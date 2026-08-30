@@ -32,6 +32,15 @@ automation. Nothing else about the run changes: it still executes in its own
 private child work stream, and the delivery is Rally's own send, not something
 the model does with a tool.
 
+Two agent tools come with it, and both are about telling the truth rather than
+gaining reach. The automation architect gets `automation_workstreams_search`,
+because it currently cannot see work streams at all and would otherwise have to
+invent the ID it records. And an automation run gets
+`automation_report_no_result`, so a run with nothing worth saying can say so —
+today that is guessed from the model's prose with a regex that only recognizes
+one English phrasing about emails, which is survivable for your own inbox and
+not for a room full of colleagues.
+
 The PRD also closes a silent gap in resource watching. The Google connector
 declares `supportsWatches: true`, but none of its activity types declare
 `resourceRelationships`, so watching an attached Google Sheet passes the UI,
@@ -40,7 +49,7 @@ because the registration reconciler produces an empty evaluator set. Declaring
 the relationships makes the existing watch toggle real for Google resources
 and lets an automation trigger scope itself to one specific Sheet or Doc.
 
-With both pieces in place, a scenario like "a recruiter's work stream for one
+With these pieces in place, a scenario like "a recruiter's work stream for one
 search receives candidate emails, pipeline-sheet updates, and a Monday-morning
 client agenda" is pure configuration through the existing automation authoring
 conversation. No recruiter-specific code exists anywhere.
@@ -73,6 +82,16 @@ building block already exists except the last hop:
   is (correctly) refused. And the resource-watch path, which is exactly shaped
   for case 2, silently does nothing for Google resources because of the
   missing manifest declarations.
+- And a run has no way to say "nothing happened". Every completed run delivers
+  something: `deliverAgentRunResult` takes the final message's text, or a
+  placeholder like "Avalon completed the task without a text response." The one
+  escape is `shouldSuppressAutomationResult`, a regex in
+  `slack-agent-service.ts` matching empty text or the shape
+  *no/zero qualifying/actionable/matching emails/messages*. A Monday agenda run
+  reporting "No changes in the pipeline this week" does not match it and is
+  delivered. That is tolerable when the destination is your own inbox. Pointed
+  at a shared work stream it is a weekly interruption for everyone in the room,
+  and it is the reason a team would turn the feature off.
 
 The cost of leaving this alone is that each "automation feeds a room" request
 becomes glue outside Rally — forwarding rules, inbox triage, copy-paste — and
@@ -97,7 +116,12 @@ avoid: nothing errors, nothing arrives, and nobody can tell why.
 4. An automation's external-event trigger can be scoped to one specific Google
    resource (a `resource_watch` trigger or a resource-scoped evaluator), and
    the compiler's validation accepts it.
-5. The recruiter scenario above is authorable end to end through the existing
+5. The architect resolves a work stream the author named in conversation to a
+   canonical ID it was actually given, and never records one it invented.
+6. A run declares that its occurrence produced nothing worth delivering, and
+   every destination is suppressed on that declaration rather than on a regex
+   over the model's prose.
+7. The recruiter scenario above is authorable end to end through the existing
    automation draft conversation, with no code written for it.
 
 ## Non-goals
@@ -106,7 +130,11 @@ avoid: nothing errors, nothing arrives, and nobody can tell why.
    frozen destination resolved at acceptance, like email is today — never a
    model choice at run time. A `send_to_workstream` tool would let anything
    that steers a run (including untrusted trigger content) choose its own
-   audience. Rejected.
+   audience. Rejected. The two tools this PRD does add stay on the right side
+   of that line: one runs during authoring, where the human is reading every
+   turn, and returns only work streams the author is already in; the other runs
+   during execution and can only *withhold* a delivery, never redirect or
+   create one. Neither can reach an audience the owner did not choose.
 2. **Delivery does not start a run in the target work stream.** The message
    arrives for the people there, the same way an inbound email or a watched
    resource update does; the target's agent sees it as transcript context the
@@ -142,9 +170,11 @@ avoid: nothing errors, nothing arrives, and nobody can tell why.
 
 During authoring, the author can tell the architect to send results into a
 named work stream ("post the agenda into my CFO — Calm Enterprises work
-stream"). The architect resolves the name through its existing search tools
-and records the request in the draft's `requestedDelivery`, which gains a
-`workstream` value alongside `email` and `slack_agent_dm`.
+stream"). The architect looks the name up with `automation_workstreams_search`,
+which returns the work streams that author actively participates in, and
+records the chosen ID in the draft's `requestedDelivery`. If the name matches
+several, the architect asks which one with an elicitation rather than picking;
+if it matches none, it says so instead of inventing an ID.
 
 At acceptance, the destination picker gains a work-stream option: a searchable
 list of work streams the accepting owner actively participates in. The choice
@@ -175,6 +205,25 @@ automation's in-flight run does not deliver — the same fence provider writes
 already respect). Any failed check skips the delivery and records the reason
 in the receipt; the automation's run history shows it. Rally never substitutes
 a different destination.
+
+### When the run has nothing to report
+
+A triggered run often finds that nothing qualifies: the sheet was saved with no
+material change, the email turned out to be a newsletter, the week's pipeline
+is unchanged. The run says so by calling `automation_report_no_result` with a
+short reason, then ending. Rally delivers to no destination — not the work
+stream, not email, not Slack — and writes a `skipped` receipt against each one
+carrying the reason the run gave.
+
+The run's own private child work stream still records everything: the
+transcript, the tool calls, and the stated reason. So "it ran and found
+nothing" stays inspectable on the automation's run history, and only the
+*interruption* is withheld. The reason is the model's own words and is shown to
+the owner there, never to the target work stream.
+
+The prose regex that approximates this today is retired in the same change, so
+there is one answer to "was there a result" and it is the run's own
+declaration. The trade is recorded in key design decision 7.
 
 ### Google watches become real
 
@@ -263,17 +312,62 @@ None yet.
    the whole existing pipeline honors immediately. A row-granular event family
    (non-goal 3) can be added later without revisiting this change, because
    manifests own the event vocabulary.
+6. **The architect resolves the work stream; it does not accept a name at
+   submission.** `agent-tools.md` principle 3 says to accept names and resolve
+   them server-side, and a `workstreamName` field on `submit_draft` would do
+   that. It is rejected here because the submission is a *frozen record*, not
+   an action: the same string could resolve differently at acceptance than it
+   did while drafting, and every other ID a draft carries — person, resource,
+   plugin — is already search-resolved with an error that names the resolver.
+   Consistency across that family is worth more than one saved call, and the
+   ambiguity rule the principle demands is better served by an elicitation the
+   person answers than by an error the model retries against.
+7. **The prose regex is retired, not kept as a backstop.**
+   `shouldSuppressAutomationResult` currently decides whether a result is worth
+   delivering by pattern-matching the model's sentence. Keeping it alongside
+   the tool would leave two answers to one question, and the regex would win
+   the disagreement: a run that reports a real finding whose wording happens to
+   match would be silently withheld. The risk of removing it is a model that
+   forgets to call the tool and delivers "no changes this week" — noise, and
+   visible, and caught by the medium-model evaluation in Agent behavior 8. The
+   alternative failure, silence where there was something to say, is invisible
+   and is the worse one to ship. Rejected: keeping both, and gating the regex
+   behind "only when the tool was not called", which is the same two-sources
+   problem with an extra branch.
+   The neighbouring `requestedDelivery` field already carries this exact
+   lesson in its own comment — it exists "so that choice starts from what was
+   actually asked for rather than from a regex over the draft's prose".
 
 ## Data model
 
 No new tables. `AutomationRunDeliveryTargetV1` (in
 `packages/contracts/src/automation-agent.ts`) gains a third arm,
-`{ type: "workstream", workstreamId }`; the acceptance-time
-`AutomationDeliveryTargetSetSchema` and the compiler's `requestedDelivery`
-enum gain the matching value. Delivery receipts reuse the existing
-`automation_delivery_receipts` row per run and target. Existing frozen
-delivery sets remain valid as they are — no backfill. The Google
-`resourceRelationships` change is connector manifest code, not schema.
+`{ type: "workstream", workstreamId }`, and so does the acceptance-time
+`AutomationDeliveryTargetSetSchema`, whose cap moves from two entries to three
+— still one per kind. The delivery loop in `substream-agent.ts` gains a third
+branch with target key `workstream:<workstreamId>`, and receipts reuse the
+existing `automation_delivery_receipts` row per run and target, including its
+existing `skipped` state. Existing frozen delivery sets remain valid as they
+are — no backfill.
+
+`requestedDelivery` has to change shape, because it is an enum array today and
+a work-stream request has to carry *which* work stream.
+`AutomationRequestedDeliverySchema` becomes a discriminated union on `kind`:
+`{kind:"email"}`, `{kind:"slack_agent_dm"}`, `{kind:"workstream", workstreamId}`.
+A `z.preprocess` step upgrades the legacy bare strings on read, because drafts
+are stored inside the conversation row and reparsed on every later turn — the
+same reason that field carries a default today, and the failure the existing
+test at `index.test.ts:1290` was written to prevent is an `invalid_response` on
+a draft somebody is in the middle of editing. New writes use the object form
+only. The alternative — keeping the enum and adding a parallel
+`requestedWorkstreamId` — is two fields that must agree, which is the drift
+this repository has already paid for elsewhere.
+
+The run's no-result declaration is one nullable column on the existing
+`automation_runs` row (reason plus reported-at), read by the delivery loop.
+
+The Google `resourceRelationships` change is connector manifest code, not
+schema.
 
 ## Regional impact
 
@@ -299,23 +393,220 @@ hop. The Global email-address registry is untouched.
    address. See open question 2.
 3. **Authority generation fences delivery** exactly as it fences provider
    writes: a run outliving a pause or delete does not deliver.
+4. **Work-stream titles are workspace content.** `automation_workstreams_search`
+   returns only work streams the author actively participates in, enforced in
+   the host's SQL rather than by an argument, for the same reason the
+   architect's resource search was narrowed on 2026-08-28: titles routinely
+   carry client and candidate names, and a draft conversation is not a place to
+   leak them.
+5. **A withheld delivery is not a hidden run.** `automation_report_no_result`
+   suppresses the outbound copy only. The run, its transcript, and the stated
+   reason remain on the automation's run history, so a model that over-uses the
+   tool produces a visible pattern of empty runs rather than silent absence.
 
 ## Agent behavior
 
-No plugins or tools are added or changed, so the full tool-contract
-documentation in [`prds.md`](../../prds.md) does not apply. Two model-facing
-surfaces move: the automation architect's `requestedDelivery` vocabulary gains
-`workstream` (with standing-policy guidance to resolve the work stream by
-search and never invent an ID), and the run prompt's `# Result delivery`
-section lists the work stream so the run treats its final message as the
-delivery instead of provider-sending a copy.
+Two tools are added, on two different loops. Written against
+[`agent-tools.md`](../../agent-tools.md); mechanics stay in
+[`agent-harness.md`](../../agent-harness.md).
+
+### 1. Plugin contract
+
+**`automation_workstreams_search` joins the existing automation architect
+plugin.** Canonical plugin ID `AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID`, model ID
+`rally_automation_architect`, short wire name `automation`. It is preloaded and
+explicit, exists only inside the compiler loop, and already owns
+`people_search` and `resources_search` — this is their sibling, declared in
+`AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS` and executed against a new
+`searchWorkstreams` method on the host's `draftResearchPort`. Tool order places
+it directly after `resources_search`, so the three resolvers read as a family.
+
+**`automation_report_no_result` needs a new plugin,
+`AVALON_AUTOMATION_PLUGIN_ID`** — model ID `rally_automation`, short wire name
+`automation`, preloaded and explicit. It is built only when the run carries an
+`AutomationRunContextV1`, and omitted entirely otherwise, following
+`createAvalonWorkstreamPlugin`'s pattern of returning `null` when it has no
+tools. An ordinary work-stream run has no delivery targets, so the tool would
+be inert there, and a tool that is present but cannot do anything is worse than
+one that is absent. The two plugins share a wire name but never coexist: one
+lives in the compiler loop and one in a run loop.
+
+Loading either plugin starts, authorizes, and persists nothing on its own.
+
+System-prompt guidance, added to each plugin's `systemMessage`:
+
+> **Architect:** Use `automation_workstreams_search` to resolve any work stream
+> the person names as a delivery destination, and record only an ID it
+> returned. Never write a work-stream ID from memory or from the conversation
+> text. If the search returns more than one plausible match, ask which one with
+> `core_request_elicitation` rather than choosing.
+
+> **Run:** Call `automation_report_no_result` when this occurrence found
+> nothing worth sending, and give the reason in one sentence. Rally then
+> delivers to no destination. Do not write "nothing to report" as your final
+> message instead — that is a delivery, and people receive it.
+
+### 2. Tool catalog
+
+| | `automation_workstreams_search` | `automation_report_no_result` |
+| --- | --- | --- |
+| Canonical name | `workstreams_search` | `report_no_result` |
+| Model-visible name | `automation_workstreams_search` | `automation_report_no_result` |
+| Description | "Search work streams you may send an automation's result to, and return canonical work-stream IDs. Only work streams this automation's author actively participates in are returned." | "Report that this run found nothing worth delivering, with a short reason. Rally then sends no result to any destination." |
+| Capability | `rally.automation.workstreams.search` | `automation.report_no_result` |
+| Mode | `read` | `write` |
+| Idempotency | `safe` | `record_before_execute` |
+| Timeout | harness default | harness default |
+| Serial | no | yes |
+
+The two capability spellings differ on purpose and match where each tool is
+assembled. The architect's tools are listed explicitly and carry the
+`rally.automation.*` names its siblings already use; the run's plugins are
+built by filtering tools on a capability prefix (`workstream.`, `table.`,
+`memory.`), so the run tool takes `automation.` to be selected the same way.
+
+`report_no_result` is `write` because it changes durable run state that
+delivery later reads, and `record_before_execute` because that write has no
+provider-side dedupe. Its arguments carry no timestamp, ID, or nonce, so the
+request is byte-stable and a genuine retry is recognizable as one. It is
+`serial: true` for the same reason `submit_draft` is: it settles what the run
+concluded, and must not interleave with the turn that is still concluding it.
+
+### 3. Wire shapes
+
+**`automation_workstreams_search`**
+
+```
+input   { "query": string (minLength 1) }        required; additionalProperties: false
+output  { "workstreams": [ { "id": uuid,
+                             "title": string,
+                             "scope": "personal" | "workspace",
+                             "participantCount": integer,
+                             "lastActivityAt": integer (epoch ms) } ],
+          "totalMatches": integer }
+```
+
+Substring match on title, case-insensitive, ordered by `lastActivityAt`
+descending so the work stream someone is actually using sorts first. Bounded to
+20 rows with `totalMatches` making truncation visible, matching
+`search_plugins`. Archived work streams are excluded. An empty result is a
+successful call returning `{"workstreams": [], "totalMatches": 0}`, not an
+error. No cursor: a query too broad to fit in 20 is narrowed, not paged.
+
+**`automation_report_no_result`**
+
+```
+input   { "reason": string (minLength 1, maxLength 500) }   required; additionalProperties: false
+output  { "reported": true, "reason": string, "suppressedTargets": integer }
+```
+
+`suppressedTargets` is how many destinations this declaration will withhold
+from, so the model can see whether it just silenced something. A replay returns
+the persisted reason and count, not the ones the repeated attempt computed.
+
+Both executors parse their arguments with a strict Zod schema before doing
+anything, because `additionalProperties: false` is a declaration to the model
+and not an enforcement point. An undeclared key is an error, never a silent
+drop.
+
+### 4. Discovery and sequencing
+
+The only new ID in the system is a work-stream ID, and
+`automation_workstreams_search` is the sole place a draft may obtain one — the
+same shape as `people_search` for person IDs and `resources_search` for
+resource IDs. Acceptance re-validates it independently, so a fabricated ID
+fails there too.
+
+```
+authoring:  automation_workstreams_search {query:"Calm Enterprises"}
+            -> { workstreams:[{id:"…a71", title:"CFO — Calm Enterprises", …}], totalMatches:1 }
+            automation_submit_draft { requestedDelivery:[{kind:"workstream", workstreamId:"…a71"}], … }
+
+run:        (tools do the work) -> nothing qualifies
+            automation_report_no_result {reason:"The pipeline sheet was saved with no candidate stage changes."}
+            -> { reported:true, reason:"…", suppressedTargets:2 }
+```
+
+`report_no_result` needs no prerequisite call: a run always knows its own
+frozen `resultDelivery` from the task context.
+
+### 5. Failures and self-healing
+
+| Code | When | Model-visible sentence | What the model should do |
+| --- | --- | --- | --- |
+| `automation_draft_research_host_unavailable` | Research port missing (existing code, shared with the sibling tools) | "Work-stream search is unavailable in this session. Submit the draft without a work-stream destination and ask the person to choose one when they accept it." | Stop searching; proceed without the destination |
+| `automation_workstream_not_participant` | Submit names an ID the author does not participate in | "You can only send results to a work stream the automation's author is in. Find it with automation_workstreams_search and use an ID it returned." | Re-search, then resubmit |
+| `automation_workstream_not_found` | Submit names an unknown or archived ID | "This work stream ID was never resolved. Find the work stream with automation_workstreams_search and use an ID it returned." | Re-search, then resubmit |
+| `automation_no_result_already_reported` | Second call with a different reason | "This run already reported no result: `<the recorded reason>`. Finish the run without reporting again." | Stop; do not retry |
+| `automation_run_context_not_found` | Called on a run with no automation context | "This run is not an automation run and has no result delivery to withhold. Finish the run normally." | Stop; do not retry |
+
+A repeat call with the **same** reason mirrors the first result rather than
+failing, per the idempotency contract. Only a *different* reason is a conflict,
+and it is refused with the recorded reason in the sentence so the model can see
+what it already said instead of guessing and looping.
+
+`automation_workstream_not_found` deliberately does not distinguish "does not
+exist" from "exists in another workspace" — that distinction is a trust
+boundary, and the remedy is identical either way.
+
+### 6. Authority, safety, lifecycle
+
+Both tools are host-derived where it matters. `workstreams_search` takes only a
+query string; the workspace and the author come from the compiler's frozen
+input, and the participation predicate is SQL in the host, not an argument. It
+reuses `searchResources`' scoping discipline — a work stream the author cannot
+see must not surface, because titles carry client and candidate names, which is
+precisely why that resource query was tightened on 2026-08-28.
+
+`report_no_result` writes only to its own run's row, fenced by the run ID the
+harness already carries. It cannot name another run, cannot widen an audience,
+and its worst case is a delivery that does not happen — recoverable by opening
+the run, which retains the full transcript. Neither tool touches connector
+credentials or reaches a provider.
+
+On cancellation or timeout, `workstreams_search` leaves nothing behind.
+A `report_no_result` receipt recorded before an interrupted run resumes is
+replayed rather than re-executed; if the run never reaches completion, delivery
+never happens either, so the flag is moot.
+
+### 7. Next-step outputs
+
+`workstreams_search` returns the ID the submission needs plus the title the
+architect should use when it describes the destination to the person, so the
+draft's overview can say "posts into CFO — Calm Enterprises" without a second
+lookup. `report_no_result` returns the reason as persisted and the count of
+destinations withheld, so a replay is distinguishable from a first call.
+
+### 8. Model-usability acceptance
+
+Schema snapshot and contract tests for both tools: required, optional,
+forbidden, success, and failure shapes, including the strict-parse rejection of
+an undeclared key and the same-reason replay versus different-reason conflict.
+
+Prompt evaluations on the configured **medium fallback model**, not only a
+frontier one, covering: resolving a work stream named loosely in conversation;
+asking an elicitation when two work streams match rather than choosing;
+declining to invent an ID when none match; calling `report_no_result` on a
+genuinely empty occurrence; and *not* calling it when there is something to
+say. That last case is the one worth watching — a model that reaches for
+`report_no_result` to end a hard turn silently converts a real result into
+silence, which is the failure this tool could introduce and the reason its
+description says "found nothing worth delivering" rather than "skip delivery".
 
 ## Rollout
 
-No flag. The change is additive: a delivery set without a work-stream entry
-behaves exactly as today, and the manifest declaration only causes events to
-route where a person has already toggled a watch on. If it goes wrong, an
+No flag. Almost all of it is additive: a delivery set without a work-stream
+entry behaves exactly as today, and the manifest declaration only causes events
+to route where a person has already toggled a watch on. If it goes wrong, an
 owner pauses the automation or disables the watch — both existing controls.
+
+The one non-additive part is retiring `shouldSuppressAutomationResult` (key
+design decision 7), which changes what existing email and Slack automations
+deliver: a run that would have been silently suppressed by the regex now
+delivers unless it calls `automation_report_no_result`. Ship the tool and the
+compiler guidance in the same change as the removal, never the removal first.
+Reverting is deleting the tool's call site and restoring the predicate; there is
+no stored state to unwind, since the declaration is per run.
 
 ## Acceptance
 
@@ -330,6 +621,15 @@ owner pauses the automation or disables the watch — both existing controls.
 4. Pause the automation mid-run; the run completes but delivers nothing, and
    the receipt says why. Archive the target work stream; the next run's
    receipt reads skipped-archived and no other destination is substituted.
+5. Author a draft naming a work stream loosely ("the Calm Enterprises one");
+   the architect calls `automation_workstreams_search` and records an ID it
+   returned. Name one that matches two work streams; it asks which, rather than
+   choosing. Name one that does not exist; it says so and does not submit an
+   invented ID.
+6. Trigger a run whose occurrence has nothing to report; it calls
+   `automation_report_no_result`, the target work stream and the owner's inbox
+   both receive nothing, and the automation's run history shows the run with
+   its stated reason and a skipped receipt per destination.
 
 ## Open questions
 
@@ -344,7 +644,12 @@ owner pauses the automation or disables the watch — both existing controls.
    author is not in? The proposal above says yes (the accepting principal's
    participation gates), but the alternative — requiring the author's
    participation too — is stricter and arguable. Changes only the acceptance
-   validation, so it can be settled during review.
+   validation, so it can be settled during review. Note the two scopes differ
+   deliberately either way: `automation_workstreams_search` runs during
+   authoring and can only see the *author's* work streams, while acceptance
+   resolves against the *accepter's*. That is the existing request-versus-
+   destination split and not a bug, but it does mean an admin can accept onto a
+   work stream the draft never named.
 3. **Gmail-thread watching.** Whether to declare `resourceRelationships` for
    `gmail_thread` on the email event types in this pass, or ship
    Sheets/Docs/Drive first. Watching one email thread is a plausible want,
