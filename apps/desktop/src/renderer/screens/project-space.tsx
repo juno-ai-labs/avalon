@@ -284,7 +284,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
         </div>
         {members.length === 0
           ? project.workstreamIds.length === 0
-            ? <EmptyState title="No work streams yet" description="Start one with the plus on this section." />
+            ? <EmptyState title="No work streams yet" description={project.status === 'active' ? 'Start one with the plus button in this section.' : 'This archived project has no work streams.'} />
             : <EmptyState title={`${project.workstreamIds.length} work stream${project.workstreamIds.length === 1 ? '' : 's'}`} description="Load more recent work streams in the sidebar to see every project member." />
           : <div className="waiting-workstream-list project-workstream-table">{members.map((workstream) => (
             <div className="project-workstream-table-row" key={workstream.id}>

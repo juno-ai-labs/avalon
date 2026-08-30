@@ -147,10 +147,12 @@ real migration ledger to SQLite and proves constraints through version 17.
 on workerd with real Durable Object storage and D1 membership rows.
 
 `apps/desktop/src/renderer/screens/project-space-screen.test.tsx` covers the
-Work streams heading plus and the other inline project-space mutations.
+Work streams heading plus, the empty-state copy for active and archived
+projects, and the other inline project-space mutations.
 `apps/api/test/workstream-project-start.test.ts` proves project-start audience
-resolution, including that a personal project seats its full roster and that
-current default resources are attached in the initialize payload.
+resolution, including that a personal project seats its full roster, that
+current default resources are attached in the initialize payload, and that an
+origin already in the project's defaults is not attached twice.
 
 Run the focused checks with:
 
@@ -213,6 +215,16 @@ send leaves them pending for a later alarm; accepted messages remain safe to
 duplicate because the consumer rechecks target generations.
 
 ## Changelog
+
+### 2026-08-30 — Archived project-space empty copy no longer points at a disabled plus
+
+**What changed:** An empty Work streams section now says "Start one with the plus button in this section." only while the project is active. An archived empty project says "This archived project has no work streams." The start helper documents that caller origin resources precede project defaults and are deduplicated, and the tests lock both the copy and the overlap case.
+
+**Why:** Review of the heading-plus change found that the new empty copy pointed at a plus that is disabled on archived projects. The previous sidebar-pointing sentence had the same problem, but this version sat next to a visible dead control. The overlap test was missing even though the `Set` union already dropped duplicates.
+
+**Considered and rejected:** Telling people to restore the project from the empty state. Restore is already a labeled header button, so a second instruction would compete with it. Aligning the heading plus on Tabler `IconPlus` to match the sidebar: this file is already lucide, and the mismatch is not worth a second icon import.
+
+**Consequences:** Keyboard and screen-reader users on an archived empty project still find the disabled plus (same pattern as **Add resource**); they are no longer told to use it.
 
 ### 2026-08-30 — Project space starts a work stream from its Work streams heading
 
