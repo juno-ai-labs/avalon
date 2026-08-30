@@ -310,8 +310,9 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
 
-    const versions = screen.getByRole('heading', { name: 'Versions' }).closest('section')!;
+    const versions = screen.getByRole('region', { name: 'Versions' });
     // Newest first, and the current one is not something to open a copy of.
     expect(within(versions).getAllByRole('listitem').map((row) => row.textContent))
       .toEqual([
@@ -343,8 +344,9 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
 
-    const versions = screen.getByRole('heading', { name: 'Versions' }).closest('section')!;
+    const versions = screen.getByRole('region', { name: 'Versions' });
     expect(within(versions).queryByRole('button', { name: /Open version 3/u })).toBeNull();
     expect(within(versions).getByRole('button', { name: /Open version 2/u })).toBeVisible();
   });
@@ -364,6 +366,7 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
 
     expect(screen.queryByRole('button', { name: /Open version 2/u })).toBeNull();
   });
@@ -378,6 +381,7 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
 
     // Offline, a 500, and "this document never changed" are four different
     // truths; silence tells the reader the last one.
@@ -397,6 +401,7 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
 
     fireEvent.click(screen.getByRole('button', { name: /Open version 2/u }));
 
@@ -409,7 +414,7 @@ describe('InspectorRail details', () => {
     );
   });
 
-  it('shows no version section for a resource that has never changed', () => {
+  it('still lists a single version when Versions is opened', () => {
     render(
       <Tooltip.Provider>
         <InspectorRail
@@ -420,9 +425,11 @@ describe('InspectorRail details', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
 
-    // One version is no history: the section would say only that the resource
-    // exists, which the detail above it already says.
+    // One version is no history on the document itself. The Versions control
+    // still opens onto that one row rather than pretending there is nothing.
     expect(screen.queryByRole('heading', { name: 'Versions' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+    expect(screen.getByText('V1')).toBeVisible();
   });
 
   it('offers a re-fetch for a watched source, and none for a generated artifact', () => {
@@ -486,6 +493,75 @@ describe('InspectorRail details', () => {
     expect(screen.getByRole('button', { name: /Linear issue create: AVA-9/ })).not.toContainElement(checkbox);
   });
 
+  it('puts the resource name in the header and drops the metadata card', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onDetachResource={vi.fn()}
+          workstream={{ ...workstream, resources: [{ ...watched, updatedAt: '2026-08-29T19:54:00.000Z' }] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    expect(screen.getByRole('heading', { name: watched.title })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Details' })).toBeNull();
+    expect(screen.queryByText('Type')).toBeNull();
+    expect(screen.queryByText('Direction')).toBeNull();
+    expect(screen.queryByText('Version')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(screen.getByText(/Last updated/u)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Versions' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeVisible();
+  });
+
+  it('asks before archiving, and Continue unlinks the resource', () => {
+    const onDetachResource = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onDetachResource={onDetachResource}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Archive this resource?' });
+    expect(within(dialog).getByText(watched.title)).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(onDetachResource).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
+    expect(onDetachResource).toHaveBeenCalledWith(expect.objectContaining({ id: 'resource-1' }));
+    expect(useUiStore.getState().inspector).toBeNull();
+  });
+
+  it('groups versions under sparse relative dates', () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 14).toISOString();
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 11).toISOString();
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          resourceVersions={[
+            { ...historyEntry, version: 3, capturedAt: today, author: { kind: 'agent', runId: 'run-1' }, cause: 'published' },
+            { ...historyEntry, version: 2, capturedAt: yesterday, author: { kind: 'connector', connectionId: 'connection-1' }, cause: 'refetched' },
+          ]}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+
+    expect(screen.getByText('today')).toBeVisible();
+    expect(screen.getByText('yesterday')).toBeVisible();
+  });
+
 });
 
 describe('resource detail content preview', () => {
@@ -511,6 +587,7 @@ describe('resource detail content preview', () => {
     watchEnabled: false,
     watchStatus: 'unsupported',
     currentVersion: 2,
+    updatedAt: '2026-08-29T19:54:00.000Z',
     relationshipType: 'context',
     direction: 'artifact',
   };
@@ -533,8 +610,11 @@ describe('resource detail content preview', () => {
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument());
     expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('resource-note', expect.anything());
-    // Beneath the metadata, not instead of it.
-    expect(screen.getByText('Version')).toBeInTheDocument();
+    // Last-updated sits in the same scroll as the body, not a metadata card.
+    expect(screen.getByText(/Last updated/u)).toBeInTheDocument();
+    expect(screen.queryByText('Version')).not.toBeInTheDocument();
+    expect(document.querySelector('.inspector-detail-preview')).toBeNull();
+    expect(document.querySelector('.inspector-detail-document')).not.toBeNull();
   });
 
   it('re-reads the content when the resource is revised in place', async () => {
@@ -577,7 +657,7 @@ describe('resource detail content preview', () => {
     openDetail({ ...note, contentAvailable: false }, loadResourceContent);
 
     expect(loadResourceContent).not.toHaveBeenCalled();
-    expect(screen.getByText('Version')).toBeInTheDocument();
+    expect(screen.getByText(/Last updated/u)).toBeInTheDocument();
   });
 
   it('says the preview is unavailable rather than leaving the panel half-drawn', async () => {
@@ -585,7 +665,7 @@ describe('resource detail content preview', () => {
     openDetail(note, loadResourceContent);
 
     await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
-    expect(screen.getByText('Version')).toBeInTheDocument();
+    expect(screen.getByText(/Last updated/u)).toBeInTheDocument();
   });
 
   /** What `/resources/:id/preview` answers while a derivative is materializing. */

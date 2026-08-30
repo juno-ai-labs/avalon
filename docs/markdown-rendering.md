@@ -21,7 +21,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/lib/use-auto-open-embedded-resource.ts` | Auto-opening the inspector onto the latest embed card in the last two text turns of a work stream. |
-| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the three host overrides, `.note-detail-article`, `.meeting-notes-body`, and `.citation-card-preview`. Notes and briefings each state a heading scale. The preview also inherits tone and zeros block margins so the four-line clamp spends itself on text. |
+| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), `.citation-card-preview` (inherits tone and zeros block margins so the four-line clamp spends itself on text), and `.inspector-detail-document` (sizes the body and restyles no markdown element). |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
 
@@ -35,7 +35,7 @@ Ten call sites, all passing a markdown string as `children`:
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
-| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document |
+| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document. Hosted as `.inspector-detail-document` in the rail's own scroll, not in a boxed inner pane. |
 | The embed card's preview of that same derivative | `markdown-citations.tsx`, via `CitationPreviewBody` in `workstream-blocks.tsx` so the card does not import the renderer it lives inside |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
@@ -513,6 +513,26 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — The rail renders a resource as a document, not a card of one
+
+**What changed:** `ResourceContentPreview` in `inspector-rail.tsx` dropped the
+boxed, independently scrolling `.inspector-detail-preview`. The markdown now
+lives in `.inspector-detail-document` under last-updated, and both move with
+`.rail-scroll`. The host sizes the body (`font-size: 13px`) and restyles no
+markdown element.
+
+**Why:** A citation that opened the rail landed on a metadata card with a
+preview window inside it. The box existed so **Remove** and **Refresh from
+source** stayed reachable under a long file; those actions left the body
+(archive is in the header, refresh stays above the document for sources), so
+the second scroller was trapping the timestamp above a document nobody could
+read as one.
+
+**What a future change has to respect:** do not put `max-height` or `overflow`
+back on the document host. A long file scrolls the rail. A heading-scale
+override here would have to name `.markdown-body` the way `.note-detail-article`
+does, and join that guard; sizing the container is the allowed exception.
 
 ### 2026-08-30 — The embed card glance leaves the markdown intact and nests no controls
 
