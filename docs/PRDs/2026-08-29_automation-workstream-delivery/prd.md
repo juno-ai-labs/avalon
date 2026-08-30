@@ -27,25 +27,28 @@ the people doing that work actually are.
 This PRD adds a third destination kind to the same frozen delivery set: an
 existing work stream. The owner picks it at acceptance, exactly the way they
 pick email or Slack today, and when a run completes, Rally records the result
-there as **one ordinary system row** — the note Rally already leaves in a
-transcript for a wake-up, an inbound email, or a watched resource going stale —
-carrying a typed *activation object* in its structured content. It is not a new
-row kind and not a one-off path.
+there as **one message of a new type**, `automation_activation`, carrying a
+typed *activation object* in its structured content. It is deliberately not the
+existing system row: that type already carries a renderer, a projector rule, and
+a reader's expectations, and an activation should inherit none of them by
+default. `message_type` has no `CHECK` constraint, so the new value costs no
+migration.
 
-"System row" here is Rally's transcript vocabulary and has nothing to do with a
-model's system role. A run has exactly one system-role message and it is at
-index 0; an activation reaches the model as a labelled `user` message like every
-other piece of injected context. That distinction is a security boundary, not
-just a format rule, and **Agent behavior 0** states it.
+That record is invisible for now, and the mechanism for that already existed.
+Every conversation turn carries a `visibility` of `people`, `model`, `both`, or
+`system`; the human feed's query reads only `('people','both')`. An activation
+is written `'model'`, so it is filtered out on the server rather than in the
+client, and a frozen `CHECK` in the turn schema makes it impossible for such a
+row to hold an attention ordinal — the database, not a code path, is what
+guarantees an invisible row cannot light an unread dot. Showing activations
+later is `'both'` instead of `'model'`, which permits the feed row and the
+marker in one move.
 
-That record is deliberately invisible for now. It renders nothing and lights no
-unread marker, because a row nobody can see must not nag. What it does do is
-reach the work stream's **own agent**, which can notice that an automation
-fired and decide for itself what to do with it. Showing activations to people
-is a product decision this PRD leaves open on purpose — but it makes it a cheap
-one: a single server-side `presentation` value moves from `"hidden"` to
-`"feed"`, and the renderer and the unread marker both follow from it, because
-both read the same field.
+None of that is about the model's system role, which is a different thing that
+shares a word. A run has exactly one system-role message, at index 0; an
+activation reaches the model as a labelled `user` message like every other piece
+of injected context. That is a security boundary and **Agent behavior 0** states
+it.
 
 Nothing else about the run changes: it still executes in its own private child
 work stream, and the delivery is Rally's own send, not something the model does
@@ -123,11 +126,12 @@ avoid: nothing errors, nothing arrives, and nobody can tell why.
 1. The owner of an automation can select an existing work stream they
    participate in as a result destination at acceptance, alongside or instead
    of email and Slack DM, and each completed run's final message is then
-   recorded in that work stream exactly once per run, as an ordinary system
-   row carrying a typed activation object.
-2. That record is invisible to people and silent — it renders nothing and
-   lights no unread marker — and becomes visible by changing one server-side
-   value, with the renderer and the marker following from it together.
+   recorded in that work stream exactly once per run, as a message of its own
+   type carrying a typed activation object — never as a reused system row.
+2. That record is invisible to people and silent: excluded by the feed query on
+   the server, and structurally incapable of holding an attention ordinal. It
+   becomes visible by changing one existing value, which permits the row and the
+   marker together.
 3. The work stream's own agent can see the activation and decide for itself
    what to do about it.
 4. A delivery that cannot land — the work stream was archived or deleted, the
@@ -167,7 +171,7 @@ avoid: nothing errors, nothing arrives, and nobody can tell why.
    arrival" behavior would be its own PRD, and the activation row is the seam it
    would attach to.
 3. **No visible feed presentation is designed or built.** The row is written
-   with `presentation: "hidden"` and the renderer draws nothing. What an
+   `visibility = 'model'` and the renderer draws nothing. What an
    activation should look like when it is shown — its own row kind, a fold into
    the automation's other activity, a summary the room's agent writes instead —
    is a product decision this PRD deliberately leaves open, having made it a
@@ -214,18 +218,29 @@ set keeps its existing shape: at most one destination per kind.
 
 ### What lands in the work stream
 
-When a run completes with a final message, Rally appends **one ordinary system
-row** to the target work stream — the note it already leaves for a scheduled
-wake-up, an inbound email, or a watched resource going stale.
-`authorType: "system"`, `messageType: "system"`, appended through the same
-`prepareMessage` / `appendPreparedMessage` path `appendWatchedResourceEvent`
-uses, so it inherits that path's idempotency (a `clientMessageId` derived from
-the delivery), its authority-generation fence, and its archive check for free.
-Nothing about the row's storage, ordering, or transport is new.
+When a run completes with a final message, Rally appends **one message of a new
+type, `automation_activation`**, to the target work stream. It is appended
+through the same `prepareMessage` / `appendPreparedMessage` path
+`appendWatchedResourceEvent` uses, so it inherits that path's idempotency (a
+`clientMessageId` derived from the delivery), its authority-generation fence,
+and its archive check. Storage, ordering, and transport are unchanged; only the
+type is new.
 
-`messageType: "system"` is a Rally transcript kind meaning "Rally is noting
-something that happened *to* this work stream rather than *in* it". It is not a
-model role and never becomes one — see **Agent behavior 0**.
+It is deliberately **not** a system row. A system row means "Rally is noting
+something that happened *to* this work stream" — a wake-up fired, a watched
+resource went stale — and it already has a renderer, a projector rule, and a
+reader's expectation attached to it. An activation is a different thing with a
+different audience, a different visibility rule, and a different answer about
+what the model may read. Reusing the system type would have meant inheriting
+all three of those by default and then carving out exceptions; a distinct type
+means every place that decides something about a message has to say what it
+does with this one. That list is short, and making it explicit is the point:
+`MessageTypeSchema` in contracts, `isParticipantMessageType` in transcript
+storage, the model projector, and the renderer.
+
+`message_type` carries no `CHECK` constraint in the work stream's SQL, so a new
+value needs no migration and does not touch the byte-frozen ordered-transcript
+schema.
 
 Its `textContent` is the run's final message. Its `structuredContent` is a
 typed **activation object**:
@@ -240,8 +255,7 @@ typed **activation object**:
   "runWorkstreamId": "…",
   "deliveryId": "…",
   "trigger": { "kind": "external_event" },
-  "occurredAt": 1756500000000,
-  "presentation": "hidden"
+  "occurredAt": 1756500000000
 }
 ```
 
@@ -249,7 +263,8 @@ typed **activation object**:
 `schedule`, `external_event`, `inbound_email` — so the two never drift.
 `runWorkstreamId` is what a future "open the run" affordance needs, and
 `automationName` is frozen at delivery so a later rename does not rewrite
-history.
+history. Nothing in the object describes presentation; that is the row's
+`visibility`, below.
 
 Delivery is idempotent per run and target — a retry after a crash lands the
 same row once — and writes the same per-target delivery receipt email delivery
@@ -259,35 +274,41 @@ through a provider tool.
 
 ### Who sees it, and when
 
-**Today, nobody.** `presentation` is `"hidden"` on every activation row, and
-the desktop feed draws nothing for it. The row is written, ordered, and
-durable; it simply has no visible form yet. Two things follow from that single
-field, which is the reason it is one field:
+**Today, nobody** — and that is the existing `visibility` column doing the
+work, not a new field. Every conversation turn carries
+`visibility IN ('people', 'model', 'both', 'system')`, and the query that
+serves the human feed already reads
+`WHERE substream_id = '0' AND visibility IN ('people', 'both')`. An activation
+is written `visibility = 'model'`, so it is filtered out **on the server**,
+before it reaches a client. A desktop build that has never heard of
+`automation_activation` cannot show one by accident, which is not true of a
+renderer-side filter.
 
-- **The renderer skips it.** One predicate in `MessageBlock`, beside the
-  existing `activity_suggestion` and system-row branches.
-- **It takes no attention ordinal.** The append path already distinguishes
-  messages that ask for attention from those that do not — `#advanceCounters`
-  takes a flag, and a tool card passes it to leave `next_attention_ordinal` and
-  `last_people_activity_at` alone. A hidden activation uses the same path. This
-  is not a detail: a row nobody can see that still lights an unread dot is a
-  work stream that nags about nothing, and that is exactly what a client-side
-  filter alone would have produced.
+Two consequences follow without any new mechanism:
 
-Making activations visible later is therefore one server-side value moving from
-`"hidden"` to `"feed"` — the renderer starts drawing and the marker starts
-counting together, because they read the same thing. When that happens the row
-already carries everything it needs to draw: the automation's name, the time,
-the body, and the run to link to. Whether that value comes from a workspace
-preference, a per-destination choice at acceptance, or a product flag is
-deliberately not decided here; see open question 1.
+- **No unread dot, enforced by the database.** The turn schema carries a frozen
+  `CHECK (attention_ordinal IS NULL OR (substream_id = '0' AND visibility IN
+  ('people', 'both') AND …))`. A `'model'` row *cannot* hold an attention
+  ordinal; SQLite rejects the insert. The invariant "a row nobody can see must
+  not nag" is not something the append path has to remember — it is not
+  expressible.
+- **Showing activations later is one value.** Write `'both'` instead of
+  `'model'` and the feed query returns the row and the attention ordinal becomes
+  permissible in the same move, because one constraint governs both. There is no
+  second edit to keep in step, which is the property that made this worth
+  finding rather than inventing.
+
+The renderer still needs a branch for the type — a message it cannot draw must
+not fall through to a default — but that branch is a safety net rather than the
+hiding mechanism, and until open question 1 is answered it draws nothing.
 
 **The work stream's agent does see it.** The activation is admitted into the
 agent's model context, so the room's own agent can notice that an automation
 fired and decide for itself what to do about it — mention it when someone next
 asks what is new, fold it into an answer, or ignore it. Rally does not
-prescribe that, and does not wake the agent to do it (non-goal 2). The details
-of the admission are in **Agent behavior**.
+prescribe that, and does not wake the agent to do it (non-goal 2). This needs
+one real change, because the runtime read shares the human feed's query today;
+**Agent behavior 0** and **Data model** both cover it.
 
 The near-term shape of this feature is therefore machine-facing on purpose: the
 activation is a fact the agent can use, not yet a thing a person reads. That is
@@ -322,7 +343,7 @@ the owner there, never to the target work stream.
 
 The prose regex that approximates this today is retired in the same change, so
 there is one answer to "was there a result" and it is the run's own
-declaration. The trade is recorded in key design decision 7.
+declaration. The trade is recorded in key design decision 10.
 
 ### Google watches become real
 
@@ -422,33 +443,47 @@ None yet.
 5. **Declare the manifest now, add granularity later.** Making
    `sheets.spreadsheet_changed` watchable is a declarative manifest edit that
    the whole existing pipeline honors immediately. A row-granular event family
-   (non-goal 3) can be added later without revisiting this change, because
+   (non-goal 4) can be added later without revisiting this change, because
    manifests own the event vocabulary.
-6. **The activation is a system row, not a new row kind.** A dedicated
-   `automation_activation` message type would have needed its own append path,
-   its own projector branch, its own renderer, and its own answer to
-   idempotency, ordering, archive, and authority-generation questions the
-   system row path has already answered — four places to get right for a
-   row that is, structurally, the same thing the work stream already writes
-   when a resource goes stale. Typed detail belongs in `structuredContent`,
-   which is exactly how `resource_update`, `inbound_email`, and the
-   suggested-work brief already carry theirs. Rejected: a new `messageType`
-   value, which would additionally have to be added to every exhaustive switch
-   over that enum in the client and the projector.
-7. **Presentation is one server-side value, not a client-side filter.** The
-   obvious way to hide the row is to have the renderer skip it. That works
-   until you notice the unread marker: attention ordinals are assigned in the
-   Durable Object when the message is appended, so a row hidden only in the
-   client still lights a dot for a message nobody can open. The fix is not to
-   also filter the marker — that is two places that must agree about one
-   question — but to put the answer on the row, where the renderer and the
-   append path both read it. It is also what makes "show them later" a change
-   to one value rather than a coordinated edit.
-8. **`presentation` governs people, never the model.** A hidden activation is
-   still admitted to the agent's context. Tying the two together would be
-   tidier to describe and wrong in both directions: the agent would be blind to
-   deliveries today, and the future decision to show activations to people
-   would silently change what every run reads.
+6. **The activation gets its own message type; it does not reuse the system
+   row.** The system row looked like a free ride: it already answers
+   idempotency, ordering, archive, and authority-generation, and typed detail
+   would sit in `structuredContent` the way `resource_update` and
+   `inbound_email` already do. It was rejected because those are the *append
+   path's* answers, and reusing the type buys them at the price of also
+   inheriting the system row's renderer, its projector rule, and what a reader
+   already assumes when they see one. Hiding an activation would then have
+   meant carving an exception out of a shared branch, and every future change
+   to system rows would have had to remember that one of them is not a system
+   row. A distinct type keeps the append path — that is where the reuse
+   actually lives — while forcing each of the four enumerators to say what it
+   does with an activation. It also leaves room for activations to acquire a
+   real presentation later without renegotiating what a system row is.
+   The cost is honest and small: four enumerations to extend, listed in
+   **Data model**, and no migration, because `message_type` carries no `CHECK`.
+7. **Invisibility is the existing `visibility` column, not a new field.** The
+   first design invented a `presentation` field on the activation object and
+   had the renderer honour it. That was wrong twice. Rally already has a
+   four-valued `visibility` on every conversation turn, and the human feed's
+   query already filters on it — so hiding server-side was one existing value,
+   not new machinery, and a client that has never heard of activations cannot
+   leak one. And the turn schema carries a frozen
+   `CHECK (attention_ordinal IS NULL OR … visibility IN ('people','both') …)`,
+   which means the unread problem a renderer-side filter would have created is
+   not merely avoided but unrepresentable: SQLite refuses an invisible row that
+   asks for attention. Rejected: `presentation` on the payload, which would
+   have been a second, weaker answer to a question the schema already answers,
+   and would have left the two able to disagree.
+8. **`visibility` separates people from the model; it does not hide the row
+   from both.** An activation invisible to people is still admitted to the
+   agent's context — that is what `'model'` means. The catch is that the
+   runtime read does not honour the distinction today: `messagesForRuntime`
+   calls the same `messageRows` the human feed does, filtering
+   `('people','both')`, so a `'model'` row would currently be invisible to the
+   model as well. The runtime read is changed to `('model','both')`, which is
+   what the column has always meant. Rejected: writing activations `'both'` and
+   hiding them in the renderer, which reintroduces the client-side filter and
+   the unread bug the frozen `CHECK` otherwise prevents.
 9. **The architect resolves the work stream; it does not accept a name at
    submission.** `agent-tools.md` principle 3 says to accept names and resolve
    them server-side, and a `workstreamName` field on `submit_draft` would do
@@ -503,15 +538,34 @@ this repository has already paid for elsewhere.
 The run's no-result declaration is one nullable column on the existing
 `automation_runs` row (reason plus reported-at), read by the delivery loop.
 
-The activation row adds **no column and no table**. It is an ordinary system
-row; everything specific to it lives in the typed activation object inside
-the existing `structured_content_json`, parsed at the boundary like every other
-`structuredContent` kind. `AutomationActivationV1Schema` joins the contracts
-package beside the other message payload shapes, and its `presentation` value
-is the one input to the append's existing "does this ask for attention" flag —
-`#advanceCounters` in `workstream-message-storage.ts`, whose parameter is today
-named `isToolCard` and now describes two callers rather than one, so it is
-renamed to say what it means. That rename is the whole of the storage change.
+The activation row adds **no column, no table, and no migration**. Everything
+specific to it lives in the typed activation object inside the existing
+`structured_content_json`, parsed at the boundary like every other
+`structuredContent` kind; `AutomationActivationV1Schema` joins the contracts
+package beside the other message payload shapes.
+
+The new `message_type` value costs nothing at the storage layer —
+`message_type TEXT NOT NULL` has no `CHECK` — but it is not free everywhere,
+and that is deliberate. Four places enumerate participant message types and
+each must name the new one: `MessageTypeSchema`
+(`["text","system","tool","elicitation","suggestion"]`) in contracts,
+`isParticipantMessageType` in `workstream-transcript-storage.ts`, the model
+projector's admitted-kinds check, and the renderer's branch list. A type that
+no enumerator had to acknowledge would be a type that silently inherits
+whatever the fallback does.
+
+Two writes and one read change:
+
+- The activation is appended with `visibility = 'model'` and a null attention
+  ordinal, which the frozen turn `CHECK` requires of any row that is not
+  `('people','both')`.
+- `messagesForRuntime` stops sharing the human feed's visibility filter. It
+  reads `('model','both')` — what the column means — instead of
+  `('people','both')`. **This is the one change here with a blast radius**: it
+  alters what every run of every work stream reads. It is a no-op against
+  existing data, because nothing writes `'model'` or `'system'` on a substream
+  `'0'` conversation turn today, and that emptiness is the thing to verify
+  before shipping rather than assume.
 
 The Google `resourceRelationships` change is connector manifest code, not
 schema.
@@ -550,9 +604,8 @@ hop. The Global email-address registry is untouched.
    suppresses the outbound copy only. The run, its transcript, and the stated
    reason remain on the automation's run history, so a model that over-uses the
    tool produces a visible pattern of empty runs rather than silent absence.
-6. **An activation never reaches the model as a system-role message.** Rally
-   calls the transcript row a system row because Rally wrote it; the content it
-   carries is an automation's output, which routinely quotes connector content
+6. **An activation never reaches the model as a system-role message.** Its
+   body is an automation's output, which routinely quotes connector content
    somebody outside the workspace wrote. Projecting it as `role: "user"` behind
    an untrusted label keeps it evidence. Projecting it as `system` — which the
    shared word invites, and which a provider would only accept at index 0
@@ -571,15 +624,19 @@ seeing something new. Written against
 ### 0. The target work stream's agent reads activations
 
 The transcript projector drops every row that is not `text` or `elicitation`,
-because system rows are UI state whose durable content is represented
-elsewhere. An activation is the exception that proves the rule: its durable
-content is *not* represented anywhere else in that work stream, and an agent
-that cannot see it cannot do anything about it.
+because system and suggestion rows are UI state whose durable content is
+represented elsewhere. An activation is the exception that proves the rule: its
+durable content is *not* represented anywhere else in that work stream, and an
+agent that cannot see it cannot do anything about it. A new message type is
+dropped by that rule automatically, so admission is an explicit branch added
+ahead of it rather than something inherited.
 
-It is admitted the way the two existing exceptions are — a
-`structuredContent.type` check placed ahead of the drop, projecting a
-`modelDerivative` wrapped in an explicit label, exactly as
-`renderUntrustedInboundEmailMessage` does for inbound mail.
+It is admitted the way the two existing exceptions are — a check placed ahead
+of the drop, projecting a `modelDerivative` wrapped in an explicit label,
+exactly as `renderUntrustedInboundEmailMessage` does for inbound mail. Because
+activations have their own `message_type`, that check is on the type rather
+than on a `structuredContent` shape, which is the cheaper and more obvious
+branch of the two.
 
 **It is projected with `role: "user"`, and this is not negotiable.** A run has
 exactly one system-role message: index 0, built by
@@ -616,10 +673,11 @@ deliberate:
   was launched to handle. An activation is standing context — the agent should
   be able to consult last Monday's agenda when someone asks a question today —
   so it stays in the window like any other message.
-- **A hidden row still enters context.** `presentation` governs what people
-  see, never what the agent sees. Those are different questions and conflating
-  them would mean the future decision to show activations silently changes what
-  the model reads.
+- **A row invisible to people still enters context.** That is precisely what
+  `visibility = 'model'` means, and it is why the runtime read has to stop
+  borrowing the human feed's filter (**Data model**). Conflating the two
+  audiences would mean the eventual decision to show activations to people
+  silently changed what every run reads.
 
 Nothing about this wakes the agent (non-goal 2) or gives it a way to reply to
 the automation. It reads, and decides.
@@ -826,13 +884,22 @@ entry behaves exactly as today, and the manifest declaration only causes events
 to route where a person has already toggled a watch on. If it goes wrong, an
 owner pauses the automation or disables the watch — both existing controls.
 
-The one non-additive part is retiring `shouldSuppressAutomationResult` (key
-design decision 7), which changes what existing email and Slack automations
+Two parts are not additive. The first is retiring
+`shouldSuppressAutomationResult` (key design decision 10), which changes what
+existing email and Slack automations
 deliver: a run that would have been silently suppressed by the regex now
 delivers unless it calls `automation_report_no_result`. Ship the tool and the
 compiler guidance in the same change as the removal, never the removal first.
 Reverting is deleting the tool's call site and restoring the predicate; there is
 no stored state to unwind, since the declaration is per run.
+
+The second is narrowing `messagesForRuntime` to `visibility IN ('model','both')`
+(key design decision 8), which touches what every run of every work stream
+reads. It is a no-op only while no substream `'0'` turn carries `'model'` or
+`'system'` visibility — true today, and acceptance check 5 is the query that
+confirms it rather than assuming it. Land that change on its own, before any
+activation is ever written, so that if a work stream's runs do change behaviour
+it is attributable to one commit and revertable without unwinding a delivery.
 
 ## Acceptance
 
@@ -849,23 +916,29 @@ no stored state to unwind, since the declaration is per run.
    shows two delivered receipts. Then open the work stream and ask its agent
    what the automation last reported — it answers from the activation, which is
    the check that the row reaches model context while reaching no screen.
-4. Flip `presentation` to `"feed"` on a delivery and repeat check 1: the row
-   now renders and the work stream goes unread. Nothing else changes, and no
-   second code path was needed to make it happen.
-5. Project a transcript containing an activation and assert the message list
+4. Write one delivery `visibility = 'both'` and repeat check 1: the row now
+   returns from the feed query, renders, and the work stream goes unread. No
+   second code path was needed. Then assert the negative directly — inserting a
+   `'model'` row with an attention ordinal is refused by SQLite, which is the
+   check that the invariant is the schema's rather than the append path's.
+5. Before shipping the runtime-read change, confirm the premise it rests on:
+   query the conversation turns for any substream `'0'` row whose `visibility`
+   is `'model'` or `'system'`. The change is a no-op only while that returns
+   nothing, and it alters what every run reads if it does not.
+6. Project a transcript containing an activation and assert the message list
    directly: exactly one `role: "system"` message, at index 0, and the
    activation present as a `role: "user"` message carrying the untrusted label.
    A unit test over the projector, not an end-to-end walk — it is guarding a
    security property that an innocent-looking edit could undo.
-6. Pause the automation mid-run; the run completes but delivers nothing, and
+7. Pause the automation mid-run; the run completes but delivers nothing, and
    the receipt says why. Archive the target work stream; the next run's
    receipt reads skipped-archived and no other destination is substituted.
-7. Author a draft naming a work stream loosely ("the Calm Enterprises one");
+8. Author a draft naming a work stream loosely ("the Calm Enterprises one");
    the architect calls `automation_workstreams_search` and records an ID it
    returned. Name one that matches two work streams; it asks which, rather than
    choosing. Name one that does not exist; it says so and does not submit an
    invented ID.
-8. Trigger a run whose occurrence has nothing to report; it calls
+9. Trigger a run whose occurrence has nothing to report; it calls
    `automation_report_no_result`, the target work stream and the owner's inbox
    both receive nothing, and the automation's run history shows the run with
    its stated reason and a skipped receipt per destination.
@@ -875,8 +948,9 @@ no stored state to unwind, since the declaration is per run.
 1. **When an activation should become visible, and as what.** This is now the
    only question the design defers, and it no longer blocks the build: the row
    is written, the switch exists, and flipping it is one value. What is
-   undecided is *when* it flips and what a person then sees — a system row with
-   the automation's name and its result, a compact "3 automation updates" fold,
+   undecided is *when* it flips and what a person then sees — a quiet row
+   carrying the automation's name and its result, a compact "3 automation
+   updates" fold,
    or nothing at all, with the room's agent writing the visible summary in its
    own voice instead. That last option is the one worth taking seriously,
    because it is the only one where a person reads something written for this
