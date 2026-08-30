@@ -1,8 +1,13 @@
 # Branded identifiers
 
-Every identifier in Rally is a UUID string, so the type system on its own
+Rally's entity identifiers are UUID strings, so the type system on its own
 treats a workspace id, a work-stream id, a run id, and a user id as freely
-interchangeable. The places they meet are exactly the places a swap is
+interchangeable. Transcript turn IDs are the deliberate exception: participant
+turns currently use UUIDs, while assistant turns derive an opaque stable key
+from the durable loop and turn ordinal. `TranscriptTurnIdSchema` owns that
+shared string contract; consumers must not narrow it back to `IdSchema`.
+
+The places identifiers meet are exactly the places a swap is
 catastrophic and silent: a Durable Object *name* built from two ids in the
 wrong order addresses a different object with no error on either side, and a
 run claimed under the wrong coordinate updates somebody else's row. The
@@ -56,6 +61,28 @@ between them. Fan-in plumbing helpers with broad mixed-provenance call sets
 through their callers.
 
 ## Changelog
+
+### 2026-08-29 — Transcript turn identity is explicitly opaque
+
+**What changed:** `TranscriptTurnIdSchema` is the shared contract for canonical
+message IDs, transcript turns, admission receipts, stream checkpoints,
+background-task references, and terminal outcomes. It accepts the existing
+UUID participant IDs and structured durable-loop assistant IDs.
+
+**Why:** Assistant turns have long used a stable `<loop>:turn:<ordinal>` key,
+but `MessageSchema.id` still required a UUID. Terminal settlement therefore
+failed while reloading a correctly persisted assistant turn and never reached
+external result delivery.
+
+**Considered and rejected:** Replacing assistant turn keys with generated UUIDs.
+The structured key is already the durable retry identity across provider
+attempts and recovery; adding a second identifier would create a translation
+table without improving authority. Also rejected: weakening generic `IdSchema`,
+which would discard UUID validation for actual entities.
+
+**Consequences:** Entity brands remain UUID-backed. Any field whose meaning is
+"canonical transcript turn" uses the named opaque schema, even when its current
+producer happens to emit a UUID.
 
 ### 2026-08-26 — Connector processing removes its external Workflow ID
 
