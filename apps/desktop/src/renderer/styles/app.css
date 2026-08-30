@@ -2640,8 +2640,18 @@ pre {
    here scrolls in either axis — a scrollable box inside a card the whole of
    which is one button would swallow the click it advertises. The kind label's
    size and weight, deliberately, so the preview reads as the card's quietest
-   layer rather than competing with the title beneath it. */
-.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-muted); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: var(--av-sys-label-weight); line-height: 1.5; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+   layer rather than competing with the title beneath it.
+
+   It is the one piece of text on the card that draws from the neutral ramp
+   rather than a `text.*` tone: a step below `text.muted` and a step above
+   `text.disabled`, which is the tone this wants and neither of those is. The
+   preview exists to hint at the document, not to be read here — the card is a
+   button, and type dark enough to read comfortably competes with the title for
+   the click. `text.disabled` would say something untrue about a control that
+   is very much enabled; `ref.color.neutral.9` is a contrast step, and the ramp
+   is ordered by contrast, so it dims the same way in a light theme as in a
+   dark one. */
+.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-ref-color-neutral-9); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: var(--av-sys-label-weight); line-height: 1.5; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
 /* What stands in for it while the derivative is still being converted. Three
    bars on the preview's own grid, so the card does not resize when the text
    lands. */
