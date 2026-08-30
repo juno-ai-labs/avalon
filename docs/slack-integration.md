@@ -799,6 +799,72 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
+### 2026-08-29 — The agent-session lifecycle became typed WorkspaceDO methods
+
+**What changed:** Thirteen more typed methods on WorkspaceDO
+(`workspace-slack-protocol.ts` / `workspace-slack-storage.ts`): reading a
+session by id, by thread, or by work stream; the interaction preflight;
+creating one; seating a member across every workspace-scoped session a Slack
+user owns; the delivery key and the stream pointer; the status reaction's
+compare-and-set and its re-anchor; the App Home context; and interaction
+feedback. `SlackAgentService` calls them instead of sending nineteen statements
+through the workspace runtime facade, and `slack_agent_sessions`,
+`slack_agent_contexts`, and `slack_agent_feedback` join
+`WORKSPACE_TYPED_RPC_ONLY_TABLES`, so a generic statement naming one of them is
+now refused by name rather than executed. Still on the facade, deliberately:
+delivery preferences, agent policies, user links, the link-challenge mint and
+redeem flow, unfurls, and everything joining `connector_connections`.
+
+**Why:** The routing hazard part 1 describes is unchanged — a typed method
+cannot be routed to the wrong database — but two of this area's decisions were
+also being made from `meta.changes`, the physical-write counter
+[`docs/durable-object-sqlite.md`](durable-object-sqlite.md) forbids deciding a
+logical outcome from.
+
+Seating was the worse of the two. The service read the sessions an email match
+could claim and then updated them, as two statements over the same predicate,
+and took the count it reported from the update's `meta.changes`. A session
+seated between the two reads was reconciled against a snapshot that no longer
+described it, and one created between them was updated without being reconciled
+at all. `assignSlackSessions` runs both inside one `transactionSync` and answers
+with the previous holder and method each row actually moved *from* — which
+`reconcileSlackWorkstreamIdentity` needs, and which `RETURNING` cannot give,
+since it yields the new row.
+
+The status reaction is a compare-and-set that spans a Slack API call, so it
+cannot be one transaction; what it can be is honest about whether it won.
+`settleSlackSessionReaction` decides `settled` from a `RETURNING` witness rather
+than a row count, against an `IS` predicate rather than `=`, because NULL —
+Rally has placed nothing — is a real state that `=` never matches. Feedback
+reports a redelivery as `replayed` from the same kind of witness, instead of
+leaving the service to read a unique-constraint violation as an error.
+
+**Considered and rejected:** Patching the Node fixtures row by row so that the
+converted assertions kept passing. The unit of coherence is the fixture, not
+the row: a test that seeds `slack_agent_sessions` in its regional fixture and
+seats them through the object is asserting on a database the write never
+reaches, and passes only while nothing reads the row back. The three tests that
+covered this area moved wholesale onto a real `createTestWorkspaceDO`, with the
+sessions — and the `connector_connections` row their foreign key requires — in
+the object's own store.
+
+**Consequences:** These three tables are refused by name now, so a new generic
+statement naming one fails loudly at the object rather than executing against
+storage nobody meant to reach generically; new session state belongs in the
+protocol and storage files. Four Slack tables are deliberately *not* on that
+list — `slack_ingress_jobs`, `slack_agent_thread_claims`,
+`slack_agent_pending_prompts`, and `slack_link_challenges` — because the
+schedule's alarm-target derivation in `workspace-schedule-execution.ts` still
+reads their due times generically through this object's local executor,
+alongside the other alarm sources.
+
+None of the three tables is an alarm source, so unlike the ingress spine's
+mutations these methods deliberately do not call `refreshScheduleAfterSlackWrite`
+— there is no target whose due time they could stale. That stops being true the
+moment a schedule target reads one of them.
+
+Shipped in the facade-to-RPC stack, 9/9 part 2.
+
 ### 2026-08-29 — The ingress spine became typed WorkspaceDO methods
 
 **What changed:** Admitting an ingress job, claiming it for processing,

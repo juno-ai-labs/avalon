@@ -367,6 +367,19 @@ import {
   sweepWorkspaceSlackIngress,
   workspaceSlackPendingPrompt,
   workspaceSlackThreadRoutable,
+  assignWorkspaceSlackSessions,
+  createWorkspaceSlackSession,
+  recordWorkspaceSlackFeedback,
+  setWorkspaceSlackSessionDeliveryKey,
+  setWorkspaceSlackSessionStream,
+  anchorWorkspaceSlackSessionReaction,
+  settleWorkspaceSlackSessionReaction,
+  storeWorkspaceSlackContext,
+  workspaceSlackContext,
+  workspaceSlackSessionById,
+  workspaceSlackSessionByThread,
+  workspaceSlackSessionByWorkstream,
+  workspaceSlackSessionExists,
 } from "./workspace-slack-storage";
 import {
   WorkspaceSlackIngressClaimRequestSchema,
@@ -402,6 +415,38 @@ import {
   type WorkspaceSlackThreadReleaseRequest,
   type WorkspaceSlackThreadRoutableRequest,
   type WorkspaceSlackThreadRoutableResult,
+  WorkspaceSlackContextRequestSchema,
+  WorkspaceSlackContextStoreRequestSchema,
+  WorkspaceSlackFeedbackRequestSchema,
+  WorkspaceSlackSessionAssignRequestSchema,
+  WorkspaceSlackSessionByIdRequestSchema,
+  WorkspaceSlackSessionByThreadRequestSchema,
+  WorkspaceSlackSessionByWorkstreamRequestSchema,
+  WorkspaceSlackSessionCreateRequestSchema,
+  WorkspaceSlackSessionDeliveryKeyRequestSchema,
+  WorkspaceSlackSessionExistsRequestSchema,
+  WorkspaceSlackSessionReactionAnchorRequestSchema,
+  WorkspaceSlackSessionReactionRequestSchema,
+  WorkspaceSlackSessionStreamRequestSchema,
+  type WorkspaceSlackContextRequest,
+  type WorkspaceSlackContextResult,
+  type WorkspaceSlackContextStoreRequest,
+  type WorkspaceSlackFeedbackRequest,
+  type WorkspaceSlackFeedbackResult,
+  type WorkspaceSlackSessionAssignRequest,
+  type WorkspaceSlackSessionAssignResult,
+  type WorkspaceSlackSessionByIdRequest,
+  type WorkspaceSlackSessionByThreadRequest,
+  type WorkspaceSlackSessionByWorkstreamRequest,
+  type WorkspaceSlackSessionCreateRequest,
+  type WorkspaceSlackSessionDeliveryKeyRequest,
+  type WorkspaceSlackSessionExistsRequest,
+  type WorkspaceSlackSessionExistsResult,
+  type WorkspaceSlackSessionReactionAnchorRequest,
+  type WorkspaceSlackSessionReactionRequest,
+  type WorkspaceSlackSessionReactionResult,
+  type WorkspaceSlackSessionResult,
+  type WorkspaceSlackSessionStreamRequest,
 } from "./workspace-slack-protocol";
 import {
   appendWorkspaceNoteSegment,
@@ -846,6 +891,15 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "memory_table_rows_fts",
   "memory_table_cells",
   "memory_table_mutations",
+  // The Slack agent session, context, and feedback tables are typed methods
+  // now. `slack_link_challenges`, `slack_agent_thread_claims`,
+  // `slack_agent_pending_prompts`, and `slack_ingress_jobs` are deliberately
+  // absent: the schedule's alarm-target derivation reads their due times
+  // generically through this object's local executor, alongside the other
+  // alarm sources.
+  "slack_agent_sessions",
+  "slack_agent_contexts",
+  "slack_agent_feedback",
 ] as const;
 
 function typedRpcOnlyWorkspaceTable(sql: string): string | null {
@@ -6719,6 +6773,151 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     releaseWorkspaceSlackThreadClaim(this.state.storage, request);
     this.refreshScheduleAfterSlackWrite(request.workspaceId);
+  }
+
+  /**
+   * The Slack agent-session lifecycle.
+   *
+   * None of `slack_agent_sessions`, `slack_agent_contexts`, or
+   * `slack_agent_feedback` is an alarm source — no schedule target derives a
+   * due time from them — so these mutations deliberately do **not** call
+   * `refreshScheduleAfterSlackWrite`. That is the one thing to re-check before
+   * adding a method here: a table that gains an alarm target needs the refresh
+   * back, and its absence is a decision rather than an omission.
+   */
+  async slackSessionById(
+    input: WorkspaceSlackSessionByIdRequest,
+  ): Promise<WorkspaceSlackSessionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionByIdRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackSessionById(this.state.storage, request);
+  }
+
+  /** The session a Slack thread already has, if this thread is one Rally runs. */
+  async slackSessionByThread(
+    input: WorkspaceSlackSessionByThreadRequest,
+  ): Promise<WorkspaceSlackSessionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionByThreadRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackSessionByThread(this.state.storage, request);
+  }
+
+  /** The session behind a work stream, for delivering that run's outcome. */
+  async slackSessionByWorkstream(
+    input: WorkspaceSlackSessionByWorkstreamRequest,
+  ): Promise<WorkspaceSlackSessionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionByWorkstreamRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackSessionByWorkstream(this.state.storage, request);
+  }
+
+  /** The interaction preflight: has this work stream already been seated here? */
+  async slackSessionExists(
+    input: WorkspaceSlackSessionExistsRequest,
+  ): Promise<WorkspaceSlackSessionExistsResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionExistsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackSessionExists(this.state.storage, request);
+  }
+
+  /** Store a new thread's session and answer with the row that was stored. */
+  async createSlackSession(
+    input: WorkspaceSlackSessionCreateRequest,
+  ): Promise<WorkspaceSlackSessionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionCreateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return createWorkspaceSlackSession(this.state.storage, request);
+  }
+
+  /** Seat a member across this Slack user's workspace-scoped sessions. */
+  async assignSlackSessions(
+    input: WorkspaceSlackSessionAssignRequest,
+  ): Promise<WorkspaceSlackSessionAssignResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionAssignRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return assignWorkspaceSlackSessions(this.state.storage, request);
+  }
+
+  /** Stamp the delivery key a run's outcome was delivered under. */
+  async setSlackSessionDeliveryKey(
+    input: WorkspaceSlackSessionDeliveryKeyRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionDeliveryKeyRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    setWorkspaceSlackSessionDeliveryKey(this.state.storage, request);
+  }
+
+  /** Record, or clear, the Slack message this session is streaming into. */
+  async setSlackSessionStream(
+    input: WorkspaceSlackSessionStreamRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionStreamRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    setWorkspaceSlackSessionStream(this.state.storage, request);
+  }
+
+  /**
+   * Settle the status reaction against the emoji the caller removed.
+   *
+   * Answers `raced` when another transition — a working tick, or the terminal
+   * outcome — moved `reaction_current` while the caller was talking to Slack.
+   * The decision comes from the `RETURNING` witness, not a row count.
+   */
+  async settleSlackSessionReaction(
+    input: WorkspaceSlackSessionReactionRequest,
+  ): Promise<WorkspaceSlackSessionReactionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionReactionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return settleWorkspaceSlackSessionReaction(this.state.storage, request);
+  }
+
+  /** Point the status reaction at the newest prompt's message. */
+  async anchorSlackSessionReaction(
+    input: WorkspaceSlackSessionReactionAnchorRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionReactionAnchorRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    anchorWorkspaceSlackSessionReaction(this.state.storage, request);
+  }
+
+  /** The App Home context Rally keeps for one Slack user on one connection. */
+  async slackAppContext(
+    input: WorkspaceSlackContextRequest,
+  ): Promise<WorkspaceSlackContextResult> {
+    await this.initialized;
+    const request = WorkspaceSlackContextRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackContext(this.state.storage, request);
+  }
+
+  /** Replace that context wholesale. */
+  async storeSlackAppContext(
+    input: WorkspaceSlackContextStoreRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackContextStoreRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    storeWorkspaceSlackContext(this.state.storage, request);
+  }
+
+  /** Record one feedback submission, or report that its job already had one. */
+  async recordSlackFeedback(
+    input: WorkspaceSlackFeedbackRequest,
+  ): Promise<WorkspaceSlackFeedbackResult> {
+    await this.initialized;
+    const request = WorkspaceSlackFeedbackRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return recordWorkspaceSlackFeedback(this.state.storage, request);
   }
 
   /**
