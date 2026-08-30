@@ -177,6 +177,7 @@ describe('project space appearance', () => {
     const plus = screen.getByRole('button', { name: 'New work stream in Hiring' });
     expect(heading.parentElement).toContainElement(plus);
     expect(plus).toHaveClass('icon-button');
+    expect(screen.getByText('Start one with the plus button in this section.')).toBeVisible();
     fireEvent.click(plus);
     expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${project.id}/workstreams/new`);
   });
@@ -185,6 +186,8 @@ describe('project space appearance', () => {
     renderProject(ProjectSummarySchema.parse({ ...project, status: 'archived' }));
 
     expect(screen.getByRole('button', { name: 'New work stream in Hiring' })).toBeDisabled();
+    expect(screen.getByText('This archived project has no work streams.')).toBeVisible();
+    expect(screen.queryByText('Start one with the plus button in this section.')).not.toBeInTheDocument();
   });
 
   it('exposes archive as a danger-colored icon-only control and opens the confirmation dialog', async () => {

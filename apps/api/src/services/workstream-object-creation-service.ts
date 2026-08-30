@@ -114,7 +114,7 @@ export function resolveProjectWorkstreamAudience(
   return { scope: "personal", participantUserIds: projectParticipantUserIds };
 }
 
-/** Audience plus the current defaults, written in the same initialize transaction. */
+/** Audience plus current defaults, for the initialize payload. */
 export function resolveProjectWorkstreamStart(
   project: ProjectSummary,
   requestedParticipantUserIds: readonly string[],
@@ -123,6 +123,7 @@ export function resolveProjectWorkstreamStart(
   const audience = resolveProjectWorkstreamAudience(project, requestedParticipantUserIds);
   return {
     ...audience,
+    // Caller resources precede project defaults; both are deduplicated.
     originResourceIds: [...new Set([...existingOriginResourceIds, ...project.defaultResourceIds])],
   };
 }

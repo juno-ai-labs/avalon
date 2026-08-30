@@ -32,7 +32,7 @@ const personalProject = ProjectSummarySchema.parse({
   updatedAt: "2026-08-27T00:00:00.000Z",
 });
 
-describe("starting a work stream inside a personal project", () => {
+describe("starting a work stream inside a project", () => {
   it("given only project participants, when creation resolves its audience, then it uses the full project roster", () => {
     expect(resolveProjectWorkstreamAudience(personalProject, [participantId])).toEqual({
       scope: "personal",
@@ -72,6 +72,15 @@ describe("starting a work stream inside a personal project", () => {
       scope: "personal",
       participantUserIds: [creatorId, participantId],
       originResourceIds: [existingOriginId, defaultResourceId],
+    });
+  });
+
+  it("given an existing origin that is also a project default, when creation resolves its start, then it deduplicates", () => {
+    const duplicateId = "00000000-0000-7000-8000-000000000207";
+    expect(resolveProjectWorkstreamStart(personalProject, [participantId], [duplicateId])).toEqual({
+      scope: "personal",
+      participantUserIds: [creatorId, participantId],
+      originResourceIds: [duplicateId],
     });
   });
 
