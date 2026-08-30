@@ -1436,6 +1436,22 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-30 — Sidebar facepile is the existing AvatarStack size
+
+**What changed:** The sidebar trailing slot uses `AvatarStack` at its existing
+24px size. The compact size variant added for that slot is gone. `extraCount`
+remains so a directory list truncated to three ids can still paint `+x`.
+
+**Why:** a second size was a parallel facepile, not reuse of the one the header
+already paints. The Air row is 31px; 24px faces already fit.
+
+**Considered and rejected:** CSS-shrinking only the sidebar stack. That would
+still be a second look. Padding dummy members so native overflow could fire
+would pollute the accessible name.
+
+**What a future change has to respect:** do not add an `Avatar` size for this
+slot. `AvatarStack` with `limit={3}` and `extraCount` is the facepile.
+
 ### 2026-08-30 — Personal sidebar rows carry a bounded participant facepile
 
 **What changed:** Directory `Workstream` rows gained `participantUserIds` (max
