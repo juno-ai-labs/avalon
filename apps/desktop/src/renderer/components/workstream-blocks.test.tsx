@@ -794,6 +794,57 @@ describe('MessageBlock markdown', () => {
     expect(table.parentElement).toHaveClass('fade-x', 'fade-scrollbar-safe-x');
   });
 
+  it('turns HTML break tags into line breaks in tables and in prose, not in code', () => {
+    // Models write `<br/>` inside GFM table cells because a real newline ends
+    // the row, and they write the same tag in ordinary paragraphs. Neither is
+    // HTML this renderer parses — `rehype-raw` is off — so the tags used to
+    // print as characters (or vanish, when micromark classifies them as html).
+    render(
+      <MarkdownBody>
+        {[
+          'Line one<br/>Line two',
+          '',
+          '| Phase | Deliverables |',
+          '| --- | --- |',
+          '| One | `src/a.ts` <br/>• migrations<br/>• tests |',
+          '',
+          'A <div>stay</div> and a <br class="x"> stay text.',
+          '',
+          'Keep a `a<br/>b` span, and a fence:',
+          '',
+          '```html',
+          '<br/>',
+          '```',
+        ].join('\n')}
+      </MarkdownBody>,
+    );
+
+    const body = document.querySelector('.markdown-body')!;
+    const paragraph = body.querySelector('p')!;
+    expect(paragraph.querySelectorAll('br')).toHaveLength(1);
+    expect(paragraph.textContent).toBe('Line oneLine two');
+
+    const cell = screen.getByRole('cell', { name: /src\/a\.ts/u });
+    expect(cell.querySelectorAll('br')).toHaveLength(2);
+    expect(cell.textContent).not.toContain('<br');
+    expect(cell.querySelector('.markdown-inline-code')?.textContent).toBe('src/a.ts');
+
+    expect(body.textContent).toContain('<div>stay</div>');
+    expect(body.textContent).toContain('<br class="x">');
+    expect(screen.getByText('a<br/>b')).toHaveClass('markdown-inline-code');
+    expect(document.querySelector('.markdown-code-block')?.textContent).toContain('<br/>');
+  });
+
+  it('rewrites break tags in a verbatim document the same way', () => {
+    // The inspector and the lightbox are verbatim because TeX repair must not
+    // rewrite a file. A break tag in that file is still a line break the
+    // renderer should honour — it is not TeX.
+    render(<MarkdownBody verbatim>{'Hello<br />there'}</MarkdownBody>);
+    const paragraph = document.querySelector('.markdown-body p')!;
+    expect(paragraph.querySelectorAll('br')).toHaveLength(1);
+    expect(paragraph.textContent).toBe('Hellothere');
+  });
+
   it('renders unsupported fenced languages as plain text without losing their label', () => {
     const message: Message = {
       ...baseMessage,
