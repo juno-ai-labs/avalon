@@ -447,11 +447,19 @@ function renderIdentity(
 }
 
 const REMARK_PLUGINS = [remarkGfm];
-const REHYPE_PLUGINS = [rehypeCitationEmbedRows];
+/**
+ * The embed-row pass groups only what the citation matrix will draw as a card,
+ * so a surface with no citation context groups nothing at all — and gets a
+ * hoisted empty array rather than a new one per render, because these reach the
+ * settled segments' memo by identity.
+ */
+const NO_REHYPE_PLUGINS: MarkdownRehypePlugins = [];
 
 type MarkdownComponents = NonNullable<React.ComponentProps<typeof ReactMarkdown>['components']>;
 type MarkdownUrlTransform = NonNullable<React.ComponentProps<typeof ReactMarkdown>['urlTransform']>;
 type MarkdownRehypeOptions = NonNullable<React.ComponentProps<typeof ReactMarkdown>['remarkRehypeOptions']>;
+/** Taken from the component's own props rather than from `unified`, which is a transitive dependency. */
+type MarkdownRehypePlugins = NonNullable<React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']>;
 
 /** A blank line: the classic boundary between markdown blocks. */
 const BLANK_LINE = /^\s*$/u;
@@ -570,16 +578,17 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
  * makes a paced reveal affordable: each animation-frame commit re-parses only
  * the open tail, while every settled segment's element is reused untouched.
  */
-const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, rehypeOptions, source, urlTransform }: {
+const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, rehypeOptions, rehypePlugins, source, urlTransform }: {
   components: MarkdownComponents;
   rehypeOptions: MarkdownRehypeOptions;
+  rehypePlugins: MarkdownRehypePlugins;
   source: string;
   urlTransform: MarkdownUrlTransform;
 }): React.JSX.Element {
   return (
     <ReactMarkdown
       components={components}
-      rehypePlugins={REHYPE_PLUGINS}
+      rehypePlugins={rehypePlugins}
       remarkPlugins={REMARK_PLUGINS}
       remarkRehypeOptions={rehypeOptions}
       urlTransform={urlTransform}
@@ -722,12 +731,23 @@ export function MarkdownBody({
   // so a commit elsewhere on the screen — another message streaming at 60
   // commits a second included — skips this subtree instead of re-parsing it.
   const rehypeOptions = useMemo<MarkdownRehypeOptions>(() => ({ clobberPrefix: prefix }), [prefix]);
+  // The row pass is told what the matrix will draw, so it groups embeds only
+  // where they become cards. A surface with no citation context takes the
+  // hoisted empty list: without that, a run of `resource://` images that render
+  // as their label text — which is what every such surface does — would be laid
+  // out side by side in a horizontal scroller instead of reading as sentences.
+  const rehypePlugins = useMemo<MarkdownRehypePlugins>(
+    () => (citations
+      ? [rehypeCitationEmbedRows((resourceId) => citations.resolve(resourceId) !== undefined)]
+      : NO_REHYPE_PLUGINS),
+    [citations],
+  );
   const rendered = useMemo(() => {
     if (!streaming) {
       return (
         <ReactMarkdown
           components={components}
-          rehypePlugins={REHYPE_PLUGINS}
+          rehypePlugins={rehypePlugins}
           remarkPlugins={REMARK_PLUGINS}
           remarkRehypeOptions={rehypeOptions}
           urlTransform={urlTransform}
@@ -742,6 +762,7 @@ export function MarkdownBody({
         {settled.map((segment, index) => (
           <SettledMarkdownSegment
             components={components}
+            rehypePlugins={rehypePlugins}
             key={index}
             rehypeOptions={rehypeOptions}
             source={segment}
@@ -750,7 +771,7 @@ export function MarkdownBody({
         ))}
         <ReactMarkdown
           components={components}
-          rehypePlugins={REHYPE_PLUGINS}
+          rehypePlugins={rehypePlugins}
           remarkPlugins={REMARK_PLUGINS}
           remarkRehypeOptions={rehypeOptions}
           urlTransform={urlTransform}
