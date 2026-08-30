@@ -17,7 +17,7 @@ one of them silently missed the others; the changelog records what that cost.
 | --- | --- |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
-| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, and the plain-text rewrite that outbound email and Slack delivery send instead. |
+| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the image-syntax announcement scan, and the plain-text rewrite that outbound email and Slack delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/lib/use-auto-open-embedded-resource.ts` | Auto-opening the inspector onto the latest embed card in the last two text turns of a work stream. |
@@ -134,14 +134,20 @@ On a work stream, the latest embed card in the last two **text** turns also
 opens the inspector onto that document without a click. The window is those
 two turns on purpose: a follow-up that does not re-announce the file should
 still surface it, and a document three turns back should not steal the rail.
-The same path runs when the feed first belongs to the route (open, reconnect,
-a snapshot that first makes the turns available) and when a streamed turn
-grows an announcement that was not there. Closing the rail for that
-announcement does not reopen it; leaving the work stream and coming back
-does, because that is a new visit. Chips, footnotes, unresolved ids, and
-samples inside code never qualify — they are not cards. Automation drafts
-do not auto-open: resources and the inspector are work-stream product
-controls.
+A turn that flattened into several text blocks still counts as one turn, so
+its own first-block card cannot be pushed out by later blocks of the same
+answer. Only agent text is scanned: human and external turns render markdown
+verbatim, without the citation context, so image syntax there is label text
+rather than a card. The same path runs when the feed first belongs to the
+route (open, reconnect, a snapshot that first makes the turns available) and
+when a streamed turn grows an announcement that was not there. Closing the
+rail for that announcement does not reopen it — the visit key is the turn
+id, so replacing the live overlay with its canonical block is the same
+announcement. Leaving the work stream and coming back does, because that is
+a new visit. Chips, footnotes, unresolved ids, escaped bangs, and samples
+inside code never qualify — they are not cards. Automation drafts do not
+auto-open: resources and the inspector are work-stream product controls.
+
 A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
 inline numbered pill with a hover popover, and its entry is dropped from the
@@ -511,14 +517,21 @@ inside code is syntax being shown — none of those are the announcement, and
 auto-opening any of them would fight the placement the protocol already
 chose.
 
-**What a future change has to respect:** the visit key is the message and the
-canonical resource id together, and it clears when the route's work stream
-changes even if the new feed has no embed. Skipping that clear is how coming
-back to a document stays closed. `open` is skipped when the rail is already
-showing that document, because `openRail` clears the inspector before
-selecting and would flash the list. The scan lives in the protocol module
-so the desktop cannot disagree with the rewrite about which image syntax is
-a citation.
+**What a future change has to respect:** the visit key is the **turn** and the
+canonical resource id together — `transcriptTurnId`, falling back to the
+row id — and it clears when the route's work stream changes even if the new
+feed has no embed. Keying on the flattened row id is how closing the rail
+during a live stream reopened the same card when the canonical block
+replaced the overlay. Skipping the visit-key clear is how coming back to a
+document stays closed. Only agent text is scanned: a human or external
+`![…](resource://…)` is not a card, because those turns render verbatim
+without the citation context. The lookback groups by turn, not by text
+row, because `orderedTranscriptMessages` emits one row per block.
+`open` is skipped when the rail is already showing that document, because
+`openRail` clears the inspector before selecting and would flash the list.
+The scan lives in the protocol module so the desktop cannot disagree with
+the rewrite about which image syntax is a citation. An escaped bang is
+not a card; CommonMark renders it as a chip.
 
 ### 2026-08-30 — The preview reader leaves the rail, and the row's class joins the export guard
 

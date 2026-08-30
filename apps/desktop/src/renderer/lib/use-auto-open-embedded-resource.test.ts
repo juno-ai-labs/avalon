@@ -12,11 +12,13 @@ import {
 const text = (
   id: string,
   body: string,
-  extras: Partial<Pick<Message, 'messageType'>> = {},
-): Pick<Message, 'id' | 'messageType' | 'text'> => ({
+  extras: Partial<Pick<Message, 'authorType' | 'messageType' | 'transcriptTurnId'>> = {},
+): Pick<Message, 'authorType' | 'id' | 'messageType' | 'text' | 'transcriptTurnId'> => ({
   id,
+  authorType: extras.authorType ?? 'agent',
   messageType: extras.messageType ?? 'text',
   text: body,
+  ...(extras.transcriptTurnId ? { transcriptTurnId: extras.transcriptTurnId } : {}),
 });
 
 const DECK = { id: 'board-deck' };
@@ -34,23 +36,23 @@ describe('latestEmbeddedResource', () => {
 
   it('returns the embed in the last text turn', () => {
     expect(latestEmbeddedResource([
-      text('user', 'Write the memo.'),
+      text('user', 'Write the memo.', { authorType: 'human' }),
       text('rally', 'Here it is.\n\n![Pricing memo](resource://pricing-memo)'),
-    ], resolve)).toEqual({ messageId: 'rally', resourceId: 'pricing-memo' });
+    ], resolve)).toEqual({ announcementId: 'rally', resourceId: 'pricing-memo' });
   });
 
   it('still finds an embed in the previous text turn when the latest has none', () => {
     expect(latestEmbeddedResource([
       text('rally', '![Pricing memo](resource://pricing-memo)'),
-      text('user', 'Make the second page shorter.'),
-    ], resolve)).toEqual({ messageId: 'rally', resourceId: 'pricing-memo' });
+      text('user', 'Make the second page shorter.', { authorType: 'human' }),
+    ], resolve)).toEqual({ announcementId: 'rally', resourceId: 'pricing-memo' });
   });
 
   it('does not reach a document three text turns back', () => {
     expect(latestEmbeddedResource([
       text('rally', '![Pricing memo](resource://pricing-memo)'),
-      text('user', 'Thanks.'),
-      text('follow-up', 'And the appendix?'),
+      text('user', 'Thanks.', { authorType: 'human' }),
+      text('follow-up', 'And the appendix?', { authorType: 'human' }),
     ], resolve)).toBeNull();
   });
 
@@ -59,26 +61,48 @@ describe('latestEmbeddedResource', () => {
       text('rally', '![Pricing memo](resource://pricing-memo)'),
       text('thought', 'Planning the rewrite.', { messageType: 'thought' }),
       text('plugin', '', { messageType: 'plugin_activity' }),
-    ], resolve)).toEqual({ messageId: 'rally', resourceId: 'pricing-memo' });
+    ], resolve)).toEqual({ announcementId: 'rally', resourceId: 'pricing-memo' });
+  });
+
+  it('counts a turn once when it flattened into several text blocks', () => {
+    // orderedTranscriptMessages emits one Message per block. Three blocks in
+    // the latest turn must not push the card in its first block — or the
+    // whole previous turn — out of a two-row window.
+    expect(latestEmbeddedResource([
+      text('previous', '![Pricing memo](resource://pricing-memo)', { transcriptTurnId: 'turn-a' }),
+      text('block-1', 'Opening.\n\n![Deck](resource://board-deck)', { transcriptTurnId: 'turn-b' }),
+      text('block-2', 'More of the same turn.', { transcriptTurnId: 'turn-b' }),
+      text('block-3', 'Still the same turn.', { transcriptTurnId: 'turn-b' }),
+    ], resolve)).toEqual({ announcementId: 'turn-b', resourceId: 'board-deck' });
+  });
+
+  it('ignores a human or external image that the renderer never draws as a card', () => {
+    expect(latestEmbeddedResource([
+      text('person', '![Budget](resource://pricing-memo)', { authorType: 'human' }),
+    ], resolve)).toBeNull();
+    expect(latestEmbeddedResource([
+      text('slack', '![Budget](resource://pricing-memo)', { authorType: 'external' }),
+      text('rally', 'Noted.'),
+    ], resolve)).toBeNull();
   });
 
   it('prefers the later turn when both of the last two announce a document', () => {
     expect(latestEmbeddedResource([
       text('first', '![Memo](resource://pricing-memo)'),
       text('second', '![Deck](resource://board-deck)'),
-    ], resolve)).toEqual({ messageId: 'second', resourceId: 'board-deck' });
+    ], resolve)).toEqual({ announcementId: 'second', resourceId: 'board-deck' });
   });
 
   it('prefers the later card when one turn announces two documents', () => {
     expect(latestEmbeddedResource([
       text('rally', '![Deck](resource://board-deck)\n\n![Memo](resource://pricing-memo)'),
-    ], resolve)).toEqual({ messageId: 'rally', resourceId: 'pricing-memo' });
+    ], resolve)).toEqual({ announcementId: 'rally', resourceId: 'pricing-memo' });
   });
 
   it('resolves the alias the model wrote to the resource id the rail keys on', () => {
     expect(latestEmbeddedResource([
       text('rally', '![Deck](resource://amber-crisp-lucid-lantern)'),
-    ], resolve)).toEqual({ messageId: 'rally', resourceId: 'board-deck' });
+    ], resolve)).toEqual({ announcementId: 'rally', resourceId: 'board-deck' });
   });
 
   it('ignores a chip, an unresolved id, and a sample inside a fence', () => {
@@ -158,6 +182,31 @@ describe('useAutoOpenLatestEmbeddedResource', () => {
     expect(useUiStore.getState().railOpen).toBe(false);
   });
 
+  it('does not reopen when the live overlay is replaced by its canonical block', () => {
+    const { rerender } = renderHook(
+      ({ transcript }) => useAutoOpenLatestEmbeddedResource({
+        enabled: true,
+        open,
+        resolve,
+        transcript,
+        workstreamId: 'workstream-one',
+      }),
+      {
+        initialProps: {
+          transcript: [text('stream-1', '![Memo](resource://pricing-memo)', { transcriptTurnId: 'turn-1' })],
+        },
+      },
+    );
+
+    act(() => { useUiStore.getState().closeRail(); });
+    rerender({
+      transcript: [text('block-1', '![Memo](resource://pricing-memo)', { transcriptTurnId: 'turn-1' })],
+    });
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(useUiStore.getState().railOpen).toBe(false);
+  });
+
   it('opens a later announcement in a new turn', () => {
     const { rerender } = renderHook(
       ({ transcript }) => useAutoOpenLatestEmbeddedResource({
@@ -181,7 +230,7 @@ describe('useAutoOpenLatestEmbeddedResource', () => {
   });
 
   it('waits until the work stream carries the resource, then opens', () => {
-    const unresolved = (_resourceId: string): { id: string } | undefined => undefined;
+    const unresolved: typeof resolve = () => undefined;
     const { rerender } = renderHook(
       ({ resolve: nextResolve }) => useAutoOpenLatestEmbeddedResource({
         enabled: true,

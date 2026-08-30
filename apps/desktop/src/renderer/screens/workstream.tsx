@@ -1211,8 +1211,11 @@ export function WorkstreamScreen(): React.JSX.Element {
   );
   // An embed card in the last two text turns opens the inspector onto that
   // document: when this feed first belongs to the route, and again when a
-  // streamed turn announces a different one. `payloadBelongsToRoute` is the
-  // fence — WorkstreamScreen stays mounted across work streams, and a handoff
+  // new turn announces a card this visit has not already opened. Closing
+  // the rail during a live stream does not reopen it when that turn
+  // settles — the visit key is the turn id, shared by the overlay and the
+  // canonical block. `payloadBelongsToRoute` is the fence —
+  // WorkstreamScreen stays mounted across work streams, and a handoff
   // render can still hold the previous transcript.
   useAutoOpenLatestEmbeddedResource({
     enabled: payloadBelongsToRoute,
