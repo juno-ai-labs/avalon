@@ -2295,13 +2295,13 @@ export function WorkstreamScreen(): React.JSX.Element {
         leaving={railLeaving === 'inspector'}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
-        onDetachResource={(resource) => detachResource.mutate(resource)}
+        onDetachResource={(resource) => detachResource.mutateAsync(resource)}
         onOpenResourceVersion={openResourceVersion}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
         onRefreshResource={(resource) => refreshResource.mutate(resource)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
-        resourceVersions={resourceVersions.data ?? []}
+        resourceVersions={resourceVersions.data}
         resourceVersionsError={resourceVersions.error?.message}
         workstream={displayedDetail}
       />

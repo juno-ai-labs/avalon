@@ -527,7 +527,12 @@ describe('markdown list markers', () => {
     'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
   ];
 
-  it.each([['.note-detail-article'], ['.meeting-notes-body'], ['.citation-card-preview']])(
+  it.each([
+    ['.note-detail-article'],
+    ['.meeting-notes-body'],
+    ['.inspector-detail-document'],
+    ['.citation-card-preview'],
+  ])(
     'leaves markdown element styling to the shared container in %s',
     (host) => {
       // Headings are absent from the list on purpose: a scale is a property of
@@ -732,5 +737,19 @@ describe('message header meta typography', () => {
     // different amounts, so flex centring alone leaves the text looking high.
     expect(rule('.message-block > header')).toContain('align-items: center');
     expect(rule('.message-block > header > *')).toContain('line-height: 1');
+  });
+});
+
+describe('inspector resource document chrome', () => {
+  it('draws a hairline between last-updated and the document from the line tokens', () => {
+    const declarations = rule('.inspector-detail-rule');
+    expect(declarations).not.toBeNull();
+    expect(declarations).toContain('border-top: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle);');
+  });
+
+  it('paints the archive header control in the danger colour', () => {
+    const idle = rule('.icon-button-danger');
+    expect(idle).not.toBeNull();
+    expect(idle).toContain('color: var(--av-sys-color-danger-base);');
   });
 });

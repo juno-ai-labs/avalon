@@ -3250,7 +3250,9 @@ pre {
 .rail-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: flex; justify-content: space-between; padding: 0 7px 0 11px; }
 .rail-title,
 .rail-header-actions { align-items: center; display: flex; gap: 2px; }
-.rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; }
+.rail-title { flex: 1; min-width: 0; }
+.rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-header-actions { flex-shrink: 0; }
 .rail-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .rail-inline-error { padding: 9px 11px 0; }
 .rail-inline-error .inline-error { margin: 0; }
@@ -3369,29 +3371,34 @@ pre {
 .run-rail-copy { display: flex; flex-direction: column; min-width: 0; }
 .run-rail-copy strong { color: var(--av-ref-color-neutral-12); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-rail-copy small { color: var(--av-ref-color-neutral-9); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inspector-detail { padding: 30px 18px; }
-.inspector-hero-icon { align-items: center; background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-subtle); display: flex; height: 38px; justify-content: center; margin-bottom: 13px; width: 38px; }
-.inspector-detail > h3 { font-size: 14px; margin: 0; }
-.inspector-detail > p { color: var(--av-sys-color-text-muted); font-size: 10.5px; margin: 3px 0 20px; }
-.inspector-detail .detail-list { margin-bottom: 18px; }
-/* The readable half of a resource detail. It is capped and scrolls inside its
-   own box rather than growing the rail: a cited document can be any length, and
-   the actions under it have to stay reachable. */
-.inspector-detail-preview { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-subtle); border-radius: var(--av-sys-size-radius-md); font-size: 12.5px; margin-bottom: 18px; max-height: 42vh; overflow-y: auto; padding: 12px 14px; }
+.inspector-detail { padding: 16px 18px 28px; }
+.inspector-detail-updated { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0 0 12px; }
+.inspector-detail-updated time { font-variant-numeric: tabular-nums; }
+.inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
+/* Hairline between last-updated and the document. Subtle is the lightest
+   named border; hairline is the thin width — not a 1px literal, and not a
+   fill off the neutral ramp, which a border must not name. */
+.inspector-detail-rule {
+  background: none;
+  border: 0;
+  border-top: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle);
+  margin: 0 0 16px;
+}
+/* The document itself, not a card of it: last-updated and the markdown share
+   the rail's scroll, so a long file does not trap the timestamp in a box above
+   a second scroller. Hosts may size the body; they may not restyle its
+   elements — see markdown-rendering.md. */
+.inspector-detail-document .markdown-body { font-size: 13px; }
+.inspector-detail-image { display: block; height: auto; max-width: 100%; }
 .inspector-detail-preview-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 11.5px; gap: 6px; margin-bottom: 18px; }
-.inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-/* History under the actions: what the resource is comes first, what it was
-   comes after. The rows are their own grid so the version number, the author
-   and the time line up down the column rather than per row. */
-.inspector-versions { margin-top: 22px; }
-.inspector-versions ul { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; }
-.inspector-versions li { align-items: center; display: grid; gap: 9px; grid-template-columns: 22px minmax(0, 1fr) auto; min-height: 36px; }
-.inspector-version-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.inspector-version-meta > .inspector-version-author { color: var(--av-ref-color-neutral-12); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inspector-version-meta > time { color: var(--av-sys-color-text-muted); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* History in the header Versions dropdown. Group labels are the sparse
+   calendar buckets; the rows themselves are who wrote that revision. */
+.inspector-versions-menu { min-width: 220px; }
+.inspector-versions-menu .inspector-version-group-label { color: var(--av-sys-color-text-muted); font-size: 10.5px; font-weight: 560; padding: 7px 8px 3px; }
+.inspector-version-item { display: grid; gap: 9px; grid-template-columns: 22px minmax(0, 1fr) auto; }
+.inspector-version-author { color: var(--av-ref-color-neutral-12); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-version-label { color: var(--av-sys-color-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 600; }
-.inspector-versions li > .icon-button { height: 26px; justify-self: end; width: 26px; }
-.inspector-versions li > .badge { justify-self: end; }
+.inspector-version-item > .badge { justify-self: end; }
 /* A notice, not a caption: a superseded version renders in the same surface as
    the current one, and reading a stale draft as current is the failure the
    whole versioning layer exists to prevent. */
