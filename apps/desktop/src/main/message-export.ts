@@ -394,6 +394,10 @@ ${syntax}
   .citation-chip-label { display: inline; }
   /* The same file-tile shape the app draws — badge at the head, title and kind
      at the foot, room between — in this card's fixed light palette. */
+  /* Composed exactly as the app composes it: the same gap, and the title block
+     pushed to the foot by its own margin-top auto rather than by a
+     space-between that would only agree with the app while the card has
+     exactly two children. */
   .citation-card {
     background: #ffffff;
     border: 1px solid #dcd9c9;
@@ -401,8 +405,7 @@ ${syntax}
     color: #3d3f33;
     display: flex;
     flex-direction: column;
-    gap: 26px;
-    justify-content: space-between;
+    gap: 9px;
     margin: 16px 0;
     min-height: 170px;
     padding: 11px;

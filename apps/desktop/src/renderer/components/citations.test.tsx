@@ -77,6 +77,27 @@ describe('resource citations', () => {
     expect(screen.getByText('Both are attached.')).toBeInTheDocument();
   });
 
+  it('leaves a run of embeds alone when they render as text rather than as cards', () => {
+    const run = 'Two of them.\n\n![The deck](resource://board-deck)\n\n![The other deck](resource://board-deck)\n\nBoth above.';
+
+    // No citation context at all — the five surfaces that render MarkdownBody
+    // this way (the block dashboard, note detail, meeting notes, the automation
+    // draft) show a `resource://` image as its label text. Grouping those would
+    // lay a run of sentences out side by side in a horizontal scroller.
+    const { unmount } = render(<MarkdownBody>{run}</MarkdownBody>);
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+    expect(document.body).toHaveTextContent('The deck');
+    unmount();
+
+    // Same again with a context that cannot resolve them: the matrix renders
+    // label text for these too, so there is still no row to make.
+    render(
+      <MarkdownBody citations={context({ resolve: () => undefined })}>{run}</MarkdownBody>,
+    );
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+    expect(document.querySelector('.citation-card')).toBeNull();
+  });
+
   it('reads a resource kind as words rather than as its system identifier', () => {
     render(
       <MarkdownBody citations={context({ resolve: () => ({ ...DECK, resourceType: 'github_pull_request' }) })}>
