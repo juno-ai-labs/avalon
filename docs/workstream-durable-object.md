@@ -1445,8 +1445,9 @@ or removing a participant publishes the recomputed row to every subscribed
 viewer, not only the person whose overlay changed. The preview query is loaded
 once per state push and chunked under the engine's 100-parameter bind limit.
 The desktop counts unresolved preview ids toward overflow, hides the pile from
-the row's accessible name, and fills an empty control-socket seed from a later
-directory row at the same waterline.
+the row's accessible name, fills an empty control-socket seed from a later
+directory row at the same waterline, and strips leftover ids when a row is
+workspace-scoped so a public row cannot keep a personal pile.
 
 **Why:** `projected_at` is rewritten on every viewer projection (unread, mention,
 seen). A message fans out to every participant in one envelope batch applied in
@@ -1470,7 +1471,8 @@ waterline the directory later cannot beat.
 sort the preview by `projected_at`. A membership change is common state for
 everyone who can see the row. Fan-in `IN` lists must use `boundParameterChunks`.
 A control snapshot must not be the authority for ids it does not know,
-including by seeding empty ones that pin the waterline.
+including by seeding empty ones that pin the waterline. A workspace-scoped
+row never carries a pile, including leftover ids from when it was personal.
 
 ### 2026-08-30 — Sidebar facepile is the existing AvatarStack size
 
