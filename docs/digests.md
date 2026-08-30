@@ -329,9 +329,9 @@ both.
   that is not machinery is protected exactly the same way.
 
 In the interface, a personal work stream's sidebar row paints the existing
-`AvatarStack` of the people in it rather than the lock a personal note still wears.
+`AvatarStack` of the other people in it rather than the lock a personal note still wears.
 The work-stream header keeps its **Private** badge. A digest occurrence is
-almost always a one-person pile.
+almost always an empty trailing slot, because the pile omits the reader.
 
 Shown, they render one level down: dimmed, with a small gear, full opacity on
 hover and while active — hierarchy should not cost legibility once you are in it.
@@ -685,6 +685,29 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-30 — Sidebar facepile omits the current viewer
+
+**What changed:** A personal sidebar row no longer paints the signed-in person's
+face. If they are the only participant, the trailing slot is empty rather than a
+one-person pile. Overflow subtracts them when they sat past the three painted
+ids. The public globe and each remaining face use the standard tooltip — "This
+is a public work stream", and the person's name.
+
+**Why:** a facepile of yourself is noise, not information: you already know you
+can see the row. The directory preview is still the same payload for every
+participant, so the omission is a render-time filter rather than a per-viewer
+wire field. Native `title` on the globe and on non-present faces was a second
+tooltip language next to the Radix chrome the rest of the row already uses.
+
+**Considered and rejected:** dropping the viewer from WorkspaceDO's preview so
+each recipient got a different id list. Membership is common state for everyone
+who can see the row; a per-viewer cap would split that. Also rejected: keeping
+native `title` beside the Radix tooltip, which would show both on a long hover.
+
+**What a future change has to respect:** the wire may still include the viewer.
+The desktop is what omits them. Do not add a second tooltip language for this
+slot.
 
 ### 2026-08-30 — Facepile order is join time
 
