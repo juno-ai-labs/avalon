@@ -376,7 +376,7 @@ the owner there, never to the target work stream.
 
 The prose regex that approximates this today is retired in the same change, so
 there is one answer to "was there a result" and it is the run's own
-declaration. The trade is recorded in key design decision 10.
+declaration. The trade is recorded in key design decision 12.
 
 ### Google watches become real
 
@@ -532,7 +532,21 @@ None yet.
    Consistency across that family is worth more than one saved call, and the
    ambiguity rule the principle demands is better served by an elicitation the
    person answers than by an error the model retries against.
-10. **The prose regex is retired, not kept as a backstop.**
+11. **The accepting principal authorizes the destination; the author's
+   participation is not additionally required.** Review left this open and it is
+   a trust boundary, so it is settled here rather than deferred. Acceptance of a
+   workspace-scoped automation is already an owner-or-admin act, and the
+   destination list is drawn from work streams *that person* is in; requiring the
+   author to be in it too would refuse the ordinary case this feature exists for
+   — an admin wiring a shared automation into a room its author does not sit in.
+   The cost is that an admin can point an automation at a work stream the draft
+   never named, which is why the authorizing principal is frozen on the target
+   (`authorizedByUserId`) and re-checked at every delivery: the moment that
+   person loses access to the room, delivery stops. Rejected: requiring both,
+   which is stricter and quietly makes the common case fail; and requiring
+   neither, which keeps delivering into a room after the only person who
+   authorized it has gone.
+12. **The prose regex is retired, not kept as a backstop.**
    `shouldSuppressAutomationResult` currently decides whether a result is worth
    delivering by pattern-matching the model's sentence. Keeping it alongside
    the tool would leave two answers to one question, and the regex would win
@@ -575,8 +589,14 @@ only. The alternative — keeping the enum and adding a parallel
 `requestedWorkstreamId` — is two fields that must agree, which is the drift
 this repository has already paid for elsewhere.
 
-The run's no-result declaration is one nullable column on the existing
-`automation_runs` row (reason plus reported-at), read by the delivery loop.
+The run's no-result declaration is **two** nullable columns — the reason and
+the instant it was reported — on the `automation_runs` table inside the
+**AutomationAgent Durable Object** (`automation-agent.ts:396`), not the
+same-named D1 table (`0001_initial.sql:214`). That matters: the DO schema takes a
+migration under
+[`durable-object-sqlite.md`](../../durable-object-sqlite.md), not a numbered file
+under `packages/db/migrations/`. The "no migration" claim above is about the work
+stream's message storage and does not cover this.
 
 The activation row adds **no column, no table, and no migration**. Everything
 specific to it lives in the typed activation object inside the existing
@@ -587,12 +607,23 @@ package beside the other message payload shapes.
 The new `message_type` value costs nothing at the storage layer —
 `message_type TEXT NOT NULL` has no `CHECK` — but it is not free everywhere,
 and that is deliberate. Four places enumerate participant message types and
-each must name the new one: `MessageTypeSchema` in contracts
-(`["text","system","tool","elicitation","suggestion"]`),
-`isParticipantMessageType` in `workstream-transcript-storage.ts` (a narrower
-list — `text`, `system`, `elicitation`, `suggestion`, with no `tool`; the two
-already disagree, and this change neither widens nor repairs that), the model
-projector's admitted-kinds check, and the renderer's branch list. A type that
+each must name the new one. There is no exported `MessageTypeSchema`; the
+vocabulary is an inline `z.enum(["text","system","tool","elicitation",
+"suggestion"])` on the message shape at `packages/contracts/src/index.ts:610`.
+Beside it: `isParticipantMessageType` in `workstream-transcript-storage.ts`
+(narrower — `text`, `system`, `elicitation`, `suggestion`, no `tool`; the two
+already disagree and this change neither widens nor repairs that), the TypeScript
+unions at `workstream-transcript-storage.ts:163`, `:180`, `:327` and
+`ConversationTurnInput.messageType` at `:330`, the model projector's
+admitted-kinds check, and the renderer's branch list. Two guards also decide the
+type's fate without enumerating it: `appendPreparedMessage` rejects only `tool`
+and `suggestion` (`participant_message_type_not_appendable`,
+`workstream-message-storage.ts:497`), so an activation passes unchanged; but the
+admitted-input validator requires `isParticipantMessageType`
+(`pending_input_message_type_invalid`, `workstream-transcript-storage.ts:4296`),
+so it refuses the new type until that predicate learns it. **The storage layer is
+free and the type layer is not** — "four enumerations" understated this, and the
+real list is the one above. A type that
 no enumerator had to acknowledge would be a type that silently inherits
 whatever the fallback does.
 
@@ -661,8 +692,8 @@ hop. The Global email-address registry is untouched.
    it. Without that field the run has no way to perform the promised check: it
    would have to test the author, which wrongly refuses the admin-accepted case,
    or test nobody and keep delivering after the accepter loses access. Codex
-   found this gap in review. See open question 2, which decides whether the
-   author's participation is *additionally* required.
+   found this gap in review. Whether the *author* must additionally participate is
+   settled in key design decision 11: no.
 3. **Authority generation fences delivery** exactly as it fences provider
    writes: a run outliving a pause or delete does not deliver.
 4. **Work-stream titles are workspace content.** `automation_workstreams_search`
@@ -753,13 +784,17 @@ deliberate:
 Nothing about this wakes the agent (non-goal 2) or gives it a way to reply to
 the automation. It reads, and decides.
 
-**One bound is left open.** A work stream receiving a daily automation
-accumulates activations, and each one occupies part of every later run's
-context window. Today they ride the existing transcript window and no separate
-cap exists, so the guard is inert:
-`WORKSTREAM_ACTIVATION_CONTEXT_MAX_ROWS` ships as `Infinity` with a
-`LIMIT UNSET` marker, per
+**One bound is left open — and it ships with its enforcement or not at all.**
+A work stream receiving a daily automation accumulates activations, and each one
+occupies part of every later run's context window. Today they ride the existing
+transcript window and nothing caps them separately.
+`WORKSTREAM_ACTIVATION_CONTEXT_MAX_ROWS` is therefore introduced *by* the
+admission branch that slices the rows, defined once and passed to that branch as
+an argument, spelled `Number.POSITIVE_INFINITY` and carrying a `LIMIT UNSET`
+marker, per
 [`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md).
+If the admission branch ships without a slice, the constant does not ship either:
+a number no code path reads is not a guard, it is a comment that looks like one.
 The arithmetic the team needs to set it: an activation's admitted form is its
 wrapper plus the run's final message, so budget roughly the length of one
 automation result per row, against the run's context window and the 80%
@@ -788,8 +823,12 @@ it directly after `resources_search`, so the three resolvers read as a family.
 `createAvalonWorkstreamPlugin`'s pattern of returning `null` when it has no
 tools. An ordinary work-stream run has no delivery targets, so the tool would
 be inert there, and a tool that is present but cannot do anything is worse than
-one that is absent. The two plugins share a wire name but never coexist: one
-lives in the compiler loop and one in a run loop.
+one that is absent. The two plugins share the wire name `automation` but never coexist, and nothing
+asserts that: the compiler builds its plugin list in `compileAutomation` and a
+run builds its own, so the separation is structural rather than checked. Worth a
+line in whichever list gains the run plugin, because a future change that made
+one loop load the other's plugin would collide silently in the model-facing
+namespace rather than failing.
 
 Loading either plugin starts, authorizes, and persists nothing on its own.
 
@@ -961,7 +1000,7 @@ to route where a person has already toggled a watch on. If it goes wrong, an
 owner pauses the automation or disables the watch — both existing controls.
 
 Two parts are not additive. The first is retiring
-`shouldSuppressAutomationResult` (key design decision 10), which changes what
+`shouldSuppressAutomationResult` (key design decision 12), which changes what
 existing email and Slack automations
 deliver: a run that would have been silently suppressed by the regex now
 delivers unless it calls `automation_report_no_result`. Ship the tool and the
@@ -1043,18 +1082,7 @@ transcript.
    [`conversation-surfaces.md`](../../conversation-surfaces.md)'s row family.
    Until it is answered, delivery into a work stream is machine-facing: correct,
    inspectable on the automation's run history, and invisible in the room.
-2. **Non-author acceptance targeting.** Should an admin accepting another
-   member's workspace automation be able to point it at a work stream the
-   author is not in? The proposal above says yes (the accepting principal's
-   participation gates), but the alternative — requiring the author's
-   participation too — is stricter and arguable. Changes only the acceptance
-   validation, so it can be settled during review. Note the two scopes differ
-   deliberately either way: `automation_workstreams_search` runs during
-   authoring and can only see the *author's* work streams, while acceptance
-   resolves against the *accepter's*. That is the existing request-versus-
-   destination split and not a bug, but it does mean an admin can accept onto a
-   work stream the draft never named.
-3. **Gmail-thread watching.** Whether to declare `resourceRelationships` for
+2. **Gmail-thread watching.** Whether to declare `resourceRelationships` for
    `gmail_thread` on the email event types in this pass, or ship
    Sheets/Docs/Drive first. Watching one email thread is a plausible want,
    but the email events' filter fields were not designed with per-thread
