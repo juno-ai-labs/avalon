@@ -16,6 +16,7 @@ import {
   WorkstreamDetailSchema,
   WorkstreamSchema,
   WorkstreamWorkflowInputSchema,
+  workstreamParticipantPreview,
   type Elicitation,
   type ActivitySuggestion,
   type Message,
@@ -1306,6 +1307,13 @@ export class WorkstreamObjectProductService {
     ).toArray().map((row) => row.user_id);
   }
 
+  /** Active participants, newest join first, for the sidebar facepile preview. */
+  private recentParticipantUserIds(): string[] {
+    return this.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM participants WHERE status = 'active' ORDER BY added_at DESC, user_id`,
+    ).toArray().map((row) => row.user_id);
+  }
+
   private locallyAuthorizedRoot(auth: AuthContext, includeArchived = false): RootRow {
     const root = this.root();
     if (root.parent_workspace_key !== auth.workspaceId || root.workstream_key === "") {
@@ -1409,6 +1417,9 @@ export class WorkstreamObjectProductService {
         promptPreview: truncateUtf16Safe(wakeup.prompt.replace(/\s+/gu, " ").trim(), 40),
       } : null,
       pinPosition: pin?.position ?? null,
+      ...(root.scope === "personal"
+        ? workstreamParticipantPreview(this.recentParticipantUserIds())
+        : { participantUserIds: [], participantExtraCount: 0 }),
     });
   }
 
@@ -2988,11 +2999,16 @@ export class WorkstreamObjectProductService {
     const latest = Math.max(0, root.next_attention_ordinal - 1);
     const unreadFrom = attention.manual_unread_from_ordinal
       ?? (latest > attention.seen_attention_ordinal ? attention.seen_attention_ordinal + 1 : null);
-    const participant = this.isParticipant(userId);
+    const participantRow = first(this.storage.sql.exec<{ added_at: number }>(
+      `SELECT added_at FROM participants WHERE user_id = ? AND status = 'active' LIMIT 1`,
+      userId,
+    ));
+    const participant = participantRow !== null;
     return {
       kind: "directory_user" as const,
       userId,
       isParticipant: participant,
+      participantAddedAt: participantRow ? iso(participantRow.added_at) : null,
       unreadCount: unreadFrom === null ? 0 : Math.max(1, latest - unreadFrom + 1),
       youAreMentioned: attention.latest_mention_attention_ordinal > attention.seen_attention_ordinal,
       unseen: this.isUnseen(userId),

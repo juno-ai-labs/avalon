@@ -207,8 +207,11 @@ Connecting a workspace socket should deliver, without being asked:
   the viewer's own preferences and effective feature gates. Nothing paints
   correctly before these.
 - **Sidebar metadata** — the first page of the work-stream directory with each
-  row's common and viewer state, plus the pinned section, and the automation and
-  note sections the sidebar renders. A cursor for the rest.
+  row's common and viewer state, including a bounded participant preview on
+  personal rows (at most three ids, most recently added first, plus an overflow
+  count) so the sidebar can paint a facepile without a second fetch, plus the
+  pinned section, and the automation and note sections the sidebar renders. A
+  cursor for the rest.
 - **The initial suggested actions** — the current suggestion set for this viewer.
   It is computed in the background by the scheduler and already resident in
   WorkspaceDO; the home screen should never be the thing that asks for it.
@@ -813,6 +816,20 @@ converting this one back requires answering the ambiguity that produced it.
   the caller is made to wait for.
 
 ## Changelog
+
+### 2026-08-30 — Sidebar participant preview is join time
+
+**What changed:** The bounded participant preview on a personal sidebar row is
+the three most recently added people, not the newest overlay rewrite.
+
+**Why:** overlay `projected_at` is rewritten on unread; it is not who joined.
+The directory and `summary()` now share `participants.added_at` so a REST merge
+cannot swap the three faces.
+
+**Considered and rejected:** keeping overlay recency as a distinct clock. The
+sidebar reads whichever producer last wrote the field.
+
+**What a future change has to respect:** one clock for the preview field.
 
 ### 2026-08-26 — Transcript history becomes range-addressed socket state
 

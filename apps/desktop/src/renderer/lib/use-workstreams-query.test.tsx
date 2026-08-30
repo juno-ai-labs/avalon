@@ -50,6 +50,8 @@ function summary(id: string, title: string): WorkstreamSummary {
     nextPendingWakeup: null,
     lastActivityAt: '2026-08-11T12:00:00.000Z',
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
   } satisfies WorkstreamSummary;
 }
 

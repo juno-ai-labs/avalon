@@ -11,7 +11,7 @@ import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { ThemeBackdrop } from './theme-backdrop';
 import { Sidebar } from './sidebar';
 
@@ -221,6 +221,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // it changes a row. This query exists for what a person asks for afterwards:
   // scrolling past page one, or widening the list with Debug enabled.
   const workstreams = useWorkstreamsQuery();
+  const members = useQuery<WorkspaceMember[]>({
+    queryKey: ['workspace-members'],
+    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
+    enabled: Boolean(api),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
   const automations = useSocketOwnedList<AutomationSummary>(['automations']);
   // One counter across all three pin mutations, because they all rewrite the
   // same list and a response can only be judged stale against the others.
@@ -289,6 +295,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       <ThemeBackdrop />
       <Sidebar
         automations={automations.data ?? []}
+        members={members.data ?? []}
         // Not `isLoading`: the first page is not fetched, so there is no
         // in-flight request to report. The sidebar is waiting exactly while it
         // has no list yet — which also keeps the skeletons up rather than

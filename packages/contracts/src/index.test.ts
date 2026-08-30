@@ -45,8 +45,11 @@ import {
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
   WorkstreamContextSchema,
+  WorkstreamSchema,
   WorkstreamSocketCommandResultSchema,
-  WorkstreamWorkflowInputSchema
+  WorkstreamWorkflowInputSchema,
+  WORKSTREAM_SIDEBAR_FACEPILE_LIMIT,
+  workstreamParticipantPreview,
 } from "./index";
 
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
@@ -1401,5 +1404,56 @@ describe("resource version provenance", () => {
     });
     expect(resource).toMatchObject({ slug: null, refreshSupported: false });
     expect(ResourceSchema.parse({ ...resource, refreshSupported: true }).refreshSupported).toBe(true);
+  });
+
+  it("caps a sidebar facepile preview and defaults an older work-stream payload", () => {
+    const ids = [
+      "00000000-0000-7000-8000-0000000000b1",
+      "00000000-0000-7000-8000-0000000000b2",
+      "00000000-0000-7000-8000-0000000000b3",
+      "00000000-0000-7000-8000-0000000000b4",
+      "00000000-0000-7000-8000-0000000000b5",
+    ];
+    expect(workstreamParticipantPreview(ids)).toEqual({
+      participantUserIds: ids.slice(0, WORKSTREAM_SIDEBAR_FACEPILE_LIMIT),
+      participantExtraCount: 2,
+    });
+    expect(workstreamParticipantPreview(ids.slice(0, 2))).toEqual({
+      participantUserIds: ids.slice(0, 2),
+      participantExtraCount: 0,
+    });
+
+    const at = "2026-08-30T00:00:00.000Z";
+    const workstream = WorkstreamSchema.parse({
+      id: "00000000-0000-7000-8000-0000000000c1",
+      workspaceId: "00000000-0000-7000-8000-0000000000c2",
+      title: "Launch",
+      titleStatus: "settled",
+      objective: "",
+      emailAddress: null,
+      originType: "ad_hoc",
+      originLabel: null,
+      createdByUserId: null,
+      automationSubscriptionId: null,
+      automationRunId: null,
+      plannedFor: null,
+      harnessStatus: "completed",
+      latestAttentionSequenceNumber: 0,
+      readThroughSequenceNumber: 0,
+      manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 0,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+      lastActivityAt: at,
+      createdAt: at,
+      updatedAt: at,
+      archivedAt: null,
+    });
+    expect(workstream.participantUserIds).toEqual([]);
+    expect(workstream.participantExtraCount).toBe(0);
+    expect(WorkstreamSchema.safeParse({
+      ...workstream,
+      participantUserIds: ids,
+    }).success).toBe(false);
   });
 });

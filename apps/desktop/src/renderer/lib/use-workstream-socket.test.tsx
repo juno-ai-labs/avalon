@@ -185,6 +185,8 @@ function workstreamSummary(overrides: Partial<WorkstreamSummary> = {}): Workstre
     firstUnreadSequenceNumber: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     lastActivityAt: '2026-07-31T20:00:00.000Z',
     ...overrides,
   };

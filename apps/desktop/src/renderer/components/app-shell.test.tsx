@@ -49,6 +49,8 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus'], id = workstr
     firstUnreadSequenceNumber: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     lastActivityAt: '2026-08-11T10:00:00.000Z',
   };
 }

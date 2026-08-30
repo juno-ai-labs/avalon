@@ -24,6 +24,7 @@ import {
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  workstreamParticipantPreview,
   WorkspaceIdSchema,
   WorkspaceProjectSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
@@ -83,6 +84,7 @@ import {
   type SocketAccessRevocation,
 } from "../services/access-revocation";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
+import { boundParameterChunks } from "./bound-parameters";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -2217,6 +2219,19 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
        due_at = MIN(due_at, excluded.due_at), retry_at = 0, attempt = 0,
        updated_at = excluded.updated_at`,
   ],
+}, {
+  version: 24,
+  description: "store participant join time on the sidebar viewer overlay",
+  statements: [
+    // The facepile sorts by who joined, not by the last overlay rewrite.
+    // `projected_at` moves on every unread and mention, and a message stamps
+    // every participant with the same now(), so that column is UUID order.
+    // Defaulted to NULL because every row already here predates the field;
+    // NULL sorts last under DESC until the next directory_user effect lands.
+    `ALTER TABLE workspace_workstream_viewers
+       ADD COLUMN participant_added_at INTEGER
+         CHECK (participant_added_at IS NULL OR participant_added_at >= 0)`,
+  ],
 }];
 
 function compareProjectionCoordinate(
@@ -2440,7 +2455,47 @@ function workstreamHarnessStatus(state: string): Workstream["harnessStatus"] {
   return "idle";
 }
 
-function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): Workstream {
+function loadParticipantPreviews(
+  sql: DurableObjectState["storage"]["sql"],
+  workstreamIds: readonly string[],
+): Map<string, ReturnType<typeof workstreamParticipantPreview>> {
+  const previews = new Map<string, ReturnType<typeof workstreamParticipantPreview>>();
+  if (workstreamIds.length === 0) return previews;
+  const rows: { workstream_id: string; user_id: string }[] = [];
+  for (const chunk of boundParameterChunks(workstreamIds)) {
+    const placeholders = chunk.map(() => "?").join(", ");
+    rows.push(...sql.exec<{ workstream_id: string; user_id: string }>(
+      `SELECT viewer.workstream_id, viewer.user_id
+         FROM workspace_workstream_viewers viewer
+         JOIN workspace_workstream_directory directory
+           ON directory.workstream_id = viewer.workstream_id
+          AND directory.authority_generation = viewer.authority_generation
+        WHERE viewer.workstream_id IN (${placeholders})
+          AND viewer.is_participant = 1
+        ORDER BY viewer.workstream_id, viewer.participant_added_at DESC, viewer.user_id`,
+      ...chunk,
+    ).toArray());
+  }
+  const grouped = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.workstream_id);
+    if (list) list.push(row.user_id);
+    else grouped.set(row.workstream_id, [row.user_id]);
+  }
+  for (const [workstreamId, userIds] of grouped) {
+    previews.set(workstreamId, workstreamParticipantPreview(userIds));
+  }
+  return previews;
+}
+
+function directoryWorkstream(
+  row: WorkspaceDirectoryRow,
+  workspaceId: string,
+  preview: ReturnType<typeof workstreamParticipantPreview> = {
+    participantUserIds: [],
+    participantExtraCount: 0,
+  },
+): Workstream {
   const latest = Number(row.latest_attention_ordinal);
   const seen = row.seen_attention_ordinal === null
     ? Number(row.unread_tracking_start_ordinal)
@@ -2453,6 +2508,9 @@ function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): W
     && Date.now() - row.source_created_at > WORKSTREAM_NAMING_GRACE_MS
     ? "automatic"
     : row.title_status;
+  const participantPreview = row.scope === "personal"
+    ? preview
+    : { participantUserIds: [], participantExtraCount: 0 };
   return WorkstreamSchema.parse({
     id: row.workstream_id,
     workspaceId,
@@ -2488,7 +2546,28 @@ function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): W
         }
       : null,
     pinPosition: row.pin_position,
+    ...participantPreview,
   });
+}
+
+function mapDirectoryWorkstreams(
+  sql: DurableObjectState["storage"]["sql"],
+  rows: readonly WorkspaceDirectoryRow[],
+  workspaceId: string,
+): Workstream[] {
+  const personalIds = [...new Set(
+    rows.filter((row) => row.scope === "personal").map((row) => row.workstream_id),
+  )];
+  const previews = loadParticipantPreviews(sql, personalIds);
+  return rows.map((row) => directoryWorkstream(row, workspaceId, previews.get(row.workstream_id)));
+}
+
+function mapDirectoryWorkstream(
+  sql: DurableObjectState["storage"]["sql"],
+  row: WorkspaceDirectoryRow,
+  workspaceId: string,
+): Workstream {
+  return mapDirectoryWorkstreams(sql, [row], workspaceId)[0]!;
 }
 
 function directoryStateVersion(row: WorkspaceDirectoryRow) {
@@ -5469,14 +5548,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewerChanges = new Map<string, Set<string>>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
     for (const envelope of request.envelopes) {
-      const changed = this.applyDirectoryEnvelope(envelope, activeUsers, originLabels);
-      directoryChanged = directoryChanged || changed;
-      if (changed && envelope.effect.kind === "directory_common") {
+      const applied = this.applyDirectoryEnvelope(envelope, activeUsers, originLabels);
+      directoryChanged = directoryChanged || applied.changed;
+      if (applied.changed && envelope.effect.kind === "directory_common") {
         commonChanges.add(envelope.workstreamId);
-      } else if (changed && envelope.effect.kind === "directory_user") {
-        const users = viewerChanges.get(envelope.workstreamId) ?? new Set<string>();
-        users.add(envelope.effect.userId);
-        viewerChanges.set(envelope.workstreamId, users);
+      } else if (applied.changed && envelope.effect.kind === "directory_user") {
+        if (applied.participantMembershipChanged) {
+          // The facepile is the whole participant set. A join or leave that
+          // only reached the affected viewer's socket would leave everyone
+          // else's pile stale until reconnect.
+          commonChanges.add(envelope.workstreamId);
+        } else {
+          const users = viewerChanges.get(envelope.workstreamId) ?? new Set<string>();
+          users.add(envelope.effect.userId);
+          viewerChanges.set(envelope.workstreamId, users);
+        }
       }
       if (envelope.effect.kind === "directory_common") {
         const current = this.state.storage.sql.exec<{
@@ -7606,7 +7692,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.automationSubscriptionId,
       epoch(request.plannedFor),
     ).toArray()[0];
-    return row ? directoryWorkstream(row, request.workspaceId) : null;
+    return row ? mapDirectoryWorkstream(this.state.storage.sql, row, request.workspaceId) : null;
   }
 
   /** Exact idempotency lookup for the scheduler, independent of any member's visibility. */
@@ -7626,7 +7712,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.automationSubscriptionId,
       epoch(request.plannedFor),
     ).toArray()[0];
-    return row ? directoryWorkstream(row, request.workspaceId) : null;
+    return row ? mapDirectoryWorkstream(this.state.storage.sql, row, request.workspaceId) : null;
   }
 
   async pinWorkstream(input: WorkspaceDirectoryPinRequest): Promise<{ items: Workstream[] }> {
@@ -7667,9 +7753,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return inserted;
     });
     if (changed) await this.publishDirectorySync(request.workspaceId);
-    return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
-      directoryWorkstream(row, request.workspaceId)
-    )) };
+    return { items: mapDirectoryWorkstreams(
+      this.state.storage.sql,
+      this.pinnedDirectoryRows(request.userId, true),
+      request.workspaceId,
+    ) };
   }
 
   async unpinWorkstream(input: WorkspaceDirectoryPinRequest): Promise<{ items: Workstream[] }> {
@@ -7691,9 +7779,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return removed;
     });
     if (changed) await this.publishDirectorySync(request.workspaceId);
-    return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
-      directoryWorkstream(row, request.workspaceId)
-    )) };
+    return { items: mapDirectoryWorkstreams(
+      this.state.storage.sql,
+      this.pinnedDirectoryRows(request.userId, true),
+      request.workspaceId,
+    ) };
   }
 
   async reorderWorkstreamPins(
@@ -7708,9 +7798,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.advanceDirectoryVersion(now);
     });
     await this.publishDirectorySync(request.workspaceId);
-    return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
-      directoryWorkstream(row, request.workspaceId)
-    )) };
+    return { items: mapDirectoryWorkstreams(
+      this.state.storage.sql,
+      this.pinnedDirectoryRows(request.userId, true),
+      request.workspaceId,
+    ) };
   }
 
   async notificationDirectoryState(
@@ -8142,7 +8234,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     envelope: WorkstreamRegionalEffectEnvelope,
     activeUsers: ReadonlySet<string>,
     originLabels: ReadonlyMap<string, string>,
-  ): boolean {
+  ): { changed: boolean; participantMembershipChanged: boolean } {
     return this.state.storage.transactionSync(() => {
       const receipt = this.state.storage.sql.exec<{ payload_hash: string }>(
         `SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?`,
@@ -8152,11 +8244,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (receipt.payload_hash !== envelope.payloadHash) {
           throw new Error("workspace_directory_effect_idempotency_conflict");
         }
-        return false;
+        return { changed: false, participantMembershipChanged: false };
       }
 
       const now = Date.now();
       let changed = false;
+      let participantMembershipChanged = false;
       if (envelope.effect.kind === "directory_common") {
         const current = this.state.storage.sql.exec<{
           authority_generation: number;
@@ -8307,19 +8400,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           authority_generation: number;
           waterline: number;
           payload_hash: string;
+          is_participant: number;
         }>(
-          `SELECT authority_generation, waterline, payload_hash
+          `SELECT authority_generation, waterline, payload_hash, is_participant
              FROM workspace_workstream_viewers WHERE workstream_id = ? AND user_id = ?`,
           envelope.workstreamId,
           effect.userId,
         ).toArray()[0];
         if (!activeUsers.has(effect.userId)) {
-          changed = this.state.storage.sql.exec<{ user_id: string }>(
+          const deleted = this.state.storage.sql.exec<{ is_participant: number }>(
             `DELETE FROM workspace_workstream_viewers
-              WHERE workstream_id = ? AND user_id = ? RETURNING user_id`,
+              WHERE workstream_id = ? AND user_id = ? RETURNING is_participant`,
             envelope.workstreamId,
             effect.userId,
-          ).toArray().length === 1;
+          ).toArray()[0];
+          changed = deleted !== undefined;
+          participantMembershipChanged = deleted?.is_participant === 1;
         } else {
           const applies = !current
             || envelope.generation > current.authority_generation
@@ -8332,20 +8428,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             throw new Error("workspace_directory_viewer_version_conflict");
           }
           if (applies) {
+            const wasParticipant = current?.is_participant === 1;
             this.state.storage.sql.exec(
               `INSERT INTO workspace_workstream_viewers
                  (workstream_id, user_id, authority_generation, waterline,
-                  source_event_id, payload_hash, is_participant, unread_count, you_are_mentioned,
+                  source_event_id, payload_hash, is_participant, participant_added_at,
+                  unread_count, you_are_mentioned,
                   unseen, listable, seen_attention_ordinal, manual_unread_from_ordinal,
                   manual_unread_generation, latest_mention_attention_ordinal,
                   projected_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(workstream_id, user_id) DO UPDATE SET
                  authority_generation = excluded.authority_generation,
                  waterline = excluded.waterline,
                  source_event_id = excluded.source_event_id,
                  payload_hash = excluded.payload_hash,
                  is_participant = excluded.is_participant,
+                 participant_added_at = CASE
+                   WHEN excluded.is_participant = 0 THEN NULL
+                   ELSE COALESCE(
+                     excluded.participant_added_at,
+                     workspace_workstream_viewers.participant_added_at
+                   )
+                 END,
                  unread_count = excluded.unread_count,
                  you_are_mentioned = excluded.you_are_mentioned,
                  unseen = excluded.unseen,
@@ -8362,6 +8467,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               envelope.messageId,
               envelope.payloadHash,
               effect.isParticipant ? 1 : 0,
+              effect.isParticipant ? epoch(effect.participantAddedAt) : null,
               effect.unreadCount,
               effect.youAreMentioned ? 1 : 0,
               effect.unseen === true ? 1 : 0,
@@ -8373,6 +8479,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               now,
             );
             changed = true;
+            participantMembershipChanged = wasParticipant !== effect.isParticipant;
           }
         }
       } else if (envelope.effect.kind === "suggestion_feedback") {
@@ -8427,7 +8534,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         now,
       );
       if (changed) this.advanceDirectoryVersion(now);
-      return changed;
+      return { changed, participantMembershipChanged };
     });
   }
 
@@ -8472,7 +8579,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     return {
-      items: rows.map((row) => directoryWorkstream(row, request.workspaceId)),
+      items: mapDirectoryWorkstreams(this.state.storage.sql, rows, request.workspaceId),
       stateVersions: rows.map(directoryStateVersion),
       nextCursor,
       directoryWaterline: this.directoryWaterline(),
@@ -8615,6 +8722,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Push the current row; missed intermediate rows are intentionally irrelevant. */
   private async publishWorkstreamState(workstreamId: string, targetUserId?: string): Promise<void> {
     const occurredAt = new Date().toISOString();
+    // Viewer-independent: one query for every subscribed socket, not one per socket.
+    const preview = loadParticipantPreviews(this.state.storage.sql, [workstreamId]).get(workstreamId);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -8642,7 +8751,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           commonWaterline: stateVersion.commonWaterline,
           viewerWaterline: stateVersion.viewerWaterline,
         },
-        workstream: visible ? directoryWorkstream(row, attachment.workspaceId) : null,
+        workstream: visible ? directoryWorkstream(row, attachment.workspaceId, preview) : null,
       }));
       try {
         socket.send(payload);
