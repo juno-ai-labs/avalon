@@ -566,6 +566,8 @@ describe('markdown list markers', () => {
     const preview = rule('.citation-card-preview');
     expect(preview).toContain('var(--av-sys-color-text-disabled)');
     expect(preview).not.toContain('--av-ref-color-neutral-9');
+    expect(preview).toContain('font-weight: normal');
+    expect(preview).not.toContain('--av-sys-label-weight');
   });
 
   // The feed paints `.markdown-body` at (0,3,0). A host written as
