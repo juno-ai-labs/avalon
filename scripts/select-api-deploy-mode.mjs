@@ -10,6 +10,7 @@ const DIRECT_DEPLOY_PATHS = new Set([
   'apps/api/wrangler.documents.global.jsonc',
   'apps/api/wrangler.eu.jsonc',
   'apps/api/wrangler.global.jsonc',
+  'apps/api/wrangler.pricing.global.jsonc',
   'apps/api/wrangler.terminal.eu.jsonc',
   'apps/api/wrangler.terminal.global.jsonc',
 ]);

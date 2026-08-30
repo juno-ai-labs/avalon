@@ -63,6 +63,7 @@ type CloudflareBinding =
   | KVNamespace
   | Queue
   | R2Bucket
+  | ScheduledController
   | SqlStorage
   | VectorizeIndex;
 
