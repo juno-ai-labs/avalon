@@ -250,6 +250,12 @@ describe("the Workstream Durable Object relational schema", () => {
         "state", "delivered_turn_id", "delivered_attention_ordinal", "delivered_at",
         "claimed_at", "cancelled_at", "cancelled_reason",
       ]));
+      const pendingImmutableSql = String(database.prepare(
+        `SELECT sql FROM sqlite_schema
+          WHERE type = 'trigger' AND name = 'pending_loop_inputs_prepared_immutable'`,
+      ).get()?.sql ?? "");
+      expect(pendingImmutableSql).toContain("BEFORE UPDATE OF");
+      expect(pendingImmutableSql).not.toMatch(/\binput_sequence\b/);
       expect(database.prepare(`PRAGMA table_info("delivered_loop_inputs")`).all()
         .map((column) => column.name)).toEqual([
           "input_id",

@@ -23,6 +23,12 @@ import {
   mapTranscriptOverlayMessages,
   setTranscriptElicitationState,
   upsertTranscriptMessage,
+  applyPendingInputQueueOrder,
+  assignPendingInputQueueSequences,
+  composerQueueOverlays,
+  isComposerQueueOverlay,
+  pendingOverlayInputId,
+  pendingTranscriptInputOverlay,
 } from './transcript';
 
 const base = {
@@ -1857,5 +1863,109 @@ describe('a reported run always gets a row', () => {
       .filter((message) => message.messageType === 'plugin_activity');
     expect(rows).toHaveLength(1);
     expect(rows[0]!.pluginActivity).toMatchObject({ name: 'Rally', durationMs: 4_000 });
+  });
+});
+
+describe('composer queue overlays', () => {
+  const pendingHuman = {
+    inputId: '00000000-0000-7000-8000-000000000101',
+    futureTurnId: '00000000-0000-7000-8000-000000000101',
+    inputSequence: 3,
+    deliveryMode: 'queue' as const,
+    afterTranscriptSequence: 4,
+    actor: 'human' as const,
+    authorUserId: 'user-1',
+    authorSnapshot: { userId: 'user-1', displayName: 'Ada', avatarUrl: null },
+    clientMessageId: 'client-queue-1',
+    externalActor: null,
+    block: {
+      type: 'text' as const,
+      blockId: 'block-1',
+      blockIndex: 0,
+      text: 'Queued for the next loop',
+      streaming: false as const,
+      messageType: 'text' as const,
+    },
+    admittedAtUtc: '2026-08-05T12:00:00.000Z',
+  };
+
+  it('copies inputSequence onto the overlay as queueSequence', () => {
+    const overlay = pendingTranscriptInputOverlay(pendingHuman, 'workstream-one', {
+      source: 'socket_snapshot',
+      snapshotId: 'snapshot-1',
+    });
+    expect(overlay.queueSequence).toBe(3);
+    expect(pendingOverlayInputId(overlay)).toBe(pendingHuman.inputId);
+    expect(isComposerQueueOverlay(overlay, { harnessRunning: false })).toBe(true);
+  });
+
+  it('sorts the composer queue by queueSequence and parks sending rows last', () => {
+    const first = pendingTranscriptInputOverlay(pendingHuman, 'workstream-one', {
+      source: 'rest_snapshot',
+      snapshotId: 'snapshot-1',
+    });
+    const second = pendingTranscriptInputOverlay({
+      ...pendingHuman,
+      inputId: '00000000-0000-7000-8000-000000000102',
+      futureTurnId: '00000000-0000-7000-8000-000000000102',
+      inputSequence: 1,
+      clientMessageId: 'client-queue-2',
+      block: { ...pendingHuman.block, blockId: 'block-2', text: 'Earlier' },
+    }, 'workstream-one', { source: 'rest_snapshot', snapshotId: 'snapshot-1' });
+    const sending = {
+      identity: { type: 'client_message' as const, clientMessageId: 'client-sending' },
+      provenance: { source: 'client_command' as const, phase: 'sending' as const },
+      position: { afterTranscriptSequence: 4, eventSequence: 90 },
+      message: createTextMessage({
+        ...base, id: 'client-sending', clientMessageId: 'client-sending',
+        authorType: 'human', text: 'Just typed', deliveryState: 'sending',
+      }),
+    };
+    expect(composerQueueOverlays([first, sending, second], { harnessRunning: true })
+      .map((overlay) => overlay.message.text)).toEqual([
+      'Earlier',
+      'Queued for the next loop',
+      'Just typed',
+    ]);
+    expect(isComposerQueueOverlay(sending, { harnessRunning: false })).toBe(false);
+    expect(isComposerQueueOverlay(sending, { harnessRunning: true })).toBe(true);
+  });
+
+  it('permutes existing queue sequences in the named order and leaves unnamed ids behind', () => {
+    const first = pendingTranscriptInputOverlay(pendingHuman, 'workstream-one', {
+      source: 'rest_snapshot',
+      snapshotId: 'snapshot-1',
+    });
+    const second = pendingTranscriptInputOverlay({
+      ...pendingHuman,
+      inputId: '00000000-0000-7000-8000-000000000102',
+      futureTurnId: '00000000-0000-7000-8000-000000000102',
+      inputSequence: 1,
+      clientMessageId: 'client-queue-2',
+    }, 'workstream-one', { source: 'rest_snapshot', snapshotId: 'snapshot-1' });
+    const third = pendingTranscriptInputOverlay({
+      ...pendingHuman,
+      inputId: '00000000-0000-7000-8000-000000000103',
+      futureTurnId: '00000000-0000-7000-8000-000000000103',
+      inputSequence: 2,
+      clientMessageId: 'client-queue-3',
+    }, 'workstream-one', { source: 'rest_snapshot', snapshotId: 'snapshot-1' });
+    const reordered = applyPendingInputQueueOrder(
+      [second, third, first],
+      ['00000000-0000-7000-8000-000000000103'],
+    );
+    expect(composerQueueOverlays(reordered, { harnessRunning: false }).map((overlay) => ({
+      id: pendingOverlayInputId(overlay),
+      sequence: overlay.queueSequence,
+    }))).toEqual([
+      { id: '00000000-0000-7000-8000-000000000103', sequence: 1 },
+      { id: '00000000-0000-7000-8000-000000000102', sequence: 2 },
+      { id: '00000000-0000-7000-8000-000000000101', sequence: 3 },
+    ]);
+    expect(assignPendingInputQueueSequences(reordered, [
+      { inputId: '00000000-0000-7000-8000-000000000103', inputSequence: 7 },
+      { inputId: '00000000-0000-7000-8000-000000000102', inputSequence: 8 },
+      { inputId: '00000000-0000-7000-8000-000000000101', inputSequence: 9 },
+    ]).map((overlay) => overlay.queueSequence)).toEqual([8, 7, 9]);
   });
 });
