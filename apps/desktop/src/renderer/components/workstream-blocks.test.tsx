@@ -507,7 +507,6 @@ describe('MessageBlock markdown', () => {
         type: 'person',
         personId,
         displayName: 'Ada Lovelace',
-        avatarUrl: null,
         startOffset: 4,
         endOffset: 65,
       }],
