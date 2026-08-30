@@ -187,6 +187,13 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
       return;
     }
     let cancelled = false;
+    // Announced unconditionally, including for a read the host has already
+    // cached. React processes this update and the settled promise's own in one
+    // commit, so a warm card re-running this effect — a refetch of the resource
+    // list changes the callback's identity, and every mounted card asks again —
+    // never paints the skeleton over an excerpt it already had. Review raised
+    // that flash; a MutationObserver across every commit shows no skeleton node
+    // is created at all, so guarding it here would be a fix for nothing.
     setExcerpt({ for: resource.id, open: true });
     request
       .then((text) => {
@@ -260,18 +267,22 @@ function isWhitespaceNode(node: EmbedRowNode): boolean {
 
 /**
  * The resource images of a paragraph that holds nothing else, or `null` for
- * any other node. Only the `resource:` scheme counts: an identity card or a
- * real image beside an embed keeps its paragraph exactly as written.
+ * any other node. Only the `resource:` scheme counts, and only a target this
+ * render will actually draw as a card: an identity card or a real image beside
+ * an embed keeps its paragraph exactly as written.
  */
-function embedImages(node: EmbedRowNode): EmbedRowNode[] | null {
+function embedImages(node: EmbedRowNode, rendersCard: (resourceId: string) => boolean): EmbedRowNode[] | null {
   if (node.type !== 'element' || node.tagName !== 'p' || !node.children) return null;
   const images: EmbedRowNode[] = [];
   for (const child of node.children) {
     if (isWhitespaceNode(child)) continue;
     const src = child.type === 'element' && child.tagName === 'img' ? String(child.properties?.src ?? '') : undefined;
     if (src !== undefined && citationScheme(src) === 'resource') {
-      images.push(child);
-      continue;
+      const target = parseCitationHref(src);
+      if (target.scheme === 'resource' && rendersCard(target.resourceId)) {
+        images.push(child);
+        continue;
+      }
     }
     return null;
   }
@@ -290,52 +301,63 @@ function embedImages(node: EmbedRowNode): EmbedRowNode[] | null {
  * every existing surface asserts on.
  *
  * It runs on hast, after the markdown has been parsed and before the citation
- * matrix decides what each image is — an image the matrix later refuses simply
- * renders its label inside the row, which says no more than it would have said
- * in its own paragraph.
+ * matrix renders anything — so it is told, through `rendersCard`, which targets
+ * that matrix will actually draw as a card. **It groups nothing else**, and the
+ * distinction is not academic: a `resource://` image on a surface with no
+ * citation context, or one naming a resource this work stream does not carry,
+ * renders as the label text the message already had. Grouping those would take
+ * a run of ordinary sentences and lay them out side by side in a horizontal
+ * scroller — which is exactly what happened on the five surfaces that render
+ * `MarkdownBody` without citations, until review caught it.
+ *
+ * Intra-run whitespace text nodes are dropped rather than carried into the row:
+ * the row is a flex container whose `gap` owns the spacing, and a stray newline
+ * between two flex items renders as nothing anyway.
  */
-export function rehypeCitationEmbedRows(): (tree: unknown) => void {
-  return (tree) => {
-    const root = tree as EmbedRowNode;
-    if (!root.children) return;
-    const source = root.children;
-    const rebuilt: EmbedRowNode[] = [];
-    let index = 0;
-    while (index < source.length) {
-      const first = embedImages(source[index]!);
-      if (!first) {
-        rebuilt.push(source[index]!);
-        index += 1;
-        continue;
-      }
-      const run = [...first];
-      let end = index + 1;
-      let cursor = end;
-      while (cursor < source.length) {
-        if (isWhitespaceNode(source[cursor]!)) {
-          cursor += 1;
+export function rehypeCitationEmbedRows(rendersCard: (resourceId: string) => boolean) {
+  return function attacher(): (tree: unknown) => void {
+    return (tree) => {
+      const root = tree as EmbedRowNode;
+      if (!root.children) return;
+      const source = root.children;
+      const rebuilt: EmbedRowNode[] = [];
+      let index = 0;
+      while (index < source.length) {
+        const first = embedImages(source[index]!, rendersCard);
+        if (!first) {
+          rebuilt.push(source[index]!);
+          index += 1;
           continue;
         }
-        const more = embedImages(source[cursor]!);
-        if (!more) break;
-        run.push(...more);
-        cursor += 1;
-        end = cursor;
+        const run = [...first];
+        let end = index + 1;
+        let cursor = end;
+        while (cursor < source.length) {
+          if (isWhitespaceNode(source[cursor]!)) {
+            cursor += 1;
+            continue;
+          }
+          const more = embedImages(source[cursor]!, rendersCard);
+          if (!more) break;
+          run.push(...more);
+          cursor += 1;
+          end = cursor;
+        }
+        if (run.length < 2) {
+          rebuilt.push(source[index]!);
+          index += 1;
+          continue;
+        }
+        rebuilt.push({
+          type: 'element',
+          tagName: 'div',
+          properties: { className: ['citation-card-row'] },
+          children: run,
+        });
+        index = end;
       }
-      if (run.length < 2) {
-        rebuilt.push(source[index]!);
-        index += 1;
-        continue;
-      }
-      rebuilt.push({
-        type: 'element',
-        tagName: 'div',
-        properties: { className: ['citation-card-row'] },
-        children: run,
-      });
-      index = end;
-    }
-    root.children = rebuilt;
+      root.children = rebuilt;
+    };
   };
 }
 

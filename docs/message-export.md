@@ -273,6 +273,20 @@ Two traps:
 
 ## Changelog
 
+### 2026-08-30 — The card composes the tile the way the app composes it
+
+**What changed:** the export `.citation-card` takes the app's `gap: 9px` and
+drops `justify-content: space-between`, leaving `.citation-card-text`'s own
+`margin-top: auto` to push the title block to the foot.
+
+**Why:** review noticed the two had drifted — the app moved to a 9px gap with an
+auto margin when the preview landed between badge and title, and this file kept
+the 26px gap and the `space-between` from the version before it. The palette
+here is deliberately the card's own; the *proportions* are not, and
+`space-between` only agrees with the app while the card has exactly two
+children, which is a coincidence of the preview being absent rather than a
+layout rule.
+
 ### 2026-08-29 — The card draws no preview, because it can never have one
 
 **What changed:** `.citation-card-preview` and `.citation-card-preview-skeleton`

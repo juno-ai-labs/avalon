@@ -106,6 +106,10 @@ sentences with no renderer heuristic guessing where a block belongs. A run of
 consecutive embeds — adjacent embed-only paragraphs, or several in one
 paragraph — is merged by `rehypeCitationEmbedRows` into a single
 `.citation-card-row` that scrolls sideways; a lone embed keeps its paragraph.
+**The pass groups only what this render will actually draw as a card**: it is
+given a predicate over the citation context's own resolver, so a surface with no
+context, or a target this work stream does not carry, keeps the paragraphs it
+already had rather than becoming a horizontal scroller full of sentences.
 While a message streams, embeds in different settled segments stay separate
 cards, and the whole-body re-render at completion merges them — the same
 healing every other cross-segment construct gets.
@@ -462,6 +466,36 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — The row groups only what becomes a card
+
+**What changed:** `rehypeCitationEmbedRows` takes a predicate saying which
+`resource://` targets this render will draw as cards, and groups nothing else.
+`MarkdownBody` builds it from the citation context's resolver, and passes a
+hoisted empty plugin list when there is no context at all. The transcript's
+wheel handler also ignores a predominantly horizontal gesture.
+
+**Why:** the pass grouped on the scheme alone, but five surfaces render
+`MarkdownBody` with no citations — the block dashboard, note detail, meeting
+notes, the automation draft — and there every `resource://` image is *label
+text*. A run of them was being laid side by side inside an `overflow-x` strip,
+turning a block of sentences into a horizontal scroller. The single-image case
+in the original reasoning was sound and the run case was not, which is the kind
+of gap a design note can hide.
+
+**Why the wheel handler moved with it:** the row is the first horizontal
+scroller inside the transcript, and `useTranscriptFollow` reads any upward
+`deltaY` as the reader leaving the end. A trackpad swipe across a row of cards
+carries enough vertical drift to look like that, which would drop a reader out
+of follow mid-stream. A horizontal-dominant wheel is now not read as vertical
+intent at all.
+
+**What a future change has to respect:** the row is a rendering decision that
+depends on what the *matrix* does, and the matrix's answer depends on the host's
+context — so anything that widens what renders as a card has to widen the
+predicate with it, or the two disagree in exactly one direction: prose in a
+scroll strip. Both were review findings; the grouping one had a test the same
+day, the wheel one is guarded by the handler's own comment.
 
 ### 2026-08-29 — The embed card previews the document it names
 
