@@ -20,6 +20,7 @@ import { asSubstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import type { SchedulingObjectPort } from "../src/durable-objects/workstream-scheduling-protocol";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
@@ -394,7 +395,7 @@ describe("scheduling authority on real workerd", () => {
   it("writes the question, its transcript part and needs_input in one step", async () => {
     const stub = agent();
     await boot(stub);
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => {
       seedWorkstreamRoot(state);
       seedRun(state);
     });
@@ -402,7 +403,7 @@ describe("scheduling authority on real workerd", () => {
     const opened = await scheduling(stub, "openElicitation", elicitation());
 
     expect(opened.value).toEqual({ outcome: "opened", sequenceNumber: 1 });
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => {
       expect(state.storage.sql.exec(
         `SELECT status, run_id FROM elicitation_requests`,
       ).toArray()).toEqual([{ status: "pending", run_id: RUN }]);
@@ -434,6 +435,15 @@ describe("scheduling authority on real workerd", () => {
       expect(transcript.ranges[0]!.turns[0]).toMatchObject({
         actor: "assistant",
         blocks: [{ type: "text", messageType: "elicitation" }],
+      });
+      const message = await (instance as unknown as {
+        product: WorkstreamObjectProductService;
+      }).product.openElicitationMessageForRuntime();
+      expect(message).toMatchObject({
+        id: elicitation().messageId,
+        clientMessageId: `elicitation:${ELICITATION}`,
+        messageType: "elicitation",
+        structuredContent: { kind: "elicitation" },
       });
       const envelope = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
         `SELECT payload_json FROM durable_outbox WHERE partition_key = 'common'`,

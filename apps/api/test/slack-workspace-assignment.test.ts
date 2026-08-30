@@ -969,6 +969,7 @@ describe("Slack connector principal delivery", () => {
       throw new Error(`Unexpected Slack request ${url}`);
     }));
 
+    const clearLegacyStream = vi.spyOn(instance, "setSlackSessionStream");
     const service = new SlackAgentService(slackMembershipEnvironment(
       database,
       instance,
@@ -1001,6 +1002,7 @@ describe("Slack connector principal delivery", () => {
     expect(objectDatabase.prepare(
       "SELECT slack_stream_ts, last_delivery_key FROM slack_agent_sessions WHERE id = 'session-saved-outcome'",
     ).get()).toEqual({ slack_stream_ts: null, last_delivery_key: "run-saved:completed" });
+    expect(clearLegacyStream).toHaveBeenCalledTimes(1);
 
     objectDatabase.exec(`
       INSERT INTO slack_agent_sessions
@@ -1028,6 +1030,7 @@ describe("Slack connector principal delivery", () => {
     expect(objectDatabase.prepare(
       "SELECT last_delivery_key FROM slack_agent_sessions WHERE id = 'session-no-saved-turn'",
     ).get()).toEqual({ last_delivery_key: "run-unsaved:failed" });
+    expect(clearLegacyStream).toHaveBeenCalledTimes(1);
   });
 
   it("presents the connector principal to the work-stream object, not a login session", async () => {

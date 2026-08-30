@@ -540,9 +540,9 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
 - **Modal submissions are validated server-side**, and modals never request Rally
   or provider passwords.
 
-- **Every Slack delivery path reduces citations before splitting.** There are two
-  — the batched payload builder and the streaming appender — and a third would
-  have to call `slackDeliveryMarkdown` too. Folding it into the chunker instead
+- **Every Slack result delivery reduces citations before splitting.** The one
+  complete-message path calls `slackDeliveryMarkdown` before building its
+  `chat.postMessage` chunks. Folding it into the chunker instead
   looks tidier and is wrong: the footnote pass would renumber a chunk against
   definitions it could not see.
 - **The chunker's fence tracking is its own, and closes only on a bare run.**
@@ -666,10 +666,10 @@ not own:
 - **Existing workspace installations must reconnect after a scope expansion**
   before health checks and tool calls succeed. Until the identity scopes arrive,
   lookup-based mentions fall back to email.
-- **Streaming degrades rather than fails**: replies stream in Slack's required
-  12,000-character chunks, falling back to complete message chunks when streaming
-  is unavailable. Both paths render through the `markdown` block, so the same
-  output looks the same whichever carried it.
+- **Result content is never streamed to Slack.** After Rally reloads the saved
+  canonical turn, the reply is posted in complete 12,000-character
+  `chat.postMessage` chunks. A pending elicitation is rendered from its saved
+  canonical elicitation turn, not from the live model or the request row alone.
 - **A reaction failure never touches the run.** A missing `reactions:write`
   discovered mid-run leaves whatever is on the message; a rate-limited rotation
   step keeps the current emoji and tries again on the next tick; a configured
@@ -803,11 +803,13 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 **What changed:** Agent ingress no longer calls `chat.startStream`, and terminal
 delivery never calls `chat.appendStream`. It reloads the exact persisted final
-turn and posts it as complete `chat.postMessage` chunks. A session carrying a
+turn, or the canonical elicitation turn for `needs_input`, and posts it as
+complete `chat.postMessage` chunks. A session carrying a
 pre-deployment `slack_stream_ts` is closed without appending content, then the
 saved turn is posted normally. The typed session API can clear that legacy
-pointer but cannot set a new one. A terminal run with no saved turn clears
-status and reactions but posts no result or controls.
+pointer but cannot set a new one, and current sessions do not incur a no-op
+clear write. A terminal run with no saved turn clears status and reactions but
+posts no result or controls.
 
 **Why:** Opening a stream created an empty Slack shell before Rally had a result.
 One completed run then failed terminal settlement because its structured
