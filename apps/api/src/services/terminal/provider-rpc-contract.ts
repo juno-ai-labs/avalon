@@ -39,13 +39,16 @@ export type TerminalProviderRpcResult<T> =
         | { kind: "provider"; message: string };
     };
 
-export interface TerminalProviderRpcCallbacks {
+export interface TerminalProviderRpcInstrumentation {
   observe?: (
     measurement: Parameters<NonNullable<TerminalProviderInstrumentation["observe"]>>[0],
   ) => void | Promise<void>;
   observeRequest?: (
     measurement: Parameters<NonNullable<TerminalProviderInstrumentation["observeRequest"]>>[0],
   ) => void | Promise<void>;
+}
+
+export interface TerminalProviderRpcCallbacks {
   assertSubmissionAuthority?: () => Promise<TerminalProviderRpcCallbackResult>;
   onSubmitted?: (providerTaskId: string) => Promise<TerminalProviderRpcCallbackResult>;
   initiallyAborted?: boolean;
@@ -53,64 +56,62 @@ export interface TerminalProviderRpcCallbacks {
   finishAbortWait?: () => Promise<void>;
 }
 
-export interface TerminalProviderRpcBinding {
+export interface TerminalProviderRpcSession {
   createSandbox(
-    configuration: SupportedTerminalConfiguration,
     input: Parameters<TerminalSandboxProvider["createSandbox"]>[0],
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<TerminalSandboxSnapshot>>;
   prepareSandbox(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     expectedDomainAllowList: string[],
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<TerminalSandboxSnapshot>>;
   getSandbox(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<TerminalSandboxSnapshot>>;
-  startSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
-  stopSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
-  archiveSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
-  deleteSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
+  startSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
+  stopSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
+  archiveSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
+  deleteSandbox(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
   updateNetworkPolicy(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     domainAllowList: string[] | null,
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<void>>;
   configureGitHubReadAccess(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     input: Parameters<TerminalSandboxProvider["configureGitHubReadAccess"]>[1],
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<void>>;
-  clearGitHubReadAccess(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
-  readFile(configuration: SupportedTerminalConfiguration, idOrName: string, path: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<Uint8Array>>;
+  clearGitHubReadAccess(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
+  readFile(idOrName: string, path: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<Uint8Array>>;
   writeFile(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     path: string,
     bytes: Uint8Array,
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<void>>;
   runUtilityCommand(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     input: TerminalUtilityCommandRpcInput,
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<Awaited<ReturnType<TerminalSandboxProvider["runUtilityCommand"]>>>>;
   runCommand(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     input: TerminalCommandRpcInput,
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<Awaited<ReturnType<TerminalSandboxProvider["runCommand"]>>>>;
   cleanupCommand(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     taskName: string,
     callbacks?: TerminalProviderRpcCallbacks,
   ): Promise<TerminalProviderRpcResult<"deleted" | "missing" | void>>;
+}
+
+export interface TerminalProviderRpcBinding {
+  createSession(
+    configuration: SupportedTerminalConfiguration,
+    instrumentation?: TerminalProviderRpcInstrumentation,
+  ): Promise<TerminalProviderRpcSession>;
 }

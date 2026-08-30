@@ -1,4 +1,4 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
+import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 
 import {
   createDaytonaTerminalProvider,
@@ -13,106 +13,127 @@ import {
 import type {
   SupportedTerminalConfiguration,
   TerminalCommandRpcInput,
-  TerminalProviderRpcBinding,
   TerminalProviderRpcCallbacks,
+  TerminalProviderRpcInstrumentation,
+  TerminalProviderRpcSession,
   TerminalUtilityCommandRpcInput,
 } from "./services/terminal/provider-rpc-contract";
 
-export default class TerminalProviderWorker
-  extends WorkerEntrypoint
-  implements TerminalProviderRpcBinding {
-  private provider(
+function hasRpcDuplicate<T>(value: T): value is T & { dup(): T } {
+  return typeof value === "function" && "dup" in value && typeof value.dup === "function";
+}
+
+function retainRpcCallback<T>(callback: T | undefined): T | undefined {
+  return callback && hasRpcDuplicate(callback) ? callback.dup() : callback;
+}
+
+function disposeRpcCallback(callback: unknown): void {
+  if (typeof callback !== "function" || !(Symbol.dispose in callback)) return;
+  const dispose = callback[Symbol.dispose];
+  if (typeof dispose === "function") dispose.call(callback);
+}
+
+class TerminalProviderSessionTarget extends RpcTarget implements TerminalProviderRpcSession {
+  private readonly provider: DaytonaTerminalProvider;
+  private readonly observe: TerminalProviderRpcInstrumentation["observe"];
+  private readonly observeRequest: TerminalProviderRpcInstrumentation["observeRequest"];
+
+  constructor(
+    ctx: ExecutionContext,
     configuration: SupportedTerminalConfiguration,
-    callbacks?: TerminalProviderRpcCallbacks,
-  ): DaytonaTerminalProvider {
-    const observe = callbacks?.observe;
-    const observeRequest = callbacks?.observeRequest;
-    return createDaytonaTerminalProvider(configuration, undefined, {
+    instrumentation?: TerminalProviderRpcInstrumentation,
+  ) {
+    super();
+    this.observe = retainRpcCallback(instrumentation?.observe);
+    this.observeRequest = retainRpcCallback(instrumentation?.observeRequest);
+    const observe = this.observe;
+    const observeRequest = this.observeRequest;
+    this.provider = createDaytonaTerminalProvider(configuration, undefined, {
       ...(observe ? {
-        observe: (measurement) => this.ctx.waitUntil(
+        observe: (measurement) => ctx.waitUntil(
           Promise.resolve(observe(measurement)).catch(() => undefined),
         ),
       } : {}),
       ...(observeRequest ? {
-        observeRequest: (measurement) => this.ctx.waitUntil(
+        observeRequest: (measurement) => ctx.waitUntil(
           Promise.resolve(observeRequest(measurement)).catch(() => undefined),
         ),
       } : {}),
     });
   }
 
-  createSandbox(configuration: SupportedTerminalConfiguration, input: Parameters<TerminalSandboxProvider["createSandbox"]>[0], callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).createSandbox(input));
+  [Symbol.dispose](): void {
+    disposeRpcCallback(this.observe);
+    disposeRpcCallback(this.observeRequest);
   }
 
-  prepareSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, allowList: string[], callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).prepareSandbox(idOrName, allowList));
+  createSandbox(input: Parameters<TerminalSandboxProvider["createSandbox"]>[0]) {
+    return terminalProviderRpcCall(() => this.provider.createSandbox(input));
   }
 
-  getSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).getSandbox(idOrName));
+  prepareSandbox(idOrName: string, allowList: string[]) {
+    return terminalProviderRpcCall(() => this.provider.prepareSandbox(idOrName, allowList));
   }
 
-  startSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).startSandbox(idOrName));
+  getSandbox(idOrName: string) {
+    return terminalProviderRpcCall(() => this.provider.getSandbox(idOrName));
   }
 
-  stopSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).stopSandbox(idOrName));
+  startSandbox(idOrName: string) {
+    return terminalProviderRpcCall(() => this.provider.startSandbox(idOrName));
   }
 
-  archiveSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).archiveSandbox(idOrName));
+  stopSandbox(idOrName: string) {
+    return terminalProviderRpcCall(() => this.provider.stopSandbox(idOrName));
   }
 
-  deleteSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).deleteSandbox(idOrName));
+  archiveSandbox(idOrName: string) {
+    return terminalProviderRpcCall(() => this.provider.archiveSandbox(idOrName));
   }
 
-  updateNetworkPolicy(configuration: SupportedTerminalConfiguration, idOrName: string, allowList: string[] | null, callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).updateNetworkPolicy(idOrName, allowList));
+  deleteSandbox(idOrName: string) {
+    return terminalProviderRpcCall(() => this.provider.deleteSandbox(idOrName));
+  }
+
+  updateNetworkPolicy(idOrName: string, allowList: string[] | null) {
+    return terminalProviderRpcCall(() => this.provider.updateNetworkPolicy(idOrName, allowList));
   }
 
   configureGitHubReadAccess(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     input: Parameters<TerminalSandboxProvider["configureGitHubReadAccess"]>[1],
-    callbacks?: TerminalProviderRpcCallbacks,
   ) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).configureGitHubReadAccess(idOrName, input));
+    return terminalProviderRpcCall(() => this.provider.configureGitHubReadAccess(idOrName, input));
   }
 
-  clearGitHubReadAccess(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).clearGitHubReadAccess(idOrName));
+  clearGitHubReadAccess(idOrName: string) {
+    return terminalProviderRpcCall(() => this.provider.clearGitHubReadAccess(idOrName));
   }
 
-  readFile(configuration: SupportedTerminalConfiguration, idOrName: string, path: string, callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).readFile(idOrName, path));
+  readFile(idOrName: string, path: string) {
+    return terminalProviderRpcCall(() => this.provider.readFile(idOrName, path));
   }
 
   writeFile(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     path: string,
     bytes: Uint8Array,
     callbacks?: TerminalProviderRpcCallbacks,
   ) {
     return terminalProviderRpcCall(() => withTerminalProviderRpcAbort(callbacks, (signal) =>
-      this.provider(configuration, callbacks).writeFile(idOrName, path, bytes, signal)));
+      this.provider.writeFile(idOrName, path, bytes, signal)));
   }
 
   runUtilityCommand(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     input: TerminalUtilityCommandRpcInput,
     callbacks?: TerminalProviderRpcCallbacks,
   ) {
     return terminalProviderRpcCall(() => withTerminalProviderRpcAbort(callbacks, (signal) =>
-      this.provider(configuration, callbacks).runUtilityCommand(idOrName, { ...input, signal })));
+      this.provider.runUtilityCommand(idOrName, { ...input, signal })));
   }
 
   runCommand(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     input: TerminalCommandRpcInput,
     callbacks?: TerminalProviderRpcCallbacks,
@@ -120,7 +141,7 @@ export default class TerminalProviderWorker
     const assertSubmissionAuthority = callbacks?.assertSubmissionAuthority;
     const onSubmitted = callbacks?.onSubmitted;
     return terminalProviderRpcCall(() => withTerminalProviderRpcAbort(callbacks, (signal) =>
-      this.provider(configuration, callbacks).runCommand(idOrName, {
+      this.provider.runCommand(idOrName, {
         ...input,
         signal,
         ...(assertSubmissionAuthority
@@ -139,11 +160,18 @@ export default class TerminalProviderWorker
   }
 
   cleanupCommand(
-    configuration: SupportedTerminalConfiguration,
     idOrName: string,
     taskName: string,
-    callbacks?: TerminalProviderRpcCallbacks,
   ) {
-    return terminalProviderRpcCall(() => this.provider(configuration, callbacks).cleanupCommand(idOrName, taskName));
+    return terminalProviderRpcCall(() => this.provider.cleanupCommand(idOrName, taskName));
+  }
+}
+
+export default class TerminalProviderWorker extends WorkerEntrypoint {
+  createSession(
+    configuration: SupportedTerminalConfiguration,
+    instrumentation?: TerminalProviderRpcInstrumentation,
+  ): TerminalProviderSessionTarget {
+    return new TerminalProviderSessionTarget(this.ctx, configuration, instrumentation);
   }
 }
