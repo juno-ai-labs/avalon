@@ -61,9 +61,16 @@ export const WORKSPACE_LOCAL_TABLES = [
   "slack_agent_policies",
   "slack_delivery_preferences",
   "slack_user_links",
+  // Typed WorkspaceDO methods now, and named in that file's
+  // `WORKSPACE_TYPED_RPC_ONLY_TABLES`. They stay listed here so an accidental
+  // generic statement reaches the object and is refused by name, rather than
+  // falling through to regional D1 as a misleading `no such table`.
   "slack_agent_contexts",
   "slack_agent_feedback",
   "slack_agent_sessions",
+  // Still executed generically, deliberately: the schedule's alarm-target
+  // derivation reads these tables' due times through the object's local
+  // executor, alongside the other alarm sources.
   "slack_agent_thread_claims",
   "slack_ingress_jobs",
   "slack_link_challenges",
