@@ -281,12 +281,14 @@ beforeEach(async () => {
   path — 200, directory snapshot re-enqueued, notifications not re-emitted —
   so a later create that reuses a workstream id / `clientMessageId` looks like
   a silent product miss (`[]` where the named people should have been told).
-  Tests that are not *about* that replay must not share an id with a
-  neighbour that already opened that object; the notify-create,
-  mention-confirmation, and elicitation cases in
-  `participant-notification.test.ts` each have their own. Do not mint a fresh
-  id for every test in the file: that leaves a live draining object per case,
-  and under a sharded workers run the promotion polls time out.
+  Tests that are not *about* that replay must not share an `initialize` identity
+  with a neighbour that already opened that object. More importantly, a test
+  that asserts pre-inference state must not start a model loop merely to create
+  its fixture: `participant-notification.test.ts` provisions existing rooms and
+  calls the create mutation without the endpoint's activation step. Minting a
+  fresh id for every case does not fix unnecessary draining work; under a
+  sharded workers run it only leaves more live objects for promotion polls to
+  contend with.
 - **Set up in `beforeEach`. No `beforeAll` in this directory.** A `beforeAll`
   that opens an object while a sibling file is resetting waits until it times
   out, and a wipe landing mid-file is then inherited by every test after it
@@ -536,16 +538,17 @@ and the test waiting on it times out on an assertion that has nothing to do with
 what broke.
 
 That failure is worse than it sounds, because the passing case is not
-necessarily better. `participant-notification.test.ts` waited for its work
-stream's loop to fall idle and got `idle:0` for a year — not because the loop
-had finished, but because nothing had ever claimed it, and a loop that never
-started reads exactly like a loop at rest. The assertion only began failing when
-an unrelated change let the run actually be claimed. A test that lets a run
-start and does not control the model is asserting on whichever of those two it
-happens to get.
+necessarily better. `participant-notification.test.ts` used to start an opening
+model run in every fixture even though it asserted only committed product state
+and regional effects. Under shard contention those live alarms crossed the
+next test's `reset()`: one create silently replayed against the previous root,
+one parent receipt was absent, and an elicitation precondition stayed
+`executing:1`. Isolating selected object ids reduced the frequency but could not
+remove a run the tests had no reason to start.
 
-Once the run *does* start, `initialize` still does not drain it in the same
-request: it writes the execution receipt and arms a +1ms alarm
+Once the endpoint *does* activate the run, it still does not drain it in the
+same request: product `initialize` commits the admitted run, then the endpoint
+writes the execution receipt and arms a +1ms alarm
 (`requestExecutionReceiptActivation`). A read-only `expect.poll` on loop SQL
 then depends on workerd auto-firing that alarm. Under a contended workers shard
 the poll's own `runInDurableObject` calls keep the input gate busy, the alarm
@@ -557,7 +560,12 @@ in [Writing a workerd test](#writing-a-workerd-test); keep the poll as the wait
 for that case.
 
 So: if what you are testing happens before inference, keep the run away from the
-model. If the run has to complete, install the double.
+model. Existing-room cases can use the real `bootstrapRuntime` plus the
+system-provision `provision` path when that is the state shape under test. A
+create-effects case can invoke the real product `initialize` mutation
+without the endpoint's later execution-receipt activation. An elicitation-answer
+case can use a settled parent-run row when run execution is not the subject. If
+the run really has to complete, install the double.
 
 ```ts
 import { useOpenRouterDouble } from "./helpers/openrouter-double";

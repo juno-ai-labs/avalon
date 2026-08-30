@@ -13,19 +13,21 @@
  * the whole thing still "works" in a mock, then tells somebody about a work
  * stream their sidebar cannot show them.
  *
- * This drives the real SubstreamAgent product endpoint against real Durable
+ * This drives the real SubstreamAgent product boundary against real Durable
  * Object SQLite, so `projection_keys`, the payload hashes, and the outbox rows
- * are the production ones rather than a description of them.
+ * are the production ones rather than a description of them. Existing-room
+ * cases use its system-provision port; create-only cases stop before run activation.
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import type { AuthContext } from "../src/env";
 import { substreamAgentName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import {
@@ -33,7 +35,6 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "../src/durable-objects/workstream-regional-effect";
 import { processWorkstreamNotificationIntent } from "../src/services/workstream-regional-effect-service";
-import { useOpenRouterDouble } from "./helpers/openrouter-double";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
@@ -49,12 +50,11 @@ const CREATE_WITH_NOTIFY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006
 const CREATE_REPLAY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b3");
 const CREATE_NAMING_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b4");
 /**
- * Mention-confirmation and elicitation cases wait on promotion or a quiet loop.
- * They must not share `WORKSTREAM_ID` with a neighbour's `openWorkstream`: an
- * incomplete `reset()` leaves the object executing, and `waitForCanonicalTurn`
- * / `waitForQuietLoop` then time out — the macOS release `pnpm test` failure
- * on 33290369991. Do not extend this to every test in the file; a live
- * draining object per case is what timed out CI shard 1/2 on #428's first cut.
+ * The existing-room mention cases still activate their own message run, so
+ * each keeps a distinct object identity while its promotion settles. The
+ * elicitation case keeps a dedicated identity for its seeded parent receipt.
+ * Their setup uses `provisionWorkstream`, not an opening model run; the older
+ * initialize-and-wait shape is the race recorded under 33290369991.
  */
 const WORKSPACE_VISIBLE_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b5");
 const CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b6");
@@ -66,6 +66,7 @@ const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
 const SECOND_INVITEE_ID = "00000000-0000-7000-8000-0000000006a7";
 const MISSING_RECIPIENT_ID = "00000000-0000-7000-8000-0000000006a8";
 const ATTACHMENT_ID = "00000000-0000-7000-8000-0000000006a9";
+const ELICITATION_PARENT_RUN_ID = "00000000-0000-7000-8000-0000000006ac";
 
 /**
  * A wall-clock budget: the probes spend Durable Object round trips out of it,
@@ -73,15 +74,6 @@ const ATTACHMENT_ID = "00000000-0000-7000-8000-0000000006a9";
  * stays well inside the suite's 30s test budget so its own failure reports.
  */
 const POLL_BUDGET_MS = 10_000;
-
-/**
- * The opening run this file starts reaches inference, so the provider is
- * doubled rather than left to a real outbound request that cannot succeed and
- * does not fail quickly (`docs/testing.md`). One turn of plain text is all the
- * run needs: nothing here asserts on what the model said, only that the loop
- * settles so the elicitation assertions run against a loop at rest.
- */
-useOpenRouterDouble(() => ({ say: "Noted." }));
 
 const AUTH: AuthContext = {
   sessionId: SESSION_ID,
@@ -153,7 +145,7 @@ beforeEach(async () => {
   // never a slow query.
 }, 30_000);
 
-function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub {
+function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub<SubstreamAgent> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     substreamAgentName("global", WORKSPACE_ID, workstreamId),
   ));
@@ -172,10 +164,13 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
 }
 
 async function openWorkstream(
-  stub: DurableObjectStub,
+  stub: DurableObjectStub<SubstreamAgent>,
   options: {
     workstreamId?: string;
     title?: string;
+    objective?: string;
+    descriptionSource?: "authored" | "derived";
+    titleStatus?: "naming" | "settled";
     participantUserIds?: readonly string[];
     openingMessage?: string;
     mentions?: readonly {
@@ -189,26 +184,30 @@ async function openWorkstream(
     /** What `POST /workstreams` sends; a connector ingress sends nothing. */
     notifyParticipants?: boolean;
   } = {},
-): Promise<{ status: number; body: Record<string, unknown> }> {
+): Promise<void> {
   const workstreamId = options.workstreamId ?? WORKSTREAM_ID;
-  const opened = await product(stub, {
-    operation: "initialize",
-    auth: AUTH,
-    input: {
+  // These cases assert creation's committed transcript and regional effects,
+  // all of which `initialize` owns. The SubstreamAgent endpoint's next step is
+  // only an execution-receipt wake. Calling the product service directly keeps
+  // that unrelated model run admitted and inert, so a later `reset()` never
+  // races an alarm that this file did not need to start.
+  await runInDurableObject(stub, async (instance) => {
+    const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+    return productService.initialize(AUTH, {
       workspaceId: WORKSPACE_ID,
       workstreamId,
       generation: 1,
       title: options.title ?? "Quarterly planning",
-      objective: "Draft the quarterly plan",
-      descriptionSource: "authored",
-      titleStatus: "settled",
+      objective: options.objective ?? "Draft the quarterly plan",
+      descriptionSource: options.descriptionSource ?? "authored",
+      titleStatus: options.titleStatus ?? "settled",
       scope: options.scope ?? "personal",
       emailAddress: null,
       creatorUserId: CREATOR_ID,
       openingMessage: options.openingMessage ?? "starting the plan",
-      ...(options.mentions ? { mentions: options.mentions } : {}),
+      ...(options.mentions ? { mentions: [...options.mentions] } : {}),
       clientMessageId: `participant-open-${workstreamId}`,
-      participantUserIds: options.participantUserIds ?? [],
+      participantUserIds: [...(options.participantUserIds ?? [])],
       ...(options.notifyParticipants === undefined
         ? {}
         : { notifyParticipants: options.notifyParticipants }),
@@ -216,10 +215,72 @@ async function openWorkstream(
       modelOverride: null,
       executionPrincipal: { type: "user", userId: CREATOR_ID },
       reason: "user_message",
-    },
+    });
   });
-  expect(opened.status).toBe(200);
-  return opened;
+}
+
+/** Establish the system-provisioned existing-room baseline without admitting a run. */
+async function provisionWorkstream(
+  stub: DurableObjectStub<SubstreamAgent>,
+  workstreamId = WORKSTREAM_ID,
+  options: { title?: string; scope?: "personal" | "workspace" } = {},
+): Promise<void> {
+  expect((await stub.bootstrapRuntime({
+    workspaceId: WORKSPACE_ID,
+    workstreamId,
+    generation: 1,
+  })).status).toBe(200);
+  expect((await stub.executeIdentityOperation({
+    workspaceId: WORKSPACE_ID,
+    workstreamId,
+    operation: "provision",
+    args: [{
+      title: options.title ?? "Quarterly planning",
+      objective: "Draft the quarterly plan",
+      scope: options.scope ?? "personal",
+      originType: "ad_hoc",
+      createdByUserId: CREATOR_ID,
+      participantUserIds: [CREATOR_ID],
+      harnessStatus: "idle",
+      emailAddress: null,
+      emailRouteStatus: null,
+      systemKind: null,
+      automationSubscriptionId: null,
+      automationRunId: null,
+      plannedFor: null,
+      modelOverride: null,
+      now: Date.now(),
+    }],
+  })).status).toBe(200);
+}
+
+/** A settled parent identity for an elicitation, with no execution to wake. */
+async function seedCompletedRun(
+  stub: DurableObjectStub<SubstreamAgent>,
+  runId: string,
+): Promise<void> {
+  await runInDurableObject(stub, (_instance, state) => {
+    const now = Date.now();
+    // Keep this minimal fixture aligned with the `runs` table in
+    // workstream-object-schema.ts. Successful production terminalization
+    // leaves `terminal_reason` null; that column describes exceptional exits.
+    state.storage.sql.exec(
+      `INSERT INTO runs (
+         run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
+         model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
+         active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+         tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+         terminal_reason, terminalized_at, completed_at, created_at, updated_at
+       ) VALUES (?, '0', NULL, 'completed', '{}', 0, 0, '', 0, 0, ?,
+                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, ?, ?, ?, ?)`,
+      runId,
+      now,
+      now,
+      now,
+      now,
+      now,
+    );
+  });
 }
 
 /**
@@ -261,51 +322,6 @@ async function waitForCanonicalTurn(stub: DurableObjectStub, turnId: string): Pr
       ).one().count),
     { timeout: POLL_BUDGET_MS, interval: 50 },
   ).toBe(1);
-}
-
-/**
- * Wait for the substream loop to have nothing left to run.
- *
- * `answerElicitation` returns an activation request only when the loop it
- * would activate is at rest (`workstream-object-product.ts`: `remaining === 0
- * && after.status === "idle" ? … : null`), and the run `openWorkstream`
- * starts drives that loop through `executing` and back. Nothing in these
- * tests made the precondition true — it just usually was by the time the
- * answer ran, and sometimes was not.
- *
- * Waiting on the loop's status alone is not enough, and finding that out is
- * what this shape is for: a status-only poll caught the loop still `idle`
- * *before* the opening run was admitted, and by the time the answer ran it
- * was `executing` — the instrumented reproduction reported exactly that
- * (`loopBefore.status = "executing"`, no pending elicitation left). So this
- * waits on both: no run still admitted or running, and a loop back at rest.
- * Together they are a state the loop cannot leave on its own.
- *
- * `initialize` does not drain that run in the same request: it writes the
- * execution receipt and arms a +1ms alarm
- * (`requestExecutionReceiptActivation`). A read-only poll then watches SQL
- * and hopes workerd auto-fires. Under a contended workers shard the object's
- * input gate stays busy with the poll itself, the alarm never gets a slot,
- * and the wait expires on `executing:1`. Forcing the wake first is the same
- * lever `message-to-output-pipeline.test.ts` uses (`settledRunForTrigger`). The helper returning false — no alarm, or
- * auto-fire already in flight — is the documented race in `docs/testing.md`;
- * the poll below is the wait for that case, and it stays read-only so it
- * cannot start a second drain.
- */
-async function waitForQuietLoop(stub: DurableObjectStub): Promise<void> {
-  await runDurableObjectAlarm(stub);
-  await expect.poll(
-    () => runInDurableObject(stub, (_instance, state) => {
-      const active = Number(state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM runs WHERE status IN ('admitted', 'running')`,
-      ).one().n);
-      const status = state.storage.sql.exec<{ status: string }>(
-        `SELECT status FROM substream_loops WHERE id = 1`,
-      ).toArray()[0]?.status ?? "idle";
-      return `${status}:${active}`;
-    }),
-    { timeout: POLL_BUDGET_MS, interval: 50 },
-  ).toBe("idle:0");
 }
 
 async function deliveredEffects(
@@ -447,7 +463,7 @@ describe("adding somebody to a work stream", () => {
 
   it("enqueues their directory row, an activity event, and a notification behind it", async () => {
     const stub = agentStub();
-    await openWorkstream(stub);
+    await provisionWorkstream(stub);
 
     const added = await product(stub, {
       operation: "add_participant",
@@ -502,7 +518,7 @@ describe("adding somebody to a work stream", () => {
 
   it("keeps a second add of the same person to one intent, and a re-add to a new one", async () => {
     const stub = agentStub();
-    await openWorkstream(stub);
+    await provisionWorkstream(stub);
 
     await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
     await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
@@ -530,8 +546,8 @@ describe("adding somebody to a work stream", () => {
   it("keeps one person's adds to two work streams apart", async () => {
     const first = agentStub();
     const second = agentStub(SECOND_WORKSTREAM_ID);
-    await openWorkstream(first);
-    await openWorkstream(second, { workstreamId: SECOND_WORKSTREAM_ID, title: "Hiring loop" });
+    await provisionWorkstream(first);
+    await provisionWorkstream(second, SECOND_WORKSTREAM_ID, { title: "Hiring loop" });
 
     await product(first, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
     await product(second, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
@@ -551,7 +567,7 @@ describe("adding somebody to a work stream", () => {
 
   it("says nothing when somebody adds themselves", async () => {
     const stub = agentStub();
-    await openWorkstream(stub);
+    await provisionWorkstream(stub);
 
     const added = await product(stub, {
       operation: "add_participant",
@@ -795,7 +811,7 @@ describe("naming somebody when the work stream is created", () => {
 describe("confirming a nonparticipant mention on an existing work stream", () => {
   it("persists a workspace-visible mention without seating or confirming the recipient", async () => {
     const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
-    await openWorkstream(stub, { workstreamId: WORKSPACE_VISIBLE_MENTION_ID, scope: "workspace" });
+    await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope: "workspace" });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -835,7 +851,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
 
   it("seats the accepted target and emits only the specific mention notification", async () => {
     const stub = agentStub(CONFIRMED_MENTION_ID);
-    await openWorkstream(stub, { workstreamId: CONFIRMED_MENTION_ID });
+    await provisionWorkstream(stub, CONFIRMED_MENTION_ID);
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -878,7 +894,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
 
   it("does not let confirmation seat the raw target of a rejected mention", async () => {
     const stub = agentStub(REJECTED_CONFIRMED_MENTION_ID);
-    await openWorkstream(stub, { workstreamId: REJECTED_CONFIRMED_MENTION_ID });
+    await provisionWorkstream(stub, REJECTED_CONFIRMED_MENTION_ID);
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -915,13 +931,13 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
 describe("answering an elicitation in the ordered transcript", () => {
   it("keeps the attributed response pending until the loop can promote it", async () => {
     const stub = agentStub(ELICITATION_ANSWER_ID);
-    const opened = await openWorkstream(stub, { workstreamId: ELICITATION_ANSWER_ID });
-    const runId = String(opened.body.harnessRunId);
-    // Settle the opening run before writing the elicitation. The activation
-    // request below exists only for a loop at rest with nothing left to run,
-    // and posting `needs_input` while that run is still draining is the
-    // interleave `waitForQuietLoop` used to lose under shard load.
-    await waitForQuietLoop(stub);
+    await provisionWorkstream(stub, ELICITATION_ANSWER_ID);
+    // `openElicitation` stores the parent run as correlation identity; it does
+    // not require that run to be executing locally. This test is about the
+    // answer's pending input and activation request, so a settled row satisfies
+    // the foreign key without starting unrelated inference first.
+    const runId = ELICITATION_PARENT_RUN_ID;
+    await seedCompletedRun(stub, runId);
     const elicitationId = "00000000-0000-7000-8000-0000000006aa";
     const messageId = "00000000-0000-7000-8000-0000000006ab";
     const createdAt = "2026-08-26T12:00:00.000Z";
@@ -1117,11 +1133,11 @@ describe("who a create is allowed to tell", () => {
     });
     // The ambiguous-response retry, on this test's own workstream id and
     // `clientMessageId`. Other cases must not share either — initialize on an
-    // already-authoritative root is a silent replay, not a second create. It
-    // must still answer 200: the whole reason the replay branch re-enqueues the
-    // directory snapshot and nothing else is that a notification re-emitted
+    // already-authoritative root is a silent replay, not a second create. The
+    // direct product call must still complete: the replay branch re-enqueues
+    // the directory snapshot and nothing else because a notification re-emitted
     // against a moved root would be refused as a hash conflict and wedge the
-    // create. `openWorkstream` asserts the status.
+    // create. The single receipt assertion below proves no notification replayed.
     await openWorkstream(stub, {
       workstreamId: CREATE_REPLAY_ID,
       participantUserIds: [INVITEE_ID],
@@ -1137,31 +1153,16 @@ describe("who a create is allowed to tell", () => {
     // What `POST /workstreams` actually sends: the desktop client supplies no
     // title, so creation writes the opening message's first line and leaves
     // `titleStatus` at `naming` until the naming pass lands.
-    const opened = await product(stub, {
-      operation: "initialize",
-      auth: AUTH,
-      input: {
-        workspaceId: WORKSPACE_ID,
-        workstreamId: CREATE_NAMING_ID,
-        generation: 1,
-        title: "Can someone dig into why the self-serve funnel dropped this week",
-        objective: "Can someone dig into why the self-serve funnel dropped this week",
-        descriptionSource: "derived",
-        titleStatus: "naming",
-        emailAddress: null,
-        creatorUserId: CREATOR_ID,
-        openingMessage: "Can someone dig into why the self-serve funnel dropped this week",
-        clientMessageId: `participant-open-${CREATE_NAMING_ID}`,
-        participantUserIds: [INVITEE_ID],
-        notifyParticipants: true,
-        attachmentIds: [],
-        modelOverride: null,
-        executionPrincipal: { type: "user", userId: CREATOR_ID },
-        reason: "user_message",
-      },
+    await openWorkstream(stub, {
+      workstreamId: CREATE_NAMING_ID,
+      title: "Can someone dig into why the self-serve funnel dropped this week",
+      objective: "Can someone dig into why the self-serve funnel dropped this week",
+      descriptionSource: "derived",
+      titleStatus: "naming",
+      openingMessage: "Can someone dig into why the self-serve funnel dropped this week",
+      participantUserIds: [INVITEE_ID],
+      notifyParticipants: true,
     });
-    expect(opened.status).toBe(200);
-
     const notification = (await deliveredEffects(stub, CREATE_NAMING_ID))
       .flatMap((envelope) => envelope.effect.kind === "participant_notification" ? [envelope.effect] : []);
     expect(notification).toHaveLength(1);

@@ -253,7 +253,11 @@ It deliberately does not:
 Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
 event needs the small stub in that file rather than `new DataTransfer()`. And an
 open error dialog hides the sidebar from the accessibility tree, so the pinned
-order can only be read back after the dialog is dismissed.
+order can only be read back after the dialog is dismissed. The keyboard reorder
+callback also fires before `commitPinnedOrder` clears its optimistic order in a
+`finally`; a test that clears its spy and sends another key immediately after
+observing the callback races that cleanup. Wait for the rendered order that the
+next assertion is meant to act on.
 
 The legacy API suite runs the checked-in D1 migrations against `node:sqlite` in
 memory. Post-cutover ownership assertions belong in the workerd suite; do not

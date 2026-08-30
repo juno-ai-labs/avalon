@@ -2134,7 +2134,21 @@ describe('pinned work streams', () => {
     // Fired on the row itself, which is what holds focus: the handler sits on
     // the wrapper around it and only ever sees the event by bubbling.
     fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
-    await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-b', 'ws-a']));
+    await waitFor(
+      () => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-b', 'ws-a']),
+    );
+
+    // Observing the async save is not the same as observing its `finally`.
+    // This harness deliberately leaves the server-owned props unchanged, so
+    // wait until the optimistic order has cleared before testing the stored
+    // order's top boundary. Otherwise the second keydown races cleanup and can
+    // turn the still-optimistic ['ws-b', 'ws-a'] back into ['ws-a', 'ws-b'].
+    await waitFor(
+      () => expect(pinnedRowTitles()).toEqual([
+        expect.stringContaining('Alpha'),
+        expect.stringContaining('Bravo'),
+      ]),
+    );
 
     // The top row has nowhere further to go, and saying so costs a request.
     onReorderPinnedWorkstreams.mockClear();
