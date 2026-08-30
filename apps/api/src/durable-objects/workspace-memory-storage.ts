@@ -641,9 +641,10 @@ export function workspaceMemoryIndexProjectionSource(
     invalidated_at: string | null;
     expires_at: string | null;
     scope_kind: WorkspaceMemoryScope["kind"];
+    scope_owner_id: string;
   }>(
     `SELECT item.text, item.revision, item.invalidated_at, item.expires_at,
-            scope.kind AS scope_kind
+            scope.kind AS scope_kind, scope.owner_id AS scope_owner_id
        FROM memory_items item
        JOIN memory_scopes scope ON scope.memory_scope_id = item.memory_scope_id
       WHERE item.memory_item_id = ? AND item.memory_scope_id = ? AND item.workspace_id = ?`,
@@ -659,6 +660,7 @@ export function workspaceMemoryIndexProjectionSource(
       invalidatedAt: row.invalidated_at,
       expiresAt: row.expires_at,
       scopeKind: row.scope_kind,
+      scopeOwnerId: row.scope_owner_id,
     }
     : { outcome: "none" });
 }
