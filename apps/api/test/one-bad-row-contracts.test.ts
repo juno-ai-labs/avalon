@@ -46,6 +46,8 @@ function workstream(overrides: Record<string, unknown> = {}) {
     modelOverride: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     ...overrides,
   };
 }

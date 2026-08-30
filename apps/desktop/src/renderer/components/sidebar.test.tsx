@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopApplicationSettings } from '../../common/desktop';
-import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { formatDateTime } from '../lib/format';
 import { useUiStore } from '../lib/ui-store';
 import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
@@ -123,6 +123,8 @@ function workstream(
     firstUnreadSequenceNumber: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     lastActivityAt,
     ...viewerState,
   };
@@ -1673,6 +1675,20 @@ describe('Sidebar work-stream markers', () => {
 });
 
 describe('private work streams', () => {
+  const teammate = (id: string, name: string): WorkspaceMember => ({
+    id,
+    name,
+    email: `${id}@example.com`,
+    timezone: 'America/Los_Angeles',
+  });
+  const roster = [
+    teammate('user-1', 'Adam'),
+    teammate('user-2', 'Ari'),
+    teammate('user-3', 'Casey'),
+    teammate('user-4', 'Drew'),
+    teammate('user-5', 'Ellis'),
+  ];
+
   beforeEach(() => {
     window.localStorage.clear();
     markWorkstreamNavigation.mockReset();
@@ -1690,6 +1706,7 @@ describe('private work streams', () => {
   function renderWith(
     streams: WorkstreamSummary[],
     onChangeWorkstreamScope?: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>,
+    members: WorkspaceMember[] = roster,
   ): void {
     render(
       <MemoryRouter>
@@ -1697,6 +1714,7 @@ describe('private work streams', () => {
           <Sidebar
             {...defaultActions}
             automations={[]}
+            members={members}
             {...(onChangeWorkstreamScope ? { onChangeWorkstreamScope } : {})}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -1707,21 +1725,60 @@ describe('private work streams', () => {
     );
   }
 
-  it('wears the same marker a private note does', () => {
+  it('does not wear the lock a private note does', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000021', 'Digest · Adam', 'completed'),
       scope: 'personal',
       systemKind: 'digest',
+      participantUserIds: ['user-1'],
     }]);
 
-    // One badge for "only you can see this", whatever kind of thing it is on.
-    expect(screen.getByLabelText('Private work stream')).toBeInTheDocument();
+    const row = screen.getByRole('link', { name: /Digest/u });
+    expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
+    expect(within(row).getByTitle('Adam')).toBeInTheDocument();
   });
 
-  it('leaves an ordinary work stream unmarked', () => {
+  it('marks a workspace-scoped work stream as public', () => {
     renderWith([workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed')]);
 
+    const row = screen.getByRole('link', { name: /Launch/u });
+    expect(within(row).getByLabelText('Public to workspace')).toBeInTheDocument();
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
+    expect(within(row).queryByTitle('Adam')).not.toBeInTheDocument();
+  });
+
+  it('paints the three newest faces and an overflow for everyone past that', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-000000000029', 'Comp review', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-5', 'user-4', 'user-3'],
+      participantExtraCount: 2,
+    }]);
+
+    const row = screen.getByRole('link', { name: /Comp review/u });
+    expect(within(row).getByTitle('Ellis')).toBeInTheDocument();
+    expect(within(row).getByTitle('Drew')).toBeInTheDocument();
+    expect(within(row).getByTitle('Casey')).toBeInTheDocument();
+    expect(within(row).queryByTitle('Ari')).not.toBeInTheDocument();
+    expect(within(row).getByText('+2')).toBeInTheDocument();
+    expect(within(row).queryByLabelText('Private work stream')).not.toBeInTheDocument();
+    expect(within(row).queryByLabelText('Public to workspace')).not.toBeInTheDocument();
+  });
+
+  it('skips participant ids the roster has not resolved', () => {
+    renderWith(
+      [{
+        ...workstream('00000000-4000-4000-8000-00000000002a', 'Staffing', 'completed'),
+        scope: 'personal',
+        participantUserIds: ['user-missing', 'user-2'],
+      }],
+      undefined,
+      [teammate('user-2', 'Ari')],
+    );
+
+    const row = screen.getByRole('link', { name: /Staffing/u });
+    expect(within(row).getByTitle('Ari')).toBeInTheDocument();
+    expect(within(row).queryByTitle('Adam')).not.toBeInTheDocument();
   });
 
   it('closes a work stream to the people in it from the right-click menu', async () => {

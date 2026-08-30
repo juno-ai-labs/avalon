@@ -64,6 +64,8 @@ const workstream: WorkstreamDetail = {
   firstUnreadSequenceNumber: null,
   nextPendingWakeup: null,
   pinPosition: null,
+  participantUserIds: [],
+  participantExtraCount: 0,
   createdAt: '2026-08-06T12:00:00.000Z',
   participants: [],
   viewers: [],

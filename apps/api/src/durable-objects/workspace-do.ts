@@ -24,6 +24,7 @@ import {
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  workstreamParticipantPreview,
   WorkspaceIdSchema,
   WorkspaceProjectSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
@@ -2440,7 +2441,44 @@ function workstreamHarnessStatus(state: string): Workstream["harnessStatus"] {
   return "idle";
 }
 
-function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): Workstream {
+function loadParticipantPreviews(
+  sql: DurableObjectState["storage"]["sql"],
+  workstreamIds: readonly string[],
+): Map<string, ReturnType<typeof workstreamParticipantPreview>> {
+  const previews = new Map<string, ReturnType<typeof workstreamParticipantPreview>>();
+  if (workstreamIds.length === 0) return previews;
+  const placeholders = workstreamIds.map(() => "?").join(", ");
+  const rows = sql.exec<{ workstream_id: string; user_id: string }>(
+    `SELECT viewer.workstream_id, viewer.user_id
+       FROM workspace_workstream_viewers viewer
+       JOIN workspace_workstream_directory directory
+         ON directory.workstream_id = viewer.workstream_id
+        AND directory.authority_generation = viewer.authority_generation
+      WHERE viewer.workstream_id IN (${placeholders})
+        AND viewer.is_participant = 1
+      ORDER BY viewer.workstream_id, viewer.projected_at DESC, viewer.user_id`,
+    ...workstreamIds,
+  ).toArray();
+  const grouped = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.workstream_id);
+    if (list) list.push(row.user_id);
+    else grouped.set(row.workstream_id, [row.user_id]);
+  }
+  for (const [workstreamId, userIds] of grouped) {
+    previews.set(workstreamId, workstreamParticipantPreview(userIds));
+  }
+  return previews;
+}
+
+function directoryWorkstream(
+  row: WorkspaceDirectoryRow,
+  workspaceId: string,
+  preview: ReturnType<typeof workstreamParticipantPreview> = {
+    participantUserIds: [],
+    participantExtraCount: 0,
+  },
+): Workstream {
   const latest = Number(row.latest_attention_ordinal);
   const seen = row.seen_attention_ordinal === null
     ? Number(row.unread_tracking_start_ordinal)
@@ -2453,6 +2491,9 @@ function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): W
     && Date.now() - row.source_created_at > WORKSTREAM_NAMING_GRACE_MS
     ? "automatic"
     : row.title_status;
+  const participantPreview = row.scope === "personal"
+    ? preview
+    : { participantUserIds: [], participantExtraCount: 0 };
   return WorkstreamSchema.parse({
     id: row.workstream_id,
     workspaceId,
@@ -2488,7 +2529,28 @@ function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): W
         }
       : null,
     pinPosition: row.pin_position,
+    ...participantPreview,
   });
+}
+
+function mapDirectoryWorkstreams(
+  sql: DurableObjectState["storage"]["sql"],
+  rows: readonly WorkspaceDirectoryRow[],
+  workspaceId: string,
+): Workstream[] {
+  const personalIds = [...new Set(
+    rows.filter((row) => row.scope === "personal").map((row) => row.workstream_id),
+  )];
+  const previews = loadParticipantPreviews(sql, personalIds);
+  return rows.map((row) => directoryWorkstream(row, workspaceId, previews.get(row.workstream_id)));
+}
+
+function mapDirectoryWorkstream(
+  sql: DurableObjectState["storage"]["sql"],
+  row: WorkspaceDirectoryRow,
+  workspaceId: string,
+): Workstream {
+  return mapDirectoryWorkstreams(sql, [row], workspaceId)[0]!;
 }
 
 function directoryStateVersion(row: WorkspaceDirectoryRow) {
@@ -7606,7 +7668,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.automationSubscriptionId,
       epoch(request.plannedFor),
     ).toArray()[0];
-    return row ? directoryWorkstream(row, request.workspaceId) : null;
+    return row ? mapDirectoryWorkstream(this.state.storage.sql, row, request.workspaceId) : null;
   }
 
   /** Exact idempotency lookup for the scheduler, independent of any member's visibility. */
@@ -7626,7 +7688,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.automationSubscriptionId,
       epoch(request.plannedFor),
     ).toArray()[0];
-    return row ? directoryWorkstream(row, request.workspaceId) : null;
+    return row ? mapDirectoryWorkstream(this.state.storage.sql, row, request.workspaceId) : null;
   }
 
   async pinWorkstream(input: WorkspaceDirectoryPinRequest): Promise<{ items: Workstream[] }> {
@@ -7667,9 +7729,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return inserted;
     });
     if (changed) await this.publishDirectorySync(request.workspaceId);
-    return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
-      directoryWorkstream(row, request.workspaceId)
-    )) };
+    return { items: mapDirectoryWorkstreams(
+      this.state.storage.sql,
+      this.pinnedDirectoryRows(request.userId, true),
+      request.workspaceId,
+    ) };
   }
 
   async unpinWorkstream(input: WorkspaceDirectoryPinRequest): Promise<{ items: Workstream[] }> {
@@ -7691,9 +7755,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return removed;
     });
     if (changed) await this.publishDirectorySync(request.workspaceId);
-    return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
-      directoryWorkstream(row, request.workspaceId)
-    )) };
+    return { items: mapDirectoryWorkstreams(
+      this.state.storage.sql,
+      this.pinnedDirectoryRows(request.userId, true),
+      request.workspaceId,
+    ) };
   }
 
   async reorderWorkstreamPins(
@@ -7708,9 +7774,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.advanceDirectoryVersion(now);
     });
     await this.publishDirectorySync(request.workspaceId);
-    return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
-      directoryWorkstream(row, request.workspaceId)
-    )) };
+    return { items: mapDirectoryWorkstreams(
+      this.state.storage.sql,
+      this.pinnedDirectoryRows(request.userId, true),
+      request.workspaceId,
+    ) };
   }
 
   async notificationDirectoryState(
@@ -8472,7 +8540,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     return {
-      items: rows.map((row) => directoryWorkstream(row, request.workspaceId)),
+      items: mapDirectoryWorkstreams(this.state.storage.sql, rows, request.workspaceId),
       stateVersions: rows.map(directoryStateVersion),
       nextCursor,
       directoryWaterline: this.directoryWaterline(),
@@ -8642,7 +8710,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           commonWaterline: stateVersion.commonWaterline,
           viewerWaterline: stateVersion.viewerWaterline,
         },
-        workstream: visible ? directoryWorkstream(row, attachment.workspaceId) : null,
+        workstream: visible ? mapDirectoryWorkstream(this.state.storage.sql, row, attachment.workspaceId) : null,
       }));
       try {
         socket.send(payload);
