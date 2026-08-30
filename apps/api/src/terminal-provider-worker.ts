@@ -168,6 +168,11 @@ class TerminalProviderSessionTarget extends RpcTarget implements TerminalProvide
 }
 
 export default class TerminalProviderWorker extends WorkerEntrypoint {
+  /** Cloudflare requires a named handler even when only RPC is reachable. */
+  override fetch(): Response {
+    return new Response(null, { status: 404 });
+  }
+
   createSession(
     configuration: SupportedTerminalConfiguration,
     instrumentation?: TerminalProviderRpcInstrumentation,
