@@ -145,9 +145,11 @@ An activated region requires:
   `TERMINAL_EMERGENCY_DISABLED=false`;
 - `DAYTONA_API_URL`, `DAYTONA_TARGET`, and
   `DAYTONA_TERMINAL_SNAPSHOT=daytona-small`; and
-- `DAYTONA_API_KEY` as a regional Worker secret. Never put the Daytona project
-  credential in a `VITE_` variable, D1, a sandbox environment value, or a
-  checked-in Wrangler file.
+- `DAYTONA_API_KEY` as a regional Worker secret. EU reuses the same Daytona
+  project key already on Global: put that exact value on the EU Worker. Cloudflare
+  cannot copy a secret between Workers, so this is a second `secret put`, not a
+  shared binding. Never put the Daytona project credential in a `VITE_`
+  variable, D1, a sandbox environment value, or a checked-in Wrangler file.
 
 If any required Daytona value is absent, Rally treats that region as
 `unsupported` and continues starting without the Terminal plugin. This is the
