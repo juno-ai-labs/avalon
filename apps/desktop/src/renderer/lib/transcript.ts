@@ -44,6 +44,12 @@ export interface TranscriptOverlay {
     afterTranscriptSequence: number;
     eventSequence: number;
   };
+  /**
+   * Promotion order among pending loop inputs. Socket room sequence is not
+   * FIFO, so the composer queue sorts on this instead of `position`.
+   * Optimistic sending rows omit it and sort last.
+   */
+  queueSequence?: number;
   message: Message;
 }
 
@@ -690,6 +696,7 @@ export function pendingTranscriptInputOverlay(
         ? provenance.eventSequence
         : input.inputSequence,
     },
+    queueSequence: input.inputSequence,
     message: {
       id: input.futureTurnId,
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
@@ -718,6 +725,107 @@ export function pendingTranscriptInputOverlay(
       deliveryState: input.deliveryMode === 'steer' ? 'steer_pending' : 'queue_pending',
     },
   };
+}
+
+/**
+ * The pending-input id a composer-queue row can send on reorder, or undefined
+ * when the overlay is still an optimistic send with no server identity.
+ */
+export function pendingOverlayInputId(overlay: TranscriptOverlay): string | undefined {
+  if (overlay.identity.type === 'loop_input') return overlay.identity.inputId;
+  if (overlay.identity.type === 'client_message' && overlay.identity.turnId) {
+    return overlay.identity.turnId;
+  }
+  return undefined;
+}
+
+/**
+ * Pending loop inputs, plus an in-flight send while the harness is running.
+ * Those rows live on the composer, not in the transcript.
+ */
+export function isComposerQueueOverlay(
+  overlay: TranscriptOverlay,
+  options: { harnessRunning: boolean },
+): boolean {
+  const state = overlay.message.deliveryState;
+  if (state === 'steer_pending' || state === 'queue_pending') return true;
+  return options.harnessRunning && state === 'sending';
+}
+
+/** Visible composer-queue rows in promotion order; sending rows without a sequence sit last. */
+export function composerQueueOverlays(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  options: { harnessRunning: boolean },
+): TranscriptOverlay[] {
+  return (overlays ?? [])
+    .filter((overlay) => isComposerQueueOverlay(overlay, options))
+    .sort((left, right) => {
+      const leftSequence = left.queueSequence;
+      const rightSequence = right.queueSequence;
+      if (leftSequence === undefined && rightSequence === undefined) {
+        return left.message.id < right.message.id ? -1 : left.message.id > right.message.id ? 1 : 0;
+      }
+      if (leftSequence === undefined) return 1;
+      if (rightSequence === undefined) return -1;
+      return leftSequence - rightSequence
+        || (left.message.id < right.message.id ? -1 : left.message.id > right.message.id ? 1 : 0);
+    });
+}
+
+/**
+ * Optimistically permute `queueSequence` among named pending overlays.
+ * Unnamed visible ids keep their relative order behind the named ones —
+ * the same merge the object applies, so a concurrent admission is not lost.
+ */
+export function applyPendingInputQueueOrder(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  orderedInputIds: readonly string[],
+): TranscriptOverlay[] {
+  const current = overlays ?? [];
+  const draggable = current.filter((overlay) => pendingOverlayInputId(overlay) !== undefined);
+  const byId = new Map(draggable.map((overlay) => [pendingOverlayInputId(overlay)!, overlay]));
+  const named = orderedInputIds.flatMap((inputId) => {
+    const overlay = byId.get(inputId);
+    return overlay ? [overlay] : [];
+  });
+  const namedIds = new Set(named.map((overlay) => pendingOverlayInputId(overlay)!));
+  const unnamed = draggable.filter((overlay) => !namedIds.has(pendingOverlayInputId(overlay)!));
+  const ordered = [...named, ...unnamed];
+  const sequences = draggable
+    .map((overlay) => overlay.queueSequence)
+    .filter((sequence): sequence is number => typeof sequence === 'number')
+    .sort((left, right) => left - right);
+  const nextSequence = new Map(ordered.flatMap((overlay, index) => {
+    const inputId = pendingOverlayInputId(overlay);
+    const sequence = sequences[index];
+    return inputId !== undefined && sequence !== undefined
+      ? [[inputId, sequence] as const]
+      : [];
+  }));
+  return current.map((overlay) => {
+    const inputId = pendingOverlayInputId(overlay);
+    if (inputId === undefined) return overlay;
+    const sequence = nextSequence.get(inputId);
+    return sequence === undefined || sequence === overlay.queueSequence
+      ? overlay
+      : { ...overlay, queueSequence: sequence };
+  });
+}
+
+/** Replace local queue sequences with the object's current pending-input order. */
+export function assignPendingInputQueueSequences(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  pendingInputs: readonly Pick<PendingTranscriptInput, 'inputId' | 'inputSequence'>[],
+): TranscriptOverlay[] {
+  const byInputId = new Map(pendingInputs.map((input) => [input.inputId, input.inputSequence]));
+  return (overlays ?? []).map((overlay) => {
+    const inputId = pendingOverlayInputId(overlay);
+    if (inputId === undefined) return overlay;
+    const sequence = byInputId.get(inputId);
+    return sequence === undefined || sequence === overlay.queueSequence
+      ? overlay
+      : { ...overlay, queueSequence: sequence };
+  });
 }
 
 /** Update presentation content without weakening its identity or provenance. */

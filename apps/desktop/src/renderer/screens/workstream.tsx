@@ -66,8 +66,14 @@ import {
   foldSettledWorkIntoMessages,
   groupPluginToolMessages,
   orderedTranscriptMessages,
+  applyPendingInputQueueOrder,
+  assignPendingInputQueueSequences,
+  composerQueueOverlays,
+  isComposerQueueOverlay,
+  pendingOverlayInputId,
   pendingTranscriptInputOverlay,
   reconcileAuthoritativeTranscriptOverlays,
+  transcriptOverlayIdentityKey,
   removeTranscriptOverlay,
   setTranscriptElicitationState,
   transcriptCoverageAdvanced,
@@ -97,6 +103,7 @@ import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
+import { queueAuthorMember, type ComposerQueueItem } from '../components/composer-queue';
 import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { BlockDashboardPanel, BlockDashboardRail } from '../components/block-dashboard-panel';
@@ -123,7 +130,7 @@ export function acceptedMessageOverlayDeliveryState(
   requestedMode: WorkstreamMessageDeliveryMode | undefined,
 ): Message['deliveryState'] {
   if (deliveryState === 'canonical') return undefined;
-  return requestedMode === 'queue' ? 'queue_pending' : 'steer_pending';
+  return requestedMode === 'steer' ? 'steer_pending' : 'queue_pending';
 }
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
@@ -1203,11 +1210,30 @@ export function WorkstreamScreen(): React.JSX.Element {
     id,
     members.data ?? [],
   ), [id, members.data, orderedTranscript.data]);
+  const harnessRunning = routedDetail?.harnessStatus === 'running';
+  const queueOverlays = useMemo(
+    () => composerQueueOverlays(transcriptOverlays.data, { harnessRunning }),
+    [harnessRunning, transcriptOverlays.data],
+  );
+  const queueItems = useMemo<ComposerQueueItem[]>(
+    () => queueOverlays.map((overlay) => ({
+      key: transcriptOverlayIdentityKey(overlay.identity),
+      inputId: pendingOverlayInputId(overlay) ?? null,
+      text: overlay.message.text ?? '',
+      member: queueAuthorMember(overlay.message, members.data ?? []),
+      sending: overlay.message.deliveryState === 'sending',
+    })),
+    [members.data, queueOverlays],
+  );
   const transcript = useMemo(
-    () => foldSettledWorkIntoMessages(
-      groupPluginToolMessages(composeTranscript(canonicalTranscript, transcriptOverlays.data)),
-    ),
-    [canonicalTranscript, transcriptOverlays.data],
+    () => {
+      const feedOverlays = (transcriptOverlays.data ?? []).filter((overlay) =>
+        !isComposerQueueOverlay(overlay, { harnessRunning }));
+      return foldSettledWorkIntoMessages(
+        groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+      );
+    },
+    [canonicalTranscript, harnessRunning, transcriptOverlays.data],
   );
   // An embed card in the last two text turns opens the inspector onto that
   // document: when this feed first belongs to the route, and again when a
@@ -1885,6 +1911,28 @@ export function WorkstreamScreen(): React.JSX.Element {
     }
   };
 
+  const reorderQueue = async (inputIds: string[]): Promise<void> => {
+    if (!api) throw new Error('This work stream is not ready to reorder queued messages.');
+    const previous = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id));
+    queryClient.setQueryData<TranscriptOverlay[]>(
+      transcriptOverlaysQueryKey(id),
+      (current) => applyPendingInputQueueOrder(current, inputIds),
+    );
+    try {
+      const result = await api.reorderPendingLoopInputs(id, inputIds);
+      queryClient.setQueryData<TranscriptOverlay[]>(
+        transcriptOverlaysQueryKey(id),
+        (current) => assignPendingInputQueueSequences(current, result.pendingInputs),
+      );
+    } catch (error) {
+      if (previous) {
+        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), previous);
+      }
+      setSendError(error instanceof Error ? error.message : 'Queued messages could not be reordered.');
+      throw error;
+    }
+  };
+
   const resolveSuggestion = async (suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> => {
     // Remove the pending detail entry before the request so an overlapping
     // transcript rebuild cannot restore a card whose decision is in flight.
@@ -2276,6 +2324,8 @@ export function WorkstreamScreen(): React.JSX.Element {
             onStop={async () => {
               await stop.mutateAsync();
             }}
+            onReorderQueue={reorderQueue}
+            queueItems={queueItems}
             sending={sending}
             uploading={attachmentDraft.uploading}
             key={displayedDetail.id}

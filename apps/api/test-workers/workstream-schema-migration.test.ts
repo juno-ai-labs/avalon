@@ -335,7 +335,17 @@ describe("work-stream schema migration in workerd", () => {
       ).one()).toEqual({ count: 0 });
       expect(state.storage.sql.exec(
         `SELECT version FROM _sql_schema_migrations WHERE version >= 33 ORDER BY version`,
-      ).toArray()).toEqual([{ version: 33 }]);
+      ).toArray()).toEqual(
+        WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS
+          .filter((migration) => migration.version >= 33)
+          .map((migration) => ({ version: migration.version })),
+      );
+      const pendingImmutableSql = String(state.storage.sql.exec<{ sql: string | null }>(
+        `SELECT sql FROM sqlite_schema
+          WHERE type = 'trigger' AND name = 'pending_loop_inputs_prepared_immutable'`,
+      ).one().sql ?? "");
+      expect(pendingImmutableSql).toContain("BEFORE UPDATE OF");
+      expect(pendingImmutableSql).not.toMatch(/\binput_sequence\b/);
       expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
       expect(state.storage.sql.exec(`PRAGMA foreign_keys`).one()).toEqual({ foreign_keys: 1 });
     });

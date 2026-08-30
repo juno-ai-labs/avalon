@@ -344,6 +344,11 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     suggestionId: IdSchema, action: z.enum(["accepted", "dismissed"]) }).strict(),
   z.object({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema }).strict(),
+  z.object({
+    operation: z.literal("reorder_pending_inputs"),
+    auth: ProductAuthSchema,
+    inputIds: z.array(IdSchema),
+  }).strict(),
   z.object({ operation: z.literal("stop"), auth: ProductAuthSchema }).strict(),
   z.object({ operation: z.literal("retry"), auth: ProductAuthSchema }).strict(),
 ]);
@@ -2334,6 +2339,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }
         await this.flushSemanticRealtimeOutboxBestEffort();
         return jsonResponse({ elicitation: result.elicitation });
+      }
+      if (request.operation === "reorder_pending_inputs") {
+        const result = await this.product.reorderPendingInputs(current, request.inputIds);
+        await this.flushSemanticRealtimeOutboxBestEffort();
+        return jsonResponse(result);
       }
       if (request.operation === "stop") {
         await this.product.stop(current);
