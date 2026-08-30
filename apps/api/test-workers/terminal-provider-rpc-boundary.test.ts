@@ -34,4 +34,23 @@ describe("Terminal provider Service Binding RPC protocol", () => {
       },
     });
   });
+
+  it("retains one RpcTarget session across multiple provider calls", async () => {
+    const session = await binding.createCounterSession();
+    try {
+      await expect(session.next()).resolves.toBe(1);
+      await expect(session.next()).resolves.toBe(2);
+    } finally {
+      session[Symbol.dispose]();
+    }
+  });
+
+  it("retains session instrumentation callbacks after session creation returns", async () => {
+    const session = await binding.createCallbackSession(async (value) => `observed:${value}`);
+    try {
+      await expect(session.call("sandbox.get")).resolves.toBe("observed:sandbox.get");
+    } finally {
+      session[Symbol.dispose]();
+    }
+  });
 });

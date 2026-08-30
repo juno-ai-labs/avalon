@@ -11,6 +11,7 @@ import type {
   SupportedTerminalConfiguration,
   TerminalProviderRpcBinding,
   TerminalProviderRpcResult,
+  TerminalProviderRpcSession,
 } from "../src/services/terminal/provider-rpc-contract";
 import { TerminalToolError } from "../src/services/terminal/tools";
 
@@ -34,8 +35,8 @@ function success<T>(value: T): TerminalProviderRpcResult<T> {
   return { ok: true, value };
 }
 
-function rpcBinding(overrides: Partial<TerminalProviderRpcBinding> = {}): TerminalProviderRpcBinding {
-  return {
+function rpcBinding(overrides: Partial<TerminalProviderRpcSession> = {}): TerminalProviderRpcBinding {
+  const session: TerminalProviderRpcSession = {
     createSandbox: vi.fn(async () => success(snapshot)),
     prepareSandbox: vi.fn(async () => success(snapshot)),
     getSandbox: vi.fn(async () => success(snapshot)),
@@ -53,21 +54,21 @@ function rpcBinding(overrides: Partial<TerminalProviderRpcBinding> = {}): Termin
     cleanupCommand: vi.fn(async () => success(undefined)),
     ...overrides,
   };
+  return { createSession: vi.fn(async () => session) };
 }
 
 describe("Terminal provider RPC client", () => {
   it("delegates typed provider arguments and instrumentation callbacks", async () => {
     const observe = vi.fn();
-    const createSandbox = vi.fn<TerminalProviderRpcBinding["createSandbox"]>(
-      async (receivedConfiguration, input, callbacks) => {
-        expect(receivedConfiguration).toEqual(configuration);
+    const createSandbox = vi.fn<TerminalProviderRpcSession["createSandbox"]>(
+      async (input) => {
         expect(input.stableName).toBe("terminal-1");
-        expect(callbacks?.observe).toBe(observe);
         return success(snapshot);
       },
     );
+    const binding = rpcBinding({ createSandbox });
     const provider = createTerminalProviderRpcClient(
-      rpcBinding({ createSandbox }),
+      binding,
       configuration,
       { observe },
     );
@@ -81,14 +82,34 @@ describe("Terminal provider RPC client", () => {
       environment: {},
     })).resolves.toEqual(snapshot);
     expect(createSandbox).toHaveBeenCalledOnce();
+    expect(binding.createSession).toHaveBeenCalledWith(configuration, { observe });
+  });
+
+  it("keeps one provider session for the client's whole harness run", async () => {
+    const getSandbox = vi.fn<TerminalProviderRpcSession["getSandbox"]>(
+      async () => success(snapshot),
+    );
+    const readFile = vi.fn<TerminalProviderRpcSession["readFile"]>(
+      async () => success(new Uint8Array([1, 2, 3])),
+    );
+    const binding = rpcBinding({ getSandbox, readFile });
+    const provider = createTerminalProviderRpcClient(binding, configuration);
+
+    await expect(provider.getSandbox("sandbox-1")).resolves.toEqual(snapshot);
+    await expect(provider.readFile("sandbox-1", "/workspace/result.txt"))
+      .resolves.toEqual(new Uint8Array([1, 2, 3]));
+
+    expect(binding.createSession).toHaveBeenCalledOnce();
+    expect(getSandbox).toHaveBeenCalledOnce();
+    expect(readFile).toHaveBeenCalledOnce();
   });
 
   it("carries submission fences and cancellation without serializing an AbortSignal", async () => {
     const controller = new AbortController();
     const assertSubmissionAuthority = vi.fn(async () => undefined);
     const onSubmitted = vi.fn(async () => undefined);
-    const runCommand = vi.fn<TerminalProviderRpcBinding["runCommand"]>(
-      async (_configuration, _idOrName, input, callbacks) => {
+    const runCommand = vi.fn<TerminalProviderRpcSession["runCommand"]>(
+      async (_idOrName, input, callbacks) => {
         expect(input).not.toHaveProperty("signal");
         await expect(callbacks?.assertSubmissionAuthority?.()).resolves.toEqual({ ok: true });
         await expect(callbacks?.onSubmitted?.("provider-task-1")).resolves.toEqual({ ok: true });
@@ -115,8 +136,8 @@ describe("Terminal provider RPC client", () => {
   });
 
   it("lets the provider close a pending cancellation callback after success", async () => {
-    const writeFile = vi.fn<TerminalProviderRpcBinding["writeFile"]>(
-      async (_configuration, _idOrName, _path, _bytes, callbacks) => {
+    const writeFile = vi.fn<TerminalProviderRpcSession["writeFile"]>(
+      async (_idOrName, _path, _bytes, callbacks) => {
         const outcome = callbacks?.waitForAbort?.();
         await callbacks?.finishAbortWait?.();
         await expect(outcome).resolves.toBe("finished");
@@ -136,8 +157,8 @@ describe("Terminal provider RPC client", () => {
   it("reports a signal that was already cancelled before the RPC begins", async () => {
     const controller = new AbortController();
     controller.abort();
-    const writeFile = vi.fn<TerminalProviderRpcBinding["writeFile"]>(
-      async (_configuration, _idOrName, _path, _bytes, callbacks) => {
+    const writeFile = vi.fn<TerminalProviderRpcSession["writeFile"]>(
+      async (_idOrName, _path, _bytes, callbacks) => {
         expect(callbacks?.initiallyAborted).toBe(true);
         await expect(callbacks?.waitForAbort?.()).resolves.toBe("aborted");
         await callbacks?.finishAbortWait?.();
@@ -159,7 +180,7 @@ describe("Terminal provider RPC client", () => {
       async () => { throw Object.assign(new Error("sandbox missing"), { status: 404 }); },
     ));
     const provider = createTerminalProviderRpcClient(rpcBinding({
-      readFile: vi.fn<TerminalProviderRpcBinding["readFile"]>(async () => transported),
+      readFile: vi.fn<TerminalProviderRpcSession["readFile"]>(async () => transported),
     }), configuration);
 
     const error = await provider.readFile("missing", "/workspace/file").catch((caught) => caught);
@@ -171,8 +192,8 @@ describe("Terminal provider RPC client", () => {
       "command_recovery_unavailable",
       "submission authority expired",
     );
-    const runCommand = vi.fn<TerminalProviderRpcBinding["runCommand"]>(
-      async (_configuration, _idOrName, _input, callbacks) => {
+    const runCommand = vi.fn<TerminalProviderRpcSession["runCommand"]>(
+      async (_idOrName, _input, callbacks) => {
         return terminalProviderRpcCall(async () => {
           await requireTerminalProviderRpcCallback(callbacks!.assertSubmissionAuthority!());
           return { exitCode: 0, stdout: "", stderr: "" };
