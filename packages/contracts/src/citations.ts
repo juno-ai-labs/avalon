@@ -270,17 +270,22 @@ function asCitation(content: string): FootnoteCitation | null {
  * is the link form. Only the card is the "here is the document" announcement
  * the inspector auto-opens onto. This scan is the same question the rewrite
  * asks — outside code, with the same inline-link grammar — so a card the
- * desktop draws is one this function names, and a sample inside a fence is
- * not. A malformed target is omitted: the renderer degrades it to label
- * text, and there is no card to open.
+ * desktop draws is one this function names, and a sample inside a fence or
+ * a footnote definition is not. Definitions are stripped first, the way
+ * the rewrite does, so `[^1]: ![Deck](resource://id)` cannot masquerade
+ * as an announcement. A malformed target is omitted: the renderer degrades
+ * it to label text, and there is no card to open.
  *
  * Order is document order. A caller that wants "the last one" reads the
  * last element; this does not decide which announcement wins.
  */
 export function embeddedResourceCitations(markdown: string): readonly { readonly resourceId: string }[] {
   const found: { resourceId: string }[] = [];
-  mapOutsideCode(markdown, (segment) => {
+  mapOutsideCode(stripFootnoteDefinitions(markdown), (segment) => {
     for (const match of segment.matchAll(INLINE_LINK)) {
+      // An escaped bang is a chip, not a card: CommonMark renders `\![Title](…)`
+      // as a literal `!` plus a link. The regex still sees the `![` substring.
+      if (match.index !== undefined && match.index > 0 && segment[match.index - 1] === "\\") continue;
       if (!match[0].startsWith("!")) continue;
       const target = parseCitationHref(match[2]);
       if (target.scheme === "resource") found.push({ resourceId: target.resourceId });
