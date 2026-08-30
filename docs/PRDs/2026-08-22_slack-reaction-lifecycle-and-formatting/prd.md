@@ -1,5 +1,12 @@
 # Slack reaction lifecycle and message formatting
 
+> **Historical design note (2026-08-29):** This PRD records the delivery paths
+> that existed when the formatting work was specified. Rally no longer calls
+> `chat.startStream` or `chat.appendStream`; external result content is posted
+> only after a canonical turn is saved and reloaded. See
+> [`slack-integration.md`](../../slack-integration.md#changelog) for the current
+> invariant.
+
 > Created 2026-08-22.
 >
 > Rally's Slack presence gains a reaction that tracks a run from acknowledgement

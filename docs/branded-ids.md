@@ -82,7 +82,9 @@ which would discard UUID validation for actual entities.
 
 **Consequences:** Entity brands remain UUID-backed. Any field whose meaning is
 "canonical transcript turn" uses the named opaque schema, even when its current
-producer happens to emit a UUID.
+producer happens to emit a UUID. The schema does not impose an invented length
+ceiling on an opaque key; storage uses `TEXT`, and producer-specific bounds stay
+at the producer boundary.
 
 ### 2026-08-26 — Connector processing removes its external Workflow ID
 

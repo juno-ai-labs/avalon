@@ -1341,12 +1341,14 @@ export class SlackAgentService {
       // this runs on every terminal status, so the message ends up correct even
       // when the ticker never started or was lost mid-run.
       await this.applyOutcomeReaction(session, connection, token, outcomeStatus);
-      await (await this.workspaceDirectory(workspaceId)).setSlackSessionStream({
-        workspaceId,
-        sessionId: session.id,
-        streamTs: null,
-        at: nowIso(),
-      });
+      if (session.slack_stream_ts) {
+        await (await this.workspaceDirectory(workspaceId)).setSlackSessionStream({
+          workspaceId,
+          sessionId: session.id,
+          streamTs: null,
+          at: nowIso(),
+        });
+      }
     }
     if (deliveryError) throw deliveryError;
   }

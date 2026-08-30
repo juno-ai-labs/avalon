@@ -1473,9 +1473,12 @@ workers tests that still use plain `CREATE TABLE` can still cascade that way.
 ### 2026-08-29 — Terminal projections read one canonical turn by identity
 
 **What changed:** `WorkstreamObjectProductService.messageForRuntime` hydrates
-one participant-visible canonical turn by its opaque transcript ID. Agent-run
-settlement uses it before any external-platform delivery, and refuses a terminal
-outcome that names a turn the transcript cannot read.
+one participant-visible canonical turn by its opaque transcript ID, while
+`openElicitationMessageForRuntime` resolves a pending question through the
+canonical turn it created. Agent-run settlement uses those reads before any
+external-platform delivery. A terminal outcome that names an unreadable turn
+retains `agent_final_turn_not_saved` as a diagnostic, settles provider status,
+and emits no result body instead of retrying forever.
 
 **Why:** The previous path loaded the newest 250 messages and parsed each through
 a UUID-only message schema before searching for `finalTurnId`. Structured
@@ -1487,10 +1490,10 @@ a recent-page scan is the wrong authority query for an exact terminal key.
 stream checkpoint. A limit only moves the transcript-length failure, while the
 checkpoint is transient output and cannot authorize an external write.
 
-**What a future change has to respect:** Exact terminal identity is the only
-join from run settlement to participant-visible content. External replies,
-comments, notifications, and automation result bodies must remain downstream
-of that saved-turn read.
+**What a future change has to respect:** A hydrated canonical turn is the only
+source of participant-visible external content. External replies, comments,
+notifications, and automation result bodies must remain downstream of that
+saved-turn read.
 
 ### 2026-08-29 — The origin label is a question to WorkspaceDO, not SQL through the facade
 
