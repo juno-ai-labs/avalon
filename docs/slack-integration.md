@@ -799,6 +799,108 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
+### 2026-08-29 — The agent-session lifecycle became typed WorkspaceDO methods
+
+**What changed:** Thirteen more typed methods on WorkspaceDO
+(`workspace-slack-protocol.ts` / `workspace-slack-storage.ts`): reading a
+session by id, by thread, or by work stream; the interaction preflight;
+creating one; seating a member across every workspace-scoped session a Slack
+user owns; the delivery key and the stream pointer; the status reaction's
+compare-and-set and its re-anchor; the App Home context; and interaction
+feedback. `SlackAgentService` calls them instead of sending nineteen statements
+through the workspace runtime facade, and `slack_agent_sessions`,
+`slack_agent_contexts`, and `slack_agent_feedback` join
+`WORKSPACE_TYPED_RPC_ONLY_TABLES`, so a generic statement naming one of them is
+now refused by name rather than executed. Still on the facade, deliberately:
+delivery preferences, agent policies, user links, the link-challenge mint and
+redeem flow, unfurls, and everything joining `connector_connections`.
+
+**Why:** The routing hazard part 1 describes is unchanged — a typed method
+cannot be routed to the wrong database — but two of this area's decisions were
+also being made from `meta.changes`, the physical-write counter
+[`docs/durable-object-sqlite.md`](durable-object-sqlite.md) forbids deciding a
+logical outcome from. Both statements were otherwise correct, and their
+predicates are carried forward unchanged; what moved is how each one's outcome
+is decided.
+
+Seating was the worse of the two. The service read the sessions an email match
+could claim and then updated them, as two statements over the same predicate,
+and took the count it reported from the update's `meta.changes`. A session
+seated between the two reads was reconciled against a snapshot that no longer
+described it, and one created between them was updated without being reconciled
+at all. `assignSlackSessions` runs both inside one `transactionSync` and answers
+with the previous holder and method each row actually moved *from* — which
+`reconcileSlackWorkstreamIdentity` needs, and which `RETURNING` cannot give,
+since it yields the new row.
+
+The status reaction is a compare-and-set that spans a Slack API call, so it
+cannot be one transaction; what it can be is honest about whether it won. The
+predicate was already right — `reaction_current IS ?`, with `IS` rather than `=`
+because NULL is a real state meaning Rally has placed nothing — and it is kept
+verbatim. What was wrong is that `slack_outcome_reaction_raced` was logged when
+`meta.changes` came back zero, and `meta.changes` is `rowsWritten`: index
+maintenance inflates it, so it cannot establish which transition won even when
+the predicate matches exactly the right row. `settleSlackSessionReaction`
+returns the updated row as a witness and reports `raced` as that witness's
+absence.
+
+Feedback is the milder case, and it is worth being precise about: the insert
+already carried `ON CONFLICT(ingress_job_id) DO NOTHING` and was right to. It
+simply discarded the result, so a redelivered submission and a first rating were
+indistinguishable to the caller. `recordSlackFeedback` returns which one
+happened, and the service logs `slack_feedback_replayed` on the replay — the
+only use that outcome has, and the reason for returning it rather than leaving
+another value nobody reads.
+
+**Considered and rejected:** Patching the Node fixtures row by row so that the
+converted assertions kept passing. The unit of coherence is the fixture, not
+the row: a test that seeds `slack_agent_sessions` in its regional fixture and
+seats them through the object is asserting on a database the write never
+reaches, and passes only while nothing reads the row back. The three tests that
+covered this area moved wholesale onto a real `createTestWorkspaceDO`, with the
+sessions — and the `connector_connections` row their foreign key requires — in
+the object's own store.
+
+**Consequences:** These three tables are refused by name now, so a new generic
+statement naming one fails loudly at the object rather than executing against
+storage nobody meant to reach generically; new session state belongs in the
+protocol and storage files. Four Slack tables are deliberately *not* on that
+list — `slack_ingress_jobs`, `slack_agent_thread_claims`,
+`slack_agent_pending_prompts`, and `slack_link_challenges` — because the
+schedule's alarm-target derivation in `workspace-schedule-execution.ts` still
+reads their due times generically through this object's local executor,
+alongside the other alarm sources.
+
+None of the three tables is an alarm source, so unlike the ingress spine's
+mutations these methods deliberately do not call `refreshScheduleAfterSlackWrite`
+— there is no target whose due time they could stale. That stops being true the
+moment a schedule target reads one of them.
+
+The feedback modal's `private_metadata` is checked against
+`z.string().uuid()` before it reaches a typed method
+(`slackModalWorkstreamId`). The generic statement this replaced simply matched
+no row for a malformed value and fell into the modal's "this task is no longer
+available" branch; `IdSchema` would instead fail the parse inside the object and
+surface as a 500 with no modal response. Rally writes that field itself, so this
+is a guard on a case that should not arise — but it is a strictly worse failure
+mode than the one it replaced, and the graceful branch is worth keeping
+reachable.
+
+`assignWorkspaceWorkstreamsForMember` seats each Slack connection inside its own
+`try`, separate from the one around the Slack email lookup. The two must stay
+separate in both directions. Sharing the lookup's `catch` reported a WorkspaceDO
+write failure as `slack_member_assignment_lookup_failed` and returned a success
+count for seating that never happened; sharing the loop's exit instead — letting
+the write throw — abandons every remaining connection in a workspace over one
+transient object error, where only the failing connection should be skipped. The
+seating `catch` logs `slack_member_assignment_seating_failed` and continues, so
+the diagnosis is separable and the blast radius is one connection. The count this
+returns is discarded by its only caller, which already logs at `warn`, so the
+value of the split is entirely in which event name fires and how much of the loop
+survives — not in what the count says.
+
+Shipped in the facade-to-RPC stack, 9/9 part 2.
+
 ### 2026-08-29 — The ingress spine became typed WorkspaceDO methods
 
 **What changed:** Admitting an ingress job, claiming it for processing,
