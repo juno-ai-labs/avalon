@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { CitationTarget } from '@rally/contracts/citations';
 import { describe, expect, it, vi } from 'vitest';
 import { CitationFootnoteSection, CitationsProvider } from './markdown-citations';
@@ -55,6 +55,61 @@ describe('resource citations', () => {
     expect(card.closest('p')?.textContent).toBe(card.textContent);
     expect(screen.getByText('Published the review.').contains(card)).toBe(false);
     expect(screen.queryByRole('img')).toBeNull();
+    // A lone embed is not a run: it keeps its paragraph, not a row of one.
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+  });
+
+  it('merges consecutive embed cards into one scrollable row', () => {
+    render(
+      <MarkdownBody citations={context()}>
+        {'Two artifacts came out of this.\n\n![The deck](resource://board-deck)\n\n![The deck again](resource://board-deck)\n\nBoth are attached.'}
+      </MarkdownBody>,
+    );
+
+    const row = document.querySelector('.citation-card-row');
+    expect(row).not.toBeNull();
+    expect(row!.querySelectorAll('.citation-card')).toHaveLength(2);
+    // The row replaces the run's paragraphs outright: no card is left behind
+    // in a paragraph of its own, and the prose around the run is untouched.
+    expect(document.querySelectorAll('.citation-card')).toHaveLength(2);
+    expect(row!.closest('p')).toBeNull();
+    expect(screen.getByText('Two artifacts came out of this.')).toBeInTheDocument();
+    expect(screen.getByText('Both are attached.')).toBeInTheDocument();
+  });
+
+  it('leaves a run of embeds alone when they render as text rather than as cards', () => {
+    const run = 'Two of them.\n\n![The deck](resource://board-deck)\n\n![The other deck](resource://board-deck)\n\nBoth above.';
+
+    // No citation context at all — the five surfaces that render MarkdownBody
+    // this way (the block dashboard, note detail, meeting notes, the automation
+    // draft) show a `resource://` image as its label text. Grouping those would
+    // lay a run of sentences out side by side in a horizontal scroller.
+    const { unmount } = render(<MarkdownBody>{run}</MarkdownBody>);
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+    expect(document.body).toHaveTextContent('The deck');
+    unmount();
+
+    // Same again with a context that cannot resolve them: the matrix renders
+    // label text for these too, so there is still no row to make.
+    render(
+      <MarkdownBody citations={context({ resolve: () => undefined })}>{run}</MarkdownBody>,
+    );
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+    expect(document.querySelector('.citation-card')).toBeNull();
+  });
+
+  it('stops a run at a neighbour the matrix draws as something else', () => {
+    render(
+      <MarkdownBody citations={context()}>
+        {'![The deck](resource://board-deck)\n\n![A chart](https://example.com/c.png)\n\n![The deck again](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    // A real image between two embeds is not part of the run: grouping across
+    // it would put an `img` inside a row of cards and reorder the message.
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+    expect(document.querySelectorAll('.citation-card')).toHaveLength(2);
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://example.com/c.png');
   });
 
   it('reads a resource kind as words rather than as its system identifier', () => {
@@ -108,6 +163,72 @@ describe('resource citations', () => {
     // anchor: an id the allowlist rejected must not reach the DOM as a target.
     expect(document.body).toHaveTextContent('A walk and an empty.');
     expect(document.body.innerHTML).not.toContain('resource:');
+  });
+
+  it('shows the resource\'s converted markdown in the card, under a shimmering skeleton while it converts', async () => {
+    let deliver: (text: string) => void = () => undefined;
+    const preview = vi.fn(() => new Promise<string>((resolve) => { deliver = resolve; }));
+    render(
+      <MarkdownBody citations={context({ preview })}>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    // The card is asking, so the room holds a skeleton and not an empty box.
+    expect(document.querySelector('.citation-card-preview-skeleton')).not.toBeNull();
+    expect(document.querySelector('.citation-card-preview')).toBeNull();
+    expect(preview).toHaveBeenCalledWith('board-deck');
+
+    // The derivative is what shows — the markdown a Word file was converted
+    // into, not its bytes.
+    await act(async () => { deliver('## Revenue\n\nUp 14% on the quarter.'); });
+
+    const excerpt = document.querySelector('.citation-card-preview');
+    expect(excerpt).not.toBeNull();
+    expect(excerpt).toHaveTextContent('Up 14% on the quarter.');
+    // The heading's words survive; its hashes do not. At label size they are
+    // two characters of noise spending one of four clamped lines.
+    expect(excerpt).toHaveTextContent('Revenue');
+    expect(excerpt!.textContent).not.toContain('#');
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
+    // A preview is presentation: the button still announces the title alone.
+    expect(excerpt).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('button', { name: 'Open Q3 board deck' })).toBeInTheDocument();
+  });
+
+  it('keeps the card\'s empty room when a preview is unavailable or not offered', async () => {
+    const failing = vi.fn(() => Promise.reject(new Error('not convertible')));
+    const { unmount } = render(
+      <MarkdownBody citations={context({ preview: failing })}>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+    await act(async () => { await Promise.resolve(); });
+
+    // A rejection reads the same as no preview at all: no skeleton left
+    // spinning, no error text inside a card that is a button.
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
+    expect(document.querySelector('.citation-card-preview')).toBeNull();
+    expect(document.querySelector('.citation-card')).not.toBeNull();
+    unmount();
+
+    // A host offering no preview at all never leaves a skeleton behind.
+    render(
+      <MarkdownBody citations={context()}>{'![Q3 board deck](resource://board-deck)'}</MarkdownBody>,
+    );
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
+  });
+
+  it('asks for no preview in a still, which would keep a skeleton forever', () => {
+    const preview = vi.fn(() => new Promise<string>(() => undefined));
+    render(
+      <MarkdownBody citations={context({ preview })} still>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    expect(preview).not.toHaveBeenCalled();
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
   });
 
   it('renders citations as plain text on a surface that cannot open one', () => {
