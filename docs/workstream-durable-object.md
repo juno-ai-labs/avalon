@@ -705,11 +705,15 @@ persistent loop next becomes idle; promotion wakes that same loop rather than
 creating another one. If failure or stop prevents a steer boundary, the input
 falls forward to the next idle activation and is never lost. Multiple inputs
 remain distinct; no later steer overwrites an earlier one.
-While the loop is executing, Electron exposes that choice beside Send and
-defaults each newly composed message to steer. The choice travels on the command
-and is painted back from the server-owned pending row as either **Will steer
-after this response** or **Queued for the next loop**; reconnect never infers it
-from local composer state.
+While the loop is executing, Electron always admits a newly composed message
+as `queue`. Slack and other external producers still send `steer` when they
+mean a safe-step interruption. The pending set is painted as a list attached
+to the top of the composer — slightly inset, overlapping the input — with the
+author's avatar and a hover drag handle. Reorder is a REST `PUT` of the full
+visible `inputIds` list; the object permutes existing `input_sequence` values
+and fans `loop_input_upserted` to every connected viewer. Prepared content
+stays immutable. Reconnect never infers delivery mode or order from local
+composer state.
 
 Promotion is one object-local transaction that validates the loop fence,
 creates the immutable canonical participant turn with its exact fact,
@@ -720,9 +724,11 @@ activity, mention, and non-duplicate participant effects in `durable_outbox`.
 A crash can therefore observe none of the canonical turn, delivery receipt,
 and effect intents, or all of them. The loop owner persists the corresponding
 Bind transition before crossing the next provider boundary.
-Rows in `pending_loop_inputs` are immutable and exist only while pending. A changed
-request is a new ordered input; it does not rewrite or silently cancel the
-earlier one. Canonical turns are immutable afterwards; `delivered_loop_inputs`
+Prepared fields on `pending_loop_inputs` are immutable and exist only while
+pending. `input_sequence` is the exception: it is the live promotion order a
+drag rewrites. A changed request is still a new ordered input; it does not
+rewrite or silently cancel the earlier one's content. Canonical turns are
+immutable afterwards; `delivered_loop_inputs`
 retains only the input-to-turn replay identity and allocated delivery ordinals.
 
 ### Compaction and concurrent messages
@@ -1435,6 +1441,37 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-30 — Pending queue order is live, and in-flight Electron sends default to queue
+
+**What changed:** Schema v34 recreates `pending_loop_inputs_prepared_immutable`
+without `input_sequence` in `UPDATE OF`, so a drag can permute promotion order
+while prepared content stays frozen. `SubstreamLoopStorage.reorderPendingInputs`
+takes the full visible id list, ignores already-delivered ids, keeps unnamed
+visible rows behind the named ones, and does not bump loop revision or consume
+`next_input_sequence`. REST `PUT /workstreams/:id/pending-inputs` is the
+mutation; `loop_input_upserted` is the fan-out. Electron drops the steer/queue
+dropdown while a loop is running, always sends `queue`, and paints pending
+rows (plus an optimistic send) as an attached list on the composer with the
+author's avatar and a hover drag handle. Slack still defaults to `steer`.
+
+**Why:** The dropdown made "interrupt this response" the default of a control
+almost nobody needed, and the pending pills lived in the transcript — away
+from the composer a second person uses to add to the same queue. Order had
+to be live across viewers; that is a sequence rewrite, not a second input.
+
+**Considered and rejected:** Keeping steer as the Electron default and only
+changing the label. The request was to default to queue and remove the
+choice while a loop is in flight. Also rejected: bumping loop revision on
+reorder, which would trip in-flight execution fences. Also rejected:
+sorting the composer list by socket `eventSequence`, which is room order,
+not FIFO.
+
+**What a future change has to respect:** Hidden pending rows behind a
+preparing mailbox head keep the sequences they already hold. Temporary
+values during the two-phase unique swap come from `next_input_sequence`
+without consuming it. Prepared columns remain in the immutability trigger.
+Do not edit shipped v33.
 
 ### 2026-08-30 — Facepile order is join time, not overlay recency
 

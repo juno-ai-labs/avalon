@@ -18,7 +18,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 33;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 34;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2652,6 +2652,14 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
          CHECK (transcript_sequence > 0)`,
     ],
   },
+  {
+    version: 34,
+    description: "pending loop input sequence may be reordered while content stays immutable",
+    statements: [
+      `DROP TRIGGER IF EXISTS pending_loop_inputs_prepared_immutable`,
+      pendingLoopInputsPreparedImmutableTrigger(),
+    ],
+  },
 ];
 
 /**
@@ -3762,6 +3770,55 @@ function toolReceiptAuthorityPromotion(): string[] {
     ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
     ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
   ];
+}
+
+/**
+ * Prepared pending-input content stays immutable; `input_sequence` does not.
+ * Queue order is the one live mutation a pending row admits: a drag rewrites
+ * promotion order without minting a second input. `updated_at` is already
+ * outside this trigger.
+ */
+function pendingLoopInputsPreparedImmutableTrigger(): string {
+  return `CREATE TRIGGER pending_loop_inputs_prepared_immutable
+       BEFORE UPDATE OF
+         input_id, loop_id, prepared_turn_id,
+         admitted_after_transcript_sequence, mode,
+         actor, author_user_id, author_name_snapshot,
+         author_avatar_url_snapshot, client_message_id, external_actor_json,
+         message_type, prepared_payload_id, prepared_fact_id,
+         prepared_payload_audience, prepared_payload_media_type,
+         prepared_payload_json, prepared_payload_sha256,
+         prepared_payload_byte_length, bind_payload_json, provenance_json, authorization_json,
+         attachments_json, mentions_json, created_at
+       ON pending_loop_inputs
+       WHEN NEW.input_id IS NOT OLD.input_id
+         OR NEW.loop_id IS NOT OLD.loop_id
+         OR NEW.prepared_turn_id IS NOT OLD.prepared_turn_id
+         OR NEW.admitted_after_transcript_sequence IS NOT OLD.admitted_after_transcript_sequence
+         OR NEW.mode IS NOT OLD.mode
+         OR NEW.actor IS NOT OLD.actor
+         OR NEW.author_user_id IS NOT OLD.author_user_id
+         OR NEW.author_name_snapshot IS NOT OLD.author_name_snapshot
+         OR NEW.author_avatar_url_snapshot IS NOT OLD.author_avatar_url_snapshot
+         OR NEW.client_message_id IS NOT OLD.client_message_id
+         OR NEW.external_actor_json IS NOT OLD.external_actor_json
+         OR NEW.message_type IS NOT OLD.message_type
+         OR NEW.prepared_payload_id IS NOT OLD.prepared_payload_id
+         OR NEW.prepared_fact_id IS NOT OLD.prepared_fact_id
+         OR NEW.prepared_payload_audience IS NOT OLD.prepared_payload_audience
+         OR NEW.prepared_payload_media_type IS NOT OLD.prepared_payload_media_type
+         OR NEW.prepared_payload_json IS NOT OLD.prepared_payload_json
+         OR NEW.prepared_payload_sha256 IS NOT OLD.prepared_payload_sha256
+         OR NEW.prepared_payload_byte_length IS NOT OLD.prepared_payload_byte_length
+         OR NEW.bind_payload_json IS NOT OLD.bind_payload_json
+         OR NEW.provenance_json IS NOT OLD.provenance_json
+         OR NEW.authorization_json IS NOT OLD.authorization_json
+         OR NEW.attachments_json IS NOT OLD.attachments_json
+         OR NEW.mentions_json IS NOT OLD.mentions_json
+         OR NEW.created_at IS NOT OLD.created_at
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_prepared_fields_are_immutable');
+       END`;
 }
 
 /** Fast deterministic schema fingerprint; the value is evidence, not authority. */
