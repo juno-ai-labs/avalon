@@ -606,9 +606,11 @@ would have kept telling people the capability was missing after it was not.
 
 **Consequences:** EU sandbox files run on the same Daytona fleet as Global.
 Rally-owned Terminal rows, resource bytes, and GitHub tokens stay in the EU
-Worker. Runtime still degrades to `unsupported` if the EU `DAYTONA_API_KEY`
-or another required Daytona value is absent. Settings continues to read
-availability from the regional API rather than from hardcoded copy.
+Worker. EU uses the same Daytona project key as Global, set as its own Worker
+secret — Cloudflare cannot copy `DAYTONA_API_KEY` from Global. Runtime still
+degrades to `unsupported` if that EU secret (or another required Daytona
+value) is absent. Settings continues to read availability from the regional
+API rather than from hardcoded copy.
 
 ### 2026-08-29 — The revoked-import note check asks WorkspaceDO a typed question
 
