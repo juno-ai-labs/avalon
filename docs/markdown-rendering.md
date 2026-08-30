@@ -15,7 +15,9 @@ one of them silently missed the others; the changelog records what that cost.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, heading collapse, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. |
+| `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
+| `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that keeps an expanded section open while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the image-syntax announcement scan, and the plain-text rewrite that outbound email and Slack delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
@@ -78,6 +80,41 @@ than its surface scrolls inside its own box instead of widening the page. It
 counts the header row's cells and publishes the count as
 `--markdown-table-columns`, which the stylesheet uses to give the table a minimum
 width proportional to how many columns it actually has.
+
+### Heading collapse
+
+Every heading h2 and below is an accordion, one level deep. The section
+runs from that heading until the next heading of the same or higher rank
+(lower number). An h3 under an h2 is content of the h2, not a nested
+accordion — nested collapse is how a scan of the document becomes worse than
+the scroll it was meant to shorten. An h1 is never collapsible; it closes
+the open section and the title that follows waits as preamble until the next
+h2+. Headings inside code are ignored, through the same `markdownLineKinds`
+answer the streaming splitter already uses.
+
+Default is collapsed. The heading stays fully visible; the body shows
+approximately the first three line-heights of whatever follows — a
+paragraph, the top of a table, the start of a fence — behind a strong
+opacity mask so the content fades into the next heading rather than
+cutting off as a hard clip. The chevron sits in a left gutter, coloured
+with `sys.color.text.muted` (the receding control tone, the same token the
+citation chip's icon uses), and carries a tooltip. Clicking the heading or
+the chevron toggles the section.
+
+A glance is already a four-line clamp inside a button, and a still is a
+picture that cannot be toggled, so neither grows accordions. The exported
+card therefore prints the document in full, without chevrons.
+
+The collapse-all control lives in the agent-message header, immediately to
+the right of **Worked for**. It expands or collapses every section in that
+turn. New sections that stream in are collapsed regardless of that
+control's last action, because a heading that has only just arrived is the
+thing the reader has not chosen to open.
+
+Streaming keeps the existing settled-segment memo: complete sections
+render as memoised chunks, and only the last section's body goes through
+`splitStreamingMarkdown`. An expanded section stays expanded as its body
+grows.
 
 ### Mentions
 
@@ -372,7 +409,10 @@ DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an option
 `mentions` array, an optional `citations` context, and `glance` / `verbatim` /
 `still` / `streaming` flags — plus the citation matrix and `ResourceIcon`, which
 the inspector rail renders too so that one resource kind draws one glyph
-everywhere.
+everywhere. Heading collapse is on unless `glance` or `still` is set; the
+collapse-all control is a sibling in the agent-message header, not a
+`MarkdownBody` prop, and shares section ids with the body through
+`MarkdownCollapseController`.
 
 **It does not own where a citation goes.** The host supplies resolution and
 click routing as `CitationContext` (`lib/use-citations.ts` builds the
@@ -486,6 +526,7 @@ subsumes the others.
 pnpm --filter @rally/desktop exec vitest run src/renderer/styles/app.css.node.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/markdown-renderer.node.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
+pnpm --filter @rally/desktop exec vitest run src/renderer/lib/markdown-collapse.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/attachments.test.tsx
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/citations.test.tsx
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-citations.test.tsx
@@ -513,6 +554,45 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — Headings h2 and below collapse, with a three-line preview
+
+**What changed:** `MarkdownBody` turns every h2–h6 that is not nested under a
+higher-rank collapsible heading into an accordion. Default is collapsed. The
+heading stays in full; the body is clipped to about three line-heights with a
+strong opacity fade. A chevron in the left gutter, in `sys.color.text.muted`,
+carries a tooltip and toggles with a click on the heading. Nested headings
+(an h3 inside an h2) are not themselves collapsible. A glance and a still do
+not collapse. The agent-message header gained an expand/collapse-all control
+immediately to the right of **Worked for**. Streaming keeps the settled-segment
+memo: complete sections stay memoised, only the last section's body is the
+open tail, and an expanded section stays open as later headings arrive
+collapsed.
+
+**Why:** Long agent replies are structured as a sequence of topics. Reading
+one meant scrolling through every section in full, including the ones the
+reader had already decided were not the topic. Hiding the body entirely would
+make it impossible to tell a section from its title; a nested accordion under
+every h3 would recreate the scroll, one click deeper. The three-line preview
+is the compromise that lets a table or a paragraph identify itself without
+opening. Default-collapsed is the right first paint for a streaming reply,
+which would otherwise push the viewport by a full section on every heading
+that lands.
+
+**Considered and rejected:** wrapping with a rehype plugin inside a single
+`react-markdown` tree. That cannot span the streaming splitter's segment
+boundaries, so a heading in one settled chunk and its body in the next would
+not be one accordion. Splitting the source into sections first, then
+streaming only the last body, is what keeps the paced-reveal memo intact.
+`<details>` cannot show a faded preview of the first three lines.
+
+**What a future change has to respect:** do not nest accordions. The ids are
+`section-${index}` and must stay stable as the source grows, or an expanded
+section would snap shut when the next heading arrives. Do not put collapse
+on a glance or a still. The chevron colour is `text.muted`, not a hardcoded
+light-theme sample — that token is the receding control tone in every theme.
+The collapse-all control is a sibling of **Worked for**, not a prop on
+`MarkdownBody`, because the header is not inside the body.
 
 ### 2026-08-30 — The rail's document wraps to the panel, not to its own max-content
 

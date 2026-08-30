@@ -725,6 +725,7 @@ describe('MessageBlock markdown', () => {
     render(<MessageBlock {...actions} message={markdownMessage} />);
 
     expect(screen.getByRole('heading', { name: 'Harness API' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand section' }));
     expect(screen.getByRole('link', { name: 'docs/bind.md' })).toHaveAttribute('rel', 'noopener noreferrer');
     expect(screen.getByRole('link', { name: 'docs/bind.md' })).toHaveAttribute('target', '_blank');
     expect(screen.getByText('load_tool_group')).toHaveClass('markdown-inline-code');
@@ -1238,5 +1239,104 @@ describe('MarkdownBody streaming mode', () => {
     expect([...settledBody.querySelectorAll('li')].map((item) => item.textContent?.trim()))
       .toEqual(['first', 'second', 'third']);
     expect(settledBody.querySelectorAll('ol')).toHaveLength(1);
+  });
+});
+
+describe('MarkdownBody heading collapse', () => {
+  const markdown = [
+    'Lead paragraph.',
+    '',
+    '## Alpha',
+    '',
+    'First section body that is long enough to preview.',
+    '',
+    '### Nested',
+    '',
+    'This nested heading must not be its own accordion.',
+    '',
+    '## Beta',
+    '',
+    'Second section body.',
+    '',
+  ].join('\n');
+
+  it('collapses every h2 by default and leaves a nested h3 without a chevron', () => {
+    const { container } = render(<MarkdownBody>{markdown}</MarkdownBody>);
+    const sections = container.querySelectorAll('.markdown-collapse');
+    expect(sections).toHaveLength(2);
+    expect([...sections].every((section) => section.classList.contains('is-collapsed'))).toBe(true);
+    expect(screen.getAllByRole('button', { name: 'Expand section' })).toHaveLength(2);
+    const nested = container.querySelector('h3');
+    expect(nested).toHaveTextContent('Nested');
+    expect(nested).not.toHaveClass('markdown-collapse-heading');
+    expect(nested?.querySelector('.markdown-collapse-chevron')).toBeNull();
+    expect(sections[0]!.querySelector('.markdown-collapse-body')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('toggles a section from the heading and from the chevron', () => {
+    const { container } = render(<MarkdownBody>{markdown}</MarkdownBody>);
+    const [first, second] = container.querySelectorAll('.markdown-collapse');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Expand section' })[0]!);
+    expect(first).toHaveClass('is-expanded');
+    expect(second).toHaveClass('is-collapsed');
+    fireEvent.click(container.querySelector('h2')!);
+    expect(first).toHaveClass('is-collapsed');
+  });
+
+  it('does not collapse a glance or a still', () => {
+    const glance = render(<MarkdownBody glance>{markdown}</MarkdownBody>);
+    expect(glance.container.querySelector('.markdown-collapse')).toBeNull();
+    glance.unmount();
+    const still = render(<MarkdownBody still>{markdown}</MarkdownBody>);
+    expect(still.container.querySelector('.markdown-collapse')).toBeNull();
+    expect(still.container.querySelector('h2')).toHaveTextContent('Alpha');
+  });
+
+  it('keeps an expanded section open while a later heading streams in collapsed', () => {
+    const first = '## Alpha\n\nFirst section body.\n';
+    const { container, rerender } = render(<MarkdownBody streaming>{first}</MarkdownBody>);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand section' }));
+    expect(container.querySelector('.markdown-collapse')).toHaveClass('is-expanded');
+    rerender(<MarkdownBody streaming>{`${first}\n## Beta\n\nSecond section body.\n`}</MarkdownBody>);
+    const sections = container.querySelectorAll('.markdown-collapse');
+    expect(sections).toHaveLength(2);
+    expect(sections[0]).toHaveClass('is-expanded');
+    expect(sections[1]).toHaveClass('is-collapsed');
+  });
+});
+
+describe('MessageBlock heading collapse control', () => {
+  it('places a collapse-all control to the right of Worked for and toggles every section', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'agent-one',
+      authorType: 'agent',
+      author: undefined,
+      text: '## Alpha\n\nFirst.\n\n## Beta\n\nSecond.\n',
+      workSummary: { durationMs: 83_000 },
+    };
+    const { container } = render(<MessageBlock {...actions} message={message} />);
+    expect(screen.getByText('Worked for 1m 23s')).toBeInTheDocument();
+    const header = container.querySelector('.message-block > header')!;
+    const summary = header.querySelector('.message-work-summary');
+    const toggle = screen.getByRole('button', { name: 'Expand all sections' });
+    expect(summary?.nextElementSibling).toBe(toggle);
+    expect(container.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(2);
+    fireEvent.click(toggle);
+    expect(container.querySelectorAll('.markdown-collapse.is-expanded')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Collapse all sections' })).toBeInTheDocument();
+  });
+
+  it('hides the collapse-all control when the turn has no collapsible headings', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'agent-plain',
+      authorType: 'agent',
+      author: undefined,
+      text: 'A paragraph with no headings.',
+      workSummary: { durationMs: 1_000 },
+    };
+    render(<MessageBlock {...actions} message={message} />);
+    expect(screen.queryByRole('button', { name: 'Expand all sections' })).toBeNull();
   });
 });

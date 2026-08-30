@@ -21,7 +21,7 @@ import {
   TerminalSquare,
   X,
 } from 'lucide-react';
-import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Children, Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import { citationFootnotes, citationScheme } from '@rally/contracts/citations';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
@@ -33,14 +33,26 @@ import { logError } from '../../common/logger';
 import { messageExportDate, messageExportFileName, type MessageExportFormat } from '../../common/message-export';
 import { formatDuration, formatRelative } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
+import { splitCollapsibleMarkdown } from '../lib/markdown-collapse';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
-import { reportTelemetryProductIntent } from '../lib/telemetry';
-import { useTextClamped } from '../lib/use-text-clamped';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
+import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
+import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
+import {
+  MarkdownCollapseAllButton,
+  MarkdownCollapseController,
+  MarkdownCollapseH2,
+  MarkdownCollapseH3,
+  MarkdownCollapseH4,
+  MarkdownCollapseH5,
+  MarkdownCollapseH6,
+  MarkdownCollapseSection,
+  useMarkdownCollapse,
+} from './markdown-collapse';
 import {
   CitationFootnoteItem,
   CitationFootnoteSection,
@@ -747,6 +759,16 @@ export function MarkdownBody({
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
   }), [glance, mentions, messageId, token, workstreamId]);
+  // Heading overrides are a second map so a nested h3 in a section body does
+  // not grow a chevron: only the section's own heading markdown uses these.
+  const headingComponents = useMemo<MarkdownComponents>(() => ({
+    ...components,
+    h2: MarkdownCollapseH2,
+    h3: MarkdownCollapseH3,
+    h4: MarkdownCollapseH4,
+    h5: MarkdownCollapseH5,
+    h6: MarkdownCollapseH6,
+  }), [components]);
   // A settled body's element is reused whenever the markdown has not changed,
   // so a commit elsewhere on the screen — another message streaming at 60
   // commits a second included — skips this subtree instead of re-parsing it.
@@ -762,53 +784,122 @@ export function MarkdownBody({
       : NO_REHYPE_PLUGINS),
     [citations],
   );
+  const collapseParts = useMemo(() => {
+    // A glance is already clamped; a still is a picture that cannot be
+    // toggled. A document with no collapsible heading keeps the single-parse
+    // path so streaming's settled/streaming DOM still match.
+    if (glance || still || markdown === '') return null;
+    const parts = splitCollapsibleMarkdown(markdown);
+    return parts.some((part) => part.type === 'section') ? parts : null;
+  }, [glance, markdown, still]);
+  const collapseSectionIds = useMemo(
+    () => collapseParts?.flatMap((part) => (part.type === 'section' ? [part.id] : [])) ?? [],
+    [collapseParts],
+  );
+  const hostedCollapse = useMarkdownCollapse();
   const rendered = useMemo(() => {
-    if (!streaming) {
+    const renderMarkdown = (source: string, extra: MarkdownComponents = components): React.JSX.Element => (
+      <ReactMarkdown
+        components={extra}
+        rehypePlugins={rehypePlugins}
+        remarkPlugins={REMARK_PLUGINS}
+        remarkRehypeOptions={rehypeOptions}
+        urlTransform={urlTransform}
+      >
+        {source}
+      </ReactMarkdown>
+    );
+    const renderStreaming = (source: string, extra: MarkdownComponents = components): React.JSX.Element => {
+      const { settled, tail } = splitStreamingMarkdown(source);
       return (
-        <ReactMarkdown
-          components={components}
-          rehypePlugins={rehypePlugins}
-          remarkPlugins={REMARK_PLUGINS}
-          remarkRehypeOptions={rehypeOptions}
-          urlTransform={urlTransform}
-        >
-          {markdown}
-        </ReactMarkdown>
+        <>
+          {settled.map((segment, index) => (
+            <SettledMarkdownSegment
+              components={extra}
+              rehypePlugins={rehypePlugins}
+              key={index}
+              rehypeOptions={rehypeOptions}
+              source={segment}
+              urlTransform={urlTransform}
+            />
+          ))}
+          {renderMarkdown(tail, extra)}
+        </>
       );
+    };
+    if (!collapseParts) {
+      return streaming ? renderStreaming(markdown) : renderMarkdown(markdown);
     }
-    const { settled, tail } = splitStreamingMarkdown(markdown);
+    const lastIndex = collapseParts.length - 1;
     return (
       <>
-        {settled.map((segment, index) => (
-          <SettledMarkdownSegment
-            components={components}
-            rehypePlugins={rehypePlugins}
-            key={index}
-            rehypeOptions={rehypeOptions}
-            source={segment}
-            urlTransform={urlTransform}
-          />
-        ))}
-        <ReactMarkdown
-          components={components}
-          rehypePlugins={rehypePlugins}
-          remarkPlugins={REMARK_PLUGINS}
-          remarkRehypeOptions={rehypeOptions}
-          urlTransform={urlTransform}
-        >
-          {tail}
-        </ReactMarkdown>
+        {collapseParts.map((part, index) => {
+          const streamThis = streaming && index === lastIndex;
+          if (part.type === 'preamble') {
+            if (!part.source) return null;
+            return (
+              <Fragment key={`preamble-${index}`}>
+                {streamThis
+                  ? renderStreaming(part.source)
+                  : (
+                    <SettledMarkdownSegment
+                      components={components}
+                      rehypePlugins={rehypePlugins}
+                      rehypeOptions={rehypeOptions}
+                      source={part.source}
+                      urlTransform={urlTransform}
+                    />
+                  )}
+              </Fragment>
+            );
+          }
+          return (
+            <MarkdownCollapseSection
+              heading={(
+                <SettledMarkdownSegment
+                  components={headingComponents}
+                  rehypePlugins={rehypePlugins}
+                  rehypeOptions={rehypeOptions}
+                  source={part.heading}
+                  urlTransform={urlTransform}
+                />
+              )}
+              id={part.id}
+              key={part.id}
+            >
+              {streamThis
+                ? renderStreaming(part.body)
+                : part.body
+                  ? (
+                    <SettledMarkdownSegment
+                      components={components}
+                      rehypePlugins={rehypePlugins}
+                      rehypeOptions={rehypeOptions}
+                      source={part.body}
+                      urlTransform={urlTransform}
+                    />
+                  )
+                  : null}
+            </MarkdownCollapseSection>
+          );
+        })}
       </>
     );
-  }, [components, markdown, rehypeOptions, streaming, urlTransform]);
+  }, [collapseParts, components, headingComponents, markdown, rehypeOptions, rehypePlugins, streaming, urlTransform]);
   // The provider sits outside the memoised body deliberately: a definition that
   // arrives mid-stream has to reach the pills, and a context update crosses a
   // `memo` boundary where a changed prop would have re-parsed everything under
   // it instead.
-  return (
+  const body = (
     <CitationsProvider value={render}>
       <div className="markdown-body">{rendered}</div>
     </CitationsProvider>
+  );
+  if (!collapseParts || hostedCollapse) return body;
+  return (
+    <MarkdownCollapseController sectionIds={collapseSectionIds}>
+      {body}
+    </MarkdownCollapseController>
   );
 }
 
@@ -1591,7 +1682,7 @@ export function MessageBlock({
     : message.deliveryState === 'queue_pending'
       ? 'Queued for the next loop'
       : null;
-  return (
+  const article = (
     <article
       aria-label={sending ? 'Sending message' : pending && pendingLabel
         ? `${pendingLabel}: message from ${humanAuthorName}`
@@ -1626,6 +1717,7 @@ export function MessageBlock({
           {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
           <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
           {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
+          {!human && <MarkdownCollapseAllButton />}
         </header>
       )}
       {sending
@@ -1669,5 +1761,14 @@ export function MessageBlock({
             </>
           )}
     </article>
+  );
+  if (human) return article;
+  // Same repair the body applies, so the header's collapse-all and the
+  // body's section wrappers agree on `section-${index}` ids. Mentions are
+  // inline links and cannot change the heading count.
+  return (
+    <MarkdownCollapseController markdown={normalizeModelMarkdown(message.text ?? '')}>
+      {article}
+    </MarkdownCollapseController>
   );
 }
