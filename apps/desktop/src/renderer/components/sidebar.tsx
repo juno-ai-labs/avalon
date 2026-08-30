@@ -785,6 +785,9 @@ function sidebarFacepileForViewer(
 ): { extraCount: number; memberIds: string[] } {
   const viewerWasInPreview = memberIds.includes(currentUserId);
   return {
+    // The wire extraCount still includes the viewer when they sat past the
+    // painted ids. Decrement once to drop them; do not decrement when they
+    // were already in the preview, or overflow of other people would vanish.
     extraCount: viewerWasInPreview ? extraCount : Math.max(0, extraCount - 1),
     memberIds: memberIds.filter((id) => id !== currentUserId),
   };

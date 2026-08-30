@@ -83,7 +83,10 @@ them to the work stream about to be created, because `POST /workstreams` carries
 participant ids and no mention spans: a name that only reached the text would
 arrive with nobody attached to it. The dialog is still one click away on the
 participant row above the composer, and remains the place a participant is
-removed.
+removed. A personal project's row is not that picker: it is a label whose
+tooltip says participants are managed by the project, and the faces in it do
+not open their own name tooltips — two tooltips on the same hover is the
+native-`title` problem `AvatarStack` exists to avoid.
 
 The participant picker sends initial focus to its first available member, or to
 Done when there are no available members. This keeps keyboard entry on the
@@ -397,6 +400,31 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-30 — A personal project's participant row uses one Radix tooltip
+
+**What changed:** The personal-project participant modifier no longer uses a
+native `title`. It wraps the whole row in the standard Radix tooltip
+("Participants are managed by the project") and passes `nameTooltip={false}`
+into `AvatarStack` so a face does not also open a name tooltip on the same
+hover.
+
+**Why:** `AvatarStack` started opening a Radix name tooltip on every face so
+the rest of Rally could drop native `title`. The personal-project row still
+had `title="Participants are managed by the project"`, so hovering a face
+opened both — Chromium's inherited title and the name tooltip — which is the
+double-tooltip this change was meant to remove.
+
+**Considered and rejected:** Leaving the native title and suppressing only the
+name tooltip. That would keep two tooltip languages on one dock. Dropping the
+explanation entirely would leave a row that looks like the workspace picker
+but does nothing on click. Making `currentUserId` required on `AvatarStack`
+does not address this; the project row does not pass presence.
+
+**Consequences:** Callers that wrap `AvatarStack` in another explanation must
+pass `nameTooltip={false}`. Presence still opens a tooltip even then. The
+workspace-scoped picker is unchanged: its faces keep their name tooltips,
+and it has no ancestor title.
 
 ### 2026-08-27 — The reduced-motion cut now zeroes delay, not only duration
 
