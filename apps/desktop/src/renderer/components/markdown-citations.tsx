@@ -33,7 +33,8 @@ import { createContext, useContext, useEffect, useState, type ComponentType } fr
  * Two rules run through every cell:
  *
  * - **Navigation is a property of the protocol.** `resource://` and `http(s)`
- *   name openable content and navigate; `person:` and `connector:` name
+ *   name openable content and navigate; `person:` / `person://` and `connector:`
+ *   name
  *   identities and never do, in any position. That asymmetry is deliberate and
  *   is the renderer's existing security posture, not a new one.
  * - **A citation adds affordance, never disclosure.** When a target cannot be
