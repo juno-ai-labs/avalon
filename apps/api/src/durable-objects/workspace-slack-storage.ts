@@ -722,7 +722,7 @@ export function setWorkspaceSlackSessionStream(
  * Record the reaction this transition placed, only if the one it removed is
  * still there.
  *
- * `IS` rather than `=` because NULL is a real state — it means Avalon has
+ * `IS` rather than `=` because NULL is a real state — it means Rally has
  * placed nothing — and `=` never matches it.
  */
 export function settleWorkspaceSlackSessionReaction(

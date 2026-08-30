@@ -819,7 +819,9 @@ redeem flow, unfurls, and everything joining `connector_connections`.
 cannot be routed to the wrong database — but two of this area's decisions were
 also being made from `meta.changes`, the physical-write counter
 [`docs/durable-object-sqlite.md`](durable-object-sqlite.md) forbids deciding a
-logical outcome from.
+logical outcome from. Both statements were otherwise correct, and their
+predicates are carried forward unchanged; what moved is how each one's outcome
+is decided.
 
 Seating was the worse of the two. The service read the sessions an email match
 could claim and then updated them, as two statements over the same predicate,
@@ -832,12 +834,23 @@ with the previous holder and method each row actually moved *from* — which
 since it yields the new row.
 
 The status reaction is a compare-and-set that spans a Slack API call, so it
-cannot be one transaction; what it can be is honest about whether it won.
-`settleSlackSessionReaction` decides `settled` from a `RETURNING` witness rather
-than a row count, against an `IS` predicate rather than `=`, because NULL —
-Rally has placed nothing — is a real state that `=` never matches. Feedback
-reports a redelivery as `replayed` from the same kind of witness, instead of
-leaving the service to read a unique-constraint violation as an error.
+cannot be one transaction; what it can be is honest about whether it won. The
+predicate was already right — `reaction_current IS ?`, with `IS` rather than `=`
+because NULL is a real state meaning Rally has placed nothing — and it is kept
+verbatim. What was wrong is that `slack_outcome_reaction_raced` was logged when
+`meta.changes` came back zero, and `meta.changes` is `rowsWritten`: index
+maintenance inflates it, so it cannot establish which transition won even when
+the predicate matches exactly the right row. `settleSlackSessionReaction`
+returns the updated row as a witness and reports `raced` as that witness's
+absence.
+
+Feedback is the milder case, and it is worth being precise about: the insert
+already carried `ON CONFLICT(ingress_job_id) DO NOTHING` and was right to. It
+simply discarded the result, so a redelivered submission and a first rating were
+indistinguishable to the caller. `recordSlackFeedback` returns which one
+happened, and the service logs `slack_feedback_replayed` on the replay — the
+only use that outcome has, and the reason for returning it rather than leaving
+another value nobody reads.
 
 **Considered and rejected:** Patching the Node fixtures row by row so that the
 converted assertions kept passing. The unit of coherence is the fixture, not
@@ -862,6 +875,29 @@ None of the three tables is an alarm source, so unlike the ingress spine's
 mutations these methods deliberately do not call `refreshScheduleAfterSlackWrite`
 — there is no target whose due time they could stale. That stops being true the
 moment a schedule target reads one of them.
+
+The feedback modal's `private_metadata` is checked against
+`z.string().uuid()` before it reaches a typed method
+(`slackModalWorkstreamId`). The generic statement this replaced simply matched
+no row for a malformed value and fell into the modal's "this task is no longer
+available" branch; `IdSchema` would instead fail the parse inside the object and
+surface as a 500 with no modal response. Rally writes that field itself, so this
+is a guard on a case that should not arise — but it is a strictly worse failure
+mode than the one it replaced, and the graceful branch is worth keeping
+reachable.
+
+`assignWorkspaceWorkstreamsForMember` seats each Slack connection inside its own
+`try`, separate from the one around the Slack email lookup. The two must stay
+separate in both directions. Sharing the lookup's `catch` reported a WorkspaceDO
+write failure as `slack_member_assignment_lookup_failed` and returned a success
+count for seating that never happened; sharing the loop's exit instead — letting
+the write throw — abandons every remaining connection in a workspace over one
+transient object error, where only the failing connection should be skipped. The
+seating `catch` logs `slack_member_assignment_seating_failed` and continues, so
+the diagnosis is separable and the blast radius is one connection. The count this
+returns is discarded by its only caller, which already logs at `warn`, so the
+value of the split is entirely in which event name fires and how much of the loop
+survives — not in what the count says.
 
 Shipped in the facade-to-RPC stack, 9/9 part 2.
 
