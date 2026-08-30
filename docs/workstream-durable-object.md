@@ -1442,6 +1442,30 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-30 — Sidebar facepile omits the current viewer
+
+**What changed:** The desktop no longer paints the signed-in person in a personal
+row's `AvatarStack`. A pile that would only be them is omitted. Overflow treats
+them as already shown when they were in the three preview ids, and drops them
+from `+x` when they were not. The public globe explains itself with the standard
+tooltip ("This is a public work stream"), and each remaining face names that
+person the same way.
+
+**Why:** seeing your own initials on every private row you are alone in is not
+a membership signal. The preview is still common state — the same three ids for
+every participant — so the filter stays in the renderer rather than becoming a
+per-recipient directory field.
+
+**Considered and rejected:** computing a viewer-specific preview in WorkspaceDO.
+A membership change is common state for everyone who can see the row; splitting
+the cap per recipient would make the pile a viewer overlay. Also rejected:
+leaving native `title` on the globe and on non-present faces, which is a second
+tooltip language the rest of the sidebar row does not use.
+
+**What a future change has to respect:** the wire still includes the viewer.
+Do not special-case a solo pile on the directory. Name tooltips live on
+`AvatarStack` itself, not a sidebar-only wrapper.
+
 ### 2026-08-30 — Pending queue order is live, and in-flight Electron sends default to queue
 
 **What changed:** Schema v34 recreates `pending_loop_inputs_prepared_immutable`

@@ -264,8 +264,11 @@ describe('WorkstreamHeader presence', () => {
       presentUserIds: [current.id, collaborator.id],
     });
 
-    expect(screen.getByTitle(current.name).closest('.avatar-stack-item')).not.toHaveClass('is-present');
-    expect(container.querySelector('.avatar-stack-item.is-present')).not.toBeNull();
+    const items = [...container.querySelectorAll('.participant-header-button .avatar-stack-item')];
+    expect(items).toHaveLength(2);
+    expect(items[0]).not.toHaveClass('is-present');
+    expect(items[1]).toHaveClass('is-present');
+    expect(screen.queryByTitle(current.name)).not.toBeInTheDocument();
     expect(screen.queryByTitle(collaborator.name)).not.toBeInTheDocument();
     expect(container.querySelectorAll('.avatar-presence-ping')).toHaveLength(1);
     expect(container.querySelector('.participant-header-button [tabindex]')).toBeNull();
