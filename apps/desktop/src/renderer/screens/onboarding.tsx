@@ -222,16 +222,6 @@ export function RegionOnboarding(): React.JSX.Element {
         <p className="region-note">
           This choice controls only where workspace data is stored and cannot be changed later.
         </p>
-        <div aria-live="polite" className="region-availability-note">
-          {selected === 'eu' && (
-            <>
-              <p>Unavailable for EU region (at this time, subject to change based on providers)</p>
-              <ul>
-                <li>Rally agent: Terminal access</li>
-              </ul>
-            </>
-          )}
-        </div>
         {error && <InlineError>{error}</InlineError>}
         <Button className="button-primary onboarding-continue" disabled={working || name.trim().length < 2} onClick={() => void continueSetup()}>
           {working && <LoaderCircle aria-hidden="true" className="spin" size={16} />}

@@ -157,7 +157,7 @@ describe('identity-first onboarding screens', () => {
     finishSetup?.();
   });
 
-  it('shows Terminal as unavailable only while the European Union region is selected', () => {
+  it('describes storage jurisdiction without listing unavailable EU capabilities', () => {
     render(<RegionOnboarding />);
 
     expect(screen.getByText('US-Jurisdiction storage')).toBeVisible();
@@ -165,10 +165,12 @@ describe('identity-first onboarding screens', () => {
     expect(screen.getByText('This choice controls only where workspace data is stored and cannot be changed later.')).toBeVisible();
     expect(screen.queryByText(/Cloudflare storage|regional routing|Your Rally sign-in stays the same/u)).not.toBeInTheDocument();
     expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rally agent: Terminal access')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
-    expect(screen.getByText('Unavailable for EU region (at this time, subject to change based on providers)')).toBeVisible();
-    expect(screen.getByRole('list')).toHaveTextContent('Rally agent: Terminal access');
+    expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rally agent: Terminal access')).not.toBeInTheDocument();
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: /Global/u }));
     expect(screen.queryByText('Unavailable for EU region (at this time, subject to change based on providers)')).not.toBeInTheDocument();
