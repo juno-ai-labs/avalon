@@ -27,6 +27,11 @@ export * from "./provider-contract";
 
 type SupportedTerminalConfiguration = Extract<TerminalRegionConfiguration, { capability: "supported" }>;
 
+export type DaytonaTerminalProvider = TerminalSandboxProvider & {
+  prepareSandbox: NonNullable<TerminalSandboxProvider["prepareSandbox"]>;
+  cleanupCommand: NonNullable<TerminalSandboxProvider["cleanupCommand"]>;
+};
+
 interface DaytonaSandboxLike {
   id: string;
   name: string;
@@ -162,7 +167,7 @@ export function createDaytonaTerminalProvider(
   configuration: SupportedTerminalConfiguration,
   clientFactory: DaytonaClientFactory = defaultClientFactory,
   instrumentation: TerminalProviderInstrumentation = {},
-): TerminalSandboxProvider {
+): DaytonaTerminalProvider {
   const client = clientFactory({
     apiKey: configuration.apiKey,
     apiUrl: configuration.apiUrl,

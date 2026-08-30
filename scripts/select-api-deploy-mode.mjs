@@ -63,14 +63,15 @@ function parseArguments(argv) {
 
 if (isEntryPoint(import.meta.url)) {
   const deployedShas = parseArguments(process.argv.slice(2));
+  let effectiveDeployedShas = deployedShas;
   let changedPaths = [];
   try {
     if (deployedShas.every(Boolean)) {
       changedPaths = await changedPathsSince(process.cwd(), deployedShas[0]);
     }
   } catch {
-    deployedShas.fill(null);
+    effectiveDeployedShas = deployedShas.map(() => null);
   }
-  const selection = selectApiDeployMode({ deployedShas, changedPaths });
+  const selection = selectApiDeployMode({ deployedShas: effectiveDeployedShas, changedPaths });
   process.stdout.write(`${JSON.stringify(selection)}\n`);
 }

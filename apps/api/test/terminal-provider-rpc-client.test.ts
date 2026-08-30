@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createTerminalProviderRpcClient } from "../src/services/terminal/provider-rpc-client";
+import { withTerminalProviderRpcAbort } from "../src/services/terminal/provider-rpc-cancellation";
 import type {
   SupportedTerminalConfiguration,
   TerminalProviderRpcBinding,
@@ -137,5 +138,25 @@ describe("Terminal provider RPC client", () => {
       new Uint8Array(),
       controller.signal,
     )).resolves.toBeUndefined();
+  });
+});
+
+describe("Terminal provider RPC cancellation", () => {
+  it("does not abort a completed operation when the remote callback settles late", async () => {
+    let finishAbortWait: (() => void) | undefined;
+    const waitForAbort = new Promise<"aborted">((resolve) => {
+      finishAbortWait = () => resolve("aborted");
+    });
+    let operationSignal: AbortSignal | undefined;
+
+    await expect(withTerminalProviderRpcAbort({
+      waitForAbort: () => waitForAbort,
+      finishAbortWait: async () => finishAbortWait?.(),
+    }, async (signal) => {
+      operationSignal = signal;
+      return "completed";
+    })).resolves.toBe("completed");
+
+    expect(operationSignal?.aborted).toBe(false);
   });
 });
