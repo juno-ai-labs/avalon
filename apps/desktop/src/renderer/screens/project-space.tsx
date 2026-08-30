@@ -244,32 +244,30 @@ export function ProjectSpaceScreen(): React.JSX.Element {
           <IconButton
             className="icon-button-danger"
             label="Archive project"
-            onClick={() => setArchiveConfirmOpen(true)}
+            onClick={() => {
+              if (!api) return;
+              setArchiveConfirmOpen(true);
+            }}
           >
             <Archive aria-hidden="true" size={15} />
           </IconButton>
         ) : (
-          <IconButton
-            label="Restore project"
-            onClick={() => {
-              if (!api) return;
-              setError(null);
-              void api.restoreProject(project.id).then((restored) => {
-                queryClient.setQueryData<ProjectDirectory>(['projects-inactive'], (current) => current ? {
-                  ...current,
-                  items: current.items.filter((item) => item.id !== restored.id),
-                } : current);
-                queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
-                  ...current,
-                  items: current.items.some((item) => item.id === restored.id)
-                    ? current.items.map((item) => item.id === restored.id ? restored : item)
-                    : [...current.items, restored],
-                } : current);
-              }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'The project could not be updated.'));
-            }}
-          >
-            <RotateCcw aria-hidden="true" size={15} />
-          </IconButton>
+          <Button onClick={() => {
+            if (!api) return;
+            setError(null);
+            void api.restoreProject(project.id).then((restored) => {
+              queryClient.setQueryData<ProjectDirectory>(['projects-inactive'], (current) => current ? {
+                ...current,
+                items: current.items.filter((item) => item.id !== restored.id),
+              } : current);
+              queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
+                ...current,
+                items: current.items.some((item) => item.id === restored.id)
+                  ? current.items.map((item) => item.id === restored.id ? restored : item)
+                  : [...current.items, restored],
+              } : current);
+            }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'The project could not be updated.'));
+          }}><RotateCcw aria-hidden="true" size={15} /> Restore project</Button>
         )}
         </div>
       </header>
