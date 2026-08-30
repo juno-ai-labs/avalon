@@ -54,8 +54,12 @@ that works the first time.
 2. **Lay out one stable directory** beneath the workspace's resource
    output directory, named for the site (`launch-checklist/`, not
    `output/` or `tmp/`). Everything the page needs goes inside it:
-   pages, styles, scripts, images, and data files. Reference assets by
-   relative path. Publish every byte the page depends on — do not lean
+   pages, styles, scripts, images, and data files. **Reference
+   everything by relative path — assets *and* the page's own API
+   routes** (`fetch("api/search?q=…")`, not `fetch("/api/search?q=…")`).
+   A root-absolute path escapes the mount Rally serves a prior version
+   under, so a page written with `/api/…` renders history but queries
+   the current version's data. Publish every byte the page depends on — do not lean
    on external CDNs or fonts; a page that carries its own assets renders
    the same for every viewer, every time. Keep the entry names exact:
    `index.html`, and `index.js` only when the site is active — an entry
@@ -199,7 +203,9 @@ has no server behavior.
 **Active: a searchable signups page.**
 
 `beta-signups/index.html` — renders a search box and a results list;
-its script calls `/api/search?q=…` and renders the JSON.
+its script calls `api/search?q=…` — relative, so it keeps working when
+Rally serves this version read-only under a prefix — and renders the
+JSON.
 
 `beta-signups/signups.json` — the dataset, one array of records.
 
@@ -209,7 +215,9 @@ its script calls `/api/search?q=…` and renders the JSON.
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/api/search") {
+    // Match the path's tail, not an absolute equality, so the same
+    // handler works under a prior-version mount.
+    if (url.pathname.endsWith("/api/search")) {
       const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
       if (q.length === 0) return Response.json({ results: [] });
       const rows = await (await env.ASSETS.fetch("/signups.json")).json();

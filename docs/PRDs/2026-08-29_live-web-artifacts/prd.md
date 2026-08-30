@@ -16,7 +16,9 @@
 > Companions:
 > [state](state.md),
 > [site authoring skill draft](site-authoring-skill.md) (the complete
-> loadable-skill text the Agent behavior section commissions). Siblings:
+> loadable-skill text the Agent behavior section commissions),
+> [research](research.md) (directions deliberately not taken, kept so
+> they are not rediscovered expensively). Siblings:
 > [terminal artifact generation](../2026-08-27_terminal-artifact-generation/prd.md)
 > (the document pipeline this extends),
 > [resource versioning](../2026-08-27_resource-versioning/prd.md) (the history
@@ -68,8 +70,9 @@ answerable in chat. No
 `index.js` but an `index.html` at the root publishes a **static** artifact —
 assets only, served from the region's bucket. A directory with neither entry
 publishes as one downloadable **archive** resource rather than failing, with
-a single deliberate exception — a one-file directory is refused with
-instructions, because it is almost always a mistaken document publish — so
+a single deliberate exception — a directory that reaches the archive
+branch carrying exactly one file is refused with instructions, because
+that shape is almost always a mistaken document publish — so
 publishing a directory is total everywhere the intent is unambiguous.
 
 Viewing and revising are both multiplayer in the way the work stream already
@@ -213,7 +216,7 @@ motivation is structural, and stated as such.
     designed and dropped — with a real database available, a KV facade in
     front of it is a second storage contract to teach and quota for
     strictly less power), and no writes into workspace-owned resource
-    storage (the deeper platform tie remains **Future research** below).
+    storage (the deeper platform tie is held in [research](research.md)).
     The facet is the one place artifact state lives, and the platform tie
     V1 ships is the read side: the rail's Data view, CSV export, and the
     agent's read-only query tools over the same rows.
@@ -364,9 +367,12 @@ version, and nothing is lost.
   loop. A multi-file directory that merely lacks a site entry is not a
   failure at all: it publishes as an archive, and the result says so
   plainly, so a misnamed entry is a one-step rename-and-republish
-  recovery. A *one-file* directory is the exception — it is refused with
-  the instruction to publish the file's own path, because that shape is
-  almost always a document publish that grabbed the folder by mistake.
+  recovery. A directory that reaches the *archive* branch carrying
+  exactly one file is the exception — it is refused with the instruction
+  to publish that file's own path, because the shape is almost always a
+  document publish that grabbed the folder by mistake. A one-file
+  directory whose file *is* a site entry is an ordinary static site, not
+  a refusal: `launch-checklist/index.html` alone publishes and serves.
 - *Server module throws at serve time*: the viewer gets a plain Rally
   error page from the serving Worker (never a stack trace); the error —
   message, stack, request path — is recorded to a bounded per-artifact
@@ -436,9 +442,21 @@ None yet.
    radius. Artifacts are served from per-artifact subdomains of
    **`rallyusercontent.com`** — a domain the team already owns, in the
    `*usercontent.com` idiom the industry uses for exactly this
-   isolation — as `<label>.g.rallyusercontent.com` and
-   `<label>.eu.rallyusercontent.com`, wildcard-routed per region.
-   Rejected:
+   isolation — as `<label>-g.rallyusercontent.com` and
+   `<label>-eu.rallyusercontent.com`, wildcard-routed per region.
+
+   **The region rides in the label, one level deep, deliberately.**
+   Cloudflare's Universal SSL covers the apex and a *single* level of
+   subdomain, so `*.rallyusercontent.com` is certificated for free
+   while `*.g.rallyusercontent.com` — two labels deep — is not, and
+   would fail the TLS handshake on every artifact open until Advanced
+   Certificate Manager or Total TLS was bought and configured. Folding
+   the region into the label keeps one wildcard, keeps the
+   region-distinct routing decision 8 depends on, and costs nothing
+   recurring. The alternative — the dotted `<label>.g.…` form plus
+   ACM — is a live option if the team would rather pay for the nicer
+   shape, and it is named in Provider configuration so the cost is
+   visible rather than discovered at first handshake. Rejected:
    *paths on `rallywith.ai`* (every artifact same-origin with every other
    and cookie-adjacent to the product domain — the standard user-content
    mistake); *subdomains of `rallywith.ai`* (cookie scoping and PSL
@@ -462,10 +480,10 @@ None yet.
    binding rather than serving the server module's source — no secret
    can be in it (the sandbox guarantees that), but serving it is
    surface nobody asked for.
-4. **One supervisor Durable Object per artifact, hosting the model's
-   storage class as a facet.** A new jurisdiction-pinned `ArtifactHostDO`
-   (one per artifact, addressed through the same stub helper every other
-   DO uses) owns the artifact's serving-side truth: current version
+4. **One supervisor Durable Object per artifact, addressed by its
+   hostname label, hosting the model's storage class as a facet.** A new
+   jurisdiction-pinned `ArtifactHostDO` owns the artifact's
+   serving-side truth: current version
    pointer, viewer-session issuance and checks, the bounded error log —
    and, for a stateful artifact, one **Durable Object facet** (`"data"`)
    running the model's exported storage class with its own isolated
@@ -485,11 +503,38 @@ None yet.
    own in-memory tracking is cold (post-hibernation), exactly as the
    reference does. Artifact deletion calls `facets.delete`, which
    permanently removes the facet's database through the same lifecycle
-   that deletes the resource. Rejected: *a Rally-mediated key-value
-   binding backed by this DO* (non-goal 11 — a KV facade over a real
-   database is a second storage contract for less power); *artifact
-   state in workspace-owned resource storage* (the deeper platform tie,
-   held in Future research).
+   that deletes the resource.
+
+   **The hostname is the address, and that is what makes serving
+   possible at all.** The serving Worker holds no D1 (see Security and
+   trust model), so given nothing but `Host:
+   <label>-<region>.rallyusercontent.com` it must reach the right object
+   without a lookup: it takes the label straight from the host and calls
+   `idFromName(label)` on the regional `ArtifactHostDO` namespace. No
+   index, no directory hop, no per-request database read on the hot
+   path — and the DO itself holds the resource linkage, so everything
+   else (which work stream, which version, which bucket prefix) comes
+   from the object once it is addressed. Rejected: *addressing by
+   artifact id with a hostname→id index*, which is what "addressed
+   through the same stub helper every other DO uses" would have meant.
+   It needs a region-wide index the serving Worker cannot read, and
+   `artifact_registry` cannot be that index: it lives beside the
+   resource authority in WorkspaceDO, which is a **per-workspace**
+   database, so a `UNIQUE` constraint on `label` there is unique per
+   workspace and two workspaces could mint the same host.
+
+   Uniqueness therefore belongs to the one thing that is already
+   region-wide: the namespace itself. A label is minted by a small
+   regional allocator — an `ArtifactLabelDO`, one per region, addressed
+   by a fixed name — which generates a random label, claims it in its
+   own SQL, and hands it back; a collision costs a regenerate, never
+   correctness, exactly as the resource slug allocator works today.
+   `artifact_registry`'s copy of the label is a per-workspace
+   convenience for listing and cleanup, not the uniqueness guarantee.
+   Rejected: *a Rally-mediated key-value binding backed by this DO*
+   (non-goal 11 — a KV facade over a real database is a second storage
+   contract for less power); *artifact state in workspace-owned resource
+   storage* (the deeper platform tie, held in [research](research.md)).
 5. **Active artifacts are one module with at most two shapes, and one
    injected binding.** The server module is the directory's root
    `index.js` — the loader's `mainModule`, under the single most
@@ -534,7 +579,7 @@ None yet.
    visibility), which returns a single-use, purpose-scoped access
    **code**. The code never travels in a request URL: the desktop (or
    the browser hand-off) lands on
-   `https://<label>.<region>.rallyusercontent.com/__rally/open#<code>`,
+   `https://<label>-<region>.rallyusercontent.com/__rally/open#<code>`,
    where a tiny Rally-served bootstrap page — not artifact code — reads
    `location.hash`, `POST`s the code to `/__rally/redeem` in the request
    body, and replaces the URL before anything else loads. A fragment is
@@ -607,7 +652,7 @@ None yet.
    identity — and a republish is never allowed to silently downgrade it
    (decision 9).
 8. **Serving stays in-region end to end.** The two wildcard hosts are
-   region-distinct (`*.g.…` to the Global Worker, `*.eu.…` to the EU
+   region-distinct (`*-g.…` to the Global Worker, `*-eu.…` to the EU
    Worker), so an EU artifact's bytes never transit a Global Worker and
    no cross-region bridge is added. Rejected: a single global router
    fanning out over RPC — it would move workspace content across the
@@ -711,7 +756,27 @@ None yet.
     prefix the server module never sees), which keeps one origin, one
     cookie, and one access flow per artifact, and keeps every
     participant-shareable address — the canonical URL, chips, embeds,
-    copied links — pointing at current. What renders depends on what the
+    copied links — pointing at current.
+
+    **A prefixed mount has to be made invisible to the page, in both
+    directions, or it silently serves the wrong version.** Two rules,
+    because neither is free and both are easy to miss:
+    - *Inbound, the serving Worker strips `/__rally/v<n>` before
+      forwarding.* A frozen module routes on `url.pathname` and knows
+      nothing of versions; handed `/__rally/v3/api/search` it would
+      match no route and fall through to assets. It must see
+      `/api/search`, exactly as it did when it was current — which is
+      what "the one prefix the server module never sees" has to mean
+      operationally, not just descriptively.
+    - *Outbound, the page must not escape the mount.* A page's own
+      client code written against root-absolute paths — the skill's
+      worked example literally calls `fetch("/api/search?q=…")` —
+      resolves `/api/search` against the origin, not the mount, so a
+      read-only render of V3 would query **V4's** live handler. The
+      prior-version mount is therefore served at a trailing slash with
+      an injected `<base href="/__rally/v3/">`, and the skill's path
+      rule widens from relative *assets* to relative *everything,
+      including the page's own API calls*. What renders depends on what the
     version was: a prior *static* version serves its frozen assets
     exactly, and a prior *stateless-active* version runs its frozen
     module over its frozen assets — nothing shared exists for old code
@@ -727,13 +792,16 @@ None yet.
     versions at distinct hostnames* — a second origin per version
     multiplies the access flow and the label allocator for no product
     gain.
-12. **The data plane: one Rally wrapper inside the facet backs the rail,
-    the export, and the agent tools.** Rally assembles the dynamic
-    worker's `modules` map, so the facet never loads the model's class
-    directly: a Rally-authored bootstrap module imports `SiteData`,
-    subclasses it, and the facet runs the wrapper. Inherited code shares
-    `this.ctx.storage` — the same database — so the wrapper answers
-    supervisor RPCs the model's code never defined: a schema describe
+12. **The data plane: one Rally host class inside the facet backs the
+    rail, the export, and the agent tools — composed with the model's
+    class, never subclassing it.** Rally assembles the dynamic worker's
+    `modules` map, so the facet never loads the model's class directly:
+    a Rally-authored bootstrap module imports `SiteData` and the facet
+    runs a Rally-authored host class that **instantiates** it and holds
+    it as a field, passing it the same `ctx`. Both objects address the
+    same `ctx.storage` — the same database — while living on separate
+    prototype chains, so the host answers supervisor RPCs the model's
+    code never defined: a schema describe
     (tables, columns, row counts, sampled values), a read-only query
     that executes SQL **inside a transaction that always rolls back**
     (structural read-only, no SELECT-sniffing), a table page/CSV stream
@@ -743,19 +811,36 @@ None yet.
     to contain a runaway writer — enforced as a loud serve-time refusal
     of further writes, never silent truncation). One
     read path, three consumers — the two agent tools, the Data view,
-    and the export — so they can never disagree. The wrapper is the
+    and the export — so they can never disagree. The host class is the
     load-bearing mechanism of the whole stateful design and is proven
     on real workerd before anything rides it; the reference platform's
     workerd test pattern applies directly (a facet class carrying
     `ctx.props` is reachable only via `ctx.facets`, so tests reach it
-    through a test-hooks DO). Rejected: *querying the facet from the
-    supervisor directly* — facet isolation is symmetric and forbids it,
-    which is exactly why the wrapper exists; *exposing the model's own
-    class methods as the agent surface* (the reference platform's
-    pattern, via its RPC-native gadget contract) — Rally's agent speaks
-    typed tools, not arbitrary model-defined RPC, and SQL over a
-    described schema is the contract that survives a hostile or clumsy
-    class.
+    through a test-hooks DO).
+
+    **Composition rather than subclassing is the load-bearing detail,
+    not a style preference.** A Rally subclass of `SiteData` would put
+    Rally's method names into the model's own namespace and win every
+    collision: the model's `fetch`, running as inherited code on the
+    same instance, would resolve `this.query(...)` to Rally's
+    implementation with a different signature — and `query`, `describe`,
+    `page`, `csv`, and `size` are precisely the names a model reaches
+    for when it factors a SQL helper out of a handler. That failure is
+    invisible at publish (decision 9 promises no publish-time code
+    validation) and surfaces as a broken site at serve time in code
+    that reads correctly. Composition removes the hazard outright:
+    separate objects, separate prototype chains, no reserved names for
+    the skill to teach and none for a model to trip over. Rejected:
+    *querying the facet from the supervisor directly* — facet isolation
+    is symmetric and forbids it, which is exactly why a host class
+    inside the facet exists; *subclassing with namespaced method names*
+    (`__rallyQuery`, …) — it works, but it keeps a shared namespace and
+    a rule to remember for no benefit composition does not already
+    give; *exposing the model's own class methods as the agent surface*
+    (the reference platform's pattern, via its RPC-native gadget
+    contract) — Rally's agent speaks typed tools, not arbitrary
+    model-defined RPC, and SQL over a described schema is the contract
+    that survives a hostile or clumsy class.
 13. **Viewer identity rides every request as trusted headers.** Rally
     is multiplayer-native — every artifact request is already
     authenticated against a workspace member, and the workplace
@@ -923,7 +1008,7 @@ The new trust surface is the point of this PRD, so it is stated in full.
 - **Origin isolation, three ways — plus the same-site gap it does not
   close on its own.** Every artifact has its own origin on a domain that
   is not `rallywith.ai`; artifacts are therefore never same-origin with
-  the application, the API, or each other (goal 6), so a hostile
+  the application, the API, or each other (goal 7), so a hostile
   artifact cannot read another's storage, cookies, or DOM. The
   viewer-session cookie is per-artifact-origin and `HttpOnly`; it is
   stripped from the request before the request reaches the server
@@ -1011,12 +1096,16 @@ The new trust surface is the point of this PRD, so it is stated in full.
   facet's rows were written by model code and page visitors, so their
   *contents* get the same untrusted handling connector payloads get —
   in the rail's Data view, in CSV exports, and in the agent tools'
-  results. The *container* is Rally's: the wrapper's describe, query,
-  page, and export methods are Rally-authored, the query path is
-  structurally read-only (always-rollback transaction), and a hostile
-  `SiteData` class can at worst shim what the wrapper reads — lying
-  about its own data, which no artifact-owned store could prevent —
-  never reach beyond its facet or mutate anything through a read.
+  results. The *container* is Rally's: the host class's describe,
+  query, page, and export methods are Rally-authored and, because the
+  host **composes** the model's class rather than extending it
+  (decision 12), a hostile `SiteData` cannot override or shadow any of
+  them — it holds no reference to the host at all. The query path is
+  structurally read-only (always-rollback transaction). What a hostile
+  class *can* still do is write misleading rows, which no
+  artifact-owned store could prevent and which is why contents are
+  treated as untrusted; what it cannot do is reach beyond its facet,
+  mutate anything through a read, or change what the host reports.
 - **Nothing that protects data is scoped by the feature flag.** The flag
   below gates presentation; authorization is structural.
 
@@ -1091,19 +1180,51 @@ published by its file path, never by its folder.
   are added. `site_entry_removed` — "This path serves a live site and
   the republish has no `index.js` or `index.html` at its root. Restore
   an entry file, or publish the files under a different path."
-  `single_file_directory` — "This directory contains a single file.
-  Publish the file's own path to publish it as a document; a directory
-  publishes as a zip only when bundling multiple files." No
+  `single_file_directory` — "This directory holds one file and no site
+  entry. Publish that file's own path to publish it as a document, or
+  name it `index.html` to publish a static site; a directory publishes
+  as a zip only when bundling multiple files." It fires only on the
+  archive branch, so a lone `index.html` or `index.js` never trips it. No
   `missing_index` exists, because a missing entry on a multi-file
   directory is not an error; and no publish-time code validation is
   promised — `index.js` is executed at serve time, never at publish.
 - Discovery and sequencing: the directory is discovered with the CLI the
-  model already has (`ls`, `find`). Revision after a sandbox recycle
-  uses the existing recovery rail, widened to match:
-  `terminal_import_resource` of a site resource materializes the
-  published directory back into the sandbox (of an archive resource, the
-  archive file), so the loop stays list → import → edit → republish the
-  same path. Nothing needs an id the family does not already return.
+  model already has (`ls`, `find`), and the revision loop stays
+  list → import → edit → republish the same path. Nothing needs an id
+  the family does not already return.
+
+**Tool contract — `import_resource`, widened.** This is the other half
+of the revision loop and a *changed* tool, so it carries the same
+registry treatment as the publish side rather than a passing mention.
+
+- Input is unchanged in shape — today's union of `{ resourceId }` and
+  `{ resourceId, destinationPath, overwrite? }` — with the meanings
+  widened where the resource is a directory-shaped one:
+  - `destinationPath`, which today names a *file*, names the
+    **directory root** to materialize into for a site resource. Omitted,
+    the deterministic placement is a directory named for the resource's
+    published path beneath the sandbox's resource-output directory —
+    the same path a republish then targets, so import → edit →
+    republish round-trips without the model choosing anything.
+  - `overwrite` is **whole-tree replacement, never a merge**: with it,
+    an existing destination tree is removed and replaced; without it, a
+    non-empty destination is refused with `destination_exists`. Merging
+    is the dangerous default this rules out — it leaves files a prior
+    version deleted lying in the tree, and the next publish silently
+    ships them back.
+  - An archive resource materializes as the single zip file, as today's
+    file behavior implies.
+- `index.js` **is** materialized. It is "module, not asset" to the
+  *serving* path (decision 3, so a viewer's `/index.js` 404s), but it
+  is ordinary source to the sandbox — a model that could not see its
+  own server could not revise it, and acceptance flow 13 walks exactly
+  that path when a participant asks to see the source.
+- Output names what landed: the resource id, the destination root, the
+  file count, and the outcome (`created`, `replaced`, or deterministic
+  `reused`), matching the family's existing outcome vocabulary.
+- Failures reuse the family's codes — `destination_exists`,
+  `destination_not_regular`, `resource_not_ready`, `limit_exceeded` —
+  with no new vocabulary for the directory case.
 
 **Attachment rails and the site kind.** The join between "the artifact"
 and "a resource in this work stream" is one token — the same
@@ -1127,10 +1248,22 @@ dead-ending it. The registry change carries its full documented cost,
 paid together in one change per the registry's own rules: the kind
 enum in contracts, the kind explanation added to every list tool's
 description, the classifier mapping and its tests, and the
-structured-failure sanitizer — whose kind vocabulary widens to nine
-and whose `suggestedCall` allowlist, today admitting only the two
-workstream content tools, widens by exactly the one
-`terminal_import_resource` entry.
+structured-failure sanitizer — whose kind vocabulary widens to nine,
+and whose `suggestedCall` allowlist grows by one member.
+
+That allowlist is a four-member discriminated union today, not two:
+`workstream_read_resource` and `workstream_view_resource` alongside
+`automation_read_resource` and `automation_view_resource`, chosen at
+throw time by the tool family's `modelToolPrefix`. The remediation is
+therefore **prefix-aware**, because the same failure fires from
+automation-prefixed runs and the tool it names is a Terminal one:
+- a `workstream`-prefixed run gets `suggestedCall:
+  terminal_import_resource`, the redirect described above;
+- an `automation`-prefixed run gets the same explanatory sentence with
+  **no** `suggestedCall`. Automation runs do not hold Terminal — the
+  site policy does not render for them at all — so naming a tool the
+  run cannot call would trade one dead end for a worse one, and the
+  sanitizer would drop an unrecognized entry anyway.
 
 **Tool contract — the artifact-data read family, new.** Two tools on
 the work-stream plugin (model-facing `workstream_describe_artifact_data`
@@ -1249,9 +1382,17 @@ rather than papered over.
 ## Provider configuration
 
 - Add the `rallyusercontent.com` zone (already owned) to the Cloudflare
-  account, with its two region wildcard hosts routed to the new serving
-  Workers — recorded in `domain-migration.md` and the runbook in the
-  implementing change.
+  account, with one `*.rallyusercontent.com` wildcard route per region
+  Worker, split on the label's `-g` / `-eu` suffix — recorded in
+  `domain-migration.md` and the runbook in the implementing change.
+- **No certificate purchase is required, and that is a design
+  constraint rather than luck:** Universal SSL covers the apex and one
+  subdomain level, which the flattened `<label>-<region>` form stays
+  inside (key design decision 2). Should the team prefer the dotted
+  `<label>.g.…` form, it is two levels deep and needs Advanced
+  Certificate Manager or Total TLS — a recurring cost to approve
+  *before* the dark deploy, since without it every artifact open fails
+  the TLS handshake.
 - No new provider apps, OAuth scopes, or third-party settings. The
   Worker Loader binding is account-level Cloudflare configuration on the
   two new Workers.
@@ -1355,9 +1496,11 @@ rather than papered over.
    exactly one downloadable zip resource; renaming its entry to
    `index.js` and republishing the same path upgrades it to a live site
    under the same resource identity.
-9. Publishing a one-file directory is refused with
-   `single_file_directory`, and the model recovers in one corrected call
-   publishing the file's own path; on every configured model routing
+9. Publishing a one-file directory *that reaches the archive branch* —
+   its single file being neither `index.html` nor `index.js` — is
+   refused with `single_file_directory`, and the model recovers in one
+   corrected call publishing the file's own path; a directory holding
+   only `index.html` publishes as a static site and is never refused; on every configured model routing
    stage, a document request yields a file publish and never an archive.
 10. Republishing a live site's path with its root entry removed fails
    loudly with the recovery instruction; the site keeps serving its
@@ -1420,65 +1563,3 @@ Two earlier open questions were settled by the team and moved into the
 body: the artifact serving domain is `rallyusercontent.com` (key design
 decision 2) and the site-manifest MIME type's brand word is `rally`
 (Data model).
-
-## Future research
-
-Three threads survive this PRD's scope decisions. The storage design
-space this section once held was resolved when the team chose to ship
-facet storage in V1 (non-goal 11 records what was rejected with it);
-what remains is the *deeper* platform tie, and the sharing problem
-V1's access model postpones rather than solves.
-
-**1. Artifact state as versioned platform data.** V1 makes artifact
-data readable by the platform — the Data view, the export, the agent's
-query tools all see the facet's rows — but the rows are still storage,
-not *content*: they have no version history, no diffability, no seam
-into the resource system. The direction worth researching is
-materializing artifact data into the versioning layer at meaningful
-boundaries — a snapshot when a poll closes, a resource derived from a
-sign-up sheet — using the storage-shape column the versioning layer's
-key design decision 7 explicitly reserved for a future producer. Open
-problems: which boundaries are meaningful (per-write versioning is
-absurd for a counter); whether a snapshot is a CSV resource, a typed
-row-set, or both; and how a derived resource cites the artifact it came
-from. Nothing in V1 blocks this: the wrapper's export path is the
-natural producer, and the facet stays the live store.
-
-**2. Observer verification, for when artifacts read beyond their own
-rows.** V1 never has to ask "may this viewer see this data?" beyond
-work-stream visibility, because an artifact can only show what was
-published with it or collected through it — all of it work-stream
-content by construction. The moment a future capability lets an
-artifact render *live external data* (the egress-gateway binding of
-non-goal 3, or any connector-backed binding), a shared artifact starts
-showing viewers data that some of them may not be allowed to see at the
-source, and work-stream visibility stops being a sufficient answer.
-The reference platform (Cloudflare OS) worked this problem thoroughly,
-and its framework is recorded here so the future PRD starts from it:
-every data source backing a shared surface needs an *observer
-verification* strategy — private-only (never shareable), single-ACL
-check (the source is one unit; verify each viewer against it on every
-open), per-data-set tracking (the source spans distinct ACLs; log
-which sets were actually shown, verify every viewer against every
-logged set, re-verify on each open so revocation at the source is
-caught), or low-stakes no-op — chosen by one lens: does the binding
-span sub-resources with distinct ACLs, and is there a per-viewer
-access oracle to check against? Rally's baseline maps to the
-single-ACL case with the work stream as the unit, which is exactly why
-V1 needs no machinery; the tracking strategy is what connector-backed
-artifacts will need, and it is the expensive one — design it with the
-binding, not after it.
-
-**3. Starter blueprints.** The reference platform steers its agent to
-start every common request from a *blueprint* — pre-written,
-already-reviewed code for a known shape (slides, a tracker, a doc) —
-and treats "consider a blueprint first" as a standing rule, because a
-vetted starting point beats a fresh derivation on quality, tokens, and
-latency at once. Rally's V1 equivalent is the skill's two worked
-examples, which is a library of size two. The research question is
-what a real library looks like here: more Tier-3 skill resources (the
-cheapest shape — no new machinery, loaded on demand), or first-class
-starter templates with their own registry and provenance. The demand
-signal is dogfooding repetition — the third time the model builds a
-poll from scratch, the poll blueprint should have existed twice
-already.
