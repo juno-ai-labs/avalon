@@ -456,13 +456,64 @@ Each agent's default model and its fallback stages are one Cloudflare Flagship f
 
 Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks. The harness package has a separate portability boundary: production sources cannot import database, connector, API, or Node-only implementations and cannot read `process`; host capabilities arrive through explicit ports.
 
-OpenRouter routing is deterministic and versioned. Empty completions, truncated
-tool calls, and fallback-eligible failures may retry or traverse configured
-model stages only before an assistant byte is published and before a tool effect
-begins. The first observable delta closes that route permanently. A later
-failure terminalizes the step, removes its transient preview, and materializes
-the reserved failure status instead of asking another provider for a competing
-answer. Cancellation and host failures never route onward.
+Provider routing is deterministic and versioned by Bind. Rally contributes a
+checked-in canonical-model binding and one planner transport per provider; Bind
+resolves the policy, filters candidates against the turn's actual capabilities,
+builds the Azure/OpenRouter/model stages, operates their shared circuit breaker,
+and executes traversal. `x-ai/grok-4.3` and `x-ai/grok-4.6` are Azure-bound:
+their same-model route is Azure first and OpenRouter second. Other canonical
+models remain OpenRouter-only. A file-parser request, audio input, or another
+capability an Azure binding has not proved skips that candidate before any
+network request rather than sending a body the deployment may reject.
+
+The Azure transport is enabled only when its dedicated endpoint and API key are
+both present. Those values are separate from realtime-dictation configuration,
+so configuring an EU dictation resource cannot accidentally send an EU work
+stream to the Global Monad production inference resource. Azure receives the
+deployment name as `model`, the standard OpenAI-compatible message/tool body,
+and `reasoning_effort` only for a binding that declares it. OpenRouter-only
+Broadcast fields, plugins, routing metadata, and headers never cross that
+boundary. Canonical `x-ai/...` identity remains in Rally's transcript and
+ledger; the Azure deployment name is recorded separately as the provider
+invocation model.
+
+The checked-in Monad production bindings were verified against the live
+`monad-prod-resource` deployment details on 2026-08-30:
+
+| Canonical model | Azure deployment | Version / lifecycle | Deployment | Live quota | Guardrail |
+| --- | --- | --- | --- | --- | --- |
+| `x-ai/grok-4.3` | `grok-4.3` | `1` / Preview | Global Standard | 250,000 TPM / 250 RPM | DefaultV2 |
+| `x-ai/grok-4.6` | `grok-4.6` | `1` / Preview | Global Standard | 2,250,000 TPM / 2,250 RPM | DefaultV2 |
+
+Both expose
+`https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions`.
+Manual inference probes returned token usage but no dollar `cost` or `price`
+field. When that happens, the configured fallback is the unweighted arithmetic
+mean of OpenRouter's published endpoint prices for that canonical model—not the
+top-level model-catalog price, which OpenRouter documents as the lowest endpoint
+price. On 2026-08-30 the four 4.3 endpoints averaged $1.875 input, $0.30 cached
+input, and $3.75 output per million tokens. The five 4.6 endpoints averaged
+$2.84 / $0.71 / $8.52. These are the binding's configured rates; update their
+fingerprints when the endpoint inventory or its prices change. Azure's Retail
+Prices API separately published 4.3 Global meters but no 4.6 meter that day;
+that API is useful corroboration, not this fallback's rate authority.
+
+Empty completions, truncated tool calls, and fallback-eligible failures may
+retry or traverse configured provider and model stages only before an assistant
+byte is published and before a tool effect begins. The first observable delta
+closes that route permanently. A later failure terminalizes the step, removes
+its transient preview, and materializes the reserved failure status instead of
+asking another provider for a competing answer. Cancellation and host failures
+never route onward.
+
+OpenRouter reports dollars directly. Azure reports token counts, so Rally feeds
+the binding's checked-in per-million-token rates and declared disjoint Grok
+cache semantics through Bind's configured-rate billing function. Missing or
+internally inconsistent final Azure usage fails the attempt; it is never
+recorded as a zero-cost call and cannot silently bypass a run cost ceiling.
+Azure Grok also reports reasoning outside `completion_tokens` while including
+it in `total_tokens`; Bind is therefore given `total_tokens - prompt_tokens` as
+the billable output count so hidden reasoning is not treated as free.
 
 The Bind/OpenRouter boundary is converted member by member rather than asserted
 through `unknown`. Bind's OpenAI-wire-compatible structural messages remain an
@@ -532,7 +583,7 @@ outcome.
 
 ### Streaming stability
 
-OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
+OpenAI-compatible SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and attempt boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
 
@@ -1054,6 +1105,59 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-30 — Bound Grok models use Bind's Azure-first provider route
+
+**What changed:** Work-stream and inline-child turns whose canonical model is
+`x-ai/grok-4.3` or `x-ai/grok-4.6` now give Bind an Azure candidate followed by
+the existing OpenRouter candidate for that same model. Rally supplies the
+deployment binding and provider-specific wire adapter; Bind owns policy
+resolution, capability skips, route construction, breaker admission, traversal,
+failure disposition, and configured-rate cost arithmetic. A dedicated optional
+Azure inference endpoint/key pair enables the transport without changing model
+flags. Provider invocation names remain separate from canonical model identity
+in the inference ledger. The host resolves an unweighted average of all
+OpenRouter endpoints for each bound Grok model and gives those rates to Bind.
+One public-metadata snapshot for both models is cached in a Cloudflare KV
+namespace shared by the Global and EU Workers, using the existing one-hour
+OpenRouter catalog freshness horizon.
+
+**Why:** Monad production carries Global Standard version-1 deployments for
+both Grok models, while Rally sent every agent turn through OpenRouter even though its
+Bind version already had a multi-provider route executor. Using the same-model
+Azure endpoint first gives Rally that deployment's capacity and commercial path
+without turning a provider choice into a product model change. The change also
+had to preserve cost ceilings: Azure returns usage rather than dollars, and
+Grok's cached count is disjoint from `prompt_tokens` while reasoning is separate
+from `completion_tokens`, so ordinary subset billing would either undercount or
+reject a valid response. When Azure omits dollars, both bindings use the most
+recent valid average of OpenRouter endpoint rates. Using the catalog's cheapest
+headline price was rejected because it would systematically understate the
+intended market-average fallback. Keeping those rates as dated source constants
+was also rejected because endpoint inventory changes independently of a Rally
+release.
+
+**Considered and rejected:** Encoding Azure as another fallback model. That
+would lose the difference between the product model and its provider endpoint,
+mislabel same-model traversal in telemetry, and bypass Bind's capability and
+circuit-breaker semantics. Reusing the realtime-dictation Azure variables was
+also rejected: those are regional and may be configured in EU, while the Monad
+production inference resource is a distinct routing authority. A missing Azure
+pair therefore omits that provider and leaves the existing OpenRouter route
+unchanged.
+
+**Consequences:** A new Azure model needs a checked-in canonical-to-deployment
+binding with proved capabilities and an entry in the host's endpoint-average
+snapshot. Pricing refreshes both models together; stale valid KV is a deliberate
+availability fallback, while no valid price omits Azure instead of treating a
+request as free. KV is eventually consistent, which is acceptable for public
+hourly pricing metadata and must not be extended to workspace state. Do not make
+the Azure client carry OpenRouter Broadcast fields or plugins. Keep turn
+requirements accurate: an Azure candidate that cannot serve a file parser,
+input modality, reasoning control, or tool surface must be skipped before I/O.
+Missing final Azure usage is a failed attempt, never a free one. Provider
+ordering remains policy, so changing Azure-first behavior belongs in the route
+registry rather than in request code.
 
 ### 2026-08-29 — External delivery reads the exact saved terminal turn
 

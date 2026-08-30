@@ -37,6 +37,8 @@ export interface Env {
   DB: D1Database;
   PAYLOADS: R2Bucket;
   TELEMETRY_PAYLOADS: R2Bucket;
+  /** One globally replicated cache shared by the Global and EU Workers. */
+  INFERENCE_PRICING_CACHE: KVNamespace;
   IMAGES: ImagesBinding;
   AI: Ai;
   MEMORY_INDEX: VectorizeIndex;
@@ -123,6 +125,9 @@ export interface Env {
   AZURE_OPENAI_ENDPOINT?: string;
   AZURE_OPENAI_API_KEY?: string;
   AZURE_OPENAI_REALTIME_DEPLOYMENT?: string;
+  /** Optional Global inference resource; kept separate from regional dictation. */
+  AZURE_INFERENCE_ENDPOINT?: string;
+  AZURE_INFERENCE_API_KEY?: string;
   FIRECRAWL_API_KEY?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
@@ -292,6 +297,7 @@ const EnvContractSchema = z.object({
   DB: binding<D1Database>(),
   PAYLOADS: binding<R2Bucket>(),
   TELEMETRY_PAYLOADS: binding<R2Bucket>(),
+  INFERENCE_PRICING_CACHE: binding<KVNamespace>(),
   IMAGES: binding<ImagesBinding>(),
   AI: binding<Ai>(),
   MEMORY_INDEX: binding<VectorizeIndex>(),
@@ -335,6 +341,9 @@ const EnvContractSchema = z.object({
   OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
   OPENROUTER_STRUCTURED_MODEL: z.string().min(1),
   OPENROUTER_AUTOMATION_MODEL: z.string().min(1),
+  AZURE_INFERENCE_ENDPOINT: HttpUrlSchema.optional(),
+  // Deliberately optional: Azure model routing degrades to OpenRouter when absent.
+  AZURE_INFERENCE_API_KEY: z.string().min(1).optional(),
 
   SESSION_SIGNING_KEY: z.string().min(1),
   OAUTH_STATE_ENCRYPTION_KEY: z.string().min(1),
@@ -501,11 +510,16 @@ export function assertEnvContract(env: Env): void {
           : []),
       ]
     : [];
+  const azureInferenceConfigurationIssues = Boolean(env.AZURE_INFERENCE_ENDPOINT)
+    === Boolean(env.AZURE_INFERENCE_API_KEY)
+    ? []
+    : ["AZURE_INFERENCE_ENDPOINT and AZURE_INFERENCE_API_KEY must be configured together"];
   if (
     result.success
     && missingSecrets.length === 0
     && missingBindings.length === 0
     && terminalConfigurationIssues.length === 0
+    && azureInferenceConfigurationIssues.length === 0
   ) {
     validated.add(env);
     return;
@@ -523,6 +537,7 @@ export function assertEnvContract(env: Env): void {
     ...missingSecrets.map((key) => `${key} is missing`),
     ...missingBindings.map((key) => `${key} is missing`),
     ...terminalConfigurationIssues,
+    ...azureInferenceConfigurationIssues,
   ];
   throw new EnvContractError([...new Set(keys)].sort());
 }

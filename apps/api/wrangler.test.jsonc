@@ -61,5 +61,8 @@
   // suite's one place production would have persisted it.
   "r2_buckets": [
     { "binding": "PAYLOADS", "bucket_name": "avalon-do-runtime-test-payloads" }
+  ],
+  "kv_namespaces": [
+    { "binding": "INFERENCE_PRICING_CACHE", "id": "00000000000000000000000000000001" }
   ]
 }

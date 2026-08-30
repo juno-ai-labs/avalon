@@ -24,6 +24,7 @@ import {
   renderAddressingMessages,
   runHarness,
   type AutomationCompilerStreamEvent,
+  type AzureModelPricing,
   type BindLoopTransition,
   type BindLoopProjectionState,
   type BindProviderBoundary,
@@ -2908,6 +2909,161 @@ describe("agent harness", () => {
     expect(executionOrder).toEqual(["read_once:start", "read_once:end"]);
     expect(transitions.some((transition) => transition.kind === "tool_result_accepted")).toBe(true);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes bound Grok 4.3 turns through Azure with a provider-specific body and priced usage", async () => {
+    let requestUrl = "";
+    let requestHeaders = new Headers();
+    let requestBody: Record<string, unknown> = {};
+    const attempts: InferenceAttemptEvent[] = [];
+    const requests: InferenceRequestEvent[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      requestUrl = String(request);
+      requestHeaders = new Headers(init?.headers);
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([
+        { choices: [{ delta: { content: "from azure" }, finish_reason: "stop" }] },
+        {
+          choices: [],
+          usage: {
+            prompt_tokens: 88,
+            completion_tokens: 10,
+            total_tokens: 98,
+            prompt_tokens_details: { cached_tokens: 192 },
+          },
+        },
+      ]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "x-ai/grok-4.3",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        workspaceId: "workspace-azure-grok-43",
+      }),
+      onInferenceRequest: (event) => { requests.push(event); },
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "from azure", model: "x-ai/grok-4.3" });
+    expect(requestUrl).toBe("https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions");
+    expect(requestHeaders.get("api-key")).toBe("azure-key");
+    expect(requestHeaders.has("authorization")).toBe(false);
+    expect(requestBody).toMatchObject({ model: "grok-4.3", stream: true, stream_options: { include_usage: true } });
+    expect(requestBody).not.toHaveProperty("trace");
+    expect(requestBody).not.toHaveProperty("plugins");
+    expect(requestBody).not.toHaveProperty("reasoning");
+    expect(requestBody).not.toHaveProperty("reasoning_effort");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      model: "x-ai/grok-4.3",
+      provider: "azure",
+      providerInvocationModel: "grok-4.3",
+    });
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      success: true,
+      provider: "azure",
+      cachedInputTokens: 192,
+    });
+    // Bind rounds configured-rate billing to the inference ledger's 4-decimal
+    // cent precision.
+    expect(attempts[0]!.costCents).toBe(0.026);
+  });
+
+  it("uses Bind's provider traversal from Azure to OpenRouter before changing models", async () => {
+    const urls: string[] = [];
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      urls.push(url);
+      return url.includes("services.ai.azure.com")
+        ? Response.json({ error: { message: "Azure unavailable" } }, { status: 503 })
+        : streamResponse([{
+            choices: [{ delta: { content: "openrouter fallback" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, cost: 0.01 },
+          }]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "x-ai/grok-4.3",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        transportRetries: 0,
+        workspaceId: "workspace-azure-fallback",
+      }),
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "openrouter fallback", model: "x-ai/grok-4.3" });
+    expect(urls).toEqual([
+      "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+      "https://openrouter.ai/api/v1/chat/completions",
+    ]);
+    expect(attempts.map((attempt) => [attempt.provider, attempt.success, attempt.disposition])).toEqual([
+      ["azure", false, "fallback"],
+      ["openrouter", true, "fallback"],
+    ]);
+  });
+
+  it("routes Grok 4.6 reasoning through its Azure deployment and prices cached usage", async () => {
+    let requestBody: Record<string, unknown> = {};
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        choices: [{ delta: { content: "reasoned on azure" }, finish_reason: "stop" }],
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          // Azure Grok keeps reasoning outside completion_tokens but includes
+          // it in total_tokens. Billing must charge the whole output side.
+          total_tokens: 132,
+          prompt_tokens_details: { cached_tokens: 40 },
+          completion_tokens_details: { reasoning_tokens: 12 },
+        },
+      }]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "x-ai/grok-4.6",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        reasoningEffort: "high",
+        workspaceId: "workspace-azure-grok-46",
+      }),
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", model: "x-ai/grok-4.6" });
+    expect(requestBody).toMatchObject({ model: "grok-4.6", reasoning_effort: "high" });
+    expect(requestBody).not.toHaveProperty("reasoning");
+    expect(attempts[0]).toMatchObject({
+      provider: "azure",
+      reasoningTokens: 12,
+      cachedInputTokens: 40,
+      costCents: 0.0585,
+    });
+  });
+
+  it("lets Bind skip an Azure binding that cannot satisfy the turn capabilities", async () => {
+    const urls: string[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      urls.push(String(request));
+      return streamResponse([{
+        choices: [{ delta: { content: "reasoned" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, cost: 0.01 },
+      }]);
+    }) as typeof fetch;
+
+    await expect(runHarness(runInput(fetcher, {
+      primaryModel: "x-ai/grok-4.3",
+      azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+      reasoningEffort: "high",
+      workspaceId: "workspace-azure-capability-skip",
+    }))).resolves.toMatchObject({ status: "completed", content: "reasoned" });
+
+    expect(urls).toEqual(["https://openrouter.ai/api/v1/chat/completions"]);
   });
 
   // A work stream pinned from the developer-mode model selector routes with no
@@ -6323,6 +6479,7 @@ function testCorePlugin(tools: HarnessTool[]): HarnessPlugin {
 }
 
 function runInput(fetcher: typeof fetch, overrides: Partial<{
+  primaryModel: string;
   maxWallClockMs: number;
   toolTimeoutMs: number;
   transportRetries: number;
@@ -6334,11 +6491,13 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
   // opens it for every test that runs after it. Give such a test its own
   // workspace.
   workspaceId: string;
+  azure: { endpoint: string; apiKey: string };
+  reasoningEffort: "low" | "medium" | "high";
 }> = {}) {
   return {
     config: {
       apiKey: "test-key",
-      primaryModel: "test/model",
+      primaryModel: overrides.primaryModel ?? "test/model",
       fetch: fetcher,
       maxIterations: 4,
       maxToolCalls: 10,
@@ -6357,8 +6516,35 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
         ? {}
         : { requestEstablishmentTimeoutMs: overrides.requestEstablishmentTimeoutMs }),
       ...(overrides.fallbackModels === undefined ? {} : { fallbackModels: overrides.fallbackModels }),
+      ...(overrides.azure === undefined ? {} : { azure: overrides.azure }),
+      ...(overrides.reasoningEffort === undefined ? {} : { reasoningEffort: overrides.reasoningEffort }),
     },
     workspaceId: overrides.workspaceId ?? "workspace-1",
+    ...(overrides.azure === undefined
+      ? {}
+      : {
+          resolveAzureModelPricing: async (modelIds: readonly string[]) => {
+            const prices = new Map<string, AzureModelPricing>();
+            for (const modelId of modelIds) {
+              if (modelId === "x-ai/grok-4.3") {
+                prices.set(modelId, {
+                  inputUsdPerM: 1.875,
+                  cachedInputUsdPerM: 0.3,
+                  outputUsdPerM: 3.75,
+                  sourceFingerprint: "openrouter-endpoint-average:v1:test:grok-4.3",
+                });
+              } else if (modelId === "x-ai/grok-4.6") {
+                prices.set(modelId, {
+                  inputUsdPerM: 2.84,
+                  cachedInputUsdPerM: 0.71,
+                  outputUsdPerM: 8.52,
+                  sourceFingerprint: "openrouter-endpoint-average:v1:test:grok-4.6",
+                });
+              }
+            }
+            return prices;
+          },
+        }),
     workstreamId: "workstream-1",
     loopId: "run-1",
     harnessRunId: "run-1",

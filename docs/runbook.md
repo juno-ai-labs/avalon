@@ -126,6 +126,44 @@ To rotate connector credentials in one region, keep the old key, set `CONNECTOR_
 
 Configure the Azure values in every region where dictation is enabled. `AZURE_OPENAI_ENDPOINT` is the HTTPS resource endpoint, and `AZURE_OPENAI_REALTIME_DEPLOYMENT` is the name of an Azure deployment backed by `gpt-live-transcribe`. Azure's GA transcription contract connects to `/openai/v1/realtime?intent=transcription` and identifies that deployment in `session.audio.input.transcription.model`. Do not place any Azure value behind a `VITE_` prefix. Local development may use one unsuffixed set or `_GLOBAL` and `_EU` overrides in `.env.local`.
 
+Azure agent inference is a separate opt-in pair:
+`AZURE_INFERENCE_ENDPOINT` and `AZURE_INFERENCE_API_KEY`. Configure both only
+on a Worker whose regional data boundary permits that resource. With neither,
+Bind omits Azure and retains the existing OpenRouter route; with only one, the
+run fails configuration before provider I/O. The endpoint is the resource root
+or its `/openai/v1` base, never a deployment URL, and the key remains a Worker
+secret. Rally's checked-in bindings currently map canonical `x-ai/grok-4.3`
+and `x-ai/grok-4.6` to their Monad production deployment names and try Azure
+before OpenRouter for the same model. Model Flagship values stay canonical and
+must never contain an Azure deployment name.
+
+The live Monad production endpoint is
+`https://monad-prod-resource.services.ai.azure.com`. As verified on 2026-08-30,
+the 4.3 and 4.6 deployments are version-1 Preview Global Standard deployments
+with DefaultV2 guardrails; their limits are respectively 250,000 TPM / 250 RPM
+and 2,250,000 TPM / 2,250 RPM. The inference API reports tokens, not dollar
+cost. In that case, Bind bills with the cached unweighted average of every
+base-rate endpoint OpenRouter publishes for the canonical model. The Worker
+refreshes both Grok endpoint inventories after the existing one-hour OpenRouter
+catalog horizon and stores their input, cached-input, and output averages under
+`inference-pricing:openrouter-endpoint-average:v1` in
+`INFERENCE_PRICING_CACHE`. Global and EU bind the same Cloudflare KV namespace;
+it contains public provider metadata only, never a workspace ID, prompt, usage,
+or credential. Do not copy the top-level OpenRouter catalog price: it is the
+lowest endpoint price, not the average.
+
+On a refresh failure, a stale valid KV snapshot remains usable. If neither KV
+nor OpenRouter can supply a valid complete snapshot, Bind omits Azure for that
+run and continues with the existing OpenRouter candidate instead of making an
+unpriced Azure request. A successful refresh is usable even if its best-effort
+KV write loses a cross-region race; a later run retries persistence. To inspect
+the current cache without exposing provider credentials, run
+`pnpm --filter @rally/api exec wrangler kv key get
+inference-pricing:openrouter-endpoint-average:v1 --namespace-id <id>` with the
+namespace ID from either regional Wrangler config. Deleting the key is not a
+normal refresh mechanism: let the one-hour freshness rule expire it logically
+so the stale snapshot remains available during an upstream outage.
+
 ### Terminal provider activation and recovery
 
 Terminal is fail-closed per region. Global and EU are both enabled against the

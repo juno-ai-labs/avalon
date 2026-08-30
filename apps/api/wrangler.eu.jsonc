@@ -131,6 +131,11 @@
     { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" },
     { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-eu-telemetry", "jurisdiction": "eu" }
   ],
+  // Deliberately the same globally replicated namespace as the Global Worker:
+  // model prices are public provider metadata, not EU workspace content.
+  "kv_namespaces": [
+    { "binding": "INFERENCE_PRICING_CACHE", "id": "ea2442c2ee744decbad3d1ca03fce728" }
+  ],
   "analytics_engine_datasets": [
     { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" },
     { "binding": "TERMINAL_ANALYTICS", "dataset": "avalon_terminal_operations" }
