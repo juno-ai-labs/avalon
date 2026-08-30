@@ -20,7 +20,7 @@ import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { WorkspaceService } from "../services/workspace-service";
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
-import { createDaytonaTerminalProvider } from "../services/terminal/daytona-provider";
+import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
 import { TerminalSettingsService } from "../services/terminal/settings";
 import { issueWorkspaceSocketTicket } from "../services/socket-service";
 
@@ -34,7 +34,7 @@ export const workspaceRoutes = new Hono<HonoAppEnv>();
 function terminalSettingsService(c: Context<HonoAppEnv>): TerminalSettingsService {
   const configuration = parseTerminalRegionConfiguration(c.env);
   const provider = configuration.capability === "supported"
-    ? createDaytonaTerminalProvider(configuration)
+    ? createTerminalProviderRpcClient(c.env.TERMINAL_PROVIDER, configuration)
     : null;
   return new TerminalSettingsService(c.env, getAuth(c), provider);
 }

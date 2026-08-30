@@ -103,6 +103,14 @@
   "triggers": { "crons": ["*/5 * * * *"] },
   "services": [
     {
+      "binding": "DOCUMENT_PROCESSOR",
+      "service": "avalon-api-documents-global"
+    },
+    {
+      "binding": "TERMINAL_PROVIDER",
+      "service": "avalon-api-terminal-global"
+    },
+    {
       "binding": "EU_IDENTITY_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "RegionalIdentityBridge"

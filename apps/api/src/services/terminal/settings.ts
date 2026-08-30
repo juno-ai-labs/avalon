@@ -21,7 +21,7 @@ import {
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 import { asWorkspaceId } from "@rally/contracts";
 import { parseTerminalRegionConfiguration } from "./contract";
-import type { TerminalSandboxProvider } from "./daytona-provider";
+import type { TerminalSandboxProvider } from "./provider-contract";
 import { createTerminalFinalDiffPreserver } from "./lifecycle";
 import {
   emitProductUsageTelemetry,
