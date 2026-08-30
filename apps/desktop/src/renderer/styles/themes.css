@@ -1294,7 +1294,7 @@
   --av-cmp-row-leading: 1.25;
   --av-cmp-row-hint-gap: 2px;
   --av-cmp-row-height-dense: 30px;
-  --av-cmp-row-background-hover: var(--av-sys-color-surface-subtle);
+  --av-cmp-row-background-hover: var(--av-sys-color-surface-raised-hover);
   --av-cmp-row-background-selected: var(--av-ref-color-neutral-4);
 
   --av-cmp-group-label-height: 26px;
