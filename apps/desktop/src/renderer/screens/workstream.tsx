@@ -2295,7 +2295,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         leaving={railLeaving === 'inspector'}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
-        onDetachResource={(resource) => detachResource.mutate(resource)}
+        onDetachResource={(resource) => detachResource.mutateAsync(resource)}
         onOpenResourceVersion={openResourceVersion}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
         onRefreshResource={(resource) => refreshResource.mutate(resource)}

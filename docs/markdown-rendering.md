@@ -514,6 +514,23 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-08-30 — The rail shows an image resource, and the document host joins the guard
+
+**What changed:** An image opened in the inspector renders as an `img` in
+`.inspector-detail-document`, sized to the rail, rather than last-updated over
+an empty panel. The host joined the stylesheet guard that forbids restyling
+markdown elements (not the heading-scale guard — this host has no heading
+override). Future `capturedAt` values no longer fall through an unbounded
+"this month".
+
+**Why:** Dropping the metadata card removed the only signal an image had. The
+rail is still not a lightbox; the image is the document analog of the markdown
+body. The guard was the rule the changelog already named and did not enforce.
+
+**What a future change has to respect:** do not style `img` (or any other
+markdown element) as a descendant of `.inspector-detail-document`. Size the
+image through `.inspector-detail-image` on the element itself.
+
 ### 2026-08-30 — A hairline separates last-updated from the document
 
 **What changed:** The inspector detail draws `.inspector-detail-rule` between

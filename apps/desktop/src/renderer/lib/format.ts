@@ -37,7 +37,8 @@ export type SparseRelativeDate =
   | 'last week'
   | 'this month'
   | 'last month'
-  | string;
+  | 'Unknown time'
+  | `${(typeof SPARSE_MONTHS)[number]} ${number}`;
 
 /**
  * A coarse calendar label for a version row, where an exact timestamp is
@@ -46,6 +47,9 @@ export type SparseRelativeDate =
  * Today and yesterday win over the week they sit in; last week wins over the
  * month it sits in. Anything older than last month is the month and year
  * ("Aug 2025"), so a year-old row does not pretend to be "last month".
+ * Weeks start on Sunday, matching the recency groups in this file, and the
+ * month shorts are English rather than `Intl` so ICU's narrow no-break space
+ * cannot flake a test.
  */
 export function formatSparseRelativeDate(value: string, now = new Date()): SparseRelativeDate {
   const date = new Date(value);
@@ -54,6 +58,8 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
   const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  // Sunday-start, same as `groupActivityItems` below. `getDay()` is 0 on
+  // Sunday; a Monday-start locale would shift every week bucket by a day.
   const startOfWeek = new Date(
     now.getFullYear(),
     now.getMonth(),
@@ -65,6 +71,7 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
     now.getDate() - now.getDay() - 7,
   ).getTime();
   const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
   const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
   const timestamp = date.getTime();
 
@@ -72,9 +79,11 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
   if (timestamp >= startOfYesterday && timestamp < startOfToday) return 'yesterday';
   if (timestamp >= startOfWeek && timestamp < startOfYesterday) return 'this week';
   if (timestamp >= startOfLastWeek && timestamp < startOfWeek) return 'last week';
-  if (timestamp >= startOfThisMonth) return 'this month';
-  if (timestamp >= startOfLastMonth) return 'last month';
-  return `${SPARSE_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+  if (timestamp >= startOfThisMonth && timestamp < startOfNextMonth) return 'this month';
+  if (timestamp >= startOfLastMonth && timestamp < startOfThisMonth) return 'last month';
+  const month = SPARSE_MONTHS[date.getMonth()];
+  if (!month) return 'Unknown time';
+  return `${month} ${date.getFullYear()}`;
 }
 
 export function formatDuration(milliseconds?: number): string | undefined {

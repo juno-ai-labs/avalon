@@ -48,9 +48,13 @@ interface InspectorRailProps {
   runs?: AutomationRunSummary[];
   onAddParticipant?: () => void;
   onAddResource?: () => void;
-  onDetachResource?: (resource: WorkstreamResource) => void;
+  onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
   onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
-  /** History for whichever resource the detail is showing, newest first. */
+  /**
+   * History for whichever resource the detail is showing, newest first.
+   * `undefined` is still loading; `[]` is genuinely none. Do not coerce a
+   * pending fetch to `[]`, or opening Versions says there is no history.
+   */
   resourceVersions?: ResourceVersion[];
   /** Set when the history could not be loaded, so absence is not read as none. */
   resourceVersionsError?: string | undefined;
@@ -376,12 +380,18 @@ function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' |
  * showing nothing for the most commonly attached document there is.
  *
  * What stays local is the one thing the rail decides for itself: an image is
- * not prose. The rail is 360 pixels wide and this is the readable half of a
- * detail card, not a lightbox.
+ * not prose. It still belongs in this host — as an `img` sized to the rail —
+ * because the detail *is* the document now, and leaving it on last-updated
+ * alone is an empty panel. The lightbox remains the full-size reader.
  */
 function readableAsText(resource: WorkstreamResource): boolean {
   if (!resource.contentAvailable) return false;
   return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) !== 'image';
+}
+
+function isImageResource(resource: WorkstreamResource): boolean {
+  if (!resource.contentAvailable) return false;
+  return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) === 'image';
 }
 
 /**
@@ -402,32 +412,54 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>;
   resource: WorkstreamResource;
 }): React.JSX.Element | null {
-  const [state, setState] = useState<{ text?: string; failed?: boolean }>({});
+  const [state, setState] = useState<{ text?: string; src?: string; failed?: boolean }>({});
+  const image = isImageResource(resource);
 
   useEffect(() => {
     const controller = new AbortController();
+    let objectUrl: string | undefined;
     setState({});
-    void readResourcePreviewText(loadResourceContent, resource.id, controller.signal, MAX_RESOURCE_PREVIEW_WAIT_MS)
-      .then((text) => {
-        if (!controller.signal.aborted) setState({ text });
-      })
-      .catch(() => {
-        // A resource whose content was never hydrated, whose object has since
-        // gone, or whose format the server will not convert is not an error the
-        // reader can act on — last-updated above is still true, and saying so
-        // beats an empty panel. A preview still being prepared is not one of
-        // these, and no longer arrives here until the retries are spent.
-        if (!controller.signal.aborted) setState({ failed: true });
-      });
-    return () => controller.abort();
+    const load = image
+      ? Promise.resolve(loadResourceContent(resource.id, controller.signal)).then((blob) => {
+          const url = URL.createObjectURL(blob);
+          if (controller.signal.aborted) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          objectUrl = url;
+          setState({ src: url });
+        })
+      : readResourcePreviewText(loadResourceContent, resource.id, controller.signal, MAX_RESOURCE_PREVIEW_WAIT_MS)
+        .then((text) => {
+          if (!controller.signal.aborted) setState({ text });
+        });
+    void load.catch(() => {
+      // A resource whose content was never hydrated, whose object has since
+      // gone, or whose format the server will not convert is not an error the
+      // reader can act on — last-updated above is still true, and saying so
+      // beats an empty panel. A preview still being prepared is not one of
+      // these, and no longer arrives here until the retries are spent.
+      if (!controller.signal.aborted) setState({ failed: true });
+    });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
     // `currentVersion` as well as the id: a watched source re-ingested in place
     // keeps its id, and last-updated above this body shows the new revision.
     // Without it the panel put a new timestamp over version 2's text, which is
     // a citation substantiating a claim with the wrong revision.
-  }, [loadResourceContent, resource.currentVersion, resource.id]);
+  }, [image, loadResourceContent, resource.currentVersion, resource.id]);
 
   if (state.failed) {
     return <p className="inspector-detail-preview-status">This preview is not available.</p>;
+  }
+  if (state.src) {
+    return (
+      <article className="inspector-detail-document">
+        <img alt={resource.title} className="inspector-detail-image" src={state.src} />
+      </article>
+    );
   }
   if (state.text === undefined) {
     return (
@@ -527,7 +559,7 @@ function ResourceVersionsMenu({
     body = <DropdownMenu.Item className="menu-item" disabled>No versions yet.</DropdownMenu.Item>;
   } else {
     body = groupVersionsBySparseDate(versions).map((group) => (
-      <DropdownMenu.Group key={group.label}>
+      <DropdownMenu.Group key={`${group.label}-${group.versions[0]?.version}`}>
         <DropdownMenu.Label className="menu-label inspector-version-group-label">
           <time dateTime={group.versions[0]?.capturedAt}>{group.label}</time>
         </DropdownMenu.Label>
@@ -588,7 +620,9 @@ function InspectorDetail({
     // connector can actually fulfill a re-fetch.
     const refreshable = resource.direction === 'source' && resource.refreshSupported;
     const sourceActions = Boolean(resource.canonicalUrl || (refreshable && onRefreshResource));
-    const showDocument = Boolean(loadResourceContent && readableAsText(resource));
+    const showDocument = Boolean(
+      loadResourceContent && (readableAsText(resource) || isImageResource(resource)),
+    );
     return (
       <div className="inspector-detail">
         {resource.updatedAt && (
@@ -642,12 +676,39 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const inspect = useUiStore((state) => state.inspect);
   const runs = props.runs ?? props.workstream?.automationRuns ?? [];
   const resource = inspectedResource(inspector, props.workstream);
-  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const versionsTriggerRef = useRef<HTMLButtonElement>(null);
+  const closeInspectorRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    setArchiveConfirmOpen(false);
+    setArchiveTarget(null);
+    setArchiveError(null);
+    setArchiving(false);
   }, [inspector?.id]);
+
+  const closeArchive = (): void => {
+    if (archiving) return;
+    setArchiveTarget(null);
+    setArchiveError(null);
+  };
+
+  const submitArchive = async (): Promise<void> => {
+    if (!archiveTarget || !props.onDetachResource) return;
+    setArchiving(true);
+    setArchiveError(null);
+    try {
+      await props.onDetachResource(archiveTarget);
+      setArchiveTarget(null);
+      inspect(null);
+      closeInspectorRef.current?.focus();
+    } catch (error) {
+      setArchiveError(error instanceof Error ? error.message : 'The resource could not be archived.');
+    } finally {
+      setArchiving(false);
+    }
+  };
 
   // The rail is already closed while it fades out under HyperSight, so the
   // hand-off keeps it on screen for exactly as long as that fade lasts.
@@ -699,16 +760,21 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
                   />
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
-              <IconButton
-                className="icon-button-danger"
-                label="Archive"
-                onClick={() => setArchiveConfirmOpen(true)}
-              >
-                <Archive size={15} />
-              </IconButton>
+              {props.onDetachResource && (
+                <IconButton
+                  className="icon-button-danger"
+                  label="Archive"
+                  onClick={() => {
+                    setArchiveError(null);
+                    setArchiveTarget(resource);
+                  }}
+                >
+                  <Archive size={15} />
+                </IconButton>
+              )}
             </>
           )}
-          <IconButton label="Close inspector" onClick={closeRail}><X size={15} /></IconButton>
+          <IconButton label="Close inspector" onClick={closeRail} ref={closeInspectorRef}><X size={15} /></IconButton>
         </div>
       </header>
       <div className="rail-scroll">
@@ -726,33 +792,28 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           <RunsContent onOpenRun={props.onOpenRun} runs={runs} />
         )}
       </div>
-      {resource && (
-        <Modal
-          footer={(
-            <>
-              <Button onClick={() => setArchiveConfirmOpen(false)}>Cancel</Button>
-              <Button
-                className="button-danger"
-                onClick={() => {
-                  props.onDetachResource?.(resource);
-                  setArchiveConfirmOpen(false);
-                  inspect(null);
-                }}
-              >
-                Continue
-              </Button>
-            </>
-          )}
-          onOpenChange={setArchiveConfirmOpen}
-          open={archiveConfirmOpen}
-          title="Archive this resource?"
-        >
-          <p className="modal-copy">
-            <strong>{resource.title}</strong> will leave this work stream. Rally has no way to
-            bring it back yet.
-          </p>
-        </Modal>
-      )}
+      <Modal
+        description={`${archiveTarget?.title ?? 'This resource'} will leave this work stream. Rally has no way to bring it back yet.`}
+        footer={(
+          <>
+            <Button disabled={archiving} onClick={closeArchive}>Cancel</Button>
+            <Button
+              className="button-danger"
+              disabled={archiving}
+              onClick={() => void submitArchive()}
+            >
+              Continue
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (!open) closeArchive();
+        }}
+        open={Boolean(archiveTarget)}
+        title="Archive this resource?"
+      >
+        {archiveError ? <InlineError>{archiveError}</InlineError> : null}
+      </Modal>
     </RailSurface>
   );
 }
