@@ -845,24 +845,16 @@ pre {
   z-index: 2;
 }
 
-.command-shortcut-pill {
-  align-items: center;
+/* Overlay extras only. Fill, radius, and border come from `.badge`; size and
+   padding come from `.scope-badge` — two rules, not a combined selector. This
+   selector is two classes so those extras cannot lose to `.scope-badge` the
+   way a one-class rule would (both are 0-1-0 and `.scope-badge` sits later
+   in the file). Restating chrome here would let the two pills drift apart. */
+.scope-badge.command-shortcut-pill {
   animation: fade-in 80ms ease-out;
-  background: var(--av-ref-color-neutral-5);
-  border: 1px solid var(--av-sys-color-border-highlight);
-  border-radius: var(--av-sys-size-radius-pill);
-  box-shadow: var(--av-sys-elevation-shadow-sm);
-  color: var(--av-ref-color-neutral-11);
-  display: inline-flex;
-  font-size: 11px;
   font-variant-numeric: tabular-nums;
-  font-weight: 550;
   gap: 1px;
-  height: 22px;
   justify-content: center;
-  line-height: 1;
-  min-width: 34px;
-  padding: 0 7px;
 }
 
 .command-shortcut-pill svg { flex: 0 0 auto; }

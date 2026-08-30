@@ -440,10 +440,12 @@ function CommandShortcutHint({
   if (!visible || shortcut === undefined) return null;
   return (
     <span aria-hidden="true" className="command-shortcut-scrim">
-      <span className="command-shortcut-pill">
-        <Command size={12} strokeWidth={1.8} />
+      {/* Same Badge + scope-badge chrome as an automation's You / Workspace
+          pill, so holding Command does not introduce a second, chunkier chip. */}
+      <Badge className="scope-badge command-shortcut-pill">
+        <Command size={9} />
         <span>{shortcut}</span>
-      </span>
+      </Badge>
     </span>
   );
 }
