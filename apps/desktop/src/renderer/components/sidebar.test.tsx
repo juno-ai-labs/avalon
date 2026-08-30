@@ -1884,8 +1884,12 @@ describe('pinned work streams', () => {
 
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true, repeat: true });
-    expect([...document.querySelectorAll('.command-shortcut-pill')].map((pill) => pill.textContent))
-      .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    const pills = [...document.querySelectorAll('.command-shortcut-pill')];
+    expect(pills.map((pill) => pill.textContent)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    // The overlay reuses the automation You / Workspace badge so the two chips
+    // cannot pick up different size or colour. Dropping either class is the
+    // failure this asserts.
+    expect(pills.every((pill) => pill.classList.contains('badge') && pill.classList.contains('scope-badge'))).toBe(true);
     expect(reportTelemetryProductIntent).toHaveBeenCalledTimes(1);
     expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
       kind: 'command_shortcuts_revealed',
