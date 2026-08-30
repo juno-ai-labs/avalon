@@ -34,15 +34,14 @@ a reader's expectations, and an activation should inherit none of them by
 default. `message_type` has no `CHECK` constraint, so the new value costs no
 migration.
 
-That record is invisible for now, and the mechanism for that already existed.
-Every conversation turn carries a `visibility` of `people`, `model`, `both`, or
-`system`; the human feed's query reads only `('people','both')`. An activation
-is written `'model'`, so it is filtered out on the server rather than in the
-client, and a frozen `CHECK` in the turn schema makes it impossible for such a
-row to hold an attention ordinal — the database, not a code path, is what
-guarantees an invisible row cannot light an unread dot. Showing activations
-later is `'both'` instead of `'model'`, which permits the feed row and the
-marker in one move.
+That record is invisible for now. The one read method behind both the human
+feed and the agent takes an audience argument: the people branch excludes the
+new type, the model branch keeps it, and the append gives an activation no
+attention ordinal — the path a tool card already takes. Hiding is therefore
+server-side, so a client that has never heard of the type cannot show one by
+accident. An earlier revision of this PRD claimed the existing `visibility`
+column could do this for free; review proved it could not, and the correction
+is recorded in **Who sees it, and when** rather than quietly swapped in.
 
 None of that is about the model's system role, which is a different thing that
 shares a word. A run has exactly one system-role message, at index 0; an
@@ -128,10 +127,10 @@ avoid: nothing errors, nothing arrives, and nobody can tell why.
    of email and Slack DM, and each completed run's final message is then
    recorded in that work stream exactly once per run, as a message of its own
    type carrying a typed activation object — never as a reused system row.
-2. That record is invisible to people and silent: excluded by the feed query on
-   the server, and structurally incapable of holding an attention ordinal. It
-   becomes visible by changing one existing value, which permits the row and the
-   marker together.
+2. That record is invisible to people and silent: excluded server-side from the
+   feed read, and given no attention ordinal, so it lights no unread marker.
+   Making it visible later is a bounded change to the people branch of one read
+   method, the renderer, and the append.
 3. The work stream's own agent can see the activation and decide for itself
    what to do about it.
 4. A delivery that cannot land — the work stream was archived or deleted, the
@@ -170,8 +169,8 @@ avoid: nothing errors, nothing arrives, and nobody can tell why.
    doubles the cost of every delivery. Rejected here; a deliberate "act on
    arrival" behavior would be its own PRD, and the activation row is the seam it
    would attach to.
-3. **No visible feed presentation is designed or built.** The row is written
-   `visibility = 'model'` and the renderer draws nothing. What an
+3. **No visible feed presentation is designed or built.** The people branch of
+   the read excludes the type and the renderer draws nothing. What an
    activation should look like when it is shown — its own row kind, a fold into
    the automation's other activity, a summary the room's agent writes instead —
    is a product decision this PRD deliberately leaves open, having made it a
@@ -276,41 +275,73 @@ through a provider tool.
 
 ### Who sees it, and when
 
-**Today, nobody** — and that is the existing `visibility` column doing the
-work, not a new field. Every conversation turn carries
-`visibility IN ('people', 'model', 'both', 'system')`, and the query that
-serves the human feed already reads
-`WHERE substream_id = '0' AND visibility IN ('people', 'both')`. An activation
-is written `visibility = 'model'`, so it is filtered out **on the server**,
-before it reaches a client. A desktop build that has never heard of
-`automation_activation` cannot show one by accident, which is not true of a
-renderer-side filter.
+**Today, nobody.** The human feed does not draw an activation and it lights no
+unread marker; the work stream's agent reads it. Getting that right takes two
+small, explicit changes, and an earlier draft of this PRD got it wrong in a way
+worth recording, because the wrong version looks more elegant than the right
+one.
 
-Two consequences follow without any new mechanism:
+The read path is one method. `messageRows` in `workstream-object-product.ts`
+serves both the human feed and — through `messagesForRuntime` — the agent, and
+it filters `WHERE substream_id = '0' AND visibility IN ('people', 'both')`. So:
 
-- **No unread dot, enforced by the database.** The turn schema carries a frozen
-  `CHECK (attention_ordinal IS NULL OR (substream_id = '0' AND visibility IN
-  ('people', 'both') AND …))`. A `'model'` row *cannot* hold an attention
-  ordinal; SQLite rejects the insert. The invariant "a row nobody can see must
-  not nag" is not something the append path has to remember — it is not
-  expressible.
-- **Showing activations later is one value.** Write `'both'` instead of
-  `'model'` and the feed query returns the row and the attention ordinal becomes
-  permissible in the same move, because one constraint governs both. There is no
-  second edit to keep in step, which is the property that made this worth
-  finding rather than inventing.
+- **`messageRows` takes an audience argument**, `people` or `model`. The people
+  branch excludes `message_type = 'automation_activation'`; the model branch
+  keeps it. Everything else is unchanged for both. The exclusion is server-side,
+  so a desktop build that has never heard of the type cannot show one by
+  accident.
+- **The append does not assign an attention ordinal to an activation.**
+  `appendPreparedMessage` currently sets `prepared.input.attentionOrdinal` from
+  `next_attention_ordinal` unconditionally; it becomes conditional on the type,
+  and `#advanceCounters` does not move the counter — the path a tool card
+  already takes.
+
+**What this PRD previously claimed, and why it was wrong.** An earlier revision
+said the row could simply be written `visibility = 'model'`, reusing the
+existing four-valued column, and that a frozen `CHECK` tying `attention_ordinal`
+to `visibility IN ('people','both')` made an invisible-but-nagging row
+*unrepresentable*. Neither holds for this path.
+`participant_transcript_turns` has no `visibility` column at all, and the
+`canonical_conversation_turn_details` view every read goes through emits the
+**literal** `'people' AS visibility` for every conversation turn
+(`workstream-object-schema.ts:2146`). There is nowhere to put `'model'`, and the
+`CHECK` sits on a different table than the one this path writes. Worse, the
+change that drew from it — narrowing the runtime read to `('model','both')` —
+would not have been the no-op this document claimed: with the view emitting
+`'people'` for every turn, it would have returned **nothing**, leaving each run
+with its activations and none of the conversation they are meant to inform. That
+is a fleet-wide context outage, and it was two lines from being specified as
+safe. Codex found it in review on the first revision of this PRD.
+
+**Considered and rejected: make `visibility` real.** Add the column to
+`participant_transcript_turns` in a new migration, default existing rows to
+`'both'` (an ordinary turn *is* visible to both), and recreate the view to read
+`turn.visibility` instead of the literal. That is the more principled shape — it
+is what the column was designed for, it would give the invariant back to the
+database, and a future model-only row of any kind would get it for free. It is
+rejected here as too much for what this needs: a migration plus a view
+recreation plus a backfill semantic on the transcript's hottest read, to serve
+one message type, at a stage where the cheapest-to-reverse option is the right
+one. Two predicates that answer two genuinely different questions — what people
+see, what the model reads — are not duplicated state, and both read the same
+single fact, the message type. If a second model-only row kind ever appears,
+that is the moment to do this properly.
+
+**Showing activations later** is then a change to the people branch of
+`messageRows` and to the renderer, plus letting the append assign an ordinal. It
+is no longer one value, which is a real cost of the correction and is recorded
+here rather than smoothed over.
 
 The renderer still needs a branch for the type — a message it cannot draw must
-not fall through to a default — but that branch is a safety net rather than the
-hiding mechanism, and until open question 1 is answered it draws nothing.
+not fall through to a default — but until open question 1 is answered it draws
+nothing.
 
 **The work stream's agent does see it.** The activation is admitted into the
 agent's model context, so the room's own agent can notice that an automation
 fired and decide for itself what to do about it — mention it when someone next
 asks what is new, fold it into an answer, or ignore it. Rally does not
-prescribe that, and does not wake the agent to do it (non-goal 2). This needs
-one real change, because the runtime read shares the human feed's query today;
-**Agent behavior 0** and **Data model** both cover it.
+prescribe that, and does not wake the agent to do it (non-goal 2). **Agent
+behavior 0** covers the projection.
 
 The near-term shape of this feature is therefore machine-facing on purpose: the
 activation is a fact the agent can use, not yet a thing a person reads. That is
@@ -362,8 +393,9 @@ in. With that declared, the existing machinery does the rest: watching an attach
 registers a resource-scoped evaluator, and each polled change appends a
 resource-update row to the watching work stream — the same system row every
 other watched connector produces. The events stay classified `operational`,
-so nothing new reaches digests, and `connector-digestibility.md` is updated in
-the same change.
+so nothing new reaches digests. `connector-digestibility.md` needs no diff: it
+already carries all three rows as **No — a save**, which is the classification
+this change keeps.
 
 Two honest caveats surface in the product: updates arrive on the Google poll
 cadence, not instantly, and a change means "the file was saved", not a
@@ -469,29 +501,27 @@ None yet.
    real presentation later without renegotiating what a system row is.
    The cost is honest and small: four enumerations to extend, listed in
    **Data model**, and no migration, because `message_type` carries no `CHECK`.
-7. **Invisibility is the existing `visibility` column, not a new field.** The
-   first design invented a `presentation` field on the activation object and
-   had the renderer honour it. That was wrong twice. Rally already has a
-   four-valued `visibility` on every conversation turn, and the human feed's
-   query already filters on it — so hiding server-side was one existing value,
-   not new machinery, and a client that has never heard of activations cannot
-   leak one. And the turn schema carries a frozen
-   `CHECK (attention_ordinal IS NULL OR … visibility IN ('people','both') …)`,
-   which means the unread problem a renderer-side filter would have created is
-   not merely avoided but unrepresentable: SQLite refuses an invisible row that
-   asks for attention. Rejected: `presentation` on the payload, which would
-   have been a second, weaker answer to a question the schema already answers,
-   and would have left the two able to disagree.
-8. **`visibility` separates people from the model; it does not hide the row
-   from both.** An activation invisible to people is still admitted to the
-   agent's context — that is what `'model'` means. The catch is that the
-   runtime read does not honour the distinction today: `messagesForRuntime`
-   calls the same `messageRows` the human feed does, filtering
-   `('people','both')`, so a `'model'` row would currently be invisible to the
-   model as well. The runtime read is changed to `('model','both')`, which is
-   what the column has always meant. Rejected: writing activations `'both'` and
-   hiding them in the renderer, which reintroduces the client-side filter and
-   the unread bug the frozen `CHECK` otherwise prevents.
+7. **Invisibility is two explicit predicates, not a stored visibility value.**
+   The tempting design — write the row `visibility = 'model'` and let the
+   existing four-valued column do the filtering — was specified in the first
+   revision of this PRD and is wrong. `participant_transcript_turns` carries no
+   `visibility` column, and the view every read goes through emits the literal
+   `'people'` for every conversation turn, so there is nowhere to put the value
+   and nothing would have filtered on it. Instead the one shared read method
+   takes an audience argument and the append skips the attention ordinal for
+   this type. Rejected: adding the column and recreating the view, which is the
+   more principled version and is written up under **Who sees it, and when** as
+   the thing to do if a second model-only row kind ever appears; it is a
+   migration, a view recreation, and a backfill on the transcript's hottest read
+   in exchange for one message type.
+8. **The runtime read is left alone.** The same first revision proposed
+   narrowing `messagesForRuntime` to `visibility IN ('model','both')` and called
+   it a no-op because nothing writes `'model'` today. It would instead have
+   returned nothing at all, because the view labels every turn `'people'` —
+   every run in every work stream would have lost its entire conversation
+   history while keeping its activations. The audience argument leaves the model
+   branch reading exactly what it reads now, plus the new type. Nothing about
+   what an existing run sees changes.
 9. **The architect resolves the work stream; it does not accept a name at
    submission.** `agent-tools.md` principle 3 says to accept names and resolve
    them server-side, and a `workstreamName` field on `submit_draft` would do
@@ -522,8 +552,10 @@ None yet.
 
 No new tables. `AutomationRunDeliveryTargetV1` (in
 `packages/contracts/src/automation-agent.ts`) gains a third arm,
-`{ type: "workstream", workstreamId }`, and so does the acceptance-time
-`AutomationDeliveryTargetSetSchema`, whose cap moves from two entries to three
+`{ type: "workstream", workstreamId, authorizedByUserId }` — the second field is
+the principal whose participation authorized the destination, frozen at
+acceptance so the delivery-time re-check has something to test — and so does the
+acceptance-time `AutomationDeliveryTargetSetSchema`, whose cap moves from two entries to three
 — still one per kind. The delivery loop in `substream-agent.ts` gains a third
 branch with target key `workstream:<workstreamId>`, and receipts reuse the
 existing `automation_delivery_receipts` row per run and target, including its
@@ -555,25 +587,30 @@ package beside the other message payload shapes.
 The new `message_type` value costs nothing at the storage layer —
 `message_type TEXT NOT NULL` has no `CHECK` — but it is not free everywhere,
 and that is deliberate. Four places enumerate participant message types and
-each must name the new one: `MessageTypeSchema`
-(`["text","system","tool","elicitation","suggestion"]`) in contracts,
-`isParticipantMessageType` in `workstream-transcript-storage.ts`, the model
+each must name the new one: `MessageTypeSchema` in contracts
+(`["text","system","tool","elicitation","suggestion"]`),
+`isParticipantMessageType` in `workstream-transcript-storage.ts` (a narrower
+list — `text`, `system`, `elicitation`, `suggestion`, with no `tool`; the two
+already disagree, and this change neither widens nor repairs that), the model
 projector's admitted-kinds check, and the renderer's branch list. A type that
 no enumerator had to acknowledge would be a type that silently inherits
 whatever the fallback does.
 
-Two writes and one read change:
+Three small behavioural changes, all in existing methods:
 
-- The activation is appended with `visibility = 'model'` and a null attention
-  ordinal, which the frozen turn `CHECK` requires of any row that is not
-  `('people','both')`.
-- `messagesForRuntime` stops sharing the human feed's visibility filter. It
-  reads `('model','both')` — what the column means — instead of
-  `('people','both')`. **This is the one change here with a blast radius**: it
-  alters what every run of every work stream reads. It is a no-op against
-  existing data, because nothing writes `'model'` or `'system'` on a substream
-  `'0'` conversation turn today, and that emptiness is the thing to verify
-  before shipping rather than assume.
+- `messageRows` takes an audience argument. The people branch adds
+  `AND message_type <> 'automation_activation'`; the model branch does not. The
+  `visibility` predicate is untouched in both, so nothing an existing run or
+  feed reads changes.
+- `appendPreparedMessage` assigns `attentionOrdinal` conditionally rather than
+  unconditionally, and `#advanceCounters` leaves the counter alone for an
+  activation — the branch a tool card already uses.
+- The projector gains an admission branch for the type, ahead of its
+  drop-everything-else rule.
+
+No migration, no view change, and no new column. The `visibility` column is
+deliberately not involved; **Who sees it, and when** records why the obvious
+reading of it does not work and what it would cost to make it work.
 
 The Google `resourceRelationships` change is **not** manifest code alone. A
 descriptor's `relationship` is validated against a closed enum, and no current
@@ -618,8 +655,14 @@ hop. The Global email-address registry is untouched.
    workspace-scoped automation can be performed by an owner or admin who is
    not the author. The destination list offers work streams the *accepting*
    user participates in, and the delivery re-check is against that same
-   frozen principal — one answer, resolved at acceptance, like the email
-   address. See open question 2.
+   principal — which means the principal has to be **frozen on the target**, not
+   inferred later. The work-stream arm therefore carries
+   `authorizedByUserId` beside `workstreamId`, and the delivery-time check reads
+   it. Without that field the run has no way to perform the promised check: it
+   would have to test the author, which wrongly refuses the admin-accepted case,
+   or test nobody and keep delivering after the accepter loses access. Codex
+   found this gap in review. See open question 2, which decides whether the
+   author's participation is *additionally* required.
 3. **Authority generation fences delivery** exactly as it fences provider
    writes: a run outliving a pause or delete does not deliver.
 4. **Work-stream titles are workspace content.** `automation_workstreams_search`
@@ -701,10 +744,10 @@ deliberate:
   was launched to handle. An activation is standing context — the agent should
   be able to consult last Monday's agenda when someone asks a question today —
   so it stays in the window like any other message.
-- **A row invisible to people still enters context.** That is precisely what
-  `visibility = 'model'` means, and it is why the runtime read has to stop
-  borrowing the human feed's filter (**Data model**). Conflating the two
-  audiences would mean the eventual decision to show activations to people
+- **A row invisible to people still enters context.** People and the model are
+  two audiences asking different questions, which is why the read method
+  branches on audience rather than on one stored value (**Data model**).
+  Conflating them would mean the eventual decision to show activations to people
   silently changed what every run reads.
 
 Nothing about this wakes the agent (non-goal 2) or gives it a way to reply to
@@ -926,13 +969,15 @@ compiler guidance in the same change as the removal, never the removal first.
 Reverting is deleting the tool's call site and restoring the predicate; there is
 no stored state to unwind, since the declaration is per run.
 
-The second is narrowing `messagesForRuntime` to `visibility IN ('model','both')`
-(key design decision 8), which touches what every run of every work stream
-reads. It is a no-op only while no substream `'0'` turn carries `'model'` or
-`'system'` visibility — true today, and acceptance check 5 is the query that
-confirms it rather than assuming it. Land that change on its own, before any
-activation is ever written, so that if a work stream's runs do change behaviour
-it is attributable to one commit and revertable without unwinding a delivery.
+The second is the audience split in `messageRows`, which touches the one method
+behind every feed read and every run's context. It changes nothing an existing
+work stream sees — the model branch keeps today's predicate exactly, and the
+people branch only excludes a type no existing row carries — but the blast
+radius if it is got wrong is fleet-wide, which an earlier revision of this PRD
+demonstrated by specifying a version that would have emptied every run's
+context (key design decision 8). Land it on its own, before any activation is
+ever written, with acceptance check 4 covering both branches against a populated
+transcript.
 
 ## Acceptance
 
@@ -954,15 +999,16 @@ it is attributable to one commit and revertable without unwinding a delivery.
    shows two delivered receipts. Then open the work stream and ask its agent
    what the automation last reported — it answers from the activation, which is
    the check that the row reaches model context while reaching no screen.
-4. Write one delivery `visibility = 'both'` and repeat check 1: the row now
-   returns from the feed query, renders, and the work stream goes unread. No
-   second code path was needed. Then assert the negative directly — inserting a
-   `'model'` row with an attention ordinal is refused by SQLite, which is the
-   check that the invariant is the schema's rather than the append path's.
-5. Before shipping the runtime-read change, confirm the premise it rests on:
-   query the conversation turns for any substream `'0'` row whose `visibility`
-   is `'model'` or `'system'`. The change is a no-op only while that returns
-   nothing, and it alters what every run reads if it does not.
+4. Assert both branches of `messageRows` against one populated transcript that
+   contains ordinary turns *and* an activation: the people branch returns the
+   ordinary turns and not the activation; the model branch returns both. The
+   second half is the regression guard for the mistake this PRD nearly shipped —
+   a predicate that admits activations while dropping the conversation would
+   pass any test that only checked the activation was present.
+5. Append an activation and assert `next_attention_ordinal` and
+   `last_people_activity_at` are unmoved, and that no unread marker appears for
+   a second participant. Then append an ordinary message and assert both do
+   move, so the conditional cannot be satisfied by never advancing at all.
 6. Project a transcript containing an activation and assert the message list
    directly: exactly one `role: "system"` message, at index 0, and the
    activation present as a `role: "user"` message carrying the untrusted label.
