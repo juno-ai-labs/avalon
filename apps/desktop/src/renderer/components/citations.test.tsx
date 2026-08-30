@@ -391,6 +391,26 @@ describe('footnote citations', () => {
     '[^mar]: [Margin memo](https://example.com/memo)',
   ].join('\n');
 
+  it('resolves a footnote whose definition lives under a later heading', () => {
+    // Heading collapse mounts each section as its own react-markdown tree.
+    // A [^rev] in Claims used to stay literal because the definition sat in
+    // Sources, a different parse — the same seam streaming used to heal by
+    // re-parsing the whole document after settle.
+    const markdown = [
+      '## Claims',
+      '',
+      'Revenue grew 40%.[^rev]',
+      '',
+      '## Sources',
+      '',
+      '[^rev]: [Q3 board deck](resource://board-deck), slide 4',
+      '',
+    ].join('\n');
+    render(<MarkdownBody citations={context()}>{markdown}</MarkdownBody>);
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
+    expect(document.querySelector('.footnotes')).toBeNull();
+  });
+
   it('renders each reference as a numbered inline pill and no trailing list', () => {
     render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
 
