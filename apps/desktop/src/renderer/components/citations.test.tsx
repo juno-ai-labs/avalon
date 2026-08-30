@@ -22,6 +22,21 @@ function context(overrides: Partial<CitationContext> = {}): CitationContext & { 
   } as CitationContext & { open: ReturnType<typeof vi.fn> };
 }
 
+/** Mount a card, deliver a derivative, and return the glance node. */
+async function showPreview(derivative: string): Promise<HTMLElement> {
+  let deliver: (text: string) => void = () => undefined;
+  const preview = vi.fn(() => new Promise<string>((resolve) => { deliver = resolve; }));
+  render(
+    <MarkdownBody citations={context({ preview })}>
+      {'![Q3 board deck](resource://board-deck)'}
+    </MarkdownBody>,
+  );
+  await act(async () => { deliver(derivative); });
+  const excerpt = document.querySelector('.citation-card-preview');
+  expect(excerpt).not.toBeNull();
+  return excerpt as HTMLElement;
+}
+
 describe('resource citations', () => {
   it('renders the link form as an inline chip carrying the resource title', () => {
     render(
@@ -225,12 +240,52 @@ describe('resource citations', () => {
     expect(excerpt!.textContent).not.toContain('**');
     expect(excerpt).toHaveAttribute('inert');
     expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
-    // A preview is presentation: the button still announces the title alone,
-    // and nothing inside the glance is its own control.
+    // A preview is presentation: the button still announces the title alone.
     expect(excerpt).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByRole('button', { name: 'Open Q3 board deck' })).toBeInTheDocument();
-    expect(within(excerpt as HTMLElement).queryAllByRole('button')).toHaveLength(0);
-    expect(within(excerpt as HTMLElement).queryAllByRole('link')).toHaveLength(0);
+  });
+
+  it('keeps two paragraphs as two paragraphs instead of collapsing the seam', async () => {
+    const excerpt = await showPreview('First paragraph here.\n\nSecond paragraph here.');
+    expect(excerpt.querySelectorAll('p')).toHaveLength(2);
+  });
+
+  it('does not promote a paragraph above a rule into a heading', async () => {
+    const excerpt = await showPreview('Quarterly report\n\n---\n\nRevenue was up.');
+    expect(excerpt.querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
+    expect(excerpt.querySelector('hr')).not.toBeNull();
+    expect(excerpt).toHaveTextContent('Quarterly report');
+    expect(excerpt).toHaveTextContent('Revenue was up.');
+  });
+
+  it('does not swallow the paragraph after a list into the last item', async () => {
+    const excerpt = await showPreview('Findings:\n\n- one\n- two\n\nNext paragraph.');
+    expect(excerpt.querySelector('li:last-child')).toHaveTextContent(/^two$/u);
+    expect(excerpt.querySelector('p:last-of-type')).toHaveTextContent('Next paragraph.');
+  });
+
+  it('still opens an ordered list that does not start at one', async () => {
+    const excerpt = await showPreview('Agenda:\n\n2. second\n3. third');
+    const list = excerpt.querySelector('ol');
+    expect(list).not.toBeNull();
+    expect(list).toHaveAttribute('start', '2');
+    expect(excerpt.textContent).not.toMatch(/2\.\s+second/u);
+  });
+
+  it('does not nest a copy control or a link inside the card button', async () => {
+    const excerpt = await showPreview(
+      'Notes\n\n```js\nconst a = 1;\n```\n\nSee [the source](https://example.com)',
+    );
+    // queryAllByRole would be 0 for any content: the glance is aria-hidden.
+    expect(excerpt.querySelectorAll('button, a[href]')).toHaveLength(0);
+    expect(excerpt).toHaveTextContent('const a = 1;');
+    expect(excerpt).toHaveTextContent('the source');
+  });
+
+  it('does not fetch an external image from the glance', async () => {
+    const excerpt = await showPreview('Chart follows.\n\n![chart](https://attacker.example/pixel.png)');
+    expect(excerpt.querySelector('img')).toBeNull();
+    expect(excerpt).toHaveTextContent('chart');
   });
 
   it('keeps the card\'s empty room when a preview is unavailable or not offered', async () => {

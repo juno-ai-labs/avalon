@@ -109,9 +109,10 @@ export interface CitationRender {
    *
    * Lives here rather than as an import of `MarkdownBody` because that module
    * already imports this one for the citation matrix; a reverse import would
-   * cycle. The body supplies itself — verbatim, no citations — so the preview
-   * uses the one renderer without mounting a second `react-markdown`, and a
-   * document that cites another resource cannot draw a card inside this card.
+   * cycle. The body supplies itself — glance, verbatim, no citations — so the
+   * preview uses the one renderer without mounting a second `react-markdown`,
+   * a document that cites another resource cannot draw a card inside this card,
+   * and a fence or a link cannot nest a control inside the card's button.
    */
   readonly PreviewBody?: ComponentType<{ children: string }>;
 }
@@ -277,7 +278,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
       )}
       {settled.text !== undefined && settled.text !== '' && (
         <span aria-hidden="true" className="citation-card-preview" inert>
-          {PreviewBody ? <PreviewBody>{settled.text}</PreviewBody> : settled.text}
+            {PreviewBody ? <PreviewBody>{settled.text}</PreviewBody> : settled.text}
         </span>
       )}
       <span className="citation-card-text">
@@ -291,17 +292,19 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
 /**
  * The slice of a derivative the preview actually shows.
  *
- * Blank-line runs collapse so the clamp spends its lines on text rather than
- * on paragraph seams, and the tail beyond a few times the visible clamp is not
- * put in the DOM at all — the stylesheet clips at four lines, so shipping a
- * whole document into the box would render the same pixels at many times the
- * node weight. The markdown itself is left intact: `MarkdownBody` consumes
- * heading hashes and emphasis, which is why this no longer strips them.
+ * Blank lines stay: they *are* the block grammar, and collapsing them used
+ * to be a plain-text trick for spending the clamp on words rather than on
+ * empty lines. Fed to `MarkdownBody` that rewrite joins paragraphs, promotes
+ * a paragraph above `---` into a heading, and swallows the sentence after a
+ * list into its last item. The clamp's seams now live in CSS (`margin: 0` on
+ * the nested body) rather than in the source. The tail beyond a few times
+ * the visible clamp is still not put in the DOM — the stylesheet clips at
+ * four lines, so shipping a whole document into the box would render the
+ * same pixels at many times the node weight.
  */
 function previewExcerpt(text: string): string {
   return text
     .replace(/\r\n/gu, '\n')
-    .replace(/\n{2,}/gu, '\n')
     .trim()
     .slice(0, 600);
 }
