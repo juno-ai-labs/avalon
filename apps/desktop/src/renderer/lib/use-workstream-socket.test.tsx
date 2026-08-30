@@ -215,6 +215,7 @@ function emptyTranscriptSnapshot(): WorkstreamBoot['transcript'] {
     ranges: [],
     activities: [],
     activeActivities: [],
+    pluginRuns: [],
     activeTurns: [], pendingInputs: [],
   };
 }
@@ -688,6 +689,7 @@ describe('useWorkstreamSocket', () => {
         covered: { startInclusive: 21, endExclusive: 31 },
         turns: [latestTurn],
         activities: [],
+        pluginRuns: [],
       }],
     };
     const api = socketApiWith({
@@ -726,6 +728,7 @@ describe('useWorkstreamSocket', () => {
         covered: { startInclusive: 1, endExclusive: 8 },
         turns: [historicalTurn],
         activities: [],
+        pluginRuns: [],
       },
     }));
     await expect(rangePromise).resolves.toMatchObject({
@@ -797,12 +800,14 @@ describe('useWorkstreamSocket', () => {
           covered: { startInclusive: 1, endExclusive: 21 },
           turns: [toolTurn],
           activities: [staleActivity],
+          pluginRuns: [],
         }, {
           purpose: 'latest',
           requested: { startInclusive: 21, endExclusive: 31 },
           covered: { startInclusive: 21, endExclusive: 31 },
           turns: [transcriptTurn(25, 'latest')],
           activities: [],
+          pluginRuns: [],
         }],
         activities: [staleActivity],
         activeActivities: [staleActivity],
@@ -837,6 +842,7 @@ describe('useWorkstreamSocket', () => {
           covered: { startInclusive: 21, endExclusive: 31 },
           turns: [transcriptTurn(25, 'latest')],
           activities: [],
+          pluginRuns: [],
         }],
       },
     })));
@@ -873,6 +879,7 @@ describe('useWorkstreamSocket', () => {
           blocks: [{ ...toolTurn.blocks[0]!, status: 'completed' as const }],
         }],
         activities: [{ ...staleActivity, state: 'completed' as const, revision: 2 }],
+        pluginRuns: [],
       },
     }));
     await rangePromise;
@@ -905,6 +912,7 @@ describe('useWorkstreamSocket', () => {
         covered: { startInclusive: 21, endExclusive: 31 },
         turns: [transcriptTurn(25, 'latest')],
         activities: [],
+        pluginRuns: [],
       }],
     };
     const api = socketApiWith({
@@ -949,6 +957,7 @@ describe('useWorkstreamSocket', () => {
         covered: { startInclusive: 1, endExclusive: 21 },
         turns: [transcriptTurn(5, 'stale history')],
         activities: [],
+        pluginRuns: [],
       },
     }));
 
