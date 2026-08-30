@@ -190,9 +190,12 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
 ## Invariants
 
 - **Product runtimes reach EU only through named Worker RPC service bindings.**
-  Ace's Access-gated operator directory is the explicit administrative
-  exception: its Worker has a direct EU D1 binding for transient user/workspace
-  search and flag fan-out enumeration. The EU
+  Two Access-gated administrative surfaces are explicit exceptions. Ace has a
+  direct EU D1 binding for transient user/workspace search and flag fan-out
+  enumeration. The engineering MCP uses a named regional API entrypoint to run
+  deliberate Durable Object SQLite inspection and can return EU product content
+  transiently to an admitted operator; it never persists or logs query material.
+  The EU
   regional identity bridge is a named service entrypoint, not a public HTTP route,
   and no bridge is ever exposed as one. An HTTP internal bridge would put the
   region boundary on the open internet with nothing but a shared secret on it.
@@ -269,6 +272,7 @@ to cross it.
 | Provider app registrations and their callbacks | [`provider-apps.md`](provider-apps.md) |
 | Telemetry routing, opt-out, identities, and lifecycle | [`telemetry.md`](telemetry.md) |
 | What a Durable Object's migration report may carry out of its region | [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md) |
+| The operator-only cross-region SQLite inspection exception | [`engineering-mcp.md`](engineering-mcp.md) |
 | Whether a queue or binding is split per region or shared, and why | [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md#splitting-per-region) |
 | Deploying and verifying both regions | [`runbook.md`](runbook.md) |
 
@@ -374,6 +378,26 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-30 — Admit an explicit operator SQLite inspection exception
+
+**What changed:** An Access-protected engineering MCP can call a private named
+entrypoint in either regional API Worker and return requested Durable Object
+SQLite rows to an operator. Query text, bindings, results, and errors are not
+persisted or logged by the shared Worker.
+
+**Why:** Engineering needs the database-console capability for both regions,
+while Durable Object authority and routing must remain inside the region that
+owns them.
+
+**Considered and rejected:** A Global product-state mirror, Global fallback,
+and public regional SQL endpoints each create a second authority or a broader
+cross-region path. Separate region-specific MCP hostnames would make clients
+guess jurisdiction before identity routing has resolved it.
+
+**Consequences:** The ordinary no-cross-region-workspace-content rule now has
+one deliberate operator exception. Access admission is equivalent to console
+authority across both regions, and no product request may reuse this bridge.
 
 ### 2026-08-28 — Automation state and event delivery remain regional
 

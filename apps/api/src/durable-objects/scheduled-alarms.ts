@@ -21,7 +21,7 @@
  * `docs/durable-object-alarms.md` is the module document.
  */
 import type { Env } from "../env";
-import { MigratableDurableObject } from "./migratable-durable-object";
+import { InternallyInspectableDurableObject } from "./internally-inspectable-durable-object";
 
 /**
  * Added to an object's own migration history, not applied here.
@@ -387,7 +387,7 @@ export class ScheduledAlarmStore {
 /**
  * The base every scheduling object in this Worker extends.
  *
- * A subclass supplies three things on top of what `MigratableDurableObject`
+ * A subclass supplies three things on top of what `InternallyInspectableDurableObject`
  * already asks of it: what its own tables want it woken for, how to run one
  * stored entry, and whatever derived work its alarm did before this existed. It
  * never calls `setAlarm` itself.
@@ -397,10 +397,11 @@ export class ScheduledAlarmStore {
  * as everything else the object stores, and `migrationsReady` — which every
  * method here awaits before touching that table — is the promise the object's
  * constructor already holds. A Durable Object that migrates but does not
- * schedule extends `MigratableDurableObject` directly.
+ * schedule extends `MigratableDurableObject` directly and is not exposed to
+ * engineering SQL inspection.
  */
 export abstract class ScheduledDurableObject<TEnv extends Env = Env>
-  extends MigratableDurableObject<TEnv> {
+  extends InternallyInspectableDurableObject<TEnv> {
   private scheduledAlarmStore: ScheduledAlarmStore | null = null;
 
   /**
