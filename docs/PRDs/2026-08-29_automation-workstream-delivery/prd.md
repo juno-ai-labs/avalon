@@ -382,8 +382,9 @@ declaration. The trade is recorded in key design decision 12.
 
 The Google activity types gain `resourceRelationships`:
 `sheets.spreadsheet_changed` names `google_sheet`, `docs.document_changed`
-names `google_doc`, and `drive.file_changed` names `drive_file`. Each needs a
-`relationship`, and none of the seven values
+names `google_doc`, and `drive.file_changed` names `drive_file` — written out,
+`{ relationship: "file", resourceType: "google_sheet" }` and its two siblings.
+Each needs that `relationship`, and none of the seven values
 `ConnectorResourceRelationshipSchema` allows today — `channel`, `folder`,
 `parent`, `project`, `repository`, `page`, `application` — describes a Drive
 file, so the enum gains `file`. That is a contracts change, not a manifest-only
@@ -532,20 +533,21 @@ None yet.
    Consistency across that family is worth more than one saved call, and the
    ambiguity rule the principle demands is better served by an elicitation the
    person answers than by an error the model retries against.
-11. **The accepting principal authorizes the destination; the author's
-   participation is not additionally required.** Review left this open and it is
-   a trust boundary, so it is settled here rather than deferred. Acceptance of a
-   workspace-scoped automation is already an owner-or-admin act, and the
-   destination list is drawn from work streams *that person* is in; requiring the
-   author to be in it too would refuse the ordinary case this feature exists for
-   — an admin wiring a shared automation into a room its author does not sit in.
-   The cost is that an admin can point an automation at a work stream the draft
-   never named, which is why the authorizing principal is frozen on the target
-   (`authorizedByUserId`) and re-checked at every delivery: the moment that
-   person loses access to the room, delivery stops. Rejected: requiring both,
-   which is stricter and quietly makes the common case fail; and requiring
-   neither, which keeps delivering into a room after the only person who
-   authorized it has gone.
+11. **The principal frozen on the target is whoever last chose it, and the
+   author's participation is not additionally required.** An earlier revision
+   settled this on a false premise — that an owner or admin who is not the author
+   can accept a workspace automation. They cannot: `acceptDraft` asserts the
+   caller is the author, and the role check is an extra condition on that person.
+   The case that actually produces a non-author principal is `PATCH`, where
+   `assertManager` admits any owner or admin and the target is resolved against
+   that caller. Requiring the author to participate as well would refuse the
+   ordinary case that path exists for — an admin pointing a shared automation at
+   a room its author does not sit in — so the target carries the principal who
+   chose it, and delivery re-checks that person. Rejected: requiring both, which
+   makes the common `PATCH` case fail; requiring neither, which keeps delivering
+   into a room after the only person who authorized it has gone; and inferring
+   the principal from `executionPrincipal`, which is the author and is only
+   coincidentally right at acceptance.
 12. **The prose regex is retired, not kept as a backstop.**
    `shouldSuppressAutomationResult` currently decides whether a result is worth
    delivering by pattern-matching the model's sentence. Keeping it alongside
@@ -589,8 +591,9 @@ only. The alternative — keeping the enum and adding a parallel
 `requestedWorkstreamId` — is two fields that must agree, which is the drift
 this repository has already paid for elsewhere.
 
-The run's no-result declaration is **two** nullable columns — the reason and
-the instant it was reported — on the `automation_runs` table inside the
+The run's no-result declaration is **two** nullable columns —
+`no_result_reason TEXT` and `no_result_reported_at INTEGER`, constrained as a
+null pair so neither can be set alone — on the `automation_runs` table inside the
 **AutomationAgent Durable Object** (`automation-agent.ts:396`), not the
 same-named D1 table (`0001_initial.sql:214`). That matters: the DO schema takes a
 migration under
@@ -610,20 +613,30 @@ and that is deliberate. Four places enumerate participant message types and
 each must name the new one. There is no exported `MessageTypeSchema`; the
 vocabulary is an inline `z.enum(["text","system","tool","elicitation",
 "suggestion"])` on the message shape at `packages/contracts/src/index.ts:610`.
-Beside it: `isParticipantMessageType` in `workstream-transcript-storage.ts`
-(narrower — `text`, `system`, `elicitation`, `suggestion`, no `tool`; the two
-already disagree and this change neither widens nor repairs that), the TypeScript
-unions at `workstream-transcript-storage.ts:163`, `:180`, `:327` and
-`ConversationTurnInput.messageType` at `:330`, the model projector's
-admitted-kinds check, and the renderer's branch list. Two guards also decide the
-type's fate without enumerating it: `appendPreparedMessage` rejects only `tool`
-and `suggestion` (`participant_message_type_not_appendable`,
-`workstream-message-storage.ts:497`), so an activation passes unchanged; but the
-admitted-input validator requires `isParticipantMessageType`
-(`pending_input_message_type_invalid`, `workstream-transcript-storage.ts:4296`),
-so it refuses the new type until that predicate learns it. **The storage layer is
-free and the type layer is not** — "four enumerations" understated this, and the
-real list is the one above. A type that
+The full inventory, because "four places" understated it twice:
+
+| Where | Today | Effect on a new type |
+| --- | --- | --- |
+| `contracts/src/index.ts:610` (inline) | text, system, tool, elicitation, suggestion | must add |
+| `AppendMessageInputSchema` (`workstream-message-protocol.ts:18`) | text, system, elicitation | **rejects the append** until added |
+| `TranscriptTextBlockSchema` (`contracts/src/workstream-transcript.ts:54`) | text, system, elicitation, suggestion | must add |
+| `isParticipantMessageType` (`workstream-transcript-storage.ts:4539`) | text, system, elicitation, suggestion | gates the admitted-input validator below |
+| `ConversationTurnInput.messageType` and the unions at `:163`, `:180`, `:327` | — | must add |
+| desktop `messageSchema` (`renderer/lib/schemas.ts:123`) | text, tool_event, elicitation, activity_suggestion, system | must add before the row can ever render |
+| the model projector's admitted-kinds check | text, elicitation | gains the admission branch |
+
+Two guards decide the type's fate without enumerating it:
+`appendPreparedMessage` rejects only `tool` and `suggestion`
+(`participant_message_type_not_appendable`, `workstream-message-storage.ts:497`),
+so an activation passes there unchanged; the admitted-input validator requires
+`isParticipantMessageType` (`pending_input_message_type_invalid`,
+`workstream-transcript-storage.ts:4296`), so it refuses the new type until that
+predicate learns it.
+
+**The storage layer is free and the type layer is not.** That asymmetry is the
+whole cost of the new type, and it is worth paying: every row above is a place
+that would otherwise have decided what an activation is by falling through to a
+default. A type that
 no enumerator had to acknowledge would be a type that silently inherits
 whatever the fallback does.
 
@@ -682,18 +695,22 @@ hop. The Global email-address registry is untouched.
    body renders through `MarkdownBody` with its scheme allowlist and
    non-navigable mention chips. The new exposure is reach, not capability —
    the owner chose that reach at acceptance.
-2. **Whose participation gates a workspace automation.** Acceptance of a
-   workspace-scoped automation can be performed by an owner or admin who is
-   not the author. The destination list offers work streams the *accepting*
-   user participates in, and the delivery re-check is against that same
-   principal — which means the principal has to be **frozen on the target**, not
-   inferred later. The work-stream arm therefore carries
-   `authorizedByUserId` beside `workstreamId`, and the delivery-time check reads
-   it. Without that field the run has no way to perform the promised check: it
-   would have to test the author, which wrongly refuses the admin-accepted case,
-   or test nobody and keep delivering after the accepter loses access. Codex
-   found this gap in review. Whether the *author* must additionally participate is
-   settled in key design decision 11: no.
+2. **Whose participation gates a work-stream destination.** Acceptance is
+   author-only: `acceptDraft` calls `assertAuthor` on the caller
+   (`automation-agent.ts:1074`), and the owner-or-admin check for workspace
+   scope is an *additional* requirement on that same person, not an alternative
+   to it. So at acceptance the authorizing principal is always the author, and
+   there is no ambiguity to resolve.
+   The divergence is `PATCH`. `updateDeliveryTargets` calls `assertManager`
+   (`automation-agent.ts:1619`) and passes the *caller* as `authorUserId` into
+   `resolveDeliveryTargets`, so an owner or admin who is not the author can
+   replace the destination set, resolved against their own participation, and
+   nothing records that it was them. That is why the work-stream arm freezes
+   `authorizedByUserId` beside `workstreamId` and the delivery-time check reads
+   it: without it a run has no way to know whose access it should be
+   re-validating, and would either test the author — who may never have been in
+   that room — or test nobody and keep delivering after the manager who chose it
+   lost access.
 3. **Authority generation fences delivery** exactly as it fences provider
    writes: a run outliving a pause or delete does not deliver.
 4. **Work-stream titles are workspace content.** `automation_workstreams_search`
