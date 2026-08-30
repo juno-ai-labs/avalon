@@ -328,8 +328,8 @@ both.
   is on. It widens what is shown, never who may read it. A private work stream
   that is not machinery is protected exactly the same way.
 
-In the interface, a personal work stream's sidebar row paints a compact
-facepile of the people in it rather than the lock a personal note still wears.
+In the interface, a personal work stream's sidebar row paints the existing
+`AvatarStack` of the people in it rather than the lock a personal note still wears.
 The work-stream header keeps its **Private** badge. A digest occurrence is
 almost always a one-person pile.
 
@@ -685,6 +685,23 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-30 — Sidebar facepile is the existing AvatarStack, not a compact variant
+
+**What changed:** Digest (and every other personal) sidebar rows use `AvatarStack`
+at its existing 24px size. The compact size that had been added for the trailing
+slot is gone.
+
+**Why:** a second visual was a parallel facepile, not reuse of the one the header
+and participant chips already paint. The Air row is 31px; 24px faces already fit.
+
+**Considered and rejected:** CSS-shrinking the stack only in the sidebar. That
+would still be a second look. `extraCount` stays because the directory list is
+already truncated to three ids; inventing dummy members so the native overflow
+could fire would pollute the accessible name.
+
+**What a future change has to respect:** `AvatarStack` itself is the sidebar
+facepile. Do not add a size for this slot.
 
 ### 2026-08-30 — Digest sidebar rows wear a facepile, not the note lock
 

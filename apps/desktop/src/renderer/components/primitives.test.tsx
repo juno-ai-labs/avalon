@@ -247,12 +247,11 @@ describe('AvatarStack', () => {
     }));
     const { container } = render(
       <Tooltip.Provider>
-        <AvatarStack extraCount={2} limit={3} members={members} size="compact" />
+        <AvatarStack extraCount={2} limit={3} members={members} />
       </Tooltip.Provider>,
     );
 
-    expect(container.querySelector('.avatar-stack')).toHaveClass('avatar-stack-compact');
-    expect(container.querySelectorAll('.avatar-compact')).toHaveLength(3);
+    expect(container.querySelectorAll('.avatar-small')).toHaveLength(3);
     expect(container.querySelector('.avatar-overflow')).toHaveTextContent('+2');
   });
 
@@ -269,7 +268,7 @@ describe('AvatarStack', () => {
     }));
     const { container } = render(
       <Tooltip.Provider>
-        <AvatarStack extraCount={0} limit={3} members={members} size="compact" />
+        <AvatarStack extraCount={0} limit={3} members={members} />
       </Tooltip.Provider>,
     );
 

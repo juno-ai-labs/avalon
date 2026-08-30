@@ -767,7 +767,6 @@ function SidebarWorkstreamFacepile({
         extraCount={extraCount}
         limit={WORKSTREAM_SIDEBAR_FACEPILE_LIMIT}
         members={members}
-        size="compact"
       />
     </span>
   );
