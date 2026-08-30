@@ -2684,10 +2684,17 @@ pre {
    `.citation-card-preview .markdown-body` lost, so inherit never landed and the
    glance painted at the turn's size and colour. `*` carries the tone into
    descendants that `.markdown-body strong` (and `a`, `th`) paint themselves,
-   without naming a markdown element a host may not restyle. */
+   without naming a markdown element a host may not restyle. It also zeros
+   block margins: blank lines stay in the excerpt (they are the block grammar)
+   and the clamp's seams belong here rather than in a source rewrite. */
 .citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-disabled); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: normal; line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; pointer-events: none; word-break: break-word; }
 .citation-card .citation-card-preview div.markdown-body { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
-.citation-card .citation-card-preview div.markdown-body * { color: inherit; }
+.citation-card .citation-card-preview div.markdown-body * { color: inherit; margin: 0; }
+/* `*` does not match `::marker`, so the shared `.markdown-body li::marker`
+   colour would otherwise keep the bullets at the turn's ink beside faint
+   text. Inherit here the same way `*` carries the tone, without naming a
+   markdown element. */
+.citation-card .citation-card-preview div.markdown-body ::marker { color: inherit; }
 /* A heading scale of one size: the shared scale's h1 is larger than this
    tile, and a glance that spent its four lines on a title would hide the
    sentence that distinguishes one card from another. The same (0,3,1)-plus
