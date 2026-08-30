@@ -756,9 +756,10 @@ EU Terminal records, resource bytes, and GitHub tokens still stay in the EU
 Worker.
 
 **Consequences:** EU sandbox files run on the same Daytona `us` fleet as
-Global. That is a subprocessor exception, not a Rally data bridge. Runtime
-still degrades to `unsupported` if the EU `DAYTONA_API_KEY` (or another
-required Daytona value) is missing.
+Global. That is a subprocessor exception, not a Rally data bridge. EU reuses
+the Global Daytona project key as its own Worker secret; Cloudflare cannot
+copy it across Workers. Runtime still degrades to `unsupported` if that EU
+secret (or another required Daytona value) is missing.
 
 ### 2026-08-13 — Terminal availability is a regional provider gate
 
