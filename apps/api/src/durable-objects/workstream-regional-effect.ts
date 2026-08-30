@@ -50,6 +50,14 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
   kind: z.literal("directory_user"),
   userId: IdSchema,
   isParticipant: z.boolean(),
+  /**
+   * When this person joined, copied from `participants.added_at`.
+   *
+   * Optional because effects written before this field existed are still in
+   * flight and still parse; absent means the overlay should keep whatever
+   * timestamp it already stored rather than treating the person as new.
+   */
+  participantAddedAt: TimestampSchema.nullable().optional(),
   unreadCount: z.number().int().nonnegative(),
   youAreMentioned: z.boolean(),
   /**

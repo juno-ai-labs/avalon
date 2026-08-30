@@ -209,13 +209,15 @@ export function AvatarStack({
   const visible = members.slice(0, limit);
   const overflow = extraCount ?? Math.max(0, members.length - visible.length);
   const present = new Set(presentUserIds);
+  const named = members.map((member) => (
+    present.has(member.id) && member.id !== currentUserId
+      ? `${member.name} is viewing this workstream.`
+      : member.name
+  ));
+  if (overflow > 0) named.push(`and ${overflow} more`);
   return (
     <span
-      aria-label={members.map((member) => (
-        present.has(member.id) && member.id !== currentUserId
-          ? `${member.name} is viewing this workstream.`
-          : member.name
-      )).join('; ')}
+      aria-label={named.join('; ')}
       className="avatar-stack"
     >
       {visible.map((member) => {

@@ -536,6 +536,17 @@ function newestCommon(effects: WorkstreamRegionalEffect[]): Extract<WorkstreamRe
   return [...common].sort((left, right) => right.lastActivityAt.localeCompare(left.lastActivityAt))[0]!;
 }
 
+function latestParticipantAddedAt(
+  effects: readonly Extract<WorkstreamRegionalEffect, { kind: "directory_user" }>[],
+): string | null {
+  let latest: string | null = null;
+  for (const effect of effects) {
+    if (!effect.isParticipant || effect.participantAddedAt == null) continue;
+    if (latest === null || effect.participantAddedAt > latest) latest = effect.participantAddedAt;
+  }
+  return latest;
+}
+
 export { workstreamDOName };
 
 /**
@@ -1910,6 +1921,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       kind: "directory_user",
       userId,
       isParticipant: effects.some((effect) => effect.isParticipant),
+      participantAddedAt: latestParticipantAddedAt(effects),
       unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
       youAreMentioned: effects.some((effect) => effect.youAreMentioned),
       // An OR across substreams, which is only the top level's answer because
@@ -2039,6 +2051,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       kind: "directory_user",
       userId,
       isParticipant: effects.some((effect) => effect.isParticipant),
+      participantAddedAt: latestParticipantAddedAt(effects),
       unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
       youAreMentioned: effects.some((effect) => effect.youAreMentioned),
       // An OR across substreams, which is only the top level's answer because

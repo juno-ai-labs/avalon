@@ -1763,6 +1763,23 @@ describe('private work streams', () => {
     expect(within(row).getByText('+2')).toBeInTheDocument();
     expect(within(row).queryByLabelText('Private work stream')).not.toBeInTheDocument();
     expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
+    expect(row).toHaveAccessibleName(/Comp review/u);
+    expect(row).not.toHaveAccessibleName(/Ellis|Drew|Casey/u);
+  });
+
+  it('counts unresolved preview ids toward the overflow rather than dropping them', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-00000000002b', 'Staffing overflow', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-5', 'user-4', 'user-missing'],
+      participantExtraCount: 2,
+    }]);
+
+    const row = screen.getByRole('link', { name: /Staffing overflow/u });
+    expect(within(row).getByTitle('Ellis')).toBeInTheDocument();
+    expect(within(row).getByTitle('Drew')).toBeInTheDocument();
+    expect(within(row).getByText('+3')).toBeInTheDocument();
+    expect(row).not.toHaveAccessibleName(/Ellis|Drew/u);
   });
 
   it('skips participant ids the roster has not resolved', () => {

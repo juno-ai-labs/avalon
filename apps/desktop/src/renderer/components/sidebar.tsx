@@ -649,7 +649,8 @@ function WorkstreamRow({
               : (
                 <SidebarWorkstreamFacepile
                   extraCount={workstream.participantExtraCount}
-                  members={resolveSidebarFacepileMembers(workstream.participantUserIds, members)}
+                  memberIds={workstream.participantUserIds}
+                  roster={members}
                 />
               )}
             <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
@@ -755,16 +756,19 @@ function resolveSidebarFacepileMembers(
 
 function SidebarWorkstreamFacepile({
   extraCount,
-  members,
+  memberIds,
+  roster,
 }: {
   extraCount: number;
-  members: WorkspaceMember[];
+  memberIds: readonly string[];
+  roster: readonly WorkspaceMember[];
 }): React.JSX.Element | null {
+  const members = resolveSidebarFacepileMembers(memberIds, roster);
   if (members.length === 0) return null;
   return (
-    <span className="sidebar-workstream-facepile">
+    <span aria-hidden="true" className="sidebar-workstream-facepile">
       <AvatarStack
-        extraCount={extraCount}
+        extraCount={extraCount + (memberIds.length - members.length)}
         limit={WORKSTREAM_SIDEBAR_FACEPILE_LIMIT}
         members={members}
       />
