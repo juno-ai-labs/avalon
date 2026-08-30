@@ -101,6 +101,11 @@ import {
   WorkspaceSlackPendingPromptResultSchema,
   WorkspaceSlackThreadClaimResultSchema,
   WorkspaceSlackThreadRoutableResultSchema,
+  WorkspaceSlackContextResultSchema,
+  WorkspaceSlackSessionAssignResultSchema,
+  WorkspaceSlackSessionExistsResultSchema,
+  WorkspaceSlackSessionReactionResultSchema,
+  WorkspaceSlackSessionResultSchema,
 } from "../durable-objects/workspace-slack-protocol";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
@@ -588,10 +593,14 @@ export class SlackAgentService {
         // the one the thread used to be pinned to. `linkedAccount` above has
         // already established that this is an active member of the workspace
         // the session belongs to, which is the whole of what feedback needs.
-        const session = await this.env.DB.prepare(
-          `SELECT id FROM slack_agent_sessions WHERE workspace_id = ? AND workstream_id = ? AND connection_id = ?`,
-        ).bind(identity.auth.workspaceId, workstreamId, identity.connection.id).first<{ id: string }>();
-        if (!session) return { response_action: "errors", errors: { rating: "This task is no longer available." } };
+        const session = WorkspaceSlackSessionExistsResultSchema.parse(
+          await (await this.workspaceDirectory(identity.auth.workspaceId)).slackSessionExists({
+            workspaceId: identity.auth.workspaceId,
+            workstreamId,
+            connectionId: identity.connection.id,
+          }),
+        );
+        if (!session.sessionId) return { response_action: "errors", errors: { rating: "This task is no longer available." } };
         await this.enqueueIngressJob({ id: `interaction:${bodyHash}`, teamId, bodyHash, kind: "interaction", payload });
         return { response_action: "clear" };
       }
@@ -883,12 +892,20 @@ export class SlackAgentService {
       const workstreamId = typeof view.private_metadata === "string" ? view.private_metadata : "";
       const rating = modalSelectedValues(view.state, "rating", "value")[0];
       if (!workstreamId || (rating !== "helpful" && rating !== "needs_improvement")) throw new ApiError(422, "slack_feedback_invalid", "Slack feedback is invalid");
-      await this.env.DB.prepare(
-        `INSERT INTO slack_agent_feedback
-         (id, ingress_job_id, workspace_id, workstream_id, user_id, connection_id, rating, comment, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(ingress_job_id) DO NOTHING`,
-      ).bind(newId(), jobId, identity.auth.workspaceId, workstreamId, identity.auth.userId, identity.connection.id, rating, modalTextValue(view.state, "comment", "value"), nowIso()).run();
+      // The outcome is read rather than ignored: `ingress_job_id` is UNIQUE, so
+      // a redelivered submission is a replay, and the object says which it was
+      // instead of leaving a constraint violation to be inferred.
+      await (await this.workspaceDirectory(identity.auth.workspaceId)).recordSlackFeedback({
+        workspaceId: identity.auth.workspaceId,
+        feedbackId: newId(),
+        ingressJobId: jobId,
+        workstreamId,
+        userId: identity.auth.userId,
+        connectionId: identity.connection.id,
+        rating,
+        comment: modalTextValue(view.state, "comment", "value"),
+        at: nowIso(),
+      });
     }
   }
 
@@ -1002,6 +1019,7 @@ export class SlackAgentService {
       throw new ApiError(409, "slack_link_consumed", "This Slack connection link was already used or replaced by a newer one; click Connect Rally in Slack to get a new one");
     }
     await this.assignWorkspaceSessions(
+      auth.workspaceId,
       String(challenge.connection_id),
       String(challenge.slack_team_id),
       String(challenge.slack_user_id),
@@ -1037,6 +1055,11 @@ export class SlackAgentService {
     ).bind(workspaceId).all<SlackConnectionRow>();
     let assigned = 0;
     for (const connection of rawConnections.results ?? []) {
+      let matchedSlackUserId: string;
+      // Only the provider conversation is guarded. What this catch knows how to
+      // interpret is a Slack answer — a member who is not in the workspace, an
+      // installation that needs reconnecting — and it reports whatever it
+      // catches as one of those.
       try {
         const result = await slackApi(
           await this.botToken(connection),
@@ -1060,13 +1083,7 @@ export class SlackAgentService {
           { userId, verification: "verified_email" },
           verifiedEmail,
         );
-        assigned += await this.assignWorkspaceSessions(
-          connection.id,
-          connection.provider_account_id,
-          result.user.id,
-          userId,
-          "verified_email",
-        );
+        matchedSlackUserId = result.user.id;
       } catch (error) {
         if (slackErrorReason(error) === "users_not_found") continue;
         if (slackReconnectRequired(error)) {
@@ -1078,57 +1095,65 @@ export class SlackAgentService {
           user_id: userId,
           reason: slackErrorReason(error),
         });
+        continue;
       }
+      // Deliberately outside it. Seating is a WorkspaceDO write, and a write
+      // that fails is not a Slack lookup failure: swallowing it here returned a
+      // success count for seating that never happened, so an overloaded object
+      // or a refused request read as "this member owns nothing" with nothing
+      // logged above `warn`. The caller learns instead.
+      assigned += await this.assignWorkspaceSessions(
+        connection.workspace_id,
+        connection.id,
+        connection.provider_account_id,
+        matchedSlackUserId,
+        userId,
+        "verified_email",
+      );
     }
     return assigned;
   }
 
+  /**
+   * Seat a member across the sessions this Slack user owns in one workspace.
+   *
+   * The read and the write are one critical section inside the object now, and
+   * the count comes from the rows the update actually returned rather than from
+   * `meta.changes` — the physical counter `docs/durable-object-sqlite.md`
+   * forbids deciding a logical outcome from. Only the sessions the update moved
+   * are reconciled, so a row seated by somebody else between the two statements
+   * is no longer reconciled against a snapshot that had already gone stale.
+   */
   private async assignWorkspaceSessions(
+    workspaceId: string,
     connectionId: string,
     teamId: string,
     slackUserId: string,
     userId: string,
     method: "verified_email" | "explicit_link",
   ): Promise<number> {
-    const at = nowIso();
-    const assignmentGuard = method === "explicit_link"
-      ? ""
-      : "AND (s.assigned_user_id IS NULL OR s.assigned_user_id = ?)";
-    const guardBindings = method === "explicit_link" ? [] : [userId];
-    const assignmentMetadata = method === "explicit_link"
-      ? "assigned_at = ?, assignment_method = 'explicit_link'"
-      : "assigned_at = COALESCE(assigned_at, ?), assignment_method = COALESCE(assignment_method, 'verified_email')";
-    const sessions = await this.env.DB.prepare(
-      `SELECT id, workspace_id, workstream_id, assigned_user_id, assignment_method
-         FROM slack_agent_sessions
-        WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
-          AND execution_scope = 'workspace'
-          ${assignmentGuard.replaceAll("s.", "")}`,
-    ).bind(connectionId, teamId, slackUserId, ...guardBindings).all<{
-      id: string;
-      workspace_id: string;
-      workstream_id: string;
-      assigned_user_id: string | null;
-      assignment_method: string | null;
-    }>();
-    const assigned = await this.env.DB.prepare(
-      `UPDATE slack_agent_sessions
-          SET assigned_user_id = ?, ${assignmentMetadata}, updated_at = ?
-        WHERE connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
-          AND execution_scope = 'workspace'
-          ${assignmentGuard.replaceAll("s.", "")}`,
-    ).bind(userId, at, at, connectionId, teamId, slackUserId, ...guardBindings).run();
-    for (const session of sessions.results ?? []) {
+    const assigned = WorkspaceSlackSessionAssignResultSchema.parse(
+      await (await this.workspaceDirectory(workspaceId)).assignSlackSessions({
+        workspaceId,
+        connectionId,
+        teamId,
+        slackUserId,
+        assignedUserId: userId,
+        assignmentMethod: method,
+        at: nowIso(),
+      }),
+    );
+    for (const session of assigned.sessions) {
       await reconcileSlackWorkstreamIdentity(this.env, {
-        workspaceId: session.workspace_id,
-        workstreamId: session.workstream_id,
+        workspaceId: session.workspaceId,
+        workstreamId: session.workstreamId,
         userId,
-        previousAssignedUserId: session.assigned_user_id,
+        previousAssignedUserId: session.previousAssignedUserId,
         mayCorrectVerifiedCreator: method === "explicit_link"
-          && session.assignment_method === "verified_email",
+          && session.previousAssignmentMethod === "verified_email",
       });
     }
-    return Number(assigned.meta.changes ?? 0);
+    return assigned.sessions.length;
   }
 
   async previewLink(auth: AuthContext, token: string): Promise<{ teamId: string; slackUserId: string; workspaceName: string }> {
@@ -1196,9 +1221,12 @@ export class SlackAgentService {
     triggeringSlackUserId: string | null = null,
   ): Promise<void> {
     this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
-    const session = await this.env.DB.prepare(
-      `SELECT * FROM slack_agent_sessions WHERE workspace_id = ? AND workstream_id = ?`,
-    ).bind(workspaceId, workstreamId).first<SlackSessionRow>();
+    const session = WorkspaceSlackSessionResultSchema.parse(
+      await (await this.workspaceDirectory(workspaceId)).slackSessionByWorkstream({
+        workspaceId,
+        workstreamId,
+      }),
+    ).session;
     if (!session) return;
     if (session.last_delivery_key === deliveryKey) return;
     const connection = await this.connectionById(session.connection_id);
@@ -1311,9 +1339,12 @@ export class SlackAgentService {
           }, AbortSignal.timeout(10_000));
         }
       }
-      await this.env.DB.prepare(
-        "UPDATE slack_agent_sessions SET last_delivery_key = ?, updated_at = ? WHERE id = ?",
-      ).bind(deliveryKey, nowIso(), session.id).run();
+      await (await this.workspaceDirectory(workspaceId)).setSlackSessionDeliveryKey({
+        workspaceId,
+        sessionId: session.id,
+        deliveryKey,
+        at: nowIso(),
+      });
     } catch (error) {
       deliveryError = error;
       logWarn(this.env, "slack_workstream_delivery_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
@@ -1330,9 +1361,12 @@ export class SlackAgentService {
       // this runs on every terminal status, so the message ends up correct even
       // when the ticker never started or was lost mid-run.
       await this.applyOutcomeReaction(session, connection, token, outcomeStatus);
-      await this.env.DB.prepare(
-        "UPDATE slack_agent_sessions SET slack_stream_ts = NULL, updated_at = ? WHERE id = ?",
-      ).bind(nowIso(), session.id).run();
+      await (await this.workspaceDirectory(workspaceId)).setSlackSessionStream({
+        workspaceId,
+        sessionId: session.id,
+        streamTs: null,
+        at: nowIso(),
+      });
     }
     if (deliveryError) throw deliveryError;
   }
@@ -1604,7 +1638,7 @@ export class SlackAgentService {
     const token = await this.botToken(connection);
     const directMessage = type === "message" && isDirectSlackMessageEvent(event);
     const existingSession = !directMessage
-      ? await this.loadSession(connection.id, channelId, rootTs)
+      ? await this.loadSession(connection, channelId, rootTs)
       : null;
     const pendingPrompt = !directMessage && !existingSession
       ? await this.loadPendingPrompt(connection.workspace_id, connection.id, channelId, rootTs, slackUserId)
@@ -1769,7 +1803,7 @@ export class SlackAgentService {
       }
     }
     const slackOrigin = await this.slackOriginContext(
-      connection.id,
+      connection,
       teamId,
       slackUserId,
       source,
@@ -1778,7 +1812,7 @@ export class SlackAgentService {
     const channel = channelId ?? await this.openDm(token, slackUserId);
     const thread = threadTs ?? await this.createUserPromptRoot(token, channel, requestedPrompt);
     const openingClientMessageId = clientMessageId.slice(0, 120);
-    let session = await this.loadSession(connection.id, channel, thread);
+    let session = await this.loadSession(connection, channel, thread);
     if (session?.opening_client_message_id === openingClientMessageId) return;
     await slackApi(token, "assistant.threads.setStatus", {
       channel_id: channel,
@@ -1789,11 +1823,11 @@ export class SlackAgentService {
     if (!session) {
       const claimId = await this.claimThread(connection.workspace_id, connection.id, channel, thread);
       if (!claimId) {
-        session = await this.waitForSession(connection.id, channel, thread);
+        session = await this.waitForSession(connection, channel, thread);
         if (!session) throw new ApiError(503, "slack_thread_busy", "This Slack thread is still being initialized");
       } else {
         try {
-          session = await this.loadSession(connection.id, channel, thread);
+          session = await this.loadSession(connection, channel, thread);
           if (!session) {
             session = await this.createSlackWorkstreamSession({
               connection,
@@ -1837,12 +1871,14 @@ export class SlackAgentService {
       // The rotation restarts with it, so a continuation does not resume the
       // previous run's position and appear to have skipped a step.
       if (reactionSource) {
-        await this.env.DB.prepare(
-          `UPDATE slack_agent_sessions
-             SET reaction_channel_id = ?, reaction_message_ts = ?, reaction_current = ?,
-                 reaction_cursor = 0, updated_at = ?
-           WHERE id = ?`,
-        ).bind(reactionSource.channelId, reactionSource.timestamp, placedReaction, nowIso(), session.id).run();
+        await (await this.workspaceDirectory(connection.workspace_id)).anchorSlackSessionReaction({
+          workspaceId: connection.workspace_id,
+          sessionId: session.id,
+          channelId: reactionSource.channelId,
+          messageTs: reactionSource.timestamp,
+          reaction: placedReaction,
+          at: nowIso(),
+        });
         session = { ...session, reaction_channel_id: reactionSource.channelId, reaction_message_ts: reactionSource.timestamp, reaction_current: placedReaction, reaction_cursor: 0 };
         await this.signalReactionTicker(
           session,
@@ -1945,9 +1981,12 @@ export class SlackAgentService {
           task_display_mode: "plan",
         }, AbortSignal.timeout(5_000));
         if (typeof started.ts === "string") {
-          await this.env.DB.prepare(
-            "UPDATE slack_agent_sessions SET slack_stream_ts = ?, updated_at = ? WHERE id = ?",
-          ).bind(started.ts, nowIso(), session.id).run();
+          await (await this.workspaceDirectory(connection.workspace_id)).setSlackSessionStream({
+            workspaceId: connection.workspace_id,
+            sessionId: session.id,
+            streamTs: started.ts,
+            at: nowIso(),
+          });
         }
       } catch {
         // A final ordinary thread reply is the compatibility fallback.
@@ -2044,63 +2083,50 @@ export class SlackAgentService {
         });
     const id = newId();
     const at = nowIso();
-    await this.env.DB.prepare(
-      // `linked_user_id` and `execution_scope` are the retired pin, written here
-      // as fixed compatibility values and read by nothing in this Worker. They
-      // stay for one deployment: the previous Worker names both columns in this
-      // insert and `execution_scope` is `NOT NULL` with no default, so dropping
-      // them in the same change as the code would break every new Slack thread
-      // for the length of a deploy. A later migration may remove them after this
-      // Worker has shipped everywhere. The pair written is the permissive one —
-      // an old Worker reading these rows treats the thread as workspace-authorized
-      // by default. The work stream's separate `scope` still controls who may
-      // read it.
-      `INSERT INTO slack_agent_sessions
-       (id, workspace_id, connection_id, linked_user_id, execution_scope,
-        slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
-        opening_client_message_id, workstream_id, invocation_kind, channel_type,
-        assigned_user_id, assigned_at, assignment_method,
-        claimed_by_slack_user_id, claimed_at, context_json, created_at, updated_at)
-       VALUES (?, ?, ?, NULL, 'workspace', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      id,
-      input.connection.workspace_id,
-      input.connection.id,
-      input.teamId,
-      input.slackUserId,
-      input.channel,
-      input.thread,
-      input.clientMessageId.slice(0, 120),
-      created.workstream.id,
-      input.source.kind,
-      input.source.channelType,
-      input.identity?.auth.userId ?? null,
-      input.identity ? at : null,
-      input.identity ? "explicit_link" : null,
-      input.identity ? input.slackUserId : null,
-      input.identity ? at : null,
-      JSON.stringify({
-        source: input.source,
-        externalActor: input.actor,
-        slackOrigin: input.slackOrigin,
+    const workspace = await this.workspaceDirectory(input.connection.workspace_id);
+    let session = WorkspaceSlackSessionResultSchema.parse(
+      await workspace.createSlackSession({
+        workspaceId: input.connection.workspace_id,
+        sessionId: id,
+        connectionId: input.connection.id,
+        teamId: input.teamId,
+        slackUserId: input.slackUserId,
+        channelId: input.channel,
+        threadTs: input.thread,
+        openingClientMessageId: input.clientMessageId.slice(0, 120),
+        workstreamId: created.workstream.id,
+        invocationKind: input.source.kind,
+        channelType: input.source.channelType,
+        assignedUserId: input.identity?.auth.userId ?? null,
+        assignedAt: input.identity ? at : null,
+        assignmentMethod: input.identity ? "explicit_link" : null,
+        claimedBySlackUserId: input.identity ? input.slackUserId : null,
+        claimedAt: input.identity ? at : null,
+        contextJson: JSON.stringify({
+          source: input.source,
+          externalActor: input.actor,
+          slackOrigin: input.slackOrigin,
+        }),
+        at,
       }),
-      at,
-      at,
-    ).run();
+    ).session;
     if (!input.identity && input.matchedWorkspaceUserId) {
       // The recorded method has to name the mapping that actually resolved the
       // member: it is what a later assignment consults before overwriting.
       await this.assignWorkspaceSessions(
+        input.connection.workspace_id,
         input.connection.id,
         input.teamId,
         input.slackUserId,
         input.matchedWorkspaceUserId,
         input.matchedVerification === "verified_email" ? "verified_email" : "explicit_link",
       );
+      // Re-read, because the assignment above seats this row and the witness
+      // the insert returned predates it.
+      session = WorkspaceSlackSessionResultSchema.parse(
+        await workspace.slackSessionById({ workspaceId: input.connection.workspace_id, sessionId: id }),
+      ).session;
     }
-    const session = await this.env.DB.prepare(
-      "SELECT * FROM slack_agent_sessions WHERE id = ?",
-    ).bind(id).first<SlackSessionRow>();
     if (!session) throw new ApiError(500, "slack_session_write_failed", "The Slack task session could not be stored");
     return session;
   }
@@ -2169,14 +2195,18 @@ export class SlackAgentService {
   }
 
   private async loadSession(
-    connectionId: string,
+    connection: SlackConnectionRow,
     channelId: string,
     threadTs: string,
   ): Promise<SlackSessionRow | null> {
-    return this.env.DB.prepare(
-      `SELECT * FROM slack_agent_sessions
-       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?`,
-    ).bind(connectionId, channelId, threadTs).first<SlackSessionRow>();
+    return WorkspaceSlackSessionResultSchema.parse(
+      await (await this.workspaceDirectory(connection.workspace_id)).slackSessionByThread({
+        workspaceId: connection.workspace_id,
+        connectionId: connection.id,
+        channelId,
+        threadTs,
+      }),
+    ).session;
   }
 
   private async shouldEnqueueSlackMessage(
@@ -2269,7 +2299,7 @@ export class SlackAgentService {
         ? event.ts
         : null;
     const existingSession = channelId && rootTs && (event.type === "message" || event.type === "app_mention")
-      ? await this.loadSession(connection.id, channelId, rootTs)
+      ? await this.loadSession(connection, channelId, rootTs)
       : null;
     const channelResolution = existingSession
       && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
@@ -2650,7 +2680,7 @@ export class SlackAgentService {
   }
 
   private async slackOriginContext(
-    connectionId: string,
+    connection: SlackConnectionRow,
     teamId: string,
     slackUserId: string,
     source: SlackPromptSource,
@@ -2659,10 +2689,15 @@ export class SlackAgentService {
     // Slack Agent policy prohibits durable storage of provider content
     // obtained for surrounding context. Persist only origin metadata; Slack
     // content can be fetched by authorized tools for the active run.
-    const storedContext = await this.env.DB.prepare(
-      `SELECT context_json FROM slack_agent_contexts
-       WHERE connection_id = ? AND slack_user_id = ?`,
-    ).bind(connectionId, slackUserId).first<{ context_json: string }>();
+    // The connection rather than its id, because addressing the object that
+    // owns `slack_agent_contexts` needs the workspace the connection names.
+    const storedContext = WorkspaceSlackContextResultSchema.parse(
+      await (await this.workspaceDirectory(connection.workspace_id)).slackAppContext({
+        workspaceId: connection.workspace_id,
+        connectionId: connection.id,
+        slackUserId,
+      }),
+    ).contextJson;
     return SlackOriginContextSchema.parse({
       teamId,
       actorSlackUserId: slackUserId,
@@ -2675,19 +2710,20 @@ export class SlackAgentService {
       nearbyMessagesStatus: "not_applicable",
       nearbyMessages: [],
       attachments: source.attachments,
-      appContext: storedContext ? parseStoredSlackAppContext(storedContext.context_json) : null,
+      appContext: storedContext ? parseStoredSlackAppContext(storedContext) : null,
     });
   }
 
   private async storeSlackAppContext(teamId: string, slackUserId: string, value: unknown): Promise<void> {
     const context = slackAppContext(value);
     const connection = await this.connectionForTeam(teamId);
-    await this.env.DB.prepare(
-      `INSERT INTO slack_agent_contexts (connection_id, slack_user_id, context_json, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(connection_id, slack_user_id)
-       DO UPDATE SET context_json = excluded.context_json, updated_at = excluded.updated_at`,
-    ).bind(connection.id, slackUserId, JSON.stringify(context), nowIso()).run();
+    await (await this.workspaceDirectory(connection.workspace_id)).storeSlackAppContext({
+      workspaceId: connection.workspace_id,
+      connectionId: connection.id,
+      slackUserId,
+      contextJson: JSON.stringify(context),
+      at: nowIso(),
+    });
   }
 
   private async nearbySlackMessages(
@@ -2751,11 +2787,17 @@ export class SlackAgentService {
     return claimed.outcome === "claimed" ? claimed.leaseId : null;
   }
 
-  private async waitForSession(connectionId: string, channelId: string, threadTs: string): Promise<SlackSessionRow | null> {
+  /** Poll for the session another worker is mid-way through creating. */
+  private async waitForSession(
+    connection: SlackConnectionRow,
+    channelId: string,
+    threadTs: string,
+  ): Promise<SlackSessionRow | null> {
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      const session = await this.env.DB.prepare(
-        `SELECT * FROM slack_agent_sessions WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?`,
-      ).bind(connectionId, channelId, threadTs).first<SlackSessionRow>();
+      // Through `loadSession` rather than restating its query: the two were the
+      // same statement written twice, and only one of them would have been
+      // found by a search for the table.
+      const session = await this.loadSession(connection, channelId, threadTs);
       if (session) return session;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -3123,10 +3165,13 @@ export class SlackAgentService {
       // the stale emoji answers `no_reaction`, which is swallowed as success —
       // leaving the working reaction *and* the outcome on the message, which is
       // the one invariant this feature has.
-      const current = await this.env.DB.prepare(
-        "SELECT reaction_current FROM slack_agent_sessions WHERE id = ?",
-      ).bind(session.id).first<{ reaction_current: string | null }>();
-      const placed = current?.reaction_current ?? null;
+      const workspace = await this.workspaceDirectory(session.workspace_id);
+      const placed = WorkspaceSlackSessionResultSchema.parse(
+        await workspace.slackSessionById({
+          workspaceId: session.workspace_id,
+          sessionId: session.id,
+        }),
+      ).session?.reaction_current ?? null;
       const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
       const result = await this.executeSlackReaction(connection, token, {
         kind: "reaction",
@@ -3140,10 +3185,16 @@ export class SlackAgentService {
       // that slipped in behind the read is detected rather than overwritten.
       // `IS` rather than `=` because the column is nullable and NULL is a real
       // state here: it means Avalon has placed nothing.
-      const written = await this.env.DB.prepare(
-        "UPDATE slack_agent_sessions SET reaction_current = ?, updated_at = ? WHERE id = ? AND reaction_current IS ?",
-      ).bind(result?.reaction ?? null, nowIso(), session.id, placed).run();
-      if (!Number(written.meta.changes ?? 0)) {
+      const written = WorkspaceSlackSessionReactionResultSchema.parse(
+        await workspace.settleSlackSessionReaction({
+          workspaceId: session.workspace_id,
+          sessionId: session.id,
+          expected: placed,
+          reaction: result?.reaction ?? null,
+          at: nowIso(),
+        }),
+      );
+      if (written.outcome === "raced") {
         logWarn(this.env, "slack_outcome_reaction_raced", {
           session_id: session.id,
           outcome,
@@ -3178,12 +3229,17 @@ export class SlackAgentService {
     deliveryKey: string;
   }): Promise<boolean> {
     try {
-      // `slack_agent_sessions` is WorkspaceDO's, so the alarm's bare env has to
-      // be scoped before it can read a session at all.
+      // The session read is a typed method now, so it needs no scoped env of its
+      // own. The scoping stays because the rest of this path — the connection
+      // lookup behind `connectionById` — is still routed SQL.
       this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
-      const session = await this.env.DB.prepare(
-        "SELECT * FROM slack_agent_sessions WHERE id = ? AND workspace_id = ?",
-      ).bind(input.sessionId, input.workspaceId).first<SlackSessionRow>();
+      const workspace = await this.workspaceDirectory(input.workspaceId);
+      const session = WorkspaceSlackSessionResultSchema.parse(
+        await workspace.slackSessionById({
+          workspaceId: input.workspaceId,
+          sessionId: input.sessionId,
+        }),
+      ).session;
       if (!session?.reaction_channel_id || !session.reaction_message_ts) return false;
       // Liveness comes from the run, not the ticker's own bookkeeping: delivery
       // stamps a new key, so a key that has moved means this run is over even if
@@ -3210,10 +3266,14 @@ export class SlackAgentService {
         });
         // Conditional on the emoji this tick removed, so a terminal transition
         // that landed in between is not overwritten by a working reaction.
-        await this.env.DB.prepare(
-          `UPDATE slack_agent_sessions SET reaction_current = ?, reaction_cursor = ?, updated_at = ?
-            WHERE id = ? AND reaction_current IS ?`,
-        ).bind(result.reaction, cursor + 1, nowIso(), session.id, session.reaction_current).run();
+        await workspace.settleSlackSessionReaction({
+          workspaceId: input.workspaceId,
+          sessionId: session.id,
+          expected: session.reaction_current,
+          reaction: result.reaction,
+          cursor: cursor + 1,
+          at: nowIso(),
+        });
       } catch (error) {
         // A rate limit above all: keep the rotation alive and leave the current
         // reaction until the next tick rather than ending it on one refusal.
