@@ -170,7 +170,7 @@ export function Avatar({
   title = member.name,
 }: {
   member: WorkspaceMember;
-  size?: 'compact' | 'small' | 'medium' | 'large';
+  size?: 'small' | 'medium' | 'large';
   title?: string | null;
 }): React.JSX.Element {
   const initials = member.name
@@ -195,7 +195,6 @@ export function AvatarStack({
   extraCount,
   presentUserIds = [],
   currentUserId = null,
-  size = 'small',
 }: {
   members: WorkspaceMember[];
   limit?: number;
@@ -206,7 +205,6 @@ export function AvatarStack({
   extraCount?: number;
   presentUserIds?: readonly string[];
   currentUserId?: string | null;
-  size?: 'compact' | 'small' | 'medium' | 'large';
 }): React.JSX.Element {
   const visible = members.slice(0, limit);
   const overflow = extraCount ?? Math.max(0, members.length - visible.length);
@@ -218,7 +216,7 @@ export function AvatarStack({
           ? `${member.name} is viewing this workstream.`
           : member.name
       )).join('; ')}
-      className={clsx('avatar-stack', size === 'compact' && 'avatar-stack-compact')}
+      className="avatar-stack"
     >
       {visible.map((member) => {
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
@@ -235,7 +233,7 @@ export function AvatarStack({
             >
               <span className={clsx('avatar-stack-item', showingPresence && 'is-present')}>
                 {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
-                <Avatar member={member} size={size === 'compact' ? 'compact' : 'small'} title={showingPresence ? null : member.name} />
+                <Avatar member={member} size="small" title={showingPresence ? null : member.name} />
               </span>
             </Tooltip.Trigger>
             {showingPresence && (

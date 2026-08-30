@@ -299,7 +299,6 @@ pre {
 }
 
 .avatar-small { height: 24px; width: 24px; }
-.avatar-compact { height: 16px; width: 16px; }
 .avatar-medium { height: 30px; width: 30px; }
 .avatar-large { height: 38px; width: 38px; }
 .avatar-image { height: 100%; object-fit: cover; width: 100%; }
@@ -310,7 +309,6 @@ pre {
  * whatever font the platform resolves.
  */
 .avatar-fallback { color: var(--av-ref-color-neutral-14); font-size: 9px; font-weight: 650; text-box: trim-both cap alphabetic; }
-.avatar-compact .avatar-fallback { font-size: 7px; }
 .avatar-medium .avatar-fallback { font-size: 10px; }
 .avatar-large .avatar-fallback { font-size: 11px; }
 
@@ -394,23 +392,6 @@ pre {
   padding: 0 4px;
   position: relative;
   z-index: 1;
-}
-
-.avatar-stack-compact .avatar-stack-item + .avatar-stack-item,
-.avatar-stack-compact .avatar-overflow {
-  margin-left: -5px;
-}
-
-.avatar-stack-compact .avatar {
-  border-width: 1px;
-}
-
-.avatar-stack-compact .avatar-overflow {
-  border-width: 1px;
-  font-size: 8px;
-  height: 16px;
-  min-width: 16px;
-  padding: 0 2px;
 }
 
 .status-indicator {
