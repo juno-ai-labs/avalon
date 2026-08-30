@@ -822,7 +822,7 @@ describe('MessageBlock markdown', () => {
     const body = document.querySelector('.markdown-body')!;
     const paragraph = body.querySelector('p')!;
     expect(paragraph.querySelectorAll('br')).toHaveLength(1);
-    expect(paragraph.textContent).toBe('Line oneLine two');
+    expect(paragraph.textContent).toBe('Line one\nLine two');
 
     const cell = screen.getByRole('cell', { name: /src\/a\.ts/u });
     expect(cell.querySelectorAll('br')).toHaveLength(2);
@@ -842,7 +842,7 @@ describe('MessageBlock markdown', () => {
     render(<MarkdownBody verbatim>{'Hello<br />there'}</MarkdownBody>);
     const paragraph = document.querySelector('.markdown-body p')!;
     expect(paragraph.querySelectorAll('br')).toHaveLength(1);
-    expect(paragraph.textContent).toBe('Hellothere');
+    expect(paragraph.textContent).toBe('Hello\nthere');
   });
 
   it('renders unsupported fenced languages as plain text without losing their label', () => {
