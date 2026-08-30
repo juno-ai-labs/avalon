@@ -499,9 +499,10 @@ export function messageExportDocument(input: {
   // `contentHtml` is interpolated as markup, not escaped, because it *is* the
   // rendered message. What makes that safe is upstream: `MarkdownBody` mounts
   // `react-markdown` with no `rehype-raw`, so HTML in a model's markdown is
-  // already text by the time it reaches here. The window's `default-src 'none'`
-  // is the second lock. Both have to hold — a raw-HTML plug-in added to the
-  // renderer would turn this into an injection point.
+  // already text by the time it reaches here — except the break-tag rewrite,
+  // which emits only empty `<br>` elements from a closed pattern. The window's
+  // `default-src 'none'` is the second lock. Both have to hold — a raw-HTML
+  // plug-in added to the renderer would turn this into an injection point.
   const seed = seedFrom(input.contentHtml);
   const signature = `<div class="export-signature"><span class="export-mark"></span>Saved from Rally</div>`;
   const card = `<div class="export-card"><div class="markdown-body">${input.contentHtml}</div>${

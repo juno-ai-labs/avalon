@@ -296,6 +296,84 @@ function MarkdownTable({ children, node, style, ...props }: React.ComponentProps
   );
 }
 
+/**
+ * Models write `<br/>` for a line break — especially inside a GFM table cell,
+ * which cannot contain a real newline without ending the row. This renderer
+ * does not parse HTML (`rehype-raw` is deliberately off), so those tags would
+ * otherwise print as characters, or vanish when micromark classifies them as
+ * `html` and remark-rehype drops the node. The rewrite is the closed
+ * exception: a bare break tag becomes an mdast `break`, which is a real
+ * `<br>` downstream. Code is skipped, because a sample may be showing the
+ * tag on purpose.
+ *
+ * It runs on every body, verbatim included. This is a renderer affordance for
+ * one HTML tag, not a repair of what a model meant — a stored document's table
+ * uses the same workaround, and rewriting it is showing the line break the
+ * file asked for.
+ *
+ * The pattern is a bare tag only. `<br class="x">` and every other element
+ * stay as they were, which is what keeps this from becoming an HTML parser.
+ */
+const HTML_BREAK_TAG = /<br\s*\/?>/giu;
+const BARE_BREAK_TAG = /^<br\s*\/?>$/iu;
+
+/**
+ * The slice of an mdast node the break rewrite reads. Structural rather than
+ * imported: the renderer depends on `mdast` only transitively through
+ * react-markdown.
+ */
+interface BreaksNode {
+  type: string;
+  value?: string;
+  children?: BreaksNode[];
+}
+
+function remarkHtmlBreaks() {
+  return (tree: unknown) => {
+    rewriteMarkdownBreaks(tree as BreaksNode);
+  };
+}
+
+function rewriteMarkdownBreaks(node: BreaksNode): void {
+  if (node.type === 'code' || node.type === 'inlineCode') return;
+  const children = node.children;
+  if (children === undefined) return;
+  let rebuilt: BreaksNode[] | undefined;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]!;
+    if (child.type === 'html' && child.value !== undefined && BARE_BREAK_TAG.test(child.value.trim())) {
+      rebuilt ??= children.slice(0, index);
+      rebuilt.push({ type: 'break' });
+      continue;
+    }
+    if (child.type === 'text' && child.value !== undefined) {
+      const pieces = splitHtmlBreaks(child.value);
+      if (pieces !== undefined) {
+        rebuilt ??= children.slice(0, index);
+        rebuilt.push(...pieces);
+        continue;
+      }
+    } else {
+      rewriteMarkdownBreaks(child);
+    }
+    rebuilt?.push(child);
+  }
+  if (rebuilt !== undefined) node.children = rebuilt;
+}
+
+function splitHtmlBreaks(value: string): BreaksNode[] | undefined {
+  if (!value.toLowerCase().includes('<br')) return undefined;
+  const parts = value.split(HTML_BREAK_TAG);
+  if (parts.length === 1) return undefined;
+  const nodes: BreaksNode[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    if (part.length > 0) nodes.push({ type: 'text', value: part });
+    if (index < parts.length - 1) nodes.push({ type: 'break' });
+  }
+  return nodes;
+}
+
 function personIdFromHref(href: string | undefined): string | undefined {
   return personIdFromMentionHref(href);
 }
@@ -470,7 +548,7 @@ function renderIdentity(
   return <span className="mention-text-fallback">{label}</span>;
 }
 
-const REMARK_PLUGINS = [remarkGfm];
+const REMARK_PLUGINS = [remarkGfm, remarkHtmlBreaks];
 /**
  * The embed-row pass groups only what the citation matrix will draw as a card,
  * so a surface with no citation context groups nothing at all — and gets a
