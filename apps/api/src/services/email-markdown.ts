@@ -18,7 +18,9 @@ import { escapeHtml } from "./resend";
  * most of what a general renderer emits, and rendering raw HTML would mean
  * rendering model output into an email. This covers the subset these emails
  * use, escapes everything before a single tag is added, and only ever emits an
- * `href` it built itself. What it does not understand — a table, a fenced
+ * `href` it built itself. The one HTML tag it will reconstruct from the source
+ * is a bare `<br/>`, after escaping, after parking code — a line break, not
+ * markup a model chose. What it does not understand — a table, a fenced
  * block — is kept verbatim inside a `<pre>` rather than flattened into a
  * paragraph, because a briefing's table read as one run-on line of pipes is
  * worse than a plain one.
@@ -203,6 +205,9 @@ function stripInlineMarks(value: string, keepLinkTargets = false): string {
     .replace(/(\*\*|__)([^*_]+)\1/gu, "$2")
     .replace(/(^|[\s(])([*_])([^\s*_][^*_]*[^\s*_]|[^\s*_])\2(?=[\s.,;:)!?]|$)/gu, "$1$3")
     .replace(/~~([^~]+)~~/gu, "$1")
+    // Break tags become newlines, except inside a code span that is showing
+    // the tag. The code pass has to run first or `` `a<br/>b` `` would split.
+    .replace(/`[^`]+`|<br\s*\/?>/giu, (match) => (match.startsWith("`") ? match : "\n"))
     .replace(/`([^`]+)`/gu, "$1")
     .trimEnd();
 }
@@ -423,6 +428,10 @@ function renderInline(value: string): string {
     codeSpans.push(`<code style="${CODE_STYLE}">${code}</code>`);
     return `${CODE_PLACEHOLDER}${codeSpans.length - 1}${CODE_PLACEHOLDER}`;
   });
+  // Bare break tags are the one HTML construct this renderer honours, after
+  // code has been parked so a sample showing the tag stays a sample. Every
+  // other tag is already an entity from `escapeHtml` and stays one.
+  html = html.replace(/&lt;br\s*\/?&gt;/giu, "<br>");
   html = html.replace(/\*\*([^*]+)\*\*/gu, (_match, bold: string) =>
     `<strong style="color:${COLOR.ink};font-weight:650">${bold}</strong>`);
   // Both emphasis marks, and asterisks only after bold has consumed its pairs.

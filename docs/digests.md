@@ -686,6 +686,20 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-30 — A bare `<br/>` becomes a line break in email prose
+
+**What changed:** `email-markdown.ts` rewrites a bare break tag to `<br>` in the
+HTML part (after escaping, after parking code spans) and to a newline in the
+plain-text part (outside code spans).
+
+**Why:** The desktop renderer now honours the same tag, and these two surfaces
+showing different bytes for the same briefing is the drift this module already
+paid for once. Tables stay preformatted here, so a break tag inside a pipe row
+is still characters — this renderer has no table model.
+
+**Considered and rejected:** Flattening email tables into real HTML tables just
+to honour the tag. That is a second table renderer, not a break-tag fix.
+
 ### 2026-08-30 — Sidebar facepile omits the current viewer
 
 **What changed:** A personal sidebar row no longer paints the signed-in person's
