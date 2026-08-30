@@ -279,8 +279,11 @@ container even though the host alone would select the same elements. That is
 deliberate. `.note-detail-article h1` ties `.markdown-body h1` at (0,1,1) and
 wins only by sitting lower in the file, so the override would survive exactly as
 long as nobody split the stylesheet or moved a block. With `.markdown-body` in
-the selector it is (0,2,1) and the question does not arise. A host override that
-cannot be written this way is a sign it is not a typography override.
+the selector it is (0,2,1) and the question does not arise. The embed card goes
+one step further: the feed already paints `.markdown-body` at (0,3,0), so the
+preview names `.citation-card` and the wrapper's `div` to sit at (0,3,1). A host
+override that cannot be written this way is a sign it is not a typography
+override.
 
 ## Invariants
 
@@ -499,6 +502,31 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — The embed card preview wins its tone on specificity, not source order
+
+**What changed:** the preview's inherit and heading scale are now
+`.citation-card .citation-card-preview div.markdown-body`, and a descendant `*`
+carries `color: inherit` so `strong` (and `a`, `th`) recede with the glance.
+
+**Why:** the feed already paints `.markdown-body` at (0,3,0) —
+`:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`
+and the human-bubble twin. The host written as
+`.citation-card-preview .markdown-body` was (0,2,0) and lost, so inherit never
+landed: headings kept the shared scale, `**Author:**` stayed `text.default`, and
+the four-line clamp spent itself on the title. The card is a nested
+`MarkdownBody` inside a turn, so a wrapper that only beats the shared group is
+not enough.
+
+**Why not restyle `p` or `strong` on the host:** a host may override typography,
+not markdown elements, and the stylesheet guard exists to keep that from
+quietly coming back. `*` inherits the tone without naming those elements.
+Naming the card and the wrapper's element is the same move the heading-scale
+guard already requires: win on specificity, not on sitting lower in the file.
+
+**What a future change has to respect:** a selector that drops `.citation-card`
+or `div` falls back to losing against the feed. Do not "fix" the glance by
+painting `p` or `strong` on `.citation-card-preview`.
 
 ### 2026-08-30 — The embed card preview renders markdown, in the faintest text tone
 
