@@ -1,4 +1,8 @@
 import {
+  type AttachmentKind,
+  classifyAttachmentKind,
+} from '@rally/contracts';
+import {
   type CitationScheme,
   type CitationTarget,
   type FootnoteCitation,
@@ -7,7 +11,7 @@ import {
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { File, FileText, Link2 } from 'lucide-react';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, type ComponentType } from 'react';
 
 /**
  * Citations, as the desktop draws them.
@@ -42,6 +46,8 @@ export interface CitationResource {
   readonly id: string;
   readonly title: string;
   readonly resourceType: string;
+  /** Present when the record knows a MIME type; the kind label classifies from it. */
+  readonly mimeType?: string;
 }
 
 export interface CitationContext {
@@ -98,6 +104,17 @@ export interface CitationRender {
    * bare numbers over nothing, which is worse than either form on its own.
    */
   readonly still?: boolean;
+  /**
+   * How the embed card's preview renders the derivative's markdown.
+   *
+   * Lives here rather than as an import of `MarkdownBody` because that module
+   * already imports this one for the citation matrix; a reverse import would
+   * cycle. The body supplies itself — glance, verbatim, no citations — so the
+   * preview uses the one renderer without mounting a second `react-markdown`,
+   * a document that cites another resource cannot draw a card inside this card,
+   * and a fence or a link cannot nest a control inside the card's button.
+   */
+  readonly PreviewBody?: ComponentType<{ children: string }>;
 }
 
 export const CitationsProvider = CitationsContext.Provider;
@@ -119,10 +136,44 @@ const EMPTY_RENDER: CitationRender = {
  * `github_pull_request`, `gmail_thread`, `linear_project_update`. A CSS
  * `capitalize` on that prints `Github_pull_request`; the underscores have to go
  * before the words do.
+ *
+ * Provenance types (`generated_file`, `uploaded_file`) are not kinds a person
+ * can tell apart: every published file is one. Those classify from MIME and
+ * filename into the attachment kinds, and a slide deck reads as "Deck" rather
+ * than "Presentation" because that is the word the rest of the product uses.
  */
-export function resourceKindLabel(resourceType: string): string {
-  const words = resourceType.replace(/[_-]+/gu, ' ').trim();
-  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : resourceType;
+const FILE_KIND_LABELS: Record<AttachmentKind, string> = {
+  image: 'Image',
+  markdown: 'Markdown',
+  pdf: 'PDF',
+  document: 'Document',
+  spreadsheet: 'Spreadsheet',
+  presentation: 'Deck',
+  text: 'Text',
+  other: 'File',
+};
+
+const FILE_PROVENANCE_TYPES = new Set(['generated_file', 'uploaded_file']);
+
+export function resourceKindLabel(resource: Pick<CitationResource, 'resourceType' | 'title' | 'mimeType'>): string {
+  const type = resource.resourceType;
+  if (FILE_PROVENANCE_TYPES.has(type)) {
+    return FILE_KIND_LABELS[classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title })];
+  }
+  if (isAttachmentKind(type)) return FILE_KIND_LABELS[type];
+  const words = type.replace(/[_-]+/gu, ' ').trim();
+  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : type;
+}
+
+function isAttachmentKind(value: string): value is AttachmentKind {
+  return Object.hasOwn(FILE_KIND_LABELS, value);
+}
+
+function resourceIconType(resource: CitationResource): string {
+  if (FILE_PROVENANCE_TYPES.has(resource.resourceType)) {
+    return classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title });
+  }
+  return resource.resourceType;
 }
 
 /** The kind of thing a resource is, at a glance. Shared with the rail's own list. */
@@ -147,7 +198,7 @@ function ResourceChip({ label, resource, onOpen }: {
       onClick={onOpen}
       type="button"
     >
-      <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon type={resource.resourceType} /></span>
+      <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon type={resourceIconType(resource)} /></span>
       <span className="citation-chip-label">{label}</span>
     </button>
   );
@@ -169,9 +220,9 @@ function ResourceChip({ label, resource, onOpen }: {
  * markdown-converted text, the card shows the opening lines of it between the
  * badge and the title, clipped by the stylesheet — never scrolled — and shows
  * a shimmering skeleton for exactly as long as the derivative is still being
- * prepared. The preview is presentation, so it is `aria-hidden` and the
- * button's label stays the title alone. A still render skips it entirely:
- * a picture serialized mid-skeleton would keep the skeleton forever.
+ * prepared. The preview is presentation, so it is `aria-hidden` and `inert`,
+ * and the button's label stays the title alone. A still render skips it
+ * entirely: a picture serialized mid-skeleton would keep the skeleton forever.
  */
 function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   label: React.ReactNode;
@@ -179,6 +230,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   onOpen: () => void;
   preview?: ((resourceId: string) => Promise<string> | undefined) | undefined;
 }): React.JSX.Element {
+  const { PreviewBody } = useCitationRender();
   const [excerpt, setExcerpt] = useState<{ for: string; text?: string; open?: boolean }>({ for: '' });
   useEffect(() => {
     const request = preview?.(resource.id);
@@ -218,18 +270,20 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
       onClick={onOpen}
       type="button"
     >
-      <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type={resource.resourceType} /></span>
+      <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type={resourceIconType(resource)} /></span>
       {settled.open && (
         <span aria-hidden="true" className="citation-card-preview-skeleton">
           <span /><span /><span />
         </span>
       )}
       {settled.text !== undefined && settled.text !== '' && (
-        <span aria-hidden="true" className="citation-card-preview">{settled.text}</span>
+        <span aria-hidden="true" className="citation-card-preview" inert>
+            {PreviewBody ? <PreviewBody>{settled.text}</PreviewBody> : settled.text}
+        </span>
       )}
       <span className="citation-card-text">
         <strong className="citation-card-title">{label}</strong>
-        <small className="citation-card-kind">{resourceKindLabel(resource.resourceType)}</small>
+        <small className="citation-card-kind">{resourceKindLabel(resource)}</small>
       </span>
     </button>
   );
@@ -238,22 +292,19 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
 /**
  * The slice of a derivative the preview actually shows.
  *
- * Blank-line runs collapse so the clamp spends its lines on text rather than
- * on paragraph seams, and the tail beyond a few times the visible clamp is not
- * put in the DOM at all — the stylesheet clips at four lines, so shipping a
- * whole document into the box would render the same pixels at many times the
- * node weight.
+ * Blank lines stay: they *are* the block grammar, and collapsing them used
+ * to be a plain-text trick for spending the clamp on words rather than on
+ * empty lines. Fed to `MarkdownBody` that rewrite joins paragraphs, promotes
+ * a paragraph above `---` into a heading, and swallows the sentence after a
+ * list into its last item. The clamp's seams now live in CSS (`margin: 0` on
+ * the nested body) rather than in the source. The tail beyond a few times
+ * the visible clamp is still not put in the DOM — the stylesheet clips at
+ * four lines, so shipping a whole document into the box would render the
+ * same pixels at many times the node weight.
  */
 function previewExcerpt(text: string): string {
   return text
     .replace(/\r\n/gu, '\n')
-    // A heading's own hashes, and nothing else. The preview is plain text at
-    // label size, so `## Revenue` printed its markers as two characters of
-    // noise and spent one of four clamped lines on them. Stripping more than
-    // this — emphasis, links, list markers — would be a markdown renderer
-    // inside a button, and the rail is one click away and renders it properly.
-    .replace(/^ {0,3}#{1,6}[ \t]+/gmu, '')
-    .replace(/\n{2,}/gu, '\n')
     .trim()
     .slice(0, 600);
 }
