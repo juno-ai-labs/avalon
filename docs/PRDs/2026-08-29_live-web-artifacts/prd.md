@@ -190,10 +190,14 @@ motivation is structural, and stated as such.
    to both regions in parity (staged, like the EU Daytona bindings), and
    EU artifacts arrive with EU Terminal support, not before.
 10. **Defensive numbers.** None are picked here. Bundle size, file count,
-    per-request body size, viewer-session lifetime, per-artifact storage
-    quota, query-tool row and time bounds, and error-log retention are
-    all real guards this design names — each ships open under the
-    open-limit rule, with the handover arithmetic, for the team to set.
+    per-request body size, viewer-session lifetime, the per-session
+    request-rate ceiling (the guard that bounds a buggy or hostile poll
+    loop — key design decision 6), per-artifact storage quota,
+    query-tool row and time bounds, and error-log retention are all
+    real guards this design names — each ships open under the
+    open-limit rule, with the handover arithmetic (for the compute
+    guards: rate ceiling × session lifetime × concurrent viewers is the
+    worst-case burn per artifact), for the team to set.
 11. **Any artifact storage mechanism other than the facet.** Rejected for
     V1: no Rally-mediated key-value binding (a curated `STORAGE` API was
     designed and dropped — with a real database available, a KV facade in
@@ -410,10 +414,12 @@ None yet.
    domain.** Serving is a new Worker (`avalon-artifacts-global` /
    `avalon-artifacts-eu`) — not routes on `avalon-api-*` — so untrusted
    execution shares nothing with the API origin, its secrets, or its blast
-   radius. Artifacts are served from per-artifact subdomains of a **new
-   registrable domain reserved for untrusted content** (name is the team's
-   to pick; the shape is `<label>.g.<artifact-domain>` and
-   `<label>.eu.<artifact-domain>`, wildcard-routed per region). Rejected:
+   radius. Artifacts are served from per-artifact subdomains of
+   **`rallyusercontent.com`** — a domain the team already owns, in the
+   `*usercontent.com` idiom the industry uses for exactly this
+   isolation — as `<label>.g.rallyusercontent.com` and
+   `<label>.eu.rallyusercontent.com`, wildcard-routed per region.
+   Rejected:
    *paths on `rallywith.ai`* (every artifact same-origin with every other
    and cookie-adjacent to the product domain — the standard user-content
    mistake); *subdomains of `rallywith.ai`* (cookie scoping and PSL
@@ -504,11 +510,29 @@ None yet.
    the artifact origin; the serving Worker redeems it with the
    `ArtifactHostDO` and sets an `HttpOnly` viewer-session cookie scoped
    to that one artifact origin, then serves. Requests re-check the
-   session against current visibility. Rejected: *capability URLs*
-   ("anyone with the link") — they contradict the house rule that knowing
-   an identifier grants nothing; *long-lived tokens in URLs* — the ticket
-   rule already keeps credentials out of URLs, and single-use redemption
-   honors it. Session lifetime is an open limit.
+   session against current visibility. The session's lifetime is
+   **fixed from mint, never sliding** — and that shape, not just its
+   number, is the artifact platform's sleep guarantee: nothing about an
+   artifact executes without a viewer request (non-goal 6), so compute
+   per open is bounded by rate ceiling × session lifetime, both open
+   limits, whatever a page's client code does. A well-behaved page goes
+   quiet at expiry (the skill's polling rules stop on auth failure); a
+   buggy or hostile one is bounded by the per-session request-rate
+   ceiling answering 429 (non-goal 10). Re-minting is the desktop's
+   seamless open flow when a person is actually there; the accepted
+   casualty is a wall dashboard left up past expiry, which is a
+   deliberate future exception if ever wanted, not a default. One cost
+   is named rather than hidden: an expired session's stray requests
+   still wake the DO just to be refused — bounded and accepted at this
+   scale, and the standing open question on edge-verifiable session
+   tokens is the future fix, since an expired signed cookie could be
+   rejected at the Worker without a DO wake. Rejected: *capability
+   URLs* ("anyone with the link") — they contradict the house rule that
+   knowing an identifier grants nothing; *long-lived tokens in URLs* —
+   the ticket rule already keeps credentials out of URLs, and
+   single-use redemption honors it; *sliding renewal* — it reads as
+   viewer convenience and quietly deletes the compute ceiling, since an
+   abandoned-but-visible page would then poll forever.
 7. **Publish identity is the file rule, unchanged, covering directories.**
    The artifact's identity is `(work stream, normalized path)` — the same
    frozen derivation `terminal_publish_resource` already applies to files,
@@ -758,11 +782,11 @@ authoritative.
   publishes use, unchanged; the row's resource type, not its identity,
   records what the path published as. A site resource's `content_ref`
   points at the version's manifest — not at any single page — so its
-  MIME type is the manifest's: a vendor type of the shape
-  `application/vnd.<brand>.site-manifest+json`, where `<brand>` (rally
-  or avalon) follows the rebrand inventory's rule for new stored
-  identifiers and is the team's one-word call before the publish path
-  ships (the type is stored forever). `text/html` would misroute the
+  MIME type is the manifest's:
+  **`application/vnd.rally.site-manifest+json`** (the brand word is the
+  team's decided call — a brand-new stored identifier carries the
+  product's real name rather than joining the rebrand inventory's
+  someday list; the type is stored forever). `text/html` would misroute the
   resource into single-document read paths and converters;
   `application/zip` would make sites indistinguishable from archive
   publishes, whose behavior is the opposite. The registry maps this
@@ -1124,10 +1148,10 @@ rather than papered over.
 
 ## Provider configuration
 
-- Register the new artifact serving domain (name the team's), with its
-  two region wildcard hosts routed to the new serving Workers, in the
-  Cloudflare account — recorded in `domain-migration.md` and the runbook
-  in the implementing change.
+- Add the `rallyusercontent.com` zone (already owned) to the Cloudflare
+  account, with its two region wildcard hosts routed to the new serving
+  Workers — recorded in `domain-migration.md` and the runbook in the
+  implementing change.
 - No new provider apps, OAuth scopes, or third-party settings. The
   Worker Loader binding is account-level Cloudflare configuration on the
   two new Workers.
@@ -1224,50 +1248,55 @@ rather than papered over.
    the preview pane works, and the preview's navigation stays on the
    artifact's origin — an external link in the page opens the system
    browser, not the pane.
-11. A chip or embed citation in chat always opens the current version.
+11. The platform goes back to sleep: a backgrounded tab (visibility
+   hidden) makes no further requests until foregrounded; after the
+   session's fixed lifetime expires, the page's loop stops on the
+   first auth failure and shows its reopen state rather than
+   retrying; a deliberately misbehaving test page polling past the
+   rate ceiling receives `429`s; and with no requests arriving,
+   nothing about the artifact executes at all.
+12. A chip or embed citation in chat always opens the current version.
    From the version list, a prior static or stateless-active version
    renders read-only on direct request — its frozen module over its
    frozen assets — while a prior version of a stateful artifact opens
    as source only (non-goal 13); source is always readable through the
    versioning layer's preview, and the canonical URL serves the newest
    version throughout.
-12. In a fresh run, "show me the site's source" leads through the
+13. In a fresh run, "show me the site's source" leads through the
    registry's redirect — a content read on the site resource returns the
    `terminal_import_resource` suggestion, the import materializes the
    directory, and the files are read there — with no dead end on any
    configured routing stage. A browser request for `/index.js` on an
    active artifact returns 404.
-13. Deleting a stateful artifact removes its facet database through the
+14. Deleting a stateful artifact removes its facet database through the
    deletion lifecycle; a subsequent publish at the same path starts
    empty.
-14. Where Terminal is unavailable, behavior is byte-identical to today;
+15. Where Terminal is unavailable, behavior is byte-identical to today;
    with the flag off, no artifact surfaces render — the preview pane
    and Data view included.
-15. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
+16. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
    workerd suite pass; every new test shown to fail when its protected
    behavior is broken; the rail (preview and Data view), artifact
    window, and error surfaces captured from a real window.
 
 ## Open questions
 
-1. **The artifact domain's name.** The team's call, needed before the
-   dark-infrastructure deploy; the only constraint from this PRD is that
-   it is a separate registrable domain, not under `rallywith.ai`.
-2. **Where viewer sessions should live on the spectrum between
+1. **Where viewer sessions should live on the spectrum between
    per-artifact DO checks and edge-verifiable tokens.** The DO check is
    the simple, revocation-honest V1; if artifact traffic ever makes the
-   per-request DO hop matter, a short-lived signed session with periodic
-   re-check is the reversible optimization — decided then, on the
-   platform's own failure signals, not now.
-3. **Whether the artifact window wants a shared chrome** (address-less
+   per-request DO hop matter — including the expired-session stray
+   requests key design decision 6 accepts — a short-lived signed
+   session with periodic re-check is the reversible optimization:
+   decided then, on the platform's own failure signals, not now.
+2. **Whether the artifact window wants a shared chrome** (address-less
    title bar naming the artifact and its work stream, a refresh action)
    — settle against real screenshots during implementation, per house
    practice.
-4. **The brand word in the site-manifest MIME type** —
-   `application/vnd.rally.…` or `application/vnd.avalon.…` — the team's
-   one-word call before the publish path ships, made under the rebrand
-   inventory's rule for new stored identifiers; the type is stored
-   forever.
+
+Two earlier open questions were settled by the team and moved into the
+body: the artifact serving domain is `rallyusercontent.com` (key design
+decision 2) and the site-manifest MIME type's brand word is `rally`
+(Data model).
 
 ## Future research
 
