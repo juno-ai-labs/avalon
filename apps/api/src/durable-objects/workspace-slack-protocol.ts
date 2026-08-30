@@ -293,8 +293,10 @@ export const WorkspaceSlackSessionSchema = z.object({
   invocation_kind: SlackInvocationKindSchema,
   channel_type: SlackChannelTypeSchema,
   assigned_user_id: z.string().nullable(),
+  /** The triggering message Rally's status reaction sits on, not the root. */
   reaction_channel_id: z.string().nullable(),
   reaction_message_ts: z.string().nullable(),
+  /** Only what Rally placed itself, so a transition never takes a member's. */
   reaction_current: z.string().nullable(),
   reaction_cursor: z.number().int().nonnegative(),
 }).strict();
