@@ -9,15 +9,17 @@
  * pill. Nothing about the wire, the schema, or the message type changes; the
  * PRD under `docs/PRDs/2026-08-27_inline-resource-citations/` has the argument.
  *
- * This module is the half of that protocol which is not React. It holds three
- * things, shared rather than reimplemented, because the three consumers
- * disagreeing about what a citation *is* would be invisible until somebody read
- * an email:
+ * This module is the half of that protocol which is not React. It holds four
+ * things, shared rather than reimplemented, because the consumers disagreeing
+ * about what a citation *is* would be invisible until somebody read an email:
  *
  * - **`parseCitationHref`** — the scheme allowlist. Its answer decides whether
  *   something navigates, and to where.
  * - **`citationFootnotes`** — the pinned definition grammar. Exactly one link in
  *   one paragraph is a citation; anything else is a footnote, and stays one.
+ * - **`embeddedResourceCitations`** — the image-syntax announcements the
+ *   desktop auto-opens the inspector onto. Link-syntax chips, footnotes, and
+ *   anything inside code are not announcements.
  * - **`rewriteCitationsAsPlainText`** — what Rally's two non-renderer delivery
  *   surfaces, outbound email and Slack, send instead. Both render agent Markdown
  *   with no renderer of ours in the path, so without this an announcement
@@ -259,6 +261,38 @@ function asCitation(content: string): FootnoteCitation | null {
     .replace(/^[,;:—–-]\s*/u, "")
     .trim();
   return { label, target, text };
+}
+
+/**
+ * The image-syntax resource citations a message actually announces.
+ *
+ * The renderer turns `![Title](resource://id)` into an embed card; the chip
+ * is the link form. Only the card is the "here is the document" announcement
+ * the inspector auto-opens onto. This scan is the same question the rewrite
+ * asks — outside code, with the same inline-link grammar — so a card the
+ * desktop draws is one this function names, and a sample inside a fence or
+ * a footnote definition is not. Definitions are stripped first, the way
+ * the rewrite does, so `[^1]: ![Deck](resource://id)` cannot masquerade
+ * as an announcement. A malformed target is omitted: the renderer degrades
+ * it to label text, and there is no card to open.
+ *
+ * Order is document order. A caller that wants "the last one" reads the
+ * last element; this does not decide which announcement wins.
+ */
+export function embeddedResourceCitations(markdown: string): readonly { readonly resourceId: string }[] {
+  const found: { resourceId: string }[] = [];
+  mapOutsideCode(stripFootnoteDefinitions(markdown), (segment) => {
+    for (const match of segment.matchAll(INLINE_LINK)) {
+      // An escaped bang is a chip, not a card: CommonMark renders `\![Title](…)`
+      // as a literal `!` plus a link. The regex still sees the `![` substring.
+      if (match.index !== undefined && match.index > 0 && segment[match.index - 1] === "\\") continue;
+      if (!match[0].startsWith("!")) continue;
+      const target = parseCitationHref(match[2]);
+      if (target.scheme === "resource") found.push({ resourceId: target.resourceId });
+    }
+    return segment;
+  });
+  return found;
 }
 
 /**
