@@ -48,6 +48,18 @@ const CREATE_WITHOUT_NOTIFY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000
 const CREATE_WITH_NOTIFY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b2");
 const CREATE_REPLAY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b3");
 const CREATE_NAMING_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b4");
+/**
+ * Mention-confirmation and elicitation cases wait on promotion or a quiet loop.
+ * They must not share `WORKSTREAM_ID` with a neighbour's `openWorkstream`: an
+ * incomplete `reset()` leaves the object executing, and `waitForCanonicalTurn`
+ * / `waitForQuietLoop` then time out — the macOS release `pnpm test` failure
+ * on 33290369991. Do not extend this to every test in the file; a live
+ * draining object per case is what timed out CI shard 1/2 on #428's first cut.
+ */
+const WORKSPACE_VISIBLE_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b5");
+const CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b6");
+const REJECTED_CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b7");
+const ELICITATION_ANSWER_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b8");
 const CREATOR_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
@@ -767,8 +779,8 @@ describe("naming somebody when the work stream is created", () => {
 
 describe("confirming a nonparticipant mention on an existing work stream", () => {
   it("persists a workspace-visible mention without seating or confirming the recipient", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub, { scope: "workspace" });
+    const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
+    await openWorkstream(stub, { workstreamId: WORKSPACE_VISIBLE_MENTION_ID, scope: "workspace" });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -799,7 +811,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         (sent.body.turn as { turnId: string }).turnId,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, WORKSPACE_VISIBLE_MENTION_ID);
     expect(envelopes.filter((envelope) => (
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
@@ -807,8 +819,8 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
   });
 
   it("seats the accepted target and emits only the specific mention notification", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub);
+    const stub = agentStub(CONFIRMED_MENTION_ID);
+    await openWorkstream(stub, { workstreamId: CONFIRMED_MENTION_ID });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -838,7 +850,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         (sent.body.turn as { turnId: string }).turnId,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, CONFIRMED_MENTION_ID);
     expect(envelopes.filter((envelope) => (
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
@@ -850,8 +862,8 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
   });
 
   it("does not let confirmation seat the raw target of a rejected mention", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub);
+    const stub = agentStub(REJECTED_CONFIRMED_MENTION_ID);
+    await openWorkstream(stub, { workstreamId: REJECTED_CONFIRMED_MENTION_ID });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -887,8 +899,8 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
 
 describe("answering an elicitation in the ordered transcript", () => {
   it("keeps the attributed response pending until the loop can promote it", async () => {
-    const stub = agentStub();
-    const opened = await openWorkstream(stub);
+    const stub = agentStub(ELICITATION_ANSWER_ID);
+    const opened = await openWorkstream(stub, { workstreamId: ELICITATION_ANSWER_ID });
     const runId = String(opened.body.harnessRunId);
     const elicitationId = "00000000-0000-7000-8000-0000000006aa";
     const messageId = "00000000-0000-7000-8000-0000000006ab";
@@ -898,7 +910,7 @@ describe("answering an elicitation in the ordered transcript", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        workstreamId: ELICITATION_ANSWER_ID,
         operation: "openElicitation",
         args: [{
           elicitationId,
@@ -915,7 +927,7 @@ describe("answering an elicitation in the ordered transcript", () => {
             kind: "elicitation",
             elicitation: {
               id: elicitationId,
-              workstreamId: WORKSTREAM_ID,
+              workstreamId: ELICITATION_ANSWER_ID,
               harnessRunId: runId,
               prompt: "Which environment?",
               responseType: "text",
