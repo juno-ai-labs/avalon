@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   citationFootnotes,
   citationScheme,
+  embeddedResourceCitations,
   parseCitationHref,
   rewriteCitationsAsPlainText,
 } from "./citations";
@@ -325,6 +326,48 @@ describe("rewriteCitationsAsPlainText", () => {
   it("reduces an angle-bracketed target and a label carrying brackets", () => {
     expect(rewriteCitationsAsPlainText("See [the deck](<resource://abc>).")).toBe("See the deck.");
     expect(rewriteCitationsAsPlainText("See [Q3 [draft] deck](resource://abc).")).toBe("See Q3 [draft] deck.");
+  });
+});
+
+describe("embeddedResourceCitations", () => {
+  it("names the image-syntax resource a card is drawn from", () => {
+    expect(embeddedResourceCitations("Published:\n\n![Mute windows PRD](resource://prd-mute)\n"))
+      .toEqual([{ resourceId: "prd-mute" }]);
+  });
+
+  it("ignores a chip, a footnote, and a real image — none of those are the announcement card", () => {
+    expect(embeddedResourceCitations("See [the deck](resource://board-deck) and ![a chart](https://example.com/c.png)."))
+      .toEqual([]);
+    expect(embeddedResourceCitations("A claim.[^1]\n\n[^1]: [Deck](resource://board-deck)"))
+      .toEqual([]);
+  });
+
+  it("keeps document order when a message announces more than one resource", () => {
+    expect(embeddedResourceCitations("![One](resource://a)\n\n![Two](resource://b)"))
+      .toEqual([{ resourceId: "a" }, { resourceId: "b" }]);
+  });
+
+  it("reads the alias spelling and strips a reserved version parameter", () => {
+    expect(embeddedResourceCitations("![Deck](resource:board-deck-q3)"))
+      .toEqual([{ resourceId: "board-deck-q3" }]);
+    expect(embeddedResourceCitations("![Deck](resource://board-deck?v=3)"))
+      .toEqual([{ resourceId: "board-deck" }]);
+  });
+
+  it("omits a malformed target, which never becomes a card", () => {
+    expect(embeddedResourceCitations("![Plan](resource://plans/2026)")).toEqual([]);
+    expect(embeddedResourceCitations("![Empty](resource://)")).toEqual([]);
+  });
+
+  it("reads nothing out of a fence, a span, or an indented block, where the syntax is sample text", () => {
+    expect(embeddedResourceCitations("```md\n![Title](resource://the-id)\n```")).toEqual([]);
+    expect(embeddedResourceCitations("Write `![Title](resource://id)` to embed.")).toEqual([]);
+    expect(embeddedResourceCitations("Example:\n\n    ![Title](resource://the-id)\n")).toEqual([]);
+  });
+
+  it("still reads an indented line that only continues a paragraph", () => {
+    expect(embeddedResourceCitations("Published, and\n    ![the deck](resource://abc)"))
+      .toEqual([{ resourceId: "abc" }]);
   });
 });
 

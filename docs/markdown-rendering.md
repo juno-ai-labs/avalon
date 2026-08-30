@@ -20,6 +20,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, and the plain-text rewrite that outbound email and Slack delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
+| `apps/desktop/src/renderer/lib/use-auto-open-embedded-resource.ts` | Auto-opening the inspector onto the latest embed card in the last two text turns of a work stream. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the two host overrides, `.note-detail-article` and `.meeting-notes-body`, each of which states a heading scale and nothing else. |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
@@ -128,6 +129,19 @@ is one button and a scrollable box inside it would swallow the click. While the
 derivative is still being converted the card shows a shimmering skeleton, and
 every terminal answer — unconvertible, gone, retries spent — leaves the card's
 empty room rather than an error inside a control. A still never asks at all.
+
+On a work stream, the latest embed card in the last two **text** turns also
+opens the inspector onto that document without a click. The window is those
+two turns on purpose: a follow-up that does not re-announce the file should
+still surface it, and a document three turns back should not steal the rail.
+The same path runs when the feed first belongs to the route (open, reconnect,
+a snapshot that first makes the turns available) and when a streamed turn
+grows an announcement that was not there. Closing the rail for that
+announcement does not reopen it; leaving the work stream and coming back
+does, because that is a new visit. Chips, footnotes, unresolved ids, and
+samples inside code never qualify — they are not cards. Automation drafts
+do not auto-open: resources and the inspector are work-stream product
+controls.
 A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
 inline numbered pill with a hover popover, and its entry is dropped from the
@@ -470,6 +484,41 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — An embed card in the last two turns opens the inspector
+
+**What changed:** `embeddedResourceCitations` in the citation protocol names
+the image-syntax announcements a message actually makes, and the work-stream
+screen auto-opens the inspector onto the latest resolvable one in the last
+two text turns — when the feed first belongs to the route, and when a
+streamed turn grows a card that was not there. Closing the rail for that
+announcement does not reopen it; leaving the work stream and coming back
+does.
+
+**Why:** a published document was reachable from the card and from the rail's
+list, but arriving at the work stream — or watching the announcement stream
+in — still left the reader on the transcript with the document itself one
+click away. The card is the announcement; opening the rail is what the click
+already did.
+
+**Why the last two text turns, and why only the card:** a follow-up that does
+not re-announce the file is still about that file, so looking only at the
+latest turn would miss it; looking past two would steal the rail for a
+document the conversation has moved on from. Plugin and thought rows sit
+between turns without announcing anything, so they are not counted. A chip
+is a passing reference inside prose, a footnote is grounding, and a sample
+inside code is syntax being shown — none of those are the announcement, and
+auto-opening any of them would fight the placement the protocol already
+chose.
+
+**What a future change has to respect:** the visit key is the message and the
+canonical resource id together, and it clears when the route's work stream
+changes even if the new feed has no embed. Skipping that clear is how coming
+back to a document stays closed. `open` is skipped when the rail is already
+showing that document, because `openRail` clears the inspector before
+selecting and would flash the list. The scan lives in the protocol module
+so the desktop cannot disagree with the rewrite about which image syntax is
+a citation.
 
 ### 2026-08-30 — The preview reader leaves the rail, and the row's class joins the export guard
 
