@@ -29,6 +29,7 @@ import {
   type HarnessActivationInput,
 } from "@rally/agent-harness";
 import { uuidV7 } from "../lib/uuid-v7";
+import { boundParameterChunks } from "./bound-parameters";
 import {
   SubstreamLoopStorage,
   type PendingLoopInputRow,
@@ -2708,8 +2709,11 @@ export class WorkstreamTranscriptStorage {
   ): TranscriptPluginRun[] {
     const turnIds = [...new Set(turns.map((turn) => turn.turnId))];
     if (turnIds.length === 0) return [];
-    const turnPlaceholders = turnIds.map(() => "?").join(", ");
-    const pluginRows = this.sql.exec<{
+    // Every `IN` list here is caller-sized — a wide opening window, or a turn
+    // that used many plugins — and the engine refuses a statement binding more
+    // than 100 parameters outright, failing the whole transcript open rather
+    // than returning less. `bound-parameters.ts` owns that ceiling.
+    const pluginRows = boundParameterChunks(turnIds).flatMap((ids) => this.sql.exec<{
       activity_id: string;
       subject_id: string;
       label: string;
@@ -2723,31 +2727,30 @@ export class WorkstreamTranscriptStorage {
            ON plugin.parent_activity_id = turn_activity.activity_id
         WHERE plugin.scope = 'plugin'
           AND turn_activity.scope = 'assistant_turn'
-          AND turn_activity.subject_id IN (${turnPlaceholders})
+          AND turn_activity.subject_id IN (${ids.map(() => "?").join(", ")})
         ORDER BY plugin.created_at, plugin.call_index, plugin.activity_id`,
-      ...turnIds,
-    ).toArray();
+      ...ids,
+    ).toArray());
     if (pluginRows.length === 0) return [];
     const pluginIds = pluginRows.map((row) => row.activity_id);
-    const pluginPlaceholders = pluginIds.map(() => "?").join(", ");
-    const callRows = this.sql.exec<{
+    const callRows = boundParameterChunks(pluginIds).flatMap((ids) => this.sql.exec<{
       parent_activity_id: string;
       subject_id: string;
     } & Record<string, SqlStorageValue>>(
       `SELECT parent_activity_id, subject_id
          FROM transcript_activities
         WHERE scope = 'tool_call'
-          AND parent_activity_id IN (${pluginPlaceholders})
+          AND parent_activity_id IN (${ids.map(() => "?").join(", ")})
         ORDER BY call_index, created_at`,
-      ...pluginIds,
-    ).toArray();
+      ...ids,
+    ).toArray());
     const callsByPlugin = new Map<string, string[]>();
     for (const row of callRows) {
       const current = callsByPlugin.get(row.parent_activity_id) ?? [];
       current.push(row.subject_id);
       callsByPlugin.set(row.parent_activity_id, current);
     }
-    const intervalRows = this.sql.exec<{
+    const intervalRows = boundParameterChunks(pluginIds).flatMap((ids) => this.sql.exec<{
       activity_id: string;
       started_at: number;
       stopped_at: number | null;
@@ -2756,10 +2759,10 @@ export class WorkstreamTranscriptStorage {
     } & Record<string, SqlStorageValue>>(
       `SELECT activity_id, started_at, stopped_at, duration_ms, timing_accuracy
          FROM transcript_activity_intervals
-        WHERE activity_id IN (${pluginPlaceholders})
+        WHERE activity_id IN (${ids.map(() => "?").join(", ")})
         ORDER BY activity_id, started_at`,
-      ...pluginIds,
-    ).toArray();
+      ...ids,
+    ).toArray());
     const intervalsByPlugin = new Map<string, typeof intervalRows>();
     for (const interval of intervalRows) {
       const current = intervalsByPlugin.get(interval.activity_id) ?? [];

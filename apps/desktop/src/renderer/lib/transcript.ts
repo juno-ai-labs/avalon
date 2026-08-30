@@ -363,9 +363,17 @@ export function orderedTranscriptMessages(
           };
         }
         const activity = block.activityId ? activities.get(block.activityId) : undefined;
+        // The run names the plugin when the server reported one, which is the
+        // whole point: the map below is the nullable-`turn.activityId` join
+        // this contract exists to stop depending on, and in the production
+        // shape it returns nothing. Without a name here a `connection:` block
+        // resolves to no group at all and its row is dropped rather than
+        // folded, so this is what puts a connector back in the feed.
+        const run = pluginRunByToolCallId.get(block.toolCallId);
         const owner = block.pluginId
           ? pluginActivitiesByTurnActivity.get(`${turn.activityId ?? ''}\u0000${block.pluginId}`)
           : undefined;
+        const pluginName = run?.displayName ?? owner?.label;
         rememberOrder(block.blockId);
         return {
           ...base,
@@ -375,7 +383,7 @@ export function orderedTranscriptMessages(
             id: block.toolCallId,
             toolCallId: block.toolCallId,
             ...(block.pluginId ? { pluginId: block.pluginId } : {}),
-            ...(owner ? { pluginName: owner.label } : {}),
+            ...(pluginName === undefined ? {} : { pluginName }),
             name: block.toolName,
             status: block.status === 'planned' || block.status === 'started'
               ? 'started'
@@ -1341,26 +1349,18 @@ function resolvePluginRuns(snapshot: WorkstreamTranscriptSnapshot): TranscriptPl
  * elapsed reading and counts forward from there, re-stamping only when the
  * server sends a new one.
  */
-const pluginRunReceiptMonotonic = new Map<string, {
-  elapsedMsAtSnapshot: number;
-  receivedAt: number;
-}>();
+const pluginRunReceiptMonotonic = new WeakMap<TranscriptPluginRun, number>();
 
 function pluginRunTiming(run: TranscriptPluginRun): { monotonicStartedAt?: number } {
-  if (run.state !== 'active' || run.elapsedMsAtSnapshot === null) {
-    pluginRunReceiptMonotonic.delete(run.pluginRunId);
-    return {};
-  }
-  const cached = pluginRunReceiptMonotonic.get(run.pluginRunId);
-  const receivedAt = cached && cached.elapsedMsAtSnapshot === run.elapsedMsAtSnapshot
-    ? cached.receivedAt
-    // The reading was already `elapsedMsAtSnapshot` old when it was taken, so
-    // the segment began that far before this moment.
-    : performance.now() - run.elapsedMsAtSnapshot;
-  pluginRunReceiptMonotonic.set(run.pluginRunId, {
-    elapsedMsAtSnapshot: run.elapsedMsAtSnapshot,
-    receivedAt,
-  });
+  if (run.state !== 'active' || run.elapsedMsAtSnapshot === null) return {};
+  // Keyed on the run object, like `activityReceiptMonotonic` beside it: a new
+  // snapshot brings a new object and re-stamps, and an entry is collected with
+  // the snapshot that produced it rather than outliving the work stream.
+  const cached = pluginRunReceiptMonotonic.get(run);
+  // The reading was already `elapsedMsAtSnapshot` old when it was taken, so the
+  // segment began that far before this moment.
+  const receivedAt = cached ?? performance.now() - run.elapsedMsAtSnapshot;
+  pluginRunReceiptMonotonic.set(run, receivedAt);
   return { monotonicStartedAt: receivedAt };
 }
 

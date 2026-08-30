@@ -150,18 +150,21 @@ in the orb's slot. Rally is the agent and is the subject of its own sentence —
 and reads that way: "Used Slack for 5s". The Computer group is the one whose
 name is a common noun rather than a proper one, so it is the one that takes an
 article: "Used a computer for 11s". A row whose duration is unknown drops the
-duration rather than printing `0ms`.
+duration rather than printing `0ms`, running or settled: printing the active
+segment alone would read as the whole.
+
+The mark is drawn bare — no chip, no ring, no per-connector brand fill — and
+pulses its opacity while the group is active, which is the whole of the "still
+going" signal. A column of enclosed glyphs down a transcript reads as a toolbar
+of controls, and these are labels; the single neutral is also the only colour
+with guaranteed contrast, because a connector's brand foreground was chosen
+against its own chip and the transcript has four themes and no chip.
 
 A **settled response total** is not a plugin row and does not live in the feed
 at all. While it runs it is progress and stays a row; once it settles
 `foldSettledWorkIntoMessages` moves it into the header of the message it
 produced — "Rally · 11 minutes ago · Worked for 2m 52s" — because a spent timer
-under the answer reads like another step still to come. The mark is drawn bare — no chip, no ring, no per-connector
-brand fill — and pulses its opacity while the group is active, which is the
-whole of the "still going" signal. A column of enclosed glyphs down a transcript
-reads as a toolbar of controls, and these are labels; the single neutral is also
-the only colour with guaranteed contrast, because a connector's brand foreground
-was chosen against its own chip and the transcript has four themes and no chip.
+under the answer reads like another step still to come.
 
 ## Invariants
 
