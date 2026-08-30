@@ -100,9 +100,10 @@ list content, not a section boundary.
 
 Default is collapsed. The heading stays fully visible; the body shows
 approximately the first three line-heights of whatever follows — a
-paragraph, the top of a table, the start of a fence — behind a strong
-opacity mask so the content fades into the next heading rather than
-cutting off as a hard clip. The chevron sits in a left gutter, coloured
+paragraph, the top of a table, the start of a fence — behind an opacity
+mask that starts at 60% on the first pixel and reaches transparent on the
+last, so the content fades into the next heading rather than cutting off
+as a hard clip. The chevron sits in a left gutter, coloured
 with `sys.color.text.muted` (the receding control tone, the same token the
 citation chip's icon uses), and carries a tooltip. Clicking the heading or
 the chevron toggles the section; a click that follows a text selection does
@@ -576,6 +577,24 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — Collapsed heading preview fades from 60% to transparent
+
+**What changed:** The collapsed-section mask is a two-stop gradient from
+`color-mix(… text-default 60%, transparent)` at the first pixel to
+`transparent` at the last. The previous mask held full opacity through the
+first 18% of the clip.
+
+**Why:** The 18% hold made the first line read as full-strength body copy
+and then drop off; the preview is supposed to recede from the first pixel
+so the heading above it stays the thing the eye lands on. Starting at 60%
+is the requested strength of that recede. `#000` is still rejected in
+`app.css`; `color-mix` against `text-default` is the token-legal way to
+name 60% alpha.
+
+**What a future change has to respect:** the mask still uses `mask-mode:
+alpha` and a token, not a named or hex black. Do not restore a mid-gradient
+plateau unless the fade is meant to leave a fully-opaque band.
 
 ### 2026-08-30 — Heading collapse keeps footnotes, list structure, and lead text
 

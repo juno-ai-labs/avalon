@@ -776,3 +776,13 @@ describe('inspector resource document chrome', () => {
     expect(host).toContain('min-width: 0;');
   });
 });
+
+describe('collapsed heading preview mask', () => {
+  it('fades from 60% on the first pixel to transparent on the last', () => {
+    const body = rule('.markdown-collapse.is-collapsed > .markdown-collapse-body');
+    expect(body).not.toBeNull();
+    expect(body).toContain('color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent)');
+    expect(body).toContain('transparent)');
+    expect(body).not.toContain('18%');
+  });
+});
