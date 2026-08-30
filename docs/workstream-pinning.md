@@ -287,8 +287,9 @@ next to the flat You badges they were meant to sit beside.
 rule moved. Sharing the classes is the thing that keeps them the same.
 
 **Consequences:** Overlay-only extras (the fade-in, tabular numbers, and the
-command glyph) stay on `.command-shortcut-pill`. Changing the automation badge
-now changes the command hints too; that is the point.
+command glyph) live on `.scope-badge.command-shortcut-pill` so they cannot lose
+to `.scope-badge` on source order. Changing the automation badge now changes
+the command hints too; that is the point.
 
 ### 2026-08-27 — Project ordering stays independent from pins
 

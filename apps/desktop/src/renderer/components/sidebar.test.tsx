@@ -1888,8 +1888,10 @@ describe('pinned work streams', () => {
     expect(pills.map((pill) => pill.textContent)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
     // The overlay reuses the automation You / Workspace badge so the two chips
     // cannot pick up different size or colour. Dropping either class is the
-    // failure this asserts.
-    expect(pills.every((pill) => pill.classList.contains('badge') && pill.classList.contains('scope-badge'))).toBe(true);
+    // failure this asserts; `toHaveClass` names the missing one.
+    for (const pill of pills) {
+      expect(pill).toHaveClass('badge', 'scope-badge');
+    }
     expect(reportTelemetryProductIntent).toHaveBeenCalledTimes(1);
     expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
       kind: 'command_shortcuts_revealed',

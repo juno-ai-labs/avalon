@@ -845,10 +845,12 @@ pre {
   z-index: 2;
 }
 
-/* Size, colour, and border come from `.badge.scope-badge` — the same chip an
-   automation row uses for You / Workspace. Only the overlay-specific extras
-   live here; restating chrome would let the two pills drift apart again. */
-.command-shortcut-pill {
+/* Overlay extras only. Fill, radius, and border come from `.badge`; size and
+   padding come from `.scope-badge` — two rules, not a combined selector. This
+   selector is two classes so those extras cannot lose to `.scope-badge` the
+   way a one-class rule would (both are 0-1-0 and `.scope-badge` sits later
+   in the file). Restating chrome here would let the two pills drift apart. */
+.scope-badge.command-shortcut-pill {
   animation: fade-in 80ms ease-out;
   font-variant-numeric: tabular-nums;
   gap: 1px;
