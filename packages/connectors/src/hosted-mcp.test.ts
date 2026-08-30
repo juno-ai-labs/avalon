@@ -51,6 +51,22 @@ describe("hosted MCP abstraction", () => {
     ], "provider.personal.mcp")).toThrow(/object/iu);
   });
 
+  it("applies trusted deadlines by exact provider operation name", () => {
+    expect(hostedMcpToolDefinitions([
+      { name: "Slow.Query", inputSchema: { type: "object" } },
+      { name: "ordinary-read", inputSchema: { type: "object" } },
+    ], "provider.personal.mcp", {
+      "Slow.Query": 300_000,
+    })).toEqual([
+      expect.objectContaining({
+        name: "slow_query",
+        providerOperationName: "Slow.Query",
+        timeoutMs: 300_000,
+      }),
+      expect.objectContaining({ name: "ordinary-read", timeoutMs: 30_000 }),
+    ]);
+  });
+
   it("discovers paginated tools and forwards the exact live name and arguments", async () => {
     const requests: Array<Record<string, unknown>> = [];
     let session = 0;
