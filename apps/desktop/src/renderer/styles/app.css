@@ -2640,6 +2640,64 @@ pre {
 .markdown-body h4,
 .markdown-body h5,
 .markdown-body h6 { font-size: var(--av-cmp-markdown-heading-4); font-weight: var(--av-sys-font-weight-heading); }
+
+/* Heading collapse. h2+ become a one-level accordion: the chevron lives in a
+   gutter to the left of the heading, and a collapsed section keeps ~3 lines of
+   whatever follows (a paragraph, the top of a table) behind a fade that starts
+   at 60% opacity on the first pixel and reaches transparent on the last, so the
+   next heading is what the eye lands on. Nested headings are content, not
+   nested accordions — an h3 under an h2 has no chevron. */
+.markdown-body:has(> .markdown-collapse) {
+  padding-left: 20px;
+}
+.markdown-body > .markdown-collapse:first-child .markdown-collapse-heading { margin-top: 0; }
+.markdown-collapse-heading { cursor: pointer; position: relative; }
+.markdown-collapse-chevron {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.25em;
+  justify-content: center;
+  left: -20px;
+  padding: 0;
+  position: absolute;
+  top: 0.12em;
+  width: 20px;
+}
+.markdown-collapse-chevron:hover,
+.markdown-collapse-chevron:focus-visible { color: var(--av-sys-color-text-subtle); }
+.markdown-collapse-chevron:focus-visible { outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 1px; }
+.markdown-collapse-chevron svg { display: block; transition: transform 140ms ease; }
+.markdown-collapse.is-expanded .markdown-collapse-chevron svg { transform: rotate(90deg); }
+.markdown-collapse.is-collapsed > .markdown-collapse-body {
+  -webkit-mask-image: linear-gradient(to bottom, color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent), transparent);
+  -webkit-mask-mode: alpha;
+  mask-image: linear-gradient(to bottom, color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent), transparent);
+  mask-mode: alpha;
+  max-height: 3lh;
+  overflow: hidden;
+  pointer-events: none;
+}
+.message-block > header .message-collapse-all {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 18px;
+  justify-content: center;
+  margin-left: 2px;
+  padding: 0;
+  width: 18px;
+}
+.message-block > header .message-collapse-all:hover,
+.message-block > header .message-collapse-all:focus-visible { color: var(--av-sys-color-text-subtle); }
+.message-block > header .message-collapse-all:focus-visible { outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 1px; }
 .markdown-body strong { color: var(--av-ref-color-neutral-14); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body em { font-style: italic; }
 .markdown-body a { color: var(--av-sys-color-accent-soft); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
