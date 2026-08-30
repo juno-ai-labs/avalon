@@ -429,7 +429,9 @@ generic tool execution/receipt loop is owned by
   source pixels, 8 MiB per derivative, 12 MiB across all delivered derivatives,
   and a 2,048-pixel native long edge. Cloudflare Images scale-down is bounded to
   that edge. HEIF is accepted only through that isolated service; TIFF
-  dimensions are checked before pixels are decoded in the Worker.
+  dimensions are checked before pixels are decoded in the Worker. The final
+  OpenRouter serializer admits base64 image parts only as PNG, JPEG, WebP, or
+  GIF and rejects every other data-URL MIME before issuing the provider request.
 
 ## Testing
 
@@ -866,6 +868,26 @@ attribution the rail would render as fact. A resource with one version shows no
 history section. Agent-decided re-fetch still has no path: `hydrate` is
 reachable only from its endpoint and a tool for it is a separate decision, so
 the loop closes today through the participant.
+### 2026-08-27 — OpenRouter image admission is enforced at the provider boundary
+
+**What changed:** The final OpenRouter serializer now rejects image data URLs
+unless they declare PNG, JPEG, WebP, or GIF. Persisted model derivatives are
+also signature-checked against their recorded supported MIME before reuse.
+
+**Why:** The normalization pipeline already emitted only OpenRouter-supported
+formats, but its TypeScript union was not a runtime fence at the final provider
+boundary. A malformed replay or future producer could otherwise bypass the
+attachment converter with an unsupported image MIME.
+
+**Considered and rejected:** Relying only on the provider to reject unsupported
+content. That turns a deterministic local contract violation into a billable,
+less-diagnosable inference failure after the complete prompt has left Rally.
+
+**Consequences:** Private Rally attachments remain base64 data URLs produced by
+the existing normalization path. Rally deliberately rejects public HTTP(S)
+image URLs at this boundary because their response MIME cannot be established
+from the provider request body; every image payload is locally allowlisted
+before transmission.
 
 ### 2026-08-27 — Message attachments use the canonical transcript relationship
 

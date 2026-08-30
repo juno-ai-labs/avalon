@@ -37,7 +37,8 @@ The harness assigns one `inference_request_id` to a provider call. It emits a
 `request` event before the call and an `attempt` event when that call succeeds or
 fails. Streaming requests carry the exact OpenRouter body; streaming attempts
 carry the complete normalized content, tool calls, usage, finish reason, and
-generation ID. Structured calls carry the exact request body and the provider's
+generation ID, including OpenRouter's opt-in routing metadata when returned.
+Structured calls carry the exact request body and the provider's
 complete successful JSON response envelope. Failed calls retain the bounded
 provider classification and message, not arbitrary provider metadata that may
 echo the rejected prompt under an unrecognized key.
@@ -50,6 +51,42 @@ classes, cost, and response bytes. The full request, response, error, routing
 cursor, retry/repair positions, validation issues, and counts remain JSON
 columns. The `request` and `attempt` rows join on `inference_request_id`;
 `event_id` adds the event type and is the stable deduplication key.
+
+The exact outbound body includes the same provider-side correlation Rally gives
+OpenRouter Broadcast: `user`, `session_id`, and `trace`. One agent loop retains
+one `trace_id` across all model turns. Each turn has its own `span_name`, with
+the OpenRouter call represented as the generation inside that span;
+`turn_id`, `inference_request_id`, and the route cursor separate retries and
+generations within it. Work-stream sessions use
+`<workstream_id>-<substream_id>`. This duplication is deliberate: Broadcast
+supports provider-side observability when it is enabled in the OpenRouter
+account, while the Global lakehouse remains Rally's lossless regional evidence
+and EU continues to skip analytical capture.
+
+For PostHog destinations, OpenRouter maps `user` to `distinct_id`, `session_id`
+to `$ai_session_id`, `trace_id` to `$ai_trace_id`, and `generation_name` to
+`$ai_span_name`. Rally sets both `user` and trace `user_id` to `workspace_id`;
+a relevant person remains separate as `context_user_id`. Rally also sends
+`feature` as the authoritative Flagship model
+category/key, keeps the execution surface in `source`, and sends `product`,
+invocation type, deployment, ownership, model, and route fields. `intended_model`
+retains Rally's primary model before traversal while `model` records the current
+candidate, so their mismatch (or a nonzero `route_stage_index`) identifies
+application-level fallback. OpenRouter forwards those custom keys as
+`metadata_*` event properties.
+
+OpenRouter's current embeddings request schema is narrower than chat: it
+accepts `user` but not the custom Broadcast `trace` object. Durable-memory
+embeddings therefore send `user = workspace_id` and the work-stream session as
+`X-Session-ID`. Work-stream-scoped document indexing recovers that session from
+the memory scope; inference with no work-stream identity omits the session
+rather than substituting an unrelated request ID.
+Rally emits a content-free regional `embedding_inference` diagnostic containing
+the same feature, trace/session identity, intended/requested/resolved model,
+fallback attempt, outcome, and latency. Embedding inputs and vectors are not
+copied into that log or the inference lakehouse. This is a documented provider
+contract gap, not a synthetic trace field sent to an endpoint that would ignore
+it.
 
 `substream_id` is the canonical product substream inside a work stream. Rally
 currently runs the main substream, so work-stream-linked inference that has no
@@ -282,6 +319,55 @@ while retaining queryable columns. Revisit it only with real storage cost or a
 decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
+
+### 2026-08-27 — Embedding calls join the observable OpenRouter boundary
+
+**What changed:** Durable-memory embeddings now travel through OpenRouter and
+carry workspace `user` plus `X-Session-ID`. Content-free regional diagnostics
+record the feature key, trace/session IDs, intended/requested/resolved model,
+fallback attempt, outcome, and latency without retaining memory text or vectors.
+
+**Why:** The previous Workers AI call was invisible to the OpenRouter routing
+and provider-observability path, including when a configured fallback differed
+from the intended model.
+
+**Considered and rejected:** Adding chat-only `trace` fields to the embeddings
+body and archiving embedding inputs in the Global inference lakehouse. The
+current SDK schema rejects the former, while the latter would widen retained
+user content without being necessary to diagnose routing.
+
+**Consequences:** OpenRouter/PostHog receive workspace and session correlation
+for embeddings but not custom trace metadata until the embeddings API supports
+it. Rally's regional logs retain the missing content-free routing dimensions;
+the exact embedding content remains deliberately absent.
+
+### 2026-08-27 — Provider traces join Rally's exact inference evidence
+
+**What changed:** Exact request records now include OpenRouter Broadcast
+identity and trace fields, and successful streaming attempt responses may
+include returned router metadata. Provider `user` and trace `user_id` now use
+the workspace ID consistently, with any relevant person in `context_user_id`.
+`feature` records the exact Flagship model
+category/key while `source` records the inference surface. The provider trace
+groups a full harness loop, not an individual model turn; work-stream
+`session_id` values are `<workstream_id>-<substream_id>`. `intended_model`
+records the primary Rally route while `model` records the attempted candidate,
+so fallback requests remain explicit in provider-side analytics.
+
+**Why:** Operators need to join OpenRouter's routing, timing, and pipeline view
+to Rally's workspace, work stream, substream, relevant person, request,
+deployment, and turn evidence without reconstructing that ownership from
+prompt content. A workspace-stable identity also keeps system-initiated and
+person-initiated inference for one tenant together.
+
+**Considered and rejected:** Replacing the lakehouse with Broadcast, exporting
+EU inference into Global observability, and making each turn a separate trace.
+Those lose exact Rally-owned evidence, violate the existing residency boundary,
+or hide the topology of a tool-using loop.
+
+**Consequences:** Broadcast remains separately enabled and governed in the
+OpenRouter account. The Global lakehouse captures the exact enriched body; EU
+still performs the provider request but creates no Rally analytical archive.
 
 ### 2026-08-24 — EU inference analytics are deferred
 

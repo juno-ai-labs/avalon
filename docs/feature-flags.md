@@ -97,6 +97,11 @@ are the standalone structured-output agents: message addressing uses the
 agent-harness classifier helper; work-stream naming, semantic activity
 triggering, the two halves of suggested work, and the
 work-stream description loop use the bounded structured-inference gateway.
+Durable-memory query and document embeddings use the same gateway's native
+OpenRouter embeddings path but deliberately have no Flagship role. Their fixed
+`qwen/qwen3-embedding-8b` model, empty fallback plan, and 1,024-dimensional
+space form one Vectorize projection contract; changing that contract requires a
+code change and active-memory rebuild.
 Admission and ranking get separate flags because admission turns connector
 activity into prompts while ranking orders them per user, and pinning one should
 not move the other.
@@ -1129,9 +1134,27 @@ model to the provider with nothing in the logs naming the pin.
 Shipped in the pull request for this change. Design:
 [the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
 
+### 2026-08-27 — Memory embeddings are excluded from Flagship routing
+
+**What changed:** Durable-memory query and document embeddings use the fixed
+`qwen/qwen3-embedding-8b` OpenRouter model with no fallback models. There is
+no `agent-model-memory-embedding` flag, Worker model variable, or Ace editor row.
+
+**Why:** A successful live route change is unsafe here: document and query
+vectors produced by independently trained models do not share a semantic space,
+even when both outputs have 1,024 dimensions.
+
+**Considered and rejected:** A dedicated flag with an empty default fallback
+list. Rules, rollouts, and later operator edits could still change the primary
+or add a fallback without atomically rebuilding the corpus.
+
+**Consequences:** Diagnostics still identify the static `memory_embedding`
+feature category and intended model. Any future model change must ship with a
+durable active-memory requeue rather than through Flagship.
+
 ### 2026-08-26 — Ace owns the ordinary default-route edit
 
-**What changed:** Ace now catalogs all eleven model roles and edits the atomic
+**What changed:** Ace now catalogs all model roles and edits the atomic
 route plan in each flag's current default variation. Its inputs suggest every
 model id already reviewed or checked in, accept another OpenRouter id as free
 text after live exact-id and endpoint validation, and keep fallbacks ordered.

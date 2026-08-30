@@ -4,7 +4,7 @@ import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
-import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
+import { OpenRouterError, type HarnessTool, type HarnessToolResult } from "@rally/agent-harness";
 import { workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceMemoryAddResultSchema,
@@ -25,8 +25,10 @@ import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { executeAutomationMemoryToolForRun } from "./automation-memory-client";
+import { runEmbeddingInference } from "./structured-inference";
 
-export const MEMORY_EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b" as const;
+export const MEMORY_EMBEDDING_DIMENSIONS = 1_024;
+const MEMORY_EMBEDDING_SPACE_VERSION = "v1";
 
 export const MEMORY_SCOPE_KINDS = ["workstream", "automation", "user", "workspace"] as const;
 const SEARCH_CANDIDATES_PER_LEG = 20;
@@ -413,37 +415,77 @@ async function searchFts(
   })).candidates;
 }
 
-async function embedQuery(env: Env, query: string): Promise<number[]> {
-  if (!env.AI) throw new Error("memory_embedding_binding_unavailable");
-  const output = await env.AI.run(MEMORY_EMBEDDING_MODEL, {
-    queries: [query],
-    instruction: "Retrieve durable facts and preferences relevant to the current Rally task.",
-  });
-  const embedding = output.data?.[0];
-  if (!embedding?.length) throw new Error("memory_query_embedding_empty");
-  return embedding;
+interface MemoryEmbeddingContext {
+  workspaceId: string;
+  workstreamId?: string;
+  harnessRunId?: string;
+  requestId?: string;
+  executionPrincipal?: WorkstreamWorkflowInput["executionPrincipal"];
 }
 
-async function embedDocument(env: Env, text: string): Promise<number[]> {
-  if (!env.AI) throw new Error("memory_embedding_binding_unavailable");
-  const output = await env.AI.run(MEMORY_EMBEDDING_MODEL, { documents: [text] });
-  const embedding = output.data?.[0];
-  if (!embedding?.length) throw new Error("memory_document_embedding_empty");
-  return embedding;
+interface MemoryEmbedding {
+  values: number[];
+  resolvedModel: string;
+}
+
+async function embedMemory(
+  env: Env,
+  text: string,
+  inputType: "search_query" | "search_document",
+  context: MemoryEmbeddingContext,
+): Promise<MemoryEmbedding> {
+  const contextUserId = context.executionPrincipal?.type === "user"
+    ? context.executionPrincipal.userId
+    : undefined;
+  const result = await runEmbeddingInference(env, {
+    context: {
+      workspaceId: context.workspaceId,
+      ...(context.workstreamId ? { workstreamId: context.workstreamId } : {}),
+      ...(contextUserId ? { userId: contextUserId } : {}),
+    },
+    text,
+    inputType,
+    dimensions: MEMORY_EMBEDDING_DIMENSIONS,
+    generationName: inputType === "search_query" ? "memory_query_embedding" : "memory_document_embedding",
+    ...(context.harnessRunId ? { harnessRunId: context.harnessRunId } : {}),
+    ...(context.requestId ? { requestId: context.requestId } : {}),
+    ...(context.executionPrincipal ? {
+      executionPrincipalType: context.executionPrincipal.type,
+      executionPrincipalId: context.executionPrincipal.type === "user"
+        ? context.executionPrincipal.userId
+        : context.executionPrincipal.workspaceId,
+    } : {}),
+  });
+  const values = result.embeddings[0];
+  if (!values) throw new Error(`memory_${inputType}_embedding_empty`);
+  return { values, resolvedModel: result.resolvedModel };
+}
+
+async function memoryVectorNamespace(scopeId: string, resolvedModel: string): Promise<string> {
+  const space = (await sha256(
+    `${MEMORY_EMBEDDING_SPACE_VERSION}:${resolvedModel}:${MEMORY_EMBEDDING_DIMENSIONS}`,
+  )).slice(0, 12);
+  return `${scopeId}:${space}`;
 }
 
 async function searchVector(
   env: Env,
+  input: WorkstreamWorkflowInput,
   scopes: readonly MemoryScope[],
   query: string,
 ): Promise<RankedCandidate[]> {
   if (!env.MEMORY_INDEX) throw new Error("memory_vector_binding_unavailable");
-  const embedding = await embedQuery(env, query);
-  const matchesByScope = await Promise.all(scopes.map((scope) => env.MEMORY_INDEX.query(
-    embedding,
+  const embedding = await embedMemory(env, query, "search_query", {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    harnessRunId: input.harnessRunId,
+    executionPrincipal: input.executionPrincipal,
+  });
+  const matchesByScope = await Promise.all(scopes.map(async (scope) => env.MEMORY_INDEX.query(
+    embedding.values,
     {
       topK: SEARCH_CANDIDATES_PER_LEG,
-      namespace: scope.memoryScopeId,
+      namespace: await memoryVectorNamespace(scope.memoryScopeId, embedding.resolvedModel),
       returnMetadata: false,
       returnValues: false,
     },
@@ -499,7 +541,7 @@ async function hybridMemorySearch(
   const scopeIds = scopes.map((scope) => scope.memoryScopeId);
   const [ftsSettled, vectorSettled] = await Promise.allSettled([
     searchFts(env, input.workspaceId, scopeIds, query),
-    searchVector(env, scopes, query),
+    searchVector(env, input, scopes, query),
   ]);
   const fts = ftsSettled.status === "fulfilled" ? ftsSettled.value : [];
   const vector = vectorSettled.status === "fulfilled" ? vectorSettled.value : [];
@@ -1077,18 +1119,36 @@ async function projectOutboxRow(
     ]);
     return;
   }
-  const embedding = await embedDocument(env, current.text);
+  const embedding = await embedMemory(env, current.text, "search_document", {
+    workspaceId: row.workspaceId,
+    ...(current.scopeKind === "workstream" ? { workstreamId: current.scopeOwnerId } : {}),
+    requestId: row.outboxId,
+  });
   await env.MEMORY_INDEX.upsert([{
     id: vectorId(row.memoryItemId, row.revision),
-    values: embedding,
-    namespace: row.memoryScopeId,
+    values: embedding.values,
+    namespace: await memoryVectorNamespace(row.memoryScopeId, embedding.resolvedModel),
     metadata: {
       workspaceId: row.workspaceId,
       scopeKind: current.scopeKind,
       revision: row.revision,
+      embeddingModel: embedding.resolvedModel,
+      embeddingDimensions: MEMORY_EMBEDDING_DIMENSIONS,
     },
   }]);
   if (priorVectorId) await env.MEMORY_INDEX.deleteByIds([priorVectorId]);
+}
+
+function memoryProjectionFailureCode(error: unknown): string {
+  if (error instanceof OpenRouterError) {
+    return error.status == null ? "openrouter_error" : `openrouter_http_${error.status}`;
+  }
+  if (error instanceof DOMException) {
+    if (error.name === "AbortError") return "embedding_aborted";
+    if (error.name === "TimeoutError") return "embedding_timeout";
+  }
+  if (error instanceof TypeError) return "embedding_network_error";
+  return "embedding_failure";
 }
 
 /**
@@ -1104,7 +1164,7 @@ export async function processMemoryIndexOutbox(
   workspaceId?: string,
 ): Promise<number> {
   if (!workspaceId) throw new Error("memory_index_workspace_required");
-  if (!env.AI || !env.MEMORY_INDEX) return 0;
+  if (!env.OPENROUTER_API_KEY || !env.MEMORY_INDEX) return 0;
   const workspace = await workspaceMemoryObject(env, workspaceId);
   const due = WorkspaceMemoryOutboxDueListSchema.parse(await workspace.dueMemoryIndexOutbox({
     workspaceId,
@@ -1135,13 +1195,14 @@ export async function processMemoryIndexOutbox(
       completed += 1;
     } catch (error) {
       const delaySeconds = Math.min(3_600, 2 ** Math.min(12, row.attemptCount + 1));
-      const message = error instanceof Error ? error.message : String(error);
       await workspace.retryMemoryIndexOutboxRow({
         workspaceId,
         outboxId: row.outboxId,
         leaseToken,
         availableAt: new Date(Date.now() + delaySeconds * 1_000).toISOString(),
-        lastError: message.slice(0, 2_000),
+        // Provider messages may echo request content. Persist only a closed,
+        // content-free failure class in durable state.
+        lastError: memoryProjectionFailureCode(error),
         at: nowIso(),
       });
     }
