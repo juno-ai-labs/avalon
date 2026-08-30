@@ -3641,6 +3641,7 @@ export class WorkstreamObjectProductService {
       const classification = await classifyWorkstreamMessage(this.env, {
         workspaceId: auth.workspaceId,
         workstreamId: root.workstream_key,
+        userId: auth.userId,
         message: input.text,
         activeTask,
         connectorMentions,

@@ -252,6 +252,7 @@ export const WorkspaceMemoryProjectionSourceResultSchema = z.discriminatedUnion(
     invalidatedAt: z.string().nullable(),
     expiresAt: z.string().nullable(),
     scopeKind: MemoryScopeKindSchema,
+    scopeOwnerId: z.string().min(1),
   }).strict(),
   z.object({ outcome: z.literal("none") }).strict(),
 ]);

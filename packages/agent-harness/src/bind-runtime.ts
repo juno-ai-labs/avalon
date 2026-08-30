@@ -6,7 +6,10 @@ import {
 import {
   runToolLoop,
   type CompactionApplied,
+  type ToolCallOutcome,
+  type ToolLoopParams,
   type ToolLoopState,
+  type ToolLoopTurn,
 } from "@juno-ai/bind/loop";
 import {
   createToolRegistry,
@@ -37,15 +40,20 @@ import {
 } from "@juno-ai/bind/routing";
 import { createRunDeadline } from "@juno-ai/bind/run";
 import { validateAndHealMessages } from "@juno-ai/bind/transcript";
-import type OpenAI from "openai";
 import { z } from "zod";
-import { readStructuredFailure, type HarnessFailureCode } from "@rally/contracts";
+import {
+  AGENT_MODEL_FLAG_KEYS,
+  readStructuredFailure,
+  type HarnessFailureCode,
+} from "@rally/contracts";
 import {
   AVALON_DISCOVERY_PLUGIN_ID,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   HarnessPluginActivationError,
   OpenRouterClient,
   OpenRouterError,
+  OpenRouterRequestError,
+  buildOpenRouterTracePayload,
   canonicalToolInputHash,
   modelMessageWithoutProvenance,
   type HarnessEvent,
@@ -79,7 +87,7 @@ import {
   validateToolArguments,
 } from "./tool-arguments";
 
-const PersistedProviderMessageSchema = z.custom<OpenAI.ChatCompletionMessageParam>(
+const PersistedProviderMessageSchema = z.custom<ProviderMessage>(
   (value) => {
     if (!isRecordValue(value) || !("content" in value)
       || !["system", "user", "assistant", "tool"].includes(String(value.role))) {
@@ -106,6 +114,16 @@ import {
   type BindLoopTransition,
   type BindSystemProjection,
 } from "./bind-loop-projection";
+
+type ProviderMessage = Parameters<ToolLoopParams["callModel"]>[0][number];
+type ProviderMessages = ProviderMessage[];
+type ProviderUserMessage = Extract<ProviderMessage, { role: "user" }>;
+type ProviderSystemMessage = Extract<ProviderMessage, { role: "system" }>;
+type ProviderAssistantMessage = Extract<ProviderMessage, { role: "assistant" }>;
+type ProviderAssistantResult = ToolLoopTurn["message"];
+type ProviderToolMessage = ToolCallOutcome["toolMessage"];
+type ProviderTool = NonNullable<Parameters<ToolLoopParams["callModel"]>[1]>[number];
+type ProviderContentPart = Exclude<ProviderUserMessage["content"], string>[number];
 
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
 const DEFAULT_CATALOG_TOKENS = 2_500;
@@ -198,7 +216,7 @@ The previous attempt ran past the output limit and was discarded. Write a shorte
 const compactionCheckpointMessage = (
   summary: string,
   appendix?: string | null,
-): OpenAI.ChatCompletionUserMessageParam => ({
+): ProviderUserMessage => ({
   role: "user",
   content: renderCompactionCheckpointContent(summary, appendix),
 });
@@ -559,7 +577,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     bindLoopProjection = applyBindLoopTransition(bindLoopProjection, transition);
   };
   const systemProjection = async (
-    message: OpenAI.ChatCompletionMessageParam,
+    message: ProviderMessage,
     revision: number,
   ): Promise<BindSystemProjection> => ({
     revision,
@@ -568,7 +586,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     message: toBindLoopMessage(message),
   });
   const persistAcceptedToolMessage = async (
-    toolMessage: OpenAI.ChatCompletionToolMessageParam,
+    toolMessage: ProviderToolMessage,
     resultOrdinal: number,
   ): Promise<void> => {
     if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
@@ -588,7 +606,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     });
   };
   const settleStep = async (wouldEnd: boolean): Promise<{
-    messages: OpenAI.ChatCompletionMessageParam[];
+    messages: ProviderMessages;
     stop: boolean;
   }> => {
     if (!input.onStepSettled) return { messages: [], stop: false };
@@ -617,7 +635,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         "Settled-step input delivery returned an invalid settlement",
       );
     }
-    const messages: OpenAI.ChatCompletionMessageParam[] = [];
+    const messages: ProviderMessages = [];
     for (const transition of settlement.transitions) {
       if (transition.loopId !== input.loopId
         || (transition.kind !== "tool_result_accepted"
@@ -634,7 +652,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           "Settled-step input delivery returned an invalid transition",
         );
       }
-      const message = structuredClone(transition.message) as OpenAI.ChatCompletionMessageParam;
+      const message = structuredClone(transition.message) as ProviderMessage;
       if (message.role !== "user" && message.role !== "tool") {
         throw new FatalHarnessPortError(
           "run_state_persistence_failed",
@@ -842,7 +860,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ? { ...resumeProjection.lastAssistantReservation }
           : null,
       };
-      const initialSystemMessage: OpenAI.ChatCompletionSystemMessageParam = {
+      const initialSystemMessage: ProviderSystemMessage = {
         role: "system",
         content: initialSystemPrompt.content,
       };
@@ -863,7 +881,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     } else {
       const inputProviderMessages = toOpenAiMessages(input.messages);
       const healed = validateAndHealMessages([
-        { role: "system", content: initialSystemPrompt.content } as OpenAI.ChatCompletionSystemMessageParam,
+        { role: "system", content: initialSystemPrompt.content } as ProviderSystemMessage,
         ...inputProviderMessages,
       ]);
       await input.onTranscriptIssues?.(healed.issues.map((issue) => ({
@@ -932,7 +950,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       contextTokens > Math.floor(selectedContextWindowTokens() * COMPACTION_FRACTION);
     const compact = async (
       trigger: "manual" | "auto",
-      messages: OpenAI.ChatCompletionMessageParam[],
+      messages: ProviderMessages,
     ): Promise<CompactionApplied> => {
       const systemMessage = messages[0];
       if (!systemMessage || messages.length < 2) {
@@ -1033,7 +1051,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         ) {
           throw new HarnessLimitError("run_cost_limit_exceeded", "Run cost ceiling exceeded during compaction");
         }
-        const persistedMessages: OpenAI.ChatCompletionMessageParam[] = [
+        const persistedMessages: ProviderMessages = [
           systemMessage,
           compactionCheckpointMessage(summary),
         ];
@@ -1045,7 +1063,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               () => renderAppendix(),
             )
           : null;
-        const compactedMessages: OpenAI.ChatCompletionMessageParam[] = [
+        const compactedMessages: ProviderMessages = [
           systemMessage,
           compactionCheckpointMessage(summary, appendix),
         ];
@@ -1316,7 +1334,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               hasToolCalls: routed.result.toolCalls.length > 0,
             })
           : routed.result.content;
-        const message: OpenAI.ChatCompletionMessage = {
+        const message: ProviderAssistantResult = {
           role: "assistant",
           content: acceptedContent || null,
           refusal: null,
@@ -1671,7 +1689,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       },
       ...(onTurnWouldEnd || input.compaction
         ? {
-            onTurnWouldEnd: async (assistantMessage: OpenAI.ChatCompletionMessage, cumulativeToolCalls: number) => {
+            onTurnWouldEnd: async (assistantMessage: ProviderAssistantResult, cumulativeToolCalls: number) => {
               const nudge = await onTurnWouldEnd?.({
                 assistantContent: typeof assistantMessage.content === "string" ? assistantMessage.content : "",
                 cumulativeToolCalls,
@@ -1837,8 +1855,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
 
   async function routeOpenRouterTurn(args: {
     input: RunHarnessInput;
-    messages: OpenAI.ChatCompletionMessageParam[];
-    tools: OpenAI.ChatCompletionTool[] | undefined;
+    messages: ProviderMessages;
+    tools: ProviderTool[] | undefined;
     systemPrompt: RenderedSystemPrompt;
     signal: AbortSignal;
     turnId: string;
@@ -1900,8 +1918,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         },
       },
     });
+    const intendedModel = args.primaryModel ?? args.input.config.primaryModel;
     const plan = routePlan(
-      args.primaryModel ?? args.input.config.primaryModel,
+      intendedModel,
       args.fallbackModels ?? args.input.config.fallbackModels ?? [],
       args.input.workspaceId,
     );
@@ -1921,6 +1940,30 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           const requestPlugins = modelMessagesContainFile(requestMessages)
             ? [{ id: "file-parser", pdf: { engine: "native" } }]
             : [];
+          const trace = buildOpenRouterTracePayload(
+            args.input.traceContext ?? {
+              source: "agent_harness",
+              feature: AGENT_MODEL_FLAG_KEYS.workstream,
+              workspaceId: args.input.workspaceId,
+              workstreamId: args.input.workstreamId,
+              harnessRunId: args.input.harnessRunId,
+              requestId: args.input.harnessRunId,
+              executionPrincipalType: args.input.executionPrincipal.type,
+              executionPrincipalId: args.input.executionPrincipal.type === "user"
+                ? args.input.executionPrincipal.userId
+                : args.input.executionPrincipal.workspaceId,
+            },
+            {
+              inferenceRequestId,
+              generationName: `rally.turn.${args.turnId}`,
+              turnId: args.turnId,
+              cursor,
+              provider: candidate.providerId,
+              intendedModel,
+              model: candidate.canonicalModelId,
+              providerInvocationModel: candidate.providerInvocationModel,
+            },
+          );
           const payload = {
             model: candidate.providerInvocationModel,
             messages: requestMessages,
@@ -1933,6 +1976,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ...(args.reasoningEffort ?? args.input.config.reasoningEffort
               ? { reasoning: { effort: args.reasoningEffort ?? args.input.config.reasoningEffort! } }
               : {}),
+            ...trace,
           };
           await args.input.onInferenceRequest?.({
             inferenceRequestId,
@@ -1958,6 +2002,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ...(payload.plugins ? { plugins: payload.plugins } : {}),
             includeWebSearch: false,
             reasoningEffort: args.reasoningEffort ?? args.input.config.reasoningEffort,
+            trace,
             signal: args.signal,
           }, async (delta) => {
             textStream.observe(delta);
@@ -2002,6 +2047,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               usage: result.usage,
               finishReason: result.finishReason,
               generationId: result.generationId,
+              ...(result.openRouterMetadata
+                ? { openRouterMetadata: result.openRouterMetadata }
+                : {}),
             },
           }));
           return { kind: "success", value: result };
@@ -2009,6 +2057,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           if (error instanceof FatalHarnessPortError || error instanceof HarnessLimitError || error instanceof AmbiguousExternalWriteError) {
             throw error;
           }
+          if (error instanceof OpenRouterRequestError) throw error;
           const target: AttemptTarget = {
             cursor,
             providerId: candidate.providerId,
@@ -2206,7 +2255,7 @@ async function createPluginRuntime(
 ): Promise<{
   active: Set<string>;
   renderSystemPrompt: () => RenderedSystemPrompt;
-  buildWireTools: () => OpenAI.ChatCompletionTool[];
+  buildWireTools: () => ProviderTool[];
   activate: (ids: string[]) => void;
   reauthorizeActive: () => Promise<void>;
   runsSerially: (wireName: string) => boolean;
@@ -2585,7 +2634,7 @@ async function createPluginRuntime(
     skills,
     renderSystemPrompt: () => renderStableSystemPrompt(input.systemPrompt, active, registry, input.config.maxCatalogTokens ?? DEFAULT_CATALOG_TOKENS, skills),
     buildWireTools: () => {
-      const definitions: OpenAI.ChatCompletionTool[] = [];
+      const definitions: ProviderTool[] = [];
       for (const id of [...active].sort()) {
         const plugin = registry.get(id);
         if (!plugin) continue;
@@ -2804,9 +2853,9 @@ function routePlan(primary: string, fallbacks: string[], workspaceId: string): R
   };
 }
 
-function replaceSystemMessage(messages: OpenAI.ChatCompletionMessageParam[], content: string): void {
+function replaceSystemMessage(messages: ProviderMessages, content: string): void {
   const index = messages.findIndex((message) => message.role === "system");
-  const next: OpenAI.ChatCompletionSystemMessageParam = { role: "system", content };
+  const next: ProviderSystemMessage = { role: "system", content };
   if (index >= 0) messages[index] = next;
   else messages.unshift(next);
 }
@@ -2835,35 +2884,35 @@ function classifyOpenRouterFailure(error: unknown) {
   return null;
 }
 
-function toOpenAiMessages(messages: RunHarnessInput["messages"]): OpenAI.ChatCompletionMessageParam[] {
+function toOpenAiMessages(messages: RunHarnessInput["messages"]): ProviderMessages {
   return messages.map((message) => {
     if (message.role === "assistant") {
       return {
         role: "assistant",
         content: toOpenAiAssistantContent(message.content),
         ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
-      } as OpenAI.ChatCompletionAssistantMessageParam;
+      } as ProviderAssistantMessage;
     }
     if (message.role === "tool") {
       return {
         role: "tool",
         content: typeof message.content === "string"
           ? message.content
-          : message.content?.map(toOpenAiContentPart) as OpenAI.ChatCompletionToolMessageParam["content"],
+          : message.content?.map(toOpenAiContentPart) as ProviderToolMessage["content"],
         tool_call_id: message.tool_call_id ?? "missing",
       };
     }
     return {
       role: message.role,
       content: toOpenAiUserContent(message.content),
-    } as OpenAI.ChatCompletionMessageParam;
+    } as ProviderMessage;
   });
 }
 
 function healedMessageOrigins(
   inputMessages: RunHarnessInput["messages"],
-  providerMessages: OpenAI.ChatCompletionMessageParam[],
-  healedMessages: OpenAI.ChatCompletionMessageParam[],
+  providerMessages: ProviderMessages,
+  healedMessages: ProviderMessages,
 ): BindLoopMessageOrigin[] {
   const candidates = providerMessages.map((message, index) => ({
     message,
@@ -2892,8 +2941,8 @@ function healedMessageOrigins(
 }
 
 function assistantHealingSource(
-  source: OpenAI.ChatCompletionMessageParam,
-  healed: OpenAI.ChatCompletionAssistantMessageParam,
+  source: ProviderMessage,
+  healed: ProviderAssistantMessage,
 ): boolean {
   if (source.role !== "assistant") return false;
   const sourceWithoutCalls = { ...source, tool_calls: undefined };
@@ -2924,7 +2973,7 @@ function normalizeMessageOrigin(
   return { ...provenance };
 }
 
-function toModelToolDefinitions(tools: OpenAI.ChatCompletionTool[]): ModelToolDefinition[] {
+function toModelToolDefinitions(tools: ProviderTool[]): ModelToolDefinition[] {
   return tools.map((tool) => {
     if (tool.type !== "function") {
       throw new Error(`Unsupported model tool type: ${tool.type}`);
@@ -2941,7 +2990,7 @@ function toModelToolDefinitions(tools: OpenAI.ChatCompletionTool[]): ModelToolDe
   });
 }
 
-function fromOpenAiMessages(messages: OpenAI.ChatCompletionMessageParam[]): RunHarnessInput["messages"] {
+function fromOpenAiMessages(messages: ProviderMessages): RunHarnessInput["messages"] {
   const result: RunHarnessInput["messages"] = [];
   for (const message of messages) {
     if (message.role === "assistant") {
@@ -2978,7 +3027,7 @@ function fromOpenAiMessages(messages: OpenAI.ChatCompletionMessageParam[]): RunH
 
 function toOpenAiContentPart(
   part: ModelMessageContentPart,
-): OpenAI.ChatCompletionContentPart {
+): ProviderContentPart {
   switch (part.type) {
     case "text":
       return { type: "text", text: part.text };
@@ -2993,14 +3042,14 @@ function toOpenAiContentPart(
 
 function toOpenAiUserContent(
   content: ModelMessageContent,
-): OpenAI.ChatCompletionUserMessageParam["content"] {
+): ProviderUserMessage["content"] {
   if (!Array.isArray(content)) return content ?? "";
   return content.map(toOpenAiContentPart);
 }
 
 function toOpenAiAssistantContent(
   content: ModelMessageContent,
-): OpenAI.ChatCompletionAssistantMessageParam["content"] {
+): ProviderAssistantMessage["content"] {
   if (!Array.isArray(content)) return content;
   return content
     .filter((part): part is Extract<ModelMessageContentPart, { type: "text" }> => part.type === "text")
@@ -3008,7 +3057,7 @@ function toOpenAiAssistantContent(
 }
 
 function fromOpenAiUserContent(
-  content: OpenAI.ChatCompletionContentPart[],
+  content: ProviderContentPart[],
 ): ModelMessageContentPart[] {
   return content.flatMap((part): ModelMessageContentPart[] => {
     switch (part.type) {
@@ -3092,7 +3141,7 @@ function harnessResultOutcome(
         content: [
           { type: "text", text: String(jsonMessage.content) },
           ...result.contentParts,
-        ] as OpenAI.ChatCompletionToolMessageParam["content"],
+        ] as ProviderToolMessage["content"],
       }
     : jsonMessage;
   return {

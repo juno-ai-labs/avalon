@@ -27,6 +27,7 @@ import {
   type BindLoopTransition,
   type BindLoopProjectionState,
   type BindProviderBoundary,
+  type EmbeddingDiagnostic,
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessPluginActivationContext,
@@ -1462,10 +1463,12 @@ describe("agent harness", () => {
 
   it("binds host fetch before invoking it from the client", async () => {
     let requestBody: Record<string, unknown> | null = null;
+    let requestHeaders: Headers | null = null;
     const diagnostics: StructuredModelDiagnostic[] = [];
     const receiverAwareFetch = function (this: unknown, _request: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       if (this !== globalThis) throw new TypeError("illegal invocation");
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestHeaders = new Headers(init?.headers);
       return Promise.resolve(Response.json({
         id: "generation-1",
         model: "test/model",
@@ -1477,6 +1480,18 @@ describe("agent harness", () => {
       apiKey: "test-key",
       primaryModel: "test/model",
       fetch: receiverAwareFetch,
+      traceContext: {
+        source: "workstream_naming",
+        feature: "agent-model-workstream-naming",
+        workspaceId: "workspace-1",
+        workstreamId: "workstream-1",
+        substreamId: "substream-1",
+        contextUserId: "user-1",
+        requestId: "request-1",
+        region: "global",
+        environment: "test",
+        buildSha: "abc123",
+      },
     });
 
     await expect(client.structured({
@@ -1504,6 +1519,33 @@ describe("agent harness", () => {
         schema: { required: ["ok"], additionalProperties: false },
       },
     });
+    expect(requestHeaders!.get("X-OpenRouter-Metadata")).toBe("enabled");
+    expect(requestBody).toMatchObject({
+      user: "workspace-1",
+      session_id: "workstream-1-substream-1",
+      trace: {
+        trace_id: "request-1",
+        trace_name: "rally.workstream_naming",
+        span_name: "rally.structured.host_fetch",
+        generation_name: "host_fetch",
+        feature: "agent-model-workstream-naming",
+        product: "rally",
+        invocation_type: "structured",
+        provider: "openrouter",
+        intended_model: "test/model",
+        model: "test/model",
+        provider_invocation_model: "test/model",
+        workspace_id: "workspace-1",
+        workstream_id: "workstream-1",
+        substream_id: "substream-1",
+        user_id: "workspace-1",
+        context_user_id: "user-1",
+        request_id: "request-1",
+        region: "global",
+        environment: "test",
+        build_sha: "abc123",
+      },
+    });
     const requestDiagnostic = diagnostics.find((diagnostic) => diagnostic.stage === "model_request");
     const completionDiagnostic = diagnostics.find((diagnostic) => diagnostic.stage === "complete");
     expect(requestDiagnostic).toMatchObject({
@@ -1517,6 +1559,194 @@ describe("agent harness", () => {
         usage: { prompt_tokens: 12, completion_tokens: 3, reasoning_tokens: 1 },
       },
     });
+  });
+
+  it("keeps the intended model in structured fallback trace metadata", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestBodies.push(body);
+      return requestBodies.length === 1
+        ? Response.json({ error: { message: "primary unavailable" } }, { status: 503 })
+        : Response.json({
+            id: "generation-fallback",
+            model: "fallback/model",
+            choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }],
+          });
+    }) as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "primary/model",
+      fallbackModels: ["fallback/model"],
+      sameModelRetries: 0,
+      fetch: fetcher,
+      traceContext: {
+        source: "workstream_naming",
+        feature: "agent-model-workstream-naming",
+        workspaceId: "workspace-1",
+      },
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "fallback_trace",
+      jsonSchema: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+        additionalProperties: false,
+      },
+      parse: (value) => value as { ok: boolean },
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).resolves.toEqual({ ok: true });
+
+    expect(requestBodies.map((body) => body.trace)).toEqual([
+      expect.objectContaining({
+        intended_model: "primary/model",
+        model: "primary/model",
+      }),
+      expect.objectContaining({
+        intended_model: "primary/model",
+        model: "fallback/model",
+      }),
+    ]);
+    const traceIds = requestBodies.map((body) =>
+      (body.trace as { trace_id?: string }).trace_id);
+    expect(traceIds[0]).toEqual(expect.any(String));
+    expect(traceIds[1]).toBe(traceIds[0]);
+    expect(new Set(diagnostics.map((diagnostic) => diagnostic.traceId))).toEqual(
+      new Set([traceIds[0]]),
+    );
+  });
+
+  it("uses the OpenRouter embeddings contract and preserves intended-model diagnostics across fallback", async () => {
+    const requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
+    const diagnostics: EmbeddingDiagnostic[] = [];
+    const embedding = Array.from({ length: 1_024 }, (_, index) => index === 0 ? 1 : 0);
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push({ body, headers: new Headers(init?.headers) });
+      return requests.length === 1
+        ? Response.json({ error: { message: "primary unavailable" } }, { status: 503 })
+        : Response.json({
+            data: [{ embedding, index: 0, object: "embedding" }],
+            id: "embedding-1",
+            model: "fallback/embedding",
+            object: "list",
+            usage: { prompt_tokens: 4, total_tokens: 4 },
+          });
+    }) as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "primary/embedding",
+      fallbackModels: ["fallback/embedding"],
+      sameModelRetries: 0,
+      fetch: fetcher,
+      traceContext: {
+        source: "memory_embedding",
+        feature: "memory_embedding",
+        workspaceId: "workspace-1",
+        workstreamId: "workstream-1",
+        substreamId: "0",
+        harnessRunId: "run-1",
+      },
+    });
+
+    await expect(client.embed({
+      input: "durable preference",
+      inputType: "search_document",
+      dimensions: 1_024,
+      generationName: "memory_document_embedding",
+      onDiagnostic: (event) => { diagnostics.push(event); },
+    })).resolves.toMatchObject({
+      embeddings: [embedding],
+      intendedModel: "primary/embedding",
+      requestedModel: "fallback/embedding",
+      resolvedModel: "fallback/embedding",
+      fallbackAttempt: 1,
+      usage: { prompt_tokens: 4, total_tokens: 4 },
+    });
+
+    expect(requests.map(({ body }) => body)).toEqual([
+      {
+        model: "primary/embedding",
+        input: "durable preference",
+        dimensions: 1_024,
+        encoding_format: "float",
+        input_type: "search_document",
+        user: "workspace-1",
+      },
+      {
+        model: "fallback/embedding",
+        input: "durable preference",
+        dimensions: 1_024,
+        encoding_format: "float",
+        input_type: "search_document",
+        user: "workspace-1",
+      },
+    ]);
+    expect(requests.every(({ headers }) => headers.get("x-session-id") === "workstream-1-0"))
+      .toBe(true);
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        intendedModel: "primary/embedding",
+        requestedModel: "primary/embedding",
+        fallbackAttempt: 0,
+        success: false,
+      }),
+      expect.objectContaining({
+        intendedModel: "primary/embedding",
+        requestedModel: "fallback/embedding",
+        resolvedModel: "fallback/embedding",
+        fallbackAttempt: 1,
+        success: true,
+      }),
+    ]);
+  });
+
+  it("rejects embeddings that do not match the requested Vectorize dimensions", async () => {
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/embedding",
+      sameModelRetries: 0,
+      fetch: vi.fn(async () => Response.json({
+        data: [{ embedding: [1, 0, 0], index: 0, object: "embedding" }],
+        model: "test/embedding",
+        object: "list",
+      })) as typeof fetch,
+    });
+
+    await expect(client.embed({
+      input: "query",
+      inputType: "search_query",
+      dimensions: 1_024,
+      generationName: "memory_query_embedding",
+    })).rejects.toThrow("unexpected shape");
+  });
+
+  it("restores embedding response order from provider indices", async () => {
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/embedding",
+      sameModelRetries: 0,
+      fetch: vi.fn(async () => Response.json({
+        data: [
+          { embedding: [0, 1], index: 1, object: "embedding" },
+          { embedding: [1, 0], index: 0, object: "embedding" },
+        ],
+        model: "test/embedding",
+        object: "list",
+      })) as typeof fetch,
+    });
+
+    await expect(client.embed({
+      input: ["first", "second"],
+      dimensions: 2,
+      generationName: "ordered_embeddings",
+    })).resolves.toMatchObject({ embeddings: [[1, 0], [0, 1]] });
   });
 
   it("emits a failure diagnostic for every failed structured provider attempt", async () => {
@@ -1575,7 +1805,6 @@ describe("agent harness", () => {
     const failure = diagnostics.find((diagnostic) => diagnostic.success === false);
     expect(failure?.providerError).toEqual({
       code: 400,
-      message: "Provider returned error",
       providerName: "Google",
     });
     // The envelope's classification is kept; the provider's echo of the request
@@ -1583,8 +1812,9 @@ describe("agent harness", () => {
     expect(JSON.stringify(failure)).not.toContain("verbatim echo");
   });
 
-  it("bounds a padded provider error message", () => {
-    expect(openRouterProviderError({ error: { message: "x".repeat(5_000) } })?.message).toHaveLength(300);
+  it("drops provider-controlled prose from error classifications", () => {
+    expect(openRouterProviderError({ error: { code: 400, message: "x".repeat(5_000) } }))
+      .toEqual({ code: 400 });
     expect(openRouterProviderError({ error: { message: 12 } })).toBeUndefined();
     expect(openRouterProviderError("not an envelope")).toBeUndefined();
     expect(openRouterProviderError({ choices: [] })).toBeUndefined();
@@ -1606,7 +1836,7 @@ describe("agent harness", () => {
         name: "OpenRouterError",
         status: 400,
         details: {
-          providerError: { code: "model_not_found", message: "No endpoints found", providerName: "xAI" },
+          providerError: { code: "model_not_found", providerName: "xAI" },
         },
       });
   });
@@ -1652,6 +1882,31 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    "data:image/tiff;base64,AA==",
+    "data:image/heif;base64,AA==",
+    "data:image/svg+xml;base64,AA==",
+    "data:application/pdf;base64,AA==",
+    "https://example.test/unverified.png",
+    "file:///tmp/private.png",
+  ])("rejects unsupported image attachments before the OpenRouter request: %s", async (url) => {
+    const fetcher = vi.fn() as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      fallbackModels: ["fallback/model"],
+      fetch: fetcher,
+    });
+
+    await expect(client.stream({
+      messages: [{
+        role: "user",
+        content: [{ type: "image_url", image_url: { url, detail: "auto" } }],
+      }],
+    }, () => {})).rejects.toThrow("Unsupported OpenRouter image content type");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("never retries or falls back after streamed assistant output", async () => {
     const fetcher = vi.fn(async () => streamResponse([
       { choices: [{ delta: { content: "partial" }, finish_reason: null }] },
@@ -1665,7 +1920,7 @@ describe("agent harness", () => {
     });
 
     await expect(client.stream({ messages: [{ role: "user", content: "test" }] }, () => {}))
-      .rejects.toThrow("provider stream broke");
+      .rejects.toThrow("OpenRouter stream error");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
@@ -1691,12 +1946,14 @@ describe("agent harness", () => {
 
   it("persists and hash-verifies the exact Bind array before and after a provider turn", async () => {
     let providerBody: Record<string, unknown> | null = null;
+    const attempts: InferenceAttemptEvent[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       providerBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return streamResponse([{
         model: "test/model",
         choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
         usage: { prompt_tokens: 4, completion_tokens: 1 },
+        openrouter_metadata: { summary: "routed to the selected endpoint" },
       }]);
     }) as typeof fetch;
     const transitions: BindLoopTransition[] = [];
@@ -1714,6 +1971,22 @@ describe("agent harness", () => {
           sourceRevision: 1,
         },
       }],
+      traceContext: {
+        source: "workstream",
+        feature: "agent-model-workstream",
+        workspaceId: "workspace-1",
+        workstreamId: "workstream-1",
+        substreamId: "substream-1",
+        contextUserId: "user-1",
+        requestId: "request-1",
+        harnessRunId: "run-1",
+        region: "global",
+        environment: "test",
+        buildSha: "abc123",
+        executionPrincipalType: "user",
+        executionPrincipalId: "user-1",
+      },
+      onInferenceAttempt: (attempt) => { attempts.push(attempt); },
       onBindLoopTransition: async (transition) => { transitions.push(transition); },
       onBindProviderBoundary: async (boundary) => { boundaries.push(boundary); },
     });
@@ -1745,6 +2018,36 @@ describe("agent harness", () => {
     }
     expect(JSON.stringify(providerBody)).not.toContain("provenance");
     expect(JSON.stringify(providerBody)).not.toContain("participant_turn");
+    expect(providerBody).toMatchObject({
+      user: "workspace-1",
+      session_id: "workstream-1-substream-1",
+      trace: {
+        trace_id: "request-1",
+        trace_name: "rally.workstream",
+        span_name: "rally.turn.run-1:turn:1",
+        generation_name: "rally.turn.run-1:turn:1",
+        feature: "agent-model-workstream",
+        product: "rally",
+        invocation_type: "streaming",
+        intended_model: "test/model",
+        workspace_id: "workspace-1",
+        workstream_id: "workstream-1",
+        substream_id: "substream-1",
+        user_id: "workspace-1",
+        context_user_id: "user-1",
+        request_id: "request-1",
+        harness_run_id: "run-1",
+        execution_principal_type: "user",
+        execution_principal_id: "user-1",
+        turn_id: "run-1:turn:1",
+        route_stage_index: 0,
+        route_candidate_index: 0,
+        endpoint_attempt: 0,
+      },
+    });
+    expect(attempts[0]?.response?.openRouterMetadata).toEqual({
+      summary: "routed to the selected endpoint",
+    });
   });
 
   it("reserves the exact assistant slot before provider I/O and fails closed", async () => {
@@ -2463,6 +2766,7 @@ describe("agent harness", () => {
   });
 
   it("persists reverse-settling parallel tool results in Bind call order before the next request", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
     const responses = [
       streamResponse([{
         choices: [{
@@ -2477,7 +2781,10 @@ describe("agent harness", () => {
         choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
       }]),
     ];
-    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return responses.shift()!;
+    }) as typeof fetch;
     let releaseFirst!: () => void;
     let releaseSecond!: () => void;
     let markStarted!: () => void;
@@ -2528,6 +2835,16 @@ describe("agent harness", () => {
     const secondBoundary = transitions.findIndex((transition) =>
       transition.kind === "assistant_reserved" && transition.modelTurnIndex === 2);
     expect(secondBoundary).toBeGreaterThan(transitions.indexOf(accepted[1]!));
+    const traces = requestBodies.map((body) => body.trace as Record<string, unknown>);
+    expect(traces).toHaveLength(2);
+    expect(traces[0]?.trace_id).toBe("run-1");
+    expect(traces[1]?.trace_id).toBe("run-1");
+    expect(traces[0]?.span_name).toBe("rally.turn.run-1:turn:1");
+    expect(traces[1]?.span_name).toBe("rally.turn.run-1:turn:2");
+    expect(traces[0]?.generation_name).toBe("rally.turn.run-1:turn:1");
+    expect(traces[1]?.generation_name).toBe("rally.turn.run-1:turn:2");
+    expect(traces[0]?.turn_id).toBe("run-1:turn:1");
+    expect(traces[1]?.turn_id).toBe("run-1:turn:2");
   });
 
   it("numbers accepted tool results densely when an earlier elicitation result is withheld", async () => {
@@ -2769,10 +3086,14 @@ describe("agent harness", () => {
     //
     // Two candidates x (20s + 30s) = 100s of worst case against a 90s budget, so
     // the retry is declined even though a single attempt would have fit.
-    const fetcher = vi.fn(async () => Response.json(
-      { error: { message: "upstream stalled" } },
-      { status: 503 },
-    )) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json(
+        { error: { message: "upstream stalled" } },
+        { status: 503 },
+      );
+    }) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
 
     const outcome = await runHarness(runInput(fetcher, {
       maxWallClockMs: 90_000,
@@ -2785,6 +3106,18 @@ describe("agent harness", () => {
 
     // Both candidates tried once; the plan is not replayed.
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(requestBodies.map((body) => body.trace)).toEqual([
+      expect.objectContaining({
+        intended_model: "test/model",
+        model: "test/model",
+        route_stage_index: 0,
+      }),
+      expect.objectContaining({
+        intended_model: "test/model",
+        model: "fallback/model",
+        route_stage_index: 1,
+      }),
+    ]);
     expect(outcome).toMatchObject({
       status: "failed",
       failure: { kind: "provider", code: "provider_unavailable" },
