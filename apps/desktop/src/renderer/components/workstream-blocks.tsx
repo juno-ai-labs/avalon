@@ -33,7 +33,7 @@ import { logError } from '../../common/logger';
 import { messageExportDate, messageExportFileName, type MessageExportFormat } from '../../common/message-export';
 import { formatDuration, formatRelative } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
-import { splitCollapsibleMarkdown } from '../lib/markdown-collapse';
+import { markdownDefinitionBlocks, splitCollapsibleMarkdown, withMarkdownDefinitions } from '../lib/markdown-collapse';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
@@ -622,6 +622,7 @@ const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components
  * turning the streaming fast path back into a whole-body re-parse.
  */
 const NO_MENTIONS: MessageMention[] = [];
+const EMPTY_DEFINITION_BLOCKS: string[] = [];
 
 export function MarkdownBody({
   children,
@@ -660,9 +661,13 @@ export function MarkdownBody({
   still?: boolean;
   /**
    * The message is still growing. Rendering switches to settled segments plus
-   * an open tail so a per-frame commit does not re-parse the whole body; the
-   * commit that ends the stream renders the source whole again, which is also
-   * what heals any seam segmentation could not preserve.
+   * an open tail so a per-frame commit does not re-parse the whole body. When
+   * heading collapse is off, the commit that ends the stream renders the source
+   * whole again, which is also what heals any seam segmentation could not
+   * preserve. When collapse is on, each section stays its own parse after
+   * settle — footnote and link-reference definitions are appended onto fragments
+   * that do not already carry them, so a `[^1]` in one section still
+   * resolves against a definition under a later heading.
    */
   streaming?: boolean;
   telemetry?: MessageCopyTelemetry;
@@ -797,34 +802,85 @@ export function MarkdownBody({
     [collapseParts],
   );
   const hostedCollapse = useMarkdownCollapse();
+  // Each section is its own react-markdown mount. A [^1] in ## Claims cannot
+  // see a [^1]: under ## Sources unless the definition rides along with the
+  // fragment. Identity of `fragment` is preserved when nothing is missing, so
+  // the parse that already owns the defs is unchanged.
+  const definitionBlocks = useMemo(
+    () => (collapseParts ? markdownDefinitionBlocks(markdown) : EMPTY_DEFINITION_BLOCKS),
+    [collapseParts, markdown],
+  );
+  const dropBorrowedFootnotes = useMemo<MarkdownComponents['section']>(() => (
+    ({ children: sectionChildren, node, ...props }) => {
+      if (node?.properties?.dataFootnotes !== undefined) return null;
+      return <section {...props}>{sectionChildren}</section>;
+    }
+  ), []);
+  const borrowedComponents = useMemo<MarkdownComponents>(() => ({
+    ...components,
+    section: dropBorrowedFootnotes,
+  }), [components, dropBorrowedFootnotes]);
+  const borrowedHeadingComponents = useMemo<MarkdownComponents>(() => ({
+    ...headingComponents,
+    section: dropBorrowedFootnotes,
+  }), [dropBorrowedFootnotes, headingComponents]);
   const rendered = useMemo(() => {
-    const renderMarkdown = (source: string, extra: MarkdownComponents = components): React.JSX.Element => (
-      <ReactMarkdown
-        components={extra}
-        rehypePlugins={rehypePlugins}
-        remarkPlugins={REMARK_PLUGINS}
-        remarkRehypeOptions={rehypeOptions}
-        urlTransform={urlTransform}
-      >
-        {source}
-      </ReactMarkdown>
-    );
+    const componentsFor = (source: string, extra: MarkdownComponents): {
+      resolved: string;
+      used: MarkdownComponents;
+    } => {
+      const resolved = withMarkdownDefinitions(source, definitionBlocks);
+      const borrowed = resolved !== source;
+      if (!borrowed) return { resolved, used: extra };
+      if (extra === headingComponents) return { resolved, used: borrowedHeadingComponents };
+      if (extra === components) return { resolved, used: borrowedComponents };
+      return { resolved, used: { ...extra, section: dropBorrowedFootnotes } };
+    };
+    const renderMarkdown = (source: string, extra: MarkdownComponents = components): React.JSX.Element => {
+      const { resolved, used } = componentsFor(source, extra);
+      return (
+        <ReactMarkdown
+          components={used}
+          rehypePlugins={rehypePlugins}
+          remarkPlugins={REMARK_PLUGINS}
+          remarkRehypeOptions={rehypeOptions}
+          urlTransform={urlTransform}
+        >
+          {resolved}
+        </ReactMarkdown>
+      );
+    };
     const renderStreaming = (source: string, extra: MarkdownComponents = components): React.JSX.Element => {
       const { settled, tail } = splitStreamingMarkdown(source);
       return (
         <>
-          {settled.map((segment, index) => (
-            <SettledMarkdownSegment
-              components={extra}
-              rehypePlugins={rehypePlugins}
-              key={index}
-              rehypeOptions={rehypeOptions}
-              source={segment}
-              urlTransform={urlTransform}
-            />
-          ))}
+          {settled.map((segment, index) => {
+            const { resolved, used } = componentsFor(segment, extra);
+            return (
+              <SettledMarkdownSegment
+                components={used}
+                rehypePlugins={rehypePlugins}
+                key={index}
+                rehypeOptions={rehypeOptions}
+                source={resolved}
+                urlTransform={urlTransform}
+              />
+            );
+          })}
           {renderMarkdown(tail, extra)}
         </>
+      );
+    };
+    const renderSettled = (source: string, extra: MarkdownComponents = components): React.JSX.Element => {
+      const { resolved, used } = componentsFor(source, extra);
+      return (
+        <SettledMarkdownSegment
+          components={used}
+          rehypePlugins={rehypePlugins}
+          rehypeOptions={rehypeOptions}
+          source={resolved}
+          urlTransform={urlTransform}
+        />
       );
     };
     if (!collapseParts) {
@@ -839,17 +895,7 @@ export function MarkdownBody({
             if (!part.source) return null;
             return (
               <Fragment key={`preamble-${index}`}>
-                {streamThis
-                  ? renderStreaming(part.source)
-                  : (
-                    <SettledMarkdownSegment
-                      components={components}
-                      rehypePlugins={rehypePlugins}
-                      rehypeOptions={rehypeOptions}
-                      source={part.source}
-                      urlTransform={urlTransform}
-                    />
-                  )}
+                {streamThis ? renderStreaming(part.source) : renderSettled(part.source)}
               </Fragment>
             );
           }
@@ -870,22 +916,27 @@ export function MarkdownBody({
               {streamThis
                 ? renderStreaming(part.body)
                 : part.body
-                  ? (
-                    <SettledMarkdownSegment
-                      components={components}
-                      rehypePlugins={rehypePlugins}
-                      rehypeOptions={rehypeOptions}
-                      source={part.body}
-                      urlTransform={urlTransform}
-                    />
-                  )
+                  ? renderSettled(part.body)
                   : null}
             </MarkdownCollapseSection>
           );
         })}
       </>
     );
-  }, [collapseParts, components, headingComponents, markdown, rehypeOptions, rehypePlugins, streaming, urlTransform]);
+  }, [
+    borrowedComponents,
+    borrowedHeadingComponents,
+    collapseParts,
+    components,
+    definitionBlocks,
+    dropBorrowedFootnotes,
+    headingComponents,
+    markdown,
+    rehypeOptions,
+    rehypePlugins,
+    streaming,
+    urlTransform,
+  ]);
   // The provider sits outside the memoised body deliberately: a definition that
   // arrives mid-stream has to reach the pills, and a context update crosses a
   // `memo` boundary where a changed prop would have re-parsed everything under
@@ -895,7 +946,16 @@ export function MarkdownBody({
       <div className="markdown-body">{rendered}</div>
     </CitationsProvider>
   );
-  if (!collapseParts || hostedCollapse) return body;
+  if (!collapseParts) return body;
+  // The agent turn wraps this body in a controller so collapse-all in the
+  // header shares ids. A nested MarkdownBody (the embed glance) must not reuse
+  // that controller: its heading set is a different document.
+  if (
+    hostedCollapse
+    && hostedCollapse.sectionIds.join('\0') === collapseSectionIds.join('\0')
+  ) {
+    return body;
+  }
   return (
     <MarkdownCollapseController sectionIds={collapseSectionIds}>
       {body}
