@@ -254,11 +254,22 @@ reply prose from an in-memory accumulator. Slack, a future Microsoft Teams
 agent, and a future Linear comment-back path all follow the same rule.
 
 The terminal delivery boundary receives the final transcript turn identity and
-reloads that exact canonical turn from the owning work-stream object. Only that
-saved text may become an external message or comment. If the run has no saved
-terminal turn, the adapter may clear status and apply an outcome reaction, but
-it sends no result body. Provider idempotency keys remain required because the
-saved projection can be retried after an ambiguous network response.
+reloads that exact canonical turn from the owning work-stream object. A
+`needs_input` outcome instead prefers the oldest open elicitation's canonical
+turn, because its prompt is saved in structured turn content rather than the
+text column. Only text rendered from one of those hydrated turns may become an
+external message or comment. If no saved turn can be read, the adapter may
+clear status and apply an outcome reaction, but it sends no result body. A
+named-but-missing turn is retained as a settlement diagnostic rather than
+retrying provider status forever; transcript persistence is awaited before
+terminalization, so a null exact read is not a late-write race. Provider
+idempotency keys remain required because the saved projection can be retried
+after an ambiguous network response.
+
+Automation destinations obey the same content rule. An absent or whitespace-only
+saved result performs no external write, but each frozen target still receives
+a durable `skipped` / `delivery_suppressed` receipt so suppression cannot be
+confused with a settlement path that never ran.
 
 This boundary is intentionally above individual adapters. Adding another
 message-oriented connector means branching after the exact saved-turn read,
@@ -853,11 +864,14 @@ fixture table instead, where it is reviewable.
 ### 2026-08-29 — External platforms receive saved turns, never model streams
 
 **What changed:** External result delivery now has one connector-wide rule: a
-fixed status signal may be live, but a reply or comment is posted only from the
-exact canonical terminal turn after it is saved. Slack no longer starts or
+fixed status signal may be live, but a reply or comment is posted only from a
+canonical turn after it is saved. Terminal results use the exact named turn;
+`needs_input` uses the saved open-elicitation turn. Slack no longer starts or
 appends response streams; its connector API contract no longer exposes those
 methods. The retained `chat.stopStream` method exists only to close placeholder
-streams left by an older deployed version.
+streams left by an older deployed version. Empty automation projections still
+record suppressed receipts, and a named turn that is missing settles status
+without a body while retaining a durable diagnostic.
 
 **Why:** A Slack run completed at the model boundary but terminal settlement
 could not hydrate its structured assistant turn ID through a UUID-only message
@@ -873,9 +887,9 @@ ambiguous partial result. Also rejected: adapter-specific policy. Teams, Linear
 comments, Slack, and later message connectors have the same authority boundary.
 
 **What a future change has to respect:** Branch to a new external adapter only
-after exact saved-turn hydration. With no saved turn, settle status and send no
-reply body. Never expose a provider streaming primitive merely because its API
-offers one.
+after saved-turn hydration. With no saved turn, settle status and send no reply
+body; do not leave a provider surface looking busy forever. Never expose a
+provider streaming primitive merely because its API offers one.
 
 ### 2026-08-29 — OAuth attempts and webhook receipt claims become typed WorkspaceDO methods
 

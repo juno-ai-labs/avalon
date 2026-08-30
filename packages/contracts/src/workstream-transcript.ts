@@ -10,7 +10,7 @@ const UtcTimestampSchema = z.string().datetime({ offset: true });
  * durable loop identity and turn ordinal. Consumers must therefore treat this
  * as an opaque transcript key instead of validating every turn as an entity ID.
  */
-export const TranscriptTurnIdSchema = z.string().min(1).max(180);
+export const TranscriptTurnIdSchema = z.string().min(1);
 
 export const TranscriptIntervalSchema = z.object({
   intervalId: z.string().min(1),
