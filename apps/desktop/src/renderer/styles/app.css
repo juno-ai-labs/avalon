@@ -168,10 +168,22 @@ pre {
   width: 30px;
 }
 
-.button:hover:not(:disabled),
-.icon-button:hover:not(:disabled) {
+.button:hover:not(:disabled) {
   background: var(--av-sys-color-surface-raised-hover);
   border-color: var(--av-ref-color-line-4);
+  color: var(--av-sys-color-text-default);
+}
+
+/* Icon buttons are the borderless counterpart to `.button`. Hover used to
+   share the bordered fill, which made header controls next to the participant
+   stack and socket dot look like a different family. Keep the 1px transparent
+   border so the box does not shift; do not paint it. Open and keyboard-focus
+   match hover so a menu trigger does not snap back to empty, and so focus
+   gets the same raised fill as `.header-socket-state:focus-visible`. */
+.icon-button:hover:not(:disabled),
+.icon-button[data-state='open']:not(:disabled),
+.icon-button:focus-visible {
+  background: var(--av-sys-color-surface-raised);
   color: var(--av-sys-color-text-default);
 }
 
@@ -212,6 +224,19 @@ pre {
   background: transparent;
   border-color: transparent;
   color: var(--av-sys-color-text-muted);
+}
+
+/* A header icon that is itself the destructive action. Colour lives on the
+   glyph so the control stays the same size and padding as its neighbours. */
+.icon-button-danger {
+  color: var(--av-sys-color-danger-base);
+}
+
+.icon-button-danger:hover:not(:disabled),
+.icon-button-danger[data-state='open']:not(:disabled),
+.icon-button-danger:focus-visible {
+  background: color-mix(in srgb, var(--av-sys-color-danger-base) 13%, var(--av-sys-color-surface-raised));
+  color: var(--av-sys-color-danger-base);
 }
 
 .text-button {
