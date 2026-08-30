@@ -1,4 +1,5 @@
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type ProjectSummary, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ChevronRight, Plus } from 'lucide-react';
@@ -856,10 +857,27 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         <div className="launch-modifiers">
           <div className="new-workstream-modifiers" aria-label="Work-stream participants">
             {owningProject?.scope === 'personal' ? (
-              <span className="participant-modifier" title="Participants are managed by the project">
-                <span aria-hidden="true"><AvatarStack limit={4} members={participants} /></span>
-                <span>{participantSummary}</span>
-              </span>
+              <Tooltip.Root delayDuration={300}>
+                <Tooltip.Trigger asChild>
+                  <span className="participant-modifier">
+                    <span aria-hidden="true">
+                      <AvatarStack limit={4} members={participants} nameTooltip={false} />
+                    </span>
+                    <span>{participantSummary}</span>
+                  </span>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                  <Tooltip.Content
+                    align="center"
+                    className="tooltip"
+                    side="top"
+                    sideOffset={6}
+                  >
+                    Participants are managed by the project
+                    <Tooltip.Arrow className="tooltip-arrow" />
+                  </Tooltip.Content>
+                </Tooltip.Portal>
+              </Tooltip.Root>
             ) : <>
             <button
               aria-haspopup="dialog"

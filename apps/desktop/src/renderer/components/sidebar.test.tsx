@@ -1824,7 +1824,9 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Comp review/u });
-    // The two extras include the viewer, who the row does not paint.
+    // Five participants, three preview ids (Ellis, Drew, Casey). The two
+    // extras include the viewer (user-1), who is not in that preview, so the
+    // row paints the three others and +1 rather than +2.
     expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; Casey; and 1 more');
     expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(3);
     expect(within(row).getByText('+1')).toBeInTheDocument();

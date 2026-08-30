@@ -220,6 +220,56 @@ describe('AvatarStack', () => {
     expect(screen.queryByTitle('Casey Observer')).not.toBeInTheDocument();
   });
 
+  it('skips the per-face name tooltip when the caller already explains the stack', async () => {
+    stubResizeObserver();
+    const { container } = render(
+      <Tooltip.Provider delayDuration={0}>
+        <AvatarStack
+          members={[{
+            id: 'user-observer',
+            name: 'Casey Observer',
+            email: 'casey@rally.test',
+            timezone: 'America/Los_Angeles',
+          }]}
+          nameTooltip={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const item = container.querySelector('.avatar-stack-item');
+    if (!item) throw new Error('avatar stack item missing');
+    expect(item).not.toHaveAttribute('data-state');
+    fireEvent.pointerMove(item, { pointerType: 'mouse' });
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(container.querySelector('.avatar-stack')).toHaveAccessibleName('Casey Observer');
+  });
+
+  it('still explains presence when name tooltips are off', async () => {
+    stubResizeObserver();
+    const { container } = render(
+      <Tooltip.Provider delayDuration={0}>
+        <AvatarStack
+          currentUserId="user-current"
+          members={[{
+            id: 'user-collaborator',
+            name: 'Ari Collaborator',
+            email: 'ari@rally.test',
+            timezone: 'America/Los_Angeles',
+          }]}
+          nameTooltip={false}
+          presentUserIds={['user-collaborator']}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const item = container.querySelector('.avatar-stack-item');
+    if (!item) throw new Error('avatar stack item missing');
+    fireEvent.pointerMove(item, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'Ari Collaborator is viewing this workstream.',
+    );
+  });
+
   it('keeps a final visible participant ping below the overflow badge', () => {
     const members = [
       ['user-current', 'Current User'],
