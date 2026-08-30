@@ -222,30 +222,26 @@ export function AvatarStack({
     >
       {visible.map((member) => {
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
-        const presenceDescription = `${member.name} is viewing this workstream.`;
+        const tooltip = showingPresence
+          ? `${member.name} is viewing this workstream.`
+          : member.name;
         return (
           <Tooltip.Root
             delayDuration={300}
             key={member.id}
           >
-            <Tooltip.Trigger
-              asChild
-              onFocus={showingPresence ? undefined : (event) => event.preventDefault()}
-              onPointerMove={showingPresence ? undefined : (event) => event.preventDefault()}
-            >
+            <Tooltip.Trigger asChild>
               <span className={clsx('avatar-stack-item', showingPresence && 'is-present')}>
                 {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
-                <Avatar member={member} size="small" title={showingPresence ? null : member.name} />
+                <Avatar member={member} size="small" title={null} />
               </span>
             </Tooltip.Trigger>
-            {showingPresence && (
-              <Tooltip.Portal>
-                <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
-                  {presenceDescription}
-                  <Tooltip.Arrow className="tooltip-arrow" />
-                </Tooltip.Content>
-              </Tooltip.Portal>
-            )}
+            <Tooltip.Portal>
+              <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
+                {tooltip}
+                <Tooltip.Arrow className="tooltip-arrow" />
+              </Tooltip.Content>
+            </Tooltip.Portal>
           </Tooltip.Root>
         );
       })}
