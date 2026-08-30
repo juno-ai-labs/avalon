@@ -2661,9 +2661,13 @@ pre {
    badge and the title. It is a *glance*, not a reader: the clamp cuts it at
    four lines, and nothing here scrolls in either axis — a scrollable box
    inside a card the whole of which is one button would swallow the click it
-   advertises. The kind label's size and weight, deliberately, so the preview
-   reads as the card's quietest layer rather than competing with the title
-   beneath it. `pointer-events: none` plus `inert` on the node keep nested
+   advertises. The kind label's size, and `font-weight: normal` rather than
+   `sys.label.weight`: that token is 560, the same as the title's
+   `sys.font.weight.strong`, so the glance competed with the line it is
+   meant to recede from. The named weights only go up from `strong`; `normal`
+   (400) is the step down that exists without inventing a number. Headings
+   inherit it; `strong` keeps markdown's own weight, so `**Author:**` actually
+   reads as emphasis. `pointer-events: none` plus `inert` on the node keep nested
    markdown (a link, a code-block copy control) from becoming a second target
    inside the card.
 
@@ -2681,7 +2685,7 @@ pre {
    glance painted at the turn's size and colour. `*` carries the tone into
    descendants that `.markdown-body strong` (and `a`, `th`) paint themselves,
    without naming a markdown element a host may not restyle. */
-.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-disabled); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: var(--av-sys-label-weight); line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; pointer-events: none; word-break: break-word; }
+.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-disabled); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: normal; line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; pointer-events: none; word-break: break-word; }
 .citation-card .citation-card-preview div.markdown-body { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
 .citation-card .citation-card-preview div.markdown-body * { color: inherit; }
 /* A heading scale of one size: the shared scale's h1 is larger than this
