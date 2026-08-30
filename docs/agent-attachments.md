@@ -615,6 +615,20 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
+
+**What changed:** **Versions** in the inspector header opens a dropdown of the
+resource's history rather than replacing the document pane. **Archive** still
+asks continue/cancel, now from a danger-coloured icon.
+
+**Why:** Swapping the pane hid the file. The header dropdown is the existing
+pattern for a list of actions off an icon button. The unlink still has no restore,
+so the modal stays.
+
+**What a future change has to respect:** the version list is still newest-first
+and still marks current by list position, not by the detail's cached number.
+Sparse dates are calendar buckets, not `formatRelative`'s "3 hours ago".
+
 ### 2026-08-30 — Resource versions move behind a header control
 
 **What changed:** The inspector rail's resource detail no longer lists versions

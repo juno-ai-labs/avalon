@@ -310,24 +310,29 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
-    const versions = screen.getByRole('region', { name: 'Versions' });
+    const versions = screen.getByRole('menu', { name: 'Versions' });
     // Newest first, and the current one is not something to open a copy of.
-    expect(within(versions).getAllByRole('listitem').map((row) => row.textContent))
+    expect(within(versions).getAllByRole('menuitem').map((row) => row.textContent))
       .toEqual([
         expect.stringContaining('V3'),
         expect.stringContaining('V2'),
         expect.stringContaining('V1'),
       ]);
     expect(within(versions).getByText(/Current/u)).toBeVisible();
-    expect(within(versions).getByRole('button', { name: /Open version 1/u })).toBeVisible();
-    expect(within(versions).queryByRole('button', { name: /Open version 3/u })).toBeNull();
+    expect(within(versions).getByRole('menuitem', { name: /V1/u })).not.toHaveAttribute('aria-disabled', 'true');
+    expect(within(versions).getByRole('menuitem', { name: /V3/u })).toHaveAttribute('aria-disabled', 'true');
     // Who moved it, in words the rail can actually show: Rally for a run, the
     // participant's own name for a member, the provider for a connector.
     expect(within(versions).getByText('Rally')).toBeVisible();
     expect(within(versions).getByText('linear')).toBeVisible();
     expect(within(versions).getByText('Alex')).toBeVisible();
+    // The document stays in the rail; Versions is a header dropdown, not a pane.
+    // Radix marks the rest of the page inert while the menu is open, so the
+    // title is hidden from the accessibility tree without leaving the DOM.
+    expect(document.querySelector('.inspector-detail')).not.toBeNull();
+    expect(screen.getByRole('heading', { hidden: true, name: watched.title })).toBeInTheDocument();
   });
 
   it('marks the newest version current even when the detail has not caught up', () => {
@@ -344,11 +349,11 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
-    const versions = screen.getByRole('region', { name: 'Versions' });
-    expect(within(versions).queryByRole('button', { name: /Open version 3/u })).toBeNull();
-    expect(within(versions).getByRole('button', { name: /Open version 2/u })).toBeVisible();
+    const versions = screen.getByRole('menu', { name: 'Versions' });
+    expect(within(versions).getByRole('menuitem', { name: /V3/u })).toHaveAttribute('aria-disabled', 'true');
+    expect(within(versions).getByRole('menuitem', { name: /V2/u })).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('says a version cannot be opened rather than offering an unreadable one', () => {
@@ -366,9 +371,9 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
-    expect(screen.queryByRole('button', { name: /Open version 2/u })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: /V2/u })).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('says history is unavailable rather than saying there is none', () => {
@@ -381,11 +386,11 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
     // Offline, a 500, and "this document never changed" are four different
     // truths; silence tells the reader the last one.
-    expect(screen.getByRole('heading', { name: 'Versions' })).toBeVisible();
+    expect(screen.getByRole('menu', { name: 'Versions' })).toBeVisible();
     expect(screen.getByText('Rally could not load this history.')).toBeVisible();
   });
 
@@ -401,9 +406,9 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
-    fireEvent.click(screen.getByRole('button', { name: /Open version 2/u }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /V2/u }));
 
     expect(onOpenResourceVersion).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'resource-1' }),
@@ -427,8 +432,8 @@ describe('InspectorRail details', () => {
 
     // One version is no history on the document itself. The Versions control
     // still opens onto that one row rather than pretending there is nothing.
-    expect(screen.queryByRole('heading', { name: 'Versions' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+    expect(screen.queryByRole('menu', { name: 'Versions' })).toBeNull();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
     expect(screen.getByText('V1')).toBeVisible();
   });
 
@@ -512,7 +517,7 @@ describe('InspectorRail details', () => {
     expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
     expect(screen.getByText(/Last updated/u)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Versions' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Archive' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Archive' })).toHaveClass('icon-button-danger');
   });
 
   it('asks before archiving, and Continue unlinks the resource', () => {
@@ -556,7 +561,7 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Versions' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
     expect(screen.getByText('today')).toBeVisible();
     expect(screen.getByText('yesterday')).toBeVisible();
@@ -615,6 +620,12 @@ describe('resource detail content preview', () => {
     expect(screen.queryByText('Version')).not.toBeInTheDocument();
     expect(document.querySelector('.inspector-detail-preview')).toBeNull();
     expect(document.querySelector('.inspector-detail-document')).not.toBeNull();
+    const updated = screen.getByText(/Last updated/u);
+    const rule = document.querySelector('.inspector-detail-rule');
+    const documentBody = document.querySelector('.inspector-detail-document');
+    expect(rule).not.toBeNull();
+    expect(updated.compareDocumentPosition(rule!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(rule!.compareDocumentPosition(documentBody!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it('re-reads the content when the resource is revised in place', async () => {
