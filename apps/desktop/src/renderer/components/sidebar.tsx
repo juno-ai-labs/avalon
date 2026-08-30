@@ -1407,6 +1407,22 @@ export function Sidebar({
     },
   });
 
+  const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
+    <WorkstreamRow
+      debugEnabled={debugEnabled}
+      onArchive={setArchiveWorkstreamTarget}
+      onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
+      onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
+      onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
+      onRename={openRename}
+      onTogglePin={(target, pin) => void togglePin(target, pin)}
+      pinPending={pinPendingWorkstreamId === workstream.id}
+      projects={projects}
+      scopePending={scopePendingWorkstreamId === workstream.id}
+      workstream={workstream}
+    />
+  );
+
   const closeRename = (): void => {
     if (renaming) return;
     setRenameTarget(null);
@@ -1580,6 +1596,7 @@ export function Sidebar({
             onReorder={onReorderProjects}
             onRestore={onRestoreProject}
             projects={projects}
+            renderWorkstream={renderWorkstream}
             workstreams={workstreams}
           />
 
