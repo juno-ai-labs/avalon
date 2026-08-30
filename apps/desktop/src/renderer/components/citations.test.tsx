@@ -123,6 +123,37 @@ describe('resource citations', () => {
     expect(screen.getByText('Github pull request')).toBeInTheDocument();
   });
 
+  it('labels a generated file by what it is, not that it was generated', () => {
+    const generated = {
+      id: 'packaging',
+      title: 'Packaging & Pricing.pptx',
+      resourceType: 'generated_file',
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    };
+    const { unmount } = render(
+      <MarkdownBody citations={context({ resolve: () => generated })}>
+        {'![Packaging & Pricing](resource://packaging)'}
+      </MarkdownBody>,
+    );
+    expect(screen.getByText('Deck')).toBeInTheDocument();
+    expect(screen.queryByText('Generated file')).toBeNull();
+    unmount();
+
+    render(
+      <MarkdownBody citations={context({
+        resolve: () => ({
+          id: 'memo',
+          title: 'Strategy.docx',
+          resourceType: 'generated_file',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        }),
+      })}>
+        {'![Strategy](resource://memo)'}
+      </MarkdownBody>,
+    );
+    expect(screen.getByText('Document')).toBeInTheDocument();
+  });
+
   it('opens the cited resource in the rail when either form is clicked', () => {
     const citations = context();
     render(

@@ -1,4 +1,8 @@
 import {
+  type AttachmentKind,
+  classifyAttachmentKind,
+} from '@rally/contracts';
+import {
   type CitationScheme,
   type CitationTarget,
   type FootnoteCitation,
@@ -42,6 +46,8 @@ export interface CitationResource {
   readonly id: string;
   readonly title: string;
   readonly resourceType: string;
+  /** Present when the record knows a MIME type; the kind label classifies from it. */
+  readonly mimeType?: string;
 }
 
 export interface CitationContext {
@@ -129,10 +135,44 @@ const EMPTY_RENDER: CitationRender = {
  * `github_pull_request`, `gmail_thread`, `linear_project_update`. A CSS
  * `capitalize` on that prints `Github_pull_request`; the underscores have to go
  * before the words do.
+ *
+ * Provenance types (`generated_file`, `uploaded_file`) are not kinds a person
+ * can tell apart: every published file is one. Those classify from MIME and
+ * filename into the attachment kinds, and a slide deck reads as "Deck" rather
+ * than "Presentation" because that is the word the rest of the product uses.
  */
-export function resourceKindLabel(resourceType: string): string {
-  const words = resourceType.replace(/[_-]+/gu, ' ').trim();
-  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : resourceType;
+const FILE_KIND_LABELS: Record<AttachmentKind, string> = {
+  image: 'Image',
+  markdown: 'Markdown',
+  pdf: 'PDF',
+  document: 'Document',
+  spreadsheet: 'Spreadsheet',
+  presentation: 'Deck',
+  text: 'Text',
+  other: 'File',
+};
+
+const FILE_PROVENANCE_TYPES = new Set(['generated_file', 'uploaded_file']);
+
+export function resourceKindLabel(resource: Pick<CitationResource, 'resourceType' | 'title' | 'mimeType'>): string {
+  const type = resource.resourceType;
+  if (FILE_PROVENANCE_TYPES.has(type)) {
+    return FILE_KIND_LABELS[classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title })];
+  }
+  if (isAttachmentKind(type)) return FILE_KIND_LABELS[type];
+  const words = type.replace(/[_-]+/gu, ' ').trim();
+  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : type;
+}
+
+function isAttachmentKind(value: string): value is AttachmentKind {
+  return Object.hasOwn(FILE_KIND_LABELS, value);
+}
+
+function resourceIconType(resource: CitationResource): string {
+  if (FILE_PROVENANCE_TYPES.has(resource.resourceType)) {
+    return classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title });
+  }
+  return resource.resourceType;
 }
 
 /** The kind of thing a resource is, at a glance. Shared with the rail's own list. */
@@ -157,7 +197,7 @@ function ResourceChip({ label, resource, onOpen }: {
       onClick={onOpen}
       type="button"
     >
-      <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon type={resource.resourceType} /></span>
+      <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon type={resourceIconType(resource)} /></span>
       <span className="citation-chip-label">{label}</span>
     </button>
   );
@@ -229,7 +269,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
       onClick={onOpen}
       type="button"
     >
-      <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type={resource.resourceType} /></span>
+      <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type={resourceIconType(resource)} /></span>
       {settled.open && (
         <span aria-hidden="true" className="citation-card-preview-skeleton">
           <span /><span /><span />
@@ -242,7 +282,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
       )}
       <span className="citation-card-text">
         <strong className="citation-card-title">{label}</strong>
-        <small className="citation-card-kind">{resourceKindLabel(resource.resourceType)}</small>
+        <small className="citation-card-kind">{resourceKindLabel(resource)}</small>
       </span>
     </button>
   );

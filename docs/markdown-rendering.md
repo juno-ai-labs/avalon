@@ -503,6 +503,28 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-08-30 — The embed card kind is the file, and the preview type is normal weight
+
+**What changed:** a generated or uploaded file's kind label classifies from MIME
+and filename (`Document`, `Deck`, `Spreadsheet`, …) instead of printing
+`Generated file`. The preview's weight moved from `sys.label.weight` (560) to
+`normal` (400).
+
+**Why:** `generated_file` is provenance, not a kind a person can tell cards
+apart by — every published file is one. The attachment-kind vocabulary already
+answers "what is this file", and "Deck" is the word the rest of the product
+uses for a slide deck rather than "Presentation". The preview sat on
+`sys.label.weight`, which is the same 560 as the title's `sys.font.weight.strong`,
+so the glance competed with the line it is meant to recede from. The named
+weights only go up from `strong`; `normal` is the step down that exists without
+inventing a number. Headings inherit it, so `**Author:**` (markdown's own 660)
+actually reads as emphasis against the glance.
+
+**What a future change has to respect:** do not relabel a connector type
+(`github_pull_request`) from MIME — those identifiers are the kind. Do not put
+the preview back on `sys.label.weight` to "match the kind label"; the kind
+label is a caption, the preview is body type at caption size.
+
 ### 2026-08-30 — The embed card preview wins its tone on specificity, not source order
 
 **What changed:** the preview's inherit and heading scale are now
