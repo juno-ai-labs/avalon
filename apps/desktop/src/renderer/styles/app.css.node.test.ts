@@ -527,7 +527,12 @@ describe('markdown list markers', () => {
     'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
   ];
 
-  it.each([['.note-detail-article'], ['.meeting-notes-body'], ['.citation-card-preview']])(
+  it.each([
+    ['.note-detail-article'],
+    ['.meeting-notes-body'],
+    ['.inspector-detail-document'],
+    ['.citation-card-preview'],
+  ])(
     'leaves markdown element styling to the shared container in %s',
     (host) => {
       // Headings are absent from the list on purpose: a scale is a property of
