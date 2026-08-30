@@ -1,7 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import {
   PROJECT_COLOR_KEYS,
   PROJECT_ICON_KEYS,
@@ -41,6 +41,10 @@ const project = ProjectSummarySchema.parse({
   updatedAt: '2026-08-27T00:00:00.000Z',
 });
 
+function Location(): React.JSX.Element {
+  return <output data-testid="location">{useLocation().pathname}</output>;
+}
+
 function renderProject(summary = project): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const active = summary.status === 'active';
@@ -50,7 +54,10 @@ function renderProject(summary = project): QueryClient {
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[`/projects/${summary.id}`]}>
-          <Routes><Route element={<ProjectSpaceScreen />} path="/projects/:projectId" /></Routes>
+          <Routes>
+            <Route element={<ProjectSpaceScreen />} path="/projects/:projectId" />
+            <Route element={<Location />} path="*" />
+          </Routes>
         </MemoryRouter>
       </QueryClientProvider>
     </Tooltip.Provider>,
@@ -161,6 +168,26 @@ describe('project space appearance', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add resources' }));
 
     await waitFor(() => expect(api.addProjectDefaultResource).toHaveBeenCalledWith(project.id, 'resource-1'));
+  });
+
+  it('opens the new project work stream page from the Work streams plus', () => {
+    renderProject();
+
+    const heading = screen.getByRole('heading', { name: 'Work streams' });
+    const plus = screen.getByRole('button', { name: 'New work stream in Hiring' });
+    expect(heading.parentElement).toContainElement(plus);
+    expect(plus).toHaveClass('icon-button');
+    expect(screen.getByText('Start one with the plus button in this section.')).toBeVisible();
+    fireEvent.click(plus);
+    expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${project.id}/workstreams/new`);
+  });
+
+  it('keeps the Work streams plus disabled on an archived project', () => {
+    renderProject(ProjectSummarySchema.parse({ ...project, status: 'archived' }));
+
+    expect(screen.getByRole('button', { name: 'New work stream in Hiring' })).toBeDisabled();
+    expect(screen.getByText('This archived project has no work streams.')).toBeVisible();
+    expect(screen.queryByText('Start one with the plus button in this section.')).not.toBeInTheDocument();
   });
 
   it('exposes archive as a danger-colored icon-only control and opens the confirmation dialog', async () => {
