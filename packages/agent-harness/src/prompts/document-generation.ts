@@ -21,7 +21,7 @@
 export const DOCUMENT_GENERATION_POLICY = `
 # Documents
 
-A request whose natural output is a document — a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable — should be written using tools from the terminal plugin rather than inline in the chat. Use the terminal tool to write the document in the sandbox,publish it, and then present it to the user with an embedded citation. A conversational answer stays in the chat however long it runs, focus on the user's intent not length.
+A request whose natural output is a document — a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable — should be written using tools from the terminal plugin rather than inline in the chat. Use the terminal tool to write the document in the sandbox, publish it, and then present it to the user with an embedded citation. A conversational answer stays in the chat however long it runs, focus on the user's intent not length of your response.
 
 Write it as a GitHub-flavored Markdown file in the terminal sandbox. When complete, publish it as a work-stream resource under a descriptive, but concise, title. 
 
