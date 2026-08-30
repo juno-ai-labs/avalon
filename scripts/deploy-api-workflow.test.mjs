@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url';
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const deployWorkflowPath = join(repositoryDirectory, '.github/workflows/deploy-api.yml');
 const ciWorkflowPath = join(repositoryDirectory, '.github/workflows/ci.yml');
+const capabilityEntrypointPaths = [
+  join(repositoryDirectory, 'apps/api/src/document-processing-worker.ts'),
+  join(repositoryDirectory, 'apps/api/src/terminal-provider-worker.ts'),
+];
 
 function matrixCommand(workflow, lane) {
   const escapedLane = lane.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -40,6 +44,16 @@ test('a merge to main provisions every declared Queue before either regional dep
   assert.notEqual(ensureQueues, -1, 'the deploy must run the idempotent Queue provisioner');
   assert.ok(ensureQueues < deployEu, 'Queue provisioning must precede the EU deploy');
   assert.ok(ensureQueues < deployGlobal, 'Queue provisioning must precede the Global deploy');
+});
+
+test('private RPC Workers register Cloudflare-required inert fetch handlers', async () => {
+  const entrypoints = await Promise.all(
+    capabilityEntrypointPaths.map((path) => readFile(path, 'utf8')),
+  );
+
+  for (const entrypoint of entrypoints) {
+    assert.match(entrypoint, /override fetch\(\): Response \{\s+return new Response\(null, \{ status: 404 \}\);\s+\}/u);
+  }
 });
 
 test('profiles all static service artifacts and uploads both regional sets before promotion', async () => {

@@ -36,6 +36,12 @@ There is no public route to either capability Worker. Cloudflare runs a bound
 service on the same thread and machine by default, with no added service cost;
 each call still counts as one Worker invocation and one subrequest.
 
+Cloudflare currently rejects a default RPC entrypoint that has no named event
+handler. Each capability Worker therefore registers an inert `fetch()` handler
+that always returns 404. `workers_dev` and preview URLs remain disabled and no
+route points at the services; the handler satisfies deployment validation but
+does not create a product or operator HTTP surface.
+
 Document RPC transfers bounded `Uint8Array` values and typed results. Existing
 source limits stay below Cloudflare RPC's serialized payload limit. Terminal RPC
 passes the already parsed regional provider configuration, including the
@@ -197,4 +203,5 @@ Their contracts must remain backward-compatible through service-first rollout,
 local development starts three Workers per region, and each service has its own
 startup evidence. Terminal's provider-side object cache is session-local rather
 than global or reconstructed per operation. Product storage and authority remain
-unchanged.
+unchanged. Until Cloudflare supports handlerless default RPC entrypoints, each
+private service must retain its inert 404 `fetch()` handler.

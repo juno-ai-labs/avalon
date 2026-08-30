@@ -17,6 +17,11 @@ import {
 export default class DocumentProcessingWorker
   extends WorkerEntrypoint
   implements DocumentProcessingRpcBinding {
+  /** Cloudflare requires a named handler even when only RPC is reachable. */
+  override fetch(): Response {
+    return new Response(null, { status: 404 });
+  }
+
   async extractText(bytes: Uint8Array): Promise<PdfTextExtraction> {
     return extractPdfText(bytes);
   }
