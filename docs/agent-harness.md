@@ -493,8 +493,9 @@ OpenRouter's PostHog Broadcast
 mapping therefore receives the workspace as `distinct_id`, the work-stream
 session as `$ai_session_id`, the loop trace as `$ai_trace_id`, the turn
 generation name as `$ai_span_name`, and the remaining fields as `metadata_*`
-properties. One-shot structured calls use their provider request ID as the trace
-ID and their schema name as the generation name.
+properties. One-shot structured calls use one call-scoped trace ID across
+retries, repairs, and fallback models, and use their schema name as the
+generation name.
 OpenRouter's returned
 `openrouter_metadata` is retained with successful streaming attempts so routing
 and pipeline decisions join the same lakehouse evidence. Broadcast destination
@@ -655,7 +656,7 @@ should start owning a work-stream scope once people are talking in it is a
 second. Neither is the memory union's to decide on its own, and neither writes a
 row today, so both stay open.
 
-Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; changing that constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
+Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; OpenRouter reporting a different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
 
 Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
 
@@ -915,7 +916,7 @@ A published document is readable in the desktop client, and was not until 2026-0
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
-When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is never written to structured Workers Logs or the object-local operational inference ledger: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose. For Global inference it is retained only inside the deliberately sensitive inference-lakehouse record, alongside the prompt it may quote, so lossless provider diagnosis does not turn the ordinary log surface into a content store. For EU inference it is not retained for later analysis.
+When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is never written to structured Workers Logs, the object-local operational inference ledger, or the Global inference lakehouse: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose. EU inference likewise does not retain it for later analysis.
 
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, WebP, HEIF/HEIC, and the primary TIFF path are normalized through Cloudflare Images; the TIFF fallback preflights dimensions before pixel decode, while HEIF has no whole-buffer local fallback. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
 
@@ -1652,7 +1653,8 @@ smuggled in.
 native embeddings endpoint through the shared inference gateway, with
 `qwen/qwen3-embedding-8b` as a fixed route with no model fallbacks and explicit 1,024
 dimensions. Query/document input types remain distinct. Vector namespaces are
-derived from the resolved model and dimension contract, and WorkspaceDO
+derived from the fixed requested model and dimension contract, provider model
+drift fails closed, and WorkspaceDO
 migration 23 requeues every current active memory while keeping old Qwen
 vectors unreachable during the rebuild.
 
@@ -1676,7 +1678,9 @@ requeue.
 The current OpenRouter embeddings request schema does not accept Broadcast's
 custom `trace` object. It receives workspace `user` plus `X-Session-ID`; Rally
 keeps feature, trace, intended/requested/resolved model, fallback, and latency
-as content-free regional diagnostics.
+as content-free regional diagnostics. Query embeddings use the active
+substream in that session; document projection uses the owning work stream's
+canonical main substream.
 
 ### 2026-08-27 — OpenRouter SDK serialization and loop-wide provider traces
 
@@ -1693,6 +1697,12 @@ both use the workspace ID; a relevant person remains separate as
 route traversal while `model` records each attempted candidate, making fallback
 requests directly queryable. Successful streaming attempts retain returned router
 metadata.
+
+Locally invalid SDK requests are terminal before transport: Rally does not
+retry them on the same model or send them to a fallback. Structured retries,
+repairs, and fallback models retain one trace ID while their provider request
+IDs remain distinct. Provider-controlled error prose is discarded before any
+operational or lakehouse record is built.
 
 **Why:** The local inference lakehouse proves what Rally sent and received, but
 provider-side diagnosis previously had no complete way to join a routed request

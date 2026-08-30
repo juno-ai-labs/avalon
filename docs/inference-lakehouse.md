@@ -40,12 +40,13 @@ carry the complete normalized content, tool calls, usage, finish reason, and
 generation ID, including OpenRouter's opt-in routing metadata when returned.
 Structured calls carry the exact request body and the provider's
 complete successful JSON response envelope. Failed calls retain the bounded
-provider classification and message, not arbitrary provider metadata that may
-echo the rejected prompt under an unrecognized key.
+provider classification (`code` and provider name) only. Provider-controlled
+free text and arbitrary metadata are discarded because either may echo the
+rejected prompt under an unrecognized key.
 
 The API turns each event into schema version 1. Core dimensions are columns:
-region, environment, build, source, invocation type, workspace/user/work-stream/
-substream and host request IDs, inference/turn/schema IDs,
+region, environment, build, source, invocation type, workspace/Broadcast-user/
+context-user/work-stream/substream and host request IDs, inference/turn/schema IDs,
 provider/routed/provider model, success/disposition/failure, latency/TTFT, token
 classes, cost, and response bytes. The full request, response, error, routing
 cursor, retry/repair positions, validation issues, and counts remain JSON
@@ -326,6 +327,8 @@ decided retention policy, not a speculative cache or aggregation layer.
 carry workspace `user` plus `X-Session-ID`. Content-free regional diagnostics
 record the feature key, trace/session IDs, intended/requested/resolved model,
 fallback attempt, outcome, and latency without retaining memory text or vectors.
+The query session uses the active substream rather than collapsing every
+conversation into main substream `"0"`.
 
 **Why:** The previous Workers AI call was invisible to the OpenRouter routing
 and provider-observability path, including when a configured fallback differed
@@ -339,7 +342,9 @@ user content without being necessary to diagnose routing.
 **Consequences:** OpenRouter/PostHog receive workspace and session correlation
 for embeddings but not custom trace metadata until the embeddings API supports
 it. Rally's regional logs retain the missing content-free routing dimensions;
-the exact embedding content remains deliberately absent.
+the exact embedding content remains deliberately absent. The fixed requested
+model defines the Vectorize namespace, and a differing provider-reported model
+fails closed to FTS instead of silently querying another semantic space.
 
 ### 2026-08-27 — Provider traces join Rally's exact inference evidence
 
@@ -352,7 +357,9 @@ category/key while `source` records the inference surface. The provider trace
 groups a full harness loop, not an individual model turn; work-stream
 `session_id` values are `<workstream_id>-<substream_id>`. `intended_model`
 records the primary Rally route while `model` records the attempted candidate,
-so fallback requests remain explicit in provider-side analytics.
+so fallback requests remain explicit in provider-side analytics. Structured
+fallback and repair attempts retain one call-scoped trace ID, while each
+provider request keeps its own `inference_request_id`.
 
 **Why:** Operators need to join OpenRouter's routing, timing, and pipeline view
 to Rally's workspace, work stream, substream, relevant person, request,
@@ -366,8 +373,10 @@ Those lose exact Rally-owned evidence, violate the existing residency boundary,
 or hide the topology of a tool-using loop.
 
 **Consequences:** Broadcast remains separately enabled and governed in the
-OpenRouter account. The Global lakehouse captures the exact enriched body; EU
-still performs the provider request but creates no Rally analytical archive.
+OpenRouter account. The Global lakehouse records `user_id = workspace_id` and
+keeps the relevant person in `context_user_id`; it archives provider error
+classifications without provider-controlled prose. EU still performs the
+provider request but creates no Rally analytical archive.
 
 ### 2026-08-24 — EU inference analytics are deferred
 

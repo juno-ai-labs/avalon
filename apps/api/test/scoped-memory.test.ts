@@ -1,4 +1,4 @@
-import { asHarnessRunId, asUserId, asWorkstreamId } from "@rally/contracts";
+import { asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -98,6 +98,7 @@ function embeddingFor(text: string): number[] {
 
 class FakeOpenRouterEmbeddings {
   fail = false;
+  resolvedModel: string | null = null;
   readonly requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
 
   readonly fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -113,7 +114,7 @@ class FakeOpenRouterEmbeddings {
         index,
         object: "embedding",
       })),
-      model: String(body.model),
+      model: this.resolvedModel ?? String(body.model),
       object: "list",
       usage: { prompt_tokens: values.length, total_tokens: values.length },
     });
@@ -722,6 +723,38 @@ describe("scoped agent memory", () => {
     expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(1);
     expect(embeddings.requests).toHaveLength(1);
     expect(embeddings.requests[0]?.headers.get("x-session-id")).toBe(`${WORKSTREAM_ONE}-0`);
+  });
+
+  it("keeps query embeddings on the active substream session", async () => {
+    const { env, embeddings } = fixture();
+    const substreamId = asSubstreamId("00000000-0000-4000-8000-000000000077");
+    const runInput = {
+      ...input("owner"),
+      substreamId,
+    };
+
+    await memorySearch(routedEnv(env, runInput), runInput, "crimson");
+
+    expect(embeddings.requests).toHaveLength(1);
+    expect(embeddings.requests[0]?.headers.get("x-session-id"))
+      .toBe(`${WORKSTREAM_ONE}-${substreamId}`);
+  });
+
+  it("fails closed to FTS when OpenRouter reports a different embedding model", async () => {
+    const { env, embeddings } = fixture();
+    const runInput = input("owner");
+    await memoryTool(env, runInput, "add").execute(
+      { scopeKind: "user", text: "The report palette is crimson", rationale: "Durable style" },
+      toolContext(runInput, "vector-model-drift"),
+    );
+    embeddings.resolvedModel = "provider/changed-embedding-model";
+
+    const result = await memorySearch(routedEnv(env, runInput), runInput, "crimson palette");
+
+    expect(result.retrievalMode).toBe("fts_only");
+    expect(result.results).toEqual([
+      expect.objectContaining({ text: "The report palette is crimson" }),
+    ]);
   });
 
   it("freezes recalled results and the context hash for deterministic retries", async () => {

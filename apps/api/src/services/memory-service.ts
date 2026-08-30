@@ -25,7 +25,7 @@ import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { executeAutomationMemoryToolForRun } from "./automation-memory-client";
-import { runEmbeddingInference } from "./structured-inference";
+import { MEMORY_EMBEDDING_MODEL, runEmbeddingInference } from "./structured-inference";
 
 export const MEMORY_EMBEDDING_DIMENSIONS = 1_024;
 const MEMORY_EMBEDDING_SPACE_VERSION = "v1";
@@ -418,6 +418,7 @@ async function searchFts(
 interface MemoryEmbeddingContext {
   workspaceId: string;
   workstreamId?: string;
+  substreamId?: string;
   harnessRunId?: string;
   requestId?: string;
   executionPrincipal?: WorkstreamWorkflowInput["executionPrincipal"];
@@ -425,7 +426,6 @@ interface MemoryEmbeddingContext {
 
 interface MemoryEmbedding {
   values: number[];
-  resolvedModel: string;
 }
 
 async function embedMemory(
@@ -441,6 +441,7 @@ async function embedMemory(
     context: {
       workspaceId: context.workspaceId,
       ...(context.workstreamId ? { workstreamId: context.workstreamId } : {}),
+      ...(context.substreamId ? { substreamId: context.substreamId } : {}),
       ...(contextUserId ? { userId: contextUserId } : {}),
     },
     text,
@@ -456,14 +457,20 @@ async function embedMemory(
         : context.executionPrincipal.workspaceId,
     } : {}),
   });
+  if (
+    result.requestedModel !== MEMORY_EMBEDDING_MODEL
+    || result.resolvedModel !== MEMORY_EMBEDDING_MODEL
+  ) {
+    throw new Error("memory_embedding_model_mismatch");
+  }
   const values = result.embeddings[0];
   if (!values) throw new Error(`memory_${inputType}_embedding_empty`);
-  return { values, resolvedModel: result.resolvedModel };
+  return { values };
 }
 
-async function memoryVectorNamespace(scopeId: string, resolvedModel: string): Promise<string> {
+async function memoryVectorNamespace(scopeId: string): Promise<string> {
   const space = (await sha256(
-    `${MEMORY_EMBEDDING_SPACE_VERSION}:${resolvedModel}:${MEMORY_EMBEDDING_DIMENSIONS}`,
+    `${MEMORY_EMBEDDING_SPACE_VERSION}:${MEMORY_EMBEDDING_MODEL}:${MEMORY_EMBEDDING_DIMENSIONS}`,
   )).slice(0, 12);
   return `${scopeId}:${space}`;
 }
@@ -478,6 +485,7 @@ async function searchVector(
   const embedding = await embedMemory(env, query, "search_query", {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
+    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
     harnessRunId: input.harnessRunId,
     executionPrincipal: input.executionPrincipal,
   });
@@ -485,7 +493,7 @@ async function searchVector(
     embedding.values,
     {
       topK: SEARCH_CANDIDATES_PER_LEG,
-      namespace: await memoryVectorNamespace(scope.memoryScopeId, embedding.resolvedModel),
+      namespace: await memoryVectorNamespace(scope.memoryScopeId),
       returnMetadata: false,
       returnValues: false,
     },
@@ -1127,12 +1135,12 @@ async function projectOutboxRow(
   await env.MEMORY_INDEX.upsert([{
     id: vectorId(row.memoryItemId, row.revision),
     values: embedding.values,
-    namespace: await memoryVectorNamespace(row.memoryScopeId, embedding.resolvedModel),
+    namespace: await memoryVectorNamespace(row.memoryScopeId),
     metadata: {
       workspaceId: row.workspaceId,
       scopeKind: current.scopeKind,
       revision: row.revision,
-      embeddingModel: embedding.resolvedModel,
+      embeddingModel: MEMORY_EMBEDDING_MODEL,
       embeddingDimensions: MEMORY_EMBEDDING_DIMENSIONS,
     },
   }]);

@@ -145,6 +145,7 @@ describe("inference lakehouse", () => {
       fallbackAttempt: 0,
       repairAttempt: 0,
       inferenceRequestId: "structured-request-1",
+      traceId: "structured-trace-1",
       requestPayload: { model: "structured/model", stream: false, messages: [] },
     });
     await captureStructuredInferenceDiagnostic(env, {
@@ -159,6 +160,7 @@ describe("inference lakehouse", () => {
       fallbackAttempt: 0,
       repairAttempt: 0,
       inferenceRequestId: "structured-request-1",
+      traceId: "structured-trace-1",
       success: true,
       latencyMs: 71,
       inputTokens: 8,
@@ -172,7 +174,8 @@ describe("inference lakehouse", () => {
     expect(archived).toEqual(expect.arrayContaining([
       expect.objectContaining({
         event_id: "stream-request-1:request",
-        user_id: "user-1",
+        user_id: "workspace-1",
+        context_user_id: "user-1",
         request_id: "run-1",
         parent_request_id: "parent-1",
         draft_id: "draft-1",
@@ -192,14 +195,48 @@ describe("inference lakehouse", () => {
         event_id: "structured-request-1:request",
         invocation_type: "structured",
         schema_name: "briefing",
+        trace_id: "structured-trace-1",
         request: expect.objectContaining({ stream: false }),
       }),
       expect.objectContaining({
         event_id: "structured-request-1:attempt",
+        trace_id: "structured-trace-1",
         latency_ms: 71,
         response: { id: "structured-generation", choices: [] },
       }),
     ]));
+  });
+
+  it("drops provider-controlled prose before archiving an error classification", async () => {
+    const { env, objects, pointers } = fixture();
+
+    await captureStructuredInferenceDiagnostic(env, {
+      source: "workstream_naming",
+      workspaceId: "workspace-1",
+    }, {
+      stage: "complete",
+      schemaName: "name",
+      model: "structured/model",
+      attempt: 0,
+      fallbackAttempt: 0,
+      repairAttempt: 0,
+      inferenceRequestId: "failed-request",
+      success: false,
+      failureKind: "provider_error",
+      providerError: {
+        code: 400,
+        providerName: "Google",
+        message: "verbatim echo of the rejected prompt",
+      } as never,
+    });
+
+    const archived = JSON.parse(objects.get(
+      (pointers[0] as { objectKey: string }).objectKey,
+    )!) as InferenceLakehouseRecord;
+    expect(archived.error).toEqual({
+      providerError: { code: 400, providerName: "Google" },
+    });
+    expect(JSON.stringify(archived)).not.toContain("verbatim echo");
   });
 
   it("uses the canonical main substream for workstream inference without an explicit identity", async () => {
