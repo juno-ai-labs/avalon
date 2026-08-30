@@ -1735,7 +1735,70 @@ describe('private work streams', () => {
 
     const row = screen.getByRole('link', { name: /Digest/u });
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(within(row).getByTitle('Adam')).toBeInTheDocument();
+    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+  });
+
+  it('hides the current user so a solo personal row has no facepile', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-00000000002c', 'Just me', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-1'],
+    }]);
+
+    const row = screen.getByRole('link', { name: /Just me/u });
+    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+    expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
+  });
+
+  it('paints everyone else in a personal row except the current user', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-00000000002d', 'Pairing', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-1', 'user-2'],
+    }]);
+
+    const row = screen.getByRole('link', { name: /Pairing/u });
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ari');
+    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(1);
+    expect(row.querySelector('.avatar-overflow')).toBeNull();
+  });
+
+  it('keeps overflow that is other people when the current user was already in the preview', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-000000000030', 'Staffing', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-1', 'user-5', 'user-4'],
+      participantExtraCount: 2,
+    }]);
+
+    const row = screen.getByRole('link', { name: /Staffing/u });
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 2 more');
+    expect(within(row).getByText('+2')).toBeInTheDocument();
+  });
+
+  it('names each remaining person on hover', async () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-00000000002e', 'Pairing', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-1', 'user-2'],
+    }]);
+
+    const row = screen.getByRole('link', { name: /Pairing/u });
+    const face = row.querySelector('.avatar-stack-item');
+    if (!face) throw new Error('the pairing row rendered no facepile avatar');
+    fireEvent.pointerMove(face, { pointerType: 'mouse' });
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Ari');
+  });
+
+  it('explains a public work stream on hover', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-00000000002f', 'Launch', 'completed')]);
+
+    const globe = screen.getByRole('link', { name: /Launch/u }).querySelector('.sidebar-workstream-public');
+    if (!globe) throw new Error('the workspace-scoped row rendered no public marker');
+    fireEvent.pointerMove(globe, { pointerType: 'mouse' });
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This is a public work stream');
   });
 
   it('marks a workspace-scoped work stream as public', () => {
@@ -1749,9 +1812,7 @@ describe('private work streams', () => {
     const row = screen.getByRole('link', { name: /Launch/u });
     expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(within(row).queryByTitle('Adam')).not.toBeInTheDocument();
-    expect(within(row).queryByTitle('Ari')).not.toBeInTheDocument();
-    expect(within(row).queryByText('+3')).not.toBeInTheDocument();
+    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
 
   it('paints the three newest faces and an overflow for everyone past that', () => {
@@ -1763,11 +1824,10 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Comp review/u });
-    expect(within(row).getByTitle('Ellis')).toBeInTheDocument();
-    expect(within(row).getByTitle('Drew')).toBeInTheDocument();
-    expect(within(row).getByTitle('Casey')).toBeInTheDocument();
-    expect(within(row).queryByTitle('Ari')).not.toBeInTheDocument();
-    expect(within(row).getByText('+2')).toBeInTheDocument();
+    // The two extras include the viewer, who the row does not paint.
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; Casey; and 1 more');
+    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(3);
+    expect(within(row).getByText('+1')).toBeInTheDocument();
     expect(within(row).queryByLabelText('Private work stream')).not.toBeInTheDocument();
     expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
     expect(row).toHaveAccessibleName(/Comp review/u);
@@ -1783,9 +1843,8 @@ describe('private work streams', () => {
     }]);
 
     const row = screen.getByRole('link', { name: /Staffing overflow/u });
-    expect(within(row).getByTitle('Ellis')).toBeInTheDocument();
-    expect(within(row).getByTitle('Drew')).toBeInTheDocument();
-    expect(within(row).getByText('+3')).toBeInTheDocument();
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 2 more');
+    expect(within(row).getByText('+2')).toBeInTheDocument();
     expect(row).not.toHaveAccessibleName(/Ellis|Drew/u);
   });
 
@@ -1801,8 +1860,8 @@ describe('private work streams', () => {
     );
 
     const row = screen.getByRole('link', { name: /Staffing/u });
-    expect(within(row).getByTitle('Ari')).toBeInTheDocument();
-    expect(within(row).queryByTitle('Adam')).not.toBeInTheDocument();
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ari');
+    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(1);
   });
 
   it('closes a work stream to the people in it from the right-click menu', async () => {
