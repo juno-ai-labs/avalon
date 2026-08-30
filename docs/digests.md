@@ -328,9 +328,10 @@ both.
   is on. It widens what is shown, never who may read it. A private work stream
   that is not machinery is protected exactly the same way.
 
-In the interface, `scope = 'personal'` renders the private marker — the lock a
-personal note already wears in the sidebar, plus a **Private** badge in the
-work-stream header.
+In the interface, a personal work stream's sidebar row paints a compact
+facepile of the people in it rather than the lock a personal note still wears.
+The work-stream header keeps its **Private** badge. A digest occurrence is
+almost always a one-person pile.
 
 Shown, they render one level down: dimmed, with a small gear, full opacity on
 hover and while active — hierarchy should not cost legibility once you are in it.
@@ -684,6 +685,30 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-30 — Digest sidebar rows wear a facepile, not the note lock
+
+**What changed:** A personal work stream's sidebar trailing slot is a compact
+facepile of its participants (three newest, then `+x`), and a workspace-scoped
+row wears a globe. Digest occurrences are personal, so Debug-enabled digest
+rows pick up a one-person pile. The work-stream header **Private** badge is
+unchanged. Notes still wear the lock.
+
+**Why:** the lock on every personal work-stream row was read as "only you",
+which is true of a digest but not of a private work stream that several people
+are in. The pile is the people the row is closed to; the lock stays on notes
+because a note has no participant set to pile.
+
+**Considered and rejected:** keeping the lock on machinery rows so a digest
+still looked like a private note. That reintroduces a second marker for the
+same `scope = 'personal'` column, which is the thing the original private
+marker existed to avoid. Also rejected: a REST fetch of participants for the
+sidebar. The directory already holds viewer rows; the wire carries three ids
+and a count.
+
+**What a future change has to respect:** workspace-scoped rows must not carry
+participant ids. The directory paints a globe, not a pile, and must not send
+what it does not paint.
 
 ### 2026-08-29 — Digest settlement receives only saved canonical result text
 

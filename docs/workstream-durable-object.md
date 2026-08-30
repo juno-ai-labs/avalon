@@ -776,7 +776,14 @@ envelopes by RPC to its parent `WorkstreamDO`.
 per-user projection from each child, and computes one aggregate work-stream
 view. Common state uses a deterministic state priority; last activity is the
 maximum child timestamp. Viewer unread counts sum across children, while
-participation, listability, and “You Are Mentioned” are logical ORs. Every
+participation, listability, and “You Are Mentioned” are logical ORs. The
+directory `Workstream` that WorkspaceDO pushes for the sidebar carries a
+bounded participant preview on personal rows only: at most three user ids,
+newest first, plus `participantExtraCount` for everyone past that.
+Workspace-scoped rows send neither. The directory sorts by overlay
+`projected_at`; WorkstreamDO `summary()` sorts by `participants.added_at` so a
+rename or scope write that merges the child's summary does not wipe the pile
+with a different order. Every
 changed aggregate partition gets its own monotonic waterline and UUIDv7 event
 ID in `workstream_state_changes`; pending transitions are not coalesced. The
 UUID is carried unchanged on the direct WorkstreamDO socket and delayed
@@ -1428,6 +1435,34 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-30 — Personal sidebar rows carry a bounded participant facepile
+
+**What changed:** Directory `Workstream` rows gained `participantUserIds` (max
+three) and `participantExtraCount`. WorkspaceDO fills them from active
+participant overlay rows ordered by `projected_at DESC, user_id`, and only for
+`scope = 'personal'`. WorkstreamDO `summary()` fills the same fields from
+`participants.added_at DESC, user_id` so a REST mutation that merges the
+summary does not drop the pile. The desktop reuses `AvatarStack` in compact
+size for the trailing slot; workspace-scoped rows paint a globe instead. Notes
+keep the lock.
+
+**Why:** a lock on every personal work-stream row said "only you", which is the
+wrong statement once more than one person is in it. The people in it are
+already on the directory overlay, so the sidebar can paint them without a
+fetch. Three faces plus `+x` is a product ceiling sized for the 30px Air row,
+not a number to guess later.
+
+**Considered and rejected:** a REST members fetch per row, or sending the full
+participant list on the directory page. Both grow with roster size; the
+sidebar only paints three faces. Also rejected: one sort key shared by the
+directory and WorkstreamDO. Overlay recency is the best signal the directory
+has; `added_at` is what the child has without a round trip, and mixing them
+would make a rename reshuffle faces for no product reason.
+
+**What a future change has to respect:** a workspace-scoped row must not carry
+ids. Raising `WORKSTREAM_SIDEBAR_FACEPILE_LIMIT` is a product decision because
+it is also the wire cap. Unresolved ids are skipped, not substituted.
 
 ### 2026-08-30 — Pre-inference notification tests no longer start model loops
 

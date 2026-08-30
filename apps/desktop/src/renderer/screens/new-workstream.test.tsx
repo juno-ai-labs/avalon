@@ -104,6 +104,8 @@ function workstream(
     firstUnreadSequenceNumber: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     preview: `${title} preview`,
     ...overrides,
   };

@@ -111,6 +111,8 @@ function metadataState(metadata: WorkstreamControlMetadata): {
       systemKind: metadata.systemKind ?? undefined,
       nextPendingWakeup: metadata.nextPendingWakeup,
       pinPosition: null,
+      participantUserIds: [],
+      participantExtraCount: 0,
       preview: metadata.description,
     },
   };

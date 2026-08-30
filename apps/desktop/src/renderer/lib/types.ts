@@ -159,9 +159,17 @@ export interface WorkstreamSummary {
   preview?: string;
   /**
    * Who may read it, the same way a note says it. `personal` means only the
-   * people in it, and is what the private marker renders from.
+   * people in it. Workspace-scoped rows show a public marker; personal rows
+   * show a facepile of `participantUserIds`.
    */
   scope: VisibilityScope;
+  /**
+   * People in a personal work stream, newest first, capped for the sidebar
+   * facepile. Empty when the row is workspace-scoped.
+   */
+  participantUserIds: string[];
+  /** How many participants sit past the three ids in `participantUserIds`. */
+  participantExtraCount: number;
   /**
    * Set on a work stream that exists so a subsystem can use the agent loop —
    * a digest run's transcript, for instance. A different question from `scope`:

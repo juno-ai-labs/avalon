@@ -54,6 +54,8 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
       scope: workstream.scope,
       systemKind: workstream.systemKind,
       nextPendingWakeup: workstream.nextPendingWakeup,
+      participantUserIds: workstream.participantUserIds,
+      participantExtraCount: workstream.participantExtraCount,
     },
     viewer: {
       readThroughSequenceNumber: workstream.readThroughSequenceNumber,
