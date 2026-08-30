@@ -1092,12 +1092,12 @@ ticket replay, and the read-only child socket.
 `test-workers/participant-notification.test.ts` covers what seating somebody
 enqueues, on both the create and the add-afterwards paths, plus identity-bearing
 mentions and attachment descriptors in an opening message, and member-authored
-elicitation answers. The notify-create, mention-confirmation, and elicitation
-cases each own an id so `initialize` cannot turn a later `it` into a silent
-replay when `reset()` interleaves. The rest of the file deliberately shares
-`WORKSTREAM_ID` so this file does not leave a draining object per case. The
-replay case reuses `CREATE_REPLAY_ID` across its own two opens because replay
-is what it asserts. `test-workers/unseen-workstream-state.test.ts` covers
+elicitation answers. Existing-room cases use runtime bootstrap plus `provision`;
+create-effect cases invoke `initialize` without activating its admitted run; and
+the elicitation case seeds a settled parent run. The distinct create ids still
+prevent accidental replay, while the replay case reuses `CREATE_REPLAY_ID`
+across its own two opens because replay is what it asserts.
+`test-workers/unseen-workstream-state.test.ts` covers
 self-removal, removal of another participant by a member, and the transactional
 final-participant refusal on real Durable Object SQLite. `test-workers/message-authority.test.ts` and
 `test-workers/scheduling-authority.test.ts` cover typed part plus participant-turn
@@ -1427,6 +1427,34 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-30 — Pre-inference notification tests no longer start model loops
+
+**What changed:** `participant-notification.test.ts` provisions existing rooms
+through the real runtime-bootstrap and identity ports, invokes the real
+`initialize` product mutation without activating its admitted opening run for
+create-only assertions, and gives the elicitation-answer case a settled parent
+run row. The file no longer installs a provider double or waits for an unrelated
+opening run to settle.
+
+**Why:** Deploy API 33295492419 failed after the object-id isolation below had
+landed: one add-to-two-rooms assertion saw no parent receipt and the elicitation
+case remained `executing:1`. The shared cause was not object naming. The fixture
+started inference for every pre-inference storage assertion, leaving alarm work
+to cross `reset()` under shard contention. Different ids made stale roots less
+likely to collide; they did not make unnecessary asynchronous work complete.
+
+**Considered and rejected:** More unique ids, a longer poll, and another forced
+alarm. The first cut already showed that a draining object per case exhausts the
+shard, while the latter two only give unrelated inference more time to finish.
+The product paths under test have explicit non-running boundaries, so the test
+uses those boundaries instead.
+
+**Consequences:** A test of committed creation state may leave an admitted run
+in storage only when it never activates that run. A test of an existing room
+uses `provision`; a test of model execution uses the execution pipeline suite.
+Do not make a pre-inference assertion depend on alarm timing merely because the
+public create endpoint normally proceeds to inference.
 
 ### 2026-08-30 — Mention-confirmation and elicitation tests get their own work-stream ids
 
