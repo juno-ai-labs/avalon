@@ -235,6 +235,11 @@ test('deploys the Managed OAuth engineering MCP only after both regional APIs ar
 
   assert.match(workflow, /- "apps\/engineering-mcp\/\*\*"/u);
   assert.match(workflow, /pnpm --filter @rally\/engineering-mcp build/u);
+  assert.match(
+    workflow.slice(deployMcp, verifyMcp),
+    /run: pnpm --filter @rally\/engineering-mcp run deploy/u,
+    'MCP deployment must explicitly run the package script instead of pnpm\'s built-in deploy command',
+  );
   assert.ok(regionalHealth < deployMcp, 'both regional health checks must precede MCP deployment');
   assert.ok(deployMcp < verifyMcp, 'the OAuth challenge probe must inspect the new MCP deployment');
   assert.match(
