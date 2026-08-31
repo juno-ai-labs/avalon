@@ -105,6 +105,9 @@ run. The script is idempotent and re-runs repair partial imports.
 pnpm dev:api:local       # both regions, remote bindings disabled
 ```
 
+If that command exits without either Worker binding a port, read the
+container-flag note below before debugging anything else.
+
 `scripts/dev-regional-api.mjs` starts Global first and waits for Wrangler's
 ready signal before starting EU. The Workers then run concurrently as before.
 Each regional command supplies the API, document-processing, and Terminal
@@ -130,19 +133,29 @@ during ordinary local work, so disabling them costs nothing here; `pnpm dev:api`
 still builds the image and is the path to use when the symbolicator itself is
 what you are working on.
 
-**On wrangler 4.126.0 that flag does not survive a multi-config session, and
-`dev:api:local` is one.** Each regional command passes three `--config` files —
-the API, document-processing and Terminal Workers — and with more than one,
-wrangler prints `Preparing container image(s)…` and fails on Docker regardless
-of `--enable-containers=false`; `"dev": { "enable_containers": false }` in the
-config is ignored the same way, in the main config and in all three. Verified by
-running the same command with one `--config` (ready in about two seconds, no
-image build) and with three (the Docker error above). So the documented sandbox
-path currently starts no Worker at all. Until wrangler is upgraded past it, the
-local workaround is to delete the `containers` array from
-`wrangler.global.jsonc` and `wrangler.eu.jsonc` for the session — the
-`CRASH_SYMBOLICATOR` Durable Object binding can stay, and both regions then come
-up normally — and to keep that edit out of the commit.
+**That flag does not survive a multi-config session in every wrangler, and
+`dev:api:local` is one.** The symptom is `Preparing container image(s)…`
+followed by the Docker error above, in spite of `--enable-containers=false`; the
+Workers never bind their ports, so the whole command fails rather than starting
+without containers. Each regional command passes three `--config` files — the
+API, document-processing and Terminal Workers — and it is the second and third
+that lose the flag: the same command with one `--config` is ready in about two
+seconds and builds no image. `"dev": { "enable_containers": false }` in the
+config is ignored the same way, in the main config and in all three. Observed on
+4.126.0, which the `wrangler: latest` in `apps/api/package.json` resolved to at
+the time of writing — check which version you have before assuming the note
+still applies, and delete it once a newer one honours the flag.
+
+Until then, the local workaround is to delete the `containers` array from
+`wrangler.global.jsonc` and `wrangler.eu.jsonc` for the session; the
+`CRASH_SYMBOLICATOR` Durable Object binding can stay, and both regions come up
+normally. **That edit must not be committed, and while it is in place
+`pnpm test` is red** — `apps/api/test/crash-symbolicator-config.test.ts` asserts
+the exact `containers` entry in both files, deliberately, so that an accidental
+commit fails the gate rather than silently shipping a deploy with no
+symbolicator. A red `crash symbolicator deployment` suite while this workaround
+is applied is that guard working; restore the configs rather than changing the
+test.
 
 `wrangler.global.jsonc` declares an `ai` binding, and Workers AI has no local
 implementation — wrangler reports it as `Mode: remote` and opens a remote proxy
@@ -282,7 +295,7 @@ an older worktree so the smoke test sees both fixtures.
 | Regenerate the D1 baseline | `pnpm db:baseline:create <through-migration.sql>` |
 | Check the baseline against the hosted databases | `pnpm db:baseline:verify` |
 | Seed both regions | `pnpm db:seed` |
-| Start both Workers (sandbox) | `pnpm dev:api:local` |
+| Start both Workers (sandbox) | `pnpm dev:api:local` (see the [container-flag note](#3-start-the-api-workers) if neither region binds a port) |
 | Start both Workers (workstation) | `pnpm dev:api` |
 | Global health | `curl -s http://127.0.0.1:8787/health` |
 | EU health | `curl -s http://127.0.0.1:8788/health` |

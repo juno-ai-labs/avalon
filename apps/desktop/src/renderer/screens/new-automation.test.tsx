@@ -1825,6 +1825,16 @@ describe('New automation composer', () => {
       .toMatch(/remember between runs/u);
     expect(automationErrorCopy('automation_workspace_scope_requires_admin', null))
       .toMatch(/owner or admin/u);
+    // The create boundary's stale refusal. The API's own sentence is written
+    // for any client and says to review the draft again; this screen names the
+    // summary the person is looking at, and neither may say "reload" — there
+    // is no reload on this screen, and the newer draft has already arrived.
+    const stale = automationErrorCopy(
+      'automation_definition_revision_stale',
+      'This draft changed while you were reviewing it. Review the updated draft, then create it again.',
+    );
+    expect(stale).toMatch(/summary above/u);
+    expect(stale).not.toMatch(/reload/iu);
     // A sentence the API wrote for a person still reads better than a
     // code; a bare snake_case token reads as neither, so it is not shown.
     expect(automationErrorCopy('unmapped_code', 'Rally took too long to refine the automation.'))
