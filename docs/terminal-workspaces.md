@@ -21,6 +21,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/services/workspace-schedule-execution.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and the `terminal` alarm target WorkspaceDO drains. |
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
 | `apps/api/scripts/build-terminal-snapshot.ts` | Builds the Rally-owned snapshot by baking the runtime bootstrap into the image, so the four managed capabilities are preinstalled rather than installed per sandbox. Does not adopt it; the acceptance probe above is still the gate. |
+| `.github/workflows/rebuild-terminal-snapshot.yml` | The weekly rebuild that bounds how stale an owned snapshot may become against Daytona's managed base, and proves each rebuild with the acceptance probe. Owning a snapshot is only safe with this running. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
@@ -664,6 +665,17 @@ verifies the manifest, so a snapshot that silently loses a capability is still
 caught. **This script has not been executed against Daytona** — this environment
 has no `DAYTONA_API_KEY` — so the base image, the build, and the resulting
 snapshot are unverified; the acceptance probe is what must establish them.
+
+Owning a snapshot also gives up what the 2026-08-13 entry below bought
+deliberately: Daytona's managed base updates no longer reach Rally on their own.
+The manifest probe does not close that gap — it fails closed on a capability
+that is *missing or broken*, not on one that is merely stale, so a pinned base
+that is months behind passes every probe. The concrete case is the Netleash CA
+that the managed image bakes into curl's trust store and Rally reads through
+`$CURL_CA_BUNDLE`: rotate it under a pinned snapshot and `git-ca` still passes
+while real Git operations fail. `rebuild-terminal-snapshot.yml` is the mitigation
+and the condition — a weekly rebuild bounds staleness to a week and proves each
+one with the acceptance probe. Do not adopt an owned snapshot without it.
 
 ### 2026-08-30 — The managed-snapshot bootstrap stops paying for work it can batch
 
