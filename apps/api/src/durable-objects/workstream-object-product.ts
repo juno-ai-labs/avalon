@@ -55,7 +55,7 @@ import {
   type WorkstreamReaderAudience,
 } from "../lib/audience-containment";
 import { logWarn } from "../observability/logger";
-import { prepareMentionMarkdown, type MentionPerson } from "../lib/message-mentions";
+import { mentionedPersonNames, prepareMentionMarkdown, type MentionPerson } from "../lib/message-mentions";
 import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
 import {
@@ -2781,8 +2781,10 @@ export class WorkstreamObjectProductService {
     }
     return rows.map((row) => ({
       authorType: row.author_type === "agent" ? "agent" : "human",
+      // The classifier's system prompt names the agent Rally; labelling its own
+      // turns with the code name would hide from the model who spoke last.
       authorName: row.author_type === "agent"
-        ? "Avalon"
+        ? "Rally"
         : row.author_user_id ? names.get(row.author_user_id) ?? null : null,
       message: row.content ?? "",
     }));
@@ -3411,6 +3413,7 @@ export class WorkstreamObjectProductService {
         message: input.text,
         activeTask,
         connectorMentions,
+        humanMentions: mentionedPersonNames(prepared.mentions),
         recentMessages: await this.recentAddressingMessages(Number(this.storage.sql.exec<{
           next_transcript_sequence: number;
         } & Record<string, SqlStorageValue>>(

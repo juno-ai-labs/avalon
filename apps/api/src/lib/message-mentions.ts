@@ -14,6 +14,20 @@ export interface PreparedMention extends Mention {
   avatarUrl?: string | null;
 }
 
+/**
+ * The people a prepared message explicitly mentions, as display names in
+ * document order, for surfaces that reason about who a message is aimed at.
+ * De-duplicated: a person mentioned twice is one audience entry.
+ */
+export function mentionedPersonNames(mentions: readonly PreparedMention[]): string[] {
+  const names: string[] = [];
+  for (const mention of mentions) {
+    if (mention.type !== "person" || !mention.displayName) continue;
+    if (!names.includes(mention.displayName)) names.push(mention.displayName);
+  }
+  return names;
+}
+
 function escapeMarkdownLabel(label: string): string {
   return label
     .replace(/\\/gu, "\\\\")

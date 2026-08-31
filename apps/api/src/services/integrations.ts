@@ -1488,6 +1488,7 @@ export async function classifyWorkstreamMessage(
     message: string;
     activeTask: boolean;
     connectorMentions: string[];
+    humanMentions: string[];
     recentMessages: AddressingContextMessage[];
     // Required, not optional: `workspaceId` is the rollout bucketing key, and
     // omitting it would drop this classifier into the default bucket while the
@@ -1508,6 +1509,7 @@ export async function classifyWorkstreamMessage(
     message: input.message,
     activeTask: input.activeTask,
     connectorMentions: input.connectorMentions,
+    humanMentions: input.humanMentions,
     recentMessages: input.recentMessages,
     traceContext: {
       source: "addressing_classifier",
