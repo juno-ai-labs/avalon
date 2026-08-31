@@ -70,7 +70,9 @@ except as the legacy fallback below.
 `rally:core`, `rally:discovery`, `rally:memory`, `rally:tables`, and
 `rally.skills` are all Rally reasoning about its own workspace, and are drawn as
 one **Rally** row. `rally:terminal` and `rally:workstream` are Rally operating a
-machine, and are drawn as one **Computer** row. A first-party plugin that is
+machine, and are drawn as one **Computer** row. The named
+`rally:multimodal-generation` plugin keeps its own **Multimodal generation** row
+with the generic first-party plug glyph. A first-party plugin that is
 absent from that map *and* has no display name of its own — which is how an
 undecided one appears, since the transcript falls back to the raw id as its
 label — joins Rally, so an internal identifier never reaches the feed. Every
@@ -295,6 +297,24 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-08-30 — Multimodal generation keeps a named plugin row
+
+**What changed:** The new `rally:multimodal-generation` plugin deliberately
+uses the existing named-first-party fallback, producing its own Multimodal
+generation row with the plug glyph. The mapping test pins that decision.
+
+**Why:** Media generation is recognizable work with provider-scale latency; a
+person should be able to distinguish it from Rally's internal reasoning and
+from a Terminal session while it runs.
+
+**Considered and rejected:** Folding it into Rally, which would hide the useful
+latency boundary, and folding it into Computer, which currently means a
+stateful workstream/Terminal machine surface rather than a hosted model call.
+
+**Consequences:** Giving the plugin a dedicated media glyph later is a visible
+design change in `plugin-groups.ts`; until then the generic plug is intentional,
+not an unhandled connector mark.
 
 ### 2026-08-30 — The two run sources compose instead of one shadowing the other
 

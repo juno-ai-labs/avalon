@@ -19,6 +19,7 @@ import { realtimeRoutes } from "./routes/realtime";
 import { resourceRoutes } from "./routes/resources";
 import { resendInboundRoutes } from "./routes/resend";
 import { socketRoutes } from "./routes/socket";
+import { speechRoutes } from "./routes/speech";
 import { workspaceRoutes } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { workstreamRoutes } from "./routes/workstreams";
@@ -144,6 +145,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/automation-templates", templateRoutes);
   protectedApi.route("/connections", connectionRoutes);
   protectedApi.route("/resources", resourceRoutes);
+  protectedApi.route("/speech", speechRoutes);
   protectedApi.route("/realtime", realtimeRoutes);
   app.route("/", protectedApi);
 

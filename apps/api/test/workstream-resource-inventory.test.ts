@@ -207,15 +207,16 @@ describe("work-stream compaction resource inventory", () => {
     expect(rendered).toContain("Visible resources: 0");
     expect(rendered).toContain("Message attachments: 0");
     expect(rendered).toContain(
-      "Allowed attachmentKind values: image, markdown, pdf, document, spreadsheet, presentation, text, other.",
+      "Allowed attachmentKind values: image, audio, markdown, pdf, document, spreadsheet, presentation, text, other.",
     );
     expect(rendered).not.toContain("Groups:\n-");
     expect(rendered.length).toBeLessThan(1_500);
   });
 
-  it("groups all eight kinds in fixed order without leaking names, IDs, MIME types, or content", () => {
+  it("groups all nine kinds in fixed order without leaking names, IDs, MIME types, or content", () => {
     const rows = [
       resource("image-secret-id", "private-image.png", "image/png", true),
+      resource("audio-secret-id", "private-audio.mp3", "audio/mpeg", true),
       resource("markdown-secret-id", "private-notes.md", "text/markdown", true),
       resource("pdf-secret-id", "private-report.pdf", "application/pdf"),
       resource("document-secret-id", "private-brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
@@ -228,10 +229,11 @@ describe("work-stream compaction resource inventory", () => {
     const rendered = renderWorkstreamResourceInventory({ asOf: AS_OF, rows });
 
     expect(rendered).toContain(`As of: ${AS_OF}`);
-    expect(rendered).toContain("Visible resources: 8");
-    expect(rendered).toContain("Message attachments: 2");
+    expect(rendered).toContain("Visible resources: 9");
+    expect(rendered).toContain("Message attachments: 3");
     const orderedRows = [
       "- image: 1",
+      "- audio: 1",
       "- markdown: 1",
       "- pdf: 1",
       "- document: 1",

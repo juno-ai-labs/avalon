@@ -87,6 +87,8 @@ export function buildAttachmentManifestPart(
       attachmentKind,
       contentMode: attachmentKind === "image"
         ? "view"
+        : attachmentKind === "audio"
+          ? "unsupported"
         : attachment.modelContentStatus === "unsupported"
           && attachment.modelContentExtractorVersion === ATTACHMENT_TEXT_EXTRACTOR_VERSION
           ? "unsupported"

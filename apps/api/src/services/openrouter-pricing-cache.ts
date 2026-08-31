@@ -119,6 +119,26 @@ export interface PricingRefreshResult {
   models: Readonly<Record<string, CachedModelPricing>>;
 }
 
+export interface AzureImageModelPricingCost {
+  billable: string;
+  unit: string;
+  costUsd: string;
+  endpointCount: number;
+  variant?: string;
+}
+
+export interface AzureImageModelPricing {
+  costs: AzureImageModelPricingCost[];
+  sourceFingerprint: string;
+}
+
+export interface AzureTokenModelPricingRecord {
+  inputUsdPerM: string;
+  cachedInputUsdPerM: string;
+  outputUsdPerM: string;
+  sourceFingerprint: string;
+}
+
 interface PricingRefreshOptions {
   fetch?: typeof globalThis.fetch;
   now?: () => number;
@@ -154,6 +174,68 @@ export function createAzureModelPricingResolver(
     }
     return resolved;
   };
+}
+
+/** Read the shared OpenRouter endpoint-average price used to bill one Azure image deployment. */
+export async function loadAzureImageModelPricing(
+  env: Pick<Env, "INFERENCE_PRICING_CACHE">,
+  modelId: string,
+): Promise<AzureImageModelPricing> {
+  const pricing = parseCachedImageModelPricing(await env.INFERENCE_PRICING_CACHE.get(modelId));
+  if (!pricing) throw new Error(`Azure image pricing cache is unavailable for ${modelId}`);
+  return {
+    costs: pricing.costs.map((cost) => ({
+      billable: cost.billable,
+      unit: cost.unit,
+      costUsd: cost.costUsd,
+      endpointCount: cost.endpointCount,
+      ...(cost.variant === undefined ? {} : { variant: cost.variant }),
+    })),
+    sourceFingerprint: pricing.sourceFingerprint,
+  };
+}
+
+/** Read one token-priced Azure deployment directly from its shared model-id KV key. */
+export async function loadAzureTokenModelPricing(
+  env: Pick<Env, "INFERENCE_PRICING_CACHE">,
+  modelId: string,
+): Promise<AzureTokenModelPricingRecord> {
+  const pricing = parseCachedTokenModelPricing(await env.INFERENCE_PRICING_CACHE.get(modelId));
+  if (!pricing) throw new Error(`Azure token pricing cache is unavailable for ${modelId}`);
+  return {
+    inputUsdPerM: pricing.inputUsdPerM,
+    cachedInputUsdPerM: pricing.cachedInputUsdPerM,
+    outputUsdPerM: pricing.outputUsdPerM,
+    sourceFingerprint: pricing.sourceFingerprint,
+  };
+}
+
+/** Sum token quantities against decimal-string prices without binary floating-point drift. */
+export function calculateAzureImageCostUsd(
+  pricing: AzureImageModelPricing,
+  quantities: Readonly<Record<"input_text" | "input_image" | "output_image", number>>,
+): string {
+  const products = Object.entries(quantities).flatMap(([billable, quantity]) => {
+    if (!Number.isSafeInteger(quantity) || quantity < 0) {
+      throw new Error(`Azure image usage for ${billable} is invalid`);
+    }
+    if (quantity === 0) return [];
+    const candidates = pricing.costs.filter((cost) => (
+      cost.billable === billable
+      && cost.unit === "token"
+      && (cost.variant === undefined || cost.variant === "medium")
+    ));
+    const cost = candidates.find((candidate) => candidate.variant === undefined) ?? candidates[0];
+    if (!cost) throw new Error(`Azure image pricing is unavailable for ${billable}/token`);
+    return [{ decimal: cost.costUsd, multiplier: BigInt(quantity) }];
+  });
+  if (products.length === 0) return "0";
+  const parsed = products.map(({ decimal, multiplier }) => ({ ...parseDecimal(decimal), multiplier }));
+  const commonScale = Math.max(...parsed.map((value) => value.scale));
+  const numerator = parsed.reduce((total, value) => (
+    total + value.integer * value.multiplier * 10n ** BigInt(commonScale - value.scale)
+  ), 0n);
+  return formatRatio(numerator, 10n ** BigInt(commonScale));
 }
 
 export async function refreshOpenRouterPricingCache(
@@ -416,6 +498,17 @@ function parseCachedTokenModelPricing(value: string | null): z.infer<typeof Cach
   try {
     const parsed: unknown = JSON.parse(value);
     const result = CachedTokenModelPricingSchema.safeParse(parsed);
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCachedImageModelPricing(value: string | null): z.infer<typeof CachedImageModelPricingSchema> | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    const result = CachedImageModelPricingSchema.safeParse(parsed);
     return result.success ? result.data : null;
   } catch {
     return null;

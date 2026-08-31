@@ -17,9 +17,11 @@ import {
   FileDown,
   ImageDown,
   LoaderCircle,
+  Square,
   TerminalSquare,
+  Volume2,
 } from 'lucide-react';
-import { Children, Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Children, Fragment, memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import {
   citationFootnotes,
@@ -73,6 +75,7 @@ import {
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { Button, ConnectorMark, InlineError, RallyMark } from './primitives';
+import { useSpeechPlayback } from './speech-playback';
 
 /**
  * A stable colour per participant. The values are the theme's, reached through
@@ -1086,6 +1089,10 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
   const [saving, setSaving] = useState<MessageExportFormat | null>(null);
   const [failed, setFailed] = useState<MessageExportFormat | null>(null);
   const exportsAvailable = desktopServicesAvailable();
+  const fallbackSpeechId = useId();
+  const speech = useSpeechPlayback();
+  const speechId = telemetry?.messageId ?? fallbackSpeechId;
+  const speaking = speech?.activeMessageId === speechId;
 
   const copyResponse = async (): Promise<void> => {
     await desktopBridge().copyText(text);
@@ -1125,7 +1132,7 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
 
   return (
     <footer
-      className="agent-message-actions"
+      className={clsx('agent-message-actions', speaking && 'is-speaking')}
       // The row itself is transient, so the failure on it should be too: it has
       // been read by the time the pointer leaves, and a stale "Image failed"
       // sitting under a turn the next day reads as a broken feature rather than
@@ -1133,6 +1140,17 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
       onPointerLeave={() => setFailed(null)}
     >
       <button aria-label="Copy response" onClick={() => void copyResponse().catch(() => undefined)} type="button"><Clipboard size={12} /> Copy</button>
+      {speech && (
+        <button
+          aria-label={speaking ? 'Stop speaking' : 'Speak response with an AI-generated voice'}
+          onClick={() => speaking ? speech.stop() : speech.speak(speechId, text)}
+          title={speaking ? 'Stop speaking' : 'Play with an AI-generated voice'}
+          type="button"
+        >
+          {speaking ? <Square aria-hidden="true" fill="currentColor" size={11} /> : <Volume2 aria-hidden="true" size={12} />}
+          {speaking ? 'Stop speaking' : 'Speak'}
+        </button>
+      )}
       {exportsAvailable && (
         <>
           <button

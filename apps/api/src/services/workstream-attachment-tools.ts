@@ -11,6 +11,7 @@ import {
   WorkstreamSearchResourceOutputSchema,
   WorkstreamSummarizeResourceOutputSchema,
   WorkstreamViewResourceOutputSchema,
+  AttachmentKindSchema,
   classifyAttachmentKind,
   ResourceRelationshipTypeSchema,
   resourceDirectionForRelationship,
@@ -77,7 +78,7 @@ const ListCursorStateSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("database"),
     fingerprint: z.string().min(1).max(100),
-    attachmentKind: z.enum(["image", "markdown", "pdf", "document", "spreadsheet", "presentation", "text", "other"]).nullable(),
+    attachmentKind: AttachmentKindSchema.nullable(),
     limit: z.number().int().min(1).max(50),
     afterAttachedAt: z.string().datetime({ offset: true }),
     afterResourceId: z.string().uuid(),
@@ -86,7 +87,7 @@ const ListCursorStateSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("in_memory"),
     fingerprint: z.string().min(1).max(100),
-    attachmentKind: z.enum(["image", "markdown", "pdf", "document", "spreadsheet", "presentation", "text", "other"]).nullable(),
+    attachmentKind: AttachmentKindSchema.nullable(),
     limit: z.number().int().min(1).max(50),
     nextIndex: z.number().int().nonnegative(),
     asOf: z.string().datetime({ offset: true }),
@@ -792,6 +793,7 @@ function rowKind(row: VisibleWorkstreamResourceRow): AttachmentKind {
 
 function contentMode(row: VisibleWorkstreamResourceRow, kind: AttachmentKind): ContentMode {
   if (kind === "image") return "view";
+  if (kind === "audio") return "unsupported";
   if (row.model_content_status === "unsupported"
     && row.model_content_extractor_version === ATTACHMENT_TEXT_EXTRACTOR_VERSION) return "unsupported";
   if (kind !== "other" || (row.model_content_status === "ready" && row.model_mime_type?.startsWith("text/"))) return "read";
