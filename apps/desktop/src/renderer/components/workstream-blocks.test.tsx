@@ -838,6 +838,7 @@ describe('MessageBlock markdown', () => {
       altFontFamily: 'token-font',
       fontFamily: 'token-font',
       fontSize: 13,
+      flowchart: { htmlLabels: false },
       htmlLabels: false,
       securityLevel: 'strict',
       startOnLoad: false,

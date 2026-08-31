@@ -141,4 +141,29 @@ flowchart TD
     expect(container.querySelector('pre')?.textContent).toBe(source);
     expect(screen.queryByRole('img')).toBeNull();
   });
+
+  it('never mounts HTML image labels while Mermaid renders', async () => {
+    const mountedSources: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of Array.from(record.addedNodes)) {
+          if (!(node instanceof Element)) continue;
+          const images = node.matches('img') ? [node] : Array.from(node.querySelectorAll('img'));
+          for (const image of images) mountedSources.push(image.getAttribute('src') ?? '');
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    const source = `flowchart TD
+  A["<img src='https://example.invalid/beacon.png'>"]`;
+
+    const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    await Promise.resolve();
+    observer.disconnect();
+    expect(mountedSources).not.toContain('https://example.invalid/beacon.png');
+    expect(container.querySelector('.markdown-mermaid-svg img')).toBeNull();
+    expect(container.querySelector('.markdown-mermaid-svg foreignObject')).toBeNull();
+  });
 });

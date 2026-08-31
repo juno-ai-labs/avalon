@@ -730,7 +730,9 @@ frontmatter from widening those choices or replacing Rally's token-derived
 theme. The lock covers the security level, HTML labels, startup/error/resource
 caps, theme, theme CSS/variables, typography, and visual look. Its
 `bindFunctions` result is not used; invalid input falls back to the source
-block. Strict mode still emits ordinary SVG links, so Rally unwraps anchors and
+block. Both the global and flowchart-specific HTML-label settings are false,
+because some Mermaid flowchart shapes read the nested value directly. Strict
+mode still emits ordinary SVG links, so Rally unwraps anchors and
 removes every non-fragment `href` before inserting the result. A generated style
 block or presentation attribute containing a non-fragment CSS resource rejects
 the entire diagram instead of allowing its display to make an external request.
