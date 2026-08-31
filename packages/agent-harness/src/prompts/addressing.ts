@@ -17,6 +17,12 @@ export interface AddressingPromptInput {
 
 const MAX_RECENT_MESSAGES = 10;
 const MAX_RECENT_MESSAGE_CHARACTERS = 1_000;
+// The message being classified gets more room than a history entry, and keeps
+// both ends: an opening address ("@Adam, …") sits at the head while a trailing
+// ask ("…can you take this?") sits at the tail, and either alone can decide
+// the classification.
+const MAX_CURRENT_MESSAGE_HEAD_CHARACTERS = 3_000;
+const MAX_CURRENT_MESSAGE_TAIL_CHARACTERS = 1_000;
 
 const SYSTEM_PROMPT = `A workstream is a shared conversation between human teammates and an AI Agent Rally. People in it talk to each other and to Rally in the same feed. Classify whether Rally should act on the newest human message.
 
@@ -50,7 +56,11 @@ export function renderAddressingMessages(input: AddressingPromptInput): PromptMe
         humanMentions: input.humanMentions,
         addressesRally: input.addressesRally,
         recentMessages,
-        currentMessage: input.message,
+        currentMessage: truncateCenter(
+          input.message,
+          MAX_CURRENT_MESSAGE_HEAD_CHARACTERS,
+          MAX_CURRENT_MESSAGE_TAIL_CHARACTERS,
+        ),
       }),
     },
   ];
@@ -59,4 +69,15 @@ export function renderAddressingMessages(input: AddressingPromptInput): PromptMe
 function truncateCharacters(value: string, maximum: number): string {
   if (value.length <= maximum) return value;
   return Array.from(value).slice(0, maximum).join("");
+}
+
+function truncateCenter(value: string, headMaximum: number, tailMaximum: number): string {
+  if (value.length <= headMaximum + tailMaximum) return value;
+  const points = Array.from(value);
+  if (points.length <= headMaximum + tailMaximum) return value;
+  return [
+    points.slice(0, headMaximum).join(""),
+    "[… middle truncated …]",
+    points.slice(points.length - tailMaximum).join(""),
+  ].join("\n");
 }

@@ -275,11 +275,13 @@ describe("agent harness", () => {
       recentMessages,
     });
     const providerMessages = requestBody!.messages as Array<{ role: string; content: string }>;
-    expect(providerMessages[0]).toEqual(rendered[0]);
-    expect(providerMessages[1]!.content).toContain(String(rendered[1]!.content));
-    expect(providerMessages[1]!.content).toContain("Expected structured output JSON Schema (message_addressing):");
-    expect(providerMessages[1]!.content).toContain('"classification"');
-    expect(providerMessages[1]!.content).toContain("Return only one JSON value that matches this schema exactly.");
+    // The schema instruction rides in the system message with the rest of the
+    // harness's own policy; the user message stays the classified data alone.
+    expect(providerMessages[0]!.content).toContain(String(rendered[0]!.content));
+    expect(providerMessages[0]!.content).toContain("Expected structured output JSON Schema (message_addressing):");
+    expect(providerMessages[0]!.content).toContain('"classification"');
+    expect(providerMessages[0]!.content).toContain("Return only one JSON value that matches this schema exactly.");
+    expect(providerMessages[1]).toEqual(rendered[1]);
     expect(requestBody!.response_format).toMatchObject({
       type: "json_schema",
       json_schema: { name: "message_addressing", strict: true },
@@ -1561,8 +1563,11 @@ describe("agent harness", () => {
 
     const messages = requestBody!.messages as Array<{ role: string; content: string }>;
     expect(messages.at(-1)!.content).toContain("test");
-    expect(messages.at(-1)!.content).toContain("Expected structured output JSON Schema (host_fetch):");
-    expect(messages.at(-1)!.content).toContain('"ok"');
+    // The schema instruction leads the conversation as a system message when
+    // the caller supplied none of its own.
+    expect(messages[0]).toMatchObject({ role: "system" });
+    expect(messages[0]!.content).toContain("Expected structured output JSON Schema (host_fetch):");
+    expect(messages[0]!.content).toContain('"ok"');
     expect(requestBody!.response_format).toMatchObject({
       type: "json_schema",
       json_schema: {
