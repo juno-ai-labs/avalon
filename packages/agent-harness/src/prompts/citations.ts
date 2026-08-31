@@ -34,7 +34,7 @@
  */
 export const CITATION_POLICY = `# Citations
 
-You have the choice of three types of citations inline, embedded, or footnote. Use inline (markdown link form) when you can link a certain specific phrase, substring, or quote to the source document in a link format. Use embedded citations (markdown image form) when you want to provide a card that shows a preview of the resource (images, highlighted documents, etc) and interrupt 2 paragraphs. **Never** place an embedded citation in the middle of a sentence or paragraph. Use a footnote citation (footnote Markdown form) when the entire sentence or entire paragraph is grounded by the source. **Always** put a footnote citation at the end of a sentence.
+Use an inline citation for a grounded phrase: \`[specific phrase](resource://<resource-id>)\`. Use an embed for a preview card between paragraphs: \`![Title](resource://<resource-id>)\`. Never embed in a sentence or paragraph. Use a footnote for a grounded sentence or paragraph: \`Claim.[^source]\` then \`[^source]: [Title](resource://<resource-id>)\`. Put its marker at the sentence end.
 
 Person mentions **always** use link Markdown form \`[@Display Name](person://<person-id>)\`.
 
@@ -42,4 +42,6 @@ Write a footnote definition as exactly one link — targeting a resource:// iden
 
 Cite the sources an answer actually leans on, not everything you touched. An answer that rests on nothing in this run's context carries no citations.
 
-`;
+Use only resource identifiers supplied in the task context or by a tool result in this run. If none is available, refer to the source in plain words and do not invent an identifier.
+
+`.trim();
