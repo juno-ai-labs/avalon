@@ -110,6 +110,15 @@ counts the header row's cells and publishes the count as
 `--markdown-table-columns`, which the stylesheet uses to give the table a minimum
 width proportional to how many columns it actually has.
 
+A GFM table cell cannot contain a real newline — that ends the row — so models
+write `<br/>` inside one. Ordinary paragraphs pick up the same habit. Because
+this renderer does not parse HTML, a remark pass after `remark-gfm` turns a
+bare break tag (`<br>`, `<br/>`, `<br />`) from its mdast `html` node into a
+`break`. Escaped and encoded examples remain text nodes and stay text. Code is
+skipped. Every other tag stays as it was. The pass runs on every body,
+including `verbatim`: this is a renderer affordance for one tag, not a repair
+of what a model meant, and a stored document's table uses the same workaround.
+
 ### Heading collapse
 
 Every heading h2 and below is an accordion, one level deep. The section
@@ -395,6 +404,12 @@ written this way is a sign it is not a typography override.
   is not hypothetical: it is what happened, and what the surfaces that had it
   looked like was *nothing* — no error, no visual break, just a list without
   markers that nobody connected to a CSS change made elsewhere.
+- **A bare break tag is the only HTML that becomes an element.** `<br>`,
+  `<br/>`, and `<br />` parsed as `html` become a `<br>` element; escaped or
+  encoded examples stay text, and a tagged `<br class="…">` and every other
+  element stay characters. Widening the pattern is how this becomes an HTML
+  parser. Code is not rewritten. The pass runs on `verbatim` bodies too — it is
+  not TeX repair.
 - **Markdown element styling lives in the `.markdown-body` group and nowhere
   else.** A rule like `.note-detail-article ul` ties `.markdown-body ul` on
   specificity, so which one applies is decided by which is further down a
@@ -499,7 +514,10 @@ document has an opinion only about the part of it that is markdown.
 It renders untrusted text: everything it is given was written by a model, a
 meeting participant, or an inbound email. `react-markdown` does not evaluate HTML
 in its input and no `rehype-raw` is configured, so markup in the source is text.
-Mermaid is the one generated-markup exception: it receives only a `mermaid`
+The first closed exception is a bare `<br>` / `<br/>` / `<br />`, rewritten to
+a real line break; that is not HTML parsing, and a tagged `<br class="…">` or
+any other element stays characters. Mermaid is the generated-markup exception:
+it receives only a `mermaid`
 fence, runs in strict mode with HTML labels and interaction disabled, and
 inserts the SVG Mermaid sanitised. Invalid input falls back to source.
 [`security.md`](security.md) owns the wider trust model.
@@ -618,6 +636,38 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — A bare `<br/>` becomes a line break, in tables and in prose
+
+**What changed:** `MarkdownBody` runs a remark pass after `remark-gfm` that
+turns a bare break tag's mdast `html` node into a `break`. Tables and ordinary
+paragraphs both get it; escaped and encoded examples stay text. Code is skipped.
+`verbatim` bodies get it too. The
+email renderer does the same rewrite on prose (after escaping, after parking
+code spans) and turns the tag into a newline in the plain-text part.
+
+**Why:** Models write `<br/>` for a line break inside a GFM table cell because a
+real newline ends the row, and they write the same tag in body copy. The
+renderer does not parse HTML, so those tags printed as characters — a
+deliverables column that was meant to be a list became one wrapped run with
+visible `<br/>` in it. Table-only would have left the identical glitch in
+paragraphs; converting to a real newline *before* parse would have broken the
+table the tag was holding together.
+
+**Considered and rejected:** Enabling `rehype-raw`. That is an HTML parser over
+untrusted model text, and the whole point of leaving it off is that markup is
+characters. Also rejected: replacing the tag with a Markdown hard break in
+`normalizeModelMarkdown`. A newline inside a table row is how GFM *ends* the
+row. Also rejected: skipping `verbatim`. The inspector and the lightbox are
+verbatim so TeX repair cannot rewrite a file; a break tag in that file is still
+a line break the file asked for.
+
+**What a future change has to respect:** this is a closed pattern — a bare
+`<br>` with optional whitespace and optional slash, nothing else. Widening it
+to other tags is how this becomes the HTML parser it is written not to be.
+Do not put the rewrite into `normalizeModelMarkdown`; the table grammar cannot
+survive a pre-parse newline. Email tables stay preformatted, so a break tag
+inside one still shows as characters there — that renderer has no table model.
 
 ### 2026-08-30 — Mermaid diagrams use Rally's active tokens
 
