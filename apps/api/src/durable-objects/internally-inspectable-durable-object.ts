@@ -9,9 +9,11 @@ import { MigratableDurableObject } from "./migratable-durable-object";
 
 function base64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
+  const chunks: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 32_768)));
+  }
+  return btoa(chunks.join(""));
 }
 
 function inspectionValue(value: SqlStorageValue): InspectionSqlValue {
@@ -24,7 +26,8 @@ function inspectionValue(value: SqlStorageValue): InspectionSqlValue {
  * This is intentionally an unrestricted SQL surface: the public boundary is
  * the Access-protected engineering MCP Worker, and inspection must be able to
  * reproduce Cloudflare's dashboard database console, including repairs. No
- * HTTP route reaches this RPC directly.
+ * Its intended caller is the private EngineeringInspectionBridge Service
+ * Binding; no product HTTP route exposes this RPC.
  */
 export abstract class InternallyInspectableDurableObject<TEnv extends Env = Env>
   extends MigratableDurableObject<TEnv> {
