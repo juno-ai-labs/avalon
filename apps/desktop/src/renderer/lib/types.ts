@@ -365,15 +365,6 @@ export interface ElicitationData {
   createdAt?: string;
 }
 
-export interface ActivitySuggestionData {
-  id: string;
-  title: string;
-  source?: string;
-  occurredAt?: string;
-  reason: string;
-  status: 'pending' | 'accepted' | 'dismissed';
-}
-
 export interface BlockDashboardBlockRun {
   id: string;
   blockId: string;
@@ -448,7 +439,6 @@ export interface Message {
     | 'tool_event'
     | 'plugin_activity'
     | 'elicitation'
-    | 'activity_suggestion'
     | 'system';
   text?: string;
   contextLabel?: string;
@@ -494,7 +484,6 @@ export interface Message {
     timingAccuracy?: 'observed' | 'upper_bound';
   };
   elicitation?: ElicitationData;
-  activitySuggestion?: ActivitySuggestionData;
 }
 
 export interface BackgroundTask {
@@ -587,7 +576,6 @@ export interface WorkstreamDetail extends WorkstreamSummary {
   latestHarnessRunId?: string;
   latestHarnessRun?: HarnessRunMetadata;
   openElicitations?: ElicitationData[];
-  suggestions?: ActivitySuggestionData[];
 }
 
 export interface WorkstreamBoot extends WorkstreamDetail {

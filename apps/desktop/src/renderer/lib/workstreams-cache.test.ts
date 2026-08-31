@@ -82,7 +82,6 @@ describe('setCachedWorkstreams', () => {
       'block-dashboard',
       'block-dashboard-preference',
       'terminal-workstream',
-      'dismissed-suggestion-ids',
     ];
     for (const prefix of prefixes) {
       queryClient.setQueryData([prefix, workstreamId], { sensitive: true });

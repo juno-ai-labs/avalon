@@ -57,6 +57,7 @@ import {
 } from "../src/durable-objects/names";
 import {
   workstreamRegionalEffectHash,
+  type WireWorkstreamRegionalEffect,
   type WorkstreamRegionalEffect,
 } from "../src/durable-objects/workstream-regional-effect";
 import {
@@ -228,7 +229,7 @@ function nextMessages(socket: WebSocket, count: number): Promise<MessageEvent[]>
 }
 
 function effectEnvelope(
-  effect: WorkstreamRegionalEffect,
+  effect: WireWorkstreamRegionalEffect,
   messageId: string,
   sourceVersion = 1,
   workstreamId = WORKSTREAM_ID,
@@ -496,6 +497,65 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     expect(reused.status).toBe(200);
     expect(JSON.parse(reused.bodyJson)).toEqual({ ok: true, accepted: 1 });
+  });
+
+  it("acknowledges in-flight suggestion feedback from older isolates without reviving its state", async () => {
+    await seedOpenAuthority();
+    const effect: WireWorkstreamRegionalEffect = {
+      kind: "suggestion_feedback",
+      actionId: "00000000-0000-7000-8000-0000000001e1",
+      activityId: "00000000-0000-7000-8000-0000000001e2",
+      source: "suggested_work",
+      status: "accepted",
+      resolvedAt: "2026-08-30T12:00:00.000Z",
+      resolvedByUserId: USER_ID,
+    };
+    const envelope = effectEnvelope(
+      effect,
+      "00000000-0000-7000-8000-0000000001e3",
+    );
+    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+
+    const childHandoff = await parent.receiveSubstreamEffects({
+      substreamId: "0",
+      envelopes: [envelope],
+    });
+    expect(childHandoff.status).toBe(200);
+    expect(JSON.parse(childHandoff.bodyJson)).toEqual({ ok: true, accepted: 1 });
+    await runInDurableObject(parent, (_instance: WorkstreamDO, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT message_id FROM child_effect_receipts WHERE message_id = ?`,
+        envelope.messageId,
+      ).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(
+        `SELECT message_id FROM durable_outbox WHERE message_id = ?`,
+        envelope.messageId,
+      ).toArray()).toEqual([]);
+    });
+
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const directoryHandoff = await workspace.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [envelope],
+    });
+    expect(directoryHandoff).toEqual({
+      accepted: [{ messageId: envelope.messageId, payloadHash: envelope.payloadHash }],
+      directoryChanged: false,
+    });
+    await runInDurableObject(workspace, (_instance: WorkspaceDO, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM workspace_workstream_effect_receipts
+          WHERE message_id = ?`,
+        envelope.messageId,
+      ).one()).toEqual({ count: 1 });
+      expect(state.storage.sql.exec(
+        `SELECT name FROM sqlite_schema WHERE name LIKE '%suggestion_feedback%'`,
+      ).toArray()).toEqual([]);
+    });
   });
 
   it("flushes a creation snapshot through both parents before a route can be advertised", async () => {
@@ -953,7 +1013,6 @@ describe("Durable Objects in the Workers runtime", () => {
           "workspace_workstream_pins",
           "workspace_workstream_resource_links",
           "pending_attachment_reservations",
-          "workspace_workstream_suggestion_feedback",
           "workspace_workstream_viewers",
           "workspace_sync_events",
           "workspace_socket_ticket_receipts",
@@ -3448,214 +3507,6 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
-  /**
-   * The candidate query's own filters.
-   *
-   * Contextual routing's Node suite used to assert these against a parallel D1
-   * query that migration 0090 made unreachable. They are subqueries inside
-   * `routingCandidates` now — a Node stub could only reproduce them, so they
-   * are asserted here against the object that runs them.
-   */
-  it("filters routing candidates by the dismissal run, its producer, its window and what is already routed", async () => {
-    await seedOpenAuthority();
-    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
-      workspaceDOName("global", WORKSPACE_ID),
-    ));
-    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
-    const NOW = Date.parse("2026-08-18T20:00:00.000Z");
-    const daysAgo = (days: number) => new Date(NOW - days * 86_400_000).toISOString();
-    const streams = [
-      WORKSTREAM_ID,
-      "00000000-0000-7000-8000-0000000005a1",
-      "00000000-0000-7000-8000-0000000005a2",
-      "00000000-0000-7000-8000-0000000005a3",
-      "00000000-0000-7000-8000-0000000005a4",
-    ];
-    let envelope = 0;
-    for (const [index, workstreamId] of streams.entries()) {
-      await stub.applyWorkstreamDirectoryEffects({
-        workspaceId: WORKSPACE_ID,
-        envelopes: [effectEnvelope({
-          kind: "directory_common",
-          title: `Candidate ${index}`,
-          description: "Eligible for contextual routing",
-          preview: "",
-          scope: "workspace",
-          state: "idle",
-          systemKind: null,
-          // Descending, so the assertions below can name the order.
-          lastActivityAt: daysAgo(index),
-          completedAt: null,
-          archivedAt: null,
-          originType: "ad_hoc",
-          createdByUserId: USER_ID,
-          latestAttentionOrdinal: 0,
-          unreadTrackingStartOrdinal: 0,
-          createdAt: "2026-08-01T00:00:00.000Z",
-          updatedAt: daysAgo(index),
-          resourceLinks: [],
-        }, `00000000-0000-7000-8000-00000000f${String(envelope += 1).padStart(3, "0")}`, 1, asWorkstreamId(workstreamId))],
-      });
-    }
-    const privateWorkstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000005af");
-    await stub.applyWorkstreamDirectoryEffects({
-      workspaceId: WORKSPACE_ID,
-      envelopes: [
-        effectEnvelope({
-          kind: "directory_common",
-          title: "Private candidate",
-          description: "Only an authorized user may offer this to the router",
-          preview: "",
-          scope: "personal",
-          state: "idle",
-          systemKind: null,
-          lastActivityAt: daysAgo(0),
-          completedAt: null,
-          archivedAt: null,
-          originType: "ad_hoc",
-          createdByUserId: USER_ID,
-          latestAttentionOrdinal: 0,
-          unreadTrackingStartOrdinal: 0,
-          createdAt: "2026-08-01T00:00:00.000Z",
-          updatedAt: daysAgo(0),
-          resourceLinks: [],
-        }, "00000000-0000-7000-8000-00000000f100", 1, privateWorkstreamId),
-        effectEnvelope({
-          kind: "directory_user",
-          userId: USER_ID,
-          isParticipant: true,
-          unreadCount: 0,
-          youAreMentioned: false,
-          listable: true,
-          seenAttentionOrdinal: 0,
-          manualUnreadFromOrdinal: null,
-          manualUnreadGeneration: 0,
-          latestMentionAttentionOrdinal: 0,
-        }, "00000000-0000-7000-8000-00000000f101", 1, privateWorkstreamId),
-      ],
-    });
-    const feedback = (
-      workstreamId: string,
-      actionId: string,
-      status: "accepted" | "dismissed",
-      resolvedAt: string,
-      source: "contextual_routing" | "suggested_work" = "contextual_routing",
-    ) => runInDurableObject(stub, (_instance, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO workspace_workstream_suggestion_feedback
-           (workstream_id, action_id, activity_id, source, status, resolved_at,
-            resolved_by_user_id, authority_generation, waterline, source_event_id, projected_at)
-         VALUES (?, ?, '00000000-0000-7000-8000-0000000004ff', ?, ?, ?, ?, 1, 1, ?, ?)`,
-        workstreamId,
-        actionId,
-        source,
-        status,
-        Date.parse(resolvedAt),
-        USER_ID,
-        actionId,
-        NOW,
-      );
-    });
-    const candidates = (excluded: string[] = []) => stub.routingCandidates({
-      workspaceId: WORKSPACE_ID,
-      audience: { scope: "workspace" },
-      excludedWorkstreamIds: excluded,
-      feedbackSince: daysAgo(30),
-      dismissalLimit: 3,
-      limit: 12,
-    }).then((result) => result.items.map((item) => item.workstreamId));
-
-    await expect(candidates()).resolves.not.toContain(privateWorkstreamId);
-    await expect(stub.routingCandidates({
-      workspaceId: WORKSPACE_ID,
-      audience: { scope: "users", userIds: [USER_ID] },
-      excludedWorkstreamIds: [],
-      feedbackSince: daysAgo(30),
-      dismissalLimit: 3,
-      limit: 12,
-    }).then((result) => result.items.map((item) => item.workstreamId)))
-      .resolves.toContain(privateWorkstreamId);
-    await expect(stub.routingCandidates({
-      workspaceId: WORKSPACE_ID,
-      audience: { scope: "users", userIds: [USER_ID] },
-      excludedWorkstreamIds: [],
-      feedbackSince: daysAgo(30),
-      dismissalLimit: 3,
-      limit: 12,
-    }).then((result) => result.items.map((item) => item.workstreamId)))
-      .resolves.not.toContain(streams[0]);
-
-    const outsiderId = "00000000-0000-7000-8000-000000000099";
-    await env.DB.prepare(
-      `INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
-       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`,
-    ).bind(WORKSPACE_ID, outsiderId).run();
-    await stub.applyWorkstreamDirectoryEffects({
-      workspaceId: WORKSPACE_ID,
-      envelopes: [effectEnvelope({
-        kind: "directory_user",
-        userId: outsiderId,
-        isParticipant: true,
-        unreadCount: 0,
-        youAreMentioned: false,
-        listable: true,
-        seenAttentionOrdinal: 0,
-        manualUnreadFromOrdinal: null,
-        manualUnreadGeneration: 0,
-        latestMentionAttentionOrdinal: 0,
-      }, "00000000-0000-7000-8000-00000000f102", 1, privateWorkstreamId)],
-    });
-    await expect(stub.routingCandidates({
-      workspaceId: WORKSPACE_ID,
-      audience: { scope: "users", userIds: [USER_ID] },
-      excludedWorkstreamIds: [],
-      feedbackSince: daysAgo(30),
-      dismissalLimit: 3,
-      limit: 12,
-    }).then((result) => result.items.map((item) => item.workstreamId)))
-      .resolves.not.toContain(privateWorkstreamId);
-    await expect(stub.routingCandidates({
-      workspaceId: WORKSPACE_ID,
-      audience: { scope: "users", userIds: [USER_ID, outsiderId] },
-      excludedWorkstreamIds: [],
-      feedbackSince: daysAgo(30),
-      dismissalLimit: 3,
-      limit: 12,
-    }).then((result) => result.items.map((item) => item.workstreamId)))
-      .resolves.toContain(privateWorkstreamId);
-
-    // Three dismissals inside the window take a work stream out of the pool.
-    for (const [index, day] of [1, 2, 3].entries()) {
-      await feedback(streams[1]!, `run-${index}`, "dismissed", daysAgo(day));
-    }
-    await expect(candidates()).resolves.not.toContain(streams[1]);
-
-    // A single acceptance after them clears the run.
-    await feedback(streams[1]!, "run-cleared", "accepted", daysAgo(0));
-    await expect(candidates()).resolves.toContain(streams[1]);
-
-    // Another producer's dismissals do not count: a work stream must not lose
-    // its place here over three dismissals of suggested-work's cards.
-    for (const [index, day] of [1, 2, 3].entries()) {
-      await feedback(streams[2]!, `other-${index}`, "dismissed", daysAgo(day), "suggested_work");
-    }
-    await expect(candidates()).resolves.toContain(streams[2]);
-
-    // Dismissals older than the window are forgotten. Nobody has offered this
-    // work stream a suggestion in over a month, so it has had no chance to earn
-    // the acceptance that would otherwise clear its run.
-    for (const [index, day] of [40, 45, 50].entries()) {
-      await feedback(streams[3]!, `stale-${index}`, "dismissed", daysAgo(day));
-    }
-    await expect(candidates()).resolves.toContain(streams[3]);
-
-    // The already-routed exclusion runs inside the query, not after the LIMIT:
-    // a work stream a watch already delivered this activity to must not consume
-    // one of the twelve slots.
-    await expect(candidates([streams[0]!])).resolves.toEqual(
-      streams.slice(1),
-    );
-  });
   it("owns per-user pin ordering in WorkspaceDO SQL", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(

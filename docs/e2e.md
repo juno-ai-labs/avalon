@@ -409,16 +409,6 @@ Finally, revoke a test provider grant and repeat an affected read. Confirm the c
 
 Pass evidence: two independently selectable preset connections, exact stored capability sets, bounded native Docs and Sheets operations, Mail/Calendar and Drive cursors, one Drive-derived Doc activity, one Drive-derived Sheet activity, one authorized automation run per tested connection, and a sanitized reconnect state. Sending email is not required for this flow.
 
-## PRD flow 4 — contextual routing
-
-1. Create a long-lived workspace-scoped **CFO of Calm** work stream, a solo private **CFO private inbox** for the webhook connection's member, and a private control work stream shared with a second member outside the webhook activity's audience.
-2. Create a signed generic-webhook connection and ingest a restricted transcript activity mentioning Calm and the CFO search.
-3. Confirm one Suggested context card appears inside **CFO private inbox**, one pending suggestion exists, and the classifier candidate set contains neither the workspace-scoped **CFO of Calm** nor the shared private control title or objective.
-4. Accept the card and confirm the activity attaches once and the accepted card remains in the transcript. Repeat with a second activity, dismiss the card, reconnect the desktop, and confirm it remains absent from canonical, paginated, and realtime reconstruction.
-5. Add the connection's member to the private control and repeat the restricted activity. Confirm it still cannot be considered because its complete audience includes the second member. Ingest the same evidence as a workspace-audience activity and confirm contextual routing considers only workspace-scoped candidates, then accept a card in **CFO of Calm**. Repeat with contextual routing forced to decline: confirm Suggested Work creates one personal admission window per active member, each window can inspect that member's own private work plus workspace work, and neither can inspect the other member's private-only title.
-6. Repeat the same signed delivery identifier and confirm ingestion reports a duplicate without creating a second activity, suggestion, or work-opportunity source.
-
-Pass evidence: explicit source and target audience traces for workspace and restricted activity, per-member fan-out of an unclaimed workspace source, cards only in audience-contained targets, one accepted attachment, one dismissal that survives reconstruction, no unauthorized or broader-audience title/objective in model input, and idempotent webhook replay.
 
 ## Flow 9 — inbound work-stream email
 

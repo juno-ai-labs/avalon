@@ -9,7 +9,6 @@ import {
   AutomationPluginIconSchema,
   WorkOpportunityPageSchema,
   asWorkspaceId,
-  asWorkstreamId,
   type Scope,
   type UserId,
   type WorkOpportunity,
@@ -22,7 +21,6 @@ import { ApiError } from "../lib/api-error";
 import { activityContentAudience } from "../lib/activity-visibility";
 import {
   contentAudienceAllowsUser,
-  contentAudienceContainsWorkstream,
   type ContentAudience,
 } from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -35,9 +33,7 @@ import {
   type WorkspaceOpportunityWorkflowInput,
 } from "../durable-objects/workspace-opportunity-protocol";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
-import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { resolveAgentModelRouting } from "./agent-model-flags";
-import { createActivitySuggestion } from "./activity-suggestion-service";
 import { hydrateConnectorActivitySource } from "./integrations";
 import { logWarn } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
@@ -79,7 +75,7 @@ const UserLinkDecisionSchema = z.object({
 }).strict();
 
 const AdmissionDecisionSchema = z.object({
-  action: z.enum(["add", "ignore", "update_existing", "route_existing"]),
+  action: z.enum(["add", "ignore", "update_existing"]),
   existingTargetId: z.string().uuid().nullable(),
   displayPrompt: z.string().max(180),
   executionPrompt: z.string().max(20_000),
@@ -99,7 +95,7 @@ const admissionJsonSchema = {
         type: "object",
         additionalProperties: false,
         properties: {
-          action: { type: "string", enum: ["add", "ignore", "update_existing", "route_existing"] },
+          action: { type: "string", enum: ["add", "ignore", "update_existing"] },
           existingTargetId: { type: ["string", "null"] },
           displayPrompt: { type: "string" },
           executionPrompt: { type: "string" },
@@ -941,53 +937,6 @@ async function opportunityFingerprint(window: WindowRow, sources: ModelSource[])
   return sha256([`audience:${audienceKey(window)}`, ...sourceKeys].join("\n"));
 }
 
-async function routeExistingDecision(
-  env: Env,
-  window: WindowRow,
-  decision: z.infer<typeof AdmissionDecisionSchema>,
-  sources: ModelSource[],
-  existingWork: Array<{ id: string; title: string; objective: string }>,
-): Promise<boolean> {
-  if (!SUGGESTED_CONTEXT_ENABLED) return false;
-  const targetId = decision.existingTargetId;
-  if (!targetId || !existingWork.some((workstream) => workstream.id === targetId)) return false;
-  const referenced = sources.filter((source) => decision.sourceIds.includes(source.id));
-  const activities = referenced.filter((source) => source.kind === "activity");
-  if (activities.length === 0) {
-    return referenced.some((source) => source.kind === "message" && source.workstreamId === targetId);
-  }
-  const targetAudience = await readWorkstreamRuntimeAudience(
-    env,
-    window.workspace_id,
-    targetId,
-  );
-  const routableActivities = activities.filter((source) => (
-    source.sourceAudience
-    && contentAudienceContainsWorkstream(source.sourceAudience, targetAudience)
-  ));
-  if (routableActivities.length === 0) return false;
-  const reason = decision.displayPrompt.trim() || "Recent connected activity belongs in this existing work stream.";
-  const routed = await Promise.all(routableActivities.map((source) => createActivitySuggestion(env, {
-    region: env.AVALON_REGION,
-    workspaceId: asWorkspaceId(window.workspace_id),
-    activityId: source.id,
-    activityTitle: source.title,
-    activitySummary: source.summary,
-    workstreamId: asWorkstreamId(targetId),
-    confidence: 1,
-    reason,
-    matchedEntities: source.entityKeys,
-    // This path publishes the same card contextual routing does, and the
-    // resolution feeds routing's feedback gates. Saying so is what keeps a
-    // dismissal of *this* agent's deliberate whole-window decision from being
-    // counted as evidence that *that* one's per-event guess was wrong.
-    // `docs/contextual-routing.md` owns what the distinction is used for.
-    source: "suggested_work",
-    sourceAudience: source.sourceAudience,
-  })));
-  return routed.some(Boolean);
-}
-
 async function persistDecision(
   env: Env,
   window: WindowRow,
@@ -995,7 +944,7 @@ async function persistDecision(
   sources: ModelSource[],
   members: Array<{ id: string; name: string; email: string; verifiedAliases: string[] }>,
 ): Promise<{ opportunityId: string | null; eagerUserIds: string[] }> {
-  if (decision.action === "ignore" || decision.action === "route_existing") return { opportunityId: null, eagerUserIds: [] };
+  if (decision.action === "ignore") return { opportunityId: null, eagerUserIds: [] };
   if (!decision.displayPrompt.trim() || !decision.executionPrompt.trim() || !decision.admissionReasoning.trim()) {
     return { opportunityId: null, eagerUserIds: [] };
   }
@@ -1145,12 +1094,6 @@ async function processModelBatch(
     const eagerUserIds: string[] = [];
     for (const decision of result.decisions) {
       if (!decision.sourceIds.every((sourceId) => sourceIds.has(sourceId))) continue;
-      if (decision.action === "route_existing") {
-        await routeExistingDecision(
-          env, window, decision, batch.map(({ source }) => source), context.existingWork,
-        );
-        continue;
-      }
       const persisted = await persistDecision(env, window, decision, batch.map(({ source }) => source), context.members);
       eagerUserIds.push(...persisted.eagerUserIds);
     }
@@ -1758,7 +1701,6 @@ export const __workOpportunityTesting = {
   rankingGroups,
   opportunityFingerprint,
   provenanceNodeForSource,
-  routeExistingDecision,
   limits: {
     batchEvents: MAX_BATCH_EVENTS,
     batchCharacters: MAX_BATCH_CHARACTERS,

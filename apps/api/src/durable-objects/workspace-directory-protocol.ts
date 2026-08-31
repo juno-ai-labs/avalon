@@ -8,7 +8,6 @@ import {
 import { z } from "zod";
 
 import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";
-import { ContentAudienceSchema } from "../lib/audience-containment";
 
 const TimestampSchema = z.string().datetime({ offset: true });
 const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
@@ -253,33 +252,6 @@ export const WorkspaceDirectoryScheduleTargetsResultSchema = z.object({
   }).strict()).max(20_000),
 }).strict();
 
-export const WorkspaceDirectoryRoutingCandidatesRequestSchema = z.object({
-  workspaceId: IdSchema,
-  audience: ContentAudienceSchema,
-  excludedWorkstreamIds: z.array(IdSchema).max(10_000),
-  feedbackSince: TimestampSchema,
-  dismissalLimit: z.number().int().positive(),
-  limit: z.number().int().min(1).max(250),
-}).strict();
-
-export const WorkspaceDirectoryFeedbackRequestSchema = z.object({
-  workspaceId: IdSchema,
-  source: z.enum(["contextual_routing", "suggested_work"]),
-  since: TimestampSchema,
-  provider: z.string().min(1).max(120),
-  eventType: z.string().min(1).max(160),
-}).strict();
-
-export const WorkspaceDirectoryFeedbackResultSchema = z.object({
-  items: z.array(z.object({
-    workstreamId: IdSchema,
-    activityId: IdSchema,
-    status: z.enum(["accepted", "dismissed"]),
-    resolvedAt: TimestampSchema,
-    resolvedByUserId: IdSchema.nullable(),
-  }).strict()).max(10_000),
-}).strict();
-
 export const WorkspaceDirectoryResourceAccessRequestSchema = z.object({
   workspaceId: IdSchema,
   resourceId: IdSchema,
@@ -403,9 +375,6 @@ export type WorkspaceDirectoryRecentRequest = z.infer<typeof WorkspaceDirectoryR
 export type WorkspaceDirectoryDueRequest = z.infer<typeof WorkspaceDirectoryDueRequestSchema>;
 export type WorkspaceDirectoryScheduleTargetsRequest = z.infer<typeof WorkspaceDirectoryScheduleTargetsRequestSchema>;
 export type WorkspaceDirectoryScheduleTargetsResult = z.infer<typeof WorkspaceDirectoryScheduleTargetsResultSchema>;
-export type WorkspaceDirectoryRoutingCandidatesRequest = z.infer<typeof WorkspaceDirectoryRoutingCandidatesRequestSchema>;
-export type WorkspaceDirectoryFeedbackRequest = z.infer<typeof WorkspaceDirectoryFeedbackRequestSchema>;
-export type WorkspaceDirectoryFeedbackResult = z.infer<typeof WorkspaceDirectoryFeedbackResultSchema>;
 export type WorkspaceDirectoryResourceAccessRequest = z.infer<typeof WorkspaceDirectoryResourceAccessRequestSchema>;
 export type WorkspaceDirectoryResourceAccessResult = z.infer<typeof WorkspaceDirectoryResourceAccessResultSchema>;
 export type WorkspaceDirectoryApplyRequest = z.infer<typeof WorkspaceDirectoryApplyRequestSchema>;

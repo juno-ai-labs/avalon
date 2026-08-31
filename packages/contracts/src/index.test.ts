@@ -46,6 +46,7 @@ import {
   WorkspaceSchema,
   WorkstreamContextSchema,
   WorkstreamSchema,
+  WorkstreamResourceSchema,
   WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema,
   WORKSTREAM_SIDEBAR_FACEPILE_LIMIT,
@@ -61,6 +62,29 @@ describe("boundary contracts", () => {
     expect(resourceDirectionForRelationship("generated")).toBe("artifact");
     expect(resourceDirectionForRelationship("origin")).toBe("source");
     expect(resourceDirectionForRelationship("attachment")).toBe("source");
+  });
+
+  it("parses the retired relationship only at rolling-deploy wire boundaries", () => {
+    const legacy = WorkstreamResourceSchema.parse({
+      id,
+      workspaceId: id,
+      connectionId: null,
+      resourceType: "document",
+      provider: "google_drive",
+      providerResourceId: "drive-1",
+      title: "Accepted context",
+      mimeType: null,
+      canonicalUrl: null,
+      watchEnabled: false,
+      watchStatus: "unsupported",
+      lastHydratedAt: null,
+      createdAt: "2026-08-30T00:00:00.000Z",
+      updatedAt: "2026-08-30T00:00:00.000Z",
+      relationshipType: "suggested_activity",
+      direction: "source",
+    });
+    expect(legacy.relationshipType).toBe("suggested_activity");
+    expect(ResourceRelationshipTypeSchema.safeParse(legacy.relationshipType).success).toBe(false);
   });
 
   it("adds a bounded optional suggested-work surface without breaking older clients", () => {
@@ -275,7 +299,6 @@ describe("boundary contracts", () => {
       "meeting_notes",
       "addressing_classifier",
       "workstream_naming",
-      "activity_structured",
       "work_opportunity_admission",
       "work_opportunity_ranking",
       "workstream_description",
@@ -288,7 +311,6 @@ describe("boundary contracts", () => {
       "agent-model-meeting-notes",
       "agent-model-addressing-classifier",
       "agent-model-workstream-naming",
-      "agent-model-activity-structured",
       "agent-model-work-opportunity-admission",
       "agent-model-work-opportunity-ranking",
       "agent-model-workstream-description",

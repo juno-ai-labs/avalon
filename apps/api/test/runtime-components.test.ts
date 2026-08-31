@@ -194,7 +194,7 @@ describe("runtime component invariants", () => {
     database.close();
   });
 
-  it("persists suggestions only when their source audience contains every work-stream reader", async () => {
+  it("returns a structured conflict before retained content gains new readers", async () => {
     const database = new DatabaseSync(":memory:");
     const sql = createTestSqlStorage(database);
     const storage = createCloudflareTestBinding<DurableObjectStorage>({
@@ -205,8 +205,7 @@ describe("runtime component invariants", () => {
     const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000000a1");
     const workstreamId = asWorkstreamId("00000000-0000-4000-8000-0000000000a2");
     const creatorId = asUserId("00000000-0000-4000-8000-0000000000a3");
-    const participantId = asUserId("00000000-0000-4000-8000-0000000000a4");
-    const outsiderId = asUserId("00000000-0000-4000-8000-0000000000a7");
+    const outsiderId = asUserId("00000000-0000-4000-8000-0000000000a4");
     store.ensureIdentity({ workspaceId, workstreamId }, "global");
     sql.exec(
       `UPDATE workstream
@@ -216,97 +215,56 @@ describe("runtime component invariants", () => {
       creatorId,
     );
     const now = Date.now();
-    for (const userId of [creatorId, participantId]) {
-      sql.exec(
-        `INSERT INTO participants
-           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-            added_at, removed_at, updated_at)
-         VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?)`,
-        userId,
-        creatorId,
-        now,
-        now,
-      );
-    }
+    sql.exec(
+      `INSERT INTO participants
+         (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+          added_at, removed_at, updated_at)
+       VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?)`,
+      creatorId,
+      creatorId,
+      now,
+      now,
+    );
+    sql.exec(
+      `INSERT INTO content_audience_fences (fence_id, audience_json, created_at)
+       VALUES ('accepted-resource', ?, ?)`,
+      JSON.stringify({ scope: "users", userIds: [creatorId] }),
+      now,
+    );
     const regional = new DatabaseSync(":memory:");
     regional.exec(`CREATE TABLE workspace_members (
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, role TEXT NOT NULL
     )`);
-    const memberships: Array<[string, string]> = [
-      [creatorId, "owner"],
-      [participantId, "member"],
-      [outsiderId, "member"],
-    ];
-    for (const [userId, role] of memberships) {
-      regional.prepare(
-        `INSERT INTO workspace_members (workspace_id, user_id, status, role)
-         VALUES (?, ?, 'active', ?)`,
-      ).run(workspaceId, userId, role);
-    }
+    regional.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, status, role)
+       VALUES (?, ?, 'active', ?)`,
+    ).run(workspaceId, creatorId, "owner");
+    regional.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, status, role)
+       VALUES (?, ?, 'active', 'member')`,
+    ).run(workspaceId, outsiderId);
     const product = new WorkstreamObjectProductService(
       storage,
       store,
       createTestEnv({ DB: sqliteD1(regional) }),
     );
-    const suggestion = {
-      id: "00000000-0000-4000-8000-0000000000a5",
-      activityId: "00000000-0000-4000-8000-0000000000a6",
-      title: "Private activity",
-      summary: "Only its source audience may read this",
-      confidence: 0.9,
-      reason: "Relevant to this work stream",
-      matchedEntities: [],
-      source: "contextual_routing" as const,
-    };
-
-    await expect(product.createSuggestion(workspaceId, {
-      ...suggestion,
-      sourceAudience: { scope: "users", userIds: [creatorId] },
-    })).rejects.toMatchObject({ status: 403, code: "suggestion_audience_mismatch" });
-    await expect(product.createSuggestion(workspaceId, {
-      ...suggestion,
-      sourceAudience: { scope: "users", userIds: [creatorId, participantId] },
-    })).resolves.toMatchObject({ inserted: true });
-
-    const visibleSuggestions = () => (
-      product as unknown as { suggestions(): Array<{ id: string }> }
-    ).suggestions();
-    expect(visibleSuggestions()).toEqual([expect.objectContaining({ id: suggestion.id })]);
-
-    sql.exec(
-      `UPDATE suggested_actions SET status = 'accepted', resolved_at = ?,
-              resolved_by_user_id = ?, resolution_client_id = ?
-        WHERE action_id = ?`,
-      now,
-      creatorId,
-      `${creatorId}:accepted`,
-      suggestion.id,
-    );
-    await expect(product.addParticipant({
+    const auth = {
       sessionId: "test-session",
       userId: creatorId,
       workspaceId,
-      region: "global",
-      role: "owner",
-    }, outsiderId)).rejects.toMatchObject({
+      region: "global" as const,
+      role: "owner" as const,
+    };
+
+    await expect(product.addParticipant(auth, outsiderId)).rejects.toMatchObject({
+      status: 409,
+      code: "workstream_audience_restricted_content",
+    });
+    await expect(product.update(auth, { scope: "workspace" })).rejects.toMatchObject({
       status: 409,
       code: "workstream_audience_restricted_content",
     });
 
-    // Pre-contract rows carry no auditable source audience. Keeping one hidden
-    // is safer than reviving a card whose title may already be a disclosure.
-    const legacySuggestionId = "00000000-0000-4000-8000-0000000000a8";
-    await product.createSuggestion(workspaceId, {
-      ...suggestion,
-      id: legacySuggestionId,
-      sourceAudience: { scope: "users", userIds: [creatorId, participantId] },
-    });
-    sql.exec(
-      `UPDATE suggested_actions SET share_intent_json = ? WHERE action_id = ?`,
-      JSON.stringify({ confidence: 0.9, reason: suggestion.reason }),
-      legacySuggestionId,
-    );
-    expect(visibleSuggestions()).toEqual([]);
     regional.close();
     database.close();
   });

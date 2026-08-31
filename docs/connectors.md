@@ -529,7 +529,15 @@ activityTriggers: defineConnectorActivityTriggers("GitHub", {
 
 The shape is the point. There is no list meaning "I did not think about this", so adding an event type is adding it to a list, and an event type in both is refused where it is written rather than resolved silently. Ask it this way: **would a person who was away for a day want this read back to them?** A pull request opened, yes. The eleven check runs it started, no.
 
-`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. [Contextual routing](contextual-routing.md) uses the declaration as a prior: an operational type starts at a higher confidence bar before it can become Suggested context, and a workspace's own acceptances can overrule that prior. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+`operational` is not a rejected event. It is verified or polled, normalized,
+routed, matched against automations and watches, considered for Suggested Work,
+and written to the activity log exactly like a digestible one — every surface
+except the one that interrupts somebody on a schedule. Answer the digest
+question when classifying an event type, and nothing else. Most of what a
+provider emits belongs here, and that is the normal case rather than a failure:
+the GitHub manifest declares ninety-one activity types and thirty of them are
+digestible. Every current connector's classification, one row per activity type
+with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
@@ -555,10 +563,25 @@ Manifests and facets are cross-validated at registry construction: a connector t
    A duplicate returns `busy` with the lease's exact expiry; a delivery after
    expiry can recover interrupted processing, and settlement is fenced by the
    returned lease token so the expired handler cannot overwrite its successor.
-8. Under that lease the consumer does the product step — contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables; admission and ranking are separate fenced Workflows whose durable product results, including provenance and per-user resolutions, commit in the same WorkspaceDO — and then calls `matchExternalEventDestinations`. That is the **only** automation and watch fan-out: WorkspaceDO selects active registrations by connection, connector type, event type, and activation boundary, applies the audience rule, evaluates each one's typed DNF predicate with no model inference, and inserts one delivery row per match. There is no semantic prefilter and no semantic matcher; the evaluator grammar is deliberately closed and deterministic, and [`automation-lifecycle.md`](automation-lifecycle.md) owns it. The Queue consumer then settles the authoritative event as processed or failed. A transient failure calls per-message `retry()` and an exhausted message enters the existing regional activities DLQ.
+8. Under that lease the consumer first calls
+   `matchExternalEventDestinations`. That is the **only** automation and watch
+   fan-out: WorkspaceDO selects active registrations by
+   connection, connector type, event type, and activation boundary, applies the
+   audience rule, evaluates each one's typed DNF predicate with no model
+   inference, and inserts one delivery row per match. A durable `claimed`
+   witness remains true after those delivery rows settle, so processing retries
+   cannot mistake handled work for an unmatched event. Only an unclaimed event
+   enters WorkspaceDO's Suggested Work batch tables; activity-log projection is
+   unconditional. There is no semantic route into an existing work stream.
+   Admission and ranking are separate fenced Workflows whose durable product
+   results, including provenance and per-user resolutions, commit in the same
+   WorkspaceDO. The evaluator grammar is deliberately closed and deterministic,
+   and [`automation-lifecycle.md`](automation-lifecycle.md) owns it. The Queue
+   consumer then settles the authoritative event as processed or failed. A
+   transient failure calls per-message `retry()` and an exhausted message enters
+   the existing regional activities DLQ.
 9. Each match becomes its own identifiers-and-hashes-only message on the same regional Queue. The consumer claims that delivery under its own lease and calls `AutomationAgent.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own authority generation and lifecycle, admits at most one occurrence per canonical event, and the consumer settles the delivery back to WorkspaceDO under the lease token.
 10. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
-11. Persist accepted/dismissed feedback that decides what step 8 offers next.
 
 **Why the event is present in ingress but absent from processing:** the first
 Queue message must be self-contained because no canonical WorkspaceDO event
@@ -594,9 +617,8 @@ are correlation fields and should be logged.
 
 The canonical event remains the automation trigger's evidence after admission.
 Prompt construction and between-turn authorization revalidation load it from
-WorkspaceDO; suggestion-quality feedback joins the WorkspaceDO feedback index
-to the same local event table by provider and event type. Neither path may
-consult a scrubbed D1 `activities` row.
+WorkspaceDO. Suggested Work admission also loads that authority rather than a
+scrubbed D1 `activities` row.
 
 One normalized event is never sent to two WorkspaceDOs and is never shared
 between workspaces. Fan-out happens before normalization at the raw provider
@@ -611,17 +633,9 @@ The global router may inspect routing metadata, but EU workspace content is
 forwarded to the EU regional Worker, EU Queue, and EU-locked WorkspaceDO.
 Normalized content never crosses through the global D1 routing plane.
 
-Steps 1 through 6 are deterministic and are what this document owns. Step 7's
-speculative classifier, feedback gates, explicit candidate audience, and the
-single switch that guards every producer and reader live in
-[`contextual-routing.md`](contextual-routing.md). It consumes the digestibility
-declaration described above and nothing else from here; change it there, not in
-this document.
-
-The routing feedback endpoint is idempotent in the direction it was given.
-Repeating the same accept or dismissal reports the state the suggestion already
-reached; only a contradictory resolution is refused with
-`409 suggestion_already_resolved`.
+The removed semantic route into an existing work stream is recorded in
+[`contextual-routing.md`](contextual-routing.md). It is not a dormant step in
+this pipeline: current processing has no classifier, card, or feedback endpoint.
 
 A routed watch activity names the resources it matched. Their titles are in the
 message text a participant reads, so the person who sees the notification can
@@ -646,13 +660,13 @@ normalized-event authority.
 
 #### Suggested work admission
 
-Eligible connector activity is grouped into bounded per-member personal batch windows before the suggested-work admission agent decides whether to ignore it, route it into existing work, or create/update a work opportunity. A workspace-visible event is copied into one window per active member; the event remains workspace-visible while each inference sees only that member's authorized directory context. The model-facing JSON Schema deliberately uses only the portable structural subset: object and array shapes, primitive types, required fields, enums, and `additionalProperties: false`. Do not add string formats, string-length bounds, numeric bounds, or array-length bounds to that provider schema. Nested limits such as `linkedUsers.maxItems` can make the schema's constrained-decoding state space too large for otherwise supported Gemini structured-output endpoints, causing every admission request to fail before inference.
+Eligible connector activity is grouped into bounded per-member personal batch windows before the suggested-work admission agent decides whether to ignore it or create/update a work opportunity. A workspace-visible event is copied into one window per active member; the event remains workspace-visible while each inference sees only that member's authorized directory context. The model-facing JSON Schema deliberately uses only the portable structural subset: object and array shapes, primitive types, required fields, enums, and `additionalProperties: false`. Do not add string formats, string-length bounds, numeric bounds, or array-length bounds to that provider schema. Nested limits such as `linkedUsers.maxItems` can make the schema's constrained-decoding state space too large for otherwise supported Gemini structured-output endpoints, causing every admission request to fail before inference.
 
 The stricter `AdmissionResultSchema` remains authoritative after generation. It enforces UUIDs, string lengths, offsets, source counts, linked-user counts, and the four-decision cap before any result reaches persistence. This separation is intentional: the provider schema guides portable constrained generation, while Zod is Rally's trust boundary. Keep regression coverage asserting both halves whenever the admission response changes. The repository ESLint rule `avalon/provider-json-schema-complexity` statically follows schemas passed through a `jsonSchema` property and rejects excessive schema depth, node count, detailed constraints, or nested bounded-array expansion; a dynamic or imported schema that the rule cannot resolve still needs an explicit unit test.
 
 Admission failures are retried through new batch windows only while an event's attempt count is below three. Once that limit is reached the event remains failed; deploying a schema or model fix does not replay it automatically. Operators must verify the corrected admission path first, then use an explicit, bounded replay rather than resetting every activity indiscriminately.
 
-A connector's normalized `title`/`summary` is not independently bounded to the API contract's suggestion and resource limits (`ActivitySuggestionSchema`/`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`SubstreamAgent` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
+A connector's normalized `title`/`summary` is not independently bounded to the API contract's resource limits (`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`SubstreamAgent` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
 
 Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Rally's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
@@ -741,7 +755,7 @@ It does not own:
 
 | For | Read |
 | --- | --- |
-| The Suggested context surface and its accept/dismiss model | [`contextual-routing.md`](contextual-routing.md) |
+| The retired Suggested context feature | [`contextual-routing.md`](contextual-routing.md) |
 | Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
 | One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
 | What happens to `digestible` after the log is written | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
@@ -860,6 +874,24 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-30 — Connector activity no longer produces Suggested context
+
+**What changed:** The processing step now has no classifier or route into an
+existing work stream. It runs deterministic automation/watch matching first,
+uses WorkspaceDO's durable `claimed` witness even after delivery settlement,
+offers only unclaimed activity to Suggested Work, and always projects the
+activity log.
+
+**Why:** Suggested context was removed rather than left as a dormant branch in
+the shared activity consumer.
+
+**Considered and rejected:** Keeping digestibility as a confidence prior for a
+hidden classifier. Digestibility answers only whether a person wants an event
+read back in a digest; no other product now interprets it.
+
+**Consequences:** Connector manifests, watches, automations, activity logs, and
+Suggested Work remain. The connector pipeline stores no context-card feedback.
 
 ### 2026-08-29 — External platforms receive saved turns, never model streams
 
