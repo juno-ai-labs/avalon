@@ -489,12 +489,12 @@ written this way is a sign it is not a typography override.
 This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an optional
 `mentions` array, an optional `citations` context, and `glance` / `verbatim` /
-`still` / `streaming` flags — plus the citation matrix and `ResourceIcon`, which
-the inspector rail renders too so that one resource kind draws one glyph
-everywhere. Heading collapse is on unless `glance` or `still` is set; the
-collapse-all control is a sibling in the agent-message header, not a
-`MarkdownBody` prop, and shares section ids with the body through
-`MarkdownCollapseController`.
+`still` / `streaming` / `collapseHeadings` flags — plus the citation matrix and
+`ResourceIcon`, which the inspector rail renders too so that one resource kind
+draws one glyph everywhere. Heading collapse is off unless a host explicitly
+sets `collapseHeadings`; the main work-stream feed is the intended opt-in host.
+Its collapse-all control is a sibling in the agent-message header and shares
+section ids with the body through `MarkdownCollapseController`.
 
 **It does not own where a citation goes.** The host supplies resolution and
 click routing as `CitationContext` (`lib/use-citations.ts` builds the
@@ -647,11 +647,12 @@ The traps, both of which have bitten:
 
 ### 2026-08-30 — Heading collapse belongs only to the main message feed
 
-**What changed:** `MarkdownBody` heading collapse became opt-in. The main
-work-stream message feed enables it explicitly; the inspector rail and every
-other Markdown host inherit the fully expanded renderer. The rail still renders
-the file verbatim through the shared Markdown and citation renderer, without
-heading accordions, chevrons, or faded previews.
+**What changed:** `MarkdownBody` and the shared `MessageBlock` make heading
+collapse opt-in. The main work-stream message feed enables it explicitly; the
+inspector rail, automation setup, launch conversation, and every other Markdown
+host inherit the fully expanded renderer. The rail still renders the file
+verbatim through the shared Markdown and citation renderer, without heading
+accordions, chevrons, or faded previews.
 
 **Why:** Heading collapse was introduced for long transcript replies, where it
 shortens the feed. Making it the shared renderer's default also collapsed
@@ -771,6 +772,7 @@ check before token resolution so recycled transcript rows do not spend work on
 discarded diagrams.
 If saved diagrams become a requirement, make export await a completed render;
 do not serialize a live component's loading state.
+
 ### 2026-08-30 — Connector chips and embeds show connection state
 
 **What changed:** Inline connector chips gain a brand mark and an aggregate
