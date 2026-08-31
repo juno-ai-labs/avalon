@@ -2124,7 +2124,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   ).values()];
 
   return (
-    <ConnectorConnectionsProvider connections={connections.data ?? []}>
+    <ConnectorConnectionsProvider connections={connections.data}>
     <div className="workstream-screen">
       {/* The HyperSight preference is independent metadata, never an open or
           interaction gate. The control is optimistic even before the control

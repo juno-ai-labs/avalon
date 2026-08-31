@@ -114,6 +114,26 @@ export function connectorMentionHref(token: string, connectorType: string): stri
   return `connector://${token}:${encodeURIComponent(connectorType)}`;
 }
 
+const CONNECTOR_HREF_PATTERN = /^connector:/iu;
+const CONNECTOR_MENTION_HREF_PATTERN = /^connector:(?:\/\/)?([0-9a-z]+):(.+)$/iu;
+const CONNECTOR_EMBED_HREF_PATTERN = /^connector:(?:\/\/)?([a-z0-9_-]+)$/iu;
+
+function decodedConnectorType(encoded: string | undefined): string | undefined {
+  if (encoded === undefined) return undefined;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    // Message text is authored by people and models, so `[x](connector:%)` is a
+    // reachable input. A malformed escape is simply not a connector reference.
+    return undefined;
+  }
+}
+
+/** Whether an href names the connector identity protocol in either accepted form. */
+export function isConnectorHref(href: string | undefined): boolean {
+  return href !== undefined && CONNECTOR_HREF_PATTERN.test(href);
+}
+
 /**
  * Connector type from a tokened mention href, or `undefined` when the href is
  * not this render's tokened link (forged text, wrong token, malformed escape).
@@ -122,15 +142,19 @@ export function connectorTypeFromMentionHref(
   href: string | undefined,
   token: string,
 ): string | undefined {
-  const match = href?.match(/^connector:(?:\/\/)?([0-9a-z]+):(.+)$/iu);
+  const match = href?.match(CONNECTOR_MENTION_HREF_PATTERN);
   if (!match || match[1] !== token) return undefined;
-  try {
-    return decodeURIComponent(match[2] ?? "");
-  } catch {
-    // Message text is authored by people and models, so `[x](connector:%)` is a
-    // reachable input. A malformed escape is simply not a connector reference.
-    return undefined;
-  }
+  return decodedConnectorType(match[2]);
+}
+
+/**
+ * Connector type from a bare embed href (`connector://google`). Tokened mention
+ * hrefs are deliberately rejected: an embed names a provider family, while a
+ * mention must be validated through {@link connectorTypeFromMentionHref}.
+ */
+export function connectorTypeFromEmbedHref(href: string | undefined): string | undefined {
+  const match = href?.match(CONNECTOR_EMBED_HREF_PATTERN);
+  return decodedConnectorType(match?.[1])?.toLowerCase();
 }
 
 /**

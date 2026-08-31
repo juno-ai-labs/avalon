@@ -23,8 +23,15 @@ import {
 } from 'lucide-react';
 import { Children, Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
-import { citationFootnotes, citationScheme, connectorMentionHref, connectorTypeFromMentionHref, personIdFromMentionHref } from '@rally/contracts/citations';
-import { connectorTypeFromHref as connectorTypeFromAnyHref } from '../lib/connector-presentation';
+import {
+  citationFootnotes,
+  citationScheme,
+  connectorMentionHref,
+  connectorTypeFromEmbedHref,
+  connectorTypeFromMentionHref,
+  isConnectorHref,
+  personIdFromMentionHref,
+} from '@rally/contracts/citations';
 import { ConnectorEmbedCard, ConnectorMentionChip } from './connector-mentions';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
@@ -296,11 +303,6 @@ export function createConnectorMentionToken(): string {
     ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }
 
-/** Any connector-scheme href, tokened or not — all stay inert rather than navigating. */
-function isConnectorHref(href: string | undefined): boolean {
-  return href !== undefined && href.startsWith('connector:');
-}
-
 function tokenedConnectorType(href: string | undefined, token: string): string | undefined {
   return connectorTypeFromMentionHref(href, token);
 }
@@ -310,7 +312,9 @@ function tokenedConnectorType(href: string | undefined, token: string): string |
  * it, and `&` would let a character reference decode into something else.
  */
 function escapeMarkdownLabel(label: string): string {
-  return label.replace(/[\\[\]*_`~&]/gu, (character) => `\\${character}`);
+  return label
+    .replace(/&/gu, '&amp;')
+    .replace(/[\\[\]*_`~]/gu, (character) => `\\${character}`);
 }
 
 /** The rendered label of a link, when it is a single plain string. */
@@ -414,7 +418,7 @@ const INTERNAL_CITATION_SCHEMES: ReadonlySet<string> = new Set(['resource', 'per
 function isInternalCitationTarget(url: string, key: string, tagName: string): boolean {
   const position = (key === 'href' && tagName === 'a') || (key === 'src' && tagName === 'img');
   if (!position) return false;
-  if (url.startsWith('connector:')) return true;
+  if (isConnectorHref(url)) return true;
   return INTERNAL_CITATION_SCHEMES.has(citationScheme(url));
 }
 
@@ -725,8 +729,8 @@ export function MarkdownBody({
         // Connector embeds are not a citation scheme. Image syntax still reaches
         // here because urlTransform lets the href through; draw the card before
         // the matrix would degrade it to alt text.
-        if (src !== undefined && src.startsWith('connector:')) {
-          const connectorType = connectorTypeFromAnyHref(src);
+        if (isConnectorHref(src)) {
+          const connectorType = connectorTypeFromEmbedHref(src);
           if (connectorType === undefined) return <>{alt}</>;
           return <ConnectorEmbedCard connectorType={connectorType} label={alt} />;
         }

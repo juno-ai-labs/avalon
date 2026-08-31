@@ -595,7 +595,12 @@ only connection status carries success or warning colour. The compact card uses
 one consistent inset and keeps its bare provider mark at the top left. The
 inline chip omits the composer's leading `@`; stored text and offsets retain it.
 The work-stream screen supplies live `/connections` data via
-`ConnectorConnectionsProvider`.
+`ConnectorConnectionsProvider`. A still-loading or failed query supplies no
+status, because an unresolved list is not evidence that a connection is
+missing. Once resolved, every matching credential in a scope contributes to a
+stable status and capability union. Google Mail/Calendar and Drive/Docs/Sheets
+remain the real shared `google` connector type; the visible label selects the
+capability family, so one bundle cannot claim that the other is connected.
 
 **Why:** Offset-backed connector mentions were label-only text chips, so a
 reader could not tell whether the named connector was usable. Resource embeds
@@ -605,7 +610,10 @@ surface language rather than inventing a third card system.
 **What a future change has to respect:** Connector remains outside
 `CitationTarget`. Chip minting still requires the per-render token; embeds use
 the bare `connector://<type>` form. Status comes from the connections list, never
-from the message text.
+from the message text. Treat the list as unresolved until query data exists,
+aggregate all same-scope credentials rather than choosing the first, and keep
+connector href parsing in `@rally/contracts/citations` so chip and embed syntax
+cannot drift.
 
 ### 2026-08-30 — Connector is not a citation scheme
 
