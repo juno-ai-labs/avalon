@@ -3786,7 +3786,10 @@ pre {
 .automation-email-value { font-family: var(--av-sys-font-family-mono); font-size: 9.5px; line-height: 1.35; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .automation-email-address .automation-email-copy { height: 24px; justify-self: end; width: 24px; }
 .automation-delivery-fact ul { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
-.automation-delivery-fact li { align-items: center; display: flex; gap: 6px; min-height: 26px; }
+/* Wraps because the sub-label below a row is a whole sentence: unwrapped it
+   shares one 250px line with the destination and ellipsises the name away,
+   so the row warning that something is wrong stops saying what. */
+.automation-delivery-fact li { align-items: center; display: flex; flex-wrap: wrap; gap: 2px 6px; min-height: 26px; }
 .automation-delivery-fact label { align-items: center; color: var(--av-sys-color-text-subtle); cursor: pointer; display: flex; font-size: 11.5px; gap: 7px; min-width: 0; }
 .automation-delivery-fact label > svg { color: var(--av-sys-color-text-muted); flex: 0 0 auto; }
 .automation-delivery-fact label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
