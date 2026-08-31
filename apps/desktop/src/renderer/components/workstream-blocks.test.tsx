@@ -17,6 +17,8 @@ const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => 
 ));
 const desktopServicesAvailable = vi.hoisted(() => vi.fn(() => true));
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn(async () => undefined));
+const initializeMermaid = vi.hoisted(() => vi.fn());
+const renderMermaid = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ copyText, exportMessage, reportTelemetryProductIntent }),
@@ -26,6 +28,12 @@ vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
     <span data-paused={String(paused)} data-size={size} data-state={state} data-testid="thinking-orb" />
   ),
+}));
+vi.mock('mermaid', () => ({
+  default: { initialize: initializeMermaid, render: renderMermaid },
+}));
+vi.mock('./markdown-mermaid-theme', () => ({
+  readMermaidThemeConfig: () => ({ themeCSS: 'token-derived-theme', themeVariables: { primaryColor: 'token' } }),
 }));
 
 afterEach(() => vi.useRealTimers());
@@ -784,15 +792,71 @@ describe('MessageBlock markdown', () => {
       id: 'message-unsupported-language',
       authorType: 'agent',
       author: undefined,
-      text: '```mermaid\ngraph TD; A-->B\n```',
+      text: '```brainfuck\n+[-->-[>>+>-----<<]<--<---]>-.\n```',
     };
 
     render(<MessageBlock {...actions} message={message} />);
 
-    expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'mermaid');
+    expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'brainfuck');
     expect(document.querySelector('.prism-code')).toHaveClass('language-plain');
-    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.getByText('+[-->-[>>+>-----<<]<--<---]>-.')).toBeVisible();
+    expect(screen.getByText('Brainfuck')).toHaveClass('markdown-code-language');
+  });
+
+  it('renders a completed Mermaid fence as a strict, theme-aware diagram', async () => {
+    renderMermaid.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Rendered graph</text></svg>' });
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-mermaid',
+      authorType: 'agent',
+      author: undefined,
+      text: '```mermaid\ngraph TD; A-->B\n```',
+    };
+
+    const { container } = render(<MessageBlock {...actions} message={message} />);
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(container.querySelector('.markdown-mermaid-diagram svg')).not.toBeNull();
+    expect(container.querySelector('.markdown-mermaid-svg')).toHaveStyle({ width: '40px' });
+    expect(screen.getByText('Rendered graph')).toBeVisible();
+    expect(initializeMermaid).toHaveBeenCalledWith(expect.objectContaining({
+      htmlLabels: false,
+      securityLevel: 'strict',
+      startOnLoad: false,
+      suppressErrorRendering: true,
+      theme: 'base',
+      themeCSS: 'token-derived-theme',
+      themeVariables: { primaryColor: 'token' },
+    }));
+    expect(renderMermaid).toHaveBeenCalledWith(expect.stringMatching(/^rally-mermaid-/u), 'graph TD; A-->B');
     expect(screen.getByText('Mermaid')).toHaveClass('markdown-code-language');
+    expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
+  });
+
+  it('keeps invalid Mermaid readable as source', async () => {
+    renderMermaid.mockRejectedValueOnce(new Error('syntax error'));
+
+    render(<MarkdownBody>{'```mermaid\nnot a diagram\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(screen.getByText('not a diagram')).toBeVisible();
+  });
+
+  it('keeps Mermaid source in stills and while streaming, then renders the settled turn', async () => {
+    renderMermaid.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Settled graph</text></svg>' });
+    const markdown = '```mermaid\ngraph TD; A-->B\n```';
+    const view = render(<MarkdownBody still>{markdown}</MarkdownBody>);
+
+    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.queryByRole('img', { name: 'Mermaid diagram' })).toBeNull();
+
+    view.rerender(<MarkdownBody streaming>{markdown}</MarkdownBody>);
+    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.queryByRole('img', { name: 'Mermaid diagram' })).toBeNull();
+
+    view.rerender(<MarkdownBody>{markdown}</MarkdownBody>);
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(screen.getByText('Settled graph')).toBeVisible();
   });
 
   it('keeps code copy retryable when clipboard access is unavailable', async () => {

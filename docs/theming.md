@@ -3,8 +3,8 @@
 A theme is a JSON file. `config/design-tokens/` holds one file per appearance
 and a registry saying which tokens exist and what each one means; a build step
 turns them into the stylesheet the renderer loads. Nothing in the interface
-knows which theme is running, and no component reads a colour, so adding an
-appearance costs a JSON file rather than an audit of a 3,800-line stylesheet.
+chooses a colour outside that vocabulary, so adding an appearance costs a JSON
+file rather than an audit of a 3,800-line stylesheet.
 
 Read this before adding a theme, adding a token, or writing a colour anywhere in
 the renderer. Two rules carry the rest: **`app.css` names tokens and never a
@@ -184,8 +184,8 @@ person actually picked, one attribute per axis, because a pinned Dark and
 "system, currently dark" produce an identical `data-theme` and the Settings
 picker has to tell them apart.
 
-Nothing else in the renderer branches on the theme. No component reads a colour,
-and no rule is written twice for two appearances.
+Nothing else in the renderer branches on the theme. No component chooses a
+colour, and no rule is written twice for two appearances.
 
 ### The token taxonomy
 
@@ -331,6 +331,17 @@ level carried by weight alone is a decision, while one *below* the prose is a
 caption. The other rejects a bare `px` font-size, weight or line-height inside a
 `.markdown-body` rule, which is the guard that would have caught this: the
 engine had one for colour and none for size.
+
+Mermaid is the one renderer that cannot keep a `var()` reference in the markup:
+it parses, derives, and writes an SVG stylesheet before the browser sees it. The
+adapter in `markdown-mermaid-theme.ts` therefore reads the active theme's
+computed custom properties at that third-party boundary and hands Mermaid
+concrete values. The mapping still chooses no palette of its own: diagram
+surfaces, text, borders, state washes, chart series, font, radius, and stroke
+width all name design tokens. Relationship lines use
+`cmp.markdown.diagram-line`, aliased to the strongest line-ramp step in each
+theme; ordinary container borders stay deliberately quieter. Switching
+appearance causes the diagram to render again from the newly resolved values.
 
 ### The navigation is translucent
 
@@ -550,11 +561,14 @@ depend on that:
 - **A focus border stays visible in every theme.** `--av-ref-color-line-6` is the one step
   Air does not flatten; an invisible focus indicator is an accessibility defect,
   not a design choice.
-- **No component reads a colour.** Two places would otherwise have to: the
-  `prism-react-renderer` theme and the per-participant accent, both of which take
+- **No component invents or branches on a colour.** Two places that accept CSS
+  values — the `prism-react-renderer` theme and the per-participant accent — take
   JavaScript values. Both pass `var(--av-sys-color-syntax-*)` and `var(--person-accent)` strings into
   inline styles, which resolve against the element's cascade like any other
-  reference — **in the renderer**. The message exporter re-hosts that same markup
+  reference. Mermaid is the explicit exception to retaining the reference: its
+  generator must receive concrete colours before it writes an SVG stylesheet,
+  so `markdown-mermaid-theme.ts` resolves named semantic tokens at render time
+  without owning a value. The message exporter re-hosts Prism markup
   in a standalone document that loads none of this, so it declares the syntax
   tokens itself from the generated `exportSyntaxPalette`; a `var()` that resolves
   nowhere is invalid at computed-value time and falls back to the inherited
@@ -662,6 +676,34 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-30 — Mermaid resolves the active design tokens
+
+**What changed:** Mermaid's base theme now receives concrete values resolved
+from Rally's active design tokens for surfaces, text, borders, state washes,
+chart series, typography, radius, and stroke width. The new
+`cmp.markdown.diagram-line` token gives relationship lines the strongest
+line-ramp value while leaving container borders quiet. A theme change
+re-renders the SVG from the new token values.
+
+**Why:** Selecting Mermaid's generic `neutral` or `dark` theme followed the
+window's brightness but not Rally's design system. Actor cards, notes, lines,
+and sequence numbers therefore looked like an embedded document instead of the
+code-block surface around them.
+
+**Considered and rejected:** CSS overrides over Mermaid's generated stylesheet
+cover only diagram kinds and selectors known today. Passing unresolved `var()`
+strings was also rejected because Mermaid performs colour calculations before
+the browser can resolve them. Reading the computed tokens at the generator
+boundary keeps every value owned by the theme and works for Mermaid's shared
+theme-variable vocabulary.
+
+**What a future change has to respect:** the adapter may map Mermaid roles to
+Rally roles, but it must not add literal colours or branch on a theme id. New
+diagram-specific fields should resolve design tokens, and every appearance must
+be checked in a real window because token provenance alone does not prove
+contrast. The visible relationship line and the quieter boundary line are
+different roles; do not collapse them back onto the generic border token.
 
 ### 2026-08-30 — Automation rows use the same hover pill as work streams
 

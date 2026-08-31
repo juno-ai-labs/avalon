@@ -241,6 +241,7 @@
     "cmp.feed.padding-x": "34px",
     "cmp.feed.author.font-size": "10.5px",
     "cmp.feed.author.font-weight": "560",
+    "cmp.markdown.diagram-line": "{ref.color.line.6}",
     "cmp.markdown.heading-1": "18px",
     "cmp.markdown.heading-2": "16px",
     "cmp.markdown.heading-3": "14.5px",

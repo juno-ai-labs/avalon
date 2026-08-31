@@ -192,6 +192,7 @@
     "cmp.feed.padding-y": "46px",
     "cmp.feed.author.font-size": "10.5px",
     "cmp.feed.author.font-weight": "560",
+    "cmp.markdown.diagram-line": "{ref.color.line.6}",
     "cmp.tooltip.background": "#2b2823",
     "cmp.tooltip.foreground": "#f4f2ed",
     "cmp.toggle.track": "#c0bbae",
