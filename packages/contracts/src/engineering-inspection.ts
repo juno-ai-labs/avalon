@@ -91,17 +91,39 @@ export const SubstreamInspectionInputSchema = z.object({
 }).strict();
 export type SubstreamInspectionInput = z.infer<typeof SubstreamInspectionInputSchema>;
 
+const AuthorityGenerationSchema = z.number().int().positive();
+
+export const EngineeringWorkspaceTargetSchema = z.object({
+  region: RegionSchema,
+  workspaceId: WorkspaceIdSchema,
+  authorityGeneration: AuthorityGenerationSchema,
+}).strict();
+export type EngineeringWorkspaceTarget = z.infer<typeof EngineeringWorkspaceTargetSchema>;
+
+export const EngineeringWorkstreamTargetSchema = EngineeringWorkspaceTargetSchema.extend({
+  workstreamId: WorkstreamIdSchema,
+}).strict();
+export type EngineeringWorkstreamTarget = z.infer<typeof EngineeringWorkstreamTargetSchema>;
+
+export const EngineeringSubstreamTargetSchema = EngineeringWorkstreamTargetSchema.extend({
+  substreamId: SubstreamIdSchema,
+}).strict();
+export type EngineeringSubstreamTarget = z.infer<typeof EngineeringSubstreamTargetSchema>;
+
 export const WorkspaceSqlInspectionInputSchema = WorkspaceInspectionInputSchema.extend({
+  authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
 }).strict();
 export type WorkspaceSqlInspectionInput = z.infer<typeof WorkspaceSqlInspectionInputSchema>;
 
 export const WorkstreamSqlInspectionInputSchema = WorkstreamInspectionInputSchema.extend({
+  authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
 }).strict();
 export type WorkstreamSqlInspectionInput = z.infer<typeof WorkstreamSqlInspectionInputSchema>;
 
 export const SubstreamSqlInspectionInputSchema = SubstreamInspectionInputSchema.extend({
+  authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
 }).strict();
 export type SubstreamSqlInspectionInput = z.infer<typeof SubstreamSqlInspectionInputSchema>;
@@ -128,6 +150,27 @@ export const EngineeringSubstreamListLookupSchema = lookupResultSchema(z.object(
 }).strict());
 export type EngineeringSubstreamListLookup = z.infer<typeof EngineeringSubstreamListLookupSchema>;
 
+export const EngineeringWorkspaceTargetLookupSchema = lookupResultSchema(
+  EngineeringWorkspaceTargetSchema,
+);
+export type EngineeringWorkspaceTargetLookup = z.infer<
+  typeof EngineeringWorkspaceTargetLookupSchema
+>;
+
+export const EngineeringWorkstreamTargetLookupSchema = lookupResultSchema(
+  EngineeringWorkstreamTargetSchema,
+);
+export type EngineeringWorkstreamTargetLookup = z.infer<
+  typeof EngineeringWorkstreamTargetLookupSchema
+>;
+
+export const EngineeringSubstreamTargetLookupSchema = lookupResultSchema(
+  EngineeringSubstreamTargetSchema,
+);
+export type EngineeringSubstreamTargetLookup = z.infer<
+  typeof EngineeringSubstreamTargetLookupSchema
+>;
+
 export const EngineeringSqlLookupSchema = lookupResultSchema(z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
@@ -142,6 +185,9 @@ export interface EngineeringInspectionRpcBinding {
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
   listWorkstreams(input: WorkspaceInspectionInput): Promise<EngineeringWorkstreamListLookup>;
   listSubstreams(input: WorkstreamInspectionInput): Promise<EngineeringSubstreamListLookup>;
+  resolveWorkspace(input: WorkspaceInspectionInput): Promise<EngineeringWorkspaceTargetLookup>;
+  resolveWorkstream(input: WorkstreamInspectionInput): Promise<EngineeringWorkstreamTargetLookup>;
+  resolveSubstream(input: SubstreamInspectionInput): Promise<EngineeringSubstreamTargetLookup>;
   runWorkspaceSql(input: WorkspaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runWorkstreamSql(input: WorkstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runSubstreamSql(input: SubstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;

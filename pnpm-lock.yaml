@@ -493,7 +493,7 @@ importers:
         specifier: 6.2.9
         version: 6.2.9
       zod:
-        specifier: 4.4.3
+        specifier: 'catalog:'
         version: 4.4.3
     devDependencies:
       '@cloudflare/workers-types':

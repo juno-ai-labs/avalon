@@ -15,7 +15,7 @@ const generatedConfig = join(appDirectory, "wrangler.generated.json");
 if (!accountId) throw new Error("CLOUDFLARE_ACCOUNT_ID is required");
 if (!deploymentToken) throw new Error("CLOUDFLARE_API_TOKEN is required");
 
-async function cloudflare(path, init = {}) {
+async function cloudflareResponse(path, init = {}) {
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}${path}`, {
     ...init,
     headers: {
@@ -31,7 +31,31 @@ async function cloudflare(path, init = {}) {
       `Cloudflare ${init.method ?? "GET"} ${path} failed (${response.status})${detail ? `: ${detail}` : ""}`,
     );
   }
-  return body.result;
+  return body;
+}
+
+async function cloudflare(path, init = {}) {
+  return (await cloudflareResponse(path, init)).result;
+}
+
+async function cloudflareList(path) {
+  const items = [];
+  for (let page = 1; ; page += 1) {
+    const url = new URL(path, "https://api.cloudflare.invalid");
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", "100");
+    const body = await cloudflareResponse(`${url.pathname}${url.search}`);
+    if (!Array.isArray(body.result)) {
+      throw new Error(`Cloudflare GET ${path} returned a non-list result`);
+    }
+    items.push(...body.result);
+    const totalPages = Number(body.result_info?.total_pages);
+    if (Number.isInteger(totalPages) && totalPages > 0) {
+      if (page >= totalPages) return items;
+    } else if (body.result.length < 100) {
+      return items;
+    }
+  }
 }
 
 function policyShape(policy) {
@@ -43,11 +67,11 @@ function policyShape(policy) {
 }
 
 async function ensureAccessApplication() {
-  const applications = await cloudflare("/access/apps?per_page=100");
+  const applications = await cloudflareList("/access/apps");
   const ace = applications.find((application) => application.domain === aceDomain);
   if (!ace) throw new Error(`The ${aceDomain} Access application is required as the MCP policy source`);
-  const acePolicies = await cloudflare(
-    `/access/apps/${encodeURIComponent(ace.id)}/policies?per_page=100`,
+  const acePolicies = await cloudflareList(
+    `/access/apps/${encodeURIComponent(ace.id)}/policies`,
   );
   if (!Array.isArray(acePolicies) || acePolicies.length === 0) {
     throw new Error("The Ace Access application has no policy to reuse");

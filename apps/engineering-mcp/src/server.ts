@@ -1,7 +1,10 @@
 import {
   EngineeringSqlLookupSchema,
   EngineeringSubstreamListLookupSchema,
+  EngineeringSubstreamTargetLookupSchema,
+  EngineeringWorkspaceTargetLookupSchema,
   EngineeringWorkstreamListLookupSchema,
+  EngineeringWorkstreamTargetLookupSchema,
   InspectionSqlBindingSchema,
   ListEngineeringWorkspacesResultSchema,
 } from "@rally/contracts/engineering-inspection";
@@ -43,6 +46,30 @@ function oneRegionalResult<T extends { found: boolean }>(
   if (found.length === 0) throw new Error(`${target} was not found in either Rally region`);
   if (found.length !== 1) throw new Error(`${target} exists in both Rally regions; inspection refused`);
   return found[0]!;
+}
+
+type Lookup<T> = { found: false } | { found: true; value: T };
+
+function oneRegionalTarget<T>(
+  env: Env,
+  global: Lookup<T>,
+  eu: Lookup<T>,
+  target: string,
+): { binding: Env["GLOBAL_INSPECTION"]; value: T } {
+  if (global.found && eu.found) {
+    throw new Error(`${target} exists in both Rally regions; inspection refused`);
+  }
+  if (global.found) return { binding: env.GLOBAL_INSPECTION, value: global.value };
+  if (eu.found) return { binding: env.EU_INSPECTION, value: eu.value };
+  throw new Error(`${target} was not found in either Rally region`);
+}
+
+function executedSql(value: unknown, target: string) {
+  const result = EngineeringSqlLookupSchema.parse(value);
+  if (!result.found) {
+    throw new Error(`${target} authority changed before SQL execution; inspection refused`);
+  }
+  return result.value;
 }
 
 async function tool(
@@ -145,14 +172,20 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     { workspace_id: workspaceId },
     async () => {
       const [globalRaw, euRaw] = await Promise.all([
-        env.GLOBAL_INSPECTION.runWorkspaceSql({ workspaceId, query: { sql, bindings } }),
-        env.EU_INSPECTION.runWorkspaceSql({ workspaceId, query: { sql, bindings } }),
+        env.GLOBAL_INSPECTION.resolveWorkspace({ workspaceId }),
+        env.EU_INSPECTION.resolveWorkspace({ workspaceId }),
       ]);
-      return oneRegionalResult(
-        EngineeringSqlLookupSchema.parse(globalRaw),
-        EngineeringSqlLookupSchema.parse(euRaw),
+      const resolved = oneRegionalTarget(
+        env,
+        EngineeringWorkspaceTargetLookupSchema.parse(globalRaw),
+        EngineeringWorkspaceTargetLookupSchema.parse(euRaw),
         `Workspace ${workspaceId}`,
-      ).value;
+      );
+      return executedSql(await resolved.binding.runWorkspaceSql({
+        workspaceId,
+        authorityGeneration: resolved.value.authorityGeneration,
+        query: { sql, bindings },
+      }), `Workspace ${workspaceId}`);
     },
   ));
 
@@ -166,14 +199,20 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     { workstream_id: workstreamId },
     async () => {
       const [globalRaw, euRaw] = await Promise.all([
-        env.GLOBAL_INSPECTION.runWorkstreamSql({ workstreamId, query: { sql, bindings } }),
-        env.EU_INSPECTION.runWorkstreamSql({ workstreamId, query: { sql, bindings } }),
+        env.GLOBAL_INSPECTION.resolveWorkstream({ workstreamId }),
+        env.EU_INSPECTION.resolveWorkstream({ workstreamId }),
       ]);
-      return oneRegionalResult(
-        EngineeringSqlLookupSchema.parse(globalRaw),
-        EngineeringSqlLookupSchema.parse(euRaw),
+      const resolved = oneRegionalTarget(
+        env,
+        EngineeringWorkstreamTargetLookupSchema.parse(globalRaw),
+        EngineeringWorkstreamTargetLookupSchema.parse(euRaw),
         `Work stream ${workstreamId}`,
-      ).value;
+      );
+      return executedSql(await resolved.binding.runWorkstreamSql({
+        workstreamId,
+        authorityGeneration: resolved.value.authorityGeneration,
+        query: { sql, bindings },
+      }), `Work stream ${workstreamId}`);
     },
   ));
 
@@ -192,24 +231,22 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     { workspace_id: workspaceId, workstream_id: workstreamId, substream_id: substreamId },
     async () => {
       const [globalRaw, euRaw] = await Promise.all([
-        env.GLOBAL_INSPECTION.runSubstreamSql({
-          workspaceId,
-          workstreamId,
-          substreamId,
-          query: { sql, bindings },
-        }),
-        env.EU_INSPECTION.runSubstreamSql({
-          workspaceId,
-          workstreamId,
-          substreamId,
-          query: { sql, bindings },
-        }),
+        env.GLOBAL_INSPECTION.resolveSubstream({ workspaceId, workstreamId, substreamId }),
+        env.EU_INSPECTION.resolveSubstream({ workspaceId, workstreamId, substreamId }),
       ]);
-      return oneRegionalResult(
-        EngineeringSqlLookupSchema.parse(globalRaw),
-        EngineeringSqlLookupSchema.parse(euRaw),
+      const resolved = oneRegionalTarget(
+        env,
+        EngineeringSubstreamTargetLookupSchema.parse(globalRaw),
+        EngineeringSubstreamTargetLookupSchema.parse(euRaw),
         `Substream ${substreamId}`,
-      ).value;
+      );
+      return executedSql(await resolved.binding.runSubstreamSql({
+        workspaceId,
+        workstreamId,
+        substreamId,
+        authorityGeneration: resolved.value.authorityGeneration,
+        query: { sql, bindings },
+      }), `Substream ${substreamId}`);
     },
   ));
 
