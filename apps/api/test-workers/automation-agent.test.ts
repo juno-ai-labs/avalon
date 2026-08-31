@@ -14,7 +14,7 @@ import {
   materializeAutomationMemoryDefinitions,
 } from "../src/durable-objects/automation-agent-memory";
 import { canonicalTranscriptJson } from "../src/durable-objects/ordered-transcript-sqlite/canonical-payload-store";
-import { automationAgentName } from "../src/durable-objects/names";
+import { automationAgentName, workspaceDOName } from "../src/durable-objects/names";
 import { sha256 } from "../src/lib/crypto";
 import type { Env } from "../src/env";
 import { AutomationAgentService } from "../src/services/automation-agent-service";
@@ -341,6 +341,136 @@ describe("AutomationAgent", () => {
     await expect(service.detail(AUTOMATION_ID)).rejects.toMatchObject({
       status: 404,
       code: "automation_identity_missing",
+    });
+  });
+
+  it("answers the create boundary's own two refusals as refusals, not as a 500", async () => {
+    // These two are decided in `AutomationAgentService` before any RPC is made,
+    // so `withAutomationErrors` — which maps only what the object throws — never
+    // saw them. Both were raised as bare `Error`s, and `errorHandler` turns
+    // anything that is not an `ApiError` into `500 internal_error` / "An
+    // unexpected error occurred": a person whose draft the compiler had revised
+    // while they reviewed it was told nothing, at error severity, by a status
+    // every client backing off on 5xx retries.
+    const stub = automationStub();
+    const definition = {
+      name: "Weekday digest",
+      description: "Summarize unread email every weekday morning.",
+      overview: "Each weekday at 9:00 AM, write a short digest.",
+      instructions: "Summarize the unread email, most important first.",
+      triggers: [{ type: "manual" as const }],
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      requestedDelivery: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal" as const,
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    await runInDurableObject(stub, async (instance: AutomationAgent, state) => {
+      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
+      const admission = await instance.admitDraftTurn({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        clientMessageId: CLIENT_MESSAGE_ID,
+        content: "Summarize my unread email every weekday at 9am",
+        attachmentIds: [],
+        inputMode: "typed",
+      });
+      state.storage.sql.exec(
+        `UPDATE automation_compiler_runs SET state = 'completed', settled_at = 1 WHERE run_id = ?`,
+        admission.compilerRunId,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_definition_revisions
+           (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
+         VALUES (1, ?, ?, 'sha256:definition', 1, 1)`,
+        admission.compilerRunId,
+        JSON.stringify(definition),
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_state SET definition_revision = 1, title = ? WHERE id = 1`,
+        definition.name,
+      );
+    });
+
+    // Acceptance reaches WorkspaceDO to register evaluators, and an object that
+    // has never been addressed refuses every caller with
+    // `workspace_object_identity_mismatch`. Pinning the identity through the
+    // method that exists for it keeps the happy path below a real round trip
+    // rather than a patched `workspace()`.
+    await env.WORKSPACE_DOS
+      .get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
+      .initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    const testEnv: Env = env;
+    const service = new AutomationAgentService(testEnv, {
+      sessionId: "session-1",
+      userId: AUTHOR_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "member",
+    });
+
+    // The draft the caller submitted is not the definition the object stored,
+    // which is what the compiler having produced a later revision looks like
+    // from here.
+    await expect(service.accept({
+      draftId: AUTOMATION_ID,
+      draft: { ...definition, description: "Summarize unread email every weekday, with links." },
+      scope: "personal",
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "automation_definition_revision_stale",
+      message: "This draft changed while you were reviewing it. Reload and try again.",
+    });
+
+    await expect(service.accept({ draft: definition, scope: "personal" })).rejects.toMatchObject({
+      status: 422,
+      code: "automation_draft_id_required",
+      message: "This request is missing its draft.",
+    });
+
+    // The refusals are the boundary's, not a blanket rejection: the draft as
+    // the object actually holds it is still accepted.
+    await expect(service.accept({
+      draftId: AUTOMATION_ID,
+      draft: definition,
+      scope: "personal",
+    })).resolves.toMatchObject({ id: AUTOMATION_ID, name: "Weekday digest", status: "active" });
+  });
+
+  it("answers a directory refusal as a refusal too, on the same unwrapped path", async () => {
+    // `list` and the first send's directory projection reached WorkspaceDO
+    // outside `withAutomationErrors` for the same reason `accept` did, so both
+    // answered 500 for a code the table already has words for. The list is the
+    // one of the two a test can put a real refusal in front of: the projection
+    // refuses only on a hash conflict at a coordinate it already holds.
+    await env.DB.prepare(`CREATE TABLE workspace_members (
+      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, user_id))`).run();
+    await env.WORKSPACE_DOS
+      .get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
+      .initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    const testEnv: Env = env;
+    const outsider = new AutomationAgentService(testEnv, {
+      sessionId: "session-2",
+      userId: asUserId("00000000-0000-7000-8000-0000000000b9"),
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "member",
+    });
+
+    await expect(outsider.list()).rejects.toMatchObject({
+      status: 409,
+      code: "automation_directory_access_denied",
     });
   });
 

@@ -386,7 +386,12 @@ email is addressed and rendered
   zone, 503 while a workspace is mid-cutover. An unmapped code that still looks
   like one of ours answers 409 generically; anything else keeps its 500, because
   a fault nobody has reasoned about must not be answered as a retryable
-  conflict.
+  conflict. Two refusals are decided in `AutomationAgentService` before any RPC
+  is made — a create request with no draft id, and a submitted draft that no
+  longer matches the stored definition — and they read the same table through
+  `automationRefusal`. Raising either as a bare `Error` puts it outside the one
+  wrapper that consults the table, which is the whole difference between a
+  sentence and a 500.
 - **The compiler fails or is interrupted.** The run settles as `failed` and stays
   the visible outcome until another turn is admitted — hiding it made a failure
   look like a successful idle reconnect. **Retry** re-arms the dispatch alarm for
@@ -525,6 +530,58 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-08-31 — The create boundary's own refusals stop answering 500
+
+**What changed:** `AutomationAgentService.accept` raised
+`automation_draft_id_required` and `automation_definition_revision_stale` as
+bare `Error`s. Both now go through `automationRefusal`, a new export of
+`automation-agent-errors.ts` that reads the same table `withAutomationErrors`
+does, so they answer 422 and 409 with the sentences already written for them.
+The table is `as const satisfies` now, and the codes `automationRefusal` accepts
+are its keys, so a misspelled one is a type error rather than a silent 500. The
+two `WorkspaceDO` calls the service made outside a wrapper —
+`applyAutomationProjection` on the first authoring send, and
+`listAutomationDirectory` — are wrapped as well.
+
+**Why:** `errorHandler` maps anything that is not an `ApiError` to `500
+internal_error` / "An unexpected error occurred". The whole point of the error
+table is that a refusal is not a fault, and these two sat outside the only
+wrapper that reads it — so the create screen showed one unexplained sentence and
+no next step for the two cases the table has the clearest answers to. Both
+reproduce against a local stack: `POST /automations` with a draft that is not
+byte-identical to the stored definition, and one with no `draftId`, each
+answered `500 internal_error`. That status is also what any client backing off
+on 5xx retries, and every occurrence was logged at error severity beside genuine
+faults, which is why nothing in the logs distinguished them.
+
+The projection and directory calls are the same defect one step earlier:
+`applyAutomationProjection` refuses a coordinate it already holds under a
+different hash with `automation_projection_hash_conflict`, and
+`listAutomationDirectory` refuses a non-member with
+`automation_directory_access_denied`. Both are object vocabulary, and both were
+reaching the member as the same 500 — on the *first* send of a new automation,
+in the projection's case.
+
+**Considered and rejected:** Wrapping the whole of `accept` in
+`withAutomationErrors`, which is shorter and makes every throw in the method
+look like the object's. The file's own note explains why the wrapping is per
+call site rather than blanket, and a refusal this boundary decides for itself is
+worth reading as such. Also rejected: loosening the byte-identical comparison so
+the stale case stops arising. The comparison is the acceptance contract — the
+caller is confirming the definition it showed a person — and a mismatch it did
+not refuse would create an automation nobody reviewed.
+
+**What a future change has to respect:** A refusal decided in the service, not
+the object, still belongs in `AUTOMATION_ERROR_RESPONSES` and must be raised
+with `automationRefusal`; `throw new Error(code)` outside a wrapper is a 500
+again, and the type only protects the codes, not the raising. The stale refusal
+now says "This draft changed while you were reviewing it. Reload and try again."
+That is the right sentence for the race it was written for — a compiler turn
+settling while somebody reviews — and the wrong one for a client whose bundled
+copy of `AutomationDraftSchema` differs from the server's, where reloading
+changes nothing. Distinguishing those needs the revision the caller reviewed to
+travel with the request, which this change does not add.
 
 ### 2026-08-29 — The template gallery becomes three typed WorkspaceDO methods
 
