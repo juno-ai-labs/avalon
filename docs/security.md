@@ -734,6 +734,10 @@ block. Strict mode still emits ordinary SVG links, so Rally unwraps anchors and
 removes every non-fragment `href` before inserting the result. A generated style
 block or presentation attribute containing a non-fragment CSS resource rejects
 the entire diagram instead of allowing its display to make an external request.
+Parsed styles with external resources and flowchart image nodes are rejected
+from Mermaid's database before render, because Mermaid can otherwise fetch them
+while drawing or measuring, before output sanitisation can run. The generated
+SVG resource scan remains as a second boundary before insertion.
 
 **Why:** Diagram rendering necessarily produces markup from untrusted model or
 member text, unlike the rest of Rally's raw-HTML-free Markdown path. Naming and
@@ -744,9 +748,9 @@ turning labels into HTML or destinations into UI behavior.
 **What a future change has to respect:** keep the insertion point confined to
 Mermaid's strict sanitised SVG. Do not enable loose/antiscript mode, HTML labels,
 callbacks, or `bindFunctions`. Keep the post-render link removal even when
-upgrading Mermaid, and keep rejecting non-fragment CSS resources: `strict` does
-not mean non-interactive or network-inert. A request for interactive diagrams is
-a new trust-boundary decision, not a styling change.
+upgrading Mermaid, and keep rejecting pre-render image nodes and non-fragment CSS
+resources: `strict` does not mean non-interactive or network-inert. A request for
+interactive diagrams is a new trust-boundary decision, not a styling change.
 
 ### 2026-08-29 — The deep-link failure window joins the trusted-sender set
 

@@ -28,6 +28,20 @@ interface PreparedDiagram {
   description?: string;
 }
 
+interface MermaidResourceBearingEntry {
+  cssStyles?: unknown;
+  img?: unknown;
+  style?: unknown;
+  styles?: unknown;
+  textStyles?: unknown;
+}
+
+interface DiagramDatabaseWithResources {
+  getClasses?: () => Map<string, MermaidResourceBearingEntry>;
+  getEdges?: () => MermaidResourceBearingEntry[];
+  getVertices?: () => Map<string, MermaidResourceBearingEntry>;
+}
+
 function directChildText(root: Element, localName: string): string | undefined {
   const value = Array.from(root.children)
     .find((child) => child.localName === localName)
@@ -76,6 +90,35 @@ const cssResourceAttributes = new Set([
   'stroke',
   'style',
 ]);
+
+/**
+ * Flowchart image nodes construct a browser Image, and parsed styles are applied
+ * to a live temporary SVG, while Mermaid is rendering. Inspect Mermaid's parsed
+ * database first so untrusted diagram text cannot start an external request
+ * before the resulting SVG can be sanitised.
+ */
+async function rejectRenderTimeResources(source: string): Promise<void> {
+  const diagram = await mermaid.mermaidAPI.getDiagramFromText(source);
+  const database = diagram.db as DiagramDatabaseWithResources;
+  const vertices = database.getVertices?.();
+  if (vertices && Array.from(vertices.values()).some((vertex) => typeof vertex.img === 'string' && vertex.img.trim())) {
+    throw new Error('mermaid_render_time_resource');
+  }
+
+  const entries = [
+    ...Array.from(vertices?.values() ?? []),
+    ...Array.from(database.getClasses?.().values() ?? []),
+    ...(database.getEdges?.() ?? []),
+  ];
+  for (const entry of entries) {
+    for (const candidate of [entry.cssStyles, entry.style, entry.styles, entry.textStyles]) {
+      const styles = Array.isArray(candidate) ? candidate : [candidate];
+      if (styles.some((style) => typeof style === 'string' && hasExternalCssResource(style))) {
+        throw new Error('mermaid_render_time_resource');
+      }
+    }
+  }
+}
 
 /**
  * Mermaid strict mode sanitises scriptable markup but deliberately preserves
@@ -157,6 +200,7 @@ async function renderMermaid(id: string, source: string, signal: AbortSignal): P
       themeCSS,
       themeVariables,
     });
+    await rejectRenderTimeResources(source);
     const { svg } = await mermaid.render(id, source);
     return prepareDiagram(svg);
   };

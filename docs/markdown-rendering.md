@@ -650,9 +650,11 @@ labels disabled, post-render links removed, and serialized configure/render
 calls. Each queued job resolves the active tokens only when it starts; an
 unmounted job leaves the queue before it initializes Mermaid. `accTitle` and
 `accDescr` become the rendered image's accessible metadata; without them, the
-source remains available as its screen-reader description. SVG styling may use
-local `url(#fragment)` references for markers and gradients; any generated CSS
-resource pointing elsewhere rejects the diagram and retains its source.
+source remains available as its screen-reader description. Parsed flowchart
+image nodes and parsed styles with external resources are rejected before
+rendering because Mermaid can load them while measuring or drawing. SVG styling
+may use local `url(#fragment)` references for markers and gradients; the output
+scan repeats that CSS-resource check before insertion as defense in depth.
 
 **Why:** Mermaid syntax was already arriving in agent answers, but the generic
 unknown-language fallback printed it as code — the failure shown in the product
@@ -677,8 +679,9 @@ at runtime.
 single serialized operation because configuration is global. Do not expose
 `bindFunctions`, loosen `securityLevel`, or let frontmatter re-enable HTML
 labels or replace Rally's theme inputs. Keep the post-render link removal and
-external-CSS-resource rejection, and keep the lifecycle check before token
-resolution so recycled transcript rows do not spend work on discarded diagrams.
+pre-render image-node and external-CSS-resource rejection, and keep the lifecycle
+check before token resolution so recycled transcript rows do not spend work on
+discarded diagrams.
 If saved diagrams become a requirement, make export await a completed render;
 do not serialize a live component's loading state.
 
