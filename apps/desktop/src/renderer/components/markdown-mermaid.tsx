@@ -37,6 +37,7 @@ interface MermaidResourceBearingEntry {
 }
 
 interface DiagramDatabaseWithResources {
+  getBlocksFlat?: () => MermaidResourceBearingEntry[];
   getClasses?: () => Map<string, MermaidResourceBearingEntry>;
   getEdges?: () => MermaidResourceBearingEntry[];
   getVertices?: () => Map<string, MermaidResourceBearingEntry>;
@@ -87,6 +88,12 @@ function hasExternalCssResource(value: string): boolean {
   return /(?:https?|data|blob|file):|(?:^|[("'\s])\/\//iu.test(css) || hasExternalCssReferenceInNormalized(css);
 }
 
+function hasExternalCssStyleDirective(source: string): boolean {
+  return source.split(/\r?\n/u).some((line) =>
+    /^\s*(?:classDef|linkStyle|style)\b/iu.test(line) && hasExternalCssReference(line),
+  );
+}
+
 const cssResourceAttributes = new Set([
   'background',
   'background-image',
@@ -109,7 +116,7 @@ const cssResourceAttributes = new Set([
  * before the resulting SVG can be sanitised.
  */
 async function rejectRenderTimeResources(source: string): Promise<void> {
-  if (hasExternalCssReference(source)) throw new Error('mermaid_render_time_resource');
+  if (hasExternalCssStyleDirective(source)) throw new Error('mermaid_render_time_resource');
   const diagram = await mermaid.mermaidAPI.getDiagramFromText(source);
   const database = diagram.db as DiagramDatabaseWithResources;
   const vertices = database.getVertices?.();
@@ -118,6 +125,7 @@ async function rejectRenderTimeResources(source: string): Promise<void> {
   }
 
   const entries = [
+    ...(database.getBlocksFlat?.() ?? []),
     ...Array.from(vertices?.values() ?? []),
     ...Array.from(database.getClasses?.().values() ?? []),
     ...(database.getEdges?.() ?? []),
