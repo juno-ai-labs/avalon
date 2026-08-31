@@ -49,6 +49,8 @@ context, and restores the button.
   destroy time-to-first-audio.
 - **Only one message speaks at a time.** Starting another cancels the current
   fetch and Web Audio graph; overlapping agent voices make neither intelligible.
+- **Each PCM player is single-use.** Stop closes its AudioContext; replay creates
+  a fresh player instead of trying to resume a closed browser audio graph.
 - **The renderer never receives the Azure credential.** It holds only its Rally
   session and calls the protected regional endpoint; moving the provider request
   client-side would expose production inference authority.
@@ -141,6 +143,22 @@ later stops before hearing; prefetching the entire response was rejected because
 its abandoned cost grows with message length.
 
 ## Changelog
+
+### 2026-08-31 — Stopped PCM players fail explicit reuse
+
+**What changed:** The PCM player now documents its single-use lifecycle and
+rejects `prepare()` or `play()` after Stop with a descriptive error.
+
+**Why:** Closing the AudioContext is the correct cleanup, but a future replay or
+retry caller could otherwise reuse the stopped object and receive silent
+no-op playback. The guard turns that lifecycle violation into a visible defect.
+
+**Considered and rejected:** Keeping an AudioContext alive for reuse would make
+ownership and cleanup ambiguous. Rally already constructs one player per Speak
+attempt, so a reusable player adds state without serving the product flow.
+
+**Consequences:** Any future replay path must create a new player, matching the
+existing Speech playback provider.
 
 ### 2026-08-30 — Finished responses can stream an AI voice
 

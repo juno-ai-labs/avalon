@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PcmSpeechPlayer } from './pcm-speech-player';
 
 describe('PcmSpeechPlayer', () => {
-  it('decodes split little-endian samples and schedules chunks without a gap', async () => {
+  it('decodes split little-endian samples, schedules without a gap, and rejects reuse after stop', async () => {
     const scheduled: number[] = [];
     const decoded: Float32Array[] = [];
     const context = {
@@ -43,5 +43,9 @@ describe('PcmSpeechPlayer', () => {
     expect(decoded).toHaveLength(1);
     expect(Array.from(decoded[0]!)).toEqual([0.5, -0.5]);
     expect(scheduled).toEqual([1]);
+
+    player.stop();
+    await expect(player.play(new ReadableStream<Uint8Array>()))
+      .rejects.toThrow('A stopped speech player cannot be reused. Create a new player.');
   });
 });
