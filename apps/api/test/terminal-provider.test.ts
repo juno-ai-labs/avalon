@@ -830,4 +830,61 @@ describe("Daytona Terminal provider", () => {
     );
   });
 
+  it("names the capabilities a failed verification could not satisfy", async () => {
+    // The probe reports every one it could not verify so a breaking managed
+    // image, or a rebuilt snapshot that lost something, is one diagnostic.
+    // Discarding stdout left "verification failed" with nothing to act on.
+    const executeCommand = vi.fn()
+      .mockResolvedValueOnce({ exitCode: 0, result: "AVALON_BOOTSTRAP_INSTALLED=\n" })
+      .mockResolvedValueOnce({ exitCode: 1, result: "AVALON_PROBE_MISSING=git-ca gh\n" });
+    const observed = {
+      id: "sandbox-1",
+      name: "avalon-ws-stream",
+      state: "started",
+      domainAllowList: "github.com",
+      refreshData: vi.fn(async () => undefined),
+      process: {
+        executeCommand,
+        createSession: vi.fn(async () => undefined),
+        executeSessionCommand: vi.fn(async () => ({})),
+        deleteSession: vi.fn(async () => undefined),
+      },
+    };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "rally-terminal-1", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(async () => observed) }));
+
+    await expect(provider.prepareSandbox!("sandbox-1", ["github.com"]))
+      .rejects.toThrow("Daytona could not initialize the private Rally workspace: missing git-ca, gh");
+  });
+
+  it("deletes the sandbox even when its read secrets cannot be listed", async () => {
+    // A credential without the Secrets scope answered 403 on the listing that
+    // runs before the delete, so the sandbox was never deleted — a live
+    // filesystem left accruing cost because tidying its secrets failed.
+    const del = vi.fn(async () => undefined);
+    const sandbox = { id: "sandbox-1", name: "avalon-ws-stream", state: "started", delete: del };
+    const list = vi.fn(async (): Promise<{
+      items: Array<{ id: string; name: string }>; total: number; nextCursor: string | null;
+    }> => { throw new Error("Access denied"); });
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "rally-terminal-1", emergencyDisabled: false,
+    }, () => ({
+      create: vi.fn(),
+      get: vi.fn(async () => sandbox),
+      secret: {
+        list,
+        create: vi.fn(async () => ({ id: "secret-1", name: "AVALON_READ_x" })),
+        update: vi.fn(async () => ({ id: "secret-1", name: "AVALON_READ_x" })),
+        delete: vi.fn(async () => undefined),
+      },
+    }));
+
+    await expect(provider.deleteSandbox("sandbox-1")).resolves.toBeUndefined();
+    expect(list).toHaveBeenCalledOnce();
+    expect(del).toHaveBeenCalledOnce();
+  });
+
 });
