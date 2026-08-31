@@ -1868,6 +1868,7 @@ export function classifyAddressingHeuristically(input: {
   message: string;
   activeTask: boolean;
   connectorMentions?: string[];
+  humanMentions?: string[];
   addressesRally?: boolean;
 }): AddressingClassification {
   const text = input.message.trim();
@@ -1877,7 +1878,13 @@ export function classifyAddressingHeuristically(input: {
   if (input.addressesRally || UNAMBIGUOUS_PRODUCT_REFERENCE.test(text)) {
     return { classification: "agent_action", confidence: 0.96, rationaleCode: "rally_reference" };
   }
-  if (/^(please\s+)?(find|check|create|draft|send|review|summarize|investigate|update|compare|prepare)\b/i.test(text)) {
+  // An opening imperative is aimed at the agent only when the message names
+  // nobody: "Please review the deck @Alex" hands the work to Alex, so a
+  // mentioned person sends the message to the model instead of deciding here.
+  if (
+    (input.humanMentions?.length ?? 0) === 0
+    && /^(please\s+)?(find|check|create|draft|send|review|summarize|investigate|update|compare|prepare)\b/i.test(text)
+  ) {
     return { classification: "agent_action", confidence: 0.9, rationaleCode: "imperative" };
   }
   if (/\?$/.test(text)) {
@@ -1898,6 +1905,7 @@ export async function classifyAddressing(input: {
   message: string;
   activeTask: boolean;
   connectorMentions?: string[];
+  humanMentions?: string[];
   addressesRally?: boolean;
   recentMessages?: AddressingContextMessage[];
   signal?: AbortSignal;
@@ -1919,6 +1927,7 @@ export async function classifyAddressing(input: {
       message: input.message,
       activeTask: input.activeTask,
       connectorMentions: input.connectorMentions ?? [],
+      humanMentions: input.humanMentions ?? [],
       addressesRally: input.addressesRally ?? PRODUCT_REFERENCE.test(input.message),
       recentMessages: input.recentMessages ?? [],
     }),

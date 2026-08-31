@@ -162,6 +162,56 @@ describe("agent harness", () => {
     })).toMatchObject({ classification: "both", rationaleCode: "question" });
   });
 
+  it("keeps an opening imperative deterministic only while the message names nobody", () => {
+    // "Review the launch checklist" aims at the agent; the same words handed
+    // to a person do not, so a mentioned person must reach the model instead
+    // of being answered here at 0.9.
+    expect(classifyAddressingHeuristically({
+      message: "Review the launch checklist",
+      activeTask: false,
+      humanMentions: ["Alex Todorovic"],
+    })).toMatchObject({ classification: "human_only", rationaleCode: "insufficient_signal" });
+    expect(classifyAddressingHeuristically({
+      message: "Review the launch checklist",
+      activeTask: true,
+      humanMentions: ["Alex Todorovic"],
+    })).toMatchObject({ classification: "uncertain", rationaleCode: "active_task" });
+    // A connector mention outranks the person: it names the agent's own tools.
+    expect(classifyAddressingHeuristically({
+      message: "Please check the thread",
+      activeTask: false,
+      connectorMentions: ["gmail"],
+      humanMentions: ["Alex Todorovic"],
+    })).toMatchObject({ classification: "agent_action", rationaleCode: "connector_mention" });
+  });
+
+  it("flags mentioned people into the prompt rather than deciding on them", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({
+        choices: [{ message: { content: JSON.stringify({
+          classification: "human_only", confidence: 0.85, rationaleCode: "human_coordination",
+        }) } }],
+      });
+    }) as typeof fetch;
+
+    await classifyAddressing({
+      apiKey: "test-key",
+      model: "test/model",
+      message: "Please review the deck before standup @Alex Todorovic",
+      activeTask: false,
+      humanMentions: ["Alex Todorovic"],
+      fetch: fetcher,
+    });
+
+    // Called at all is half the assertion: without the mention gate the
+    // imperative decides deterministically and no request is ever made.
+    expect(fetcher).toHaveBeenCalledOnce();
+    const providerMessages = requestBody!.messages as Array<{ role: string; content: string }>;
+    expect(providerMessages[1]!.content).toContain('"humanMentions":["Alex Todorovic"]');
+  });
+
   it("flags a Rally reference into the prompt rather than deciding on it", async () => {
     // The heuristic deliberately does not short-circuit on "rally" — it is an
     // ordinary verb. What makes the classifier prompt's "an explicit Rally
@@ -220,6 +270,7 @@ describe("agent harness", () => {
       message: "The second section still needs work",
       activeTask: true,
       connectorMentions: [],
+      humanMentions: [],
       addressesRally: false,
       recentMessages,
     });
