@@ -953,6 +953,18 @@ describe('MessageBlock markdown', () => {
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
 
+  it('rejects parsed block styles before rendering', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidDiagram.mockResolvedValueOnce({
+      db: { getBlocksFlat: () => [{ styles: ['fill:url(https://example.invalid/beacon)'] }] },
+    });
+
+    render(<MarkdownBody>{'```mermaid\nblock-beta\n  A["Review"]\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
   it('rejects diagram-independent CSS resource functions before rendering', async () => {
     const renderCallBaseline = mermaidRender.mock.calls.length;
     const source = `block-beta
@@ -963,6 +975,17 @@ describe('MessageBlock markdown', () => {
 
     expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('allows CSS-looking text in a Mermaid label', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Read url(https://example.com)</text></svg>' });
+    const source = 'flowchart TD\n  A["Read url(https://example.com)"]';
+
+    render(<MarkdownBody>{`\`\`\`mermaid\n${source}\n\`\`\``}</MarkdownBody>);
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
   });
 
   it('keeps Mermaid source in stills, glances, and streams, then renders the settled turn', async () => {
