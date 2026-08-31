@@ -1,4 +1,4 @@
-import { rewriteCitationsAsPlainText } from "@rally/contracts/citations";
+import { personMentionMarkdownPattern, rewriteCitationsAsPlainText } from "@rally/contracts/citations";
 import { ConnectorError, connectorRetryAfterMs, slackApi } from "@rally/connectors";
 import { workstreamCanonicalUrl } from "@rally/contracts";
 import { nowIso } from "@rally/db";
@@ -514,10 +514,11 @@ async function workspaceBotToken(
  * An agent's words, made safe for a notification.
  *
  * Two internal syntaxes would otherwise reach a channel verbatim: a mention's
- * `person:` target, which prints a raw UUID at somebody, and a citation, which
- * prints a `resource://` URL or a bare `[^1]` marker. This is a third
- * outbound surface beside the digest email and the agent's own delivery, and it
- * quotes the same message text they render — so it owes the same reduction.
+ * `person:` / `person://` target, which prints a raw UUID at somebody, and a
+ * citation, which prints a `resource://` URL or a bare `[^1]` marker. This is a
+ * third outbound surface beside the digest email and the agent's own delivery,
+ * and it quotes the same message text they render — so it owes the same
+ * reduction.
  *
  * In its plain shape, though: this text goes to `chat.postMessage`'s `text`
  * field, which is Slack mrkdwn and has neither `**bold**` nor `[label](url)`.
@@ -527,7 +528,7 @@ async function workspaceBotToken(
  */
 function humanReadableMessage(value: string): string {
   return rewriteCitationsAsPlainText(value, { sources: "plain" }).replace(
-    /\[@((?:\\.|[^\]])+)\]\(person:[0-9a-f-]{36}\)/giu,
+    personMentionMarkdownPattern(),
     (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
   );
 }
@@ -539,8 +540,8 @@ function slackParticipantAddedChunks(
 ): string[] {
   // Read through the same renderer the mention path uses. The objective is a
   // work stream's description, which the description agent rewrites from
-  // transcript messages — and those carry `[@Name](person:<uuid>)`, which would
-  // otherwise print a raw UUID at somebody.
+  // transcript messages — and those carry `[@Name](person://<uuid>)` (or the
+  // legacy bare `person:` form), which would otherwise print a raw UUID.
   const objective = humanReadableMessage(input.workstreamObjective).trim();
   // A work stream created from the composer has no name yet: quoting its
   // placeholder title names the room by a fragment of the opening message, and

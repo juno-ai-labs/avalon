@@ -497,14 +497,14 @@ describe('MessageBlock markdown', () => {
       id: 'message-person-mention',
       authorType: 'agent',
       author: undefined,
-      text: `Ask [@Spoofed label](person:${personId}) for a review.`,
+      text: `Ask [@Spoofed label](person://${personId}) for a review.`,
       mentions: [{
         type: 'person',
         personId,
         displayName: 'Ada Lovelace',
         avatarUrl: 'https://example.com/ada.png',
         startOffset: 4,
-        endOffset: 65,
+        endOffset: 67,
       }],
     };
 
@@ -516,6 +516,29 @@ describe('MessageBlock markdown', () => {
     expect(screen.queryByRole('link', { name: '@Ada Lovelace' })).not.toBeInTheDocument();
     expect(screen.queryByText('@Spoofed label')).not.toBeInTheDocument();
     expect(chip?.querySelector('img')).toHaveAttribute('src', 'https://example.com/ada.png');
+  });
+
+  it('still resolves a stored bare person: mention to a chip', () => {
+    const personId = '00000000-0000-7000-8000-000000000042';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-person-mention-legacy',
+      authorType: 'agent',
+      author: undefined,
+      text: `Ask [@Ada Lovelace](person:${personId}) for a review.`,
+      mentions: [{
+        type: 'person',
+        personId,
+        displayName: 'Ada Lovelace',
+        startOffset: 4,
+        endOffset: 65,
+      }],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(screen.getByText('@Ada Lovelace').closest('.mention-chip'))
+      .toHaveAttribute('data-person-id', personId);
   });
 
   it('keeps person Markdown inert when authoritative mention metadata is absent', () => {
@@ -542,20 +565,24 @@ describe('MessageBlock markdown', () => {
       id: 'message-connector-mention',
       text,
       mentions: [
-        { type: 'connector', connectorType: 'google_drive', startOffset: 4, endOffset: 17 },
+        { type: 'connector', connectorType: 'google', startOffset: 4, endOffset: 17 },
         { type: 'connector', connectorType: 'linear', startOffset: 22, endOffset: 29 },
       ],
     };
 
     render(<MessageBlock {...actions} message={message} />);
 
-    const drive = screen.getByText('@Google Drive').closest('.mention-chip');
-    expect(drive).toHaveAttribute('data-connector-type', 'google_drive');
+    const drive = screen.getByText('Google Drive').closest('.mention-chip');
+    expect(drive).toHaveAttribute('data-connector-type', 'google');
+    expect(drive).toHaveAttribute('data-connector-status', 'missing');
+    expect(drive?.querySelector('.mention-chip-status')).toHaveTextContent('Not connected');
     expect(drive?.tagName).toBe('SPAN');
-    expect(screen.getByText('@Linear').closest('.mention-chip'))
+    expect(screen.getByText('Linear').closest('.mention-chip'))
       .toHaveAttribute('data-connector-type', 'linear');
-    expect(screen.queryByRole('link', { name: '@Google Drive' })).not.toBeInTheDocument();
-    expect(document.querySelector('.markdown-body')).toHaveTextContent(text);
+    expect(screen.queryByRole('link', { name: 'Google Drive' })).not.toBeInTheDocument();
+    const body = document.querySelector('.markdown-body');
+    expect(body).toHaveTextContent(/Ask.*Google Drive.*Linear.*to sync/u);
+    expect(drive?.querySelector('.mention-chip-connector-icon.provider-icon')).toBeInTheDocument();
   });
 
   it('repairs a model\'s TeX without disturbing the mention offsets beside it', () => {
@@ -569,16 +596,16 @@ describe('MessageBlock markdown', () => {
       id: 'message-connector-mention-tex',
       text: 'Ask @Google Drive to move Backlog $\\rightarrow$ Done, and @Linear to log it.',
       mentions: [
-        { type: 'connector', connectorType: 'google_drive', startOffset: 4, endOffset: 17 },
+        { type: 'connector', connectorType: 'google', startOffset: 4, endOffset: 17 },
         { type: 'connector', connectorType: 'linear', startOffset: 58, endOffset: 65 },
       ],
     };
 
     render(<MessageBlock {...actions} message={message} />);
 
-    expect(screen.getByText('@Google Drive').closest('.mention-chip'))
-      .toHaveAttribute('data-connector-type', 'google_drive');
-    expect(screen.getByText('@Linear').closest('.mention-chip'))
+    expect(screen.getByText('Google Drive').closest('.mention-chip'))
+      .toHaveAttribute('data-connector-type', 'google');
+    expect(screen.getByText('Linear').closest('.mention-chip'))
       .toHaveAttribute('data-connector-type', 'linear');
     expect(document.querySelector('.markdown-body')).toHaveTextContent('Backlog → Done');
     expect(document.querySelector('.markdown-body')?.textContent).not.toContain('rightarrow');
@@ -620,7 +647,7 @@ describe('MessageBlock markdown', () => {
       ...baseMessage,
       id: 'message-connector-mention-stale',
       text: 'Ask @Google Drive to sync.',
-      mentions: [{ type: 'connector', connectorType: 'google_drive', startOffset: 0, endOffset: 3 }],
+      mentions: [{ type: 'connector', connectorType: 'google', startOffset: 0, endOffset: 3 }],
     };
 
     render(<MessageBlock {...actions} message={message} />);
@@ -632,21 +659,39 @@ describe('MessageBlock markdown', () => {
   it('escapes connection labels and ignores overlapping or malformed ranges', () => {
     expect(withConnectorMentionLinks('Ping @Ops [beta]', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 16 },
-    ], 'tok')).toBe('Ping [@Ops \\[beta\\]](connector:tok:ops)');
+    ], 'tok')).toBe('Ping [@Ops \\[beta\\]](connector://tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops *now* & co', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 20 },
-    ], 'tok')).toBe('Ping [@Ops \\*now\\* \\& co](connector:tok:ops)');
+    ], 'tok')).toBe('Ping [@Ops \\*now\\* &amp; co](connector://tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 },
       { type: 'connector', connectorType: 'ops', startOffset: 6, endOffset: 9 },
-    ], 'tok')).toBe('Ping [@Ops](connector:tok:ops)');
+    ], 'tok')).toBe('Ping [@Ops](connector://tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 40 },
       { type: 'person', personId: 'user-1', startOffset: 0, endOffset: 4 },
     ], 'tok')).toBe('Ping @Ops');
+  });
+
+  it('renders ampersands in connection labels literally instead of as entities', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-mention-ampersand',
+      text: 'Ask @R&D and @A &copy;.',
+      mentions: [
+        { type: 'connector', connectorType: 'research', startOffset: 4, endOffset: 8 },
+        { type: 'connector', connectorType: 'archive', startOffset: 13, endOffset: 22 },
+      ],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(screen.getByText('R&D').closest('.mention-chip')).not.toBeNull();
+    expect(screen.getByText('A &copy;').closest('.mention-chip')).not.toBeNull();
+    expect(document.querySelector('.markdown-body')).not.toHaveTextContent('A ©');
   });
 
   it('mints a distinct connector token per call', () => {

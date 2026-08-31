@@ -24,17 +24,25 @@ import {
   type ToolPlugin,
 } from "@juno-ai/bind/plugins";
 import {
-  ROUTE_POLICY_VERSION,
+  INFERENCE_CAPABILITIES,
+  buildRoutePlan,
   canonicalModelIdSchema,
   classifyAttemptError,
+  computeConfiguredRatesCostCents,
   createCircuitBreaker,
   executeRoutePlan,
   failureDisposition,
   isRetriableAttemptError,
+  parseModelRouteRegistry,
   providerIdSchema,
   retryAfterMsFromHeaders,
+  resolveProviderPolicy,
   type AttemptTarget,
+  type CanonicalModelId,
+  type InferenceCapability,
   type InferenceAttemptError,
+  type PlannerTransport,
+  type ProviderId,
   type RouteCandidate,
   type RoutePlan,
 } from "@juno-ai/bind/routing";
@@ -49,6 +57,10 @@ import {
 import {
   AVALON_DISCOVERY_PLUGIN_ID,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
+  AzureOpenAIClient,
+  AzureOpenAIError,
+  AzureOpenAIRequestError,
+  OPENROUTER_CATALOG_CACHE_TTL_MS,
   HarnessPluginActivationError,
   OpenRouterClient,
   OpenRouterError,
@@ -67,10 +79,12 @@ import {
   type ModelMessageContent,
   type ModelMessageContentPart,
   type ModelToolDefinition,
+  type AzureModelPricing,
   type OpenRouterProviderError,
   type PluginAuthorization,
   type PluginAuthorizationOccasion,
   type RunHarnessInput,
+  type StreamResult,
 } from "./index";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
 import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
@@ -126,11 +140,54 @@ type ProviderTool = NonNullable<Parameters<ToolLoopParams["callModel"]>[1]>[numb
 type ProviderContentPart = Exclude<ProviderUserMessage["content"], string>[number];
 
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
+const AZURE_PROVIDER = providerIdSchema.parse("azure");
+const MODEL_ROUTE_REGISTRY = parseModelRouteRegistry({
+  version: "provider-router-v1",
+  unboundDefault: { mode: "only", provider: "openrouter" },
+  boundDefault: { mode: "ordered", providers: ["azure", "openrouter"] },
+  models: {},
+});
+const OPENROUTER_CAPABILITIES: ReadonlySet<InferenceCapability> = new Set(
+  INFERENCE_CAPABILITIES,
+);
+
+interface AzureModelBinding {
+  deployment: string;
+  capabilities: ReadonlySet<InferenceCapability>;
+  maxCompletionTokens: number | null;
+  cachedTokenSemantics: Extract<
+    RouteCandidate["pricingBasis"],
+    { kind: "configured_token_rates" }
+  >["cachedTokenSemantics"];
+  fingerprint: string;
+}
+
+const AZURE_MODEL_BINDINGS = new Map<CanonicalModelId, AzureModelBinding>([
+  [canonicalModelIdSchema.parse("x-ai/grok-4.3"), {
+    deployment: "grok-4.3",
+    capabilities: new Set(["chat_completions", "streaming", "tools"]),
+    maxCompletionTokens: null,
+    cachedTokenSemantics: "disjoint",
+    fingerprint: "azure:grok-4.3:v1:global-standard",
+  }],
+  [canonicalModelIdSchema.parse("x-ai/grok-4.6"), {
+    deployment: "grok-4.6",
+    capabilities: new Set([
+      "chat_completions",
+      "streaming",
+      "tools",
+      "image_input",
+      "reasoning_effort",
+    ]),
+    maxCompletionTokens: 128_000,
+    cachedTokenSemantics: "disjoint",
+    fingerprint: "azure:grok-4.6:v1:global-standard",
+  }],
+]);
 const DEFAULT_CATALOG_TOKENS = 2_500;
 const COMPACTION_FRACTION = 0.8;
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
-const OPENROUTER_CATALOG_TTL_MS = 60 * 60 * 1_000;
 const OPENROUTER_CATALOG_TIMEOUT_MS = 5_000;
 /**
  * What the model is asked for when a compaction fires.
@@ -567,6 +624,22 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   let completedByTool = false;
   let completedWithoutAcceptedAssistant = false;
   let bindLoopProjection: BindLoopProjectionState | null = null;
+  let azureModelPricingRequest: Promise<ReadonlyMap<string, AzureModelPricing>> | null = null;
+  const resolveAzureModelPricing = async (): Promise<ReadonlyMap<string, AzureModelPricing>> => {
+    if (!input.config.azure || !input.resolveAzureModelPricing) return new Map();
+    azureModelPricingRequest ??= input.resolveAzureModelPricing(
+      [...AZURE_MODEL_BINDINGS.keys()],
+      signal,
+    ).catch((error: unknown) => {
+      if (signal.aborted) throw signal.reason ?? error;
+      // Pricing is required before an Azure candidate is valid. A missing or
+      // malformed scheduled-cache record therefore omits Azure while preserving
+      // the existing OpenRouter route instead of failing the whole run or
+      // recording a free Azure call.
+      return new Map();
+    });
+    return azureModelPricingRequest;
+  };
   const toolCallPositions = new Map<string, { turn: number; index: number }>();
   const commitBindTransition = async (transition: BindLoopTransition): Promise<void> => {
     await requiredPort(
@@ -988,7 +1061,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           candidate !== compactionPrimaryModel && candidates.indexOf(candidate) === index
         );
         const summaryTurn = async (instruction: string, attempt: number): Promise<RoutedTurn> =>
-          routeOpenRouterTurn({
+          routeProviderTurn({
             input,
             messages: [
               ...messages,
@@ -1295,7 +1368,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         });
         stableTurnIndex = modelTurnIndex;
         streamedContent = "";
-        const routed = await routeOpenRouterTurn({
+        const routed = await routeProviderTurn({
           input,
           messages: prepared.messages,
           tools: authorizedTools,
@@ -1853,7 +1926,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     deadline?.dispose();
   }
 
-  async function routeOpenRouterTurn(args: {
+  async function routeProviderTurn(args: {
     input: RunHarnessInput;
     messages: ProviderMessages;
     tools: ProviderTool[] | undefined;
@@ -1919,51 +1992,66 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       },
     });
     const intendedModel = args.primaryModel ?? args.input.config.primaryModel;
+    const requestMessages = fromOpenAiMessages(args.messages);
+    const requestTools = args.tools ?? [];
+    const wireTools = toModelToolDefinitions(requestTools);
+    const requestPlugins = modelMessagesContainFile(requestMessages)
+      ? [{ id: "file-parser", pdf: { engine: "native" } }]
+      : [];
+    const reasoningEffort = args.reasoningEffort ?? args.input.config.reasoningEffort;
+    const fallbackModels = args.fallbackModels ?? args.input.config.fallbackModels ?? [];
+    const azurePricing = routeIncludesAzureBinding([intendedModel, ...fallbackModels])
+      ? await resolveAzureModelPricing()
+      : new Map();
     const plan = routePlan(
       intendedModel,
-      args.fallbackModels ?? args.input.config.fallbackModels ?? [],
+      fallbackModels,
       args.input.workspaceId,
+      args.input.config,
+      azurePricing,
+      {
+        messages: requestMessages,
+        hasTools: wireTools.length > 0,
+        hasFileParserPlugin: requestPlugins.length > 0,
+        hasReasoningEffort: reasoningEffort !== undefined,
+      },
     );
     const executePlan = () => executeRoutePlan({
       plan,
       completionDefectRetries: args.input.config.completionDefectRetries ?? 2,
       breaker: circuitBreaker,
       attempt: async (candidate, cursor) => {
-        const requestMessages = fromOpenAiMessages(args.messages);
         const inferenceRequestId = crypto.randomUUID();
         const startedAt = Date.now();
-        currentModel = candidate.providerInvocationModel;
+        currentModel = candidate.canonicalModelId;
         textStream.beginAttempt();
         try {
-          const requestTools = args.tools ?? [];
-          const wireTools = toModelToolDefinitions(requestTools);
-          const requestPlugins = modelMessagesContainFile(requestMessages)
-            ? [{ id: "file-parser", pdf: { engine: "native" } }]
-            : [];
-          const trace = buildOpenRouterTracePayload(
-            args.input.traceContext ?? {
-              source: "agent_harness",
-              feature: AGENT_MODEL_FLAG_KEYS.workstream,
-              workspaceId: args.input.workspaceId,
-              workstreamId: args.input.workstreamId,
-              harnessRunId: args.input.harnessRunId,
-              requestId: args.input.harnessRunId,
-              executionPrincipalType: args.input.executionPrincipal.type,
-              executionPrincipalId: args.input.executionPrincipal.type === "user"
-                ? args.input.executionPrincipal.userId
-                : args.input.executionPrincipal.workspaceId,
-            },
-            {
-              inferenceRequestId,
-              generationName: `rally.turn.${args.turnId}`,
-              turnId: args.turnId,
-              cursor,
-              provider: candidate.providerId,
-              intendedModel,
-              model: candidate.canonicalModelId,
-              providerInvocationModel: candidate.providerInvocationModel,
-            },
-          );
+          const trace = candidate.providerId === OPENROUTER_PROVIDER
+            ? buildOpenRouterTracePayload(
+                args.input.traceContext ?? {
+                  source: "agent_harness",
+                  feature: AGENT_MODEL_FLAG_KEYS.workstream,
+                  workspaceId: args.input.workspaceId,
+                  workstreamId: args.input.workstreamId,
+                  harnessRunId: args.input.harnessRunId,
+                  requestId: args.input.harnessRunId,
+                  executionPrincipalType: args.input.executionPrincipal.type,
+                  executionPrincipalId: args.input.executionPrincipal.type === "user"
+                    ? args.input.executionPrincipal.userId
+                    : args.input.executionPrincipal.workspaceId,
+                },
+                {
+                  inferenceRequestId,
+                  generationName: `rally.turn.${args.turnId}`,
+                  turnId: args.turnId,
+                  cursor,
+                  provider: candidate.providerId,
+                  intendedModel,
+                  model: candidate.canonicalModelId,
+                  providerInvocationModel: candidate.providerInvocationModel,
+                },
+              )
+            : undefined;
           const payload = {
             model: candidate.providerInvocationModel,
             messages: requestMessages,
@@ -1972,11 +2060,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ...(wireTools.length > 0
               ? { tools: wireTools, tool_choice: "auto" as const }
               : {}),
-            ...(requestPlugins.length > 0 ? { plugins: requestPlugins } : {}),
-            ...(args.reasoningEffort ?? args.input.config.reasoningEffort
-              ? { reasoning: { effort: args.reasoningEffort ?? args.input.config.reasoningEffort! } }
+            ...(candidate.providerId === OPENROUTER_PROVIDER && requestPlugins.length > 0
+              ? { plugins: requestPlugins }
               : {}),
-            ...trace,
+            ...(reasoningEffort
+              ? candidate.providerId === AZURE_PROVIDER
+                ? { reasoning_effort: reasoningEffort }
+                : { reasoning: { effort: reasoningEffort } }
+              : {}),
+            ...(trace ?? {}),
           };
           await args.input.onInferenceRequest?.({
             inferenceRequestId,
@@ -1990,26 +2082,52 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             cursor,
             payload,
           });
-          const client = new OpenRouterClient({
-            ...args.input.config,
-            primaryModel: candidate.providerInvocationModel,
-            fallbackModels: [],
-            sameModelRetries: args.input.config.sameModelRetries ?? 0,
-          });
-          const result = await client.stream({
-            messages: payload.messages,
-            ...(payload.tools ? { tools: payload.tools } : {}),
-            ...(payload.plugins ? { plugins: payload.plugins } : {}),
-            includeWebSearch: false,
-            reasoningEffort: args.reasoningEffort ?? args.input.config.reasoningEffort,
-            trace,
-            signal: args.signal,
-          }, async (delta) => {
+          const handleDelta = async (delta: string) => {
             textStream.observe(delta);
             await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => args.input.onLiveness?.("during_stream"));
             args.onOutputProgress?.(Math.max(1, Math.ceil(delta.length / 4)));
             await streamEventChain;
-          });
+          };
+          const rawResult = candidate.providerId === AZURE_PROVIDER
+            ? await new AzureOpenAIClient({
+                ...args.input.config.azure!,
+                ...(args.input.config.fetch ? { fetch: args.input.config.fetch } : {}),
+                ...(args.input.config.requestEstablishmentTimeoutMs === undefined
+                  ? {}
+                  : { requestEstablishmentTimeoutMs: args.input.config.requestEstablishmentTimeoutMs }),
+                ...(args.input.config.ttftTimeoutMs === undefined
+                  ? {}
+                  : { ttftTimeoutMs: args.input.config.ttftTimeoutMs }),
+                ...(args.input.config.streamIdleTimeoutMs === undefined
+                  ? {}
+                  : { streamIdleTimeoutMs: args.input.config.streamIdleTimeoutMs }),
+              }).stream({
+                model: candidate.providerInvocationModel,
+                messages: payload.messages,
+                ...(payload.tools ? { tools: payload.tools } : {}),
+                includeWebSearch: false,
+                reasoningEffort,
+                signal: args.signal,
+              }, handleDelta)
+            : await new OpenRouterClient({
+                ...args.input.config,
+                primaryModel: candidate.providerInvocationModel,
+                fallbackModels: [],
+                sameModelRetries: args.input.config.sameModelRetries ?? 0,
+              }).stream({
+                messages: payload.messages,
+                ...(payload.tools ? { tools: payload.tools } : {}),
+                ...(payload.plugins ? { plugins: payload.plugins } : {}),
+                includeWebSearch: false,
+                reasoningEffort,
+                trace,
+                signal: args.signal,
+              }, handleDelta);
+          const result = normalizeRoutedResult(
+            candidate,
+            rawResult,
+            azurePricing.get(candidate.canonicalModelId),
+          );
           const defect = detectCompletionDefect({
             content: result.content || null,
             tool_calls: result.toolCalls,
@@ -2057,7 +2175,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           if (error instanceof FatalHarnessPortError || error instanceof HarnessLimitError || error instanceof AmbiguousExternalWriteError) {
             throw error;
           }
-          if (error instanceof OpenRouterRequestError) throw error;
+          if (error instanceof OpenRouterRequestError || error instanceof AzureOpenAIRequestError) {
+            throw error;
+          }
           const target: AttemptTarget = {
             cursor,
             providerId: candidate.providerId,
@@ -2067,7 +2187,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           };
           const classified = classifyAttemptError(error, target, {
             isAbort: (value) => args.signal.aborted || (value instanceof Error && value.name === "AbortError"),
-            asTransportFailure: classifyOpenRouterFailure,
+            asTransportFailure: classifyProviderFailure,
           });
           const disposition = failureDisposition(classified);
           await requiredPort("run_state_persistence_failed", "Inference attempt ledger persistence failed", () => args.input.onInferenceAttempt?.({
@@ -2092,7 +2212,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             cursor,
             latencyMs: target.durationMs,
             failureKind: classified.kind,
-            ...(error instanceof OpenRouterError
+            ...(error instanceof OpenRouterError || error instanceof AzureOpenAIError
               ? (() => {
                 const providerError = (error.details as { providerError?: OpenRouterProviderError } | undefined)
                   ?.providerError;
@@ -2158,7 +2278,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       // Unchanged for everything else: Bind rethrows the transport's own error so
       // a host's error classes and messages survive routing, and the outer catch
       // still reads them.
-      throw attemptError ? attemptError.cause : new Error("No viable OpenRouter endpoint");
+      throw attemptError ? attemptError.cause : new Error("No viable inference endpoint");
     }
     textStream.finish("succeeded");
     await streamEventChain;
@@ -2236,7 +2356,7 @@ async function loadOpenRouterContextCatalog(
       }
     }
     return {
-      expiresAt: Date.now() + OPENROUTER_CATALOG_TTL_MS,
+      expiresAt: Date.now() + OPENROUTER_CATALOG_CACHE_TTL_MS,
       contextWindowTokensByModel: values,
     };
   })();
@@ -2820,36 +2940,226 @@ function renderStableSystemPrompt(
   };
 }
 
-function routePlan(primary: string, fallbacks: string[], workspaceId: string): RoutePlan {
-  const models = [...new Set([primary, ...fallbacks].filter(Boolean))];
-  const stages = models.map((model, index) => {
-    const canonical = canonicalModelIdSchema.parse(model);
-    const candidate: RouteCandidate = {
-      providerId: OPENROUTER_PROVIDER,
-      canonicalModelId: canonical,
-      providerInvocationModel: model,
-      credentialSource: "platform",
-      creditEligible: false,
-      capabilities: new Set(["chat_completions", "streaming", "tools"]),
-      maxCompletionTokens: null,
-      pricingBasis: { kind: "provider_reported" },
-      bindingFingerprint: `openrouter:${model}`,
-      breakerScope: workspaceId,
-    };
-    return {
+function routePlan(
+  primary: string,
+  fallbacks: string[],
+  workspaceId: string,
+  config: RunHarnessInput["config"],
+  azurePricing: ReadonlyMap<string, AzureModelPricing>,
+  request: {
+    messages: RunHarnessInput["messages"];
+    hasTools: boolean;
+    hasFileParserPlugin: boolean;
+    hasReasoningEffort: boolean;
+  },
+): RoutePlan {
+  const models = [...new Set([primary, ...fallbacks].filter(Boolean))]
+    .map((model) => canonicalModelIdSchema.parse(model));
+  const requirements = {
+    capabilities: routeCapabilities(request),
+    requestedMaxCompletionTokens: null,
+  };
+  const transports = new Map<ProviderId, PlannerTransport>([
+    [OPENROUTER_PROVIDER, openRouterTransport(workspaceId, config.apiKey)],
+    [AZURE_PROVIDER, azureTransport(workspaceId, config.azure, azurePricing)],
+  ]);
+  const stages = models.flatMap((model, index) => {
+    const boundProviders = AZURE_MODEL_BINDINGS.has(model)
+      ? new Set<ProviderId>([AZURE_PROVIDER])
+      : new Set<ProviderId>();
+    const built = buildRoutePlan({
+      primaryModel: model,
+      fallbackModel: null,
+      requirements,
+      policyFor: (canonical) => resolveProviderPolicy(
+        MODEL_ROUTE_REGISTRY,
+        canonical,
+        boundProviders,
+      ),
+      transports,
+    });
+    return built.plan.stages.map((stage) => ({
+      ...stage,
       kind: index === 0 ? "primary" as const : "fallback_model" as const,
-      canonicalModelId: canonical,
-      policy: { mode: "only" as const, provider: OPENROUTER_PROVIDER },
-      candidates: [candidate],
-    };
+    }));
   });
   return {
-    policyVersion: ROUTE_POLICY_VERSION,
-    requirements: {
-      capabilities: new Set(["chat_completions", "streaming", "tools"]),
-      requestedMaxCompletionTokens: null,
-    },
+    policyVersion: "provider-router-v1",
+    requirements,
     stages,
+  };
+}
+
+function routeIncludesAzureBinding(models: readonly string[]): boolean {
+  return models.some((model) => {
+    const canonical = canonicalModelIdSchema.safeParse(model);
+    return canonical.success && AZURE_MODEL_BINDINGS.has(canonical.data);
+  });
+}
+
+function routeCapabilities(request: {
+  messages: RunHarnessInput["messages"];
+  hasTools: boolean;
+  hasFileParserPlugin: boolean;
+  hasReasoningEffort: boolean;
+}): ReadonlySet<InferenceCapability> {
+  const capabilities = new Set<InferenceCapability>(["chat_completions", "streaming"]);
+  if (request.hasTools) capabilities.add("tools");
+  if (request.hasFileParserPlugin) capabilities.add("file_parser_plugin");
+  if (request.hasReasoningEffort) capabilities.add("reasoning_effort");
+  for (const message of request.messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === "image_url") capabilities.add("image_input");
+      // There is no audio-input capability in Bind. Requiring OpenRouter's
+      // file-parser extension keeps unsupported Azure bodies off the wire.
+      if (part.type === "input_audio") capabilities.add("file_parser_plugin");
+    }
+  }
+  return capabilities;
+}
+
+function openRouterTransport(workspaceId: string, apiKey: string): PlannerTransport {
+  return {
+    id: OPENROUTER_PROVIDER,
+    getAvailability: () => apiKey.trim()
+      ? { available: true }
+      : { available: false, reason: "OPENROUTER_API_KEY is not configured" },
+    resolveCandidate(model) {
+      return {
+        kind: "candidate",
+        candidate: {
+          providerId: OPENROUTER_PROVIDER,
+          canonicalModelId: model,
+          providerInvocationModel: model,
+          credentialSource: "platform",
+          creditEligible: false,
+          capabilities: OPENROUTER_CAPABILITIES,
+          maxCompletionTokens: null,
+          pricingBasis: { kind: "provider_reported" },
+          bindingFingerprint: "openrouter-catalog-v1",
+          breakerScope: workspaceId,
+        },
+      };
+    },
+  };
+}
+
+function azureTransport(
+  workspaceId: string,
+  config: RunHarnessInput["config"]["azure"],
+  pricingByModel: ReadonlyMap<string, AzureModelPricing>,
+): PlannerTransport {
+  return {
+    id: AZURE_PROVIDER,
+    getAvailability: () => config
+      ? { available: true }
+      : { available: false, reason: "Azure inference endpoint and key are not configured" },
+    resolveCandidate(model) {
+      const binding = AZURE_MODEL_BINDINGS.get(model);
+      if (!binding) return { kind: "unserved" };
+      const pricing = pricingByModel.get(model);
+      if (!pricing) {
+        return {
+          kind: "skip",
+          skip: {
+            kind: "invalid_binding",
+            providerId: AZURE_PROVIDER,
+            canonicalModelId: model,
+            reason: "OpenRouter endpoint-average token rates are unavailable",
+          },
+        };
+      }
+      return {
+        kind: "candidate",
+        candidate: {
+          providerId: AZURE_PROVIDER,
+          canonicalModelId: model,
+          providerInvocationModel: binding.deployment,
+          credentialSource: "platform",
+          creditEligible: true,
+          capabilities: binding.capabilities,
+          maxCompletionTokens: binding.maxCompletionTokens,
+          pricingBasis: {
+            kind: "configured_token_rates",
+            inputUsdPerM: pricing.inputUsdPerM,
+            cachedInputUsdPerM: pricing.cachedInputUsdPerM,
+            outputUsdPerM: pricing.outputUsdPerM,
+            cachedTokenSemantics: binding.cachedTokenSemantics,
+          },
+          bindingFingerprint: `${binding.fingerprint}:${pricing.sourceFingerprint}`,
+          breakerScope: workspaceId,
+        },
+      };
+    },
+  };
+}
+
+function normalizeRoutedResult(
+  candidate: RouteCandidate,
+  result: StreamResult,
+  azurePricing: AzureModelPricing | undefined,
+): StreamResult {
+  if (candidate.pricingBasis.kind === "provider_reported") {
+    return { ...result, model: candidate.canonicalModelId };
+  }
+  if (!azurePricing) throw new AzureOpenAIError("Azure model pricing became unavailable");
+  const usage = result.usage;
+  if (!usage) throw new AzureOpenAIError("Azure returned no final token usage");
+  const promptTokens = numberFromUsage(usage, "prompt_tokens");
+  const completionTokens = numberFromUsage(usage, "completion_tokens");
+  const totalTokens = numberFromUsage(usage, "total_tokens");
+  if (totalTokens < promptTokens + completionTokens) {
+    throw new AzureOpenAIError("Azure returned internally inconsistent token usage");
+  }
+  // Azure Grok reports visible completion tokens and reasoning tokens as
+  // separate output buckets: `completion_tokens` can be 1 while
+  // `total_tokens - prompt_tokens` is 104. The Global output meter charges the
+  // complete output side, so pricing only the visible completion would make a
+  // reasoning-heavy call look nearly free. For providers whose completion
+  // count already includes reasoning, the subtraction produces that same
+  // completion count.
+  const billableOutputTokens = totalTokens - promptTokens;
+  const cachedInputTokens = cachedTokens(usage) ?? 0;
+  // Azure Grok's cached count is disjoint from prompt_tokens, but OpenRouter's
+  // long-context threshold is based on the complete prompt. Count both input
+  // buckets before choosing the tier, then let Bind apply the declared cache
+  // semantics to the cost arithmetic itself.
+  const totalPromptTokens = candidate.pricingBasis.cachedTokenSemantics === "disjoint"
+    ? promptTokens + cachedInputTokens
+    : promptTokens;
+  const tokenRates = azureTokenRatesForPrompt(azurePricing, totalPromptTokens);
+  const priced = computeConfiguredRatesCostCents({
+    ...candidate.pricingBasis,
+    ...tokenRates,
+  }, {
+    inputTokens: promptTokens,
+    cachedInputTokens,
+    outputTokens: billableOutputTokens,
+  });
+  if (!priced.ok) throw new AzureOpenAIError(`Azure returned invalid token usage (${priced.reason})`);
+  return {
+    ...result,
+    model: candidate.canonicalModelId,
+    usage: { ...usage, cost: priced.costCents / 100 },
+  };
+}
+
+function azureTokenRatesForPrompt(
+  pricing: AzureModelPricing,
+  promptTokens: number,
+): Pick<AzureModelPricing, "inputUsdPerM" | "cachedInputUsdPerM" | "outputUsdPerM"> {
+  let selected: Pick<AzureModelPricing, "inputUsdPerM" | "cachedInputUsdPerM" | "outputUsdPerM"> = pricing;
+  const overrides = [...pricing.overrides]
+    .sort((left, right) => left.minPromptTokens - right.minPromptTokens);
+  for (const override of overrides) {
+    if (override.minPromptTokens > promptTokens) break;
+    selected = override;
+  }
+  return {
+    inputUsdPerM: selected.inputUsdPerM,
+    cachedInputUsdPerM: selected.cachedInputUsdPerM,
+    outputUsdPerM: selected.outputUsdPerM,
   };
 }
 
@@ -2860,11 +3170,11 @@ function replaceSystemMessage(messages: ProviderMessages, content: string): void
   else messages.unshift(next);
 }
 
-function classifyOpenRouterFailure(error: unknown) {
+function classifyProviderFailure(error: unknown) {
   if (error instanceof OpenRouterCompletionDefectError) {
     return { kind: error.defect, statusCode: null, retryAfterMs: null } as const;
   }
-  if (error instanceof OpenRouterError) {
+  if (error instanceof OpenRouterError || error instanceof AzureOpenAIError) {
     const status = error.status ?? null;
     return {
       kind: status === 429

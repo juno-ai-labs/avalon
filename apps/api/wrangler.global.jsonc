@@ -153,6 +153,9 @@
     { "binding": "PAYLOADS", "bucket_name": "avalon-global-payloads" },
     { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-global-telemetry" }
   ],
+  "kv_namespaces": [
+    { "binding": "INFERENCE_PRICING_CACHE", "id": "ea2442c2ee744decbad3d1ca03fce728" }
+  ],
   "analytics_engine_datasets": [
     { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" },
     { "binding": "TERMINAL_ANALYTICS", "dataset": "avalon_terminal_operations" }

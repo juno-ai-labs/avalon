@@ -203,7 +203,7 @@ After admission Rally validates the execution principal and persists an immutabl
 
 Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, subscription overrides, and the active destinations Rally will deliver the result to. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
 
-Attached resources are exposed as an authorized index and hydrated lazily through tools. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
+Attached resources are exposed as an authorized index and hydrated lazily through tools. Their manifests and contents remain untrusted evidence. A partial read is not represented as the whole resource: the prompt requires exact cursor continuation when more coverage is needed and requires the answer to disclose any remaining `charactersBefore` or `charactersAfter` boundary. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
 
 All base prompts are rendered by typed, dependency-free functions in `@rally/agent-harness`, and the prompt version is frozen with the run. Per-run time, reason, IDs, and trigger evidence are user-role messages rather than mutations of the system prefix, so retries and route fallbacks see stable policy. Bind validates the transcript before inference and heals dangling or orphaned tool-protocol rows; Rally records diagnostics without adding provider-controlled text to the system prompt.
 
@@ -219,11 +219,11 @@ Interactive multi-round work starts with a short plan and reports meaningful pha
 
 An automation run's final message is what Rally delivers, so the run is told which destinations Rally will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Rally and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
 
-A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the trigger — an explicit document type, a composition past roughly three paragraphs organized with headings or a table, or a result long enough to bury the conversation — plus the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is rendered only for a run that can produce one — the region reports Terminal supported, and the run is not an automation, a scheduled digest, an inbound email, or Slack-originated, each of which delivers a final message that a rail entry is not part of. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the rule steers into.
+A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds, while a HyperSight block run skips publication and submits finished Markdown through its required block tool. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
-An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. Unlike `DOCUMENT_GENERATION_POLICY` it is **not** gated, because a resource worth citing can be in context on any run — but the *announcement* rule is, and lives there: the embed form announces something the run produced, and a run that was deliberately not told it may publish has nothing to announce. Rendered for every work-stream run — interactive, automation and scheduled digest alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
+An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. The *announcement* rule — the embed form for a document the run just published — lives in `DOCUMENT_GENERATION_POLICY` so there is one rule for that act. Rendered for every work-stream run — interactive, automation and scheduled digest alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
 
-Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — the character itself is typed instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). The rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
+Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — Unicode or plain words are used instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). Elicitation questions and option labels are plain text because their surface does not render Markdown. The TeX rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
 ### Automation compilation
 
@@ -456,13 +456,82 @@ Each agent's default model and its fallback stages are one Cloudflare Flagship f
 
 Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks. The harness package has a separate portability boundary: production sources cannot import database, connector, API, or Node-only implementations and cannot read `process`; host capabilities arrive through explicit ports.
 
-OpenRouter routing is deterministic and versioned. Empty completions, truncated
-tool calls, and fallback-eligible failures may retry or traverse configured
-model stages only before an assistant byte is published and before a tool effect
-begins. The first observable delta closes that route permanently. A later
-failure terminalizes the step, removes its transient preview, and materializes
-the reserved failure status instead of asking another provider for a competing
-answer. Cancellation and host failures never route onward.
+Provider routing is deterministic and versioned by Bind. Rally contributes a
+checked-in canonical-model binding and one planner transport per provider; Bind
+resolves the policy, filters candidates against the turn's actual capabilities,
+builds the Azure/OpenRouter/model stages, operates their shared circuit breaker,
+and executes traversal. `x-ai/grok-4.3` and `x-ai/grok-4.6` are Azure-bound:
+their same-model route is Azure first and OpenRouter second. Other canonical
+models remain OpenRouter-only. A file-parser request, audio input, or another
+capability an Azure binding has not proved skips that candidate before any
+network request rather than sending a body the deployment may reject.
+
+The Azure transport is enabled only when its dedicated endpoint and API key are
+both present. Those values are separate from realtime-dictation configuration,
+so configuring an EU dictation resource cannot accidentally send an EU work
+stream to the Global Monad production inference resource. A shared contract
+accepts only an HTTPS resource root or `/openai/v1` base, so an endpoint the
+transport cannot address fails Worker startup rather than the first model turn.
+Azure receives the
+deployment name as `model`, the standard OpenAI-compatible message/tool body,
+and `reasoning_effort` only for a binding that declares it. OpenRouter-only
+Broadcast fields, plugins, routing metadata, and headers never cross that
+boundary. Canonical `x-ai/...` identity remains in Rally's transcript and
+ledger; the Azure deployment name is recorded separately as the provider
+invocation model.
+
+The checked-in Monad production bindings were verified against the live
+`monad-prod-resource` deployment details on 2026-08-30:
+
+| Canonical model | Azure deployment | Version / lifecycle | Deployment | Live quota | Guardrail |
+| --- | --- | --- | --- | --- | --- |
+| `x-ai/grok-4.3` | `grok-4.3` | `1` / Preview | Global Standard | 250,000 TPM / 250 RPM | DefaultV2 |
+| `x-ai/grok-4.6` | `grok-4.6` | `1` / Preview | Global Standard | 2,250,000 TPM / 2,250 RPM | DefaultV2 |
+
+Both expose
+`https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions`.
+Manual inference probes returned token usage but no dollar `cost` or `price`
+field. When that happens, the configured fallback is the unweighted arithmetic
+mean of OpenRouter's published endpoint prices for that canonical model—not the
+top-level model-catalog price, which OpenRouter documents as the lowest endpoint
+price. On 2026-08-30 the four 4.3 endpoints averaged $1.875 input, $0.30 cached
+input, and $3.75 output per million tokens through the first 200,000 prompt
+tokens, then $3.75 / $0.60 / $7.50. The five 4.6 endpoints averaged
+$2.84 / $0.71 / $8.52, then $5.68 / $1.42 / $17.04 at the same OpenRouter
+catalog threshold. A dedicated Global cron refreshes those rates hourly,
+writes each model under its canonical OpenRouter ID in the shared regional KV,
+and preserves the decimal costs as strings. The inventory covers every model in
+the developer-mode manual selector plus every Monad production Azure
+deployment carried by OpenRouter: fourteen unique IDs on that date. API inference
+only reads the cache when the primary or a fallback model has an Azure binding;
+it never fetches or writes pricing. A failed cache read omits Azure and leaves
+OpenRouter available. Azure's Retail Prices
+API separately published 4.3 Global meters but no 4.6 meter that day; that API
+is useful corroboration, not this fallback's rate authority.
+The Azure agent route does not enable provider web search, so the separate
+per-search catalog charge is neither incurred nor folded into token rates.
+
+Empty completions, truncated tool calls, and fallback-eligible failures may
+retry or traverse configured provider and model stages only before an assistant
+byte is published and before a tool effect begins. The first observable delta
+closes that route permanently. A later failure terminalizes the step, removes
+its transient preview, and materializes the reserved failure status instead of
+asking another provider for a competing answer. Cancellation and host failures
+never route onward.
+
+OpenRouter reports dollars directly. Azure reports token counts, so Rally feeds
+the cached per-million-token rates and declared disjoint Grok cache semantics
+through Bind's configured-rate billing function. Azure reports cached Grok
+tokens alongside rather than inside `prompt_tokens`, so Rally adds both input
+buckets only to select the OpenRouter prompt-size tier; Bind still prices each
+bucket exactly once. A missing, malformed, or
+legacy numeric-cost record removes that Azure candidate before the request;
+stale valid pricing remains usable. Missing or internally inconsistent final
+Azure usage fails the attempt; it is never recorded as a zero-cost call and
+cannot silently bypass a run cost ceiling.
+Azure Grok also reports reasoning outside `completion_tokens` while including
+it in `total_tokens`; Bind is therefore given `total_tokens - prompt_tokens` as
+the billable output count so hidden reasoning is not treated as free.
 
 The Bind/OpenRouter boundary is converted member by member rather than asserted
 through `unknown`. Bind's OpenAI-wire-compatible structural messages remain an
@@ -532,7 +601,7 @@ outcome.
 
 ### Streaming stability
 
-OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
+OpenAI-compatible SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and attempt boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
 
@@ -1007,7 +1076,6 @@ proof.
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
 | `apps/api/test/digest-run-context.test.ts` | A scheduled digest's hidden brief becomes an explicit derived activation input with stable logical identity instead of disappearing on loop resume. |
-| `apps/api/test/document-run-context.test.ts` | Which runs are told to write documents: an interactive run in a region with Terminal is, and a region without Terminal, an inbound-email run and a Slack-origin run are not. The automation and digest origins are pinned in their own suites, beside the delivery context each already proves. **The trap:** the gate reads the whole Terminal region configuration, so a test asserting the section's *absence* must set `TERMINAL_REGION_CAPABILITY`, all four `DAYTONA_*` variables and `TERMINAL_EMERGENCY_DISABLED` — otherwise it passes because the region is unsupported rather than because of the origin it names. |
 | `apps/api/test/block-dashboard-submission.test.ts` | The single nudge, the `block_dashboard_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
 | `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
@@ -1054,6 +1122,97 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-30 — Bound Grok models use Bind's Azure-first provider route
+
+**What changed:** Work-stream and inline-child turns whose canonical model is
+`x-ai/grok-4.3` or `x-ai/grok-4.6` now give Bind an Azure candidate followed by
+the existing OpenRouter candidate for that same model. Rally supplies the
+deployment binding and provider-specific wire adapter; Bind owns policy
+resolution, capability skips, route construction, breaker admission, traversal,
+failure disposition, and configured-rate cost arithmetic. A dedicated optional
+Azure inference endpoint/key pair enables the transport without changing model
+flags. Provider invocation names remain separate from canonical model identity
+in the inference ledger. The host resolves an unweighted average of all
+OpenRouter endpoints for each bound Grok model and gives those rates to Bind.
+One public-metadata record per canonical OpenRouter model ID is cached in a
+Cloudflare KV namespace shared by the Global and EU Workers. A dedicated Global
+cron refreshes the developer-selector and Azure-deployment union hourly; base
+and prompt-threshold override costs remain decimal strings in KV and are
+converted only at Bind's billing boundary. Startup now validates the Azure
+endpoint against the same exact contract used by the transport, and turns whose
+primary and fallback models are all OpenRouter-only do not read pricing KV.
+
+**Why:** Monad production carries Global Standard version-1 deployments for
+both Grok models, while Rally sent every agent turn through OpenRouter even though its
+Bind version already had a multi-provider route executor. Using the same-model
+Azure endpoint first gives Rally that deployment's capacity and commercial path
+without turning a provider choice into a product model change. The change also
+had to preserve cost ceilings: Azure returns usage rather than dollars, and
+Grok's cached count is disjoint from `prompt_tokens` while reasoning is separate
+from `completion_tokens`, so ordinary subset billing would either undercount or
+reject a valid response. When Azure omits dollars, both bindings use the most
+recent valid average of OpenRouter endpoint rates, including the 200,000-token
+long-context override rather than silently billing a large request at the base
+rate. Using the catalog's cheapest
+headline price was rejected because it would systematically understate the
+intended market-average fallback. Keeping those rates as dated source constants
+was also rejected because endpoint inventory changes independently of a Rally
+release.
+
+**Considered and rejected:** Encoding Azure as another fallback model. That
+would lose the difference between the product model and its provider endpoint,
+mislabel same-model traversal in telemetry, and bypass Bind's capability and
+circuit-breaker semantics. Reusing the realtime-dictation Azure variables was
+also rejected: those are regional and may be configured in EU, while the Monad
+production inference resource is a distinct routing authority. A missing Azure
+pair therefore omits that provider and leaves the existing OpenRouter route
+unchanged.
+
+**Consequences:** A new Azure model needs a checked-in canonical-to-deployment
+binding with proved capabilities and a canonical OpenRouter identity in the
+Azure pricing inventory. The cron fetches every inventoried model before it
+writes any of them; stale valid per-model KV is a deliberate availability
+fallback, while no valid price omits Azure instead of treating a request as
+free. KV is eventually consistent, which is acceptable for public hourly
+pricing metadata and must not be extended to workspace state. Do not make
+the Azure client carry OpenRouter Broadcast fields or plugins. Keep turn
+requirements accurate: an Azure candidate that cannot serve a file parser,
+input modality, reasoning control, or tool surface must be skipped before I/O.
+Missing final Azure usage is a failed attempt, never a free one. Provider
+ordering remains policy, so changing Azure-first behavior belongs in the route
+registry rather than in request code.
+### 2026-08-30 — Document generation is standing policy, not a gated section
+
+**What changed:** `DOCUMENT_GENERATION_POLICY` moves into the work-stream
+`SYSTEM_PROMPT` alongside the other standing sections. `documentPublishing` and
+`runPublishesDocuments` are gone — every work-stream run sees `# Documents`,
+including automations, digests, inbound email, Slack-origin, HyperSight blocks,
+and regions without Terminal. The host-side gate tests go with them. A typed
+output surface now follows the standing rule: external deliveries require the
+complete usable body in the final message, and HyperSight blocks require
+finished Markdown through the block submission tool instead of a document.
+
+**Why:** The section already told the model what to do when the sandbox cannot
+be reached ("answer in the chat and inform the user"). A host gate that omitted
+the section for delivery-path and unsupported-region runs was solving the same
+problem a second time, and the wrong resolution of an absent rule — promising a
+document that never appears — was exactly what the gate existed to prevent. One
+standing rule with an explicit fallback is cheaper to reason about than a
+conditional render whose absence itself needed reasoning.
+
+**Considered and rejected:** Restoring a host gate for delivery and HyperSight
+runs — rejected because absence makes the platform rule depend on every caller
+remembering the exclusion. A standing rule followed by an explicit,
+surface-specific tie-break keeps one default while stating the actual output
+contract where it differs.
+
+**Consequences:** The work-stream golden hash moves. The standing prompt now
+always pays for the documents section; the 8,000-byte ceiling in
+`prompts.test.ts` is the bound that matters. Output-surface derivation is part of
+run-context assembly and must cover any new external delivery origin. Prompt
+assembly joins optional sections without blank tombstones, while preserving
+blank lines inside authorized task data.
 
 ### 2026-08-29 — External delivery reads the exact saved terminal turn
 
@@ -1621,6 +1780,8 @@ feature exists to remove. Shipped in
 [`docs/PRDs/2026-08-27_inline-resource-citations/prd.md`](PRDs/2026-08-27_inline-resource-citations/prd.md).
 
 ### 2026-08-27 — A document request becomes a published resource, not a wall of chat
+
+Superseded by the 2026-08-30 standing-policy and output-surface entry above.
 
 **What changed:** `DOCUMENT_GENERATION_POLICY` joined the work-stream system
 prompt as a `# Documents` section, rendered only when `loadRunPromptContext`

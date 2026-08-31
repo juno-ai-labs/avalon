@@ -634,7 +634,7 @@ describe("naming somebody when the work stream is created", () => {
       }],
     });
 
-    const canonical = `[@Invitee](person:${INVITEE_ID})`;
+    const canonical = `[@Invitee](person://${INVITEE_ID})`;
     await runInDurableObject(stub, (_instance, state) => {
       const stored = state.storage.sql.exec<{
         content: string;
