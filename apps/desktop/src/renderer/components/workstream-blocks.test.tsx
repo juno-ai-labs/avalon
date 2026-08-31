@@ -884,6 +884,17 @@ describe('MessageBlock markdown', () => {
     expect(screen.queryByText('Unsafe graph')).toBeNull();
   });
 
+  it('rejects forbidden elements in generated Mermaid SVG', async () => {
+    mermaidRender.mockResolvedValueOnce({
+      svg: '<svg viewBox="0 0 40 20"><foreignObject><div>Unsafe graph</div></foreignObject></svg>',
+    });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(screen.queryByText('Unsafe graph')).toBeNull();
+  });
+
   it('rejects parsed Mermaid CSS resources before rendering', async () => {
     const renderCallBaseline = mermaidRender.mock.calls.length;
     getMermaidDiagram.mockResolvedValueOnce({
@@ -891,6 +902,18 @@ describe('MessageBlock markdown', () => {
     });
 
     render(<MarkdownBody>{'```mermaid\nflowchart TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('rejects diagram-independent CSS resource functions before rendering', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    const source = `block-beta
+  A["Review"]
+  style A fill:url(https://example.invalid/beacon.svg)`;
+
+    render(<MarkdownBody>{`\`\`\`mermaid\n${source}\n\`\`\``}</MarkdownBody>);
 
     expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);

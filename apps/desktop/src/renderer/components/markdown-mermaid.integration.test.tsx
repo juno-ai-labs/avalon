@@ -58,7 +58,7 @@ describe('Mermaid trust boundary', () => {
     const source = `---
 config:
   theme: dark
-  themeCSS: '.attacker { background-image: url("https://example.invalid/beacon"); }'
+  themeCSS: '.attacker { fill: rgb(9, 8, 7); }'
   themeVariables:
     primaryColor: '#ff00ff'
   fontFamily: Attacker
@@ -83,6 +83,7 @@ flowchart TD
     expect(svg?.outerHTML).toContain('trusted-mermaid-theme');
     expect(svg?.outerHTML).not.toContain('example.invalid');
     expect(svg?.outerHTML).not.toContain('#ff00ff');
+    expect(svg?.outerHTML).not.toContain('rgb(9, 8, 7)');
     expect(svg?.outerHTML).not.toContain('Attacker');
     expect(svg?.outerHTML).not.toContain('font-size:99');
     expect(svg?.querySelector('a')).toBeNull();
@@ -97,6 +98,18 @@ flowchart TD
   A[Review] --> B[Done]
   classDef remote fill:url(https://example.invalid/beacon)
   class B remote`;
+
+    const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(container.querySelector('pre')?.textContent).toBe(source);
+    expect(screen.queryByRole('img')).toBeNull();
+  });
+
+  it('rejects external resources in block styles before rendering', async () => {
+    const source = `block-beta
+  A["Review"]
+  style A fill:url(https://example.invalid/beacon.svg)`;
 
     const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
 
