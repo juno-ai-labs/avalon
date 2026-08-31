@@ -832,6 +832,29 @@ either create a second authority or widen the raw-SQL trust boundary.
 excludes this Access-authorized operator console. Product paths remain regional
 and typed; operator SQL is destructive and separately documented.
 
+### 2026-08-30 — Public inference pricing gets one scheduled producer
+
+**What changed:** Global now deploys a fourth Worker whose hourly scheduled
+handler refreshes OpenRouter endpoint averages into the KV namespace both
+regional APIs read. The cache has one canonical model-ID key per record and
+stores decimal costs as strings. Deployment builds, profiles, uploads, and
+promotes seven total Worker artifacts.
+
+**Why:** Provider pricing is shared fleet metadata, not request or workspace
+state. Refreshing it inside an arbitrary inference request coupled member
+latency and Azure eligibility to an OpenRouter catalog write.
+
+**Considered and rejected:** A Workflow adds durable orchestration without a
+durable multi-step transaction to resume; one cron execution is fourteen reads
+followed by fourteen small writes. One cron per region would duplicate and race
+the same public metadata.
+
+**Consequences:** Inference is read-only against pricing KV, stale valid records
+remain available during catalog outages, and a missing record omits Azure. The
+Global-only cron is a deployment dependency but not a regional product
+authority; [`api-worker-deployment.md`](api-worker-deployment.md) owns its build
+and rollout contract.
+
 ### 2026-08-30 — Heavy provider graphs move behind typed Worker services
 
 **What changed:** Each region now deploys three statically imported Workers:

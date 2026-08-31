@@ -8,6 +8,8 @@ import ts from 'typescript';
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const deployWorkflowPath = join(repositoryDirectory, '.github/workflows/deploy-api.yml');
 const ciWorkflowPath = join(repositoryDirectory, '.github/workflows/ci.yml');
+const pricingConfigPath = join(repositoryDirectory, 'apps/api/wrangler.pricing.global.jsonc');
+const pricingEntrypointPath = join(repositoryDirectory, 'apps/api/src/inference-pricing-worker.ts');
 const engineeringMcpDeployPath = join(
   repositoryDirectory,
   'apps/engineering-mcp/scripts/deploy.mjs',
@@ -117,6 +119,27 @@ test('private RPC Workers register Cloudflare-required inert fetch handlers', as
   }
 });
 
+test('the Global pricing Worker refreshes the shared regional KV on an hourly cron', async () => {
+  const [pricingConfig, pricingEntrypoint, globalConfig, euConfig] = await Promise.all([
+    readFile(pricingConfigPath, 'utf8'),
+    readFile(pricingEntrypointPath, 'utf8'),
+    readFile(join(repositoryDirectory, 'apps/api/wrangler.global.jsonc'), 'utf8'),
+    readFile(join(repositoryDirectory, 'apps/api/wrangler.eu.jsonc'), 'utf8'),
+  ]);
+  const pricingKv = pricingConfig.match(
+    /"binding": "INFERENCE_PRICING_CACHE", "id": "(?<id>[a-f0-9]+)"/u,
+  );
+
+  assert.match(pricingConfig, /"name": "avalon-api-inference-pricing-global"/u);
+  assert.match(pricingConfig, /"main": "src\/inference-pricing-worker\.ts"/u);
+  assert.match(pricingConfig, /"workers_dev": false/u);
+  assert.match(pricingConfig, /"crons": \["0 \* \* \* \*"\]/u);
+  assert.ok(pricingKv?.groups?.id, 'the pricing Worker must bind the shared pricing KV');
+  assert.match(globalConfig, new RegExp(`INFERENCE_PRICING_CACHE", "id": "${pricingKv.groups.id}"`, 'u'));
+  assert.match(euConfig, new RegExp(`INFERENCE_PRICING_CACHE", "id": "${pricingKv.groups.id}"`, 'u'));
+  assert.match(pricingEntrypoint, /async scheduled\([\s\S]+await refreshOpenRouterPricingCache\(env\)/u);
+});
+
 test('profiles all static service artifacts and uploads both regional sets before promotion', async () => {
   const workflow = await readFile(deployWorkflowPath, 'utf8');
   const buildEu = workflow.indexOf('- name: Build and profile the exact EU Worker artifact');
@@ -134,12 +157,15 @@ test('profiles all static service artifacts and uploads both regional sets befor
   assert.ok(uploadEu < deployEu && uploadGlobal < deployEu);
   assert.ok(deployEu < euHealth && euHealth < deployGlobal);
   assert.match(workflow, /wrangler\.documents\.eu\.jsonc wrangler\.terminal\.eu\.jsonc \.wrangler\.lakehouses\.eu\.json/u);
-  assert.match(workflow, /wrangler\.documents\.global\.jsonc wrangler\.terminal\.global\.jsonc \.wrangler\.lakehouses\.global\.json/u);
+  assert.match(workflow, /wrangler\.documents\.global\.jsonc wrangler\.terminal\.global\.jsonc wrangler\.pricing\.global\.jsonc \.wrangler\.lakehouses\.global\.json/u);
   assert.match(workflow, /WRANGLER_OUTPUT_FILE_PATH="\$output_file"[\s\S]+\.version_id/u);
   assert.match(workflow, /wrangler versions deploy[\s\S]+--version-id "\$version_id"/u);
   assert.doesNotMatch(workflow, /versions deploy[\s\S]{0,200}--version-tag/u);
   assert.match(workflow, /steps\.upload_eu\.outputs\.eu_documents/u);
   assert.match(workflow, /steps\.upload_global\.outputs\.global_api/u);
+  assert.match(workflow, /steps\.upload_global\.outputs\.global_pricing/u);
+  assert.match(workflow, /pnpm --filter @rally\/api build:pricing/u);
+  assert.match(workflow, /apps\/api\/dist-pricing\/startup\.cpuprofile/u);
   assert.match(workflow, /Preserve exact deployment startup evidence/u);
 });
 
@@ -152,6 +178,7 @@ test('a missing capability Worker selects the service-first direct bootstrap', a
   );
   assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.documents\.eu\.jsonc\)"\)/u);
   assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.terminal\.global\.jsonc\)"\)/u);
+  assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.pricing\.global\.jsonc\)"\)/u);
   assert.match(workflow, /if \[ "\$\{\{ steps\.deploy_mode\.outputs\.mode \}\}" = "versioned" \]; then/u);
 });
 
