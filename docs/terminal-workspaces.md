@@ -20,6 +20,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/network-policy.ts`, `settings.ts` | Trusted-only policy compiler and preview/confirm workspace settings transition. |
 | `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/services/workspace-schedule-execution.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and the `terminal` alarm target WorkspaceDO drains. |
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
+| `apps/api/scripts/build-terminal-snapshot.ts` | Builds the Rally-owned snapshot by baking the runtime bootstrap into the image, so the four managed capabilities are preinstalled rather than installed per sandbox. Does not adopt it; the acceptance probe above is still the gate. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
@@ -584,6 +585,43 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-30 — A Rally-owned snapshot can preinstall the managed capabilities
+
+**What changed:** `apps/api/scripts/build-terminal-snapshot.ts`
+(`pnpm --filter @rally/api terminal:build-snapshot`) builds a named Daytona
+snapshot from a required `TERMINAL_SNAPSHOT_BASE_IMAGE`, applying
+`terminalManagedSnapshotBootstrapCommand()` as the image's build step. Nothing
+adopts it: the operator points `DAYTONA_TERMINAL_SNAPSHOT` at the result and
+runs the existing `terminal:verify-provider` acceptance gate before any region
+serves from it.
+
+**Why:** Daytona's managed default image ships none of `sqlite3`, `gh`, `pnpm`,
+`tsx`, so every new work-stream sandbox installs all four before the
+participant's first Terminal tool can run — inside `prepareSandbox`, inside the
+blocking `load_plugin` activation. Measured on the pinned command text in a
+Linux container: ~14.4s with the capabilities missing against **117ms** with
+them present, since the bootstrap's `command -v` guards then skip every install.
+`apt-get update` alone is 5.7s of that. Production telemetry localises the cost
+the same way: every recorded `restore` acquisition, which skips this phase,
+lands in 1–5s, while no `start`, which runs it, has ever landed under 5s.
+
+**Considered and rejected:** A second package list maintained beside the
+bootstrap — it would drift from the runtime, and a snapshot that disagrees with
+the manifest fails closed at acceptance rather than obviously. A
+`SNAPSHOT_PREBUILT` flag letting the runtime skip the bootstrap — the `command
+-v` guards already make it a 117ms no-op, and a flag that lies would skip the
+manifest verification that fails closed on a breaking image update. Defaulting
+the base image — the manifest probes fifteen capabilities and a wrong guess
+ships a sandbox missing a runtime the prompt promises the model.
+
+**Consequences:** The snapshot and the runtime share one source of truth, so
+adding a capability means editing the bootstrap and rebuilding, not editing two
+lists. The runtime bootstrap stays on the create path unchanged and still
+verifies the manifest, so a snapshot that silently loses a capability is still
+caught. **This script has not been executed against Daytona** — this environment
+has no `DAYTONA_API_KEY` — so the base image, the build, and the resulting
+snapshot are unverified; the acceptance probe is what must establish them.
 
 ### 2026-08-30 — The managed-snapshot bootstrap stops paying for work it can batch
 
