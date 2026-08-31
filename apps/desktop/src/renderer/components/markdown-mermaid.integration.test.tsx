@@ -41,6 +41,7 @@ describe('Mermaid trust boundary', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     if (computedTextLength) {
       Object.defineProperty(SVGElement.prototype, 'getComputedTextLength', computedTextLength);
     } else {
@@ -100,6 +101,30 @@ flowchart TD
     const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
 
     expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(container.querySelector('pre')?.textContent).toBe(source);
+    expect(screen.queryByRole('img')).toBeNull();
+  });
+
+  it('rejects flowchart images before Mermaid can assign their external URL', async () => {
+    const assignedSource = vi.fn();
+    class InstrumentedImage {
+      naturalHeight = 1;
+      naturalWidth = 1;
+
+      set src(value: string) {
+        assignedSource(value);
+      }
+
+      async decode(): Promise<void> {}
+    }
+    vi.stubGlobal('Image', InstrumentedImage);
+    const source = `flowchart TD
+  A@{ img: "https://example.invalid/beacon.png" }`;
+
+    const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(assignedSource).not.toHaveBeenCalled();
     expect(container.querySelector('pre')?.textContent).toBe(source);
     expect(screen.queryByRole('img')).toBeNull();
   });
