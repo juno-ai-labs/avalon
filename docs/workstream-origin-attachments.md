@@ -20,9 +20,9 @@ object normalization already recorded; a connector whose work streams start
 somewhere an activity cannot describe — a Slack thread, a provider-hosted agent
 session — implements `ConnectorOriginSource` and the same host path carries it.
 Read this alongside [`connectors.md`](connectors.md) for what a resource is, and
-[`contextual-routing.md`](contextual-routing.md) for the *other* way connector
-activity reaches a work stream — a card someone accepts, which is a decision
-rather than a fact about how the work stream began.
+[`contextual-routing.md`](contextual-routing.md) for the historical card path
+that was removed. Current connector activity reaches an existing work stream
+only through an explicit watch or deterministic automation.
 
 Origin resources are always references at the model boundary. The message
 attachment manifest cutover does not copy connector origin content into a
@@ -253,8 +253,9 @@ It deliberately does **not** cover:
   request a caller may make. `originResource` is therefore absent from
   `CreateWorkstreamRequestSchema` and cannot be asserted over the wire.
 - **Retired Suggested context.** Existing accepted relationships are retained as
-  ordinary `attachment` links by the retirement migration; no new cards or links
-  are created. See [`contextual-routing.md`](contextual-routing.md).
+  ordinary `attachment` links by the retirement migration. Their original source
+  audience remains an immutable content fence; no new cards or links are created.
+  See [`contextual-routing.md`](contextual-routing.md).
 - **Inbound email.** An automation run created from an address attaches its email
   resource itself, from the opening input frozen in its run context; that is
   `AutomationAgent`'s and is not rewritten here.

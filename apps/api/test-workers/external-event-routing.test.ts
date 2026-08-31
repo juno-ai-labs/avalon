@@ -129,14 +129,65 @@ describe("typed external-event destination routing", () => {
       eventId,
     });
 
+    expect(matched.claimed).toBe(true);
     expect(matched.deliveries).toHaveLength(3);
     expect(matched.deliveries.every((delivery: Record<string, unknown>) => (
       Object.keys(delivery).sort().join(",")
         === "deliveryId,payloadHash,region,schemaVersion,type,workspaceEventId,workspaceId"
     ))).toBe(true);
-    expect((await workspace().matchExternalEventDestinations({
+    await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(
+        `UPDATE workspace_external_event_deliveries
+            SET state = 'delivered', updated_at = 2
+          WHERE workspace_event_id = ?`,
+        eventId,
+      );
+    });
+    expect(await workspace().matchExternalEventDestinations({
       workspaceId: WORKSPACE_ID,
       eventId,
-    })).deliveries).toHaveLength(3);
+    })).toEqual({ claimed: true, deliveries: [] });
+
+    const unmatchedEventId = "00000000-0000-7000-8000-0000000009c1";
+    await workspace().ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: unmatchedEventId,
+      payloadHash: `sha256:${"b".repeat(64)}`,
+      event: {
+        connectorType: "slack",
+        activity: {
+          id: unmatchedEventId,
+          workspaceId: WORKSPACE_ID,
+          region: "global",
+          connectionId: CONNECTION_ID,
+          connectionScope: "workspace",
+          connectionOwnerUserId: null,
+          provider: "slack",
+          providerEventId: "event-2",
+          eventType: "slack.reaction.added",
+          resourceType: "slack_channel",
+          providerResourceId: "C123",
+          actor: {},
+          subject: {},
+          occurredAt: "2026-08-28T09:00:02.000Z",
+          receivedAt: "2026-08-28T09:00:03.000Z",
+          title: "Reaction",
+          summary: "A reaction arrived",
+          textSnippet: "",
+          payloadRef: null,
+          visibility: { kind: "workspace" },
+          targetUserIds: [],
+          entityKeys: [],
+          dedupeKey: "slack:event-2",
+          rawContentHash: null,
+          metadata: {},
+          externalPeople: [],
+        },
+      },
+    });
+    expect(await workspace().matchExternalEventDestinations({
+      workspaceId: WORKSPACE_ID,
+      eventId: unmatchedEventId,
+    })).toEqual({ claimed: false, deliveries: [] });
   });
 });

@@ -194,6 +194,81 @@ describe("runtime component invariants", () => {
     database.close();
   });
 
+  it("returns a structured conflict before retained content gains new readers", async () => {
+    const database = new DatabaseSync(":memory:");
+    const sql = createTestSqlStorage(database);
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      transactionSync: (callback: () => unknown) => callback(),
+      sql,
+    });
+    const store = new WorkstreamObjectStore(storage, "test", "global");
+    const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000000a1");
+    const workstreamId = asWorkstreamId("00000000-0000-4000-8000-0000000000a2");
+    const creatorId = asUserId("00000000-0000-4000-8000-0000000000a3");
+    const outsiderId = asUserId("00000000-0000-4000-8000-0000000000a4");
+    store.ensureIdentity({ workspaceId, workstreamId }, "global");
+    sql.exec(
+      `UPDATE workstream
+          SET authority_mode = 'authoritative', authority_generation = 1,
+              scope = 'personal', created_by_user_id = ?
+        WHERE id = 1`,
+      creatorId,
+    );
+    const now = Date.now();
+    sql.exec(
+      `INSERT INTO participants
+         (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+          added_at, removed_at, updated_at)
+       VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?)`,
+      creatorId,
+      creatorId,
+      now,
+      now,
+    );
+    sql.exec(
+      `INSERT INTO content_audience_fences (fence_id, audience_json, created_at)
+       VALUES ('accepted-resource', ?, ?)`,
+      JSON.stringify({ scope: "users", userIds: [creatorId] }),
+      now,
+    );
+    const regional = new DatabaseSync(":memory:");
+    regional.exec(`CREATE TABLE workspace_members (
+      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, role TEXT NOT NULL
+    )`);
+    regional.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, status, role)
+       VALUES (?, ?, 'active', ?)`,
+    ).run(workspaceId, creatorId, "owner");
+    regional.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, status, role)
+       VALUES (?, ?, 'active', 'member')`,
+    ).run(workspaceId, outsiderId);
+    const product = new WorkstreamObjectProductService(
+      storage,
+      store,
+      createTestEnv({ DB: sqliteD1(regional) }),
+    );
+    const auth = {
+      sessionId: "test-session",
+      userId: creatorId,
+      workspaceId,
+      region: "global" as const,
+      role: "owner" as const,
+    };
+
+    await expect(product.addParticipant(auth, outsiderId)).rejects.toMatchObject({
+      status: 409,
+      code: "workstream_audience_restricted_content",
+    });
+    await expect(product.update(auth, { scope: "workspace" })).rejects.toMatchObject({
+      status: 409,
+      code: "workstream_audience_restricted_content",
+    });
+
+    regional.close();
+    database.close();
+  });
+
   it("fences product failure on the singleton loop execution lease", async () => {
     const database = new DatabaseSync(":memory:");
     const sql = createTestSqlStorage(database);

@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   isPersonNotificationEffect,
+  WorkstreamRegionalEffectEnvelopeSchema,
+  WorkstreamRegionalEffectSchema,
   workstreamRegionalEffectWakeMessage,
   workstreamRegionalEffectHash,
   type WorkstreamRegionalEffect,
@@ -191,6 +193,33 @@ function workspaceSyncNamespace(listable = true) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("the WorkstreamDO regional effect inbox", () => {
+  it("keeps suggestion feedback receiver-only during a rolling deployment", () => {
+    const effect = {
+      kind: "suggestion_feedback" as const,
+      actionId: "00000000-0000-7000-8000-0000000000e1",
+      activityId: "00000000-0000-7000-8000-0000000000e2",
+      source: "contextual_routing" as const,
+      status: "dismissed" as const,
+      resolvedAt: AT,
+      resolvedByUserId: USER_ID,
+    };
+    expect(WorkstreamRegionalEffectSchema.safeParse(effect).success).toBe(false);
+    expect(WorkstreamRegionalEffectEnvelopeSchema.safeParse({
+      kind: "workstream_regional_effect",
+      contractVersion: 1,
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+      messageId: "00000000-0000-7000-8000-0000000000e3",
+      partitionKey: "suggestion:legacy",
+      sourceVersion: 1,
+      requiredProjectionVersion: null,
+      payloadHash: workstreamRegionalEffectHash(effect),
+      effect,
+    }).success).toBe(true);
+  });
+
   it("acknowledges effects from an authority generation superseded by re-cutover", async () => {
     const database = seedAuthority();
     database.prepare(

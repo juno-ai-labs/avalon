@@ -4062,7 +4062,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         payloadHash: row.payload_hash,
       })
     ));
+    const claimed = this.state.storage.sql.exec<{ claimed: number }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM workspace_external_event_deliveries WHERE workspace_event_id = ?
+       ) AS claimed`,
+      event.event_id,
+    ).one().claimed === 1;
     return WorkspaceExternalEventMatchResultSchema.parse({
+      claimed,
       deliveries: [...new Map([...deliveries, ...pending].map((delivery) => [delivery.deliveryId, delivery])).values()],
     });
   }

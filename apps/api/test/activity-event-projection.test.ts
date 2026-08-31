@@ -3,7 +3,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
-import { __testing } from "../src/queues/activity-consumer";
+import { __testing, processConnectorEvent } from "../src/queues/activity-consumer";
+import type { WorkspaceConnectorEvent } from "../src/durable-objects/workspace-connector-event-protocol";
 import type { ActivityEventInput } from "../src/services/activity-event-service";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
@@ -119,6 +120,98 @@ function activity(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as Parameters<typeof projectActivityEvent>[1];
 }
+
+function connectorEvent(): WorkspaceConnectorEvent {
+  return {
+    connectorType: "slack",
+    activity: {
+      id: "00000000-0000-7000-8000-0000000000a1",
+      workspaceId: WORKSPACE,
+      region: "global",
+      connectionId: CONNECTION,
+      connectionScope: "workspace",
+      connectionOwnerUserId: null,
+      provider: "slack",
+      providerEventId: "ev-1",
+      eventType: "slack.message.posted",
+      resourceType: "message",
+      providerResourceId: "C1/1",
+      actor: { displayName: "Dana Okafor" },
+      subject: {},
+      occurredAt: "2026-08-11T09:00:00.000Z",
+      receivedAt: "2026-08-11T09:00:01.000Z",
+      title: "Dana posted in #launch",
+      summary: "Shipped the installer",
+      textSnippet: "Shipped the installer",
+      payloadRef: null,
+      visibility: { kind: "workspace" },
+      targetUserIds: [],
+      entityKeys: [],
+      dedupeKey: "slack:ev-1",
+      rawContentHash: null,
+      metadata: {},
+      externalPeople: [],
+    },
+  };
+}
+
+function processingEnv(claimed: boolean): {
+  env: Env;
+  opportunitySources: Array<Record<string, unknown>>;
+  recorded: ActivityEventInput[];
+} {
+  const database = seededDatabase();
+  const opportunitySources: Array<Record<string, unknown>> = [];
+  const recorded: ActivityEventInput[] = [];
+  const event = connectorEvent();
+  const env = createTestEnv({
+    DB: sqliteD1(database),
+    AVALON_REGION: "global",
+    APP_ENV: "test",
+    PUBLIC_API_BASE_URL: "https://api.example.com",
+    SLACK_CLIENT_ID: "client",
+    SLACK_CLIENT_SECRET: "secret",
+    SLACK_SIGNING_SECRET: "signing",
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: {
+        matchExternalEventDestinations: () => ({ claimed, deliveries: [] }),
+        connectorEvent: () => event,
+        enqueueOpportunitySource: (input: Record<string, unknown>) => {
+          opportunitySources.push(input);
+        },
+        recordActivityEvent: (input: ActivityEventInput) => {
+          recorded.push(input);
+          return input.eventId ?? `event-${recorded.length}`;
+        },
+      },
+    }),
+  });
+  return { env, opportunitySources, recorded };
+}
+
+describe("routing connector activity before Suggested Work", () => {
+  it("keeps a durably claimed event out after its pending deliveries have settled", async () => {
+    const { env, opportunitySources, recorded } = processingEnv(true);
+
+    await processConnectorEvent(env, connectorEvent());
+
+    expect(opportunitySources).toEqual([]);
+    expect(recorded).toHaveLength(1);
+  });
+
+  it("offers only an unclaimed event to each eligible member", async () => {
+    const { env, opportunitySources, recorded } = processingEnv(false);
+
+    await processConnectorEvent(env, connectorEvent());
+
+    expect(opportunitySources).toHaveLength(2);
+    expect(opportunitySources.map((source) => source.partitionKey).sort()).toEqual([
+      `workspace:${MEMBER_A}`,
+      `workspace:${MEMBER_B}`,
+    ]);
+    expect(recorded).toHaveLength(1);
+  });
+});
 
 describe("projecting connector activity into the activity log", () => {
   it("shares a public workspace activity with every member", async () => {

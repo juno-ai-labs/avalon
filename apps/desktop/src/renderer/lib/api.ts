@@ -313,7 +313,9 @@ export function mapResource(resource: WireResource | WireWorkstreamResource): Wo
     contentAvailable: resource.contentAvailable,
     sizeBytes: resource.sizeBytes,
     currentVersion: resource.currentVersion,
-    relationshipType: 'relationshipType' in resource ? resource.relationshipType : 'attachment',
+    relationshipType: 'relationshipType' in resource && resource.relationshipType !== 'suggested_activity'
+      ? resource.relationshipType
+      : 'attachment',
     direction: 'direction' in resource ? resource.direction : 'source',
   };
 }

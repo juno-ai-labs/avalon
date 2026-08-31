@@ -420,6 +420,14 @@ describe('Rally API wire adapter', () => {
       watchEnabled: false,
       watchStatus: 'unsupported',
     });
+    expect(mapResource({
+      ...resource,
+      relationshipType: 'suggested_activity',
+      direction: 'source',
+    })).toMatchObject({
+      relationshipType: 'attachment',
+      direction: 'source',
+    });
   });
 
   it('preserves a stopped harness status instead of reporting completion', () => {

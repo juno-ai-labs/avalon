@@ -64,10 +64,11 @@ export interface WorkstreamRegionalEffectResult {
 export function isWorkspaceDirectoryEffect(
   effect: WorkstreamRegionalEffectEnvelope["effect"],
 ): effect is Extract<WorkstreamRegionalEffectEnvelope["effect"], {
-  kind: "directory_common" | "directory_user";
+  kind: "directory_common" | "directory_user" | "suggestion_feedback";
 }> {
   return effect.kind === "directory_common"
-    || effect.kind === "directory_user";
+    || effect.kind === "directory_user"
+    || effect.kind === "suggestion_feedback";
 }
 
 /** Apply one unordered, at-least-once Queue delivery to WorkspaceDO. */
@@ -119,6 +120,7 @@ export async function applyWorkstreamRegionalEffect(
   if (
     message.effect.kind === "directory_common"
     || message.effect.kind === "directory_user"
+    || message.effect.kind === "suggestion_feedback"
   ) {
     throw new Error("workspace_owned_effect_misdirected_to_regional_queue");
   }
