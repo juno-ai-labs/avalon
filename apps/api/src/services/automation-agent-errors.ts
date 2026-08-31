@@ -104,6 +104,19 @@ const AUTOMATION_ERROR_RESPONSES = {
     status: 409,
     message: "A delivery destination could not be resolved for your account.",
   },
+  // Both of these are thrown and both were falling to the `SAFE_CODE` net, so
+  // one half of the delivery surface answered with a sentence and the other
+  // half with "This automation could not complete that request." — which, under
+  // a checkbox, reads as the automation having broken rather than the setting
+  // having failed to save.
+  automation_email_delivery_unavailable: {
+    status: 409,
+    message: "Your account has no email address, so Rally cannot send results there.",
+  },
+  automation_workspace_connection_required: {
+    status: 409,
+    message: "A workspace automation can only use connections shared with the whole workspace.",
+  },
   automation_cutover_in_progress: {
     status: 503,
     message: "Rally is finishing an update to automations. Try again in a moment.",

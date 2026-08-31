@@ -41,7 +41,10 @@ import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { assistantMessageForDraft } from "../services/automation-service";
 import { compileAutomationDraft } from "../services/integrations";
 import { activateWorkstreamLoop } from "../services/integrations";
-import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
+import {
+  withWorkspaceRuntimeDatabase,
+  workspaceRegionalDatabase,
+} from "../services/workspace-runtime-database";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
@@ -2858,12 +2861,19 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       ...input.defaultPluginIds,
       ...Object.values(input.activitySourcePluginIds),
     ])];
-    // WorkspaceDO owns `connector_connections`; see `resolveDeliveryTargets`.
+    // `status <> 'disabled'` is what makes the collapse below deterministic.
+    // `connector_connections_active_model_plugin_id_uq` is partial on
+    // `status != 'disabled'` and `allocateModelPluginId` hands a disabled row's
+    // name back out, so connect/disconnect/reconnect leaves two rows sharing one
+    // `model_plugin_id`. Reading both, `new Map` keeps whichever an ORDER BY-less
+    // scan returned last; if that was the disabled one, acceptance refused a
+    // plugin the create screen had just offered. This is the predicate that
+    // screen's own catalog applies.
     const connections = selectedPluginIds.length === 0
       ? { results: [] }
-      : await withWorkspaceRuntimeDatabase(this.env, asWorkspaceId(input.workspaceId)).DB.prepare(
+      : await this.workspaceDatabase(input.workspaceId).prepare(
         `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status
-           FROM connector_connections WHERE workspace_id = ?`,
+           FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
       ).bind(input.workspaceId).all<{
       id: string;
       connector_type: string;
@@ -2971,8 +2981,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       if (!evaluator.source.resourceId) continue;
       const selectedPluginId = selectedByBinding.get(evaluator.source.sourceBindingKey);
       const selectedConnection = selectedPluginId ? connectionsByPlugin.get(selectedPluginId) : undefined;
-      const runtime = withWorkspaceRuntimeDatabase(this.env, asWorkspaceId(input.workspaceId));
-      const resource = await runtime.DB.prepare(
+      const resource = await this.workspaceDatabase(input.workspaceId).prepare(
         `SELECT id, connection_id, resource_type FROM resources WHERE workspace_id = ? AND id = ?`,
       ).bind(input.workspaceId, evaluator.source.resourceId).first<{
         id: string;
@@ -3148,6 +3157,27 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     });
   }
 
+  /**
+   * The database port for this workspace's product tables.
+   *
+   * WorkspaceDO is the authority for every `WORKSPACE_LOCAL_TABLES` table this
+   * object reads — `connector_connections`, `slack_user_links`, `resources` —
+   * and migration 0090 dropped them from regional D1 when that authority
+   * opened. The object's own `this.env.DB` is the regional binding, so a
+   * statement sent there names a table that is not present: `no such table`,
+   * which is not one of this object's snake_case codes, so `withAutomationErrors`
+   * let it through as a 500 and saving a connector delivery destination failed
+   * with "An unexpected error occurred". Nothing wraps a Durable Object's
+   * environment on the way in the way it wraps a service's, so the crossing is
+   * named here instead, once.
+   *
+   * Not the constructor: the port needs a workspace id, and the constructor has
+   * none — identity is read from storage behind `await this.initialized`.
+   */
+  private workspaceDatabase(workspaceId: string): D1Database {
+    return withWorkspaceRuntimeDatabase(this.env, asWorkspaceId(workspaceId)).DB;
+  }
+
   private async resolveDeliveryTargets(input: {
     workspaceId: string;
     authorUserId: string;
@@ -3157,22 +3187,14 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     if (input.scope !== "personal" && input.deliveryTargets.length > 0) {
       throw new Error("automation_personal_delivery_required");
     }
-    // `connector_connections` and `slack_user_links` live in WorkspaceDO, not
-    // in regional D1, so they are reached through the workspace runtime port.
-    // The object's own `this.env.DB` is the regional binding — the two tables
-    // were dropped from it by migration 0090 — and reading them there raised
-    // `no such table`, which is not one of this object's snake_case codes, so
-    // every attempt to save a connector destination answered 500 rather than
-    // saving or refusing. `users` stays on the regional binding, which is the
-    // authority that has it.
-    const workspaceDatabase = withWorkspaceRuntimeDatabase(
-      this.env,
-      asWorkspaceId(input.workspaceId),
-    ).DB;
+    const workspaceDatabase = this.workspaceDatabase(input.workspaceId);
     const resolved: AutomationRunContextV1["deliveryTargets"] = [];
     for (const target of input.deliveryTargets) {
       if (target.type === "email") {
-        const user = await this.env.DB.prepare(
+        // Named rather than `this.env.DB`: this read belongs to the regional
+        // authority, and saying so keeps it correct if the object's environment
+        // is ever wrapped.
+        const user = await workspaceRegionalDatabase(this.env).prepare(
           `SELECT email FROM users WHERE id = ?`,
         ).bind(input.authorUserId).first<{ email: string | null }>();
         if (!user?.email) throw new Error("automation_email_delivery_unavailable");
@@ -3846,9 +3868,15 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       deliveryTargets: deliveryTargets.map((target) => ({
         type: target.type,
         connectionId: target.connectionId ?? null,
+        // Never the provider's own id. This field is read only for a
+        // destination whose connection is gone, where it is the sole label on
+        // the one row telling a person something is wrong — and `U0ABCDEF` is
+        // not something they have ever seen in Slack. The projection is
+        // synchronous (`broadcastSnapshot` calls it), so it cannot join the
+        // connection's name; the target type's own noun is what it has.
         displayName: target.type === "email"
           ? target.emailAddress ?? "Email"
-          : target.slackUserId ?? "Slack direct message",
+          : "Slack direct message",
         status: "active",
       })),
       templateUpdate: null,

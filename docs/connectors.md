@@ -228,6 +228,8 @@ Saving a **digest** destination runs the same resolution. `resolveFrozenDelivery
 
 **An automation's destinations no longer go through that path.** `AutomationAgent.resolveDeliveryTargets` resolves the whole set itself, at acceptance and again on every `PATCH`, reading the connection's status and scope and then `slack_user_links` in its own SQL. It has to: the resolution now happens inside the Durable Object that owns the automation, and it freezes the result into the acceptance row rather than a workspace table. The rules it applies are the same ones — a disabled connection, a personal connection belonging to somebody else, or a missing identity link each refuse the write — but they are stated a second time, in a second place. A change to eligibility has to be made in both.
 
+Both tables it reads there — `connector_connections` and `slack_user_links` — are WorkspaceDO's, and the object reaches them through `withWorkspaceRuntimeDatabase`, never through its own `this.env.DB`. A Durable Object is handed the raw environment, so unlike a service nothing wraps its `DB` on the way in; migration 0090 dropped both tables from regional D1, and the statements sent there failed as `no such table` — an unmapped code, so a `500` — which is why no automation could save a connector destination until 2026-08-31. `apps/api/test/durable-object-workspace-table-routing.test.ts` now fails on any object that reaches a `WORKSPACE_LOCAL_TABLES` table on the regional binding.
+
 Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way and register it in `AutomationDeliveryTargetTypeSchema`, in `PERSONAL_IDENTITY_LINKS` if the surface needs a link, in `FROZEN_IDENTITY_RESOLVERS`, and — because that resolver is not on the automation path — in `AutomationAgent.resolveDeliveryTargets` and in `AutomationRunDeliveryTargetV1Schema`, the discriminated union the frozen run context carries. Digest delivery needs one more entry — `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts` — but no schema change: `digest_delivery_targets.target_type` is checked per family (email versus connector-addressed) rather than enumerated. A target type with no resolver is refused at save rather than half-stored. The two identity columns are still named `slack_team_id` and `slack_user_id`; they hold the provider tenant and user of whichever connector owns the row, and a second connector is the point at which renaming them earns its migration. The saved destinations and how each is delivered are described in [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results).
 
 ### Being found, and being refused
@@ -767,12 +769,21 @@ It does not own:
 | How a run holds and narrows connector authority | [`agent-harness.md`](agent-harness.md) |
 | Where automation results are delivered | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
 
-Adding a personal delivery surface touches registries and nothing else:
+Adding a personal delivery surface touches registries and one hand-written read:
 `AutomationDeliveryTargetTypeSchema`, `AutomationRunDeliveryTargetV1Schema`,
 `PERSONAL_IDENTITY_LINKS` if the surface needs a link, `FROZEN_IDENTITY_RESOLVERS`
 for the digest path, `AutomationAgent.resolveDeliveryTargets` for the automation
 path, and `CONNECTOR_DELIVERIES` for digest delivery. Nothing
 about which providers can deliver is written into the API or the client.
+
+The automation path is the one that is not a registry, and the one to be careful
+with: a new link table (`teams_user_links`, say) is a WorkspaceDO table, so the
+read added there goes through `withWorkspaceRuntimeDatabase` like its neighbour.
+Written against `this.env.DB` it names a table regional D1 does not have, which
+reaches the person as "An unexpected error occurred" rather than as anything
+naming the boundary. That is the defect recorded in the delivery-resolution note
+above, and `durable-object-workspace-table-routing.test.ts` is what now catches
+it.
 
 ## Failure modes and limits
 

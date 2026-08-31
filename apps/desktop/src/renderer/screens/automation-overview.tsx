@@ -236,9 +236,19 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   // destination that is still delivering, has no row on screen to untick, and
   // is replayed inside every set this screen sends, so the API rejects the lot
   // and no destination can be changed at all.
-  const orphanedDeliveryTargets = deliveryTargets.filter((target) =>
+  const unmatchedDeliveryTargets = deliveryTargets.filter((target) =>
     target.type !== 'email'
     && !availableDeliveryConnections.some((connection) => connection.id === target.connectionId));
+  // Whether a destination is *disconnected* is a different question from whether
+  // it is missing from the list, and only the connection query can answer it.
+  // This screen renders as soon as the *automation* resolves, so an absent
+  // `connections.data` is indistinguishable from an empty one: while the list
+  // was loading — and permanently if it failed, since nothing here retries —
+  // every healthy connector destination was declared disconnected and the reader
+  // was told to "turn off to stop trying", which destroys a working one. The row
+  // still has to appear, or the sentence below claims nothing is being sent
+  // while the destination is delivering.
+  const deliveryConnectionsKnown = connections.isSuccess;
   const deliveryChoices = [
     ...(ownerEmail || deliveryTargets.some((target) => target.type === 'email')
       ? [{
@@ -260,13 +270,13 @@ export function AutomationOverviewScreen(): React.JSX.Element {
       status: deliveryTargets.find((target) => target.connectionId === connection.id)?.status,
       available: true,
     })),
-    ...orphanedDeliveryTargets.map((target) => ({
+    ...unmatchedDeliveryTargets.map((target) => ({
       key: target.connectionId!,
       type: target.type,
       label: target.displayName,
       checked: true,
       status: target.status,
-      available: false,
+      available: !deliveryConnectionsKnown,
     })),
   ].map((choice) => ({
     ...choice,
@@ -411,6 +421,8 @@ export function AutomationOverviewScreen(): React.JSX.Element {
                     </li>
                   ))}
                 </ul>
+                {connections.error
+                  && <small className="is-warning">Rally cannot check your connections right now, so a destination may be missing from this list.</small>}
                 {setDelivery.error && <InlineError>{setDelivery.error.message}</InlineError>}
                 {deliveryChoices.some((choice) => choice.checked)
                   ? <small>Every run is saved to its own work stream, whatever else is chosen.</small>
