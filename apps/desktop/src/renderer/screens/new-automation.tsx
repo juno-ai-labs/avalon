@@ -169,6 +169,11 @@ const COMPILER_ERROR_COPY: Record<string, string> = {
   automation_authority_mismatch: 'This draft changed somewhere else while you were writing. Reopen it to pick up the newest version.',
   automation_not_active: 'This automation is not running, so it cannot do that right now.',
   automation_acceptance_conflict: 'This draft changed while it was being created. Reopen it and create it again.',
+  // The API's own sentence for this one ends "Reload and try again", which is
+  // the right instruction for a browser and the wrong one here: there is no
+  // reload on this screen, and the newer draft has already arrived over the
+  // socket by the time anybody reads this. Creating again is the recovery.
+  automation_definition_revision_stale: 'Rally revised this draft while you were reviewing it. Check the summary above, then create it again.',
   automation_personal_connection_access_denied: 'This automation cannot use that connection. Choose one of your own connections, or ask an admin to share it with the workspace.',
   automation_compiler_run_not_retryable: 'That message can no longer be retried. Send it again to pick the conversation back up.',
   automation_compiler_run_not_found: 'That message is no longer available to retry. Send it again to pick the conversation back up.',
@@ -1274,6 +1279,13 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       void navigate(`/automations/${automation.id}`);
     },
   });
+  const createReset = create.reset;
+  // The request id belongs to whichever failure is being shown, not to the
+  // compile that may not be the one on screen. It was the only correlate a
+  // person could hand to support, and a failed create never carried it.
+  const shownRequestId = [compile.error, create.error]
+    .find((error): error is ApiError => error instanceof ApiError && error.requestId !== null)
+    ?.requestId ?? null;
 
   // A stop belongs to the turn it stopped. A new run — or another
   // conversation — makes the notice a statement about something the
@@ -1281,10 +1293,16 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   useEffect(() => {
     if (!compilerRun) return;
     setStoppedTurn(null);
-  }, [compilerRun?.id]);
+    // A failed create is a statement about the draft that was on screen when
+    // the button was pressed. A new turn replaces that draft, so the notice
+    // stops being true — and the one it most often carries now says the draft
+    // moved on, which would sit under the very turn that moved it.
+    createReset();
+  }, [compilerRun?.id, createReset]);
   useEffect(() => {
     setStoppedTurn((current) => current?.conversationKey === conversationKey ? current : null);
-  }, [conversationKey]);
+    createReset();
+  }, [conversationKey, createReset]);
   // A resumed conversation opens at its newest turn, once. `atEnd`
   // starts true and only a scroll event moves it, and nothing scrolls
   // on mount, so a long draft would open at the top with no way of
@@ -1667,13 +1685,19 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                             compile.error instanceof ApiError ? compile.error.code : null,
                             compile.error.message,
                           )
-                        : compilerError
-                          ?? (create.error
+                        // Ahead of `compilerError`, which is a property of the
+                        // newest run and outlives it. A run that failed leaves
+                        // the last ready draft on screen with Create still
+                        // live, so pressing it in that state used to compute a
+                        // refusal and then render the older compiler failure
+                        // over it — the one place this whole answer is read.
+                        : (create.error
                             ? automationErrorCopy(
                                 create.error instanceof ApiError ? create.error.code : null,
                                 create.error.message,
                               )
                             : null)
+                          ?? compilerError
                           // Both were computed and neither was ever rendered:
                           // a stop or a retry that failed left the button
                           // enabled and said nothing at all.
@@ -1691,7 +1715,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                             : null)
                           ?? connections.error?.message
                           ?? attachmentDraft.error}
-                      {compile.error instanceof ApiError && compile.error.requestId ? ` · Request ${compile.error.requestId}` : ''}
+                      {shownRequestId ? ` · Request ${shownRequestId}` : ''}
                     </InlineError>
                     {compilerError && automationId && compilerRun && (
                       <Button
@@ -1702,14 +1726,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                         <RefreshCcw aria-hidden="true" size={13} /> Retry
                       </Button>
                     )}
-                    {compile.error instanceof ApiError && compile.error.requestId && (() => {
-                      const requestId = compile.error.requestId;
-                      return (
-                        <Button className="button-secondary" onClick={() => void desktopBridge().copyText(requestId)}>
-                          <Copy aria-hidden="true" size={13} /> Copy request ID
-                        </Button>
-                      );
-                    })()}
+                    {shownRequestId && (
+                      <Button className="button-secondary" onClick={() => void desktopBridge().copyText(shownRequestId)}>
+                        <Copy aria-hidden="true" size={13} /> Copy request ID
+                      </Button>
+                    )}
                   </div>
                 )}
                 {draft?.summary && <p className="keep-editing-hint">Keep editing by describing what should change.</p>}
