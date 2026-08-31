@@ -1,5 +1,4 @@
 import {
-  HarnessPluginActivationError,
   type HarnessPlugin,
   type HarnessPluginActivationContext,
   type HarnessToolContext,
@@ -183,7 +182,19 @@ export async function createAvalonTerminalPlugin(
       // Repository selection and bootstrap failures are repaired through the
       // Terminal tool surface itself. The sandbox is already usable, so hiding
       // checkout_repository here would remove the only in-product repair path.
-      if (error instanceof TerminalToolError && repositoryPreparationDeferredCodes.has(error.code)) {
+      //
+      // `repository_not_configured` is the one code that leaves nothing to
+      // revalidate, so it returns and the acquisition stands. Every other code
+      // rethrows the original error, which rejects the shared per-run
+      // acquisition. That rejection is load-bearing now that activation no
+      // longer blocks the model: a Terminal tool from the next turn can already
+      // be awaiting this promise, and evicting the cache after it resolves
+      // never reaches an in-flight waiter — that waiter would go on to use a
+      // sandbox whose checkout is stale or whose repository authorization was
+      // revoked. Rethrowing the original `TerminalToolError` rather than a
+      // sentinel is what gives that waiter the actionable code
+      // (`repository_access_revoked` and friends) instead of an opaque one.
+      if (error instanceof TerminalToolError && error.code === "repository_not_configured") {
         return error.code;
       }
       throw error;
@@ -305,76 +316,71 @@ export async function createAvalonTerminalPlugin(
         toolInvocationId: null,
       });
       const terminalContext: HarnessToolContext = { ...context, toolCallId };
-      try {
-        let repositoryPreparationCode: string | null = null;
-        await withTerminalToolTrace(trace, async () => {
-          await runtime.prepare(terminalContext, async (runtimeContext, sandbox) => {
-            repositoryPreparationCode = await prepareRepositoryForActivation(runtimeContext, sandbox);
-          });
-        });
-        // A selected repository that could not be prepared must be revalidated
-        // by the first ordinary tool. Keep activation successful so
-        // checkout_repository remains available, but do not let the shared
-        // acquisition promise bypass revoked authorization or stale checkout
-        // state. With no repository selected, the sandbox itself is fully
-        // prepared and remains the warm first-tool path.
-        if (repositoryPreparationCode !== null
-          && repositoryPreparationCode !== "repository_not_configured") {
-          runtime.discardPreparation(terminalContext);
-        }
+      const settled = (level: "info" | "warn", fields: Record<string, unknown>): void => {
         const durationMs = Date.now() - startedAt;
-        logStructuredEvent(env, "info", "terminal_plugin_activation_finished", {
+        logStructuredEvent(env, level, "terminal_plugin_activation_finished", {
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
           harness_run_id: context.harnessRunId,
           tool_call_id: toolCallId,
           activation_attempt: activationAttemptNumber,
+          ...fields,
+          duration_ms: durationMs,
+          acquisition_duration_ms: trace.acquisitionDurationMs,
+          acquisition_cache_hit: trace.acquisitionCacheHit,
+          provider_duration_ms: trace.providerDurationMs,
+          provider_request_count: trace.providerRequestCount,
+          provider_poll_count: trace.providerPollCount,
+          provider_operation_count: trace.providerOperationCount,
+          provider_bytes: trace.providerBytes,
+          rally_duration_ms: Math.max(0, durationMs - trace.providerDurationMs),
+        });
+      };
+
+      let repositoryPreparationCode: string | null = null;
+      // Start the sandbox; do not hold the model behind it. `runtime.prepare`
+      // registers the shared per-run acquisition that every Terminal tool
+      // already awaits, so the first tool that genuinely needs a sandbox
+      // collects this work in flight instead of starting it. Measured across
+      // runs that use Terminal, the median run does 16.5s of unrelated work
+      // between activation and its first Terminal tool, against an ~18s median
+      // cold start — so for most runs this wait stops being visible at all.
+      const preparing = withTerminalToolTrace(trace, async () => {
+        await runtime.prepare(terminalContext, async (runtimeContext, sandbox) => {
+          repositoryPreparationCode = await prepareRepositoryForActivation(runtimeContext, sandbox);
+        });
+      });
+
+      void preparing.then(
+        () => settled("info", {
           state: "completed",
           repository_state: repositoryPreparationCode ? "deferred" : "prepared",
           ...(repositoryPreparationCode ? { repository_code: repositoryPreparationCode } : {}),
-          duration_ms: durationMs,
-          acquisition_duration_ms: trace.acquisitionDurationMs,
-          acquisition_cache_hit: trace.acquisitionCacheHit,
-          provider_duration_ms: trace.providerDurationMs,
-          provider_request_count: trace.providerRequestCount,
-          provider_poll_count: trace.providerPollCount,
-          provider_operation_count: trace.providerOperationCount,
-          provider_bytes: trace.providerBytes,
-          rally_duration_ms: Math.max(0, durationMs - trace.providerDurationMs),
-        });
-      } catch (error) {
-        const durationMs = Date.now() - startedAt;
-        logStructuredEvent(env, "warn", "terminal_plugin_activation_finished", {
-          workspace_id: context.workspaceId,
-          workstream_id: context.workstreamId,
-          harness_run_id: context.harnessRunId,
-          tool_call_id: toolCallId,
-          activation_attempt: activationAttemptNumber,
-          state: "failed",
-          code: error instanceof TerminalToolError ? error.code : "terminal_activation_failed",
-          duration_ms: durationMs,
-          acquisition_duration_ms: trace.acquisitionDurationMs,
-          acquisition_cache_hit: trace.acquisitionCacheHit,
-          provider_duration_ms: trace.providerDurationMs,
-          provider_request_count: trace.providerRequestCount,
-          provider_poll_count: trace.providerPollCount,
-          provider_operation_count: trace.providerOperationCount,
-          provider_bytes: trace.providerBytes,
-          rally_duration_ms: Math.max(0, durationMs - trace.providerDurationMs),
-        });
-        if (!(error instanceof TerminalToolError)) throw error;
-        const retryAfterMs = typeof error.details?.retryAfterMs === "number"
-          ? error.details.retryAfterMs
-          : undefined;
-        const retryable = error.code === "sandbox_busy"
-          || (error.code === "sandbox_unavailable" && !configuration.emergencyDisabled);
-        const reason = typeof error.details?.reason === "string" ? error.details.reason : error.message;
-        throw new HarnessPluginActivationError(reason, {
-          retryable,
-          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
-          cause: error,
-        });
-      }
+        }),
+        (error: unknown) => {
+          // A repository that has to be revalidated is not an activation
+          // failure: the plugin stays active and `checkout_repository` remains
+          // the in-product repair path. The acquisition was rejected rather
+          // than evicted, so whichever Terminal tool asks next receives this
+          // same actionable error and reacquires.
+          if (error instanceof TerminalToolError
+            && repositoryPreparationDeferredCodes.has(error.code)) {
+            settled("info", {
+              state: "completed",
+              repository_state: "deferred",
+              repository_code: error.code,
+            });
+            return;
+          }
+          // Nothing to raise to the model here — activation already returned.
+          // The first Terminal tool acquires again and reports the failure with
+          // its own guidance.
+          settled("warn", {
+            state: "failed",
+            code: error instanceof TerminalToolError ? error.code : "terminal_activation_failed",
+          });
+        },
+      );
     },
   };
 }
