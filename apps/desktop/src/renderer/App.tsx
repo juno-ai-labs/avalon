@@ -6,6 +6,7 @@ import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-d
 import { logError } from '../common/logger';
 import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
+import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
 import type { AutomationSummary } from './lib/types';
@@ -226,32 +227,34 @@ function WorkspaceApp(): React.JSX.Element {
 
   return (
     <WorkspaceSocketProvider api={api!} workspaceId={workspace.data.id}>
-      {/*
-        A declarative router otherwise wraps its history listener in
-        startTransition. The hash and active sidebar row move first while the
-        previous work-stream screen remains visible, which can put the wrong
-        transcript under the newly selected row. This route tree is small and
-        local; commit its navigation atomically, then let each screen show its
-        own opening state while keyed data arrives.
-      */}
-      <HashRouter useTransitions={false}>
-        <TelemetryRouteObserver />
-        <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
-          <AppShell workspace={workspace.data}>
-            <Routes>
-              <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
-              <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
-              <Route element={<ProjectSpaceScreen />} path="/projects/:projectId" />
-              <Route element={<NewWorkstreamScreen workspace={workspace.data} projectId="route" />} path="/projects/:projectId/workstreams/new" />
-              <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
-              <Route element={<NoteDetailScreen />} path="/notes/:id" />
-              <Route element={<AutomationScreen workspace={workspace.data} />} path="/automations/:id" />
-              <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
-              <Route element={<NotFoundScreen />} path="*" />
-            </Routes>
-          </AppShell>
-        </WorkstreamSocketResumeProvider>
-      </HashRouter>
+      <SpeechPlaybackProvider api={api!}>
+        {/*
+          A declarative router otherwise wraps its history listener in
+          startTransition. The hash and active sidebar row move first while the
+          previous work-stream screen remains visible, which can put the wrong
+          transcript under the newly selected row. This route tree is small and
+          local; commit its navigation atomically, then let each screen show its
+          own opening state while keyed data arrives.
+        */}
+        <HashRouter useTransitions={false}>
+          <TelemetryRouteObserver />
+          <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
+            <AppShell workspace={workspace.data}>
+              <Routes>
+                <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
+                <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
+                <Route element={<ProjectSpaceScreen />} path="/projects/:projectId" />
+                <Route element={<NewWorkstreamScreen workspace={workspace.data} projectId="route" />} path="/projects/:projectId/workstreams/new" />
+                <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+                <Route element={<NoteDetailScreen />} path="/notes/:id" />
+                <Route element={<AutomationScreen workspace={workspace.data} />} path="/automations/:id" />
+                <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
+                <Route element={<NotFoundScreen />} path="*" />
+              </Routes>
+            </AppShell>
+          </WorkstreamSocketResumeProvider>
+        </HashRouter>
+      </SpeechPlaybackProvider>
     </WorkspaceSocketProvider>
   );
 }

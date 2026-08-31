@@ -159,6 +159,11 @@ A glance is already a four-line clamp inside a button, and a still is a
 picture that cannot be toggled, so neither grows accordions. The exported
 card therefore prints the document in full, without chevrons.
 
+The **Speak** action likewise uses the complete stored Markdown source rather
+than reading this collapsed DOM. Its server-side plain-text reduction and PCM
+stream are owned by [`message-speech.md`](message-speech.md); collapse is only a
+view state and must never decide which words are audible.
+
 The collapse-all control lives in the agent-message header, immediately to
 the right of **Worked for**. It expands or collapses every section in that
 turn. New sections that stream in are collapsed regardless of that

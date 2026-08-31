@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { inferencePricingWorker } from "../src/inference-pricing-worker";
 import {
   AZURE_DEPLOYED_OPENROUTER_MODEL_IDS,
+  calculateAzureImageCostUsd,
   createAzureModelPricingResolver,
+  loadAzureImageModelPricing,
   OPENROUTER_PRICING_MODEL_IDS,
   refreshOpenRouterPricingCache,
 } from "../src/services/openrouter-pricing-cache";
@@ -145,6 +147,30 @@ describe("OpenRouter endpoint-average pricing cache", () => {
 
     expect(prices.get("x-ai/grok-4.3")?.inputUsdPerM).toBe(1.875);
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("reads image prices from the model-id KV key and calculates token cost exactly", async () => {
+    const get = vi.fn(async () => JSON.stringify({
+      version: 1,
+      fetchedAtMs: NOW,
+      costs: [
+        { billable: "input_image", unit: "token", costUsd: "0.000008", endpointCount: 1 },
+        { billable: "input_text", unit: "token", costUsd: "0.000005", endpointCount: 1 },
+        { billable: "output_image", unit: "token", costUsd: "0.00003", endpointCount: 1 },
+      ],
+      endpointCount: 1,
+      sourceFingerprint: "openrouter-endpoint-average:v1:openai/gpt-image-2:1",
+    }));
+    const pricing = await loadAzureImageModelPricing({
+      INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ get }),
+    }, "openai/gpt-image-2");
+
+    expect(get).toHaveBeenCalledWith("openai/gpt-image-2");
+    expect(calculateAzureImageCostUsd(pricing, {
+      input_text: 100,
+      input_image: 50,
+      output_image: 1_000,
+    })).toBe("0.0309");
   });
 
   it("fails closed for a missing or legacy numeric-price record", async () => {

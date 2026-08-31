@@ -17,6 +17,7 @@ describe("attachment contracts", () => {
   it("keeps every natural-language kind in one registry, schema, and list description", () => {
     const kinds = [
       "image",
+      "audio",
       "markdown",
       "pdf",
       "document",
@@ -64,6 +65,9 @@ describe("attachment contracts", () => {
 
   it("classifies verified MIME first and uses extensions only for generic MIME", () => {
     expect(classifyAttachmentKind({ mimeType: "image/png", fileName: "wrong.docx" })).toBe("image");
+    expect(classifyAttachmentKind({ mimeType: "audio/mpeg", fileName: "wrong.txt" })).toBe("audio");
+    expect(classifyAttachmentKind({ mimeType: "application/octet-stream", fileName: "voice.MP3" }))
+      .toBe("audio");
     expect(classifyAttachmentKind({ mimeType: "text/markdown; charset=utf-8", fileName: "notes.txt" }))
       .toBe("markdown");
     expect(classifyAttachmentKind({ mimeType: "application/octet-stream", fileName: "brief.DOCX" }))
@@ -77,6 +81,7 @@ describe("attachment contracts", () => {
     const list = ATTACHMENT_TOOL_ARGUMENT_SCHEMAS.listResources;
     expect(list.safeParse({}).success).toBe(true);
     expect(list.safeParse({ attachmentKind: "image", limit: 50 }).success).toBe(true);
+    expect(list.safeParse({ attachmentKind: "audio", limit: 50 }).success).toBe(true);
     expect(list.safeParse({ cursor: "cursor" }).success).toBe(true);
     expect(list.safeParse({ cursor: "cursor", attachmentKind: "image" }).success).toBe(false);
     expect(list.safeParse({ mimeType: "image/png" }).success).toBe(false);

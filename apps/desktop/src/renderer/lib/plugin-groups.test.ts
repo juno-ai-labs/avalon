@@ -50,6 +50,15 @@ describe('pluginGroup', () => {
         completedVerb: 'Used Web',
       },
     );
+    expect(pluginGroup('rally:multimodal-generation', 'Multimodal generation')).toEqual(
+      {
+        key: 'name:Multimodal generation',
+        name: 'Multimodal generation',
+        icon: 'plug',
+        activeVerb: 'Using Multimodal generation',
+        completedVerb: 'Used Multimodal generation',
+      },
+    );
   });
 
   it('phrases Rally as the actor and every other plugin as something it used', () => {
