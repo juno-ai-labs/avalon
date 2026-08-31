@@ -2235,6 +2235,7 @@ export function WorkstreamScreen(): React.JSX.Element {
                     ) : (
                       <MessageBlock
                         citations={citations}
+                        collapseHeadings
                         currentUserId={session?.user.id}
                         loadAttachmentContent={loadAttachmentContent}
                         message={message}

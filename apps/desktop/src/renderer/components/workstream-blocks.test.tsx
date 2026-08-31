@@ -738,7 +738,7 @@ describe('MessageBlock markdown', () => {
       ].join('\n'),
     };
 
-    render(<MessageBlock {...actions} message={markdownMessage} />);
+    render(<MessageBlock {...actions} collapseHeadings message={markdownMessage} />);
 
     expect(screen.getByRole('heading', { name: 'Harness API' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Expand section' }));
@@ -1583,7 +1583,7 @@ describe('MarkdownBody heading collapse', () => {
     '',
   ].join('\n');
 
-  it('leaves headings expanded unless the hosting surface explicitly enables collapse', () => {
+  it('does not collapse headings when the renderer has not opted into heading collapse', () => {
     const { container } = render(<MarkdownBody>{markdown}</MarkdownBody>);
     expect(container.querySelector('.markdown-collapse')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
@@ -1662,7 +1662,7 @@ describe('MessageBlock heading collapse control', () => {
       text: '## Alpha\n\nFirst.\n\n## Beta\n\nSecond.\n',
       workSummary: { durationMs: 83_000 },
     };
-    const { container } = render(<MessageBlock {...actions} message={message} />);
+    const { container } = render(<MessageBlock {...actions} collapseHeadings message={message} />);
     expect(screen.getByText('Worked for 1m 23s')).toBeInTheDocument();
     const header = container.querySelector('.message-block > header')!;
     const summary = header.querySelector('.message-work-summary');
@@ -1683,7 +1683,7 @@ describe('MessageBlock heading collapse control', () => {
       text: 'A paragraph with no headings.',
       workSummary: { durationMs: 1_000 },
     };
-    render(<MessageBlock {...actions} message={message} />);
+    render(<MessageBlock {...actions} collapseHeadings message={message} />);
     expect(screen.queryByRole('button', { name: 'Expand all sections' })).toBeNull();
   });
 });
