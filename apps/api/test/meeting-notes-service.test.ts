@@ -104,7 +104,7 @@ describe("MeetingNotesService", () => {
     expect(captured!.systemPrompt).toContain("complete replacement briefing");
     // The formatting policy's TeX rule is the prompt half of the repair pair
     // (docs/model-text-normalization.md); a hash cannot say which line left.
-    expect(captured!.systemPrompt).toContain("Never write TeX or math delimiters.");
+    expect(captured!.systemPrompt).toContain("Never write TeX or math delimiters");
     // The cadence is a served flag, so it reaches the model as run data. With
     // no binding attached this is the checked-in default — the same value the
     // desktop falls back to, which is the point of resolving both from one

@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   citationFootnotes,
   citationScheme,
+  connectorMentionHref,
+  connectorTypeFromEmbedHref,
+  connectorTypeFromMentionHref,
   embeddedResourceCitations,
+  isConnectorHref,
   parseCitationHref,
+  personIdFromMentionHref,
+  personMentionHref,
+  personMentionMarkdownPattern,
   rewriteCitationsAsPlainText,
 } from "./citations";
 
@@ -55,17 +62,82 @@ describe("parseCitationHref", () => {
       url: "http://example.com",
     });
     expect(parseCitationHref("person:0192f3ac-1b2c-7000-8000-abcdefabcdef").scheme).toBe("person");
+    expect(parseCitationHref("person://0192f3ac-1b2c-7000-8000-abcdefabcdef").scheme).toBe("person");
     // Any `person:` target is an identity, well-formed or not — it must reach
     // the cell that renders it inert rather than one that could give it a
     // destination.
     expect(parseCitationHref("person:someone").scheme).toBe("person");
-    expect(parseCitationHref("connector:abc123:slack").scheme).toBe("connector");
+    expect(parseCitationHref("person://someone").scheme).toBe("person");
+  });
+
+  it("does not treat a connector mention href as a citation scheme", () => {
+    // Connector chips are render-minted mentions, not citations. Classifying
+    // them here would put them in the matrix; they stay unknown to the protocol.
+    expect(parseCitationHref("connector:abc123:slack").scheme).toBe("unknown");
+    expect(parseCitationHref("connector://abc123:slack").scheme).toBe("unknown");
   });
 
   it("treats every other scheme as text, so message content reaches no protocol handler", () => {
     for (const href of ["javascript:alert(1)", "file:///etc/passwd", "data:text/html,<b>", "mailto:a@b.c", undefined]) {
       expect(parseCitationHref(href).scheme).toBe("unknown");
     }
+  });
+});
+
+describe("person mention hrefs", () => {
+  const id = "0192f3ac-1b2c-7000-8000-abcdefabcdef";
+
+  it("emits the house person:// form", () => {
+    expect(personMentionHref(id)).toBe(`person://${id}`);
+  });
+
+  it("reads both house and legacy spellings, and nothing else", () => {
+    expect(personIdFromMentionHref(`person://${id}`)).toBe(id);
+    expect(personIdFromMentionHref(`person:${id}`)).toBe(id);
+    expect(personIdFromMentionHref(`PERSON://${id.toUpperCase()}`)).toBe(id);
+    expect(personIdFromMentionHref("person:someone")).toBeUndefined();
+    expect(personIdFromMentionHref(`person:///${id}`)).toBeUndefined();
+    expect(personIdFromMentionHref(undefined)).toBeUndefined();
+  });
+
+  it("reduces both Markdown spellings to the label", () => {
+    const house = `Ask [@Ada](person://${id}) please.`;
+    const legacy = `Ask [@Ada](person:${id}) please.`;
+    expect(house.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
+    expect(legacy.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
+  });
+});
+
+describe("connector mention hrefs", () => {
+  it("emits the house connector:// form", () => {
+    expect(connectorMentionHref("tok", "ops")).toBe("connector://tok:ops");
+    expect(connectorMentionHref("tok", "google drive")).toBe("connector://tok:google%20drive");
+  });
+
+  it("reads both house and legacy tokened spellings for this render's token", () => {
+    expect(connectorTypeFromMentionHref("connector://tok:ops", "tok")).toBe("ops");
+    expect(connectorTypeFromMentionHref("connector:tok:ops", "tok")).toBe("ops");
+    expect(connectorTypeFromMentionHref("CONNECTOR://tok:ops", "tok")).toBe("ops");
+    expect(connectorTypeFromMentionHref("connector://tok:google%20drive", "tok")).toBe("google drive");
+    expect(connectorTypeFromMentionHref("connector://other:ops", "tok")).toBeUndefined();
+    expect(connectorTypeFromMentionHref("connector:ops", "tok")).toBeUndefined();
+    expect(connectorTypeFromMentionHref("connector:%", "tok")).toBeUndefined();
+    expect(connectorTypeFromMentionHref(undefined, "tok")).toBeUndefined();
+  });
+
+  it("reads only bare connector embed hrefs", () => {
+    expect(connectorTypeFromEmbedHref("connector://google")).toBe("google");
+    expect(connectorTypeFromEmbedHref("connector:GOOGLE_DRIVE")).toBe("google_drive");
+    expect(connectorTypeFromEmbedHref("connector://tok:google")).toBeUndefined();
+    expect(connectorTypeFromEmbedHref("connector:%")).toBeUndefined();
+    expect(connectorTypeFromEmbedHref("https://example.com")).toBeUndefined();
+  });
+
+  it("recognizes connector hrefs without making them citations", () => {
+    expect(isConnectorHref("connector://google")).toBe(true);
+    expect(isConnectorHref("CONNECTOR://tok:google")).toBe(true);
+    expect(isConnectorHref("resource://google")).toBe(false);
+    expect(isConnectorHref(undefined)).toBe(false);
   });
 });
 
@@ -403,7 +475,6 @@ describe("citationScheme", () => {
       "resource://ok",
       "https://example.com",
       "person:0192f3ac-1b2c-7000-8000-abcdefabcdef",
-      "connector:token:slack",
     ]) {
       expect(citationScheme(href)).toBe(parseCitationHref(href).scheme);
     }

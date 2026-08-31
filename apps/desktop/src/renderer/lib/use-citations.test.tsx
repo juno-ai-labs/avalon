@@ -186,7 +186,6 @@ describe('useCitations', () => {
 
     act(() => {
       result.current.open({ scheme: 'person' });
-      result.current.open({ scheme: 'connector' });
       result.current.open({ scheme: 'unknown' });
     });
 
