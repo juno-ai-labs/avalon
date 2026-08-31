@@ -1,0 +1,127 @@
+# Rebuilds the Rally-owned Terminal snapshot against Daytona's current managed
+# base image, and proves the rebuild with the real-provider acceptance gate.
+#
+# Owning a snapshot means Daytona's OS and system-package fixes stop reaching us
+# automatically: we are pinned to whatever their base looked like when we last
+# built. Nothing detects that. The snapshot manifest fails closed when a
+# capability is missing or broken, but a stale-yet-working base passes every
+# probe, so drift is silent — a rotated CA baked into the managed image is the
+# concrete case, where the probe stays green and Git operations start failing.
+#
+# A weekly rebuild bounds that staleness to a week. It is the condition on which
+# owning the snapshot was judged safe enough; without it, do not adopt one.
+name: Rebuild Terminal snapshot
+
+on:
+  schedule:
+    # Mondays, early UTC — a failure is then in front of someone on Monday
+    # morning rather than discovered by a work stream at the weekend.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      snapshot_name:
+        description: Snapshot name to build. Defaults to a date-stamped candidate.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rebuild-terminal-snapshot
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    name: build and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: api-production
+    env:
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
+      DAYTONA_TARGET: ${{ vars.DAYTONA_TARGET }}
+      TERMINAL_SNAPSHOT_BASE_IMAGE: ${{ vars.TERMINAL_SNAPSHOT_BASE_IMAGE }}
+      TERMINAL_PROBE_REDIRECT_URL: ${{ vars.TERMINAL_PROBE_REDIRECT_URL }}
+      TERMINAL_PROBE_PRIVATE_DNS_URL: ${{ vars.TERMINAL_PROBE_PRIVATE_DNS_URL }}
+      TERMINAL_REGION_CAPABILITY: supported
+
+    steps:
+      - name: Check out the revision
+        uses: actions/checkout@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Require Daytona build credentials
+        run: |
+          set -euo pipefail
+          for name in DAYTONA_API_KEY DAYTONA_API_URL DAYTONA_TARGET \
+            TERMINAL_SNAPSHOT_BASE_IMAGE TERMINAL_PROBE_REDIRECT_URL \
+            TERMINAL_PROBE_PRIVATE_DNS_URL; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name is not configured for this environment" >&2
+              exit 1
+            fi
+          done
+
+      - name: Name this week's snapshot
+        id: snapshot
+        run: |
+          set -euo pipefail
+          name="${{ inputs.snapshot_name }}"
+          if [ -z "$name" ]; then
+            name="rally-terminal-$(date -u +%Y%m%d)"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Building $name"
+
+      # Builds by applying the runtime's own bootstrap command as the image
+      # build step, so the snapshot cannot drift from what the runtime expects.
+      - name: Build the snapshot
+        env:
+          DAYTONA_TERMINAL_SNAPSHOT: ${{ steps.snapshot.outputs.name }}
+        run: pnpm --filter @rally/api terminal:build-snapshot
+
+      # The gate that decides whether this rebuild is usable at all. It creates
+      # a real private sandbox, round-trips a binary file, runs the snapshot
+      # manifest and the Trusted-only escape cases, exercises
+      # stop/restart/archive/restore, then deletes it and confirms absence.
+      - name: Verify the snapshot against the real provider
+        env:
+          DAYTONA_TERMINAL_SNAPSHOT: ${{ steps.snapshot.outputs.name }}
+        run: pnpm --filter @rally/api terminal:verify-provider
+
+      # Deliberately stops here rather than repointing production. Promotion
+      # changes what every new work-stream sandbox runs, and whether that should
+      # happen without a human is the team's call, not this workflow's. Flip it
+      # to an automatic promote once you have a few green weeks and want the
+      # toil gone.
+      - name: Report the verified snapshot
+        run: |
+          set -euo pipefail
+          {
+            echo "### Terminal snapshot rebuilt and verified"
+            echo
+            echo "Verified snapshot: \`${{ steps.snapshot.outputs.name }}\`"
+            echo
+            echo "To adopt it, set \`DAYTONA_TERMINAL_SNAPSHOT\` to that name in:"
+            echo "- \`apps/api/wrangler.global.jsonc\`"
+            echo "- \`apps/api/wrangler.eu.jsonc\`"
+            echo
+            echo "Rolling back is the same edit in reverse; the snapshot only"
+            echo "applies when a sandbox is created, so existing sandboxes are"
+            echo "unaffected either way."
+          } >> "$GITHUB_STEP_SUMMARY"
