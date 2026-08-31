@@ -2905,6 +2905,9 @@ pre {
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
 .markdown-mermaid-diagram { overflow: auto; padding: 18px; }
 .markdown-mermaid-svg { margin: 0 auto; }
+/* Mermaid writes a responsive max-width into the generated SVG. The wrapper's
+   viewBox width is the scrollable frame; the SVG must fill that frame instead
+   of shrinking a wide diagram back to the message width. */
 .markdown-mermaid-svg svg { display: block; height: auto; max-width: none !important; width: 100% !important; }
 .markdown-mermaid-error { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; padding: 10px 18px 0; }
 .markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: var(--av-cmp-markdown-blockquote-margin); padding: 1px 0 1px 15px; }
