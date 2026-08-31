@@ -39,6 +39,7 @@ import {
 } from "./scheduled-alarms";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
+  isRetiredSuggestionFeedbackEffect,
   WorkstreamRegionalEffectAckSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
   WorkstreamRegionalEffectSchema,
@@ -1757,7 +1758,12 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       let accepted = 0;
       for (const envelope of parsed.data.envelopes) {
         if (envelope.region !== this.env.AVALON_REGION) throw new Error("workstream_effect_region_mismatch");
-        this.applyChildEnvelope(parsed.data.substreamId, envelope);
+        // An old child may have committed this just before the deployment.
+        // Returning it as accepted lets that child delete the row; persisting
+        // it in the new parent would revive the retired feedback protocol.
+        if (!isRetiredSuggestionFeedbackEffect(envelope.effect)) {
+          this.applyChildEnvelope(parsed.data.substreamId, envelope);
+        }
         accepted += 1;
       }
       await this.armNextAlarm();

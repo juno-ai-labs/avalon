@@ -536,7 +536,7 @@ that schema's map; what follows is only what WorkspaceDO still holds.
 ### Activity log and digests
 
 - `WorkspaceDO.workspace_workstream_effect_receipts` is the inbox for queued
-  WorkstreamDO directory, activity, suggestion-feedback, resource-link, and
+  WorkstreamDO directory, activity, resource-link, and
   mention-delivery effects. Message ID and payload hash detect replay or
   conflict; generation and per-key waterlines reject stale mutable state.
 - `WorkspaceDO.workspace_workstream_directory` and
@@ -882,7 +882,8 @@ perform the regional audit/control write explicitly through
 **What changed:** Current WorkspaceDO and SubstreamAgent schemas no longer
 contain feedback or suggested-action tables, and `suggested_activity` is no
 longer a valid resource relationship. Forward migrations preserve an accepted
-resource as an ordinary `attachment` and discard pending cards and feedback.
+resource as an ordinary `attachment`, preserve its source audience in the
+generic `content_audience_fences` table, and discard pending cards and feedback.
 
 **Why:** The Suggested context feature was removed end to end. Keeping its
 operational schema would leave a second, unused content-routing authority.
@@ -892,7 +893,9 @@ append-only migration ledger and this changelog retain the history without
 making current code or schema continue to own it.
 
 **Consequences:** Historical migration SQL still names the retired tables and
-relationship so deployed hashes remain valid; the live schema does not.
+relationship so deployed hashes remain valid; the live schema does not. The
+generic fence stores no suggestion status or display state, but remains
+immutable for the attachment's lifetime and blocks audience widening.
 
 ### 2026-08-30 — Pending loop `input_sequence` is the live queue order
 

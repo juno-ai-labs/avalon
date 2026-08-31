@@ -78,6 +78,7 @@ const EXPECTED_TABLES = [
   "block_dashboard_block_runs",
   "block_dashboard_configuration_versions",
   "block_dashboard_user_preferences",
+  "content_audience_fences",
   "content_refs",
   "delivered_loop_inputs",
   "description_refresh_state",

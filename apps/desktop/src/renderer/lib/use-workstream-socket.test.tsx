@@ -312,6 +312,33 @@ function wireWorkstreamDetail(overrides: Record<string, unknown> = {}): Record<s
   };
 }
 
+function legacySuggestedResource(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: '00000000-0000-7000-8000-000000000096',
+    slug: null,
+    workspaceId: '00000000-0000-7000-8000-000000000001',
+    connectionId: null,
+    resourceType: 'document',
+    provider: 'google_drive',
+    providerResourceId: 'drive-legacy',
+    title: 'Previously accepted context',
+    mimeType: 'application/pdf',
+    canonicalUrl: null,
+    refreshSupported: false,
+    watchEnabled: false,
+    watchStatus: 'unsupported',
+    lastHydratedAt: null,
+    createdAt: '2026-07-31T19:00:00.000Z',
+    updatedAt: '2026-07-31T19:00:00.000Z',
+    contentAvailable: false,
+    sizeBytes: 0,
+    currentVersion: 1,
+    relationshipType: 'suggested_activity',
+    direction: 'source',
+    ...overrides,
+  };
+}
+
 function snapshotFrame(input: {
   sequence: number;
   reason?: 'initial' | 'reconciliation' | 'history_unavailable';
@@ -669,6 +696,62 @@ describe('useWorkstreamSocket', () => {
       { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
+  });
+
+  it('normalizes legacy suggested resources in snapshots and live frames without losing sequence', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000095';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+    await flushPromises();
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    act(() => first.message(snapshotFrame({
+      sequence: 1,
+      workstream: { id: workstreamId, resources: [legacySuggestedResource()] },
+    })));
+    act(() => first.message({
+      type: 'resource_attached',
+      sequence: 2,
+      occurredAt: '2026-07-31T19:20:01.000Z',
+      resource: legacySuggestedResource({
+        id: '00000000-0000-7000-8000-000000000097',
+        title: 'Second accepted resource',
+      }),
+    }));
+    act(() => first.message({
+      type: 'resource_updated',
+      sequence: 3,
+      occurredAt: '2026-07-31T19:20:02.000Z',
+      resource: legacySuggestedResource({ title: 'Updated accepted context' }),
+    }));
+
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.resources)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ title: 'Updated accepted context', relationshipType: 'attachment' }),
+        expect.objectContaining({ title: 'Second accepted resource', relationshipType: 'attachment' }),
+      ]));
+
+    act(() => first.close());
+    await act(async () => { await vi.advanceTimersByTimeAsync(750); });
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    expect(second.send).toHaveBeenCalledWith(JSON.stringify({
+      type: 'subscribe',
+      afterSequence: 3,
+      publishPresence: false,
+    }));
   });
 
   it('keeps a narrowed history prefix requestable and retains it across reconciliation', async () => {

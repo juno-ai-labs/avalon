@@ -549,11 +549,6 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
 
       try {
         await processConnectorEvent(env, claim.event);
-        const matched = await workspace.matchExternalEventDestinations({
-          workspaceId: input.workspaceId,
-          eventId: input.eventId,
-        });
-        await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(delivery)));
       } catch (error) {
         const errorCode = diagnosticErrorCode(error, "connector_event_processing_failed");
         const reason = error instanceof Error
@@ -735,18 +730,29 @@ export async function processConnectorEvent(
 ): Promise<void> {
   const activity = activityRowFromWorkspaceEvent(event);
   env = withWorkspaceRuntimeDatabase(env, activity.workspace_id);
-  // WorkspaceDO separately owns deterministic automation/watch fan-out. With
-  // speculative routing removed, every activity reaches Suggested Work for
-  // duplicate detection and possible creation of a new work stream.
-  await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
+  // Match first and ask WorkspaceDO for its durable claim witness. The list of
+  // deliveries is only the work still pending; a retry after those deliveries
+  // settle must still know the activity was claimed and keep it out of
+  // Suggested Work.
+  const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
+  const matched = await workspace.matchExternalEventDestinations({
+    workspaceId: activity.workspace_id,
+    eventId: activity.id,
+  });
+  if (!matched.claimed) {
+    await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
+  }
   await projectActivityEvent(env, activity);
+  await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(delivery)));
   logInfo(env, "connector_event_processing_completed", {
     workspace_id: activity.workspace_id,
     connection_id: activity.connection_id,
     connector_type: activity.connector_type,
     provider: activity.provider,
     connector_event_id: activity.id,
-    opportunity_enqueued: true,
+    deterministic_route_claimed: matched.claimed,
+    deterministic_delivery_count: matched.deliveries.length,
+    opportunity_enqueued: !matched.claimed,
     outcome: "processed",
   });
 }

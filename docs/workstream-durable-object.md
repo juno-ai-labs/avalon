@@ -770,11 +770,11 @@ Terminal remains a Bind plugin backed by Daytona. The child stores the terminal
 workspace, command/task receipts, imports, repository selection, publication
 grants, and convergence state; actual coding execution remains in Daytona.
 
-### Sidebar, activity, suggestions, and notifications
+### Sidebar, activity, and notifications
 
 A product transaction that changes common metadata, a viewer overlay, activity,
-suggestion feedback, or a person notification — a mention, or somebody being
-added to the work stream — writes a versioned envelope to the child
+or a person notification — a mention, or somebody being added to the work
+stream — writes a versioned envelope to the child
 `durable_outbox` in the same SQLite transaction. The child sends those
 envelopes by RPC to its parent `WorkstreamDO`.
 
@@ -821,8 +821,8 @@ Streams, In Progress, and Completed sections using title,
 description/preview, state, and last activity.
 `workspace_workstream_viewers` supplies unread count, participation,
 listability, “You Are Mentioned,” and the Home/sidebar list of work streams of
-interest. Pins, resource links, and resolved suggestion feedback live beside
-those rows so cross-work-stream queries are one local SQLite query rather than a
+interest. Pins and resource links live beside those rows so cross-work-stream
+queries are one local SQLite query rather than a
 fan-out to every child. Electron requests cursor-paged rows over its existing
 WorkspaceDO socket, and receives the sidebar itself on the answer to
 `subscribe` — the first page together with the viewer's
@@ -1452,11 +1452,14 @@ form the chip matcher and notification reducers miss.
 
 ### 2026-08-30 — Suggested context state was retired from every object layer
 
-**What changed:** SubstreamAgent migration 35 drops `suggested_actions`, its
-audience triggers, and pending suggestion outbox rows; old `suggested_activity`
-links become ordinary attachments. WorkstreamDO migration 4 removes the
-suggestion-feedback effect kind and pending rows. WorkspaceDO migration 25 drops
-the feedback projection. The runtime exposes no suggestion RPCs.
+**What changed:** SubstreamAgent migration 35 drops `suggested_actions` and
+pending suggestion outbox rows; old `suggested_activity` links become ordinary
+attachments. Accepted source audiences are copied first into generic immutable
+`content_audience_fences`, so participant and scope widening stays fail-closed.
+WorkstreamDO migration 4 removes pending feedback rows and WorkspaceDO migration
+25 drops the feedback projection. Receivers retain a parse-only feedback
+tombstone so older isolates can drain their already-committed envelopes. The
+runtime exposes no suggestion RPCs.
 
 **Why:** Removing the Suggested context product requires removing its durable
 authority and delivery machinery, not merely hiding its desktop card.
@@ -1465,8 +1468,10 @@ authority and delivery machinery, not merely hiding its desktop card.
 That would preserve unused authorization invariants, alarms, and cross-object
 effects as permanent maintenance surface.
 
-**Consequences:** Accepted resources remain attached. Pending cards and feedback
-are intentionally discarded, and released migration versions remain immutable.
+**Consequences:** Accepted resources remain attached without suggestion state,
+and their original reader boundary still constrains the work stream. Pending
+cards and feedback are intentionally discarded, mixed-version deliveries can
+settle, and released migration versions remain immutable.
 
 ### 2026-08-30 — Sidebar facepile omits the current viewer
 

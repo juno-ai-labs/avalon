@@ -280,7 +280,7 @@ export const WorkspaceDirectoryApplyRequestSchema = z.object({
         message: "Workspace directory effects must target their owning workspace",
       });
     }
-    if (!["directory_common", "directory_user"].includes(envelope.effect.kind)) {
+    if (!["directory_common", "directory_user", "suggestion_feedback"].includes(envelope.effect.kind)) {
       context.addIssue({
         code: "custom",
         path: ["envelopes", index, "effect", "kind"],
@@ -288,7 +288,8 @@ export const WorkspaceDirectoryApplyRequestSchema = z.object({
       });
     }
     if ((envelope.effect.kind === "directory_common"
-      || envelope.effect.kind === "directory_user")
+      || envelope.effect.kind === "directory_user"
+      || envelope.effect.kind === "suggestion_feedback")
       && !UuidV7Schema.safeParse(envelope.messageId).success) {
       context.addIssue({
         code: "custom",

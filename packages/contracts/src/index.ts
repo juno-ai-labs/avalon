@@ -13,7 +13,10 @@ export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, ResourceSlugSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
-import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
+import {
+  ResourceDirectionSchema,
+  WireResourceRelationshipTypeSchema,
+} from "./resource-relationships";
 import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
 import {
   ActivitySourceBindingKeySchema,
@@ -673,7 +676,10 @@ export const ResourceSchema = z.object({
 });
 
 export const WorkstreamResourceSchema = ResourceSchema.extend({
-  relationshipType: ResourceRelationshipTypeSchema,
+  // The live storage vocabulary excludes `suggested_activity`. This wire-only
+  // parser admits the previous Worker's accepted-resource snapshots long
+  // enough for a newer desktop to normalize them to ordinary attachments.
+  relationshipType: WireResourceRelationshipTypeSchema,
   direction: ResourceDirectionSchema,
 });
 
