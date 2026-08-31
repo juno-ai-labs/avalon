@@ -1,6 +1,11 @@
 const PCM_SAMPLE_RATE = 24_000;
 
-/** Schedules provider PCM as it arrives instead of waiting for a complete file. */
+/**
+ * Schedules provider PCM as it arrives instead of waiting for a complete file.
+ *
+ * A player is single-use: `stop()` closes its AudioContext, so callers must
+ * create a new instance for another playback attempt.
+ */
 export class PcmSpeechPlayer {
   private readonly context: AudioContext;
   private readonly sources = new Set<AudioBufferSourceNode>();
@@ -13,10 +18,12 @@ export class PcmSpeechPlayer {
 
   /** Call synchronously from the pointer event so browsers preserve activation. */
   prepare(): Promise<void> {
+    this.assertUsable();
     return this.context.resume();
   }
 
   async play(stream: ReadableStream<Uint8Array>): Promise<void> {
+    this.assertUsable();
     const reader = stream.getReader();
     let trailingByte: number | null = null;
     let finalEnded: Promise<void> | null = null;
@@ -56,6 +63,10 @@ export class PcmSpeechPlayer {
     }
     this.sources.clear();
     void this.context.close().catch(() => undefined);
+  }
+
+  private assertUsable(): void {
+    if (this.stopped) throw new Error('A stopped speech player cannot be reused. Create a new player.');
   }
 
   private schedule(bytes: Uint8Array): Promise<void> {

@@ -33,6 +33,7 @@ import {
   MULTIMODAL_AUDIO_DEFAULT_VOICE,
   MULTIMODAL_AUDIO_MODEL,
   MULTIMODAL_AUDIO_PRICING_MODEL_ID,
+  MULTIMODAL_GENERATION_MODEL,
   MULTIMODAL_GENERATION_PRICING_MODEL_ID,
   MultimodalGenerationError,
   type EditImageArguments,
@@ -147,7 +148,7 @@ export function createAvalonMultimodalGenerationPlugin(
         tool_invocation_id: context.effectIntentId ?? null,
         tool_call_id: context.toolCallId,
         operation,
-        model: "gpt-image-2",
+        model: MULTIMODAL_GENERATION_MODEL,
         state: "completed",
         duration_ms: Date.now() - startedAt,
         resource_id: published.resourceId,
@@ -170,7 +171,7 @@ export function createAvalonMultimodalGenerationPlugin(
         tool_invocation_id: context.effectIntentId ?? null,
         tool_call_id: context.toolCallId,
         operation,
-        model: "gpt-image-2",
+        model: MULTIMODAL_GENERATION_MODEL,
         state: "failed",
         code: translated.code,
         duration_ms: Date.now() - startedAt,
@@ -336,7 +337,7 @@ async function bestEffortPricing(
       tool_invocation_id: context.effectIntentId ?? null,
       tool_call_id: context.toolCallId,
       operation,
-      model: "gpt-image-2",
+      model: MULTIMODAL_GENERATION_MODEL,
       pricing_model_id: MULTIMODAL_GENERATION_PRICING_MODEL_ID,
       reason: error instanceof Error ? error.message : "unknown",
     });
@@ -365,7 +366,7 @@ function calculateBilling(
         tool_invocation_id: context.effectIntentId ?? null,
         tool_call_id: context.toolCallId,
         operation,
-        model: "gpt-image-2",
+        model: MULTIMODAL_GENERATION_MODEL,
       });
     }
     return {
@@ -392,7 +393,7 @@ function calculateBilling(
       tool_invocation_id: context.effectIntentId ?? null,
       tool_call_id: context.toolCallId,
       operation,
-      model: "gpt-image-2",
+      model: MULTIMODAL_GENERATION_MODEL,
       pricing_model_id: MULTIMODAL_GENERATION_PRICING_MODEL_ID,
       reason: error instanceof Error ? error.message : "unknown",
     });
@@ -426,7 +427,7 @@ function toolResult(
       contentMode: "view",
       derivativeStatus: published.derivativeStatus,
       createdAt: published.createdAt,
-      model: "gpt-image-2",
+      model: MULTIMODAL_GENERATION_MODEL,
       inferenceProvider: "azure",
       operation,
       requestedSize: typeof metadata.requestedSize === "string" ? metadata.requestedSize : "auto",
