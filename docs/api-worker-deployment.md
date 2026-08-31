@@ -1,9 +1,11 @@
 # API Worker build and deployment
 
 Rally's API is deployed as three statically imported Workers in each region:
-the public API and two private capability services. The split controls the
-module graph Cloudflare evaluates at startup without moving product authority
-or loading code during a request.
+the public API and two private capability services. Global also has one
+scheduled inference-pricing Worker. The split controls the module graph
+Cloudflare evaluates at startup and keeps provider-catalog refreshes out of
+inference requests without moving product authority or loading code during a
+request.
 
 Read this before changing an API entrypoint, a Worker dependency, a Service
 Binding, a Wrangler config, or `deploy-api.yml`. The repository-wide rule is
@@ -25,6 +27,7 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 | Regional API | `src/index.ts`, `wrangler.{eu,global}.jsonc` | HTTP, events, Durable Objects, Workflows, routing bridges, and product authority. |
 | Document processor | `src/document-processing-worker.ts`, `wrangler.documents.{eu,global}.jsonc` | PDF.js text extraction, animated-GIF storyboards, and TIFF decoding. |
 | Terminal provider | `src/terminal-provider-worker.ts`, `wrangler.terminal.{eu,global}.jsonc` | Daytona SDK calls behind the `TerminalSandboxProvider` contract. |
+| Inference pricing | `src/inference-pricing-worker.ts`, `wrangler.pricing.global.jsonc` | Hourly OpenRouter endpoint-price averages written to the shared regional KV namespace. |
 | Contracts | `src/services/document-processing-contract.ts`, `src/services/terminal/provider-rpc-contract.ts` | Typed RPC inputs and outputs imported by caller and callee. |
 | Rollout | `.github/workflows/deploy-api.yml` | Profiles, version upload, migration ordering, promotion, health, and retained evidence. |
 
@@ -68,6 +71,8 @@ logic consumes.
 Local development starts each region's three configs in one Wrangler
 multi-Worker session. Tests inject contract implementations where a provider
 cannot run, while build checks compile and profile every real entrypoint.
+`pnpm --filter @rally/api dev:pricing` separately exposes the scheduled handler
+locally through Wrangler's scheduled-event test route.
 
 ## Invariants and contracts
 
@@ -82,6 +87,9 @@ cannot run, while build checks compile and profile every real entrypoint.
   API until the regional API promotion is healthy.
 - EU services are separate from Global services. Payloads and provider calls do
   not cross regions through these bindings.
+- The Global pricing Worker is the only OpenRouter pricing-cache writer. API
+  inference in both regions reads the shared public-metadata KV and never
+  refreshes provider pricing inline.
 - All selected versions are uploaded successfully before ordinary promotion.
   EU services and API promote and pass health before Global promotion.
 - Every successful version is tagged with the immutable Git SHA that passed the
@@ -115,6 +123,9 @@ selected product regions.
 - If EU promotion or EU health fails, Global remains unchanged.
 - If Global fails after EU succeeds, leave the verified EU set live and roll
   Global forward or explicitly restore its prior tagged set.
+- A failed pricing cron leaves every prior valid per-model KV record usable. A
+  missing or malformed record makes Bind omit that Azure candidate rather than
+  send an unpriced request.
 - Cloudflare Versions cannot apply Durable Object migrations or update a
   Container image. A Wrangler-config or Crash Symbolicator change therefore
   uses direct service-first deployment. An untagged or divergent production
@@ -126,8 +137,8 @@ selected product regions.
 ## Testing
 
 - `pnpm --filter @rally/api build`, `build:eu`, `build:documents`,
-  `build:documents:eu`, `build:terminal`, and `build:terminal:eu` dry-run and
-  profile all six static artifacts.
+  `build:documents:eu`, `build:terminal`, `build:terminal:eu`, and
+  `build:pricing` dry-run and profile all seven static artifacts.
 - Attachment tests run the same statically imported codec implementation behind
   an injected document-processing contract.
 - Terminal provider tests continue to prove Daytona behavior directly; RPC
@@ -135,13 +146,15 @@ selected product regions.
   delegation. A real-workerd auxiliary Service Binding proves `RpcTarget`
   state and retained callbacks survive the entrypoint call that created them.
 - `node --test scripts/deploy-api-workflow.test.mjs` proves service-first
-  upload, EU-before-Global health, and migration placement.
+  upload, the hourly Global cron and shared KV binding, EU-before-Global health,
+  and migration placement.
 - CI retains every startup profile on success or failure.
 
 ## Regional impact
 
-Each region gains two private Workers and two Service Bindings. They add no
-routes, databases, buckets, queues, secrets, or Durable Object namespaces.
+Each region has two private Workers and two Service Bindings. Global additionally
+has one route-less scheduled Worker bound to the same pricing KV both APIs
+read. They add no routes, databases, buckets, queues, secrets, or Durable Object namespaces.
 Service calls execute at the caller's Cloudflare location. EU remains first
 because Global also carries named bindings to EU API entrypoints, and EU data
 retains its existing no-Global-fallback policy.
@@ -152,7 +165,7 @@ Normal production rollout is `deploy-api.yml`. It builds and profiles all
 selected service graphs, materializes Global lakehouse bindings, discovers the
 active source tags, and selects one mode:
 
-- **Versioned:** upload every selected document, Terminal, and API version with
+- **Versioned:** upload every selected document, Terminal, pricing, and API version with
   no traffic and capture its immutable version ID; apply migration-first D1
   changes; promote those exact EU IDs service-first; prove EU health; promote
   the exact Global IDs; apply Worker-first retirements; prove both.
@@ -182,6 +195,9 @@ Service Bindings add no monetary charge or network hop by default. A document
 or Terminal operation adds a Worker invocation and subrequest, while ordinary
 API requests no longer initialize either provider library. That cost is bounded
 to the capability that uses it and is visible as a platform invocation.
+The pricing graph runs once per hour in Global and performs fourteen OpenRouter
+catalog reads plus fourteen small KV writes; inference performs only the KV reads
+for Azure-bound models in its route plan.
 
 ## Changelog
 
@@ -223,6 +239,34 @@ other binding into an availability failure.
 workflow, and one-region manual recovery does not update the MCP. Both regional
 entrypoints must remain compatible with the previously deployed MCP until the
 full barrier completes.
+
+### 2026-08-30 — Pricing refresh leaves the inference path
+
+**What changed:** Global gained a dedicated hourly scheduled Worker that
+refreshes OpenRouter endpoint-average pricing for the union of the developer
+model selector and Azure deployments carried by OpenRouter. It writes one KV record keyed by
+canonical OpenRouter model ID, with base and prompt-threshold override decimal
+costs stored as strings. Regional
+API Workers are read-only consumers of the same namespace. Token-priced records
+carry per-million input/cache/output values and any catalog long-context tiers;
+image records preserve OpenRouter's native billable/unit lines.
+
+**Why:** A request-triggered refresh made an arbitrary inference request own
+provider-catalog availability and shared-cache mutation. Pricing is public
+fleet metadata with one refresh cadence, not workspace or regional product
+state, so it has one explicit producer.
+
+**Considered and rejected:** A Cloudflare Workflow was rejected because the job
+is fourteen independent GETs followed by fourteen small KV writes and has no
+multi-step durable business transaction to resume. Per-region crons were
+rejected because they would race to publish identical public metadata.
+
+**Consequences:** Stale valid records remain usable during OpenRouter outages;
+missing or legacy numeric records fail closed for Azure routing. Adding a model
+to the developer selector automatically adds it to the refresh inventory, while
+a new Azure-only deployment must be added to the checked-in Azure inventory.
+The realtime-transcription deployment has no OpenRouter model ID and therefore
+no key in this cache.
 
 ### 2026-08-30 — Heavy providers become typed regional services
 

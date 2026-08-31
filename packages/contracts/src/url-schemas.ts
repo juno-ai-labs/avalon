@@ -31,6 +31,21 @@ export const HttpUrlSchema = urlSchema(HTTP_PROTOCOLS, "Expected an absolute HTT
 /** Absolute provider URL whose transport must be encrypted. */
 export const HttpsUrlSchema = urlSchema(HTTPS_PROTOCOL, "Expected an absolute HTTPS URL");
 
+/** Azure AI inference accepts a resource root or its OpenAI-compatible base. */
+export const AzureInferenceEndpointSchema = HttpsUrlSchema.refine((value) => {
+  try {
+    const url = new URL(value);
+    const path = url.pathname.replace(/\/+$/u, "");
+    return !url.username
+      && !url.password
+      && !url.search
+      && !url.hash
+      && (!path || path === "/openai/v1");
+  } catch {
+    return false;
+  }
+}, "Expected an Azure HTTPS resource root or /openai/v1 base");
+
 /** Absolute WebSocket URL. WS remains valid for loopback/local development. */
 export const WebSocketUrlSchema = urlSchema(
   WEB_SOCKET_PROTOCOLS,

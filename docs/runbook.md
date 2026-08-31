@@ -126,6 +126,78 @@ To rotate connector credentials in one region, keep the old key, set `CONNECTOR_
 
 Configure the Azure values in every region where dictation is enabled. `AZURE_OPENAI_ENDPOINT` is the HTTPS resource endpoint, and `AZURE_OPENAI_REALTIME_DEPLOYMENT` is the name of an Azure deployment backed by `gpt-live-transcribe`. Azure's GA transcription contract connects to `/openai/v1/realtime?intent=transcription` and identifies that deployment in `session.audio.input.transcription.model`. Do not place any Azure value behind a `VITE_` prefix. Local development may use one unsuffixed set or `_GLOBAL` and `_EU` overrides in `.env.local`.
 
+Azure agent inference is a separate opt-in pair:
+`AZURE_INFERENCE_ENDPOINT` and `AZURE_INFERENCE_API_KEY`. Configure both only
+on a Worker whose regional data boundary permits that resource. With neither,
+Bind omits Azure and retains the existing OpenRouter route; with only one, the
+run fails configuration before provider I/O. The endpoint is the resource root
+or its `/openai/v1` base, never HTTP, a deployment URL, or a URL carrying
+credentials, query parameters, or a fragment; invalid values fail Worker
+startup. The key remains a Worker secret. Rally's checked-in bindings currently map canonical `x-ai/grok-4.3`
+and `x-ai/grok-4.6` to their Monad production deployment names and try Azure
+before OpenRouter for the same model. Model Flagship values stay canonical and
+must never contain an Azure deployment name.
+
+The live Monad production endpoint is
+`https://monad-prod-resource.services.ai.azure.com`. As verified on 2026-08-30,
+the project had the following ten successful deployments. Nine have canonical
+OpenRouter identities and participate in the pricing inventory; realtime
+transcription does not.
+
+| Azure deployment | OpenRouter pricing key |
+| --- | --- |
+| `FLUX.2-flex` | `black-forest-labs/flux.2-flex` |
+| `grok-4.6` | `x-ai/grok-4.6` |
+| `gpt-image-2` | `openai/gpt-image-2` |
+| `text-embedding-3-large` | `openai/text-embedding-3-large` |
+| `gpt-5.6-sol` | `openai/gpt-5.6-sol` |
+| `gpt-5.6-terra` | `openai/gpt-5.6-terra` |
+| `gpt-live-transcribe` | none |
+| `DeepSeek-V4-Flash` | `deepseek/deepseek-v4-flash-0731` |
+| `DeepSeek-V4-Pro` | `deepseek/deepseek-v4-pro` |
+| `grok-4.3` | `x-ai/grok-4.3` |
+
+As verified on the same date,
+the 4.3 and 4.6 deployments are version-1 Preview Global Standard deployments
+with DefaultV2 guardrails; their limits are respectively 250,000 TPM / 250 RPM
+and 2,250,000 TPM / 2,250 RPM. The inference API reports tokens, not dollar
+cost. In that case, Bind bills with the cached unweighted average of every
+endpoint OpenRouter publishes for the canonical model, including the catalog's
+prompt-token override tiers. The Worker
+`avalon-api-inference-pricing-global` refreshes the OpenRouter endpoint
+inventories hourly. The inventory is the union of the developer-mode manual
+choice list and every Monad production Azure deployment that has an
+OpenRouter identity: fourteen canonical model IDs as of 2026-08-30. It stores one
+record per model in `INFERENCE_PRICING_CACHE`, using the canonical OpenRouter ID
+itself (for example `x-ai/grok-4.3`) as the KV key. Each input, cached-input, and
+output USD-per-million value in a token-priced record remains a decimal JSON
+string. Long-context `overrides` retain their numeric `minPromptTokens`
+threshold and another string-valued input/cache/output triple. Image records
+instead retain OpenRouter's native `billable`, `unit`, and
+string `costUsd` lines—for example FLUX input/output image costs per megapixel—
+so a zero generic token price cannot conceal the actual image charge. Global
+and EU bind the same Cloudflare KV namespace; it contains public provider metadata only,
+never a workspace ID, prompt, usage, or credential. Do not copy the top-level
+OpenRouter catalog price: it is the lowest endpoint price, not the average.
+
+Inference never refreshes this cache, and a route whose primary and fallback
+models are all OpenRouter-only does not read it. On a cron failure, each stale
+valid model record remains usable. A rejected cache read or a missing,
+malformed, or legacy numeric-cost record makes Bind omit Azure for that model
+and continue with the existing OpenRouter
+candidate instead of making an unpriced Azure request. To inspect the two
+currently Azure-routed records without exposing provider credentials, run:
+
+```bash
+pnpm --filter @rally/api exec wrangler kv key get x-ai/grok-4.3 --namespace-id <id>
+pnpm --filter @rally/api exec wrangler kv key get x-ai/grok-4.6 --namespace-id <id>
+```
+
+Use the namespace ID from any of the three pricing-bound Wrangler configs. To
+exercise the cron locally, start `pnpm --filter @rally/api dev:pricing`, then
+request `/cdn-cgi/handler/scheduled`. Deleting a record is not a refresh
+mechanism: retain stale valid pricing during an upstream outage.
+
 ### Terminal provider activation and recovery
 
 Terminal is fail-closed per region. Global and EU are both enabled against the
@@ -810,8 +882,8 @@ without putting either setup material or its signing secret into logs:
 For ordinary releases after both entrypoints exist:
 
 1. Build the API, document-processing, and Terminal-provider artifacts for both
-   regions, validate the exact Wrangler configurations with dry runs, and
-   retain all six startup profiles. See
+   regions plus the Global pricing Worker, validate the exact Wrangler
+   configurations with dry runs, and retain all seven startup profiles. See
    [`api-worker-deployment.md`](api-worker-deployment.md).
 2. Create or confirm each region's named Cloudflare resources. The deployment
    automatically creates and verifies the Global inference Queue, analytical R2
@@ -850,7 +922,7 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop Vitest suite uses two shards, the API Vitest suite uses three, and the workers suite uses two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: six exact-artifact dry-runs and startup profiles, remote D1 migrations, service-first two-region version upload or direct deployment, EU promotion and health, Global promotion and health, and final regional health. The profiles and build manifests are retained even on failure. Wrangler-config, Durable Object migration, Container-image, and first-service releases select direct deployment because Cloudflare Versions cannot establish that platform state; successful releases tag each active version with the immutable verified Git SHA. Its verify matrix shards the workers suite the same way CI does (`api-tests-workers-1-of-n` / `2-of-n`) rather than appending an unsharded `test:workers` onto a Node lane — that split is load, not coverage, and an unsharded full-suite Miniflare is more `reset()` interleave than PR CI ever sees. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies both Global lakehouses before migrations; the EU deploy config intentionally contains no lakehouse binding. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: seven exact-artifact dry-runs and startup profiles, remote D1 migrations, service-first two-region version upload or direct deployment, EU promotion and health, Global service/pricing/API promotion and health, and final regional health. The profiles and build manifests are retained even on failure. Wrangler-config, Durable Object migration, Container-image, and first-service releases select direct deployment because Cloudflare Versions cannot establish that platform state; successful releases tag each active version with the immutable verified Git SHA. Its verify matrix shards the workers suite the same way CI does (`api-tests-workers-1-of-n` / `2-of-n`) rather than appending an unsharded `test:workers` onto a Node lane — that split is load, not coverage, and an unsharded full-suite Miniflare is more `reset()` interleave than PR CI ever sees. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies both Global lakehouses before migrations; the EU deploy config intentionally contains no lakehouse binding. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - **The durable automation lifecycle cutover ran on 2026-08-28** and its three
   one-shot deploy steps — the single-region refusal, the preflight, and the
