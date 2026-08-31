@@ -21,6 +21,7 @@ outside this document can break without their own tests failing.
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
 | `apps/desktop/src/renderer/index.html` | The Content Security Policy. |
 | `apps/desktop/src/main/theme-assets.ts` | The two theme-asset schemes: a backdrop document's policy, and the remote-font cache that keeps the renderer off remote hosts. |
+| `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The one generated-SVG boundary in Markdown: strict Mermaid configuration, disabled HTML labels and interactions, and source fallback. |
 | `apps/desktop/src/main/session-encryption.ts`, `stored-auth.ts`, `stored-session.ts`, `session-file.ts` | The versioned credential envelope and the serialized session-mutation boundary. |
 | `apps/desktop/src/main/lockdown-mode.ts` | The `safeStorage` mode and its migration. |
 | `apps/desktop/src/main/application-settings.ts` | The shared write queue every preference goes through. |
@@ -72,6 +73,13 @@ are canonical storage services, not authorization layers.
   browser.
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
+- Markdown treats model, member, email, and attachment text as untrusted.
+  `react-markdown` evaluates no raw HTML. A fenced `mermaid` block is the one
+  generated-markup path: Mermaid runs with `securityLevel: strict`, HTML labels
+  and interaction disabled and those settings locked against diagram
+  frontmatter before its sanitised SVG is inserted. The application never calls
+  Mermaid's binding callback, so a diagram cannot install click handlers. A
+  rejected parse leaves the original source visible.
 - Refresh material is encrypted in the main process. By default the desktop uses
   an application-wide embedded key so a saved session survives signing-identity
   and keystore changes. Application → **Lockdown mode** replaces that with
@@ -712,6 +720,44 @@ trust domains or fail open if the Access route is removed.
 **Consequences:** An admitted Access identity can deliberately mutate product
 SQLite in either region. Audit logs identify the actor/tool/target but must not
 contain SQL, bindings, returned rows, or SQLite error text.
+
+### 2026-08-30 — Mermaid SVG is a strict generated-markup boundary
+
+**What changed:** The Markdown renderer may insert SVG generated from a
+`mermaid` fence. Mermaid is initialized with strict security, HTML labels and
+interaction disabled, and secure configuration keys that keep diagram
+frontmatter from widening those choices or replacing Rally's token-derived
+theme. The lock covers the security level, HTML labels, startup/error/resource
+caps, theme, theme CSS/variables, typography, and visual look. Its
+`bindFunctions` result is not used; invalid input falls back to the source
+block. Both the global and flowchart-specific HTML-label settings are false,
+because some Mermaid flowchart shapes read the nested value directly. Strict
+mode still emits ordinary SVG links, so Rally unwraps anchors and
+removes every non-fragment `href` before inserting the result. A generated style
+block or presentation attribute containing a non-fragment CSS resource rejects
+the entire diagram instead of allowing its display to make an external request.
+Before preflight parsing, Rally applies Mermaid's initialized and secured text-size
+ceiling. A source preflight rejects external CSS resource functions in Mermaid
+style directives, and parsed flowchart image nodes and block styles are rejected
+from Mermaid's database before render, because Mermaid can otherwise fetch them
+while drawing or measuring, before output sanitisation can run. Parsed-style and
+generated-SVG scans remain as additional boundaries before insertion, and the
+generated SVG is rejected if it contains a `script` or `foreignObject` even if
+Mermaid's strict sanitizer were to regress.
+
+**Why:** Diagram rendering necessarily produces markup from untrusted model or
+member text, unlike the rest of Rally's raw-HTML-free Markdown path. Naming and
+locking the one exception keeps `dangerouslySetInnerHTML` from quietly becoming
+a general rendering technique and prevents a model-authored diagram from
+turning labels into HTML or destinations into UI behavior.
+
+**What a future change has to respect:** keep the insertion point confined to
+Mermaid's strict sanitised SVG. Do not enable loose/antiscript mode, HTML labels,
+callbacks, or `bindFunctions`. Keep the post-render link removal even when
+upgrading Mermaid, and keep rejecting pre-render image nodes, non-fragment CSS
+resources, and scriptable output elements: `strict` does not mean non-interactive
+or network-inert. A request for interactive diagrams is a new trust-boundary
+decision, not a styling change.
 
 ### 2026-08-29 — The deep-link failure window joins the trusted-sender set
 
