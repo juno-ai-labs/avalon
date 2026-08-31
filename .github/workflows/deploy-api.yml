@@ -32,6 +32,7 @@ on:
       # Everything the Worker bundle or its schema is built from. A merge that
       # touches only docs, the desktop app, or the site does not redeploy.
       - "apps/api/**"
+      - "apps/engineering-mcp/**"
       - "packages/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -118,6 +119,7 @@ jobs:
               pnpm --filter @rally/api build:documents:eu &&
               pnpm --filter @rally/api build:terminal &&
               pnpm --filter @rally/api build:terminal:eu &&
+              pnpm --filter @rally/engineering-mcp build &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-2
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
@@ -596,6 +598,34 @@ jobs:
           if [ "$DEPLOY_EU" = "true" ]; then regions="$regions eu"; fi
           if [ "$DEPLOY_GLOBAL" = "true" ]; then regions="$regions global"; fi
           node scripts/check-regional-health.mjs $regions
+
+      # The MCP binds both regional API entrypoints. It is deliberately last:
+      # a first release cannot make its caller live until both named targets
+      # exist, and a partial manual regional deployment must leave the current
+      # MCP deployment untouched.
+      - name: Deploy the engineering MCP after both regional entrypoints
+        if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/engineering-mcp deploy
+
+      - name: Verify the engineering MCP advertises OAuth to non-browser clients
+        if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: |
+          set -euo pipefail
+          # Reuse the existing Access propagation window from deploy-ace.yml;
+          # this is the same custom-domain and Access control-plane operation.
+          for attempt in 1 2 3 4 5 6; do
+            headers="${RUNNER_TEMP}/engineering-mcp-headers-${attempt}.txt"
+            status="$(curl --silent --show-error --output /dev/null --dump-header "$headers" \
+              --header 'Accept: application/json' \
+              --write-out '%{http_code}' \
+              https://mcp.internal.rallywith.ai/mcp || true)"
+            if [ "$status" = 401 ] && grep -qi '^www-authenticate:.*resource_metadata' "$headers"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Engineering MCP did not expose the expected OAuth challenge" >&2
+          exit 1
 
       - name: Preserve exact deployment startup evidence
         if: ${{ always() }}

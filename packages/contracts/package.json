@@ -8,6 +8,7 @@
     "./desktop-deep-link": "./src/desktop-deep-link.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./durable-object-migrations": "./src/durable-object-migrations.ts",
+    "./engineering-inspection": "./src/engineering-inspection.ts",
     "./http-headers": "./src/http-headers.ts",
     "./socket-tickets": "./src/socket-tickets.ts",
     "./telemetry": "./src/telemetry.ts",
