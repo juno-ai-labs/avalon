@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 
 import type { TerminalRegionConfiguration } from "./contract";
 import {
+  TERMINAL_SNAPSHOT_PROBES,
   terminalManagedSnapshotBootstrapCommand,
   terminalSnapshotProbeCommand,
 } from "./snapshot-manifest";
@@ -103,8 +104,18 @@ type DaytonaClientFactory = (config: {
 }) => DaytonaClientLike;
 
 class TerminalSandboxInitializationError extends Error {
-  constructor() {
-    super("Daytona could not initialize the private Rally workspace");
+  /**
+   * `missingCapabilities` carries the manifest ids the probe could not verify.
+   *
+   * The catch that raises this discards the underlying error, which is what made
+   * a failed snapshot report only that initialization failed — the probe named
+   * every missing capability and nothing carried it out. The ids come from the
+   * manifest's fixed set, so this stays content-free.
+   */
+  constructor(readonly missingCapabilities: readonly string[] = []) {
+    super(missingCapabilities.length > 0
+      ? `Daytona could not initialize the private Rally workspace: missing ${missingCapabilities.join(", ")}`
+      : "Daytona could not initialize the private Rally workspace");
     this.name = "TerminalSandboxInitializationError";
   }
 }
@@ -161,6 +172,23 @@ function parseInstalledCapabilities(output: string): TerminalManagedBootstrapCap
   const allowed = new Set<string>(MANAGED_BOOTSTRAP_CAPABILITIES);
   return [...new Set(match[1]!.split(",").filter((value) => allowed.has(value)))]
     .map((value) => value as TerminalManagedBootstrapCapability);
+}
+
+/**
+ * The one detail a failed verification is worth reporting: which capabilities
+ * the snapshot could not satisfy.
+ *
+ * The probe already names them all as `AVALON_PROBE_MISSING=<ids>` precisely so
+ * a breaking managed-image update, or a rebuilt snapshot that lost something, is
+ * one diagnostic. Discarding stdout threw that away and left "verification
+ * failed" with nothing to act on. Filtering against the manifest's own ids keeps
+ * this to a fixed enum, so no sandbox content travels out with it.
+ */
+function parseMissingCapabilities(output: string): string[] {
+  const match = /^AVALON_PROBE_MISSING=([^\r\n]*)$/mu.exec(output);
+  if (!match) return [];
+  const allowed = new Set<string>(TERMINAL_SNAPSHOT_PROBES.map((probe) => probe.id));
+  return [...new Set(match[1]!.split(/\s+/u).filter((value) => allowed.has(value)))];
 }
 
 export function createDaytonaTerminalProvider(
@@ -253,10 +281,24 @@ export function createDaytonaTerminalProvider(
   } as const;
 
   const secretPrefix = (idOrName: string) => `AVALON_READ_${idOrName.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 60)}_`;
+  /**
+   * Best effort, including the listing.
+   *
+   * The individual deletes were already tolerant, but the `list` that finds them
+   * was not, and `deleteSandbox` calls this before the delete itself. A
+   * credential without the Secrets scope therefore answered 403 here and the
+   * sandbox was never deleted — a live filesystem left accruing cost because
+   * tidying its read secrets failed. That trade is the wrong way round: a
+   * leftover secret is scoped to a sandbox that no longer exists, while an
+   * undeleted sandbox is real money and a real authority surface. Teardown
+   * proceeds regardless.
+   */
   const clearReadSecrets = async (idOrName: string): Promise<void> => {
     if (!client.secret) return;
     const prefix = secretPrefix(idOrName);
-    const page = await measureRequest("secret.list", () => client.secret!.list({ name: prefix, limit: 20 }));
+    const page = await measureRequest("secret.list", () => client.secret!.list({ name: prefix, limit: 20 }))
+      .catch(() => null);
+    if (!page) return;
     await Promise.all(page.items
       .filter((secret) => secret.name.startsWith(prefix))
       .map((secret) => measureRequest("secret.delete", () => client.secret!.delete(secret.id)).catch(() => undefined)));
@@ -333,6 +375,7 @@ export function createDaytonaTerminalProvider(
       let phase: TerminalProviderOperationMeasurement["failurePhase"] = "policy_readback";
       let sourceState: TerminalSandboxState = "failed";
       let installedCapabilities: TerminalManagedBootstrapCapability[] = [];
+      let missingCapabilities: string[] = [];
       let observed: DaytonaSandboxLike | null = null;
       try {
         observed = await load(idOrName);
@@ -377,7 +420,12 @@ export function createDaytonaTerminalProvider(
           undefined,
           120,
         ));
-        if (verified.exitCode !== 0) throw new Error("Rally workspace verification failed");
+        if (verified.exitCode !== 0) {
+          missingCapabilities = parseMissingCapabilities(
+            verified.result ?? verified.artifacts?.stdout ?? "",
+          );
+          throw new Error("Rally workspace verification failed");
+        }
         const finishedAt = now();
         observe({
           operation: "sandbox_bootstrap",
@@ -415,7 +463,7 @@ export function createDaytonaTerminalProvider(
         if (observed?.delete) {
           await measureRequest("sandbox.delete", () => observed!.delete!(60, true)).catch(() => undefined);
         }
-        throw new TerminalSandboxInitializationError();
+        throw new TerminalSandboxInitializationError(missingCapabilities);
       }
     },
     async getSandbox(idOrName) {
