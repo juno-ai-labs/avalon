@@ -1,4 +1,8 @@
-import { DesktopDeepLinkUrlSchema, HttpUrlSchema } from "@rally/contracts/url-schemas";
+import {
+  AzureInferenceEndpointSchema,
+  DesktopDeepLinkUrlSchema,
+  HttpUrlSchema,
+} from "@rally/contracts/url-schemas";
 import type { Pipeline } from "cloudflare:pipelines";
 import { z } from "zod";
 import type { Region, UserId, WorkspaceId } from "@rally/contracts";
@@ -341,7 +345,7 @@ const EnvContractSchema = z.object({
   OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
   OPENROUTER_STRUCTURED_MODEL: z.string().min(1),
   OPENROUTER_AUTOMATION_MODEL: z.string().min(1),
-  AZURE_INFERENCE_ENDPOINT: HttpUrlSchema.optional(),
+  AZURE_INFERENCE_ENDPOINT: AzureInferenceEndpointSchema.optional(),
   // Deliberately optional: Azure model routing degrades to OpenRouter when absent.
   AZURE_INFERENCE_API_KEY: z.string().min(1).optional(),
 

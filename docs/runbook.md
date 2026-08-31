@@ -131,8 +131,9 @@ Azure agent inference is a separate opt-in pair:
 on a Worker whose regional data boundary permits that resource. With neither,
 Bind omits Azure and retains the existing OpenRouter route; with only one, the
 run fails configuration before provider I/O. The endpoint is the resource root
-or its `/openai/v1` base, never a deployment URL, and the key remains a Worker
-secret. Rally's checked-in bindings currently map canonical `x-ai/grok-4.3`
+or its `/openai/v1` base, never HTTP, a deployment URL, or a URL carrying
+credentials, query parameters, or a fragment; invalid values fail Worker
+startup. The key remains a Worker secret. Rally's checked-in bindings currently map canonical `x-ai/grok-4.3`
 and `x-ai/grok-4.6` to their Monad production deployment names and try Azure
 before OpenRouter for the same model. Model Flagship values stay canonical and
 must never contain an Azure deployment name.
@@ -179,9 +180,11 @@ and EU bind the same Cloudflare KV namespace; it contains public provider metada
 never a workspace ID, prompt, usage, or credential. Do not copy the top-level
 OpenRouter catalog price: it is the lowest endpoint price, not the average.
 
-Inference never refreshes this cache. On a cron failure, each stale valid model
-record remains usable. A missing, malformed, or legacy numeric-cost record makes
-Bind omit Azure for that model and continue with the existing OpenRouter
+Inference never refreshes this cache, and a route whose primary and fallback
+models are all OpenRouter-only does not read it. On a cron failure, each stale
+valid model record remains usable. A rejected cache read or a missing,
+malformed, or legacy numeric-cost record makes Bind omit Azure for that model
+and continue with the existing OpenRouter
 candidate instead of making an unpriced Azure request. To inspect the two
 currently Azure-routed records without exposing provider credentials, run:
 
