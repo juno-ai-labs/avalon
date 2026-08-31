@@ -60,9 +60,11 @@ function decodeCssEscapes(value: string): string {
     });
 }
 
-function hasExternalCssResource(value: string): boolean {
-  const css = decodeCssEscapes(value).replace(/\/\*[\s\S]*?\*\//gu, '');
-  if (/(?:https?|data|blob|file):|(?:^|[("'\s])\/\//iu.test(css)) return true;
+function normalizedCss(value: string): string {
+  return decodeCssEscapes(value).replace(/\/\*[\s\S]*?\*\//gu, '');
+}
+
+function hasExternalCssReferenceInNormalized(css: string): boolean {
   if (/@import\b|(?:-webkit-)?image-set\s*\(/iu.test(css)) return true;
 
   const urls = css.matchAll(/url\s*\(\s*([^)]*?)\s*\)/giu);
@@ -74,6 +76,15 @@ function hasExternalCssResource(value: string): boolean {
     if (!/^#[\w.:-]+$/u.test(target)) return true;
   }
   return false;
+}
+
+function hasExternalCssReference(value: string): boolean {
+  return hasExternalCssReferenceInNormalized(normalizedCss(value));
+}
+
+function hasExternalCssResource(value: string): boolean {
+  const css = normalizedCss(value);
+  return /(?:https?|data|blob|file):|(?:^|[("'\s])\/\//iu.test(css) || hasExternalCssReferenceInNormalized(css);
 }
 
 const cssResourceAttributes = new Set([
@@ -98,6 +109,7 @@ const cssResourceAttributes = new Set([
  * before the resulting SVG can be sanitised.
  */
 async function rejectRenderTimeResources(source: string): Promise<void> {
+  if (hasExternalCssReference(source)) throw new Error('mermaid_render_time_resource');
   const diagram = await mermaid.mermaidAPI.getDiagramFromText(source);
   const database = diagram.db as DiagramDatabaseWithResources;
   const vertices = database.getVertices?.();
@@ -135,6 +147,7 @@ function prepareDiagram(svg: string): PreparedDiagram {
   const viewBoxWidth = Number(viewBox?.[2]);
   const width = Number.isFinite(viewBoxWidth) && viewBoxWidth > 0 ? viewBoxWidth : undefined;
 
+  if (root.querySelector('script, foreignObject')) throw new Error('mermaid_svg_forbidden_element');
   for (const style of Array.from(root.querySelectorAll('style'))) {
     if (hasExternalCssResource(style.textContent ?? '')) throw new Error('mermaid_svg_external_resource');
   }
