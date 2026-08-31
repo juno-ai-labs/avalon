@@ -690,7 +690,7 @@ preview does *not* reproduce on its own.
 
 **What changed:** `email-markdown.ts` rewrites a bare break tag to `<br>` in the
 HTML part (after escaping, after parking code spans) and to a newline in the
-plain-text part (outside code spans).
+plain-text part (outside code spans and preformatted pipe rows).
 
 **Why:** The desktop renderer now honours the same tag, and these two surfaces
 showing different bytes for the same briefing is the drift this module already

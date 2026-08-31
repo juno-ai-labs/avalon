@@ -51,6 +51,24 @@ describe("email markdown rendering", () => {
     expect(markdownToEmailText("Use `a<br/>b` here")).toContain("a<br/>b");
   });
 
+  it("keeps break-shaped text in generated link targets inert", () => {
+    const html = markdownToEmailHtml("[docs](https://example.com/<br>/tail)");
+
+    expect(html).toContain('href="https://example.com/&#60;br&#62;/tail"');
+    expect(html).not.toMatch(/href="[^"]*</u);
+  });
+
+  it("keeps preformatted table rows intact in both email parts", () => {
+    const markdown = "| Phase | Deliverables |\n| --- | --- |\n| One | migrations<br/>tests |";
+
+    expect(markdownToEmailHtml(markdown)).toContain("migrations&lt;br/&gt;tests");
+    expect(markdownToEmailText(markdown)).toContain("| One | migrations<br/>tests |");
+  });
+
+  it("reduces a break tag to a space in the inbox preview", () => {
+    expect(markdownToEmailPreheader("Hello<br/>World")).toBe("Hello World");
+  });
+
   it("refuses a link target that is not http", () => {
     // The label survives as text; only the anchor is withheld, so nothing is
     // silently swallowed and nothing dangerous is emitted.
