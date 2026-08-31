@@ -121,14 +121,22 @@ of what a model meant, and a stored document's table uses the same workaround.
 
 ### Heading collapse
 
-Every heading h2 and below is an accordion, one level deep. The section
-runs from that heading until the next heading of the same or higher rank
-(lower number). An h3 under an h2 is content of the h2, not a nested
-accordion — nested collapse is how a scan of the document becomes worse than
-the scroll it was meant to shorten. An h1 is never collapsible; it closes
-the open section and the title that follows waits as preamble until the next
-h2+. Lead text before that first h1 is preamble too — closing an h1 must
-flush it, or the bytes disappear from the reconstructed source.
+Heading collapse is opt-in and enabled only by the main work-stream message
+feed. There, every heading h2 and below is an accordion, one level deep. Every
+other Markdown surface — the inspector rail, notes, attachment lightbox,
+HyperSight, meeting briefing, and automation setup — renders headings fully
+expanded. This keeps compact feed navigation from becoming a surprising
+document-reader behavior. It also avoids borrowing `still`, whose citation
+behavior belongs to exported pictures rather than interactive screens.
+
+Where collapse is enabled, the section runs from that heading until the next
+heading of the same or higher rank (lower number). An h3 under an h2 is content
+of the h2, not a nested accordion — nested collapse is how a scan of the
+document becomes worse than the scroll it was meant to shorten. An h1 is never
+collapsible; it closes the open section and the title that follows waits as
+preamble until the next h2+. Lead text before that first h1 is preamble too —
+closing an h1 must flush it, or the bytes disappear from the reconstructed
+source.
 
 Headings inside code are ignored, through the same `markdownLineKinds`
 answer the streaming splitter already uses. Headings inside a list item or
@@ -136,7 +144,7 @@ a blockquote stay in that container: `- Item 2\n---` is a list plus a
 thematic break, not a setext h2, and `  ## heading` under a list item is
 list content, not a section boundary.
 
-Default is collapsed. The heading stays fully visible; the body shows
+When enabled, a section starts collapsed. The heading stays fully visible; the body shows
 approximately the first three line-heights of whatever follows — a
 paragraph, the top of a table, the start of a fence — behind an opacity
 mask that starts at 60% on the first pixel and reaches transparent on the
@@ -481,12 +489,12 @@ written this way is a sign it is not a typography override.
 This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an optional
 `mentions` array, an optional `citations` context, and `glance` / `verbatim` /
-`still` / `streaming` flags — plus the citation matrix and `ResourceIcon`, which
-the inspector rail renders too so that one resource kind draws one glyph
-everywhere. Heading collapse is on unless `glance` or `still` is set; the
-collapse-all control is a sibling in the agent-message header, not a
-`MarkdownBody` prop, and shares section ids with the body through
-`MarkdownCollapseController`.
+`still` / `streaming` / `collapseHeadings` flags — plus the citation matrix and
+`ResourceIcon`, which the inspector rail renders too so that one resource kind
+draws one glyph everywhere. Heading collapse is off unless a host explicitly
+sets `collapseHeadings`; the main work-stream feed is the intended opt-in host.
+Its collapse-all control is a sibling in the agent-message header and shares
+section ids with the body through `MarkdownCollapseController`.
 
 **It does not own where a citation goes.** The host supplies resolution and
 click routing as `CitationContext` (`lib/use-citations.ts` builds the
@@ -636,6 +644,25 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — Heading collapse belongs only to the main message feed
+
+**What changed:** `MarkdownBody` and the shared `MessageBlock` make heading
+collapse opt-in. The main work-stream message feed enables it explicitly; the
+inspector rail, automation setup, launch conversation, and every other Markdown
+host inherit the fully expanded renderer. The rail still renders the file
+verbatim through the shared Markdown and citation renderer, without heading
+accordions, chevrons, or faded previews.
+
+**Why:** Heading collapse was introduced for long transcript replies, where it
+shortens the feed. Making it the shared renderer's default also collapsed
+documents and secondary surfaces whose readers never asked for compact message
+navigation.
+
+**What a future change has to respect:** A new Markdown host stays fully
+expanded unless it is part of the main message feed. Do not use `still` to
+suppress collapse on an interactive reader; `still` changes citation behavior
+for exported images.
 
 ### 2026-08-30 — A bare `<br/>` becomes a line break, in tables and in prose
 
@@ -883,8 +910,9 @@ ids match — the embed glance is `glance` and has none.
 
 ### 2026-08-30 — Headings h2 and below collapse, with a three-line preview
 
-**What changed:** `MarkdownBody` turns every h2–h6 that is not nested under a
-higher-rank collapsible heading into an accordion. Default is collapsed. The
+**What changed:** The main message feed asks `MarkdownBody` to turn every h2–h6
+that is not nested under a higher-rank collapsible heading into an accordion.
+Within that feed, the default is collapsed. The
 heading stays in full; the body is clipped to about three line-heights with a
 strong opacity fade. A chevron in the left gutter, in `sys.color.text.muted`,
 carries a tooltip and toggles with a click on the heading. Nested headings

@@ -1006,6 +1006,25 @@ describe('New automation composer', () => {
     expect(screen.getAllByText(example)).toHaveLength(1);
   });
 
+  it('keeps assistant headings expanded without feed collapse controls', async () => {
+    agentReply = {
+      definition: draftDefinition({ followUpQuestion: null }),
+      assistantMessage: '## Summary\n\nThe automation is ready.\n\n## Details\n\nIt checks every day.',
+    };
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check this blog every 24 hours for a new post.' }));
+    await completeTurn();
+
+    const assistantMessage = (await screen.findByRole('heading', { name: 'Summary' })).closest('article');
+    expect(assistantMessage).not.toBeNull();
+    expect(assistantMessage!.querySelector('.markdown-collapse')).toBeNull();
+    expect(within(assistantMessage!).queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
+    expect(within(assistantMessage!).queryByRole('button', { name: 'Expand all sections' })).not.toBeInTheDocument();
+    expect(within(assistantMessage!).getByRole('heading', { name: 'Details' })).toBeVisible();
+    expect(within(assistantMessage!).getByText('It checks every day.')).toBeVisible();
+  });
+
   it('retracts an abandoned narration turn without blanking the bubble', async () => {
     renderScreen();
 
