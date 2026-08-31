@@ -1143,6 +1143,22 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-31 — The addressing prompt defines its own setting
+
+**What changed:** the addressing classifier's system prompt now opens by
+defining a workstream and Rally's place in it, and its mention rule says that a
+mention in `recentMessages` appears as a `[@Name](person://<id>)` link, not only
+as `@Name`. Golden hash re-baselined; both sentences are held by exact-line
+assertions.
+
+**Why:** review of the shipped prompt (Adam, 2026-08-31) found two facts a small
+model cannot infer: the condensed rewrite had dropped what Rally *is* — the
+prompt asked whether "Rally" should act without saying Rally is the agent in
+the conversation — and the history's stored mention markup was never explained,
+so the two forms of the same mention read as different things. Both are one
+sentence of framing, which is the cost writing-prompts.md accepts for making a
+rule decidable.
+
 ### 2026-08-30 — The multimodal plugin creates replay-safe speech resources
 
 **What changed:** `rally_multimodal_generation` now advertises a third Bind

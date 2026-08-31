@@ -71,7 +71,7 @@ describe("prompt renderers", () => {
             { authorType: "agent", authorName: "Rally", message: "The release is still running." },
           ],
         }),
-        hash: "6114735828454fc96caea7b7e50ab7e3ec82538478e372d1a7aaca2d31dea005",
+        hash: "c3426745bed239052a2f2a2fd57a1d3c9ad7323bfd0f907e7346d749210371bd",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -359,6 +359,10 @@ describe("prompt renderers", () => {
     // Rally, and the product name alone is not an address.
     expect(system!.content).toContain("Mentioning a person never cancels a request to Rally");
     expect(system!.content).toContain("not when using the ordinary word");
+    // The two facts a small model cannot infer: what Rally is in this
+    // conversation, and that history renders a mention as a person:// link.
+    expect(system!.content).toContain("Rally is the AI agent present in every workstream");
+    expect(system!.content).toContain("in recentMessages a mention appears as [@Name](person://<id>)");
   });
 
   it("keeps draft and provider injection text out of system messages", () => {

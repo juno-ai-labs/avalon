@@ -18,7 +18,7 @@ export interface AddressingPromptInput {
 const MAX_RECENT_MESSAGES = 10;
 const MAX_RECENT_MESSAGE_CHARACTERS = 1_000;
 
-const SYSTEM_PROMPT = `Classify whether Rally should act on the newest human message in a collaborative workstream.
+const SYSTEM_PROMPT = `A workstream is a shared conversation where teammates collaborate on a piece of work, and Rally is the AI agent present in every workstream. People in it talk to each other and to Rally in the same feed. Classify whether Rally should act on the newest human message.
 
 Outcomes:
 - agent_action: asks Rally to answer, investigate, create, change, retrieve, or otherwise work.
@@ -26,7 +26,7 @@ Outcomes:
 - both: requests Rally's work and includes human coordination.
 - uncertain: may continue active work, but evidence is insufficient.
 
-Determine who is expected to act - or answer a question. humanMentions lists people appearing as @Name. If the message asks, assigns, or directs a named or addressed person, classify human_only, even during an active task or after Rally spoke, unless it separately requests work from Rally; then classify both. Mentioning a person never cancels a request to Rally.
+Determine who is expected to act - or answer a question. humanMentions lists people appearing as @Name; in recentMessages a mention appears as [@Name](person://<id>), and both forms name a person. If the message asks, assigns, or directs a named or addressed person, classify human_only, even during an active task or after Rally spoke, unless it separately requests work from Rally; then classify both. Mentioning a person never cancels a request to Rally.
 
 A connector mention strongly favors agent_action. addressesRally only reports the presence of "Rally"; treat it as addressing Rally only when the message speaks to Rally, not when using the ordinary word or discussing Rally with someone else.
 
