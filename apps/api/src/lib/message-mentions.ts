@@ -1,4 +1,5 @@
 import type { Message } from "@rally/contracts";
+import { personMentionHref } from "@rally/contracts/citations";
 
 type Mention = Message["mentions"][number];
 
@@ -21,7 +22,7 @@ function escapeMarkdownLabel(label: string): string {
 }
 
 export function renderPersonMentionMarkdown(person: MentionPerson): string {
-  return `[@${escapeMarkdownLabel(person.name)}](person:${person.id})`;
+  return `[@${escapeMarkdownLabel(person.name)}](${personMentionHref(person.id)})`;
 }
 
 export function isCanonicalPersonMention(
@@ -30,7 +31,10 @@ export function isCanonicalPersonMention(
 ): boolean {
   if (mention.type !== "person" || !mention.userId) return false;
   const value = text.slice(mention.startOffset, mention.endOffset);
-  return value.startsWith("[@") && value.endsWith(`](person:${mention.userId})`);
+  if (!value.startsWith("[@")) return false;
+  // House form is person://; bare person: remains canonical for stored text.
+  return value.endsWith(`](${personMentionHref(mention.userId)})`)
+    || value.endsWith(`](person:${mention.userId})`);
 }
 
 function visiblePersonMentionMatches(value: string, person: MentionPerson): boolean {
