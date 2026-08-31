@@ -237,6 +237,40 @@ describe("Terminal Bind integration", () => {
     info.mockRestore();
   });
 
+  it("pairs a started row with a finished row so an abandoned activation is visible", async () => {
+    // Activation no longer awaits its own work, so the runtime decides whether
+    // that work survives to settle — and a cancelled continuation cannot log its
+    // own death. The pair is the only way to see it: a started row with no
+    // finished row for the same tool_call_id is an activation that vanished.
+    const { env, input } = fixture("supported");
+    const sandboxProvider = provider();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
+      provider: sandboxProvider,
+    });
+
+    await plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    });
+
+    const rows = (): Record<string, unknown>[] => info.mock.calls
+      .map(([entry]) => entry as Record<string, unknown>);
+    // The started row is written before activation hands back, so it is already
+    // there even though the sandbox is not.
+    expect(rows().filter((row) => row.event === "terminal_plugin_activation_started"))
+      .toMatchObject([{ tool_call_id: `${R}:plugin:terminal:activation:1` }]);
+
+    await vi.waitFor(() => {
+      expect(rows().filter((row) => row.event === "terminal_plugin_activation_finished"))
+        .toMatchObject([{ tool_call_id: `${R}:plugin:terminal:activation:1`, state: "completed" }]);
+    });
+    info.mockRestore();
+  });
+
   it("returns from activation while the sandbox is still being provisioned", async () => {
     // The whole point of the change: the model is not held behind provisioning.
     // Gate the provider call so the assertion cannot pass by the acquisition

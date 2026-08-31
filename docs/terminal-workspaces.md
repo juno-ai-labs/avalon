@@ -21,7 +21,7 @@ provider API, and a sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/services/workspace-schedule-execution.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and the `terminal` alarm target WorkspaceDO drains. |
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
 | `apps/api/scripts/build-terminal-snapshot.ts` | Builds the Rally-owned snapshot by baking the runtime bootstrap into the image, so the four managed capabilities are preinstalled rather than installed per sandbox. Does not adopt it; the acceptance probe above is still the gate. |
-| `.github/workflows/rebuild-terminal-snapshot.yml` | The weekly rebuild that bounds how stale an owned snapshot may become against Daytona's managed base, and proves each rebuild with the acceptance probe. Owning a snapshot is only safe with this running. |
+| `.github/workflows/rebuild-terminal-snapshot.yml` | The weekly rebuild that bounds how stale an owned snapshot may become against Daytona's managed base, proves each rebuild with the acceptance probe, and opens the labelled adoption pull request. Owning a snapshot is only safe with this running. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
@@ -616,6 +616,16 @@ bootstrap instead — that is worth doing too, but it is a ~14s problem inside a
 ~70s one. Evicting the cached acquisition after preparation fails, as before —
 see below.
 
+Because activation stopped awaiting its own work, the runtime — not Rally —
+decides whether that work survives to settle, and a cancelled continuation
+cannot log its own death. So activation now writes
+`terminal_plugin_activation_started` alongside the existing
+`terminal_plugin_activation_finished`: a started row with no finished row for
+the same `tool_call_id` is the shape of a sandbox abandoned in flight, and the
+pair is the only way to see it. The rejection path also calls `notifyOps`,
+because a failure that used to reach the model as an activation error now
+reaches only a log row.
+
 **Consequences:** The eviction that made a failed repository preparation safe no
 longer works, and this is the subtle part. It was only ever safe because nothing
 else could be awaiting the acquisition while activation blocked. Now a Terminal
@@ -648,6 +658,14 @@ them present, since the bootstrap's `command -v` guards then skip every install.
 `apt-get update` alone is 5.7s of that. Production telemetry localises the cost
 the same way: every recorded `restore` acquisition, which skips this phase,
 lands in 1–5s, while no `start`, which runs it, has ever landed under 5s.
+
+The weekly rebuild opens a labelled `Daytona Snapshot Upgrade` pull request
+rather than writing a job summary. A verified snapshot nobody adopts is this
+workflow's most likely failure: the job goes green every Monday, the rebuild
+sits unused, and production runs an image that ages anyway. A pull request lands
+in the queue the team already works, so adoption is one merge and rollback is
+one revert, while a human still sits between a rebuilt image and every new
+sandbox.
 
 **Considered and rejected:** A second package list maintained beside the
 bootstrap — it would drift from the runtime, and a snapshot that disagrees with
