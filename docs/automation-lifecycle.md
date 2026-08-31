@@ -460,7 +460,7 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, and an `ApiError` raised inside the object surviving the RPC hop with its own status. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, and an `ApiError` raised inside the object surviving the RPC hop with its own status; and acceptance completing against a real WorkspaceDO both with a connector plugin selected and with a Slack delivery target, which is the outcome the 2026-08-31 connector-reads incident denied. |
 | `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
@@ -735,7 +735,11 @@ statement it sends that names a `WORKSPACE_LOCAL_TABLES` table has to be routed
 explicitly. That is no longer only prose:
 `apps/api/test/durable-object-workspace-table-routing.test.ts` scans every object
 under `durable-objects/` and fails on one, importing the real
-`WORKSPACE_LOCAL_TABLES` rather than a copy of it — the list drifts precisely
+`WORKSPACE_LOCAL_TABLES` rather than a copy of it. That guard is about the
+*pattern*; it cannot see a routed read handed the wrong workspace, or a
+`workspaceDatabase` that regresses, so `automation-agent.test.ts` carries the
+two behavioural cases beside it — acceptance with a connector plugin, and with
+a Slack delivery target — whose D1 deliberately never declares those tables — the list drifts precisely
 when a table is added, which is the moment the guard matters. An ESLint rule was
 the other candidate and was rejected for that reason: rules are `.mjs` and would
 have to restate the list.

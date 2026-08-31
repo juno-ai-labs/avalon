@@ -563,6 +563,108 @@ describe("AutomationAgent", () => {
     }
   });
 
+  it("reads the workspace's connector connections from the object that owns them", async () => {
+    // Behavioural cover for the routing the 2026-08-31 connector-reads entry
+    // fixed. `durable-object-workspace-table-routing.test.ts` scans for the
+    // pattern — a statement naming a `WORKSPACE_LOCAL_TABLES` table on a raw
+    // `env.DB` — which is the right guard for that class and is not this. This
+    // asserts the outcome the incident actually denied a person: acceptance
+    // completing with a connector plugin selected. A correctly *routed* read
+    // that is handed the wrong workspace, or a `workspaceDatabase` helper that
+    // regresses, passes that scan and fails here.
+    //
+    // This suite's D1 starts with no schema while a real WorkspaceDO creates
+    // the local tables from its own migrations, which is exactly the production
+    // split — so deliberately no `CREATE TABLE connector_connections` here.
+    // Adding one would retire the test without failing it.
+    const connectionId = "00000000-0000-7000-8000-0000000000d1";
+    const pluginId = "plugin_github_repository";
+    await pinWorkspaceIdentity();
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const seeded = await workspace.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-0000000000d2",
+      statements: [{
+        sql: `INSERT INTO connector_connections
+          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+           display_name, granted_scopes_json, status, cursor_json, config_json,
+           created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, 'github', 'workspace', NULL, NULL, 'Repository', '[]', 'healthy',
+                 '{}', '{}', '2026-08-31T00:00:00.000Z', '2026-08-31T00:00:00.000Z', ?)`,
+        params: [connectionId, WORKSPACE_ID, pluginId],
+      }],
+    });
+    expect(seeded.status).toBe(200);
+
+    const definition = readyDefinition("Connector-backed digest");
+    await seedReadyDraft(definition);
+
+    await expect(authorService().accept({
+      draftId: AUTOMATION_ID,
+      draft: definition,
+      scope: "personal",
+      defaultPluginIds: [pluginId],
+    })).resolves.toMatchObject({
+      id: AUTOMATION_ID,
+      status: "active",
+      defaultPluginIds: [pluginId],
+    });
+  });
+
+  it("resolves a Slack delivery target from the object that owns the link", async () => {
+    // The other half, and a separate user-visible failure: ticking Slack DM
+    // under Delivered to. `resolveDeliveryTargets` reads `connector_connections`
+    // by id and then `slack_user_links`, and the test above never reaches
+    // either — `deliveryTargets` defaults to `[]`, so its loop does not run,
+    // however many plugins are selected.
+    const connectionId = "00000000-0000-7000-8000-0000000000d3";
+    const pluginId = "plugin_slack";
+    await pinWorkspaceIdentity();
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const seeded = await workspace.executeRuntimeSql({
+      workspaceId: WORKSPACE_ID,
+      requestId: "00000000-0000-7000-8000-0000000000d4",
+      statements: [
+        {
+          sql: `INSERT INTO connector_connections
+            (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+             display_name, granted_scopes_json, status, cursor_json, config_json,
+             created_at, updated_at, model_plugin_id)
+           VALUES (?, ?, 'slack', 'personal', ?, NULL, 'Slack', '[]', 'healthy',
+                   '{}', '{}', '2026-08-31T00:00:00.000Z', '2026-08-31T00:00:00.000Z', ?)`,
+          params: [connectionId, WORKSPACE_ID, AUTHOR_ID, pluginId],
+        },
+        {
+          sql: `INSERT INTO slack_user_links
+            (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
+             status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'T0LINK', 'U0LINK', 'active',
+                   '2026-08-31T00:00:00.000Z', '2026-08-31T00:00:00.000Z')`,
+          params: ["00000000-0000-7000-8000-0000000000d5", WORKSPACE_ID, connectionId, AUTHOR_ID],
+        },
+      ],
+    });
+    expect(seeded.status).toBe(200);
+
+    const definition = readyDefinition("Slack-delivered digest");
+    await seedReadyDraft(definition);
+
+    await expect(authorService().accept({
+      draftId: AUTOMATION_ID,
+      draft: definition,
+      scope: "personal",
+      deliveryTargets: [{ type: "slack_agent_dm", connectionId }],
+    })).resolves.toMatchObject({
+      id: AUTOMATION_ID,
+      status: "active",
+      deliveryTargets: [{ type: "slack_agent_dm", connectionId }],
+    });
+  });
+
   it("refuses a create against a draft the compiler has not compiled yet", async () => {
     // `admitFirstTurn` answers with the automation's id as soon as the turn is
     // durable, so a caller can reach `accept` before any definition revision
