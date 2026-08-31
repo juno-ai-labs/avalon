@@ -1,6 +1,5 @@
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
-  ActivitySuggestionSchema as WireActivitySuggestionSchema,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationAgentSnapshotSchema as WireAutomationAgentSnapshotSchema,
   AutomationDraftTurnAdmissionResultSchema as WireAutomationDraftTurnAdmissionResultSchema,
@@ -78,7 +77,6 @@ import { logDebug } from '../../common/logger';
 import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import type {
-  ActivitySuggestionData,
   AgentModelOverride,
   AutomationCreateOptions,
   AutomationDeliveryTargetType,
@@ -383,17 +381,6 @@ export function mapElicitation(elicitation: WireElicitation): ElicitationData {
   return normalizeElicitation(elicitation);
 }
 
-export function mapSuggestion(suggestion: z.infer<typeof WireActivitySuggestionSchema>): ActivitySuggestionData {
-  return {
-    id: suggestion.id,
-    title: suggestion.title,
-    source: 'Activity',
-    occurredAt: suggestion.createdAt,
-    reason: suggestion.reason,
-    status: suggestion.status,
-  };
-}
-
 export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationSchema>): ToolEventData {
   const started = invocation.startedAt ? Date.parse(invocation.startedAt) : Number.NaN;
   const completed = invocation.completedAt ? Date.parse(invocation.completedAt) : Number.NaN;
@@ -449,7 +436,6 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
     connections: workstream.connections.map(mapConnection),
     backgroundTasks: (workstream.backgroundTasks ?? []).map(mapBackgroundTask),
     openElicitations: workstream.openElicitations.map(mapElicitation),
-    suggestions: workstream.suggestions.map(mapSuggestion),
     automationRuns: [],
     ...(workstream.modelOverride ? { modelOverride: workstream.modelOverride } : {}),
     ...(workstream.automationSubscriptionId ? { automationSubscriptionId: workstream.automationSubscriptionId } : {}),
@@ -1663,13 +1649,6 @@ export class RallyApi {
         ? { skipped: true }
         : { answer, ...(customResponse ? { customResponse } : {}) },
       schema: z.object({ elicitation: WireElicitationSchema.optional() }).strict(),
-    });
-  }
-
-  async resolveActivitySuggestion(id: string, suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> {
-    await this.request(`/workstreams/${encodeURIComponent(id)}/activities/${encodeURIComponent(suggestionId)}/${action}`, {
-      method: 'POST',
-      schema: z.object({ suggestion: WireActivitySuggestionSchema.optional(), resourceId: z.string().nullable() }),
     });
   }
 

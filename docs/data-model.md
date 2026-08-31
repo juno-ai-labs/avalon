@@ -204,7 +204,7 @@ SQL joins.
   admission without consulting D1.
 - **`personal` means “an active participant” at every serving
   boundary.** Detail authorization, sockets, workspace lists, pins, visibility
-  checks, resource reads, Suggested Work, and contextual routing all use that
+  checks, resource reads, and Suggested Work all use that
   same rule. Creation seats the creator, but `created_by_user_id` is attribution,
   not a permanent authorization grant: `removeParticipant` revokes a creator in
   exactly the same way it revokes anybody else. Any current reader may remove
@@ -398,23 +398,19 @@ SQL joins.
   relationship and resource-inventory fence; WorkspaceDO owns resource metadata,
   workspace watches, and the inverted workspace index. `relationship_type` is
   constrained to `attachment`, `message_attachment`, `origin`, `generated`,
-  `suggested_activity`, `inbound_email`, or `context`. The work-stream-facing
+  `inbound_email`, or `context`. The work-stream-facing
   `direction` is derived from that relationship: `generated` is an `artifact`;
   every other relationship is a `source`. Direction is not stored on the shared
   resource because the same resource may be an artifact here and a source elsewhere.
   The `origin` relationship records what a work stream was created from — see
   [work-stream origin attachments](workstream-origin-attachments.md).
 - `elicitation_requests` is operational human-input state tied to a run.
-  `suggested_actions` is an audience-scoped operational overlay and is never
-  model or shared transcript input merely because it exists. Acceptance may
-  explicitly author a new audience-safe `parts` row; that new part, not the
-  private card body, enters conversation history.
 
 D1 retains a `workstreams` identity/routing anchor because control tables have
 foreign keys to the stable ID. It contains only `id`, `workspace_id`, and
 `do_identity_anchor`; a post-cutover row has `do_identity_anchor = 1`. Common/per-user
-list queries, pins, resource discovery, and resolved work-stream
-suggestion feedback use `WorkspaceDO`'s `workspace_workstream_*` tables. D1 has
+list queries, pins, and resource discovery use `WorkspaceDO`'s
+`workspace_workstream_*` tables. D1 has
 no projection fallback when that object is unavailable.
 
 ### Automations and execution
@@ -880,6 +876,23 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-30 — Suggested context storage was removed
+
+**What changed:** Current WorkspaceDO and SubstreamAgent schemas no longer
+contain feedback or suggested-action tables, and `suggested_activity` is no
+longer a valid resource relationship. Forward migrations preserve an accepted
+resource as an ordinary `attachment` and discard pending cards and feedback.
+
+**Why:** The Suggested context feature was removed end to end. Keeping its
+operational schema would leave a second, unused content-routing authority.
+
+**Considered and rejected:** Leaving empty tables in place for history. The
+append-only migration ledger and this changelog retain the history without
+making current code or schema continue to own it.
+
+**Consequences:** Historical migration SQL still names the retired tables and
+relationship so deployed hashes remain valid; the live schema does not.
 
 ### 2026-08-30 — Pending loop `input_sequence` is the live queue order
 

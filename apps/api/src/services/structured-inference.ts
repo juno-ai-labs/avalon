@@ -23,7 +23,6 @@ const MEMORY_EMBEDDING_FEATURE = "memory_embedding";
 type StructuredInferenceRole = Extract<
   AgentModelRole,
   | "workstream"
-  | "activity_structured"
   | "work_opportunity_admission"
   | "work_opportunity_ranking"
   | "workstream_description"

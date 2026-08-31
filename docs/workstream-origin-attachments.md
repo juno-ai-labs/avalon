@@ -252,10 +252,9 @@ It deliberately does **not** cover:
   origin does not go through: an origin is a fact the server observed, not a
   request a caller may make. `originResource` is therefore absent from
   `CreateWorkstreamRequestSchema` and cannot be asserted over the wire.
-- **Contextual routing.** The paused **Suggested context** surface offered an
-  activity to an *existing* work stream; if re-enabled, accepting one produces
-  an `attachment`, not an `origin`. See
-  [`contextual-routing.md`](contextual-routing.md).
+- **Retired Suggested context.** Existing accepted relationships are retained as
+  ordinary `attachment` links by the retirement migration; no new cards or links
+  are created. See [`contextual-routing.md`](contextual-routing.md).
 - **Inbound email.** An automation run created from an address attaches its email
   resource itself, from the opening input frozen in its run context; that is
   `AutomationAgent`'s and is not rewritten here.

@@ -1520,7 +1520,6 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                         })
                       : async () => undefined}
                     onOpenAttachment={setAttachmentPreview}
-                    onResolveSuggestion={async () => undefined}
                   />
                 ))}
                 {(compilePending || (compilerError !== null && streamingText.trim().length > 0)) && (
@@ -1533,7 +1532,6 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                         currentUserId={AUTOMATION_USER_ID}
                         message={automationTextMessage('automation-streaming', 'agent', streamingText, true)}
                         onAnswerElicitation={async () => undefined}
-                        onResolveSuggestion={async () => undefined}
                       />
                     : turns.some((turn) => turn.messageType === 'thought' && turn.thoughtEvent?.status === 'started')
                       ? null

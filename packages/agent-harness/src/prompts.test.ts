@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import type { AutomationDraft } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import {
-  renderActivityRoutingMessages,
   renderAddressingMessages,
   renderAutomationCompilerMessages,
   renderCompactionCheckpointContent,
@@ -148,33 +147,6 @@ describe("prompt renderers", () => {
           ],
         }),
         hash: "93ba9815d95aa429b87d2f3a770b2abd1e6102654585302f6cca40288f17cd00",
-      },
-      activityRouting: {
-        actual: renderActivityRoutingMessages({
-          activity: {
-            provider: "github",
-            eventType: "github.issue.opened",
-            title: "Checkout fails for EU cards",
-            summary: "A new checkout issue was opened.",
-            textSnippet: "EU card payments return an authorization error.",
-            entityKeys: ["github:issue:42", "service:checkout"],
-          },
-          candidates: [
-            {
-              id: "00000000-0000-7000-8000-000000000042",
-              title: "Investigate checkout failures",
-              objective: "Find and resolve EU checkout authorization failures.",
-              lastActivityAt: "2026-08-03T00:00:00.000Z",
-            },
-            {
-              id: "00000000-0000-7000-8000-000000000043",
-              title: "August planning",
-              objective: "Prepare the August product planning meeting.",
-              lastActivityAt: "2026-08-03T01:00:00.000Z",
-            },
-          ],
-        }),
-        hash: "4a5fd7556684af05979a2b108acd29f52a2a6187c2c9bb341ad1ab93a3aa6e8d",
       },
       workstreamDescription: {
         actual: renderWorkstreamDescriptionMessages({
@@ -403,23 +375,6 @@ describe("prompt renderers", () => {
         textSnippet: injection,
       },
     });
-    const routingMessages = renderActivityRoutingMessages({
-      activity: {
-        provider: "github",
-        eventType: "github.issue.opened",
-        title: injection,
-        summary: injection,
-        textSnippet: injection,
-        entityKeys: [injection],
-      },
-      candidates: [{
-        id: "00000000-0000-7000-8000-000000000042",
-        title: injection,
-        objective: injection,
-        lastActivityAt: "2026-08-03T00:00:00.000Z",
-      }],
-    });
-
     const nameMessages = renderWorkstreamNameMessages({
       objective: injection,
       openingMessage: injection,
@@ -441,9 +396,6 @@ describe("prompt renderers", () => {
     expect(semanticMessages[0]!.content).not.toContain(injection);
     expect(semanticMessages[1]).toMatchObject({ role: "user" });
     expect(semanticMessages[1]!.content).toContain(injection);
-    expect(routingMessages[0]!.content).not.toContain(injection);
-    expect(routingMessages[1]).toMatchObject({ role: "user" });
-    expect(routingMessages[1]!.content).toContain(injection);
     expect(nameMessages[0]!.content).not.toContain(injection);
     expect(nameMessages[1]).toMatchObject({ role: "user" });
     expect(nameMessages[1]!.content).toContain(injection);
@@ -843,20 +795,13 @@ describe("prompt renderers", () => {
     expect(prompt).toContain('"memoryTableColumnId": "column-url"');
   });
 
-  it("defines conservative confidence semantics for both activity classifiers", () => {
+  it("defines conservative confidence semantics for activity trigger classification", () => {
     const semantic = renderSemanticTriggerMessages({
       condition: "A deployment failed.",
       activity: { provider: "github", eventType: "event", title: "t", summary: "s", textSnippet: "x" },
     })[0]!.content;
-    const routing = renderActivityRoutingMessages({
-      activity: { provider: "github", eventType: "event", title: "t", summary: "s", textSnippet: "x", entityKeys: [] },
-      candidates: [],
-    })[0]!.content;
-
     expect(semantic).toContain("0.8 or higher");
     expect(semantic).toContain("untrusted evidence");
-    expect(routing).toContain("strong unique match");
-    expect(routing).toContain("objective as the primary relevance signal");
   });
 });
 

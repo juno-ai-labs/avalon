@@ -195,7 +195,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_workstream_directory",
   "workspace_workstream_effect_receipts",
   "workspace_workstream_resource_links",
-  "workspace_workstream_suggestion_feedback",
   "workspace_workstream_viewers",
   "workstream_notification_intents_kinds",
 ] as const;

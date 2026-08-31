@@ -529,7 +529,15 @@ activityTriggers: defineConnectorActivityTriggers("GitHub", {
 
 The shape is the point. There is no list meaning "I did not think about this", so adding an event type is adding it to a list, and an event type in both is refused where it is written rather than resolved silently. Ask it this way: **would a person who was away for a day want this read back to them?** A pull request opened, yes. The eleven check runs it started, no.
 
-`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. [Contextual routing](contextual-routing.md) uses the declaration as a prior: an operational type starts at a higher confidence bar before it can become Suggested context, and a workspace's own acceptances can overrule that prior. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+`operational` is not a rejected event. It is verified or polled, normalized,
+routed, matched against automations and watches, considered for Suggested Work,
+and written to the activity log exactly like a digestible one — every surface
+except the one that interrupts somebody on a schedule. Answer the digest
+question when classifying an event type, and nothing else. Most of what a
+provider emits belongs here, and that is the normal case rather than a failure:
+the GitHub manifest declares ninety-one activity types and thirty of them are
+digestible. Every current connector's classification, one row per activity type
+with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
@@ -555,10 +563,23 @@ Manifests and facets are cross-validated at registry construction: a connector t
    A duplicate returns `busy` with the lease's exact expiry; a delivery after
    expiry can recover interrupted processing, and settlement is fenced by the
    returned lease token so the expired handler cannot overwrite its successor.
-8. Under that lease the consumer does the product step — contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables; admission and ranking are separate fenced Workflows whose durable product results, including provenance and per-user resolutions, commit in the same WorkspaceDO — and then calls `matchExternalEventDestinations`. That is the **only** automation and watch fan-out: WorkspaceDO selects active registrations by connection, connector type, event type, and activation boundary, applies the audience rule, evaluates each one's typed DNF predicate with no model inference, and inserts one delivery row per match. There is no semantic prefilter and no semantic matcher; the evaluator grammar is deliberately closed and deterministic, and [`automation-lifecycle.md`](automation-lifecycle.md) owns it. The Queue consumer then settles the authoritative event as processed or failed. A transient failure calls per-message `retry()` and an exhausted message enters the existing regional activities DLQ.
+8. Under that lease the consumer projects the activity log entry and enqueues
+   the event into WorkspaceDO's Suggested Work batch tables. There is no
+   speculative route into an existing work stream. Admission and ranking are
+   separate fenced Workflows whose durable product results, including
+   provenance and per-user resolutions, commit in the same WorkspaceDO. The
+   consumer then calls `matchExternalEventDestinations`. That is the **only**
+   automation and watch fan-out: WorkspaceDO selects active registrations by
+   connection, connector type, event type, and activation boundary, applies the
+   audience rule, evaluates each one's typed DNF predicate with no model
+   inference, and inserts one delivery row per match. There is no semantic
+   prefilter and no semantic matcher; the evaluator grammar is deliberately
+   closed and deterministic, and [`automation-lifecycle.md`](automation-lifecycle.md)
+   owns it. The Queue consumer then settles the authoritative event as processed
+   or failed. A transient failure calls per-message `retry()` and an exhausted
+   message enters the existing regional activities DLQ.
 9. Each match becomes its own identifiers-and-hashes-only message on the same regional Queue. The consumer claims that delivery under its own lease and calls `AutomationAgent.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own authority generation and lifecycle, admits at most one occurrence per canonical event, and the consumer settles the delivery back to WorkspaceDO under the lease token.
 10. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
-11. Persist accepted/dismissed feedback that decides what step 8 offers next.
 
 **Why the event is present in ingress but absent from processing:** the first
 Queue message must be self-contained because no canonical WorkspaceDO event
@@ -741,7 +762,7 @@ It does not own:
 
 | For | Read |
 | --- | --- |
-| The Suggested context surface and its accept/dismiss model | [`contextual-routing.md`](contextual-routing.md) |
+| The retired Suggested context feature | [`contextual-routing.md`](contextual-routing.md) |
 | Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
 | One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
 | What happens to `digestible` after the log is written | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
@@ -860,6 +881,22 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-30 — Connector activity no longer produces Suggested context
+
+**What changed:** The processing step now has no classifier or route into an
+existing work stream. It projects the activity, enqueues Suggested Work, and
+runs deterministic automation/watch matching.
+
+**Why:** Suggested context was removed rather than left as a dormant branch in
+the shared activity consumer.
+
+**Considered and rejected:** Keeping digestibility as a confidence prior for a
+hidden classifier. Digestibility answers only whether a person wants an event
+read back in a digest; no other product now interprets it.
+
+**Consequences:** Connector manifests, watches, automations, activity logs, and
+Suggested Work remain. The connector pipeline stores no context-card feedback.
 
 ### 2026-08-29 — External platforms receive saved turns, never model streams
 

@@ -73,7 +73,6 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "addressing_classifier":
     case "workstream_naming":
       return { model: modelId(env.OPENROUTER_CLASSIFIER_MODEL), fallbackModels };
-    case "activity_structured":
     case "work_opportunity_admission":
     case "work_opportunity_ranking":
     case "workstream_description":

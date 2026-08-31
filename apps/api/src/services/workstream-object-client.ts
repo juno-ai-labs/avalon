@@ -1,5 +1,4 @@
 import {
-  ActivitySuggestionSchema,
   ElicitationSchema,
   ParticipantSchema,
   WorkstreamResourceSchema,
@@ -37,7 +36,6 @@ import type {
   InitializeWorkstreamObjectRequest,
   WorkstreamObjectCreateMessageInput,
 } from "../durable-objects/workstream-object-product";
-import type { WorkstreamObjectCreateSuggestionInput } from "../durable-objects/workstream-object-product";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import {
@@ -55,14 +53,6 @@ const AnsweredElicitationSchema = z.object({
   elicitation: ElicitationSchema.optional(),
 }).strict();
 const RetriedRunSchema = z.object({ harnessRunId: z.string().uuid() });
-const CreatedSuggestionSchema = z.object({
-  suggestion: ActivitySuggestionSchema,
-  inserted: z.boolean(),
-});
-const ResolvedSuggestionSchema = z.object({
-  suggestion: ActivitySuggestionSchema.optional(),
-  resourceId: z.string().uuid().nullable(),
-});
 const InitializedWorkstreamSchema = z.object({
   workstream: WorkstreamSchema,
   turnId: z.string().uuid(),
@@ -119,27 +109,6 @@ export async function readWorkstreamRuntimeAudience(
       workstreamId,
     }),
   );
-}
-
-export async function createWorkstreamRuntimeSuggestion(
-  env: Env,
-  input: {
-    workspaceId: string;
-    workstreamId: string;
-    suggestion: WorkstreamObjectCreateSuggestionInput;
-  },
-): Promise<{ suggestion: z.infer<typeof ActivitySuggestionSchema>; inserted: boolean }> {
-  const response = await (await objectStub(env, input.workspaceId, input.workstreamId))
-    .createRuntimeSuggestion({
-      workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
-      input: input.suggestion,
-    });
-  if (response.status < 200 || response.status >= 300) {
-    const body = rpcResultBody(response) as { error?: unknown } | null;
-    throw new Error(typeof body?.error === "string" ? body.error : "runtime_suggestion_create_failed");
-  }
-  return CreatedSuggestionSchema.parse(rpcResultBody(response));
 }
 
 function decode(response: DurableObjectRpcResult): unknown {
@@ -278,17 +247,6 @@ export class WorkstreamObjectClient {
 
   async detachResource(resourceId: string): Promise<void> {
     await this.request({ operation: "detach_resource", resourceId });
-  }
-
-  async resolveSuggestion(
-    suggestionId: string,
-    action: "accepted" | "dismissed",
-  ): Promise<z.infer<typeof ResolvedSuggestionSchema>> {
-    return ResolvedSuggestionSchema.parse(await this.request({
-      operation: "resolve_suggestion",
-      suggestionId,
-      action,
-    }));
   }
 
   async answerElicitation(
