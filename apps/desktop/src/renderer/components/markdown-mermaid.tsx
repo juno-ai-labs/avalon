@@ -185,6 +185,7 @@ async function renderMermaid(id: string, source: string, signal: AbortSignal): P
     const { fontFamily, fontSize, themeCSS, themeVariables } = readMermaidThemeConfig();
     mermaid.initialize({
       altFontFamily: fontFamily,
+      flowchart: { htmlLabels: false },
       fontFamily,
       fontSize,
       htmlLabels: false,
