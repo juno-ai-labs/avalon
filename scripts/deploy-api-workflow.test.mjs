@@ -8,6 +8,10 @@ import ts from 'typescript';
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const deployWorkflowPath = join(repositoryDirectory, '.github/workflows/deploy-api.yml');
 const ciWorkflowPath = join(repositoryDirectory, '.github/workflows/ci.yml');
+const engineeringMcpDeployPath = join(
+  repositoryDirectory,
+  'apps/engineering-mcp/scripts/deploy.mjs',
+);
 const capabilityEntrypointPaths = [
   join(repositoryDirectory, 'apps/api/src/document-processing-worker.ts'),
   join(repositoryDirectory, 'apps/api/src/terminal-provider-worker.ts'),
@@ -216,4 +220,37 @@ test('deploy verify shards workers the same way CI does', async () => {
     /test:workers|vitest\.workers\.config\.ts/u,
     'workers must not be appended unsharded onto a Node API shard',
   );
+});
+
+test('deploys the Managed OAuth engineering MCP only after both regional APIs are healthy', async () => {
+  const [workflow, provisioner] = await Promise.all([
+    readFile(deployWorkflowPath, 'utf8'),
+    readFile(engineeringMcpDeployPath, 'utf8'),
+  ]);
+  const regionalHealth = workflow.indexOf('- name: Verify regional health');
+  const deployMcp = workflow.indexOf('- name: Deploy the engineering MCP after both regional entrypoints');
+  const verifyMcp = workflow.indexOf(
+    '- name: Verify the engineering MCP advertises OAuth to non-browser clients',
+  );
+
+  assert.match(workflow, /- "apps\/engineering-mcp\/\*\*"/u);
+  assert.match(workflow, /pnpm --filter @rally\/engineering-mcp build/u);
+  assert.ok(regionalHealth < deployMcp, 'both regional health checks must precede MCP deployment');
+  assert.ok(deployMcp < verifyMcp, 'the OAuth challenge probe must inspect the new MCP deployment');
+  assert.match(
+    workflow.slice(deployMcp, verifyMcp),
+    /if: env\.DEPLOY_EU == 'true' && env\.DEPLOY_GLOBAL == 'true'/u,
+  );
+  assert.match(workflow, /www-authenticate:.*resource_metadata/u);
+
+  assert.match(provisioner, /const aceDomain = "ace\.internal\.rallywith\.ai"/u);
+  assert.match(provisioner, /oauth_configuration:\s*\{\s*enabled: true,/su);
+  assert.match(provisioner, /dynamic_client_registration:\s*\{[\s\S]{0,180}enabled: true,/u);
+  assert.match(provisioner, /allow_any_on_localhost: true/u);
+  assert.match(provisioner, /allow_any_on_loopback: true/u);
+  assert.match(provisioner, /current\?\.oauth_configuration\?\.grant/u);
+  assert.match(provisioner, /config\.vars\.ACCESS_APPLICATION_AUD = audience/u);
+  assert.match(provisioner, /cloudflareList\("\/access\/apps"\)/u);
+  assert.match(provisioner, /body\.result_info\?\.total_pages/u);
+  assert.match(provisioner, /cloudflareList\(\s*`\/access\/apps\/\$\{encodeURIComponent\(ace\.id\)\}\/policies`/u);
 });

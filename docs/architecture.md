@@ -671,7 +671,9 @@ precede any LLM classification.
   schema fail the readers still running the old one.
 - **Global reaches EU only through named Worker RPC service bindings.** There is
   no public internal-bridge HTTP route, and adding one would put the region
-  boundary on the open internet.
+  boundary on the open internet. The engineering MCP is the explicit
+  Access-authorized operator exception that may return requested EU Durable
+  Object content through such a binding; product traffic has no equivalent.
 - **A run's authority can narrow but never widen.** Immutable run scopes plus live
   connection reauthorization mean progressive plugin activation cannot introduce a
   connection or grant the run did not start with.
@@ -707,6 +709,7 @@ document, and it does not absorb one when it grows:
 | The macOS status item | [`menu-bar.md`](menu-bar.md) |
 | Regional product telemetry and crash reporting | [`telemetry.md`](telemetry.md) |
 | Hosted resources, secrets, deployment, incidents | [`runbook.md`](runbook.md) |
+| Operator discovery and raw Durable Object SQLite inspection | [`engineering-mcp.md`](engineering-mcp.md) |
 
 A new module is added to this map in a sentence and documented in its own file per
 [`module-documents.md`](module-documents.md); the map does not grow a section for
@@ -753,8 +756,10 @@ it.
   [`agent-harness.md`](agent-harness.md).
 - **A missing or malformed Worker variable fails the isolate at its entrypoint**
   rather than inside the first request that happened to read it.
-- **Cross-region workspace-content access is not implemented.** A caller that
-  needs it does not have a degraded path; it has no path.
+- **Cross-region workspace-content access is not implemented for product
+  callers.** The only path is deliberate operator inspection through the
+  Access-protected engineering MCP; it has no product fallback and persists no
+  returned content.
 
 ## Testing
 
@@ -809,6 +814,23 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-30 — Add a dedicated operator path to Durable Object authority
+
+**What changed:** A stateless engineering MCP routes through private named
+regional API entrypoints to a shared inspection RPC inherited by scheduled
+Durable Objects.
+
+**Why:** Production SQLite inspection needs authority-aware discovery across
+both regions without moving product state into D1 or exposing regional HTTP
+bridges.
+
+**Considered and rejected:** D1 product mirrors and direct object routes would
+either create a second authority or widen the raw-SQL trust boundary.
+
+**Consequences:** Architecture's no-cross-region-content rule now explicitly
+excludes this Access-authorized operator console. Product paths remain regional
+and typed; operator SQL is destructive and separately documented.
 
 ### 2026-08-30 — Heavy provider graphs move behind typed Worker services
 

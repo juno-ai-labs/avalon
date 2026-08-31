@@ -24,6 +24,7 @@ export { SlackRegionalBridge } from "./slack-regional-bridge";
 export { SlackRoutingBridge } from "./slack-routing-bridge";
 export { TelemetryRegionalBridge } from "./telemetry-regional-bridge";
 export { TelemetryControlBridge } from "./telemetry-control-bridge";
+export { EngineeringInspectionBridge } from "./engineering-inspection-bridge";
 
 // Production modules are always statically imported. Startup isolation is a
 // Worker/service boundary, never request-time module loading.
