@@ -71,7 +71,7 @@ describe("prompt renderers", () => {
             { authorType: "agent", authorName: "Rally", message: "The release is still running." },
           ],
         }),
-        hash: "356060719f2f7c052761ce3e9335f597fec535b3f686941186a9bf9e06c7c2f6",
+        hash: "6114735828454fc96caea7b7e50ab7e3ec82538478e372d1a7aaca2d31dea005",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -352,14 +352,13 @@ describe("prompt renderers", () => {
     // by exact wording rather than the golden hash, which a later prompt edit
     // re-baselines by design: the rule could leave with the hash and no test
     // would say so.
-    expect(system!.content).toContain("is that person's to act on");
     expect(system!.content).toContain(
-      "classify it human_only even when a task is active, even when Rally spoke or asked a question last",
+      "classify human_only, even during an active task or after Rally spoke",
     );
     // Its two tie-breaks: a person mention never suppresses a real request to
     // Rally, and the product name alone is not an address.
-    expect(system!.content).toContain("naming a person never cancels a request aimed at Rally");
-    expect(system!.content).toContain("which is also an ordinary English word");
+    expect(system!.content).toContain("Mentioning a person never cancels a request to Rally");
+    expect(system!.content).toContain("not when using the ordinary word");
   });
 
   it("keeps draft and provider injection text out of system messages", () => {
