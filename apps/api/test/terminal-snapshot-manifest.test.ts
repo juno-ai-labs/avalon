@@ -5,6 +5,7 @@ import {
   terminalBaselineHostAcceptanceCommand,
   terminalManagedSnapshotBootstrapCommand,
   terminalPackageManagerAcceptanceCommand,
+  terminalSnapshotImageBuildCommand,
   terminalSnapshotProbeCommand,
 } from "../src/services/terminal/snapshot-manifest";
 
@@ -98,6 +99,23 @@ describe("Terminal snapshot manifest", () => {
     expect(command).toContain("AVALON_PROBE_MISSING=");
     expect(command).toContain("exit 1");
     expect(command).toContain("trap 'rm -rf -- \"$probe_results\"' EXIT");
+  });
+
+  it("bakes the bootstrap into one Dockerfile-safe line", () => {
+    // Daytona rejected the first version of this with
+    // `dockerfile parse error on line 3: unknown instruction: sudo`: the
+    // bootstrap is multi-line, a Dockerfile instruction is not, and the parser
+    // splits the RUN before any shell sees the quoting.
+    const command = terminalSnapshotImageBuildCommand();
+    expect(command).not.toContain("\n");
+    expect(command).not.toContain("'");
+    expect(command).not.toContain("\"");
+    // Byte-identical to what the runtime would otherwise have run, so the image
+    // and the runtime cannot disagree about what "prepared" means.
+    const encoded = command.match(/^echo ([A-Za-z0-9+/=]+) \| base64 -d \| bash -l$/u);
+    expect(encoded).not.toBeNull();
+    expect(Buffer.from(encoded![1]!, "base64").toString("utf8"))
+      .toBe(terminalManagedSnapshotBootstrapCommand());
   });
 
   it("functionally exercises every supported installer in Trusted only", () => {

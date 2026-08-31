@@ -667,6 +667,15 @@ in the queue the team already works, so adoption is one merge and rollback is
 one revert, while a human still sits between a rebuilt image and every new
 sandbox.
 
+The build step is the bootstrap base64-encoded into a single line, not the
+script itself. Daytona renders each build command as one Dockerfile `RUN`, and a
+Dockerfile instruction cannot span raw newlines, so handing it the multi-line
+bootstrap made that script's second line its own instruction and the create call
+failed with `dockerfile parse error on line 3: unknown instruction: sudo`.
+Shell quoting does not help — the parser splits the line before any shell sees
+the quotes. Encoding removes newlines, quotes, and metacharacters together while
+keeping the script byte-identical to the one the runtime would have run.
+
 **Considered and rejected:** A second package list maintained beside the
 bootstrap — it would drift from the runtime, and a snapshot that disagrees with
 the manifest fails closed at acceptance rather than obviously. A
