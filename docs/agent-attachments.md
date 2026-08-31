@@ -44,8 +44,8 @@ source of truth for retry, replay, and compaction recovery.
 
 ### Kind and schema selection
 
-Rally classifies an attachment into exactly one of `image`, `markdown`, `pdf`,
-`document`, `spreadsheet`, `presentation`, `text`, or `other`. A verified MIME
+Rally classifies an attachment into exactly one of `image`, `audio`, `markdown`,
+`pdf`, `document`, `spreadsheet`, `presentation`, `text`, or `other`. A verified MIME
 type wins. A sanitized final filename extension participates only when MIME is
 missing or a generic binary type. The model selects a natural-language kind in
 a list request; it never supplies or guesses a MIME filter.
@@ -616,6 +616,28 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-30 — Generated audio is a playable, non-model-readable kind
+
+**What changed:** The shared attachment registry now classifies verified audio
+MIME types and common audio extensions as `audio`. MP3 signatures are verified
+server-side. Current and historical audio resources flow directly from regional
+R2 to native desktop players, while manifests and resource listings advertise
+`contentMode: "unsupported"` to the agent.
+
+**Why:** Treating generated speech as `other` hid a format the product can
+present, while treating it as readable text invited the model to call document
+tools that cannot transcribe it. A distinct natural kind states both truths.
+
+**Considered and rejected:** Classifying audio as `text` or building implicit
+transcription into preview. Both would couple a media-generation feature to a
+second inference operation and change what a resource means without an explicit
+transcription request.
+
+**Consequences:** Attachment-kind consumers must handle `audio` explicitly.
+Audio preview routes serve stored bytes directly, derivative builders do not
+attempt text extraction, and adding agent-readable audio later requires a
+separate transcription contract rather than changing this kind silently.
 
 ### 2026-08-30 — Archive waits for the unlink before leaving the document
 

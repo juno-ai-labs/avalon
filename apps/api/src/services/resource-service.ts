@@ -330,7 +330,7 @@ export class ResourceService {
     const kind = classifyAttachmentKind({ fileName, mimeType });
     const normalizedMimeType = mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 
-    if (kind === "image" || kind === "markdown" || kind === "text" || normalizedMimeType.startsWith("text/")) {
+    if (kind === "image" || kind === "audio" || kind === "markdown" || kind === "text" || normalizedMimeType.startsWith("text/")) {
       const object = await this.env.PAYLOADS.get(resource.content_ref);
       if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
       return resourceObjectResponse(object, fileName);

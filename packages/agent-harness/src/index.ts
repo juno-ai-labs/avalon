@@ -3541,6 +3541,7 @@ export const AVALON_MEMORY_PLUGIN_ID = "rally:memory";
 export const AVALON_TABLES_PLUGIN_ID = "rally:tables";
 export const AVALON_WEB_PLUGIN_ID = "rally:web";
 export const AVALON_WORKSTREAM_PLUGIN_ID = "rally:workstream";
+export const AVALON_MULTIMODAL_GENERATION_PLUGIN_ID = "rally:multimodal-generation";
 export const AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID = "rally:automation_architect";
 
 export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {

@@ -3572,7 +3572,7 @@ function installContentSecurityPolicy(): void {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: ${fontScheme}:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src ${backdropScheme}:; frame-ancestors 'none'`,
+          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data: ${fontScheme}:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src ${backdropScheme}:; frame-ancestors 'none'`,
         ],
       },
     });

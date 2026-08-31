@@ -20,6 +20,16 @@ describe("attachment MIME verification", () => {
       "wrong.txt",
       "text/plain",
     )).toBe("image/png");
+    expect(verifyAttachmentMimeType(
+      new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00, 0x00]),
+      "wrong.txt",
+      "text/plain",
+    )).toBe("audio/mpeg");
+    expect(verifyAttachmentMimeType(
+      new Uint8Array([0xff, 0xfb, 0x90, 0x64]),
+      "wrong.bin",
+      "application/octet-stream",
+    )).toBe("audio/mpeg");
   });
 
   it("distinguishes OOXML subtypes from central-directory entries without expanding the archive", () => {
