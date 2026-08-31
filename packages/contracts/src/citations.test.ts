@@ -4,6 +4,9 @@ import {
   citationScheme,
   embeddedResourceCitations,
   parseCitationHref,
+  personIdFromMentionHref,
+  personMentionHref,
+  personMentionMarkdownPattern,
   rewriteCitationsAsPlainText,
 } from "./citations";
 
@@ -55,10 +58,12 @@ describe("parseCitationHref", () => {
       url: "http://example.com",
     });
     expect(parseCitationHref("person:0192f3ac-1b2c-7000-8000-abcdefabcdef").scheme).toBe("person");
+    expect(parseCitationHref("person://0192f3ac-1b2c-7000-8000-abcdefabcdef").scheme).toBe("person");
     // Any `person:` target is an identity, well-formed or not — it must reach
     // the cell that renders it inert rather than one that could give it a
     // destination.
     expect(parseCitationHref("person:someone").scheme).toBe("person");
+    expect(parseCitationHref("person://someone").scheme).toBe("person");
     expect(parseCitationHref("connector:abc123:slack").scheme).toBe("connector");
   });
 
@@ -66,6 +71,30 @@ describe("parseCitationHref", () => {
     for (const href of ["javascript:alert(1)", "file:///etc/passwd", "data:text/html,<b>", "mailto:a@b.c", undefined]) {
       expect(parseCitationHref(href).scheme).toBe("unknown");
     }
+  });
+});
+
+describe("person mention hrefs", () => {
+  const id = "0192f3ac-1b2c-7000-8000-abcdefabcdef";
+
+  it("emits the house person:// form", () => {
+    expect(personMentionHref(id)).toBe(`person://${id}`);
+  });
+
+  it("reads both house and legacy spellings, and nothing else", () => {
+    expect(personIdFromMentionHref(`person://${id}`)).toBe(id);
+    expect(personIdFromMentionHref(`person:${id}`)).toBe(id);
+    expect(personIdFromMentionHref(`PERSON://${id.toUpperCase()}`)).toBe(id);
+    expect(personIdFromMentionHref("person:someone")).toBeUndefined();
+    expect(personIdFromMentionHref(`person:///${id}`)).toBeUndefined();
+    expect(personIdFromMentionHref(undefined)).toBeUndefined();
+  });
+
+  it("reduces both Markdown spellings to the label", () => {
+    const house = `Ask [@Ada](person://${id}) please.`;
+    const legacy = `Ask [@Ada](person:${id}) please.`;
+    expect(house.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
+    expect(legacy.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
   });
 });
 

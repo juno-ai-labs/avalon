@@ -60,15 +60,59 @@ const CITATION_ID = /^[A-Za-z0-9_-]+$/u;
 const RESOURCE_SCHEME = /^resource:(?:\/\/)?/iu;
 
 /**
+ * A well-formed person id in a mention href.
+ *
+ * Mentions authorize against a real user id, so unlike `resource://` — whose
+ * opaque segment is the resource system's to shape — this is a UUID. Both the
+ * house `person://` spelling and the legacy bare `person:` spelling are
+ * accepted so stored transcript messages keep resolving.
+ */
+const PERSON_UUID = "[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}";
+const PERSON_MENTION_HREF = new RegExp(`^person:(?:\\/\\/)?(${PERSON_UUID})$`, "iu");
+
+/**
+ * Durable Markdown link for a person mention — the house spelling.
+ *
+ * Callers that author mentions (composer prepare, model guidance) emit
+ * `person://`. Surfaces that *read* mentions must also accept bare `person:`
+ * via {@link personIdFromMentionHref} / {@link personMentionMarkdownPattern}.
+ */
+export function personMentionHref(personId: string): string {
+  return `person://${personId}`;
+}
+
+/**
+ * UUID from a person mention href, or `undefined` when the target is not a
+ * well-formed id (malformed model text, a non-id label, etc.).
+ */
+export function personIdFromMentionHref(href: string | undefined): string | undefined {
+  const match = href?.match(PERSON_MENTION_HREF);
+  return match?.[1]?.toLowerCase();
+}
+
+/**
+ * Matches `[@Label](person:<uuid>)` and `[@Label](person://<uuid>)` in agent
+ * text. Capture group 1 is the label, with Markdown escapes intact. Fresh each
+ * call so a `/g` lastIndex cannot leak across reductions.
+ */
+export function personMentionMarkdownPattern(): RegExp {
+  return new RegExp(
+    String.raw`\[@((?:\\.|[^\]])+)\]\(person:(?:\/\/)?${PERSON_UUID}\)`,
+    "giu",
+  );
+}
+
+/**
  * Which scheme a link target names — the allowlist that decides navigation.
  *
  * Both `resource://` spellings parse. The URL style is what the guidance
  * teaches and what a future `?v=` parameter needs a slot in; the bare
- * `resource:` form matches the house style of `person:` and is accepted so that
- * anything already emitted keeps working. A `?v=` or `#fragment` is stripped
- * rather than honoured: a citation opens the current version (key design
- * decision 7), and leaving the parameter attached would only turn a resolvable
- * id into an unresolvable one.
+ * `resource:` form is accepted so that anything already emitted keeps working.
+ * Person mentions follow the same dual-accept rule with house form
+ * `person://` — see {@link personMentionHref}. A `?v=` or `#fragment` is
+ * stripped rather than honoured: a citation opens the current version (key
+ * design decision 7), and leaving the parameter attached would only turn a
+ * resolvable id into an unresolvable one.
  */
 export function parseCitationHref(href: string | undefined): CitationTarget {
   if (href === undefined) return { scheme: "unknown" };

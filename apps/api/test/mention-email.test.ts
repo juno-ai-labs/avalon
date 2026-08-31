@@ -112,7 +112,7 @@ describe("work-stream mention email", () => {
 
   it("renders canonical person Markdown as a human-readable mention", async () => {
     const resend = successfulResend();
-    const messageText = `Please ask [@Sam & Team](person:${input.recipientUserId}) to review.`;
+    const messageText = `Please ask [@Sam & Team](person://${input.recipientUserId}) to review.`;
 
     await sendWorkstreamMentionEmail(environment(), { ...input, messageText }, resend);
 
@@ -120,6 +120,18 @@ describe("work-stream mention email", () => {
     const body = JSON.parse(String(calls[0]?.[1].body)) as Record<string, unknown>;
     expect(String(body.text)).toContain("Please ask @Sam & Team to review.");
     expect(String(body.text)).not.toContain("person:");
+  });
+
+  it("still reduces a stored bare person: mention", async () => {
+    const resend = successfulResend();
+    const messageText = `Please ask [@Sam & Team](person:${input.recipientUserId}) to review.`;
+
+    await sendWorkstreamMentionEmail(environment(), { ...input, messageText }, resend);
+
+    const calls = resend.mock.calls as unknown as Array<[string, RequestInit]>;
+    const body = JSON.parse(String(calls[0]?.[1].body)) as Record<string, unknown>;
+    expect(String(body.text)).toContain("Please ask @Sam & Team to review.");
+    expect(String(body.text)).not.toContain(input.recipientUserId);
   });
 
   it("reduces a citation, which a mail client shows verbatim just like a mention", async () => {

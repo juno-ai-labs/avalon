@@ -1442,6 +1442,15 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-30 — Person mention Markdown uses `person://`
+
+**What changed:** Composer prepare and related writers emit
+`[@Name](person://<user-id>)`. Readers still accept bare `person:<user-id>`.
+
+**Why:** Aligns person mentions with the URL-style schemes the rest of the
+product teaches (`resource://`), so a model that generalizes does not produce a
+form the chip matcher and notification reducers miss.
+
 ### 2026-08-30 — Sidebar facepile omits the current viewer
 
 **What changed:** The desktop no longer paints the signed-in person in a personal
@@ -2922,7 +2931,8 @@ mention identities as the in-work-stream composer and sends them through the
 same visible-text-to-span resolver. `POST /workstreams` accepts those spans,
 and `SubstreamAgent.initialize` resolves their people against active workspace
 membership, replaces accepted visible ranges with canonical
-`[@Name](person:<user-id>)` Markdown, writes `part_mentions` and mention
+`[@Name](person://<user-id>)` Markdown (bare `person:<user-id>` still accepted),
+writes `part_mentions` and mention
 attention in the opening-message transaction, and emits the normal durable
 mention activity and notification. A mentioned person is seated even if a
 direct API caller omitted them from `participantUserIds`. In an existing
