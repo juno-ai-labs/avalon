@@ -1149,7 +1149,14 @@ silently return every test to the shared key while each still passes alone.
 defining a workstream and Rally's place in it, and its mention rule says that a
 mention in `recentMessages` appears as a `[@Name](person://<id>)` link, not only
 as `@Name`. Golden hash re-baselined; both sentences are held by exact-line
-assertions.
+assertions. Two more findings from the same review: every structured call's
+JSON-schema instruction moved from the last user message into the system
+message — the schema is the harness's own contract, so it rides with policy and
+the user-role messages stay pure data — and the addressing renderer now bounds
+the current message (first 3,000 plus last 1,000 code points around a marked
+cut) instead of sending it whole; history entries were already bounded at
+1,000. The cut is from the middle because addressing evidence sits at both
+ends — the opening "@Adam" and a trailing ask.
 
 **Why:** review of the shipped prompt (Adam, 2026-08-31) found two facts a small
 model cannot infer: the condensed rewrite had dropped what Rally *is* — the

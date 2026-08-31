@@ -1737,6 +1737,9 @@ function structuredReasoning(
  * Keep strict provider enforcement and model-visible instructions in sync.
  * Medium-sized models are materially more reliable when the exact schema is
  * present in the conversation instead of existing only in response_format.
+ * The instruction rides in the system message: the schema is the harness's
+ * own contract, so it belongs with policy, and the user-role messages stay
+ * pure data.
  */
 function withExpectedJsonSchema(
   messages: ModelMessage[],
@@ -1747,24 +1750,13 @@ function withExpectedJsonSchema(
     renderExpectedJsonSchema(schemaName, jsonSchema),
     "Return only one JSON value that matches this schema exactly. Do not include Markdown or explanatory text in the response.",
   ].join("\n\n");
-  const result = [...messages];
-  const last = result.at(-1);
-  if (last?.role !== "user") {
-    return [...result, { role: "user", content: instruction }];
+  const [first, ...rest] = messages;
+  if (first?.role === "system" && typeof first.content === "string") {
+    return [{ ...first, content: `${first.content}\n\n${instruction}` }, ...rest];
   }
-  if (typeof last.content === "string") {
-    result[result.length - 1] = { ...last, content: `${last.content}\n\n${instruction}` };
-    return result;
-  }
-  if (Array.isArray(last.content)) {
-    result[result.length - 1] = {
-      ...last,
-      content: [...last.content, { type: "text", text: instruction }],
-    };
-    return result;
-  }
-  result[result.length - 1] = { ...last, content: instruction };
-  return result;
+  return [{ role: "system", content: instruction }, first, ...rest].filter(
+    (message): message is ModelMessage => message !== undefined,
+  );
 }
 
 /**

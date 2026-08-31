@@ -339,6 +339,31 @@ describe("prompt renderers", () => {
     expect(payload.currentMessage).toBe(currentMessage);
   });
 
+  it("keeps both ends of an oversized current message", () => {
+    const message = `HEAD@Adam ${"m".repeat(5_000)} can you take this?TAIL`;
+    const under = "u".repeat(4_000);
+    const render = (current: string) => {
+      const rendered = renderAddressingMessages({
+        message: current,
+        activeTask: false,
+        connectorMentions: [],
+        humanMentions: ["Adam"],
+        addressesRally: false,
+      });
+      return (JSON.parse(rendered[1]!.content) as { currentMessage: string }).currentMessage;
+    };
+
+    const truncated = render(message);
+    // Addressing evidence lives at both ends — the opening "@Adam" and the
+    // trailing ask — so the cut is from the middle, marked, never silent.
+    expect(truncated.startsWith("HEAD@Adam ")).toBe(true);
+    expect(truncated.endsWith("can you take this?TAIL")).toBe(true);
+    expect(truncated).toContain("[… middle truncated …]");
+    expect(Array.from(truncated).length).toBeLessThan(4_100);
+    // At or under the budget the message passes through byte-identical.
+    expect(render(under)).toBe(under);
+  });
+
   it("routes a person-directed message to its person, in the words the rule needs", () => {
     const [system] = renderAddressingMessages({
       message: "irrelevant",
