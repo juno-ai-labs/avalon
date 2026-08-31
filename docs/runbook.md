@@ -161,7 +161,8 @@ the 4.3 and 4.6 deployments are version-1 Preview Global Standard deployments
 with DefaultV2 guardrails; their limits are respectively 250,000 TPM / 250 RPM
 and 2,250,000 TPM / 2,250 RPM. The inference API reports tokens, not dollar
 cost. In that case, Bind bills with the cached unweighted average of every
-base-rate endpoint OpenRouter publishes for the canonical model. The Worker
+endpoint OpenRouter publishes for the canonical model, including the catalog's
+prompt-token override tiers. The Worker
 `avalon-api-inference-pricing-global` refreshes the OpenRouter endpoint
 inventories hourly. The inventory is the union of the developer-mode manual
 choice list and every Monad production Azure deployment that has an
@@ -169,7 +170,9 @@ OpenRouter identity: fourteen canonical model IDs as of 2026-08-30. It stores on
 record per model in `INFERENCE_PRICING_CACHE`, using the canonical OpenRouter ID
 itself (for example `x-ai/grok-4.3`) as the KV key. Each input, cached-input, and
 output USD-per-million value in a token-priced record remains a decimal JSON
-string. Image records instead retain OpenRouter's native `billable`, `unit`, and
+string. Long-context `overrides` retain their numeric `minPromptTokens`
+threshold and another string-valued input/cache/output triple. Image records
+instead retain OpenRouter's native `billable`, `unit`, and
 string `costUsd` lines—for example FLUX input/output image costs per megapixel—
 so a zero generic token price cannot conceal the actual image charge. Global
 and EU bind the same Cloudflare KV namespace; it contains public provider metadata only,

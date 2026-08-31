@@ -2120,7 +2120,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 trace,
                 signal: args.signal,
               }, handleDelta);
-          const result = normalizeRoutedResult(candidate, rawResult);
+          const result = normalizeRoutedResult(
+            candidate,
+            rawResult,
+            azurePricing.get(candidate.canonicalModelId),
+          );
           const defect = detectCompletionDefect({
             content: result.content || null,
             tool_calls: result.toolCalls,
@@ -3081,10 +3085,15 @@ function azureTransport(
   };
 }
 
-function normalizeRoutedResult(candidate: RouteCandidate, result: StreamResult): StreamResult {
+function normalizeRoutedResult(
+  candidate: RouteCandidate,
+  result: StreamResult,
+  azurePricing: AzureModelPricing | undefined,
+): StreamResult {
   if (candidate.pricingBasis.kind === "provider_reported") {
     return { ...result, model: candidate.canonicalModelId };
   }
+  if (!azurePricing) throw new AzureOpenAIError("Azure model pricing became unavailable");
   const usage = result.usage;
   if (!usage) throw new AzureOpenAIError("Azure returned no final token usage");
   const promptTokens = numberFromUsage(usage, "prompt_tokens");
@@ -3101,9 +3110,21 @@ function normalizeRoutedResult(candidate: RouteCandidate, result: StreamResult):
   // count already includes reasoning, the subtraction produces that same
   // completion count.
   const billableOutputTokens = totalTokens - promptTokens;
-  const priced = computeConfiguredRatesCostCents(candidate.pricingBasis, {
+  const cachedInputTokens = cachedTokens(usage) ?? 0;
+  // Azure Grok's cached count is disjoint from prompt_tokens, but OpenRouter's
+  // long-context threshold is based on the complete prompt. Count both input
+  // buckets before choosing the tier, then let Bind apply the declared cache
+  // semantics to the cost arithmetic itself.
+  const totalPromptTokens = candidate.pricingBasis.cachedTokenSemantics === "disjoint"
+    ? promptTokens + cachedInputTokens
+    : promptTokens;
+  const tokenRates = azureTokenRatesForPrompt(azurePricing, totalPromptTokens);
+  const priced = computeConfiguredRatesCostCents({
+    ...candidate.pricingBasis,
+    ...tokenRates,
+  }, {
     inputTokens: promptTokens,
-    cachedInputTokens: cachedTokens(usage) ?? 0,
+    cachedInputTokens,
     outputTokens: billableOutputTokens,
   });
   if (!priced.ok) throw new AzureOpenAIError(`Azure returned invalid token usage (${priced.reason})`);
@@ -3111,6 +3132,24 @@ function normalizeRoutedResult(candidate: RouteCandidate, result: StreamResult):
     ...result,
     model: candidate.canonicalModelId,
     usage: { ...usage, cost: priced.costCents / 100 },
+  };
+}
+
+function azureTokenRatesForPrompt(
+  pricing: AzureModelPricing,
+  promptTokens: number,
+): Pick<AzureModelPricing, "inputUsdPerM" | "cachedInputUsdPerM" | "outputUsdPerM"> {
+  let selected: Pick<AzureModelPricing, "inputUsdPerM" | "cachedInputUsdPerM" | "outputUsdPerM"> = pricing;
+  const overrides = [...pricing.overrides]
+    .sort((left, right) => left.minPromptTokens - right.minPromptTokens);
+  for (const override of overrides) {
+    if (override.minPromptTokens > promptTokens) break;
+    selected = override;
+  }
+  return {
+    inputUsdPerM: selected.inputUsdPerM,
+    cachedInputUsdPerM: selected.cachedInputUsdPerM,
+    outputUsdPerM: selected.outputUsdPerM,
   };
 }
 

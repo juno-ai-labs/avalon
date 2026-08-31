@@ -131,11 +131,21 @@ export interface AzureOpenAIConfig {
 /** Shared freshness horizon for OpenRouter catalog-derived metadata. */
 export const OPENROUTER_CATALOG_CACHE_TTL_MS = 60 * 60 * 1_000;
 
-/** Host-resolved token rates Bind can attach to an Azure route candidate. */
-export interface AzureModelPricing {
+/** One host-resolved token-rate tier Bind can use to bill an Azure attempt. */
+export interface AzureModelTokenRates {
   inputUsdPerM: number;
   cachedInputUsdPerM: number;
   outputUsdPerM: number;
+}
+
+export interface AzureModelPricingOverride extends AzureModelTokenRates {
+  /** OpenRouter applies this tier when total prompt tokens reach this value. */
+  minPromptTokens: number;
+}
+
+/** Host-resolved base and long-context token rates for an Azure route candidate. */
+export interface AzureModelPricing extends AzureModelTokenRates {
+  overrides: readonly AzureModelPricingOverride[];
   /** Stable, secret-free identity of the source endpoint inventory and rates. */
   sourceFingerprint: string;
 }
