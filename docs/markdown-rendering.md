@@ -646,7 +646,11 @@ sanitised SVG in every live `MarkdownBody` surface. It retains the code-block
 header and copy action, follows the current light or dark appearance, and falls
 back to highlighted source when parsing fails. Streaming turns, embed glances,
 and saved stills keep the source form. Mermaid runs with strict security, HTML
-labels and interaction disabled, and serialized configure/render calls.
+labels disabled, post-render links removed, and serialized configure/render
+calls. Each queued job resolves the active tokens only when it starts; an
+unmounted job leaves the queue before it initializes Mermaid. `accTitle` and
+`accDescr` become the rendered image's accessible metadata; without them, the
+source remains available as its screen-reader description.
 
 **Why:** Mermaid syntax was already arriving in agent answers, but the generic
 unknown-language fallback printed it as code — the failure shown in the product
@@ -670,8 +674,11 @@ at runtime.
 **What a future change has to respect:** `mermaid.initialize` and `render` are a
 single serialized operation because configuration is global. Do not expose
 `bindFunctions`, loosen `securityLevel`, or let frontmatter re-enable HTML
-labels. If saved diagrams become a requirement, make export await a completed
-render; do not serialize a live component's loading state.
+labels or replace Rally's theme inputs. Keep the post-render link removal and
+the lifecycle check before token resolution so recycled transcript rows do not
+spend work on discarded diagrams.
+If saved diagrams become a requirement, make export await a completed render;
+do not serialize a live component's loading state.
 
 ### 2026-08-30 — Collapsed heading preview fades from 60% to transparent
 

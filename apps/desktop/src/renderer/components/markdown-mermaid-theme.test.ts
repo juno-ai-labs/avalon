@@ -6,17 +6,20 @@ describe('Mermaid theme', () => {
     const readToken = vi.fn((customProperty: string) => {
       if (customProperty === '--av-sys-size-radius-md') return '7px';
       if (customProperty === '--av-sys-size-border-hairline') return '1px';
+      if (customProperty === '--av-sys-font-size-prose') return '14px';
       return `resolved(${customProperty})`;
     });
 
-    const { themeCSS, themeVariables } = readMermaidThemeConfig(readToken);
+    const { fontFamily, fontSize, themeCSS, themeVariables } = readMermaidThemeConfig(readToken);
 
+    expect(fontFamily).toBe('resolved(--av-sys-font-family-ui)');
+    expect(fontSize).toBe(14);
     expect(themeVariables).toMatchObject({
       actorBkg: 'resolved(--av-sys-color-surface-elevated)',
       actorBorder: 'resolved(--av-sys-color-border-default)',
       actorTextColor: 'resolved(--av-sys-color-text-default)',
       fontFamily: 'resolved(--av-sys-font-family-ui)',
-      fontSize: 'resolved(--av-sys-font-size-prose)',
+      fontSize: '14px',
       lineColor: 'resolved(--av-cmp-markdown-diagram-line)',
       noteBkgColor: 'resolved(--av-sys-color-warning-wash)',
       noteBorderColor: 'resolved(--av-sys-color-warning-edge)',
@@ -37,5 +40,6 @@ describe('Mermaid theme', () => {
   it('fails closed when a theme token or measurement is unavailable', () => {
     expect(() => readMermaidThemeConfig(() => '')).toThrow('mermaid_theme_token_missing');
     expect(() => readMermaidThemeConfig(() => 'not-a-measurement')).toThrow('mermaid_theme_measurement_invalid');
+    expect(() => readMermaidThemeConfig(() => '7pxoops')).toThrow('mermaid_theme_measurement_invalid');
   });
 });

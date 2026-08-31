@@ -1,4 +1,6 @@
 interface MermaidThemeConfig {
+  fontFamily: string;
+  fontSize: number;
   themeCSS: string;
   themeVariables: Record<string, boolean | number | string>;
 }
@@ -12,7 +14,11 @@ function readRootToken(customProperty: string): string {
 }
 
 function pixels(value: string): number {
-  const parsed = Number.parseFloat(value);
+  const measurement = value.trim();
+  if (!/^-?(?:\d+(?:\.\d+)?|\.\d+)px$/u.test(measurement)) {
+    throw new Error('mermaid_theme_measurement_invalid');
+  }
+  const parsed = Number.parseFloat(measurement);
   if (!Number.isFinite(parsed)) throw new Error('mermaid_theme_measurement_invalid');
   return parsed;
 }
@@ -211,6 +217,8 @@ export function readMermaidThemeConfig(readUnvalidatedToken: TokenReader = readR
   }
 
   return {
+    fontFamily,
+    fontSize: pixels(fontSize),
     // Mermaid uses signalColor for both sequence lines and number labels. The
     // label needs the token intended for text on the accent fill instead.
     themeCSS: `[id$="-sequencenumber"] { fill: ${accentOn} !important; }`,
