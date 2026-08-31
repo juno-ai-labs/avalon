@@ -30,11 +30,7 @@
 import { Daytona, Image } from "@daytona/sdk";
 
 import { parseTerminalRegionConfiguration } from "../src/services/terminal/contract";
-import { terminalManagedSnapshotBootstrapCommand } from "../src/services/terminal/snapshot-manifest";
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/gu, `'"'"'`)}'`;
-}
+import { terminalSnapshotImageBuildCommand } from "../src/services/terminal/snapshot-manifest";
 
 const configuration = parseTerminalRegionConfiguration(process.env);
 if (configuration.capability !== "supported") {
@@ -60,9 +56,7 @@ const daytona = new Daytona({
   target: configuration.target,
 });
 
-const image = Image.base(baseImage).runCommands(
-  `bash -lc ${shellQuote(terminalManagedSnapshotBootstrapCommand())}`,
-);
+const image = Image.base(baseImage).runCommands(terminalSnapshotImageBuildCommand());
 
 process.stdout.write(`Building Terminal snapshot ${configuration.snapshot} from ${baseImage}\n`);
 

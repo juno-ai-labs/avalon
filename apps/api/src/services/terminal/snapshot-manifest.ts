@@ -55,6 +55,26 @@ export function terminalManagedSnapshotBootstrapCommand(): string {
 }
 
 /**
+ * The bootstrap as one Dockerfile-safe line, for baking it into a snapshot
+ * image instead of running it on every new sandbox.
+ *
+ * A Dockerfile instruction cannot span raw newlines, and the provider renders
+ * each build command as a single `RUN`. Handing it the bootstrap directly makes
+ * that script's second line its own instruction, which Daytona rejects with
+ * `unknown instruction: sudo`. Quoting does not help: the shell would honour the
+ * quotes, but the Dockerfile parser splits the line before any shell sees it.
+ *
+ * Base64 sidesteps the whole class — the encoded form has no newlines, no
+ * quotes, and no shell metacharacters, so it survives whatever quoting the
+ * provider applies while keeping the script byte-identical to the one the
+ * runtime would have run.
+ */
+export function terminalSnapshotImageBuildCommand(): string {
+  const encoded = Buffer.from(terminalManagedSnapshotBootstrapCommand(), "utf8").toString("base64");
+  return `echo ${encoded} | base64 -d | bash -l`;
+}
+
+/**
  * Verifies the pinned snapshot still satisfies the manifest.
  *
  * The probes are independent of one another, and each one pays a whole runtime
