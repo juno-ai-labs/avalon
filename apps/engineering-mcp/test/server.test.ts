@@ -1,4 +1,4 @@
-import { createMcpHandler } from "@modelcontextprotocol/server";
+import { createMcpHandler } from "agents/mcp/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
@@ -23,6 +23,15 @@ function regionalBinding(region: "global" | "eu"): EngineeringInspectionRpcBindi
       async () => ({ found: false }),
     ),
     listSubstreams: vi.fn<EngineeringInspectionRpcBinding["listSubstreams"]>(
+      async () => ({ found: false }),
+    ),
+    resolveWorkspace: vi.fn<EngineeringInspectionRpcBinding["resolveWorkspace"]>(
+      async () => ({ found: false }),
+    ),
+    resolveWorkstream: vi.fn<EngineeringInspectionRpcBinding["resolveWorkstream"]>(
+      async () => ({ found: false }),
+    ),
+    resolveSubstream: vi.fn<EngineeringInspectionRpcBinding["resolveSubstream"]>(
       async () => ({ found: false }),
     ),
     runWorkspaceSql: vi.fn<EngineeringInspectionRpcBinding["runWorkspaceSql"]>(
@@ -128,6 +137,16 @@ describe("Rally engineering MCP tools", () => {
     const substreamId = asSubstreamId("0");
     const global = regionalBinding("global");
     const eu = regionalBinding("eu");
+    vi.mocked(eu.resolveSubstream).mockResolvedValue({
+      found: true,
+      value: {
+        region: "eu",
+        workspaceId,
+        workstreamId,
+        substreamId,
+        authorityGeneration: 7,
+      },
+    });
     vi.mocked(eu.runSubstreamSql).mockResolvedValue({
       found: true,
       value: {
@@ -167,7 +186,57 @@ describe("Rally engineering MCP tools", () => {
       workspaceId,
       workstreamId,
       substreamId,
+      authorityGeneration: 7,
       query: { sql: "SELECT ? AS answer", bindings: [42] },
     });
+    expect(global.runSubstreamSql).not.toHaveBeenCalled();
+    expect(eu.runSubstreamSql).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not execute SQL when both regions resolve the target", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb5");
+    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000eb6");
+    const substreamId = asSubstreamId("0");
+    const global = regionalBinding("global");
+    const eu = regionalBinding("eu");
+    vi.mocked(global.resolveSubstream).mockResolvedValue({
+      found: true,
+      value: {
+        region: "global",
+        workspaceId,
+        workstreamId,
+        substreamId,
+        authorityGeneration: 7,
+      },
+    });
+    vi.mocked(eu.resolveSubstream).mockResolvedValue({
+      found: true,
+      value: {
+        region: "eu",
+        workspaceId,
+        workstreamId,
+        substreamId,
+        authorityGeneration: 7,
+      },
+    });
+
+    const response = await rpc(
+      { GLOBAL_INSPECTION: global, EU_INSPECTION: eu },
+      "tools/call",
+      {
+        name: "run_substream_sql",
+        arguments: {
+          workspaceId,
+          workstreamId,
+          substreamId,
+          sql: "DELETE FROM fixture",
+        },
+      },
+    );
+    const result = response.result as { isError: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain("exists in both Rally regions");
+    expect(global.runSubstreamSql).not.toHaveBeenCalled();
+    expect(eu.runSubstreamSql).not.toHaveBeenCalled();
   });
 });

@@ -250,4 +250,7 @@ test('deploys the Managed OAuth engineering MCP only after both regional APIs ar
   assert.match(provisioner, /allow_any_on_loopback: true/u);
   assert.match(provisioner, /current\?\.oauth_configuration\?\.grant/u);
   assert.match(provisioner, /config\.vars\.ACCESS_APPLICATION_AUD = audience/u);
+  assert.match(provisioner, /cloudflareList\("\/access\/apps"\)/u);
+  assert.match(provisioner, /body\.result_info\?\.total_pages/u);
+  assert.match(provisioner, /cloudflareList\(\s*`\/access\/apps\/\$\{encodeURIComponent\(ace\.id\)\}\/policies`/u);
 });

@@ -72,4 +72,20 @@ describe("internal Durable Object SQLite inspection RPC", () => {
       expect(selected.rowsRead).toBeGreaterThan(0);
     }
   });
+
+  it("serializes a BLOB larger than one JavaScript argument chunk", async () => {
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const selected = await workspace.runInspectionSql({
+      sql: "SELECT zeroblob(70000) AS payload",
+      bindings: [],
+    });
+    const payload = selected.rows[0]?.payload;
+    expect(payload).toMatchObject({ type: "blob" });
+    if (typeof payload !== "object" || payload === null || !("base64" in payload)) {
+      throw new Error("Expected an inspection BLOB result");
+    }
+    expect(payload.base64).toHaveLength(93_336);
+  });
 });

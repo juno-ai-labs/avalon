@@ -34,21 +34,25 @@ request fails closed.
 
 The Worker has two named Service Bindings, one to
 `avalon-api-global#EngineeringInspectionBridge` and one to
-`avalon-api-eu#EngineeringInspectionBridge`. Every ID-based tool asks both
-regions concurrently. Exactly one may answer `found`; neither is a not-found
-error and both is an ambiguity error. This means the MCP Worker never guesses a
-region or silently prefers Global.
+`avalon-api-eu#EngineeringInspectionBridge`. Every ID-based list tool asks both
+regions concurrently. SQL tools first ask both regions to resolve the target
+without executing SQL, require exactly one answer, and then send SQL only to
+that binding with the resolved authority generation. The regional bridge
+revalidates that generation immediately before obtaining the object stub.
+Neither region finding a target is a not-found error; both finding it is an
+ambiguity error. This means the MCP Worker never guesses a region, silently
+prefers Global, or mutates both sides of a duplicate route.
 
 The regional bridge uses D1 only for identity and routing:
 
 | Tool | Route lookup | Authoritative read or write |
 | --- | --- | --- |
 | `list_workspaces` | Regional `workspaces` plus the workspace authority ledger | D1 identity inventory from both regions |
-| `list_workstreams` | Workspace ID and workspace authority ledger | `workspace_workstream_directory` in WorkspaceDO |
-| `list_substreams` | `workstream_authority_routes.object_name` | `substream_directory` in WorkstreamDO, plus main substream `0` |
-| `run_workspace_sql` | Workspace ID and workspace authority ledger | WorkspaceDO SQLite |
-| `run_workstream_sql` | `workstream_authority_routes.object_name` | WorkstreamDO SQLite |
-| `run_substream_sql` | Work-stream route and child directory membership | SubstreamAgent SQLite |
+| `list_workstreams` | Active workspace route at the open regional authority generation | `workspace_workstream_directory` in WorkspaceDO |
+| `list_substreams` | Active work-stream route at the open regional authority generation | `substream_directory` in WorkstreamDO, plus main substream `0` |
+| `run_workspace_sql` | Resolve, select one region, then revalidate the active workspace route generation | WorkspaceDO SQLite |
+| `run_workstream_sql` | Resolve, select one region, then revalidate the active work-stream route generation | WorkstreamDO SQLite |
+| `run_substream_sql` | Resolve the active work-stream route and child directory membership, select one region, then revalidate | SubstreamAgent SQLite |
 
 `run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
 IDs are not redundant: all three are part of the Durable Object's stable name.
@@ -63,9 +67,16 @@ counters. SQLite BLOB results are represented as `{ type: "blob", base64 }`.
 ## Invariants and contracts
 
 - D1 locates authority; it never substitutes for Durable Object product state.
-- The bridge checks regional routing before obtaining a stub, so a wrong-region
-  lookup cannot create an empty Durable Object.
-- A target found in both regions is refused rather than selected.
+- The bridge accepts only an `active` route in the current
+  `durable_object_open` generation with a compatible serving contract. Pending,
+  importing, verified, quarantined, and stale-generation routes cannot obtain a
+  Durable Object stub.
+- SQL resolves both regions without mutation, refuses a duplicate target, and
+  executes against exactly one selected binding. The selected bridge rechecks
+  the generation so a cutover between resolution and execution fails closed.
+- Main substream `0` needs no directory row: route activation happens only after
+  creation or import initializes that object. Child substreams still require a
+  directory membership row before their stub is obtained.
 - The origin verifies Access JWT provenance. A header's presence alone is not
   authentication.
 - The Access application is separate from Ace and has its own audience, while
@@ -113,9 +124,12 @@ identity or authorization.
 on real WorkspaceDO, WorkstreamDO, and SubstreamAgent instances under workerd.
 It proves bound writes, reads, SQLite metadata, and BLOB serialization.
 
-`apps/engineering-mcp/test/server.test.ts` exercises the actual MCP protocol
-handler, tool discovery, cross-region aggregation, destructive annotations, and
-the fail-closed duplicate-region result. Existing Access tests own JWT
+`apps/engineering-mcp/test/server.test.ts` exercises the production Agents SDK
+MCP handler, tool discovery, cross-region aggregation, destructive annotations,
+single-region SQL execution, and proof that a duplicate-region resolution makes
+no SQL call. `apps/api/test/engineering-inspection-routes.test.ts` exercises the
+checked-in regional D1 schema and proves that lifecycle, serving-contract, and
+generation fences admit only the current active authority. Existing Access tests own JWT
 signature, issuer, audience, cookie, and header verification because this
 Worker imports that one verifier rather than forking it.
 
@@ -172,6 +186,30 @@ configuration and HTTPS redirect allowlist; changing those values remains an
 explicit Access administration decision.
 
 ## Changelog
+
+### 2026-08-30 — Fence SQL execution behind read-only regional resolution
+
+**What changed:** SQL tools now resolve both regional authorities before they
+execute, select exactly one Service Binding, and pass its authority generation
+back for a final regional check. All object-routing lookups now require an
+active route in the current open, serving-compatible generation. The Access
+provisioner now paginates both application and policy inventory, and BLOB
+serialization uses bounded chunks instead of per-byte string growth.
+
+**Why:** The first implementation issued SQL to both regions concurrently and
+only rejected ambiguity after both calls returned. A duplicate route could
+therefore apply one destructive statement twice, and maintenance or stale
+routes could address an object that was not the current serving authority.
+
+**Considered and rejected:** Running read-only SQL in both regions and parsing
+the statement was rejected because SQLite text is not a reliable capability
+boundary and the tools deliberately permit arbitrary statements. Choosing the
+first successful region was rejected because a second route is an authority
+defect that must remain visible.
+
+**Consequences:** Every SQL call adds one read-only regional resolution round
+trip before execution. If authority changes between those phases, the tool
+fails without issuing SQL and the operator must retry against the new route.
 
 ### 2026-08-30 — Add the Access-protected cross-region SQLite console
 
