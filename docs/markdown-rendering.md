@@ -655,9 +655,11 @@ back to highlighted source when parsing fails. Streaming turns, embed glances,
 and saved stills keep the source form. Mermaid runs with strict security, HTML
 labels disabled, post-render links removed, and serialized configure/render
 calls. Each queued job resolves the active tokens only when it starts; an
-unmounted job leaves the queue before it initializes Mermaid. `accTitle` and
-`accDescr` become the rendered image's accessible metadata; without them, the
-source remains available as its screen-reader description. A source preflight
+unmounted job leaves the queue before it initializes Mermaid or after its
+resource preflight completes. Before parsing, the adapter applies Mermaid's
+initialized and secured text-size ceiling. `accTitle` and `accDescr` become the
+rendered image's accessible metadata; without them, the source remains available
+as its screen-reader description. A source preflight
 rejects external CSS resource functions in Mermaid style directives, and parsed
 flowchart image nodes and block styles are rejected before rendering, because
 Mermaid can load them while measuring or drawing. Labels remain ordinary text

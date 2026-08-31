@@ -22,6 +22,7 @@ const setWindowTheme = vi.hoisted(() => vi.fn(async () => undefined));
 const initializeMermaid = vi.hoisted(() => vi.fn());
 const mermaidRender = vi.hoisted(() => vi.fn());
 const getMermaidDiagram = vi.hoisted(() => vi.fn(async () => ({ db: {} })));
+const getMermaidConfig = vi.hoisted(() => vi.fn(() => ({ maxTextSize: 50_000 })));
 const readMermaidThemeConfig = vi.hoisted(() => vi.fn(
   () => ({
     fontFamily: 'token-font',
@@ -43,7 +44,7 @@ vi.mock('thinking-orbs', () => ({
 vi.mock('mermaid', () => ({
   default: {
     initialize: initializeMermaid,
-    mermaidAPI: { getDiagramFromText: getMermaidDiagram },
+    mermaidAPI: { getConfig: getMermaidConfig, getDiagramFromText: getMermaidDiagram },
     render: mermaidRender,
   },
 }));
@@ -919,6 +920,18 @@ describe('MessageBlock markdown', () => {
     expect(screen.getByText('not a diagram')).toBeVisible();
   });
 
+  it('rejects Mermaid source above its configured text limit before parsing', async () => {
+    const parseCallBaseline = getMermaidDiagram.mock.calls.length;
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidConfig.mockReturnValueOnce({ maxTextSize: 12 });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(getMermaidDiagram).toHaveBeenCalledTimes(parseCallBaseline);
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
   it('rejects external resources in Mermaid SVG style blocks', async () => {
     mermaidRender.mockResolvedValueOnce({
       svg: '<svg viewBox="0 0 40 20"><style>.node { fill: url(https://example.invalid/beacon); }</style><text>Unsafe graph</text></svg>',
@@ -1057,6 +1070,25 @@ describe('MessageBlock markdown', () => {
     });
 
     expect(await screen.findByText('Kept graph')).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
+  it('skips Mermaid rendering when work unmounts during resource preflight', async () => {
+    let resolvePreflight!: (value: { db: object }) => void;
+    const pendingPreflight = new Promise<{ db: object }>((resolve) => { resolvePreflight = resolve; });
+    const parseCallBaseline = getMermaidDiagram.mock.calls.length;
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidDiagram.mockImplementationOnce(() => pendingPreflight);
+    mermaidRender.mockResolvedValue({ svg: '<svg viewBox="0 0 40 20"><text>Current graph</text></svg>' });
+
+    const stale = render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+    await waitFor(() => expect(getMermaidDiagram).toHaveBeenCalledTimes(parseCallBaseline + 1));
+    stale.unmount();
+    render(<MarkdownBody>{'```mermaid\ngraph TD; C-->D\n```'}</MarkdownBody>);
+
+    await act(async () => { resolvePreflight({ db: {} }); });
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
   });
 
