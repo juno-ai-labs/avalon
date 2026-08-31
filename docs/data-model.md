@@ -630,7 +630,12 @@ that schema's map; what follows is only what WorkspaceDO still holds.
   region, even when regional RPC calls arrive out of order.
 - `slack_installation_routes` is the opaque Global team-to-region directory;
   `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs`
-  remain regional.
+  remain regional — meaning *per region rather than Global*, not *in regional
+  D1*. All three are WorkspaceDO tables, reached through
+  `withWorkspaceRuntimeDatabase`; regional D1 has not had them since migration
+  0090. Reading the distinction the other way is what produced the
+  `slackUserIsLinked` incident below, and again the automation delivery-target
+  500 of 2026-08-31.
 - `automation_delivery_targets` is gone from WorkspaceDO. The destinations a
   personal automation copies its results to are now the acceptance row's frozen
   `deliveryTargets` inside that automation's own object, re-resolved on every
