@@ -16,10 +16,12 @@ import { ApiError } from "../lib/api-error";
  */
 type AutomationErrorStatus = 403 | 404 | 409 | 422 | 503;
 
-const AUTOMATION_ERROR_RESPONSES: Readonly<Record<string, {
+interface AutomationErrorResponse {
   status: AutomationErrorStatus;
   message: string;
-}>> = {
+}
+
+const AUTOMATION_ERROR_RESPONSES = {
   automation_access_denied: { status: 403, message: "You do not have access to this automation." },
   automation_authority_mismatch: { status: 403, message: "You do not have access to this automation." },
   automation_identity_mismatch: { status: 404, message: "This automation could not be found." },
@@ -92,7 +94,23 @@ const AUTOMATION_ERROR_RESPONSES: Readonly<Record<string, {
     message: "Rally is finishing an update to automations. Try again in a moment.",
   },
   automation_draft_id_required: { status: 422, message: "This request is missing its draft." },
-};
+} as const satisfies Readonly<Record<string, AutomationErrorResponse>>;
+
+/**
+ * A code the table above answers for, so a refusal raised here rather than by
+ * the object cannot be spelled wrong. A typo would fall through
+ * `automationApiError` to the 500 this table exists to prevent, and nothing
+ * would say so until somebody hit that branch in production.
+ */
+export type AutomationRefusalCode = keyof typeof AUTOMATION_ERROR_RESPONSES;
+
+/**
+ * The same table keyed by an arbitrary string, for the lookup that starts from a
+ * code an object threw rather than one this module named.
+ */
+const RESPONSE_BY_CODE: ReadonlyMap<string, AutomationErrorResponse> = new Map(
+  Object.entries(AUTOMATION_ERROR_RESPONSES),
+);
 
 /** Codes that are safe to return verbatim with a generic sentence. */
 const SAFE_CODE = /^(automation|memory|email)_[a-z0-9_]+$/u;
@@ -107,7 +125,7 @@ const SAFE_CODE = /^(automation|memory|email)_[a-z0-9_]+$/u;
 export function automationApiError(error: unknown): never {
   if (error instanceof ApiError) throw error;
   const code = error instanceof Error ? error.message : "";
-  const mapped = AUTOMATION_ERROR_RESPONSES[code];
+  const mapped = RESPONSE_BY_CODE.get(code);
   if (mapped) throw new ApiError(mapped.status, code, mapped.message);
   if (SAFE_CODE.test(code)) {
     throw new ApiError(409, code, "This automation could not complete that request.");
@@ -122,4 +140,21 @@ export async function withAutomationErrors<T>(work: () => Promise<T>): Promise<T
   } catch (error) {
     automationApiError(error);
   }
+}
+
+/**
+ * Refuse from the REST boundary itself, in the object's own vocabulary.
+ *
+ * `withAutomationErrors` maps what an AutomationAgent throws, but two refusals
+ * on the create path are decided in `AutomationAgentService` before any RPC is
+ * made: a request carrying no draft id, and a submitted draft that no longer
+ * matches the stored definition. Both were raised as bare `Error`s outside that
+ * wrapper, so the sentences written for them here were never read — `POST
+ * /automations` answered `500 internal_error` / "An unexpected error occurred",
+ * logged at error severity, for a person whose only fault was reviewing a draft
+ * the compiler had since revised.
+ */
+export function automationRefusal(code: AutomationRefusalCode): never {
+  const mapped = AUTOMATION_ERROR_RESPONSES[code];
+  throw new ApiError(mapped.status, code, mapped.message);
 }

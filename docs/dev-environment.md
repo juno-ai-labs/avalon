@@ -130,6 +130,20 @@ during ordinary local work, so disabling them costs nothing here; `pnpm dev:api`
 still builds the image and is the path to use when the symbolicator itself is
 what you are working on.
 
+**On wrangler 4.126.0 that flag does not survive a multi-config session, and
+`dev:api:local` is one.** Each regional command passes three `--config` files —
+the API, document-processing and Terminal Workers — and with more than one,
+wrangler prints `Preparing container image(s)…` and fails on Docker regardless
+of `--enable-containers=false`; `"dev": { "enable_containers": false }` in the
+config is ignored the same way, in the main config and in all three. Verified by
+running the same command with one `--config` (ready in about two seconds, no
+image build) and with three (the Docker error above). So the documented sandbox
+path currently starts no Worker at all. Until wrangler is upgraded past it, the
+local workaround is to delete the `containers` array from
+`wrangler.global.jsonc` and `wrangler.eu.jsonc` for the session — the
+`CRASH_SYMBOLICATOR` Durable Object binding can stay, and both regions then come
+up normally — and to keep that edit out of the commit.
+
 `wrangler.global.jsonc` declares an `ai` binding, and Workers AI has no local
 implementation — wrangler reports it as `Mode: remote` and opens a remote proxy
 session to Cloudflare to serve it. Without Cloudflare credentials, or behind a
