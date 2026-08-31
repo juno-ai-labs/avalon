@@ -95,6 +95,27 @@ whose `DurableObject` base class stores `ctx` and `env` and does nothing else �
 so a Durable Object under Node is an ordinary class, and everything the platform
 contributes is absent by construction.
 
+#### Declaring a table the region does not have
+
+This suite's D1 starts empty and each test declares what it needs, which makes it
+easy to declare something a real region does not have. Every table in
+`WORKSPACE_LOCAL_TABLES` — `connector_connections`, `slack_user_links`,
+`resources`, the memory and digest families, and the rest — lives in WorkspaceDO,
+and migration 0090 dropped them from regional D1. A fixture that creates one in
+D1 hands the code under test an authority production retired, and a statement
+sent to the wrong one then passes here and 500s in production. It has: a
+delivery destination could not be saved on any automation for as long as that
+statement went to `env.DB`, and eleven fixtures in
+`test-workers/durable-object-runtime.test.ts` still declare `connector_connections`
+in D1 today, where they prove nothing about the routed reads they sit beside.
+
+Seed those tables in the object that owns them — `initializeWorkspace`, then
+`runInDurableObject(workspaceStub(), …)`. Where the absence is the point,
+`test-workers/automation-delivery-targets.test.ts` asserts it in its first test
+rather than trusting a comment to survive.
+`apps/api/test/durable-object-workspace-table-routing.test.ts` is the matching
+guard on the production side.
+
 ### 2. Node against real SQL
 
 When the behavior is a query or a schema rather than a runtime feature, run it
