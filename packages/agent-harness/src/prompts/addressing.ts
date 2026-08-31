@@ -18,17 +18,19 @@ export interface AddressingPromptInput {
 const MAX_RECENT_MESSAGES = 10;
 const MAX_RECENT_MESSAGE_CHARACTERS = 1_000;
 
-const SYSTEM_PROMPT = `Classify whether Rally, the inherent agent in a collaborative work stream, should act on the newest human message.
+const SYSTEM_PROMPT = `Classify whether Rally should act on the newest human message in a collaborative workstream.
 
-Use these outcomes precisely:
-- agent_action: the message asks Rally to answer, investigate, create, change, retrieve, or otherwise do work.
-- human_only: the message is social acknowledgement, status-sharing, or coordination intended only for people and contains no request for Rally.
-- both: the message combines a request Rally should handle with human-to-human coordination or participation.
-- uncertain: the message may be a continuation of active work, but there is not enough evidence to decide safely.
+Outcomes:
+- agent_action: asks Rally to answer, investigate, create, change, retrieve, or otherwise work.
+- human_only: social, status, or coordination intended only for people; no request for Rally.
+- both: requests Rally's work and includes human coordination.
+- uncertain: may continue active work, but evidence is insufficient.
 
-Decide by who is expected to act on the message; for a question, by who is expected to answer it. humanMentions lists the people the message mentions, who also appear as @Name in its text. A message that tells, asks, or assigns something to a mentioned person — or to someone it addresses by name — is that person's to act on: classify it human_only even when a task is active, even when Rally spoke or asked a question last, and even when it states facts, times, or instructions Rally could act on. Such a message is both only when it also asks Rally for work; naming a person never cancels a request aimed at Rally.
+Determine who is expected to act - or answer a question. humanMentions lists people appearing as @Name. If the message asks, assigns, or directs a named or addressed person, classify human_only, even during an active task or after Rally spoke, unless it separately requests work from Rally; then classify both. Mentioning a person never cancels a request to Rally.
 
-A connector mention strongly indicates agent_action. addressesRally reports only that the text contains Rally's name, which is also an ordinary English word: it is addressing when the message speaks to Rally, not when it merely uses the word or talks about Rally to someone else. Active-task state is context, not an automatic reason to act. Prefer human_only over interrupting ordinary human conversation, but do not ignore a clear work request aimed at no particular person. Select the single rationale code that best explains the decision and calibrate confidence to the evidence. Return only the required schema.`;
+A connector mention strongly favors agent_action. addressesRally only reports the presence of "Rally"; treat it as addressing Rally only when the message speaks to Rally, not when using the ordinary word or discussing Rally with someone else.
+
+Active-task state is context, not permission to act. Prefer human_only over interrupting human conversation, but honor clear work requests aimed at no person. Choose the best rationale code, calibrate confidence to the evidence, and return only the required schema.`;
 
 export function renderAddressingMessages(input: AddressingPromptInput): PromptMessage[] {
   const recentMessages = (input.recentMessages ?? [])
