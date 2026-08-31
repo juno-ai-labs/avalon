@@ -14,7 +14,7 @@ import { automationAgentName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { issueAutomationSocketTicket } from "./socket-service";
 import { AutomationService } from "./automation-service";
-import { withAutomationErrors } from "./automation-agent-errors";
+import { automationRefusal, withAutomationErrors } from "./automation-agent-errors";
 
 export const AutomationDraftTurnRequestSchema = z.object({
   clientCreationKey: IdSchema.optional(),
@@ -51,7 +51,7 @@ export class AutomationAgentService {
     }));
     const result = await this.admit(claim.automationId, input);
     const payloadHash = `draft:${claim.automationId}:1:${result.transcriptSequence}`;
-    await workspace.applyAutomationProjection({
+    await withAutomationErrors(() => workspace.applyAutomationProjection({
       schemaVersion: 1,
       automationId: claim.automationId,
       workspaceId: this.auth.workspaceId,
@@ -65,7 +65,7 @@ export class AutomationAgentService {
       description: "",
       nextRunAt: null,
       attentionCode: null,
-    });
+    }));
     return result;
   }
 
@@ -122,7 +122,7 @@ export class AutomationAgentService {
 
   async accept(rawInput: unknown): Promise<AutomationDetail> {
     const input = CreateAutomationRequestSchema.parse(rawInput);
-    if (!input.draftId) throw new Error("automation_draft_id_required");
+    if (!input.draftId) automationRefusal("automation_draft_id_required");
     const automationId = asAutomationId(input.draftId);
     const agent = await this.agent(automationId);
     const snapshot: AutomationAgentSnapshot = await withAutomationErrors(() => agent.readSnapshot({
@@ -132,7 +132,7 @@ export class AutomationAgentService {
     }));
     const canonicalDraft = AutomationDraftSchema.parse(snapshot.definition);
     if (JSON.stringify(canonicalDraft) !== JSON.stringify(input.draft)) {
-      throw new Error("automation_definition_revision_stale");
+      automationRefusal("automation_definition_revision_stale");
     }
     return withAutomationErrors(() => agent.acceptDraft({
       schemaVersion: 1,
@@ -233,10 +233,10 @@ export class AutomationAgentService {
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
     );
-    return workspace.listAutomationDirectory({
+    return withAutomationErrors(() => workspace.listAutomationDirectory({
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
-    });
+    }));
   }
 
   async share(automationId: string): Promise<{ templateId: string }> {
