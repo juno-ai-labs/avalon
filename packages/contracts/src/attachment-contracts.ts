@@ -34,6 +34,7 @@ export const ATTACHMENT_CONVERTER_TIMEOUT_MS = 30_000;
 
 export const ATTACHMENT_KIND_ENTRIES = [
   { kind: "image", description: "an image the agent can view" },
+  { kind: "audio", description: "an audio file the user can play" },
   { kind: "markdown", description: "a Markdown file" },
   { kind: "pdf", description: "a PDF document" },
   { kind: "document", description: "a word-processing document such as DOCX" },
@@ -45,6 +46,7 @@ export const ATTACHMENT_KIND_ENTRIES = [
 
 const ATTACHMENT_KINDS = ATTACHMENT_KIND_ENTRIES.map((entry) => entry.kind) as [
   "image",
+  "audio",
   "markdown",
   "pdf",
   "document",
@@ -87,6 +89,13 @@ const EXTENSION_KINDS: Readonly<Record<string, AttachmentKind>> = {
   tif: "image",
   tiff: "image",
   webp: "image",
+  aac: "audio",
+  flac: "audio",
+  m4a: "audio",
+  mp3: "audio",
+  ogg: "audio",
+  opus: "audio",
+  wav: "audio",
   markdown: "markdown",
   mdown: "markdown",
   md: "markdown",
@@ -187,6 +196,7 @@ export function classifyAttachmentKind(input: {
   const mimeType = normalizedMimeType(input.mimeType);
   if (!GENERIC_MIME_TYPES.has(mimeType)) {
     if (mimeType.startsWith("image/")) return "image";
+    if (mimeType.startsWith("audio/")) return "audio";
     if (mimeType === "text/markdown" || mimeType === "text/x-markdown") return "markdown";
     if (mimeType === "application/pdf") return "pdf";
     if (DOCUMENT_MIME_TYPES.has(mimeType)) return "document";

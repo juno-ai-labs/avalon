@@ -274,6 +274,26 @@ principal/resource and repository/publication checks remain executor
 preconditions rather than scopes. The sandbox lifecycle and authority fence are owned by
 [`terminal-workspaces.md`](terminal-workspaces.md), not by Bind.
 
+Ordinary work-stream runs with the main Azure inference credentials also
+register the deferred built-in `rally:multimodal-generation` plugin. It has no
+connection row and exposes three record-before-execute writes: create one image
+from a prompt, edit one currently visible image with an optional PNG mask, or
+turn bounded text into one AI-generated MP3 recording.
+Each tool has a five-minute ceiling and fixes the provider request to
+`gpt-image-2` for images or `gpt-4o-mini-tts` for speech. Image moderation,
+quality, background and count are fixed to low, medium, automatic and one;
+speech output is fixed to MP3 and defaults to the `marin` voice.
+The executor publishes the verified bytes to the workspace resource authority.
+Generation attaches a new resource; editing compare-and-swaps a new version onto
+the selected resource, preserving its ID and version history. A durable
+effect-intent-derived identity makes a settled replay converge on that resource;
+no raw media bytes enter a receipt or transcript. Audio remains a playable
+human-facing resource and is not projected back to the model. The shared
+OpenRouter-average pricing record is advisory on this surface: unavailable
+pricing or usage is logged and produces no image charge rather than hiding the
+plugin or refusing the call. [`agent-tools.md`](agent-tools.md#multimodal-generation-tool-contract-registry)
+owns the exact schemas and resource result.
+
 Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Rally revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
 
 Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference, and is answered from Rally's own records: the principal, the work stream, the automation authority, the connection's identity, scope, owner, grants, and disablement are what that check exists to catch, and all of them are already known here. Asking the provider instead would spend a round trip per active plugin per turn to rediscover them, and on a connector whose health check writes it would repeat that write. A credential the provider has since refused therefore surfaces on the next tool call rather than between turns — which is the right place, since that is where a provider call was going to happen anyway.
@@ -1122,6 +1142,54 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-30 — The multimodal plugin creates replay-safe speech resources
+
+**What changed:** `rally_multimodal_generation` now advertises a third Bind
+write, `generate_audio`. It calls the main Azure `gpt-4o-mini-tts` deployment,
+MIME-verifies and bounds one MP3 response, and publishes it under the durable
+effect identity. Desktop current-resource and version previews render native
+audio controls; the tool result and plugin system message carry the AI-voice
+disclosure because the same player also serves user-uploaded audio.
+
+**Why:** Generated speech needs the same plugin activation, receipt, timeout,
+regional storage and resource ownership as generated images. Keeping it in the
+existing multimodal plugin avoids a parallel lifecycle for one media subtype.
+
+**Considered and rejected:** Injecting generated audio into the following model
+turn. The output is for the person to play, not evidence the model needs to
+reconsume. Also rejected: a guessed charge when Azure returns no usage and the
+shared OpenRouter cache has no endpoint price for this model.
+
+**Consequences:** Audio generation is available anywhere the main Azure
+credential pair already enables multimodal generation. Its receipt and metadata
+must not persist the source text or instructions, and no billing entry is
+created without provider usage and a valid shared price.
+
+### 2026-08-30 — A dedicated plugin generates and edits durable images
+
+**What changed:** Runs with main Azure inference credentials now advertise the
+deferred `rally_multimodal_generation` plugin. Its initial two Bind tools call Azure's
+`gpt-image-2` image endpoints, return an ephemeral image part to the current
+turn. Generation publishes one durable generated resource under a
+receipt-derived identity; editing publishes a new version of the selected image
+resource under the same resource ID. Tool timeouts are fixed at five minutes.
+
+**Why:** The agent needs a native image capability that participates in Bind's
+plugin discovery, receipt policy, and workstream resource ownership. Reusing a
+chat-model route or Terminal would either misstate the provider API or make a
+first-class product operation depend on a sandbox.
+
+**Considered and rejected:** Preloading the plugin on every run; generation is
+specialized and its instructions and tools need not consume every model turn.
+Also rejected: failing closed on a missing cached price, because an
+observability/cache failure should not deny the requested image. The no-price
+case is logged and left uncharged.
+
+**Consequences:** The plugin is absent without the main Azure credential pair.
+West remains future fallback infrastructure and is not selected implicitly.
+The durable receipt stores JSON only; a later turn views the attached resource
+instead of replaying provider bytes.
 
 ### 2026-08-30 — Bound Grok models use Bind's Azure-first provider route
 

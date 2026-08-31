@@ -749,6 +749,34 @@ export class RallyApi {
     if (!response.ok) return this.throwResponseError(response);
   }
 
+  /**
+   * Opens the authenticated raw-PCM response without buffering it. Credential
+   * renewal is complete before the body is handed to Web Audio, so a replay
+   * can never splice two provider streams into one audible response.
+   */
+  async streamMessageSpeech(markdown: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+    const path = '/speech';
+    const headers = new Headers({
+      Accept: 'application/octet-stream',
+      'Content-Type': 'application/json',
+    });
+    const response = await this.traced(path, 'POST', undefined, headers, () => this.execute(path, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ markdown }),
+      signal,
+    }));
+    if (!response.ok) return this.throwResponseError(response);
+    if (!response.body) {
+      throw new ApiError('The speech service returned no audio stream.', 502, 'unexpected_empty_response');
+    }
+    if (response.headers.get('content-type') !== 'audio/pcm;rate=24000;channels=1;bits=16;endian=little') {
+      void response.body.cancel().catch(() => undefined);
+      throw new ApiError('The speech service returned an unsupported audio format.', 502, 'invalid_response');
+    }
+    return response.body;
+  }
+
   async getWorkspace(signal?: AbortSignal): Promise<Workspace> {
     const raw = await this.request('/workspace', { schema: WireWorkspaceSchema, signal });
     let currentUser: WorkspaceMember | undefined = this.session?.user

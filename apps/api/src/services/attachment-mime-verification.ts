@@ -51,6 +51,7 @@ export function verifyAttachmentMimeType(
   if (hasAscii(bytes, 0, "GIF87a") || hasAscii(bytes, 0, "GIF89a")) return "image/gif";
   if (hasAscii(bytes, 0, "RIFF") && hasAscii(bytes, 8, "WEBP")) return "image/webp";
   if (hasPrefix(bytes, [0x49, 0x49, 0x2a, 0x00]) || hasPrefix(bytes, [0x4d, 0x4d, 0x00, 0x2a])) return "image/tiff";
+  if (hasAscii(bytes, 0, "ID3") || (bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0)) return "audio/mpeg";
   if (hasAscii(bytes, 4, "ftyp") && /^(?:heic|heix|hevc|hevx|heim|heis|hevm|hevs|mif1|msf1)$/u.test(ascii(bytes, 8, 4))) {
     return "image/heif";
   }

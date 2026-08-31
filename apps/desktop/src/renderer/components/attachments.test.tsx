@@ -65,6 +65,32 @@ describe('attachment presentation', () => {
     await waitFor(() => expect(button).toHaveFocus());
   });
 
+  it('loads generated audio lazily and exposes an AI-voice player', async () => {
+    const attachment: MessageAttachment = {
+      id: 'resource-audio',
+      fileName: 'launch-update.mp3',
+      mimeType: 'audio/mpeg',
+      sizeBytes: 8,
+      contentAvailable: true,
+      createdAt: '2026-08-30T00:00:00.000Z',
+    };
+    const loadContent = vi.fn(async () => new Blob(['ID3audio'], { type: 'audio/mpeg' }));
+    function Example(): React.JSX.Element {
+      const [preview, setPreview] = useState<AttachmentPreview | null>(null);
+      return <><MessageAttachments attachments={[attachment]} loadContent={loadContent} onOpen={setPreview} /><AttachmentLightbox preview={preview} onClose={() => setPreview(null)} /></>;
+    }
+    render(<Example />);
+
+    const button = screen.getByRole('button', { name: 'Preview launch-update.mp3' });
+    fireEvent.click(button);
+
+    const player = await screen.findByLabelText('Audio: launch-update.mp3');
+    expect(player.tagName).toBe('AUDIO');
+    expect(player).toHaveAttribute('controls');
+    expect(player).toHaveAttribute('src', 'blob:remote-image');
+    expect(loadContent).toHaveBeenCalledOnce();
+  });
+
   it('says plainly that a prior version is not current, and offers the way back', async () => {
     const onReturnToCurrent = vi.fn();
     render(

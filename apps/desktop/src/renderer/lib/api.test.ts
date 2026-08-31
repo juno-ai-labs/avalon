@@ -1457,4 +1457,26 @@ describe('expired access-token recovery', () => {
       .toBe('/resources?limit,q');
     expect(redactQuery('/workstreams/abc/messages')).toBe('/workstreams/abc/messages');
   });
+
+  it('returns the authenticated speech body without buffering it', async () => {
+    const body = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(Uint8Array.of(0x00, 0x40));
+      controller.close();
+    } });
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(body, {
+      headers: { 'Content-Type': 'audio/pcm;rate=24000;channels=1;bits=16;endian=little' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    const stream = await api.streamMessageSpeech('## Complete response', new AbortController().signal);
+
+    expect(await stream.getReader().read()).toEqual({ done: false, value: Uint8Array.of(0x00, 0x40) });
+    expect(fetchMock).toHaveBeenCalledWith('https://api.rally.test/speech', expect.objectContaining({
+      body: JSON.stringify({ markdown: '## Complete response' }),
+      method: 'POST',
+    }));
+    const headers = new Headers(fetchMock.mock.calls[0]![1]!.headers);
+    expect(headers.get('authorization')).toBe(`Bearer ${session.accessToken}`);
+  });
 });

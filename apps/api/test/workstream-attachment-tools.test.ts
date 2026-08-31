@@ -384,12 +384,13 @@ describe("work-stream attachment tools", () => {
       .run(genericMarkdownId);
     const imageId = insertReadyResource(database, objectStore, bucket, 55, { mime: "image/png", title: "Diagram" });
     const kindFixtures = {
-      pdf: insertReadyResource(database, objectStore, bucket, 56, { mime: "application/pdf", title: "Report.pdf" }),
-      document: insertReadyResource(database, objectStore, bucket, 57, { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", title: "Brief.docx" }),
-      spreadsheet: insertReadyResource(database, objectStore, bucket, 58, { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", title: "Data.xlsx" }),
-      presentation: insertReadyResource(database, objectStore, bucket, 59, { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", title: "Pitch.pptx" }),
-      text: insertReadyResource(database, objectStore, bucket, 60, { mime: "text/plain", title: "Notes.txt" }),
-      other: insertReadyResource(database, objectStore, bucket, 61, { mime: "application/octet-stream", title: "Archive.bin" }),
+      audio: insertReadyResource(database, objectStore, bucket, 56, { mime: "audio/mpeg", title: "Voice.mp3" }),
+      pdf: insertReadyResource(database, objectStore, bucket, 57, { mime: "application/pdf", title: "Report.pdf" }),
+      document: insertReadyResource(database, objectStore, bucket, 58, { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", title: "Brief.docx" }),
+      spreadsheet: insertReadyResource(database, objectStore, bucket, 59, { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", title: "Data.xlsx" }),
+      presentation: insertReadyResource(database, objectStore, bucket, 60, { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", title: "Pitch.pptx" }),
+      text: insertReadyResource(database, objectStore, bucket, 61, { mime: "text/plain", title: "Notes.txt" }),
+      other: insertReadyResource(database, objectStore, bucket, 62, { mime: "application/octet-stream", title: "Archive.bin" }),
     } as const;
     database.prepare(
       "UPDATE resources SET model_content_status = 'unsupported', model_mime_type = NULL WHERE id = ?",
@@ -406,13 +407,13 @@ describe("work-stream attachment tools", () => {
     const inventoryCursor = (result.output as { nextCursor: string }).nextCursor;
     for (;;) {
       const output = result.output as { items: Array<{ resourceId: string }>; nextCursor: string | null; totalVisibleResources: number };
-      expect(output.totalVisibleResources).toBe(62);
+      expect(output.totalVisibleResources).toBe(63);
       ids.push(...output.items.map((item) => item.resourceId));
       if (!output.nextCursor) break;
       result = await list.execute({ cursor: output.nextCursor }, context());
     }
-    expect(ids).toHaveLength(62);
-    expect(new Set(ids).size).toBe(62);
+    expect(ids).toHaveLength(63);
+    expect(new Set(ids).size).toBe(63);
 
     await expect(list.execute({ attachmentKind: "image" }, context())).resolves.toMatchObject({
       output: { totalMatchingResources: 1, items: [{ resourceId: imageId, attachmentKind: "image", contentMode: "view" }], nextCursor: null },
@@ -423,7 +424,7 @@ describe("work-stream attachment tools", () => {
           items: expect.arrayContaining([expect.objectContaining({
             resourceId,
             attachmentKind,
-            contentMode: attachmentKind === "other" ? "unsupported" : "read",
+            contentMode: attachmentKind === "audio" || attachmentKind === "other" ? "unsupported" : "read",
           })]),
         },
       });
@@ -437,7 +438,7 @@ describe("work-stream attachment tools", () => {
       },
     });
 
-    insertReadyResource(database, objectStore, bucket, 62);
+    insertReadyResource(database, objectStore, bucket, 63);
     await expect(list.execute({ cursor: inventoryCursor }, context())).rejects.toMatchObject({ code: "invalid_cursor" });
   });
 
