@@ -212,25 +212,62 @@ describe("Terminal Bind integration", () => {
       signal: new AbortController().signal,
     });
 
-    expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce();
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT lifecycle_state, sandbox_id FROM terminal_workspace",
-    )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-1" });
-    const activationEvents = info.mock.calls
-      .map(([entry]) => entry as Record<string, unknown>)
-      .filter((entry) => entry.event === "terminal_plugin_activation_finished");
-    expect(activationEvents).toMatchObject([
-      {
-        activation_attempt: 1,
-        tool_call_id: `${R}:plugin:terminal:activation:1`,
-      },
-      {
-        activation_attempt: 2,
-        tool_call_id: `${R}:plugin:terminal:activation:2`,
-      },
-    ]);
+    // Activation no longer waits for the sandbox, so the provider work and its
+    // completion log land after `onActivate` has already returned.
+    await vi.waitFor(() => {
+      expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce();
+      expect(workstreamObjectGet(
+        objectStore,
+        "SELECT lifecycle_state, sandbox_id FROM terminal_workspace",
+      )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-1" });
+      const activationEvents = info.mock.calls
+        .map(([entry]) => entry as Record<string, unknown>)
+        .filter((entry) => entry.event === "terminal_plugin_activation_finished");
+      expect(activationEvents).toMatchObject([
+        {
+          activation_attempt: 1,
+          tool_call_id: `${R}:plugin:terminal:activation:1`,
+        },
+        {
+          activation_attempt: 2,
+          tool_call_id: `${R}:plugin:terminal:activation:2`,
+        },
+      ]);
+    });
     info.mockRestore();
+  });
+
+  it("returns from activation while the sandbox is still being provisioned", async () => {
+    // The whole point of the change: the model is not held behind provisioning.
+    // Gate the provider call so the assertion cannot pass by the acquisition
+    // simply having been fast.
+    const { env, input } = fixture("supported");
+    const sandboxProvider = provider();
+    let releaseCreate = (): void => undefined;
+    const created = new Promise<void>((resolve) => { releaseCreate = () => resolve(); });
+    vi.mocked(sandboxProvider.createSandbox).mockImplementation(async (request) => {
+      await created;
+      return {
+        id: `sandbox-${request.generation}`,
+        name: request.stableName,
+        state: "running" as const,
+        domainAllowList: request.domainAllowList,
+      };
+    });
+    const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
+      provider: sandboxProvider,
+    });
+
+    await expect(plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    })).resolves.toBeUndefined();
+
+    releaseCreate();
+    await vi.waitFor(() => expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce());
   });
 
   it("prepares a selected repository during activation", async () => {
@@ -270,23 +307,27 @@ describe("Terminal Bind integration", () => {
       signal: new AbortController().signal,
     });
 
-    expect(githubReadGateway.mintRepositoryToken).toHaveBeenCalledOnce();
-    expect(sandboxProvider.configureGitHubReadAccess).toHaveBeenCalledWith("sandbox-1", {
-      gitBasicCredential: btoa("x-access-token:read-token"),
-      ghToken: "read-token",
+    // Repository preparation still happens under activation, but activation no
+    // longer waits for it, so it lands after `onActivate` has returned.
+    await vi.waitFor(() => {
+      expect(githubReadGateway.mintRepositoryToken).toHaveBeenCalledOnce();
+      expect(sandboxProvider.configureGitHubReadAccess).toHaveBeenCalledWith("sandbox-1", {
+        gitBasicCredential: btoa("x-access-token:read-token"),
+        ghToken: "read-token",
+      });
+      expect(sandboxProvider.runUtilityCommand).toHaveBeenCalledWith(
+        "sandbox-1",
+        expect.objectContaining({
+          operation: "repository.bootstrap",
+          command: expect.stringContaining("clone --no-checkout 'https://github.com/owner/repo.git'"),
+          timeoutMs: 180_000,
+        }),
+      );
+      expect(workstreamObjectGet(
+        objectStore,
+        "SELECT bootstrapped_sandbox_generation FROM terminal_repository",
+      )).toEqual({ bootstrapped_sandbox_generation: 1 });
     });
-    expect(sandboxProvider.runUtilityCommand).toHaveBeenCalledWith(
-      "sandbox-1",
-      expect.objectContaining({
-        operation: "repository.bootstrap",
-        command: expect.stringContaining("clone --no-checkout 'https://github.com/owner/repo.git'"),
-        timeoutMs: 180_000,
-      }),
-    );
-    expect(workstreamObjectGet(
-      objectStore,
-      "SELECT bootstrapped_sandbox_generation FROM terminal_repository",
-    )).toEqual({ bootstrapped_sandbox_generation: 1 });
 
     await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
       { filePath: "README.md", offset: 1, limit: 200 },
@@ -450,14 +491,14 @@ describe("Terminal Bind integration", () => {
     const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
     expect(plugin?.tools).toHaveLength(9);
+    // Activation stopped blocking the model, so it also stopped being the place
+    // a provider failure is raised. The breaker now surfaces on the first tool
+    // that actually needs a sandbox, with the same operator guidance, while the
+    // plugin stays loaded so unrelated work in the same turn is unaffected.
     await expect(plugin!.onActivate!({
       workspaceId: W, workstreamId: S, harnessRunId: R,
       executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
-    })).rejects.toMatchObject({
-      name: "HarnessPluginActivationError",
-      message: "Wait for an operator to re-enable Terminal before trying another tool.",
-      retryable: false,
-    });
+    })).resolves.toBeUndefined();
     await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
       { filePath: "README.md" },
       {
