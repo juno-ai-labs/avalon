@@ -314,7 +314,6 @@ function MarkdownTable({ children, node, style, ...props }: React.ComponentProps
  * The pattern is a bare tag only. `<br class="x">` and every other element
  * stay as they were, which is what keeps this from becoming an HTML parser.
  */
-const HTML_BREAK_TAG = /<br\s*\/?>/giu;
 const BARE_BREAK_TAG = /^<br\s*\/?>$/iu;
 
 /**
@@ -346,32 +345,10 @@ function rewriteMarkdownBreaks(node: BreaksNode): void {
       rebuilt.push({ type: 'break' });
       continue;
     }
-    if (child.type === 'text' && child.value !== undefined) {
-      const pieces = splitHtmlBreaks(child.value);
-      if (pieces !== undefined) {
-        rebuilt ??= children.slice(0, index);
-        rebuilt.push(...pieces);
-        continue;
-      }
-    } else {
-      rewriteMarkdownBreaks(child);
-    }
+    rewriteMarkdownBreaks(child);
     rebuilt?.push(child);
   }
   if (rebuilt !== undefined) node.children = rebuilt;
-}
-
-function splitHtmlBreaks(value: string): BreaksNode[] | undefined {
-  if (!value.toLowerCase().includes('<br')) return undefined;
-  const parts = value.split(HTML_BREAK_TAG);
-  if (parts.length === 1) return undefined;
-  const nodes: BreaksNode[] = [];
-  for (let index = 0; index < parts.length; index += 1) {
-    const part = parts[index]!;
-    if (part.length > 0) nodes.push({ type: 'text', value: part });
-    if (index < parts.length - 1) nodes.push({ type: 'break' });
-  }
-  return nodes;
 }
 
 function personIdFromHref(href: string | undefined): string | undefined {

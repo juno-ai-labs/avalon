@@ -113,8 +113,8 @@ width proportional to how many columns it actually has.
 A GFM table cell cannot contain a real newline — that ends the row — so models
 write `<br/>` inside one. Ordinary paragraphs pick up the same habit. Because
 this renderer does not parse HTML, a remark pass after `remark-gfm` turns a
-bare break tag (`<br>`, `<br/>`, `<br />`) into an mdast `break`, whether the
-parser left it as an `html` node or as characters inside a text node. Code is
+bare break tag (`<br>`, `<br/>`, `<br />`) from its mdast `html` node into a
+`break`. Escaped and encoded examples remain text nodes and stay text. Code is
 skipped. Every other tag stays as it was. The pass runs on every body,
 including `verbatim`: this is a renderer affordance for one tag, not a repair
 of what a model meant, and a stored document's table uses the same workaround.
@@ -405,10 +405,11 @@ written this way is a sign it is not a typography override.
   looked like was *nothing* — no error, no visual break, just a list without
   markers that nobody connected to a CSS change made elsewhere.
 - **A bare break tag is the only HTML that becomes an element.** `<br>`,
-  `<br/>`, and `<br />` in a text node become a `<br>` element; a tagged
-  `<br class="…">` and every other element stay characters. Widening the
-  pattern is how this becomes an HTML parser. Code is not rewritten. The pass
-  runs on `verbatim` bodies too — it is not TeX repair.
+  `<br/>`, and `<br />` parsed as `html` become a `<br>` element; escaped or
+  encoded examples stay text, and a tagged `<br class="…">` and every other
+  element stay characters. Widening the pattern is how this becomes an HTML
+  parser. Code is not rewritten. The pass runs on `verbatim` bodies too — it is
+  not TeX repair.
 - **Markdown element styling lives in the `.markdown-body` group and nowhere
   else.** A rule like `.note-detail-article ul` ties `.markdown-body ul` on
   specificity, so which one applies is decided by which is further down a
@@ -639,9 +640,9 @@ The traps, both of which have bitten:
 ### 2026-08-30 — A bare `<br/>` becomes a line break, in tables and in prose
 
 **What changed:** `MarkdownBody` runs a remark pass after `remark-gfm` that
-turns a bare break tag into an mdast `break` — whether the parser left it as
-an `html` node or as characters inside a text node. Tables and ordinary
-paragraphs both get it. Code is skipped. `verbatim` bodies get it too. The
+turns a bare break tag's mdast `html` node into a `break`. Tables and ordinary
+paragraphs both get it; escaped and encoded examples stay text. Code is skipped.
+`verbatim` bodies get it too. The
 email renderer does the same rewrite on prose (after escaping, after parking
 code spans) and turns the tag into a newline in the plain-text part.
 

@@ -822,15 +822,19 @@ describe('MessageBlock markdown', () => {
     const body = document.querySelector('.markdown-body')!;
     const paragraph = body.querySelector('p')!;
     expect(paragraph.querySelectorAll('br')).toHaveLength(1);
-    expect(paragraph.textContent).toBe('Line one\nLine two');
+    expect(paragraph.firstChild?.textContent).toBe('Line one');
+    expect(paragraph.lastChild?.textContent?.trim()).toBe('Line two');
 
     const cell = screen.getByRole('cell', { name: /src\/a\.ts/u });
     expect(cell.querySelectorAll('br')).toHaveLength(2);
     expect(cell.textContent).not.toContain('<br');
     expect(cell.querySelector('.markdown-inline-code')?.textContent).toBe('src/a.ts');
 
-    expect(body.textContent).toContain('<div>stay</div>');
-    expect(body.textContent).toContain('<br class="x">');
+    const taggedParagraph = Array.from(body.querySelectorAll('p'))
+      .find((candidate) => candidate.textContent?.includes('<br class="x">'));
+    expect(taggedParagraph).toBeDefined();
+    expect(taggedParagraph?.querySelectorAll('br')).toHaveLength(0);
+    expect(taggedParagraph?.textContent).toContain('<div>stay</div>');
     expect(screen.getByText('a<br/>b')).toHaveClass('markdown-inline-code');
     expect(document.querySelector('.markdown-code-block')?.textContent).toContain('<br/>');
   });
@@ -842,7 +846,17 @@ describe('MessageBlock markdown', () => {
     render(<MarkdownBody verbatim>{'Hello<br />there'}</MarkdownBody>);
     const paragraph = document.querySelector('.markdown-body p')!;
     expect(paragraph.querySelectorAll('br')).toHaveLength(1);
-    expect(paragraph.textContent).toBe('Hello\nthere');
+    expect(paragraph.firstChild?.textContent).toBe('Hello');
+    expect(paragraph.lastChild?.textContent?.trim()).toBe('there');
+  });
+
+  it.each([false, true])('keeps escaped break-tag text when verbatim is %s', (verbatim) => {
+    const source = 'Backslash \\<br/> and entity &lt;br/&gt; stay text.';
+    render(<MarkdownBody verbatim={verbatim}>{source}</MarkdownBody>);
+
+    const paragraph = document.querySelector('.markdown-body p')!;
+    expect(paragraph.querySelectorAll('br')).toHaveLength(0);
+    expect(paragraph.textContent).toBe('Backslash <br/> and entity <br/> stay text.');
   });
 
   it('renders unsupported fenced languages as plain text without losing their label', () => {
