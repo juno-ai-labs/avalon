@@ -726,8 +726,12 @@ contain SQL, bindings, returned rows, or SQLite error text.
 **What changed:** The Markdown renderer may insert SVG generated from a
 `mermaid` fence. Mermaid is initialized with strict security, HTML labels and
 interaction disabled, and secure configuration keys that keep diagram
-frontmatter from widening those choices. Its `bindFunctions` result is not used;
-invalid input falls back to the source block.
+frontmatter from widening those choices or replacing Rally's token-derived
+theme. The lock covers the security level, HTML labels, startup/error/resource
+caps, theme, theme CSS/variables, typography, and visual look. Its
+`bindFunctions` result is not used; invalid input falls back to the source
+block. Strict mode still emits ordinary SVG links, so Rally unwraps anchors and
+removes every non-fragment `href` before inserting the result.
 
 **Why:** Diagram rendering necessarily produces markup from untrusted model or
 member text, unlike the rest of Rally's raw-HTML-free Markdown path. Naming and
@@ -737,8 +741,9 @@ turning labels into HTML or destinations into UI behavior.
 
 **What a future change has to respect:** keep the insertion point confined to
 Mermaid's strict sanitised SVG. Do not enable loose/antiscript mode, HTML labels,
-links, callbacks, or `bindFunctions`; a request for interactive diagrams is a
-new trust-boundary decision, not a styling change.
+callbacks, or `bindFunctions`. Keep the post-render link removal even when
+upgrading Mermaid: `strict` does not mean non-interactive. A request for
+interactive diagrams is a new trust-boundary decision, not a styling change.
 
 ### 2026-08-29 — The deep-link failure window joins the trusted-sender set
 
