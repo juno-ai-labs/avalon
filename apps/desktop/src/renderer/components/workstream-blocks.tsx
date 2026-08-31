@@ -1705,6 +1705,12 @@ interface MessageBlockProps {
    * message degrades to the label text it already carried.
    */
   citations?: CitationContext;
+  /**
+   * Whether agent-message headings use the compact feed accordions. This is a
+   * host decision because MessageBlock also renders automation and launch
+   * conversations, which are not the main work-stream feed.
+   */
+  collapseHeadings?: boolean;
   currentUserId?: string;
   message: Message;
   loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
@@ -1715,6 +1721,7 @@ interface MessageBlockProps {
 
 export function MessageBlock({
   citations,
+  collapseHeadings = false,
   currentUserId,
   loadAttachmentContent,
   message,
@@ -1814,7 +1821,7 @@ export function MessageBlock({
           {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
           <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
           {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
-          {!human && <MarkdownCollapseAllButton />}
+          {!human && collapseHeadings && <MarkdownCollapseAllButton />}
         </header>
       )}
       {sending
@@ -1850,7 +1857,7 @@ export function MessageBlock({
               ) : null}
               <AssistantMessageContent
                 citations={citations}
-                collapseHeadings
+                collapseHeadings={collapseHeadings}
                 mentions={message.mentions}
                 streaming={message.streaming}
                 text={message.text ?? ''}
@@ -1860,7 +1867,7 @@ export function MessageBlock({
           )}
     </article>
   );
-  if (human) return article;
+  if (human || !collapseHeadings) return article;
   // Same repair the body applies, so the header's collapse-all and the
   // body's section wrappers agree on `section-${index}` ids. Mentions are
   // inline links and cannot change the heading count.
