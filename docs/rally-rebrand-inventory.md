@@ -323,6 +323,14 @@ call", "do not repeat the command"). Those moved too. Finding them took the
 positive check rather than a list of likely files, which is the same lesson
 recorded under the section 3 sweep.
 
+One more of the same class surfaced on 2026-08-26, found from behavior rather
+than a sweep: the work-stream object labelled the agent's own turns `"Avalon"`
+in the recent-message context it hands the addressing classifier. An author
+field, not a prompt file — but it is serialized into the same user-role JSON
+the classifier reads, whose system prompt introduces the agent as Rally, so the
+classifier could not tell that the agent itself had asked the question a member
+was answering. It now says Rally.
+
 **Tool descriptions the model reads when choosing a tool** — the six Google Docs
 and Sheets descriptions in `packages/connectors/src/index.ts`, the X plugin, the
 Linear native-agent plugin, and the core plugin's own utilities line all moved;

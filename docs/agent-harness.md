@@ -123,7 +123,7 @@ but still keeps one stable loop identity.
 
 ### Addressing
 
-Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
+Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
 
 ### Naming
 
@@ -1966,6 +1966,45 @@ is only the admitted input; the ledger follows every later accepted mutation.
 **Consequences:** A run cannot continue when transcript persistence or boundary
 equality fails. The system prompt remains a deterministic runtime projection,
 but its rendered bytes and revision participate in every equality check.
+### 2026-08-26 — The addressing classifier is told who a message mentions
+
+**What changed:** `classifyAddressing` and its prompt gained a `humanMentions`
+input — the display names of the people the message mentions, resolved by the
+work-stream object from the same validated mention rows that drive
+notifications, and serialized into the classifier's user-role JSON beside
+`connectorMentions`. The prompt now rules that a message telling, asking, or
+assigning something to a mentioned person (or to someone it addresses by name)
+is that person's to act on — `human_only` even during an active task, even when
+Rally spoke last, and even when it states facts or times Rally could act on —
+with two stated tie-breaks: naming a person never cancels a request aimed at
+Rally, and `addressesRally` reports only that the text contains the product's
+name, which the model must read as addressing only when the message speaks *to*
+Rally. The deterministic imperative fast path no longer fires when the message
+mentions a person; it hands those to the model instead. The work-stream object
+also now labels the agent's own turns "Rally" rather than "Avalon" in the
+classifier's recent-message context.
+
+**Why:** a member tagged a teammate — "@Alex Todorovic this was sent at
+12:08 Pac" — and Rally answered, checking the current time and "logging" the
+timestamp. The classifier never received who the message mentioned: the object
+resolved and validated the mentions, then dropped them, so the model saw only
+raw text, an active-task flag, and an outcome list with no rule for
+person-directed messages. During an active task that reads as a continuation of
+work. The prompt could not state a person-addressing rule a medium model could
+follow until the audience arrived as data, which is the same reason the
+ambiguous product name rides in as `addressesRally` rather than being decided by
+regex. The "Avalon" author label was a rebrand miss of the documented
+model-facing-string class: the prompt introduces the agent as Rally, so history
+attributed to "Avalon" hid from the classifier that the agent itself had asked
+the pending question.
+
+**Consequences:** an imperative message that mentions a person now costs a model
+call where it used to classify deterministically at 0.9 — the price of not
+answering work that was handed to a teammate. A message that only *names* a
+person mid-sentence without a mention chip carries no `humanMentions` entry and
+is covered only by the prompt's addressed-by-name clause, so plain-text
+addressing remains a judgment call for the model. `docs/rally-rebrand-inventory.md`
+records the author-label rename.
 
 ### 2026-08-26 — A run's own subscription decides whether it is an automation run
 
