@@ -10,6 +10,7 @@ export interface AddressingPromptInput {
   message: string;
   activeTask: boolean;
   connectorMentions: string[];
+  humanMentions: string[];
   addressesRally: boolean;
   recentMessages?: AddressingContextMessage[];
 }
@@ -25,7 +26,9 @@ Use these outcomes precisely:
 - both: the message combines a request Rally should handle with human-to-human coordination or participation.
 - uncertain: the message may be a continuation of active work, but there is not enough evidence to decide safely.
 
-An explicit Rally reference or connector mention strongly indicates agent_action. A question is not automatically mixed: classify it by who is expected to answer. Active-task state is context, not an automatic reason to act. Prefer human_only over interrupting ordinary human conversation, but do not ignore a clear work request. Select the single rationale code that best explains the decision and calibrate confidence to the evidence. Return only the required schema.`;
+Decide by who is expected to act on the message; for a question, by who is expected to answer it. humanMentions lists the people the message mentions, who also appear as @Name in its text. A message that tells, asks, or assigns something to a mentioned person — or to someone it addresses by name — is that person's to act on: classify it human_only even when a task is active, even when Rally spoke or asked a question last, and even when it states facts, times, or instructions Rally could act on. Such a message is both only when it also asks Rally for work; naming a person never cancels a request aimed at Rally.
+
+A connector mention strongly indicates agent_action. addressesRally reports only that the text contains Rally's name, which is also an ordinary English word: it is addressing when the message speaks to Rally, not when it merely uses the word or talks about Rally to someone else. Active-task state is context, not an automatic reason to act. Prefer human_only over interrupting ordinary human conversation, but do not ignore a clear work request aimed at no particular person. Select the single rationale code that best explains the decision and calibrate confidence to the evidence. Return only the required schema.`;
 
 export function renderAddressingMessages(input: AddressingPromptInput): PromptMessage[] {
   const recentMessages = (input.recentMessages ?? [])
@@ -42,6 +45,7 @@ export function renderAddressingMessages(input: AddressingPromptInput): PromptMe
       content: JSON.stringify({
         activeTask: input.activeTask,
         connectorMentions: input.connectorMentions,
+        humanMentions: input.humanMentions,
         addressesRally: input.addressesRally,
         recentMessages,
         currentMessage: input.message,
