@@ -15,6 +15,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { issueAutomationSocketTicket } from "./socket-service";
 import { AutomationService } from "./automation-service";
 import { automationRefusal, withAutomationErrors } from "./automation-agent-errors";
+import { logWarn } from "../observability/logger";
 
 export const AutomationDraftTurnRequestSchema = z.object({
   clientCreationKey: IdSchema.optional(),
@@ -25,6 +26,24 @@ export const AutomationDraftTurnRequestSchema = z.object({
 }).strict();
 
 export type AutomationDraftTurnRequest = z.infer<typeof AutomationDraftTurnRequestSchema>;
+
+/**
+ * The top-level draft fields whose serialized values disagree.
+ *
+ * Names only, and only the ones `AutomationDraftSchema` declares — a draft's
+ * values are the member's own prose. A field the caller omitted entirely shows
+ * up here too, which is the shape a client built against an older copy of the
+ * contract produces.
+ */
+function differingDraftFields(canonical: unknown, submitted: unknown): string[] {
+  if (canonical === null || typeof canonical !== "object") return ["(root)"];
+  const submittedRecord = submitted !== null && typeof submitted === "object"
+    ? submitted as Record<string, unknown>
+    : {};
+  return Object.keys(canonical as Record<string, unknown>).filter((key) => (
+    JSON.stringify((canonical as Record<string, unknown>)[key]) !== JSON.stringify(submittedRecord[key])
+  ));
+}
 
 export class AutomationAgentService {
   constructor(
@@ -51,7 +70,15 @@ export class AutomationAgentService {
     }));
     const result = await this.admit(claim.automationId, input);
     const payloadHash = `draft:${claim.automationId}:1:${result.transcriptSequence}`;
-    await withAutomationErrors(() => workspace.applyAutomationProjection({
+    // Deliberately outside `withAutomationErrors`. Everything this call can
+    // throw is a fault rather than a refusal — a `ZodError` on its own strict
+    // schema, `workspace_object_identity_mismatch` from addressing the wrong
+    // object, or `automation_projection_hash_conflict`, which means two writers
+    // disagreed about a coordinate the directory already holds. The table this
+    // wrapper reads answers 403/404/409/422/503 and cannot express "fault", so
+    // wrapping would move a real defect onto `SAFE_CODE`'s generic 409 — the
+    // status a client retries — instead of the 500 that is true of it.
+    await workspace.applyAutomationProjection({
       schemaVersion: 1,
       automationId: claim.automationId,
       workspaceId: this.auth.workspaceId,
@@ -65,7 +92,7 @@ export class AutomationAgentService {
       description: "",
       nextRunAt: null,
       attentionCode: null,
-    }));
+    });
     return result;
   }
 
@@ -130,8 +157,30 @@ export class AutomationAgentService {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
     }));
+    // A draft whose first compiler run has not settled has no definition row at
+    // all, and `admitFirstTurn` hands the client its id the moment the turn is
+    // admitted — so this is reachable, and parsing `null` here threw the exact
+    // `ZodError`-to-500 this change exists to remove, one line above the fix.
+    // A definition that is present but fails the schema is left to fault: the
+    // server wrote something it can no longer read, which is not a refusal.
+    if (snapshot.definition === null) automationRefusal("automation_definition_not_ready");
     const canonicalDraft = AutomationDraftSchema.parse(snapshot.definition);
     if (JSON.stringify(canonicalDraft) !== JSON.stringify(input.draft)) {
+      // Which fields disagree, before refusing. The refusal is written for one
+      // cause — a compiler turn settling while somebody reviewed the summary —
+      // and reads as transient. It fires for a second cause that is neither
+      // transient nor the caller's fault: a desktop build whose bundled
+      // `AutomationDraftSchema` differs from this one strips or defaults a
+      // field on its way back, so every attempt from that build refuses
+      // forever. The two are indistinguishable in the response and were
+      // indistinguishable in the log; the field names separate them, and they
+      // are schema shape rather than member content, so they are safe to
+      // record where the values would not be.
+      logWarn(this.env, "automation_definition_revision_stale", {
+        automation_id: automationId,
+        definition_revision: snapshot.definitionRevision,
+        differing_fields: differingDraftFields(canonicalDraft, input.draft),
+      });
       automationRefusal("automation_definition_revision_stale");
     }
     return withAutomationErrors(() => agent.acceptDraft({
