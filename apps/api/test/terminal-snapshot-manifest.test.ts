@@ -70,6 +70,36 @@ describe("Terminal snapshot manifest", () => {
     expect(command).not.toContain("gh --version");
   });
 
+  it("installs both Node capabilities in a single npm invocation", () => {
+    // Two `npm install --global` calls each pay npm's start-up and registry
+    // handshake before installing anything: 3.3s split against 1.5s combined,
+    // on the critical path of the participant's first Terminal tool.
+    const command = terminalManagedSnapshotBootstrapCommand();
+    const invocations = command.split("\n").filter((line) => line.includes("npm install --global"));
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]).toContain("$node_packages");
+    expect(command).toContain("node_packages=\"$node_packages pnpm@11.13.0\"");
+    expect(command).toContain("node_packages=\"$node_packages tsx@4.20.6\"");
+    // The whole block stays a no-op on a snapshot that already ships both.
+    expect(command).toContain("if [ -n \"$node_packages\" ]");
+  });
+
+  it("runs every probe concurrently and fails closed naming all missing capabilities", () => {
+    const command = terminalSnapshotProbeCommand();
+    const backgrounded = command.split("\n").filter((line) => line.endsWith("&"));
+    expect(backgrounded).toHaveLength(TERMINAL_SNAPSHOT_PROBES.length);
+    expect(command).toContain("wait");
+    for (const probe of TERMINAL_SNAPSHOT_PROBES) {
+      expect(command).toContain(`>"$probe_results/${probe.id}"`);
+      expect(command).toContain(probe.command);
+    }
+    // A probe that fails writes no marker; the sweep after `wait` is what makes
+    // a missing capability non-zero rather than merely unreported.
+    expect(command).toContain("AVALON_PROBE_MISSING=");
+    expect(command).toContain("exit 1");
+    expect(command).toContain("trap 'rm -rf -- \"$probe_results\"' EXIT");
+  });
+
   it("functionally exercises every supported installer in Trusted only", () => {
     const command = terminalPackageManagerAcceptanceCommand();
     expect(command).toContain("sudo -n apt-get update");

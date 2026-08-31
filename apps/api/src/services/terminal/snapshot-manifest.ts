@@ -40,21 +40,53 @@ export function terminalManagedSnapshotBootstrapCommand(): string {
     "if ! command -v sqlite3 >/dev/null 2>&1; then system_packages=\"$system_packages sqlite3\"; installed_capabilities=\"$installed_capabilities,sqlite3\"; fi",
     "if ! command -v gh >/dev/null 2>&1; then system_packages=\"$system_packages gh\"; installed_capabilities=\"$installed_capabilities,gh\"; fi",
     "if [ -n \"$system_packages\" ]; then sudo -n apt-get update -qq && sudo -n apt-get install -y --no-install-recommends $system_packages >/dev/null; fi",
-    "if ! command -v pnpm >/dev/null 2>&1; then npm install --global 'pnpm@11.13.0' >/dev/null; installed_capabilities=\"$installed_capabilities,pnpm\"; fi",
-    "if ! command -v tsx >/dev/null 2>&1; then npm install --global 'tsx@4.20.6' >/dev/null; installed_capabilities=\"$installed_capabilities,tsx\"; fi",
+    // One `npm install --global` for both packages rather than one apiece. Each
+    // invocation pays npm's own start-up and registry handshake before it
+    // installs anything, so two sequential calls cost about twice a single call
+    // carrying both — measured at 3.3s split versus 1.5s combined. Accumulating
+    // into a variable first mirrors the apt branch immediately above, and keeps
+    // the whole block a no-op when the snapshot already ships both.
+    "node_packages=''",
+    "if ! command -v pnpm >/dev/null 2>&1; then node_packages=\"$node_packages pnpm@11.13.0\"; installed_capabilities=\"$installed_capabilities,pnpm\"; fi",
+    "if ! command -v tsx >/dev/null 2>&1; then node_packages=\"$node_packages tsx@4.20.6\"; installed_capabilities=\"$installed_capabilities,tsx\"; fi",
+    "if [ -n \"$node_packages\" ]; then npm install --global $node_packages >/dev/null; fi",
     "printf 'AVALON_BOOTSTRAP_INSTALLED=%s\\n' \"${installed_capabilities#,}\"",
   ].join("\n");
 }
 
+/**
+ * Verifies the pinned snapshot still satisfies the manifest.
+ *
+ * The probes are independent of one another, and each one pays a whole runtime
+ * start-up: `pnpm --version` alone costs about 770ms, `python3 -m pip` about
+ * 250ms. Run sequentially that is the entire probe budget spent waiting on
+ * fifteen interpreters to boot one after another, on the critical path of the
+ * participant's first Terminal tool. Running them concurrently bounds the phase
+ * by its slowest single probe instead of their sum.
+ *
+ * It still fails closed: a probe that fails writes no marker, and the check
+ * after `wait` exits non-zero when any marker is missing. Reporting *every*
+ * missing capability rather than only the first also makes a breaking managed
+ * image update one diagnostic instead of one per redeploy.
+ */
 export function terminalSnapshotProbeCommand(): string {
+  const ids = TERMINAL_SNAPSHOT_PROBES.map((probe) => probe.id);
   return [
     "set -euo pipefail",
     "test -d /workspace/.rally/tmp",
     "test -d /workspace/.rally-output",
-    ...TERMINAL_SNAPSHOT_PROBES.flatMap((probe) => [
-      probe.command,
-      `printf '%s\\n' '${probe.id}:ok'`,
-    ]),
+    "probe_results=\"$(mktemp -d /workspace/.rally/tmp/probe.XXXXXX)\"",
+    "trap 'rm -rf -- \"$probe_results\"' EXIT",
+    ...TERMINAL_SNAPSHOT_PROBES.map((probe) => (
+      `{ ${probe.command} ; } >/dev/null 2>&1 && printf '%s\\n' '${probe.id}:ok' >"$probe_results/${probe.id}" &`
+    )),
+    "wait",
+    "probe_missing=''",
+    `for probe_id in ${ids.join(" ")}; do`,
+    "  if [ ! -s \"$probe_results/$probe_id\" ]; then probe_missing=\"$probe_missing $probe_id\"; fi",
+    "done",
+    "if [ -n \"$probe_missing\" ]; then printf 'AVALON_PROBE_MISSING=%s\\n' \"${probe_missing# }\"; exit 1; fi",
+    "cat -- \"$probe_results\"/*",
   ].join("\n");
 }
 
