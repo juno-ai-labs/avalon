@@ -139,21 +139,26 @@ configuration locations, OAuth, approvals, and MCP logs.
 
 ## Hosted clients
 
-The instructions above cover installed Codex clients, Claude Code, and Cursor
-Desktop. Hosted clients use HTTPS callbacks rather than a loopback callback and
-are not admitted automatically:
+Claude Code on the web, ChatGPT/Codex hosted surfaces, and Cursor web or Cloud
+Agents complete OAuth through HTTPS callbacks owned by their service. The Rally
+Access application admits hosted callbacks anywhere under these provider
+origins:
 
-- ChatGPT web uses a published plugin rather than the local Codex MCP
-  configuration.
-- A Claude.ai custom connector needs its exact HTTPS OAuth callback added to the
-  Access application's Managed OAuth redirect allowlist.
-- Cursor web and Cloud Agents use
-  `https://www.cursor.com/agents/mcp/oauth/callback`, which likewise needs an
-  explicit Access allowlist entry.
+- `https://claude.ai/*`
+- `https://chatgpt.com/*`
+- `https://cursor.com/*`
+- `https://www.cursor.com/*`
 
-An Access administrator must review and add a hosted callback before that
-surface is used. Do not broaden the redirect allowlist or add a wildcard merely
-to make a client connect. Cloudflare documents the distinction in its
+Add `https://mcp.internal.rallywith.ai/mcp` in the hosted client's connector
+settings and choose its normal sign-in action. Dynamic Client Registration
+creates the client automatically; do not enter a static OAuth Client ID. The
+Cloudflare Access login still requires an engineering identity admitted by the
+Ace-derived policy.
+
+Cloudflare supports a trailing `/*` for all paths on a specific HTTPS origin,
+but does not document an allow-any-HTTPS-origin setting. Supporting another
+hosted provider therefore requires adding its provider origin to the deployment
+provisioner. See Cloudflare's
 [Managed OAuth settings](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/).
 
 ## First safe inspection
@@ -235,7 +240,7 @@ maintenance; it is not a domain-level count of changed records.
 | --- | --- |
 | Browser login never opens | Run the client's explicit login command or its MCP **Authenticate** action. Confirm the endpoint returns the OAuth `401` challenge above. |
 | Access denies the login | Confirm the same company identity is admitted to Ace. The MCP copies Ace's policy but has a separate application and token audience. |
-| Redirect URI is rejected | Installed clients must use `localhost` or `127.0.0.1`. A hosted HTTPS callback must be explicitly added to the Access Managed OAuth allowlist. |
+| Connector registration fails before login | Confirm the hosted client redirects through one of the documented provider origins. New hosted-provider origins must be added to the Access Managed OAuth allowlist and deployed. |
 | Client remains disconnected after login | Restart or reconnect the client, then inspect `codex mcp list`, Claude Code `/mcp`, or Cursor's **MCP Logs** output. |
 | No tools appear | Confirm the configured URL ends in `/mcp`, not merely the hostname. |
 | Target is not found | Re-run the list tools from the workspace downward and use the returned IDs. A missing routing record is refused rather than creating an empty object. |
