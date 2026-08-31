@@ -245,10 +245,11 @@ full barrier completes.
 **What changed:** Global gained a dedicated hourly scheduled Worker that
 refreshes OpenRouter endpoint-average pricing for the union of the developer
 model selector and Azure deployments carried by OpenRouter. It writes one KV record keyed by
-canonical OpenRouter model ID, with decimal costs stored as strings. Regional
+canonical OpenRouter model ID, with base and prompt-threshold override decimal
+costs stored as strings. Regional
 API Workers are read-only consumers of the same namespace. Token-priced records
-carry per-million input/cache/output values; image records preserve OpenRouter's
-native billable/unit lines.
+carry per-million input/cache/output values and any catalog long-context tiers;
+image records preserve OpenRouter's native billable/unit lines.
 
 **Why:** A request-triggered refresh made an arbitrary inference request own
 provider-catalog availability and shared-cache mutation. Pricing is public
