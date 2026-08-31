@@ -20,10 +20,11 @@ import { desktopBridge } from './platform';
  * keeps that true: the card shows the same DOM the feed does, and a fix to the
  * renderer reaches the exported picture without anyone remembering to.
  *
- * `flushSync` requires the content to render synchronously: `MarkdownBody` has
- * no `Suspense`, no `use()`, and no lazy import, and must keep none — a
- * suspended render here would serialize a fallback into someone's file instead
- * of showing one on a screen where it would be noticed.
+ * `flushSync` requires the content to render synchronously. `MarkdownBody`'s
+ * `still` branch mounts no asynchronous Mermaid renderer (it keeps diagram
+ * source as code), preview reader, `Suspense`, or `use()` — a suspended render
+ * here would serialize a fallback into someone's file instead of showing one
+ * on a screen where it would be noticed.
  *
  * The root is detached, so nothing about the current screen — its width, its
  * scroll position, the dark stylesheet around it — can reach the markup. The
