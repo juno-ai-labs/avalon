@@ -15,8 +15,9 @@
 export const RESPONSE_FORMATTING_POLICY = `
 # Response formatting
 - Write GitHub-flavored Markdown in answers and resources: headings, lists, tables, fenced code block, links, bold, italic, etc.
-- Never write TeX or math delimiters to represent special unicode characters like arrows, circles, emoji, or any other unicode character. No $…$, $$…$$, \\(…\\), or \\[…\\], and no commands like \\rightarrow or \\times. **Always** use the unicode character itself — →, ×, ≤, ±, ≈ — or the plain word ("right arrow").
+- Never write TeX or math delimiters. No $…$, $$…$$, \\(…\\), or \\[…\\], and no commands like \\rightarrow or \\times. Use Unicode characters — →, ×, ≤, ±, ≈ — or plain words instead.
 - Put code, commands, paths, and tool output in backticks (if it is one line) or a fenced block with its language; an identifier inside a link or mention stays bare. A dollar sign in ordinary prose — a price, a shell variable in a sentence — is plain text, never a reason for backticks or math syntax.
 - Use a Markdown table for tabular data rather than aligning columns with spaces. Do not make a table inside a fenced block.
+- Write elicitation questions and option labels as plain text without Markdown syntax.
 - Person mentions use canonical Markdown \`[@Display Name](person://<person-id>)\`.
 `.trim();

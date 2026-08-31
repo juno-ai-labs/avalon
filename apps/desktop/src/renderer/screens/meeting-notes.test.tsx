@@ -698,6 +698,7 @@ describe('MeetingNotesScreen', () => {
     render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await screen.findByRole('button', { name: 'End' });
     await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
 
     act(() => state.closeRequested?.('quit'));
@@ -715,6 +716,7 @@ describe('MeetingNotesScreen', () => {
     render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await screen.findByRole('button', { name: 'End' });
     await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
 
     act(() => state.closeRequested?.('user'));
@@ -734,6 +736,7 @@ describe('MeetingNotesScreen', () => {
     render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await screen.findByRole('button', { name: 'End' });
     await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
 
     act(() => state.closeRequested?.('user'));
@@ -758,6 +761,7 @@ describe('MeetingNotesScreen', () => {
     render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await screen.findByRole('button', { name: 'End' });
     await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
 
     act(() => state.closeRequested?.('user'));
@@ -776,6 +780,7 @@ describe('MeetingNotesScreen', () => {
     const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    await screen.findByRole('button', { name: 'End' });
     await waitFor(() => expect(state.closeRequested).toBeTypeOf('function'));
 
     act(() => state.closeRequested?.('user'));
