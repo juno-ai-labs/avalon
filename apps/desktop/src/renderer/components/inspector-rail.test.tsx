@@ -710,6 +710,11 @@ describe('resource detail content preview', () => {
     openDetail(note, loadResourceContent);
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument());
+    // The rail is the document reader, not a compact transcript reply. Its
+    // sections stay fully rendered rather than inheriting the feed's heading
+    // accordions and three-line preview.
+    expect(screen.queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
+    expect(document.querySelector('.markdown-collapse')).toBeNull();
     expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('resource-note', expect.anything());
     // Last-updated sits in the same scroll as the body, not a metadata card.
     expect(screen.getByText(/Last updated/u)).toBeInTheDocument();

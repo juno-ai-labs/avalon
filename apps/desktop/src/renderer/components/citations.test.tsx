@@ -406,7 +406,7 @@ describe('footnote citations', () => {
       '[^rev]: [Q3 board deck](resource://board-deck), slide 4',
       '',
     ].join('\n');
-    render(<MarkdownBody citations={context()}>{markdown}</MarkdownBody>);
+    render(<MarkdownBody citations={context()} collapseHeadings>{markdown}</MarkdownBody>);
     expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
     expect(document.querySelector('.footnotes')).toBeNull();
   });
