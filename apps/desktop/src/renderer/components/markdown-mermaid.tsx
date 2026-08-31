@@ -21,15 +21,9 @@ type DiagramState = RenderedDiagram | FailedDiagram;
 
 let renderQueue: Promise<void> = Promise.resolve();
 
-function diagramWidth(svg: string): number | undefined {
-  const document = new DOMParser().parseFromString(svg, 'image/svg+xml');
-  const values = document.documentElement.getAttribute('viewBox')?.trim().split(/\s+/u);
-  const width = Number(values?.[2]);
-  return Number.isFinite(width) && width > 0 ? width : undefined;
-}
-
 interface PreparedDiagram {
   svg: string;
+  width?: number;
   title?: string;
   description?: string;
 }
@@ -42,6 +36,47 @@ function directChildText(root: Element, localName: string): string | undefined {
   return value || undefined;
 }
 
+function decodeCssEscapes(value: string): string {
+  return value
+    .replace(/\\(?:\r\n|[\n\r\f])/gu, '')
+    .replace(/\\([\dA-Fa-f]{1,6})\s?|\\([^\dA-Fa-f])/gu, (_match, hex: string | undefined, escaped: string | undefined) => {
+      if (!hex) return escaped ?? '';
+      const codePoint = Number.parseInt(hex, 16);
+      return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '\ufffd';
+    });
+}
+
+function hasExternalCssResource(value: string): boolean {
+  const css = decodeCssEscapes(value).replace(/\/\*[\s\S]*?\*\//gu, '');
+  if (/(?:https?|data|blob|file):|(?:^|[("'\s])\/\//iu.test(css)) return true;
+  if (/@import\b|(?:-webkit-)?image-set\s*\(/iu.test(css)) return true;
+
+  const urls = css.matchAll(/url\s*\(\s*([^)]*?)\s*\)/giu);
+  for (const match of urls) {
+    let target = match[1]?.trim() ?? '';
+    if ((target.startsWith('"') && target.endsWith('"')) || (target.startsWith("'") && target.endsWith("'"))) {
+      target = target.slice(1, -1).trim();
+    }
+    if (!/^#[\w.:-]+$/u.test(target)) return true;
+  }
+  return false;
+}
+
+const cssResourceAttributes = new Set([
+  'background',
+  'background-image',
+  'clip-path',
+  'cursor',
+  'fill',
+  'filter',
+  'marker-end',
+  'marker-mid',
+  'marker-start',
+  'mask',
+  'stroke',
+  'style',
+]);
+
 /**
  * Mermaid strict mode sanitises scriptable markup but deliberately preserves
  * ordinary links. Rally diagrams are non-interactive, so unwrap anchors and
@@ -53,6 +88,20 @@ function prepareDiagram(svg: string): PreparedDiagram {
   const root = document.documentElement;
   const title = directChildText(root, 'title');
   const description = directChildText(root, 'desc');
+  const viewBox = root.getAttribute('viewBox')?.trim().split(/\s+/u);
+  const viewBoxWidth = Number(viewBox?.[2]);
+  const width = Number.isFinite(viewBoxWidth) && viewBoxWidth > 0 ? viewBoxWidth : undefined;
+
+  for (const style of Array.from(root.querySelectorAll('style'))) {
+    if (hasExternalCssResource(style.textContent ?? '')) throw new Error('mermaid_svg_external_resource');
+  }
+  for (const element of [root, ...Array.from(root.querySelectorAll('*'))]) {
+    for (const attribute of Array.from(element.attributes)) {
+      if (cssResourceAttributes.has(attribute.name) && hasExternalCssResource(attribute.value)) {
+        throw new Error('mermaid_svg_external_resource');
+      }
+    }
+  }
 
   for (const anchor of Array.from(root.querySelectorAll('a'))) {
     const parent = anchor.parentNode;
@@ -67,7 +116,7 @@ function prepareDiagram(svg: string): PreparedDiagram {
     }
   }
 
-  return { svg: new XMLSerializer().serializeToString(root), title, description };
+  return { svg: new XMLSerializer().serializeToString(root), width, title, description };
 }
 
 /**
@@ -132,7 +181,7 @@ export function MarkdownMermaid({ code, fallback }: {
     void renderMermaid(id, code, controller.signal).then(
       (prepared) => {
         if (!current) return;
-        setDiagram({ key, status: 'rendered', ...prepared, width: diagramWidth(prepared.svg) });
+        setDiagram({ key, status: 'rendered', ...prepared });
       },
       () => {
         if (current) setDiagram({ key, status: 'failed' });

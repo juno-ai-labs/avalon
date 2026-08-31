@@ -218,6 +218,8 @@ export function readMermaidThemeConfig(readUnvalidatedToken: TokenReader = readR
 
   return {
     fontFamily,
+    // Mermaid's site config expects a pixel count while its generated theme
+    // stylesheet expects the original CSS length.
     fontSize: pixels(fontSize),
     // Mermaid uses signalColor for both sequence lines and number labels. The
     // label needs the token intended for text on the accent fill instead.
