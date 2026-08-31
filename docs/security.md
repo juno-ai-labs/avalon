@@ -736,10 +736,11 @@ mode still emits ordinary SVG links, so Rally unwraps anchors and
 removes every non-fragment `href` before inserting the result. A generated style
 block or presentation attribute containing a non-fragment CSS resource rejects
 the entire diagram instead of allowing its display to make an external request.
-A source preflight rejects external CSS resource functions in Mermaid style
-directives, and parsed flowchart image nodes and block styles are rejected from
-Mermaid's database before render, because Mermaid can otherwise fetch them while
-drawing or measuring, before output sanitisation can run. Parsed-style and
+Before preflight parsing, Rally applies Mermaid's initialized and secured text-size
+ceiling. A source preflight rejects external CSS resource functions in Mermaid
+style directives, and parsed flowchart image nodes and block styles are rejected
+from Mermaid's database before render, because Mermaid can otherwise fetch them
+while drawing or measuring, before output sanitisation can run. Parsed-style and
 generated-SVG scans remain as additional boundaries before insertion, and the
 generated SVG is rejected if it contains a `script` or `foreignObject` even if
 Mermaid's strict sanitizer were to regress.
