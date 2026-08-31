@@ -370,12 +370,16 @@ lifecycle, schedules, occurrence admission, generated-run provisioning, run
 history, automation-owned memory, inbound-email admission, result-delivery
 receipts, and the workspace projection.
 
-It depends on WorkspaceDO for four things and no more: minting an automation ID
+It depends on WorkspaceDO for five things and no more: minting an automation ID
 against a creation key, holding the directory row, evaluating and fanning out
-connector events, and authorizing a non-author viewer. It depends on the Global
+connector events, authorizing a non-author viewer, and holding the connector
+rows — `connector_connections`, `slack_user_links` — a plugin binding or a
+delivery destination is resolved from. Those last are reached through
+`withWorkspaceRuntimeDatabase`, not through the object's own `env.DB`: regional
+D1 has not had them since migration 0090. It depends on the Global
 `workstream_email_routes` registry for its address, on regional D1 for identity,
-membership, sessions, and connector connections, and on SubstreamAgent for the
-execution of a generated run.
+membership, and sessions, and on SubstreamAgent for the execution of a generated
+run.
 
 It does not own: the shared template catalog (`automation-service.ts`, and the
 `automation_templates` rows survive the cutover); the connector manifests that
@@ -453,6 +457,7 @@ email is addressed and rendered
 | Suite | Command | Covers |
 | --- | --- | --- |
 | `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, and an `ApiError` raised inside the object surviving the RPC hop with its own status. |
+| `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with the connector rows only in WorkspaceDO and only `users` in D1: saving and removing a Slack destination, refusing one whose connection the workspace object does not have, and binding a connector plugin at acceptance. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
@@ -465,7 +470,10 @@ email is addressed and rendered
 Traps worth knowing before writing one here. The `test-workers` D1 starts with no
 schema, so a test that exercises membership or sessions declares those tables
 itself; anything that depends on a checked-in migration belongs in the Node
-suite. And an automation alarm armed at `now + 1` can fire while a test is still
+suite. That freedom cuts both ways: declaring `connector_connections` or
+`slack_user_links` there gives the fixture a table the migrated region does not
+have, and a statement pointed at the wrong authority then passes. Those two
+belong in WorkspaceDO in a test, as they do in a region. And an automation alarm armed at `now + 1` can fire while a test is still
 arranging state — park it in the same `runInDurableObject` invocation that admits
 the work, as [`durable-object-alarms.md`](durable-object-alarms.md) describes;
 settling the compiler run in that same invocation is what makes a drain after an
@@ -661,6 +669,43 @@ it still renders a denial as "No active automations".
 
 Shipped in [#450](https://github.com/juno-ai-labs/avalon/pull/450). Design:
 [the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
+
+### 2026-08-31 — Connector reads leave regional D1 for the object that has the rows
+
+**What changed:** the three statements AutomationAgent sent to its own `env.DB`
+for `connector_connections` and `slack_user_links` — the plugin-binding read in
+`prepareAcceptance` and both reads in `resolveDeliveryTargets` — now go through
+`withWorkspaceRuntimeDatabase`. The `users` read beside them stays on the
+regional binding, which is the authority that has that table.
+
+**Why:** migration 0090 dropped both tables from regional D1 when the workspace
+authority opened; WorkspaceDO is their only live authority. The object kept
+asking D1 for them, so every one of those reads raised `D1_ERROR: no such
+table`. That is not one of this object's snake_case codes, so
+`withAutomationErrors` passed it through unmapped and `errorHandler` answered
+`500 internal_error`. What a person saw: ticking Slack DM under **Delivered to**
+on an automation put "An unexpected error occurred" under the list and left the
+box unticked, with no way to save a connector destination at all. Acceptance
+carried the same defect on the same table — choosing any connector plugin for a
+new automation failed the same way, and equally silently.
+
+**Considered and rejected:** wrapping the object's whole `env` once in the
+constructor. The router decides by table name and sends anything it does not
+recognise to regional D1, so it would work — but it would also route this
+object's identity, membership and session reads through a facade none of them
+needs, and hide which authority each read belongs to at exactly the boundary
+this bug was about. Naming the port at the two call sites that cross it says
+where the rows are.
+
+**What a future change has to respect:** a Durable Object gets the raw
+environment. Unlike a service, nothing wraps its `DB` on the way in, so any
+statement it sends that names a `WORKSPACE_LOCAL_TABLES` table has to be routed
+explicitly. The failure is silent in the worst way — a table that does not
+exist reads like a server fault rather than like a boundary crossing — so the
+test for one belongs in `test-workers/`, with the table created only in the
+object that owns it. `automation-delivery-targets.test.ts` is set up that way
+on purpose: adding `connector_connections` to its D1 fixture would make every
+test in it pass against the defect.
 
 ### 2026-08-29 — The template gallery becomes three typed WorkspaceDO methods
 
