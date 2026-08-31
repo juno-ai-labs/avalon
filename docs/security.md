@@ -278,6 +278,10 @@ test. Otherwise Chromium rejects the request before authentication or route code
 runs, which appears to the renderer as a transport failure and leaves no API
 request log for the blocked mutation. The required implementation and test steps
 live in [When adding a new HTTP header](when-adding-a-new-http-header.md).
+The message speech path follows that same boundary: the renderer sends its Rally
+session to the regional `/speech` route, while Azure credentials remain Worker
+secrets. Raw PCM returns as an in-memory response stream and never creates a
+provider URL, preload capability, or broader media origin.
 
 The same exact origin policy admits `https://rallywith.ai`,
 `https://www.rallywith.ai`, `https://with-avalon.com`, and
@@ -702,6 +706,49 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-30 — Spoken messages keep Azure authority in the regional Worker
+
+**What changed:** The renderer can stream message PCM only through the
+authenticated regional `/speech` route. The Worker owns the Azure inference
+endpoint and key; the renderer validates Rally's fixed PCM format and plays the
+in-memory stream without changing CSP.
+
+**Why:** Direct provider playback would put production inference authority in an
+untrusted renderer. A provider URL or preload audio bridge would widen a second
+trust boundary when the existing authenticated HTTP boundary already supports a
+streaming body.
+
+**Considered and rejected:** Exposing an Azure key, minting provider URLs, and
+adding an Electron IPC/media bridge. Each grants more authority than reading one
+already-authorized Rally response.
+
+**Consequences:** Speech stays region-scoped and content-free in logs. Future
+audio playback must not treat `media-src`, preload, or direct provider access as
+a shortcut around the regional API.
+
+### 2026-08-30 — Renderer media is limited to owned and in-memory URLs
+
+**What changed:** The desktop renderer CSP now declares
+`media-src 'self' blob:` in both the checked-in HTML policy and the runtime
+response-header policy. Generated audio is fetched through Rally's authorized
+resource route, converted to an in-memory object URL, and played by the native
+audio element; no remote or data-URL media origin was added.
+
+**Why:** The renderer already allowed `blob:` images, but an audio element fell
+back to `default-src 'self'` and Electron blocked its object URL after the
+resource had loaded successfully. Visible controls therefore looked usable
+while playback could never begin.
+
+**Considered and rejected:** Adding `https:` to `media-src` or pointing the
+element at an authenticated API URL. The former lets document-authored remote
+media bypass Rally's resource boundary; the latter cannot carry the main
+process-owned session and complicates revocation. A short-lived object URL keeps
+the existing authorized fetch and cleanup lifecycle.
+
+**Consequences:** Any future media player must use same-origin or revocable
+`blob:` content. The HTML and runtime policies are an intentional duplicate and
+their invariant test must keep them aligned.
 
 ### 2026-08-30 — Separate operator OAuth from product identity
 

@@ -139,6 +139,7 @@ import {
   resolveWorkstreamModelRouting,
 } from "./agent-model-flags";
 import { createAzureModelPricingResolver } from "./openrouter-pricing-cache";
+import { createAvalonMultimodalGenerationPlugin } from "./multimodal-generation/plugin";
 import {
   emitAgentToolStartedTelemetry,
   emitAgentToolTerminalTelemetry,
@@ -5735,11 +5736,16 @@ async function loadHarnessTools(
     input,
     inObjectResourceAttacher,
   );
+  const multimodalGenerationPlugin = createAvalonMultimodalGenerationPlugin(
+    env,
+    input,
+    inObjectResourceAttacher,
+  );
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
-  const builtinPlugins = [workstreamPlugin, webPlugin, terminalPlugin].filter(
+  const builtinPlugins = [workstreamPlugin, webPlugin, terminalPlugin, multimodalGenerationPlugin].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
   const plugins: HarnessPlugin[] = [...builtinPlugins];

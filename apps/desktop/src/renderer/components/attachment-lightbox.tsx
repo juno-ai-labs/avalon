@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import type { AttachmentPreview } from './attachments';
 import { MarkdownBody } from './workstream-blocks';
 
-type PreviewMode = 'image' | 'markdown' | 'text';
+type PreviewMode = 'audio' | 'image' | 'markdown' | 'text';
 
 interface LoadedPreview {
   preview: AttachmentPreview;
@@ -15,11 +15,11 @@ interface LoadedPreview {
 }
 
 function previewMode(preview: AttachmentPreview): PreviewMode {
-  if (preview.src) return 'image';
   const mimeType = preview.mimeType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
   if (mimeType.startsWith('text/') && mimeType !== 'text/markdown') return 'text';
   const kind = classifyAttachmentKind({ fileName: preview.name, mimeType: preview.mimeType });
-  if (kind === 'image') return 'image';
+  if (kind === 'audio') return 'audio';
+  if (preview.src || kind === 'image') return 'image';
   return kind === 'text' ? 'text' : 'markdown';
 }
 
@@ -47,7 +47,7 @@ export function AttachmentLightbox({ preview, onClose }: {
     const controller = new AbortController();
     let objectUrl: string | undefined;
     void preview.loadContent(controller.signal).then(async (blob) => {
-      if (mode === 'image') {
+      if (mode === 'image' || mode === 'audio') {
         if (controller.signal.aborted) return;
         objectUrl = URL.createObjectURL(blob);
         setLoaded({ preview, src: objectUrl });
@@ -112,6 +112,7 @@ export function AttachmentLightbox({ preview, onClose }: {
             {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
             {current?.error && <div className="attachment-lightbox-status is-error" role="alert">{current.error}</div>}
             {mode === 'image' && src && <img alt={preview.name} src={src} />}
+            {mode === 'audio' && src && <audio aria-label={`Audio: ${preview.name}`} controls src={src} />}
             {mode === 'markdown' && current?.text !== undefined && (
               <article className="attachment-lightbox-document"><MarkdownBody verbatim>{current.text}</MarkdownBody></article>
             )}

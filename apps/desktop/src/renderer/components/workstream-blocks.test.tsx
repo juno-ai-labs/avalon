@@ -11,6 +11,7 @@ import {
   splitStreamingMarkdown,
   withConnectorMentionLinks,
 } from './workstream-blocks';
+import { SpeechPlaybackProvider, type SpeechApi, type SpeechPlayer } from './speech-playback';
 
 const copyText = vi.hoisted(() => vi.fn());
 const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => Promise<MessageExportResult>>(
@@ -1236,6 +1237,44 @@ describe('MessageBlock export actions', () => {
     expect(screen.getByRole('button', { name: 'Copy response' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Download response as an image' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save response as a PDF' })).not.toBeInTheDocument();
+  });
+});
+
+describe('MessageBlock speech action', () => {
+  it('speaks the complete markdown source even after its sections are collapsed, then stops', async () => {
+    const markdown = '## Visible section\n\nVisible copy.\n\n## Collapsed section\n\nThe complete hidden detail.';
+    const streamMessageSpeech = vi.fn(async () => new ReadableStream<Uint8Array>());
+    const stop = vi.fn();
+    const player: SpeechPlayer = {
+      prepare: vi.fn(async () => undefined),
+      play: vi.fn(async () => new Promise<void>(() => undefined)),
+      stop,
+    };
+    const api = { streamMessageSpeech } satisfies SpeechApi;
+    render(
+      <SpeechPlaybackProvider api={api} createPlayer={() => player}>
+        <MessageBlock {...actions} collapseHeadings message={{
+          ...baseMessage,
+          id: 'message-agent-speech',
+          authorType: 'agent',
+          author: undefined,
+          text: markdown,
+        }} />
+      </SpeechPlaybackProvider>,
+    );
+    expect(screen.getByRole('button', { name: 'Expand all sections' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Speak response with an AI-generated voice' }));
+
+    await waitFor(() => expect(streamMessageSpeech).toHaveBeenCalledWith(markdown, expect.any(AbortSignal)));
+    const stopButton = screen.getByRole('button', { name: 'Stop speaking' });
+    expect(stopButton).toHaveTextContent('Stop speaking');
+    expect(stopButton.closest('.agent-message-actions')).toHaveClass('is-speaking');
+
+    fireEvent.click(stopButton);
+
+    expect(stop).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Speak response with an AI-generated voice' })).toBeVisible();
   });
 });
 

@@ -412,14 +412,17 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>;
   resource: WorkstreamResource;
 }): React.JSX.Element | null {
-  const [state, setState] = useState<{ text?: string; src?: string; failed?: boolean }>({});
-  const image = isImageResource(resource);
+  const [state, setState] = useState<{ text?: string; src?: string; media?: 'audio' | 'image'; failed?: boolean }>({});
+  const attachmentKind = classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType });
+  const media = resource.contentAvailable && (attachmentKind === 'image' || attachmentKind === 'audio')
+    ? attachmentKind
+    : null;
 
   useEffect(() => {
     const controller = new AbortController();
     let objectUrl: string | undefined;
     setState({});
-    const load = image
+    const load = media
       ? Promise.resolve(loadResourceContent(resource.id, controller.signal)).then((blob) => {
           const url = URL.createObjectURL(blob);
           if (controller.signal.aborted) {
@@ -427,7 +430,7 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
             return;
           }
           objectUrl = url;
-          setState({ src: url });
+          setState({ src: url, media });
         })
       : readResourcePreviewText(loadResourceContent, resource.id, controller.signal, MAX_RESOURCE_PREVIEW_WAIT_MS)
         .then((text) => {
@@ -449,7 +452,7 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
     // keeps its id, and last-updated above this body shows the new revision.
     // Without it the panel put a new timestamp over version 2's text, which is
     // a citation substantiating a claim with the wrong revision.
-  }, [image, loadResourceContent, resource.currentVersion, resource.id]);
+  }, [loadResourceContent, media, resource.currentVersion, resource.id]);
 
   if (state.failed) {
     return <p className="inspector-detail-preview-status">This preview is not available.</p>;
@@ -457,7 +460,9 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   if (state.src) {
     return (
       <article className="inspector-detail-document">
-        <img alt={resource.title} className="inspector-detail-image" src={state.src} />
+        {state.media === 'audio'
+          ? <audio aria-label={`Audio: ${resource.title}`} className="inspector-detail-audio" controls src={state.src} />
+          : <img alt={resource.title} className="inspector-detail-image" src={state.src} />}
       </article>
     );
   }
@@ -512,7 +517,7 @@ function versionAuthorLabel(
 function versionIsOpenable(version: ResourceVersion): boolean {
   if (!version.contentAvailable) return false;
   const kind = classifyAttachmentKind({ fileName: version.title, mimeType: version.mimeType });
-  return kind === 'image' || kind === 'markdown' || kind === 'text';
+  return kind === 'audio' || kind === 'image' || kind === 'markdown' || kind === 'text';
 }
 
 function groupVersionsBySparseDate(

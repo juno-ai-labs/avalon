@@ -412,6 +412,61 @@ Calling a content tool on the wrong authorized natural-language kind returns an
 exact read or view suggestion. Unsupported and invisible resources never carry
 that remediation.
 
+## Multimodal generation tool contract registry
+
+The deferred `rally:multimodal-generation` plugin owns image generation,
+editing, and text-to-speech. It is registered only when the main Azure
+inference endpoint and key are both configured, and Bind exposes its tools as
+`multimodal_generation_generate_image` and
+`multimodal_generation_edit_image`, and
+`multimodal_generation_generate_audio`. All three are serial
+`record_before_execute` writes with a five-minute timeout.
+
+| Tool | Strict input | Successful `output` |
+| --- | --- | --- |
+| `multimodal_generation_generate_image` | `{ prompt: string, title?: string, size?: "auto" \| "1024x1024" \| "1536x1024" \| "1024x1536" }` | One attached `generated_file` resource plus an ephemeral image part for the current model turn. |
+| `multimodal_generation_edit_image` | `{ resourceId: UUID, prompt: string, title?: string, size?: same enum, maskResourceId?: UUID }` | A new version of that same attached image resource, preserving its resource ID and history, plus an ephemeral image part. The source must be an attached PNG, JPEG, or WebP image; a mask must be an attached PNG. |
+| `multimodal_generation_generate_audio` | `{ text: string (1–4096 characters), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
+
+Both calls use Azure's `gpt-image-2` deployment. The caller controls only the
+prompt, title, and advertised size: moderation is fixed to `low`, quality to
+`medium`, background to `auto`, output to PNG, and image count to one. The
+provider response is MIME-verified and bounded by `MAX_ATTACHMENT_BYTES` before
+R2 publication. Prompt text is never copied into resource metadata or logs.
+
+Audio calls use the main Azure `gpt-4o-mini-tts` deployment, whose live
+deployment version was `2025-12-15` when this contract was added. The response
+format and image count have no tool arguments: the response is exactly one MP3,
+and the voice defaults to `marin`. Text and optional speaking instructions are
+sent to Azure but are not copied into the resource metadata, receipt, or logs.
+The plugin system message requires the final response to disclose that the
+recording uses an AI voice. Audio is a playable resource for people, not model
+input: it is classified as `audio` with `contentMode: "unsupported"` and is not
+returned through `contentParts`.
+
+The resource's provider identity is derived from the durable effect-intent ID.
+A generation replay therefore finds and reattaches the already-published image
+instead of issuing a second provider request. An edit records its effect ID in
+the new version's metadata and reuses that same resource on replay. Its update
+is compare-and-swapped against the source content pointer and digest so it cannot
+overwrite a version that changed while Azure was working. Current-turn image bytes travel through
+`contentParts`, which durable receipts deliberately omit; later turns can view
+the durable resource through the workstream tools.
+
+Azure image usage is costed from the shared OpenRouter endpoint-average KV
+record keyed by `openai/gpt-image-2`. Pricing is best-effort for this user-facing
+tool: a missing/invalid price or missing usage does not deny the image request
+and does not invent a charge. It records a null image cost and emits a structured
+operator error instead.
+
+The Azure speech response contains audio bytes and request metadata but no
+token-usage object. Rally therefore makes the call available but records no
+audio charge and logs that usage is unavailable. It probes the shared KV key
+`openai/gpt-4o-mini-tts` for an advisory OpenRouter token-price fingerprint;
+OpenRouter did not expose an endpoint record for that model when this tool was
+added, so the normal state is an unavailable-price log rather than an invented
+price or denied speech request.
+
 ## Terminal tool contract registry
 
 The deferred `rally:terminal` plugin is the concrete file/command family that
@@ -644,3 +699,54 @@ future agent tool or plugin, not just this family.
   system messages that tell the model when to reach for a tool.
 - [`security.md`](security.md) — trust boundaries and what is treated as
   untrusted.
+
+## Changelog
+
+### 2026-08-30 — One multimodal plugin also creates durable audio
+
+**What changed:** Added `multimodal_generation_generate_audio`, backed by the
+main Azure `gpt-4o-mini-tts` deployment. The strict call accepts bounded text,
+one of the provider's advertised voices, optional speaking instructions and an
+optional title; output is fixed to one MP3 and defaults to `marin`. The verified
+bytes become a replay-safe durable audio resource with native desktop playback.
+
+**Why:** Speech generation belongs beside image generation as hosted media work:
+it needs the same Bind discovery, receipt, timeout, Azure credentials and
+resource-publication boundary, without introducing a second plugin whose only
+difference is media type.
+
+**Considered and rejected:** Returning the MP3 through `contentParts`, which
+would pay to send an output artifact back into the model and would misstate it
+as model-readable input. Also rejected: denying the call or guessing a token
+charge when Azure omits usage and OpenRouter has no endpoint price for this
+model. Rally logs the missing billing evidence and records no charge.
+
+**Consequences:** The attachment registry includes `audio`; current and
+historical MP3 resources open in a native player but remain unsupported by the
+agent content tools. Speech text and instructions must remain absent from logs,
+receipts and resource metadata, and user-facing summaries must identify the
+voice as AI-generated.
+
+### 2026-08-30 — Image generation and editing are one dedicated plugin
+
+**What changed:** Added the two strict `multimodal_generation` image tools,
+their fixed Azure request policy, durable generated-resource publication and
+same-resource edit versioning,
+effect-intent replay identity, ephemeral visual results, and best-effort
+OpenRouter-average cost calculation.
+
+**Why:** Image creation is a distinct capability that should be discoverable
+without loading Terminal and should return a reusable workstream resource, not
+an opaque provider payload. The provider controls that should not vary between
+agent calls are locked in code so the small public schema remains honest.
+
+**Considered and rejected:** Denying generation when cached pricing is absent.
+That prevents an unpriced charge but turns a pricing-observability outage into a
+product outage. Rally instead continues, records no image charge, and logs the
+missing pricing for repair. Also rejected: storing prompt text in resource
+metadata; it is not needed to display or replay the resource and would expand
+the durable sensitive-data surface.
+
+**Consequences:** Changes to size choices, fixed moderation/quality/background,
+output count, pricing semantics, or edit input formats must update this registry
+and its exact request-contract tests in the same change.
