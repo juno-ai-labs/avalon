@@ -18,7 +18,7 @@ export interface AddressingPromptInput {
 const MAX_RECENT_MESSAGES = 10;
 const MAX_RECENT_MESSAGE_CHARACTERS = 1_000;
 
-const SYSTEM_PROMPT = `A workstream is a shared conversation where teammates collaborate on a piece of work, and Rally is the AI agent present in every workstream. People in it talk to each other and to Rally in the same feed. Classify whether Rally should act on the newest human message.
+const SYSTEM_PROMPT = `A workstream is a shared conversation between human teammates and an AI Agent Rally. People in it talk to each other and to Rally in the same feed. Classify whether Rally should act on the newest human message.
 
 Outcomes:
 - agent_action: asks Rally to answer, investigate, create, change, retrieve, or otherwise work.
