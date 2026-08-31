@@ -1,4 +1,3 @@
-import { createMcpHandler } from "agents/mcp/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
@@ -6,7 +5,8 @@ import type { EngineeringInspectionRpcBinding } from "@rally/contracts/engineeri
 
 import type { AccessPrincipal } from "../src/access";
 import type { Env } from "../src/env";
-import { createEngineeringMcpServer } from "../src/server";
+import { createEngineeringMcpHandler } from "../src/index";
+import hostedClients from "../hosted-clients.json";
 
 const principal: AccessPrincipal = {
   subject: "engineer-1",
@@ -46,17 +46,20 @@ function regionalBinding(region: "global" | "eu"): EngineeringInspectionRpcBindi
   };
 }
 
-async function rpc(env: Env, method: string, params: unknown = {}): Promise<Record<string, unknown>> {
-  const handler = createMcpHandler(
-    () => createEngineeringMcpServer(env, principal),
-    { responseMode: "json" },
-  );
+async function rpc(
+  env: Env,
+  method: string,
+  params: unknown = {},
+  origin?: string,
+): Promise<Record<string, unknown>> {
+  const handler = createEngineeringMcpHandler(env, principal, "json");
   const response = await handler.fetch(new Request("https://mcp.internal.rallywith.ai/mcp", {
     method: "POST",
     headers: {
       accept: "application/json, text/event-stream",
       "content-type": "application/json",
       "mcp-protocol-version": "2025-11-25",
+      ...(origin ? { origin } : {}),
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   }));
@@ -67,6 +70,16 @@ async function rpc(env: Env, method: string, params: unknown = {}): Promise<Reco
 }
 
 describe("Rally engineering MCP tools", () => {
+  it.each(hostedClients.originHostnames)("admits the %s hosted origin to the MCP transport", async (hostname) => {
+    const env: Env = {
+      GLOBAL_INSPECTION: regionalBinding("global"),
+      EU_INSPECTION: regionalBinding("eu"),
+    };
+
+    const response = await rpc(env, "tools/list", {}, `https://${hostname}`);
+    expect(response.result).toMatchObject({ tools: expect.any(Array) });
+  });
+
   it("publishes the six initial tools with mutation annotations on SQL", async () => {
     const env: Env = {
       GLOBAL_INSPECTION: regionalBinding("global"),
