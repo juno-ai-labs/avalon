@@ -586,6 +586,48 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-30 — Terminal activation starts the sandbox without holding the model
+
+**What changed:** `onActivate` no longer awaits `runtime.prepare`. It starts the
+acquisition, registers the shared per-run promise every Terminal tool already
+awaits, and returns; the completion log is emitted when that promise settles.
+Activation therefore always succeeds — a provider failure now surfaces on the
+first tool that needs a sandbox rather than as a
+`HarnessPluginActivationError`. A repository that cannot be prepared rejects
+the shared acquisition with its original `TerminalToolError` instead of being
+evicted from the cache afterwards.
+
+**Why:** The sandbox was being built in front of work that did not need it. In
+one recorded run, provisioning finished at 08:27:43 and the first Terminal tool
+did not run until 08:28:54 — the sandbox sat ready and idle for **70 seconds**
+while the model loaded plugins and read GitHub, Linear and Slack. Across all
+runs that use Terminal, the median gap between a run's first tool call and its
+first Terminal tool is **16.5s**, against an ~18s median cold start, so for most
+runs this wait stops being visible at all. It is not free for everyone: in 6 of
+18 runs a Terminal tool *was* the first tool, and those see no overlap and no
+improvement.
+
+**Considered and rejected:** Starting acquisition at run start rather than at
+activation — it would allocate a sandbox for every run including the many that
+never touch Terminal, which is the speculative cost the lazy restored-activation
+rule already exists to avoid. Keeping activation blocking and shrinking the
+bootstrap instead — that is worth doing too, but it is a ~14s problem inside a
+~70s one. Evicting the cached acquisition after preparation fails, as before —
+see below.
+
+**Consequences:** The eviction that made a failed repository preparation safe no
+longer works, and this is the subtle part. It was only ever safe because nothing
+else could be awaiting the acquisition while activation blocked. Now a Terminal
+tool from the following turn can already be waiting on that same promise, and an
+eviction after it resolves never reaches an in-flight waiter — which would then
+operate on a sandbox whose checkout is stale or whose repository authorization
+was revoked. Preparation therefore rethrows the original error so the promise
+rejects and there is nothing to observe; rethrowing the original
+`TerminalToolError` rather than a sentinel is what keeps the waiter's error
+actionable (`repository_access_revoked` and friends). Anything added to the
+activation path must preserve that: fail the acquisition, do not clean up after
+it. `HarnessPluginActivationError` is no longer raised from this plugin.
+
 ### 2026-08-30 — A Rally-owned snapshot can preinstall the managed capabilities
 
 **What changed:** `apps/api/scripts/build-terminal-snapshot.ts`
