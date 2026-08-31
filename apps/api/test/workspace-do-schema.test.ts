@@ -94,6 +94,24 @@ describe("the WorkspaceDO alarm migrations", () => {
   });
 });
 
+describe("the WorkspaceDO context-suggestion retirement", () => {
+  it("drops the feedback projection when version 25 applies", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 24);
+    expect(database.prepare(
+      `SELECT name FROM sqlite_schema
+        WHERE type = 'table' AND name = 'workspace_workstream_suggestion_feedback'`,
+    ).get()).toEqual({ name: "workspace_workstream_suggestion_feedback" });
+
+    apply(database, 25, 24);
+
+    expect(database.prepare(
+      `SELECT name FROM sqlite_schema
+        WHERE type = 'table' AND name = 'workspace_workstream_suggestion_feedback'`,
+    ).get()).toBeUndefined();
+  });
+});
+
 describe("the WorkspaceDO resource-version migration", () => {
   it("backfills history, increments semantic writes, and retains every R2 reference until deletion", () => {
     const database = new DatabaseSync(":memory:");

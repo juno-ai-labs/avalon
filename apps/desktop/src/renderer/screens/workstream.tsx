@@ -58,11 +58,9 @@ import {
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
-  appendDismissedSuggestionId,
   adjacentTranscriptRange,
   composeTranscript,
   createTextMessage,
-  dismissedSuggestionIdsQueryKey,
   foldSettledWorkIntoMessages,
   groupPluginToolMessages,
   orderedTranscriptMessages,
@@ -1940,45 +1938,6 @@ export function WorkstreamScreen(): React.JSX.Element {
     }
   };
 
-  const resolveSuggestion = async (suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> => {
-    // Remove the pending detail entry before the request so an overlapping
-    // transcript rebuild cannot restore a card whose decision is in flight.
-    const pending = queryClient.getQueryData<WorkstreamDetail>(['workstream', id])
-      ?.suggestions?.find((suggestion) => suggestion.id === suggestionId);
-    const pendingOverlay = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id))
-      ?.find((overlay) => overlay.identity.type === 'activity_suggestion'
-        && overlay.identity.suggestionId === suggestionId);
-    queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
-      ? { ...current, suggestions: (current.suggestions ?? []).filter((suggestion) => suggestion.id !== suggestionId) }
-      : current);
-    queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) =>
-      removeTranscriptOverlay(current, (overlay) => overlay.identity.type === 'activity_suggestion'
-        && overlay.identity.suggestionId === suggestionId));
-    try {
-      await api!.resolveActivitySuggestion(id, suggestionId, action);
-      if (action === 'dismiss') {
-        queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id), (current) =>
-          appendDismissedSuggestionId(current, suggestionId));
-      }
-    } catch (error) {
-      const status = error instanceof ApiError ? error.status : 0;
-      if (pending && status !== 404 && status !== 409) {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
-          && !(current.suggestions ?? []).some((suggestion) => suggestion.id === suggestionId)
-          ? { ...current, suggestions: [...(current.suggestions ?? []), pending] }
-          : current);
-        if (pendingOverlay) {
-          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) =>
-            upsertTranscriptOverlay(current, pendingOverlay));
-        }
-      } else {
-        requestSocketSnapshot();
-      }
-      throw error;
-    }
-    requestSocketSnapshot();
-  };
-
   useEffect(() => {
     if (!routedDetail || initialPositionedWorkstreamRef.current === id) return;
     initialPositionedWorkstreamRef.current = id;
@@ -2281,7 +2240,6 @@ export function WorkstreamScreen(): React.JSX.Element {
                         message={message}
                         onAnswerElicitation={answerElicitation}
                         onOpenAttachment={setAttachmentPreview}
-                        onResolveSuggestion={resolveSuggestion}
                         systemRowDisclosure={systemRowDisclosure}
                       />
                     )}

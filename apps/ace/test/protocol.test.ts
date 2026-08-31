@@ -91,12 +91,11 @@ describe('Ace managed model protocol', () => {
       { role: 'workstream_naming', key: 'agent-model-workstream-naming' },
       { role: 'automation_compiler', key: 'agent-model-automation-compiler' },
       { role: 'meeting_notes', key: 'agent-model-meeting-notes' },
-      { role: 'activity_structured', key: 'agent-model-activity-structured' },
       { role: 'work_opportunity_admission', key: 'agent-model-work-opportunity-admission' },
       { role: 'work_opportunity_ranking', key: 'agent-model-work-opportunity-ranking' },
       { role: 'block_dashboard', key: 'agent-model-block-dashboard' },
     ]);
-    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(MANAGED_MODELS.every((model) => model.rankReason.length > 15)).toBe(true);
     expect(new Set(MANAGED_MODELS.map((model) => model.key)).size).toBe(MANAGED_MODELS.length);
     expect(MANAGED_MODELS.every((model) => model.description.length > 60)).toBe(true);

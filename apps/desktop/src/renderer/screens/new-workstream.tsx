@@ -200,7 +200,6 @@ function launchedWorkstreamDetail(
     backgroundTasks: [],
     automationRuns: [],
     openElicitations: [],
-    suggestions: [],
     // Without the run, the work timer the launch surface has been showing
     // disappears on arrival and only comes back when the refetch answers —
     // the one thing that still read as a navigation.
@@ -837,7 +836,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
                     message={openingTurn}
                     onAnswerElicitation={async () => undefined}
                     onOpenAttachment={setAttachmentPreview}
-                    onResolveSuggestion={async () => undefined}
                   />
                 </div>
               )}

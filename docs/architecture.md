@@ -262,7 +262,7 @@ predecessor is a different ID and is not a serving fallback. All namespaces are
 SQLite-backed and use explicit SQL only. Before guarded maintenance cutover, D1
 serves work-stream product rows;
 afterward each child owns its ordered parts, runs/tools, compaction, timers,
-suggestions, and Terminal state, while its parent aggregates common/user
+retained-content audience fences, and Terminal state, while its parent aggregates common/user
 metadata and `WorkspaceDO` owns the authoritative workspace product database.
 D1 retains identity/membership, regional routing/migration, and operational
 records; it has no rebuildable workspace/work-stream serving projections. The normalized schemas, fleet import, and authority states are in
@@ -299,7 +299,7 @@ the aggregate, appends a common or per-viewer state row with a monotonic
 waterline and UUIDv7 identity, and owns the sole parent outbox. The direct
 WorkstreamDO socket can publish that committed row immediately. Its alarm sends
 an opaque Queue wake-up for every directory, viewer, resource-link,
-suggestion-feedback, activity-log, and mention-delivery effect. The regional
+activity-log, and mention-delivery effect. The regional
 consumer fetches the payload from WorkstreamDO and RPCs the named WorkspaceDO.
 WorkspaceDO rejects stale/duplicate per-key waterlines, persists the current
 row with the same UUIDv7 for the affected common or viewer field, and publishes
