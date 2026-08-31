@@ -25,7 +25,8 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 concurrency:
   group: rebuild-terminal-snapshot
@@ -104,24 +105,63 @@ jobs:
           DAYTONA_TERMINAL_SNAPSHOT: ${{ steps.snapshot.outputs.name }}
         run: pnpm --filter @rally/api terminal:verify-provider
 
-      # Deliberately stops here rather than repointing production. Promotion
-      # changes what every new work-stream sandbox runs, and whether that should
-      # happen without a human is the team's call, not this workflow's. Flip it
-      # to an automatic promote once you have a few green weeks and want the
-      # toil gone.
-      - name: Report the verified snapshot
+      # A verified snapshot nobody adopts is the failure mode this workflow is
+      # most likely to have: the job goes green every Monday, the rebuild sits
+      # unused, and production keeps running an image that ages anyway. A step
+      # summary would not be read. A pull request lands in the review queue the
+      # team already works, so adoption is one merge and a rollback is one
+      # revert — while still keeping a human between a rebuilt image and every
+      # new work-stream sandbox.
+      - name: Open the adoption pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT: ${{ steps.snapshot.outputs.name }}
         run: |
           set -euo pipefail
-          {
-            echo "### Terminal snapshot rebuilt and verified"
-            echo
-            echo "Verified snapshot: \`${{ steps.snapshot.outputs.name }}\`"
-            echo
-            echo "To adopt it, set \`DAYTONA_TERMINAL_SNAPSHOT\` to that name in:"
-            echo "- \`apps/api/wrangler.global.jsonc\`"
-            echo "- \`apps/api/wrangler.eu.jsonc\`"
-            echo
-            echo "Rolling back is the same edit in reverse; the snapshot only"
-            echo "applies when a sandbox is created, so existing sandboxes are"
-            echo "unaffected either way."
-          } >> "$GITHUB_STEP_SUMMARY"
+          for config in apps/api/wrangler.global.jsonc apps/api/wrangler.eu.jsonc; do
+            perl -pi -e \
+              's/("DAYTONA_TERMINAL_SNAPSHOT":\s*)"[^"]*"/$1 . chr(34) . $ENV{SNAPSHOT} . chr(34)/e' \
+              "$config"
+          done
+          if git diff --quiet; then
+            echo "Both regions already run \`$SNAPSHOT\`; nothing to adopt." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          branch="daytona-snapshot-upgrade/$SNAPSHOT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -aqm "Daytona Snapshot Upgrade: adopt $SNAPSHOT"
+          git push -u origin "$branch"
+
+          # The label is what makes these findable as a series rather than one
+          # more weekly PR; creating it here keeps the workflow self-contained.
+          gh label create daytona-snapshot-upgrade \
+            --color BFD4F2 \
+            --description "Weekly Terminal sandbox image rebuild, verified against the provider" \
+            || true
+
+          gh pr create \
+            --title "Daytona Snapshot Upgrade — $SNAPSHOT" \
+            --label daytona-snapshot-upgrade \
+            --body "$(cat <<BODY
+          This week's Terminal sandbox image, rebuilt against Daytona's current
+          managed base and verified with \`terminal:verify-provider\` before this
+          pull request was opened.
+
+          **Why this exists.** Rally owns its Terminal snapshot, so Daytona's OS
+          and system-package fixes no longer reach us on their own, and nothing
+          detects that drift — the snapshot manifest fails closed on a capability
+          that is missing or broken, not on one that is merely stale. Merging
+          weekly is what bounds how far behind the image can get.
+
+          **What merging does.** Points both regions at \`$SNAPSHOT\`. It applies
+          only when a sandbox is created, so existing sandboxes are unaffected
+          and a rollback is reverting this commit.
+
+          **If you do not merge it**, production keeps running the previous
+          image. Nothing breaks today; the gap to Daytona's base just widens.
+          BODY
+          )"
+          echo "Opened the adoption pull request for \`$SNAPSHOT\`." >> "$GITHUB_STEP_SUMMARY"

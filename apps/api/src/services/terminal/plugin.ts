@@ -8,6 +8,7 @@ import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
 import { logStructuredEvent } from "../../observability/logger";
+import { notifyOps } from "../../observability/ops-slack-notifier";
 import { recordTerminalPlatformObservation } from "../../observability/terminal-platform-observability";
 import {
   createTerminalPlugin,
@@ -54,6 +55,40 @@ import {
   recordTerminalProviderRequest,
   withTerminalToolTrace,
 } from "./tracing";
+
+/**
+ * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: minimum interval between operator notices carrying the same Terminal
+ *   activation failure code.
+ * Without it: a Daytona outage fails every run's activation with the same code,
+ *   and the operator channel receives one message per run — the notice tracks
+ *   traffic volume instead of describing one incident, which is how a channel
+ *   stops being read. Checked 2026-08-30: nothing upstream deduplicates these;
+ *   `notifyOps` posts every call it is given.
+ * Direction: lower bound; the open value is 0, which notifies on every failure.
+ * Trips: the notice is skipped. The `warn` log row is written either way, so
+ *   nothing is lost from the record — only the Slack message is suppressed.
+ * Derive from: how long an operator needs to see a repeat as a new incident
+ *   rather than the same one, against how often activation legitimately fails.
+ */
+const TERMINAL_ACTIVATION_NOTICE_INTERVAL_MS = 0;
+
+/**
+ * Last operator notice per activation failure code, so a provider outage is one
+ * incident rather than one message per run. Per isolate, which is the same reach
+ * every other in-memory gate in this Worker has: it narrows a storm, it does not
+ * promise exactly-once.
+ */
+const lastActivationNoticeAt = new Map<string, number>();
+
+function claimActivationNotice(code: string, now: number): boolean {
+  const previous = lastActivationNoticeAt.get(code);
+  if (previous !== undefined && now - previous < TERMINAL_ACTIVATION_NOTICE_INTERVAL_MS) return false;
+  lastActivationNoticeAt.set(code, now);
+  return true;
+}
 
 export async function createAvalonTerminalPlugin(
   env: Env,
@@ -337,6 +372,20 @@ export async function createAvalonTerminalPlugin(
         });
       };
 
+      // Paired with `terminal_plugin_activation_finished`. Activation no longer
+      // awaits its own work, so the runtime — not this code — decides whether
+      // that work survives to settle. A started row with no finished row for the
+      // same `tool_call_id` is the shape of the sandbox being abandoned mid
+      // flight, and it is the only way to see it: a cancelled continuation
+      // cannot log its own death.
+      logStructuredEvent(env, "info", "terminal_plugin_activation_started", {
+        workspace_id: context.workspaceId,
+        workstream_id: context.workstreamId,
+        harness_run_id: context.harnessRunId,
+        tool_call_id: toolCallId,
+        activation_attempt: activationAttemptNumber,
+      });
+
       let repositoryPreparationCode: string | null = null;
       // Start the sandbox; do not hold the model behind it. `runtime.prepare`
       // registers the shared per-run acquisition that every Terminal tool
@@ -374,11 +423,27 @@ export async function createAvalonTerminalPlugin(
           }
           // Nothing to raise to the model here — activation already returned.
           // The first Terminal tool acquires again and reports the failure with
-          // its own guidance.
-          settled("warn", {
-            state: "failed",
-            code: error instanceof TerminalToolError ? error.code : "terminal_activation_failed",
-          });
+          // its own guidance. That also means nobody is watching this rejection:
+          // before, it reached the model as an activation error, and now it
+          // reaches only the log. Hence the operator notice.
+          const code = error instanceof TerminalToolError
+            ? error.code
+            : "terminal_activation_failed";
+          settled("warn", { state: "failed", code });
+          if (claimActivationNotice(code, Date.now())) {
+            void notifyOps(env, {
+              event: "terminal_plugin_activation_failed",
+              summary: "A Terminal sandbox failed to start during plugin activation."
+                + " The work stream's first Terminal tool will retry and report to the model;"
+                + " a repeat across work streams is a provider or configuration fault.",
+              fields: {
+                code,
+                workspace_id: context.workspaceId,
+                workstream_id: context.workstreamId,
+                activation_attempt: activationAttemptNumber,
+              },
+            });
+          }
         },
       );
     },
