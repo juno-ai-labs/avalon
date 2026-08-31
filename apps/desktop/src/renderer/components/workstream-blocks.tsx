@@ -23,7 +23,16 @@ import {
 } from 'lucide-react';
 import { Children, Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
-import { citationFootnotes, citationScheme, personIdFromMentionHref } from '@rally/contracts/citations';
+import {
+  citationFootnotes,
+  citationScheme,
+  connectorMentionHref,
+  connectorTypeFromEmbedHref,
+  connectorTypeFromMentionHref,
+  isConnectorHref,
+  personIdFromMentionHref,
+} from '@rally/contracts/citations';
+import { ConnectorEmbedCard, ConnectorMentionChip } from './connector-mentions';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -279,38 +288,23 @@ function MarkdownTable({ children, node, style, ...props }: React.ComponentProps
   );
 }
 
-const CONNECTOR_LINK_PATTERN = /^connector:([0-9a-z]+):(.+)$/u;
-
 function personIdFromHref(href: string | undefined): string | undefined {
   return personIdFromMentionHref(href);
 }
 
 /**
- * A `connector:` link counts only when it carries this render's token. The token
- * is minted in the browser and never appears in the stored message, so a link
- * someone wrote into the text cannot carry it — no guessing at labels or offsets.
+ * A `connector:` / `connector://` link counts only when it carries this render's
+ * token. The token is minted in the browser and never appears in the stored
+ * message, so a link someone wrote into the text cannot carry it — no guessing
+ * at labels or offsets.
  */
 export function createConnectorMentionToken(): string {
   return globalThis.crypto?.randomUUID?.().replace(/-/gu, '')
     ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }
 
-/** Any `connector:` href, tokened or not — all of them stay inert rather than navigating. */
-function isConnectorHref(href: string | undefined): boolean {
-  return href !== undefined && href.startsWith('connector:');
-}
-
-function connectorTypeFromHref(href: string | undefined, token: string): string | undefined {
-  const match = href?.match(CONNECTOR_LINK_PATTERN);
-  if (!match || match[1] !== token) return undefined;
-  try {
-    return decodeURIComponent(match[2] ?? '');
-  } catch {
-    // Message text is authored by people and models, so `[x](connector:%)` is a
-    // reachable input. A malformed escape is simply not a connector reference —
-    // it must not throw through the renderer and take the transcript with it.
-    return undefined;
-  }
+function tokenedConnectorType(href: string | undefined, token: string): string | undefined {
+  return connectorTypeFromMentionHref(href, token);
 }
 
 /**
@@ -318,7 +312,9 @@ function connectorTypeFromHref(href: string | undefined, token: string): string 
  * it, and `&` would let a character reference decode into something else.
  */
 function escapeMarkdownLabel(label: string): string {
-  return label.replace(/[\\[\]*_`~&]/gu, (character) => `\\${character}`);
+  return label
+    .replace(/&/gu, '&amp;')
+    .replace(/[\\[\]*_`~]/gu, (character) => `\\${character}`);
 }
 
 /** The rendered label of a link, when it is a single plain string. */
@@ -337,8 +333,9 @@ function linkLabelText(children: React.ReactNode): string | undefined {
  * Slack see untouched.
  *
  * Each emitted link carries `token`, which is what makes it authoritative: a
- * `connector:` link already present in the message text is something a person or
- * a model wrote, cannot carry the token, and must not be dressed as a mention.
+ * `connector:` / `connector://` link already present in the message text is
+ * something a person or a model wrote, cannot carry the token, and must not be
+ * dressed as a mention.
  */
 export function withConnectorMentionLinks(text: string, mentions: MessageMention[], token: string): string {
   const connectors = mentions
@@ -354,7 +351,7 @@ export function withConnectorMentionLinks(text: string, mentions: MessageMention
     const source = text.slice(startOffset, endOffset);
     if (!source.startsWith('@')) continue;
     output += text.slice(cursor, startOffset);
-    output += `[${escapeMarkdownLabel(source)}](connector:${token}:${encodeURIComponent(connectorType)})`;
+    output += `[${escapeMarkdownLabel(source)}](${connectorMentionHref(token, connectorType)})`;
     cursor = endOffset;
   }
   return output + text.slice(cursor);
@@ -400,33 +397,39 @@ function MentionChip({ fallbackLabel, mention, personId }: {
   );
 }
 
-/** The three schemes whose cells need the target the model actually wrote. */
-const INTERNAL_CITATION_SCHEMES: ReadonlySet<string> = new Set(['resource', 'person', 'connector']);
+/** The schemes whose cells need the target the model actually wrote. */
+const INTERNAL_CITATION_SCHEMES: ReadonlySet<string> = new Set(['resource', 'person']);
 
 /**
  * Which targets bypass `defaultUrlTransform` on their way to a component.
  *
- * An allowlist of three schemes in two positions, and nothing wider: everything
- * else — `javascript:`, `data:`, `file:` — keeps going through the default
- * transform, which empties what it rejects. The position matters as much as the
- * scheme, because `resource:` has to survive on an `img` as well as an `a`: the
- * embed card is reached through image syntax.
+ * An allowlist of citation schemes plus the render-minted connector mention
+ * href, in two positions, and nothing wider: everything else — `javascript:`,
+ * `data:`, `file:` — keeps going through the default transform, which empties
+ * what it rejects. The position matters as much as the scheme, because
+ * `resource:` has to survive on an `img` as well as an `a`: the embed card is
+ * reached through image syntax.
  *
  * Passing a scheme here is not the same as rendering it. Every cell downstream
  * emits a chip, a card, or text — never the value itself as a destination.
+ * Connector hrefs are allowed through so the identity path can chip them; they
+ * are not a {@link citationScheme}.
  */
 function isInternalCitationTarget(url: string, key: string, tagName: string): boolean {
   const position = (key === 'href' && tagName === 'a') || (key === 'src' && tagName === 'img');
-  return position && INTERNAL_CITATION_SCHEMES.has(citationScheme(url));
+  if (!position) return false;
+  if (isConnectorHref(url)) return true;
+  return INTERNAL_CITATION_SCHEMES.has(citationScheme(url));
 }
 
 /**
  * The identity cells of the citation matrix, in one place.
  *
- * Mentions are unchanged by citations and stay unchanged here: a `person:` href
- * resolves against this render's `mentions`, a `connector:` one counts only when
- * it carries this render's token, and neither is ever emitted as something with
- * a destination. What moved is only where the decision is called from.
+ * Mentions are unchanged by citations and stay unchanged here: a `person:` /
+ * `person://` href resolves against this render's `mentions`, a `connector:` /
+ * `connector://` one counts only when it carries this render's token, and
+ * neither is ever emitted as something with a destination. What moved is only
+ * where the decision is called from.
  */
 function renderIdentity(
   href: string | undefined,
@@ -443,18 +446,14 @@ function renderIdentity(
     return <MentionChip fallbackLabel={label} mention={mention} personId={personId} />;
   }
   if (isConnectorHref(href)) {
-    const connectorType = connectorTypeFromHref(href, token);
+    const connectorType = tokenedConnectorType(href, token);
     const text = linkLabelText(label);
     // Without this render's token the link is text someone wrote, not a
     // mention: it neither earns a chip nor becomes something clickable.
     if (connectorType === undefined || text === undefined) {
       return <span className="mention-text-fallback">{label}</span>;
     }
-    return (
-      <span className="mention-chip mention-chip-connector" data-connector-type={connectorType}>
-        <span className="mention-chip-label">{text}</span>
-      </span>
-    );
+    return <ConnectorMentionChip connectorType={connectorType} label={text} />;
   }
   // A `person:` target that is not an id is text a model wrote. It reaches here
   // intact because `urlTransform` passes the whole scheme through —
@@ -727,6 +726,14 @@ export function MarkdownBody({
       img: ({ alt, node, src, ...props }) => {
         void node;
         if (glance) return <>{alt}</>;
+        // Connector embeds are not a citation scheme. Image syntax still reaches
+        // here because urlTransform lets the href through; draw the card before
+        // the matrix would degrade it to alt text.
+        if (isConnectorHref(src)) {
+          const connectorType = connectorTypeFromEmbedHref(src);
+          if (connectorType === undefined) return <>{alt}</>;
+          return <ConnectorEmbedCard connectorType={connectorType} label={alt} />;
+        }
         return <CitationImage alt={alt} image={{ ...props, alt, src }} src={src} />;
       },
       li: ({ children: itemChildren, node, ...props }) => {
