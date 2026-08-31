@@ -222,7 +222,12 @@ async function renderMermaid(id: string, source: string, signal: AbortSignal): P
       themeCSS,
       themeVariables,
     });
+    const maxTextSize = mermaid.mermaidAPI.getConfig().maxTextSize;
+    if (typeof maxTextSize === 'number' && Number.isFinite(maxTextSize) && source.length > maxTextSize) {
+      throw new Error('mermaid_text_too_large');
+    }
     await rejectRenderTimeResources(source);
+    signal.throwIfAborted();
     const { svg } = await mermaid.render(id, source);
     return prepareDiagram(svg);
   };
