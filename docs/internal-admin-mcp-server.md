@@ -149,6 +149,10 @@ origins:
 - `https://cursor.com/*`
 - `https://www.cursor.com/*`
 
+The MCP transport also admits request `Origin` headers from those four provider
+hosts. An authorization success followed by “no MCP server was found” usually
+means a new hosted provider was added to OAuth but not to this shared registry.
+
 Add `https://mcp.internal.rallywith.ai/mcp` in the hosted client's connector
 settings and choose its normal sign-in action. Dynamic Client Registration
 creates the client automatically; do not enter a static OAuth Client ID. The
