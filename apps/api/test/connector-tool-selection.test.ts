@@ -319,6 +319,30 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 }
 
 describe("connector tools selected for harness runs", () => {
+  it("registers multimodal generation only when the main Azure inference deployment is configured", async () => {
+    const database = new ToolSelectionDatabase([]);
+    const withoutAzure = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    expect(withoutAzure.plugins.some((plugin) => plugin.canonicalId === "rally:multimodal-generation")).toBe(false);
+
+    const withAzure = await __integrationTesting.loadHarnessTools(createTestEnv({
+      ...env(database),
+      AZURE_INFERENCE_ENDPOINT: "https://monad-prod-resource.services.ai.azure.com",
+      AZURE_INFERENCE_API_KEY: "azure-test-key",
+    }), workflowInput());
+    const plugin = withAzure.plugins.find((candidate) => candidate.canonicalId === "rally:multimodal-generation");
+
+    expect(plugin).toMatchObject({
+      modelId: "rally_multimodal_generation",
+      preload: false,
+      explicit: false,
+    });
+    expect(plugin?.tools.map((tool) => tool.definition.name)).toEqual(["generate_image", "edit_image", "generate_audio"]);
+    expect(withAzure.idempotencyByTool.get("multimodal_generation_generate_image")).toBe("record_before_execute");
+    expect(withAzure.modeByTool.get("multimodal_generation_edit_image")).toBe("write");
+    expect(withAzure.idempotencyByTool.get("multimodal_generation_generate_audio")).toBe("record_before_execute");
+    expect(withAzure.modeByTool.get("multimodal_generation_generate_audio")).toBe("write");
+  });
+
   it("resolves durable receipt policy from canonical identity, never a provider wire alias", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),

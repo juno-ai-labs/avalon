@@ -43,6 +43,11 @@ adapter rekeys text/files and adopts the server identity without remounting the
 conversation family. Socket snapshots remain authoritative after reconnect;
 local optimistic rows are reconciled by stable client turn IDs.
 
+Finished assistant turns also share the action row. Copy and export remain
+local actions; **Speak** uses the regional authenticated stream documented in
+[`message-speech.md`](message-speech.md) and receives the complete stored
+markdown even when the shared renderer has collapsed its sections.
+
 ## Testing
 
 Shared components have fixture-level component tests for settled, streaming,
@@ -52,6 +57,24 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-08-30 — Finished assistant turns share Speak and Stop speaking
+
+**What changed:** The common assistant action row can start one streamed AI
+voice and stop it. Both work-stream and automation adapters inherit it from the
+same message component, and collapsed presentation never truncates the source.
+
+**Why:** Speech is an action on the completed assistant turn, not a product
+control belonging to one adapter. Implementing it in WorkstreamScreen would
+repeat the divergence this shared conversation family removed.
+
+**Considered and rejected:** A work-stream-only control and DOM text extraction.
+The first excludes automation responses without a semantic reason; the second
+silently drops collapsed text and turns presentation into data loss.
+
+**Consequences:** Any conversation adapter that renders the shared action row
+also needs a `SpeechPlaybackProvider` at its route host. The provider owns one
+active voice across all visible turns.
 
 ### 2026-08-30 — Work-stream pending messages attach to the composer as a live queue
 

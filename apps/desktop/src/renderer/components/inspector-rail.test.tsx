@@ -751,6 +751,29 @@ describe('resource detail content preview', () => {
     }
   });
 
+  it('renders generated audio in the detail as a disclosed player', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:voice');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const loadResourceContent = vi.fn(async () => new Blob(['ID3audio'], { type: 'audio/mpeg' }));
+    try {
+      openDetail({
+        ...note,
+        id: 'resource-audio',
+        title: 'launch-update.mp3',
+        mimeType: 'audio/mpeg',
+      }, loadResourceContent);
+
+      const player = await screen.findByLabelText('Audio: launch-update.mp3');
+      expect(player.tagName).toBe('AUDIO');
+      expect(player).toHaveAttribute('controls');
+      expect(player).toHaveAttribute('src', 'blob:voice');
+      expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('resource-audio', expect.anything());
+    } finally {
+      createObjectURL.mockRestore();
+      revokeObjectURL.mockRestore();
+    }
+  });
+
   it('re-reads the content when the resource is revised in place', async () => {
     // A watched source re-ingested keeps its id, and the metadata beside this
     // preview shows the new version number — so keying the read on the id alone
