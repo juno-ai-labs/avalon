@@ -36,7 +36,6 @@ export type CitationTarget =
   | { readonly scheme: "external"; readonly url: string }
   /** An identity. Named, rendered, and — deliberately — never navigable. */
   | { readonly scheme: "person" }
-  | { readonly scheme: "connector" }
   /** Everything else, which is text. */
   | { readonly scheme: "unknown" };
 
@@ -103,13 +102,72 @@ export function personMentionMarkdownPattern(): RegExp {
 }
 
 /**
+ * Per-render connector mention href — the house spelling.
+ *
+ * Connection mentions are not durable Markdown. The composer stores plain
+ * `@Label` text plus offsets; the desktop renderer alone mints a tokened link
+ * so a chip can share the person-mention path without letting hand-authored
+ * `connector:` text impersonate one. Surfaces that *read* these hrefs must
+ * also accept bare `connector:token:type` via {@link connectorTypeFromMentionHref}.
+ */
+export function connectorMentionHref(token: string, connectorType: string): string {
+  return `connector://${token}:${encodeURIComponent(connectorType)}`;
+}
+
+const CONNECTOR_HREF_PATTERN = /^connector:/iu;
+const CONNECTOR_MENTION_HREF_PATTERN = /^connector:(?:\/\/)?([0-9a-z]+):(.+)$/iu;
+const CONNECTOR_EMBED_HREF_PATTERN = /^connector:(?:\/\/)?([a-z0-9_-]+)$/iu;
+
+function decodedConnectorType(encoded: string | undefined): string | undefined {
+  if (encoded === undefined) return undefined;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    // Message text is authored by people and models, so `[x](connector:%)` is a
+    // reachable input. A malformed escape is simply not a connector reference.
+    return undefined;
+  }
+}
+
+/** Whether an href names the connector identity protocol in either accepted form. */
+export function isConnectorHref(href: string | undefined): boolean {
+  return href !== undefined && CONNECTOR_HREF_PATTERN.test(href);
+}
+
+/**
+ * Connector type from a tokened mention href, or `undefined` when the href is
+ * not this render's tokened link (forged text, wrong token, malformed escape).
+ */
+export function connectorTypeFromMentionHref(
+  href: string | undefined,
+  token: string,
+): string | undefined {
+  const match = href?.match(CONNECTOR_MENTION_HREF_PATTERN);
+  if (!match || match[1] !== token) return undefined;
+  return decodedConnectorType(match[2]);
+}
+
+/**
+ * Connector type from a bare embed href (`connector://google`). Tokened mention
+ * hrefs are deliberately rejected: an embed names a provider family, while a
+ * mention must be validated through {@link connectorTypeFromMentionHref}.
+ */
+export function connectorTypeFromEmbedHref(href: string | undefined): string | undefined {
+  const match = href?.match(CONNECTOR_EMBED_HREF_PATTERN);
+  return decodedConnectorType(match?.[1])?.toLowerCase();
+}
+
+/**
  * Which scheme a link target names — the allowlist that decides navigation.
  *
  * Both `resource://` spellings parse. The URL style is what the guidance
  * teaches and what a future `?v=` parameter needs a slot in; the bare
  * `resource:` form is accepted so that anything already emitted keeps working.
  * Person mentions follow the same dual-accept rule with house form
- * `person://` — see {@link personMentionHref}. A `?v=` or `#fragment` is
+ * `person://` — see {@link personMentionHref}. Connector mention chips are
+ * minted at render time ({@link connectorMentionHref}) but are *not* a
+ * citation scheme — they share the identity render path without entering this
+ * allowlist. A `?v=` or `#fragment` is
  * stripped rather than honoured: a citation opens the current version (key
  * design decision 7), and leaving the parameter attached would only turn a
  * resolvable id into an unresolvable one.
@@ -118,7 +176,6 @@ export function parseCitationHref(href: string | undefined): CitationTarget {
   if (href === undefined) return { scheme: "unknown" };
   if (/^https?:\/\//iu.test(href)) return { scheme: "external", url: href };
   if (/^person:/iu.test(href)) return { scheme: "person" };
-  if (/^connector:/iu.test(href)) return { scheme: "connector" };
   if (!RESOURCE_SCHEME.test(href)) return { scheme: "unknown" };
   // Stripped before the alphabet test, not after, so the test sees only the
   // opaque segment: `resource://abc?v=3` is a citation of `abc`, while
@@ -150,7 +207,6 @@ export function citationScheme(href: string | undefined): CitationScheme {
   if (href === undefined) return "unknown";
   if (/^https?:\/\//iu.test(href)) return "external";
   if (/^person:/iu.test(href)) return "person";
-  if (/^connector:/iu.test(href)) return "connector";
   return RESOURCE_SCHEME.test(href) ? "resource" : "unknown";
 }
 

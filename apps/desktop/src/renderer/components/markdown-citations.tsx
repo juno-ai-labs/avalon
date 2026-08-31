@@ -7,6 +7,7 @@ import {
   type CitationTarget,
   type FootnoteCitation,
   citationScheme,
+  isConnectorHref,
   parseCitationHref,
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -33,10 +34,11 @@ import { createContext, useContext, useEffect, useState, type ComponentType } fr
  * Two rules run through every cell:
  *
  * - **Navigation is a property of the protocol.** `resource://` and `http(s)`
- *   name openable content and navigate; `person:` / `person://` and `connector:`
- *   name
- *   identities and never do, in any position. That asymmetry is deliberate and
- *   is the renderer's existing security posture, not a new one.
+ *   name openable content and navigate; `person:` / `person://` names an
+ *   identity and never does, in any position. Connector mention chips
+ *   (`connector://`) share that non-navigating identity path but are not a
+ *   citation scheme — they are handled before the matrix. That asymmetry is
+ *   deliberate and is the renderer's existing security posture, not a new one.
  * - **A citation adds affordance, never disclosure.** When a target cannot be
  *   resolved — unknown, revoked, or simply not visible to this viewer — what
  *   renders is the label the message text already carried, and nothing else.
@@ -534,7 +536,6 @@ const LINK_CELLS: Matrix<LinkArgs> = {
   // to the system browser through its existing allowlist.
   external: (args) => <a {...args.anchor} rel="noopener noreferrer" target="_blank">{args.label}</a>,
   person: (args) => args.identity(),
-  connector: (args) => args.identity(),
   // Not "render as text": this is where `mailto:`, `tel:` and every relative
   // target keep exactly the behavior they have today, including the dead anchor
   // the default transform leaves behind for a scheme it rejects.
@@ -558,7 +559,6 @@ const IMAGE_CELLS: Matrix<ImageArgs> = {
   // embedding an image.
   external: (args) => <img {...args.image} />,
   person: (args) => <IdentityCard label={args.label} />,
-  connector: (args) => <IdentityCard label={args.label} />,
   unknown: (args) => <>{args.label}</>,
 };
 
@@ -578,7 +578,6 @@ const FOOTNOTE_CELLS: Matrix<FootnoteArgs> = {
     />
   ),
   person: (args) => <CitationPill citation={args.citation} number={args.number} />,
-  connector: (args) => <CitationPill citation={args.citation} number={args.number} />,
   // Unreachable through the pinned grammar, which refuses a definition whose one
   // link names no known scheme. Defined anyway, because "cannot happen" is not a
   // thing the type system can check and a superscript is the honest fallback.
@@ -647,6 +646,12 @@ export function CitationLink({ anchor, children, footnoteRef, href, identity }: 
     // A definition that did not qualify keeps classic GFM rendering, and its
     // reference keeps pointing at the entry that is still in the trailing list.
     return <a {...anchor} href={href}>{children}</a>;
+  }
+  // Connector chips are minted at render time and are not a citation scheme.
+  // Route them through the host's identity path before the matrix, or they
+  // would land in `unknown` as a navigable (or emptied) anchor.
+  if (isConnectorHref(href)) {
+    return <>{identity()}</>;
   }
   const cell = LINK_CELLS[citationScheme(href)];
   return <>{cell({ anchor, identity, label: children, render, target: parseCitationHref(href) })}</>;

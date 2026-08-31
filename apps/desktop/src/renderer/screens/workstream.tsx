@@ -105,6 +105,7 @@ import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { queueAuthorMember, type ComposerQueueItem } from '../components/composer-queue';
 import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
+import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { BlockDashboardPanel, BlockDashboardRail } from '../components/block-dashboard-panel';
 import { useRailCrossFade } from '../components/rail-surface';
@@ -1166,6 +1167,12 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api),
     staleTime: 60_000,
   });
+  const connections = useQuery({
+    queryKey: ['connections'],
+    queryFn: ({ signal }) => api!.getConnections(signal),
+    enabled: Boolean(api),
+    staleTime: 60_000,
+  });
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
@@ -2117,6 +2124,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   ).values()];
 
   return (
+    <ConnectorConnectionsProvider connections={connections.data}>
     <div className="workstream-screen">
       {/* The HyperSight preference is independent metadata, never an open or
           interaction gate. The control is optimistic even before the control
@@ -2405,5 +2413,6 @@ export function WorkstreamScreen(): React.JSX.Element {
       />
       <AttachmentLightbox onClose={() => setAttachmentPreview(null)} preview={attachmentPreview} />
     </div>
+    </ConnectorConnectionsProvider>
   );
 }
