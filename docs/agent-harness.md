@@ -298,6 +298,8 @@ Loading never widens the frozen scope. At run start, before credential decryptio
 
 Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference, and is answered from Rally's own records: the principal, the work stream, the automation authority, the connection's identity, scope, owner, grants, and disablement are what that check exists to catch, and all of them are already known here. Asking the provider instead would spend a round trip per active plugin per turn to rediscover them, and on a connector whose health check writes it would repeat that write. A credential the provider has since refused therefore surfaces on the next tool call rather than between turns — which is the right place, since that is where a provider call was going to happen anyway.
 
+A built-in plugin carries no credential, so its authorization is settled by the run scope alone and can never be indeterminate. The set of built-ins that hold that authority is derived from the plugins the run registered — registration is already the conditional decision, since Terminal is absent without its provider configuration, `rally:web` without `FIRECRAWL_API_KEY`, and multimodal generation without the Azure inference pair. An id the run does not carry, whether invented by the model or restored from an activation hint a later deploy stopped registering, is denied.
+
 Revalidation answers with one of three verdicts, and the third one is the point of having them. `authorized` activates; `denied` is a decision about authority — a revoked credential, a withdrawn grant, an owner who no longer holds the connection — and reaches the model as `plugin_not_authorized`; `indeterminate` means the host could not reach a decision at all, because the provider timed out, the transport failed, or the health check answered something that says nothing about this run's authority. Both non-authorized verdicts leave the plugin inactive, so the distinction costs the run nothing, and it is what stops a provider hiccup from being reported as a permission problem: an `indeterminate` load returns `plugin_authorization_unavailable`, and the host logs `connector_plugin_reauthorization_failed` with the connection and the underlying cause rather than discarding it. An adapter distinguishes the two the same way, through `reconnectRequired` on its health result. A verdict must never be derived from a swallowed exception — a failure to verify is not a denial, and reporting it as one sends a run off to explain a permission problem that may not exist.
 
 All four non-success activation outcomes — unavailable, unauthorized,
@@ -1142,6 +1144,48 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-31 — Built-in plugin authorization is derived from registration
+
+**What changed:** `isLoadableBuiltinHarnessPlugin` now reads a
+`builtinPluginIds` set derived where the built-ins are registered, replacing a
+hand-maintained literal of three plugin IDs. `builtinPluginAuthorization`,
+`beforeToolCall` scope enforcement, activation persistence, and receipt-identity
+resolution all read that one derivation, in the root run and in the inline child
+surface. A test asserts the invariant over the registered surface rather than a
+repeated list: every registered non-connector plugin authorizes for activation,
+while an unregistered built-in id and an invented one are denied.
+
+**Why:** The literal list was a second, unlinked statement of which built-ins
+exist. `rally:multimodal-generation` shipped absent from it, so image, image-edit
+and speech generation registered, entered the plugin catalog, were found by
+`search_plugins` — and had every `load_plugin` denied as
+`plugin_not_authorized`. Because that verdict's guidance is written for
+credential connectors, runs told users to have a workspace owner restore a
+connection that does not exist, and fell back to hand-drawn SVG. Nothing failed
+at startup, no test covered the list's contents, and the defect was only
+reachable in production. Deriving the set makes registering a built-in and
+authorizing it the same edit.
+
+**Considered and rejected:** Adding the one missing ID and keeping the literal.
+That fixes this instance and leaves the trap armed for the next built-in, with
+the same silent, production-only failure. Also rejected: removing the classifier
+altogether — its `toolPolicyForCall` use is a branch that mints the built-in
+receipt identity (`connectionId: null` plus the surface hash), so deleting it
+sends every built-in into the connector arm and throws
+`Connector identity is outside this run scope`, breaking web, workstream and
+Terminal to unblock multimodal.
+
+**Consequences:** A built-in plugin's eligibility is now exactly its
+registration, which is where the conditions already live — the Azure inference
+pair, `FIRECRAWL_API_KEY`, Terminal's provider configuration. Registering a new
+built-in therefore grants it run-scope authority with no second list to update,
+so the registration site is the review point for that authority, and the
+conditional-registration branches are load-bearing: a built-in that registers
+unconditionally and fails inside its tool calls would advertise a capability the
+discovery prompt promises is available.
+
+Shipped in the pull request for this change.
 
 ### 2026-08-30 — The multimodal plugin creates replay-safe speech resources
 

@@ -4306,6 +4306,7 @@ async function createInlineChildHarnessSurface(options: {
         .flatMap((plugin) => plugin.tools),
     ],
     plugins: childPlugins,
+    builtinPluginIds: new Set(childBuiltinPlugins.map((plugin) => plugin.canonicalId)),
     frozenConnections: childFrozenConnections,
     pluginSurfaceHashes: childPluginSurfaceHashes,
     legacyPluginSurfaceHashes: childLegacyPluginSurfaceHashes,
@@ -5690,6 +5691,8 @@ async function loadHarnessTools(
   corePlugins: HarnessPlugin[];
   tools: HarnessTool[];
   plugins: HarnessPlugin[];
+  /** Canonical IDs of the built-in plugins this run registered. */
+  builtinPluginIds: ReadonlySet<string>;
   frozenConnections: Map<string, FrozenConnectorPlugin>;
   pluginSurfaceHashes: Map<string, string>;
   legacyPluginSurfaceHashes: Map<string, string>;
@@ -5970,6 +5973,14 @@ async function loadHarnessTools(
     tools,
     plugins: plugins.sort((left, right) => left.canonicalId < right.canonicalId
       ? -1 : left.canonicalId > right.canonicalId ? 1 : 0),
+    // Derived from the plugins this run actually registered, never restated.
+    // A built-in holds run-scope authority instead of a credential, so the
+    // authorization checks below have to recognize it by identity — and a
+    // second hand-maintained list of those identities is a list that drifts.
+    // It did: the multimodal plugin registered, entered the catalog, and had
+    // every `load_plugin` denied from the day it shipped, because it was absent
+    // from the literal list this set replaces.
+    builtinPluginIds: new Set(builtinPlugins.map((plugin) => plugin.canonicalId)),
     frozenConnections,
     pluginSurfaceHashes,
     legacyPluginSurfaceHashes,
@@ -6832,12 +6843,22 @@ function builtinPluginAuthorization(
   return isLoadableBuiltinHarnessPlugin(pluginId, harnessTools) ? "authorized" : "denied";
 }
 
+/**
+ * Whether this id is a built-in plugin **this run registered**.
+ *
+ * Registration is already conditional and already the decision: Terminal is
+ * absent without its provider configuration, the web plugin without
+ * `FIRECRAWL_API_KEY`, multimodal generation without the Azure inference pair.
+ * So the set is derived there and only read here, which keeps the answer
+ * fail-closed for an id this run does not carry — an invented pluginId, or a
+ * restored activation hint for a plugin a later deploy stopped registering —
+ * without a second list to keep in step.
+ */
 function isLoadableBuiltinHarnessPlugin(
   pluginId: string,
   harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
 ): boolean {
-  return ([AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID, TERMINAL_PLUGIN_ID] as string[]).includes(pluginId)
-    && harnessTools.plugins.some((plugin) => plugin.canonicalId === pluginId);
+  return harnessTools.builtinPluginIds.has(pluginId);
 }
 
 /**
@@ -8255,6 +8276,7 @@ export const __integrationTesting = {
   persistPolledActivity,
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,
+  builtinPluginAuthorization,
   reauthorizeFrozenPlugin,
   createTextDeltaBatcher,
   classifyHarnessToolFailure,
