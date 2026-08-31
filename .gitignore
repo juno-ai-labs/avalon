@@ -13,6 +13,7 @@ release/
 output/
 .wrangler/
 apps/ace/wrangler.generated.json
+apps/engineering-mcp/wrangler.generated.json
 apps/api/.wrangler.lakehouses.*.json
 .vite/
 coverage/

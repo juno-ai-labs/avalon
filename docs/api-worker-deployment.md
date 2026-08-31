@@ -88,6 +88,9 @@ cannot run, while build checks compile and profile every real entrypoint.
   workflow's complete verification matrix.
 - Promotion uses the unique version IDs captured from that workflow attempt,
   never the non-unique Git SHA tag. A retry can safely upload another set.
+- The engineering MCP is a consumer of named entrypoints in both regional API
+  Workers. It deploys only after both selected regions are healthy; a partial
+  regional recovery leaves the existing MCP version untouched.
 
 ## Boundaries and non-goals
 
@@ -161,6 +164,11 @@ The manual `deploy:eu` and `deploy:global` scripts use the same service-first
 order but do not provide the cross-region pre-upload transaction. Use them only
 for a deliberate operator recovery.
 
+After a full two-region rollout, the workflow provisions and deploys the
+Access-protected engineering MCP. This ordering is also the first-release
+bootstrap for `EngineeringInspectionBridge`: the caller cannot go live before
+both named entrypoints exist. See [`engineering-mcp.md`](engineering-mcp.md).
+
 ## Performance and cost
 
 The failed monolith uploaded about 12.3 MiB and had no dependable startup
@@ -176,6 +184,25 @@ API requests no longer initialize either provider library. That cost is bounded
 to the capability that uses it and is visible as a platform invocation.
 
 ## Changelog
+
+### 2026-08-30 — Deploy the engineering MCP after the regional API barrier
+
+**What changed:** The verified build now dry-runs the engineering MCP, and a
+full release deploys it only after EU and Global API health. The post-deploy
+probe requires Cloudflare Access's non-browser OAuth challenge.
+
+**Why:** The MCP binds a named inspection entrypoint in both regional API
+Workers. Deploying the caller in parallel would make the first release race a
+target that does not exist and could expose a mixed pair during later changes.
+
+**Considered and rejected:** A separate independent workflow cannot prove which
+regional API versions are live. Deploying after only one region would turn the
+other binding into an availability failure.
+
+**Consequences:** MCP-only changes intentionally run the API deployment
+workflow, and one-region manual recovery does not update the MCP. Both regional
+entrypoints must remain compatible with the previously deployed MCP until the
+full barrier completes.
 
 ### 2026-08-30 — Heavy providers become typed regional services
 

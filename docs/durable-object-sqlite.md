@@ -235,6 +235,13 @@ category cannot recur through a different branch of the same lifecycle.
 - Treat `rowsRead` and `rowsWritten` as operational measurements. They are useful
   for diagnostics and cost reasoning, not as a domain API.
 
+The one intentional raw-SQL exception is the Access-protected engineering MCP.
+Inspectable scheduling authorities inherit `runInspectionSql` from a shared
+internal base so an admitted operator can reproduce Cloudflare's database
+console. Product callers must never use that RPC; routing, cross-region handling,
+logging exclusions, and destructive-tool semantics live in
+[`engineering-mcp.md`](engineering-mcp.md).
+
 ## Alarms and background work
 
 A Durable Object has one platform alarm. Rally multiplexes logical wake reasons
@@ -314,6 +321,23 @@ mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
 
 ## Changelog
+
+### 2026-08-30 — Document the operator-only raw-SQL exception
+
+**What changed:** Scheduled Durable Objects now inherit one unrestricted
+inspection RPC beneath the scheduler for the engineering MCP.
+
+**Why:** Agents need the same production diagnosis and repair capability as the
+Cloudflare dashboard without creating per-class SQL methods or copying object
+state elsewhere.
+
+**Considered and rejected:** Making generic SQL a product contract would bypass
+each authority's domain invariants. A read-only restriction would not reproduce
+the repair capability that motivated the console.
+
+**Consequences:** The RPC is internal operator infrastructure only, remains
+destructive by design, and requires real-workerd coverage for every exposed
+authority class. Domain code continues to use typed RPC outcomes.
 
 ### 2026-08-27 — Migration execution mode is receipted and runtime-tested
 
