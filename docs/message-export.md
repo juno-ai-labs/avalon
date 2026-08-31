@@ -438,7 +438,7 @@ text off the device to have a picture of it made.
 
 Three details are load-bearing and look arbitrary from inside the file:
 
-- **The document is served over `avalon-export://` rather than handed to the
+- **The document is served over `rallywithai-export://` rather than handed to the
   window as a `data:` URL.** Chromium refuses a top-level `data:` navigation past
   roughly 128 KB, which a message with a table in it reaches; the failure is an
   opaque `ERR_FAILED` at load. A scheme also carries a real CSP response header.
