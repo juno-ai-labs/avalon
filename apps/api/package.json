@@ -8,12 +8,14 @@
     "dev:eu": "wrangler dev --config wrangler.eu.jsonc --config wrangler.documents.eu.jsonc --config wrangler.terminal.eu.jsonc --env-file .dev.vars.eu --persist-to .wrangler/state/eu --port 8788 --inspector-port 9231",
     "dev:local": "wrangler dev --local --config wrangler.global.jsonc --config wrangler.documents.global.jsonc --config wrangler.terminal.global.jsonc --env-file .dev.vars.global --persist-to .wrangler/state/global --port 8787 --inspector-port 9230 --enable-containers=false",
     "dev:local:eu": "wrangler dev --local --config wrangler.eu.jsonc --config wrangler.documents.eu.jsonc --config wrangler.terminal.eu.jsonc --env-file .dev.vars.eu --persist-to .wrangler/state/eu --port 8788 --inspector-port 9231 --enable-containers=false",
+    "dev:pricing": "wrangler dev --local --test-scheduled --config wrangler.pricing.global.jsonc --persist-to .wrangler/state/pricing --port 8790",
     "build": "wrangler deploy --dry-run --containers-rollout none --config wrangler.global.jsonc --outfile dist/worker.bundle && wrangler check startup --worker dist/worker.bundle --outfile dist/startup.cpuprofile",
     "build:eu": "wrangler deploy --dry-run --containers-rollout none --config wrangler.eu.jsonc --outfile dist-eu/worker.bundle && wrangler check startup --worker dist-eu/worker.bundle --outfile dist-eu/startup.cpuprofile",
     "build:documents": "wrangler deploy --dry-run --config wrangler.documents.global.jsonc --outfile dist-documents/worker.bundle && wrangler check startup --worker dist-documents/worker.bundle --outfile dist-documents/startup.cpuprofile",
     "build:documents:eu": "wrangler deploy --dry-run --config wrangler.documents.eu.jsonc --outfile dist-documents-eu/worker.bundle && wrangler check startup --worker dist-documents-eu/worker.bundle --outfile dist-documents-eu/startup.cpuprofile",
     "build:terminal": "wrangler deploy --dry-run --config wrangler.terminal.global.jsonc --outfile dist-terminal/worker.bundle && wrangler check startup --worker dist-terminal/worker.bundle --outfile dist-terminal/startup.cpuprofile",
     "build:terminal:eu": "wrangler deploy --dry-run --config wrangler.terminal.eu.jsonc --outfile dist-terminal-eu/worker.bundle && wrangler check startup --worker dist-terminal-eu/worker.bundle --outfile dist-terminal-eu/startup.cpuprofile",
+    "build:pricing": "wrangler deploy --dry-run --config wrangler.pricing.global.jsonc --outfile dist-pricing/worker.bundle && wrangler check startup --worker dist-pricing/worker.bundle --outfile dist-pricing/startup.cpuprofile",
     "build:deployed": "wrangler deploy --dry-run --containers-rollout none --config .wrangler.lakehouses.global.json --outfile dist/worker.bundle && wrangler check startup --worker dist/worker.bundle --outfile dist/startup.cpuprofile",
     "build:deployed:eu": "wrangler deploy --dry-run --containers-rollout none --config .wrangler.lakehouses.eu.json --outfile dist-eu/worker.bundle && wrangler check startup --worker dist-eu/worker.bundle --outfile dist-eu/startup.cpuprofile",
     "typecheck": "tsc --noEmit",
@@ -30,7 +32,7 @@
     "db:migrate:remote:list:eu": "node ../../scripts/migrate-d1.mjs --remote --list --region eu",
     "db:seed": "node ../../scripts/seed-local-region.mjs global",
     "db:seed:eu": "node ../../scripts/seed-local-region.mjs eu",
-    "deploy:global": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config wrangler.documents.global.jsonc && wrangler deploy --config wrangler.terminal.global.jsonc && wrangler deploy --config .wrangler.lakehouses.global.json",
+    "deploy:global": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config wrangler.documents.global.jsonc && wrangler deploy --config wrangler.terminal.global.jsonc && wrangler deploy --config wrangler.pricing.global.jsonc && wrangler deploy --config .wrangler.lakehouses.global.json",
     "deploy:eu": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config wrangler.documents.eu.jsonc && wrangler deploy --config wrangler.terminal.eu.jsonc && wrangler deploy --config .wrangler.lakehouses.eu.json"
   },
   "dependencies": {

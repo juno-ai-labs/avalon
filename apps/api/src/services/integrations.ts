@@ -138,6 +138,7 @@ import {
   resolveAgentModelRouting,
   resolveWorkstreamModelRouting,
 } from "./agent-model-flags";
+import { createAzureModelPricingResolver } from "./openrouter-pricing-cache";
 import {
   emitAgentToolStartedTelemetry,
   emitAgentToolTerminalTelemetry,
@@ -243,7 +244,7 @@ import { createMemoryTableTools } from "./memory-table-service";
 import type { MaterializedMemoryTable } from "./memory-table-service";
 import { readAutomationMemoryBootstrapForRun } from "./automation-memory-client";
 import { workstreamRunLimits } from "./workstream-run-policy";
-import { parseTerminalRegionConfiguration, TERMINAL_PLUGIN_ID } from "./terminal/contract";
+import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 import { requireOpenWorkstreamAuthority } from "./workstream-authority";
@@ -2746,6 +2747,7 @@ export async function runWorkstreamHarness(
         fallbackModels: modelRouting.fallbackModels,
         appUrl: env.PUBLIC_API_BASE_URL,
         appName: "Rally",
+        ...azureInferenceConfig(env),
         ...runLimits,
         toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
@@ -2762,6 +2764,7 @@ export async function runWorkstreamHarness(
         transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
       },
       workspaceId: input.workspaceId,
+      resolveAzureModelPricing: createAzureModelPricingResolver(env),
       workstreamId: input.workstreamId,
       loopId: input.loopId,
       harnessRunId: input.harnessRunId,
@@ -4135,6 +4138,16 @@ function delayWithSignal(milliseconds: number, signal: AbortSignal): Promise<voi
   });
 }
 
+function azureInferenceConfig(env: Env): Pick<RunHarnessInput["config"], "azure"> | Record<never, never> {
+  const endpoint = env.AZURE_INFERENCE_ENDPOINT?.trim();
+  const apiKey = env.AZURE_INFERENCE_API_KEY?.trim();
+  if (!endpoint && !apiKey) return {};
+  if (!endpoint || !apiKey) {
+    throw new Error("AZURE_INFERENCE_ENDPOINT and AZURE_INFERENCE_API_KEY must be configured together");
+  }
+  return { azure: { endpoint, apiKey } };
+}
+
 function childRunLimits(env: Env) {
   return {
     maxIterations: Math.min(8, numericEnv(env, "HARNESS_CHILD_MAX_MODEL_ITERATIONS", 4)),
@@ -4548,6 +4561,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             fallbackModels: childModelRouting.fallbackModels,
             appUrl: options.env.PUBLIC_API_BASE_URL,
             appName: "Rally",
+            ...azureInferenceConfig(options.env),
             maxIterations: limits.maxIterations,
             maxToolCalls: limits.maxToolCalls,
             maxWallClockMs: limits.maxWallClockMs,
@@ -4562,6 +4576,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             transportRetries: countEnv(options.env, "HARNESS_TRANSPORT_RETRIES", 1),
           },
           workspaceId: childInput.workspaceId,
+          resolveAzureModelPricing: createAzureModelPricingResolver(options.env),
           workstreamId: childInput.workstreamId,
           loopId: childInput.loopId,
           harnessRunId: childInput.harnessRunId,
@@ -5132,44 +5147,6 @@ async function loadConnectorTriggerContext(
  * re-rendered on every turn and must be byte-identical across a retry, and
  * SQLite is free to return two rows in either order.
  */
-/**
- * Whether this run can land a document as a work-stream resource.
- *
- * Two conditions, and the second is the one worth reading twice. The first is
- * availability: the terminal workspace is what a document is written in, and
- * where the region has none the guidance would be a procedure the run cannot
- * follow. The second is where the result is read. A run whose answer leaves
- * through a delivery path — an automation's frozen destinations, a scheduled
- * digest's delivery, an inbound email's reply, a Slack thread — delivers a
- * final message and nothing else, so a document in the rail would be named to
- * someone with no way to open it. Those origins keep today's inline answer
- * until their delivery paths can carry a reference to one.
- *
- * Delegated child runs need no clause here: they are given their own system
- * prompt, which this section is not part of.
- */
-function runPublishesDocuments(env: Env, input: WorkstreamWorkflowInput): boolean {
-  const terminal = parseTerminalRegionConfiguration(env);
-  // The emergency switch is part of "available": it keeps the plugin
-  // discoverable but refuses every acquisition, so rendering the section
-  // through an incident costs a guaranteed-failing sandbox call on every
-  // document-shaped request across the region — which is when that traffic is
-  // least wanted. Both halves are deploy-time values, so a run still renders
-  // the same bytes on every attempt.
-  if (terminal.capability !== "supported" || terminal.emergencyDisabled) return false;
-  return !input.automationSubscriptionId
-    && !input.digestDeliveryId
-    && !input.slackOrigin
-    && input.reason !== "inbound_email"
-    // A HyperSight block's product is the Markdown it submits, and the run is
-    // read-only — every step of the section is a write tool the loop refuses
-    // before it runs. Worse, a dashboard block is itself structured and
-    // sectioned, so the trigger fires on the very thing the run exists to
-    // produce, and a model that obeys submits a block saying it published a
-    // document somewhere.
-    && input.reason !== "block_dashboard_block";
-}
-
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -5374,7 +5351,14 @@ async function loadRunPromptContext(
       title: workstream.title,
       objective: workstream.objective,
       executionAuthority: input.executionPrincipal.type,
-      documentPublishing: runPublishesDocuments(env, input),
+      outputSurface: input.reason === "block_dashboard_block"
+        ? "block_dashboard"
+        : input.reason === "inbound_email"
+          || Boolean(input.digestDeliveryId)
+          || Boolean(input.slackOrigin)
+          || (automationContext?.resultDelivery.length ?? 0) > 0
+          ? "external_delivery"
+          : "workstream",
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { automation: automationContext } : {}),
     }),

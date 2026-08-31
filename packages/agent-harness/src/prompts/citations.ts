@@ -10,13 +10,9 @@
  *
  * - **The announcement rule lives in `DOCUMENT_GENERATION_POLICY`, not here.**
  *   The embed form (`![Title](resource://<id>)`) is how a run announces a
- *   document it published, and that section is gated on the run actually being
- *   able to publish one. Teaching it here charged every automation, scheduled
- *   digest, inbound-email and Slack-origin run to announce documents they were
- *   deliberately never told to make — and on the Slack path the delivery
- *   rewrite reduces such a line to a bare title with nothing to open, which is
- *   the exact outcome that gate exists to prevent. It also left two rules for
- *   one act with no tie-break between them.
+ *   document it published. Keeping it there rather than here leaves one rule
+ *   for that act: the documents section owns when to publish and how to
+ *   announce, and this section owns how to cite what is already in context.
  * - **Never fabricating an identifier is the whole defense**, and it is stated
  *   once, as an action rather than a second prohibition. Platform policy
  *   already forbids inventing an identifier twice over; what was missing was
@@ -37,8 +33,15 @@
  * rendering, because the renderer reads the message text and nothing else.
  */
 export const CITATION_POLICY = `# Citations
-- Refer to a resource with the link form, inside the sentence: \`[Title](resource://<resource-id>)\`. Label it with the resource's human title, and target it with the identifier a tool result in this run returned for that resource. With no identifier in context, name the thing in plain words rather than citing it.
-- A source that backs a specific claim takes a GitHub-flavored footnote after that claim's punctuation instead: \`Revenue grew 40%.[^1]\` with \`[^1]: [Q3 board deck](resource://<resource-id>)\` at the end. A source outside Rally takes its ordinary URL: \`[^2]: [The article](https://example.com/article)\`.
-- Write a footnote definition as exactly one link — targeting a resource:// identifier or an https:// URL — with optional words around it. A definition with no link, with two, with a target of any other kind, or running to a second paragraph is a plain footnote, not a citation.
-- Cite the sources an answer actually leans on, not everything you touched. An answer that rests on nothing in this run's context carries no citations.
-`;
+
+Use an inline citation for a grounded phrase: \`[specific phrase](resource://<resource-id>)\`. Use an embed for a preview card between paragraphs: \`![Title](resource://<resource-id>)\`. Never embed in a sentence or paragraph. Use a footnote for a grounded sentence or paragraph: \`Claim.[^source]\` then \`[^source]: [Title](resource://<resource-id>)\`. Put its marker at the sentence end.
+
+Person mentions **always** use link Markdown form \`[@Display Name](person://<person-id>)\`.
+
+Write a footnote definition as exactly one link — targeting a resource:// identifier or an https:// URL — with optional words around it. A definition with no link, with two, with a target of any other kind, or running to a second paragraph is a plain footnote, not a citation.
+
+Cite the sources an answer actually leans on, not everything you touched. An answer that rests on nothing in this run's context carries no citations.
+
+Use only resource identifiers supplied in the task context or by a tool result in this run. If none is available, refer to the source in plain words and do not invent an identifier.
+
+`.trim();

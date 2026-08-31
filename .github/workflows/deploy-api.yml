@@ -1,7 +1,7 @@
 name: Deploy Avalon API
 
 # Ordinary regional release, in the order docs/runbook.md requires:
-# build and locally profile all six static Worker artifacts, upload every
+# build and locally profile all seven static Worker artifacts, upload every
 # ordinary Worker version without traffic, apply ordinary remote D1 migrations,
 # promote EU services and API, prove EU health, promote Global, then prove both regions. The one
 # destructive product-schema retirement is detected from each region's pending
@@ -119,6 +119,7 @@ jobs:
               pnpm --filter @rally/api build:documents:eu &&
               pnpm --filter @rally/api build:terminal &&
               pnpm --filter @rally/api build:terminal:eu &&
+              pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/engineering-mcp build &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-2
@@ -217,6 +218,7 @@ jobs:
             apps/api/dist-documents-eu/startup.cpuprofile
             apps/api/dist-terminal/startup.cpuprofile
             apps/api/dist-terminal-eu/startup.cpuprofile
+            apps/api/dist-pricing/startup.cpuprofile
 
   # `deploy` gates on this one job rather than on the matrix, so the lane list
   # can change without touching the deployment. `always()` makes it report a
@@ -336,6 +338,10 @@ jobs:
         if: env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @rally/api build:terminal
 
+      - name: Build and profile the Global inference-pricing Worker
+        if: env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/api build:pricing
+
       - name: Build and profile the exact Global Worker artifact
         if: env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @rally/api build:deployed
@@ -383,6 +389,7 @@ jobs:
           if [ "$DEPLOY_GLOBAL" = "true" ]; then
             args+=(--deployed-sha "$(deployed_sha wrangler.documents.global.jsonc)")
             args+=(--deployed-sha "$(deployed_sha wrangler.terminal.global.jsonc)")
+            args+=(--deployed-sha "$(deployed_sha wrangler.pricing.global.jsonc)")
             args+=(--deployed-sha "$(deployed_sha .wrangler.lakehouses.global.json)")
           fi
           selection="$(node scripts/select-api-deploy-mode.mjs "${args[@]}")"
@@ -438,6 +445,7 @@ jobs:
           }
           upload_version wrangler.documents.global.jsonc global_documents
           upload_version wrangler.terminal.global.jsonc global_terminal
+          upload_version wrangler.pricing.global.jsonc global_pricing
           upload_version .wrangler.lakehouses.global.json global_api
 
       - name: List the pending remote migrations for EU
@@ -561,9 +569,10 @@ jobs:
             }
             promote_version wrangler.documents.global.jsonc "${{ steps.upload_global.outputs.global_documents }}"
             promote_version wrangler.terminal.global.jsonc "${{ steps.upload_global.outputs.global_terminal }}"
+            promote_version wrangler.pricing.global.jsonc "${{ steps.upload_global.outputs.global_pricing }}"
             promote_version .wrangler.lakehouses.global.json "${{ steps.upload_global.outputs.global_api }}"
           else
-            for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc .wrangler.lakehouses.global.json; do
+            for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc wrangler.pricing.global.jsonc .wrangler.lakehouses.global.json; do
               pnpm --filter @rally/api exec wrangler deploy \
                 --config "$config" \
                 --tag "$DEPLOY_SHA" \
@@ -605,7 +614,7 @@ jobs:
       # MCP deployment untouched.
       - name: Deploy the engineering MCP after both regional entrypoints
         if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
-        run: pnpm --filter @rally/engineering-mcp deploy
+        run: pnpm --filter @rally/engineering-mcp run deploy
 
       - name: Verify the engineering MCP advertises OAuth to non-browser clients
         if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
@@ -640,6 +649,7 @@ jobs:
             apps/api/dist-documents-eu/startup.cpuprofile
             apps/api/dist-terminal/startup.cpuprofile
             apps/api/dist-terminal-eu/startup.cpuprofile
+            apps/api/dist-pricing/startup.cpuprofile
 
       - name: Record the remaining manual release gates
         if: success()
