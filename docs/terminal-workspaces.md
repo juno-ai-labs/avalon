@@ -585,6 +585,49 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-30 — The managed-snapshot bootstrap stops paying for work it can batch
+
+**What changed:** The two `npm install --global` calls that add `pnpm` and `tsx`
+became one call carrying both, accumulated through a `node_packages` variable in
+the same shape as the `system_packages` branch above it. The fifteen snapshot
+probes now run concurrently against per-probe marker files and are swept after
+`wait`, rather than executing one after another under `set -e`.
+
+**Why:** Both sit on the critical path of a participant's first Terminal tool,
+inside the blocking `load_plugin` activation. Measured in a Linux container on
+the pinned command text: the split `npm` calls cost 3.3s against 1.5s combined,
+because each invocation pays npm's own start-up and registry handshake before
+installing anything; the sequential probe cost 1.3–2.3s, of which `pnpm
+--version` alone is 770ms and `python3 -m pip --version` 250ms — fifteen
+interpreters booting in series. Concurrent probing bounds that phase by its
+slowest single probe, measured at 727ms.
+
+This is the cheap half of a larger finding. The same measurements show the
+bootstrap costs ~14.4s when the snapshot lacks `sqlite3`/`gh`/`pnpm`/`tsx` and
+117ms when it ships them, because the `command -v` guards then skip every
+install. Production telemetry agrees on where that lands: across all recorded
+acquisitions, every `restore` (which skips `prepareSandbox`) completes in 1–5s
+while no `start` (which runs it) has ever completed in under 5s. A Rally-owned
+snapshot carrying those four capabilities is the change that removes the ~13s;
+this entry only removes what could be removed without one.
+
+**Considered and rejected:** Merging install and verify into a single provider
+`executeCommand` to save one round trip — it would collapse the `install` and
+`verify` failure phases that `sandbox_bootstrap` reports separately, trading
+deliberate observability for less than a second. Caching probe results per
+snapshot version across sandboxes — that needs shared state for a 727ms phase.
+Dropping probes from the manifest — the manifest is the fail-closed contract
+against a breaking managed-image update, not overhead.
+
+**Consequences:** The probe reports *every* missing capability as
+`AVALON_PROBE_MISSING=<ids>` rather than failing at the first, so a breaking
+image update is one diagnostic instead of one per redeploy. A probe that fails
+still writes no marker and the sweep still exits non-zero, so the phase remains
+fail-closed; anything added to `TERMINAL_SNAPSHOT_PROBES` must stay independent
+of the others, because they no longer run in a defined order. The probe now
+writes into `/workspace/.rally/tmp`, which the bootstrap already owns and the
+probe already asserts.
+
 ### 2026-08-30 — EU Terminal is a supported regional deployment
 
 **What changed:** The EU Worker declares `TERMINAL_REGION_CAPABILITY=supported`
