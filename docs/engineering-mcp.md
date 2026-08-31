@@ -27,7 +27,9 @@ by virtue of product membership.
 ## How it works
 
 Cloudflare Access terminates MCP OAuth and Dynamic Client Registration at the
-custom hostname. The origin independently verifies the signed
+custom hostname. Dynamic registration accepts installed-client loopback
+callbacks and hosted callbacks under the supported Claude, ChatGPT, and Cursor
+origins. The origin independently verifies the signed
 `Cf-Access-Jwt-Assertion`, including issuer and this application's dedicated
 audience. A verified request reaches the stateless MCP handler; every other
 request fails closed.
@@ -182,10 +184,34 @@ policy, identity-provider, and session-duration source; missing source state is
 a deployment failure, not permission to create a broader policy. Generated
 configuration contains the Access audience, is owner-readable, and is removed
 after Wrangler exits. Redeployment preserves an existing Managed OAuth grant
-configuration and HTTPS redirect allowlist; changing those values remains an
-explicit Access administration decision.
+configuration and administrator-added HTTPS redirect allowlist entries. It also
+ensures the supported Claude, ChatGPT, and Cursor hosted origins remain present.
+Changing that managed provider list remains an explicit Access administration
+decision.
 
 ## Changelog
+
+### 2026-08-30 — Admit hosted MCP clients through Managed OAuth
+
+**What changed:** The Access provisioner now permits Dynamic Client Registration
+callbacks on every path under the hosted Claude, ChatGPT, and Cursor origins,
+while retaining installed-client localhost and loopback callbacks and preserving
+administrator-added HTTPS entries.
+
+**Why:** Claude Code on the web registered through an Anthropic-hosted callback,
+but the initial Access application admitted only callbacks on the user's own
+machine. Client registration therefore failed before company sign-in.
+
+**Considered and rejected:** A single exact Claude callback was rejected because
+hosted clients can move callback paths and the operator requirement is to admit
+all supported hosted surfaces. An undocumented global HTTPS wildcard was
+rejected because Cloudflare documents path wildcards only after a concrete
+HTTPS origin.
+
+**Consequences:** Any OAuth client hosted on an admitted provider origin can
+dynamically register, but it still receives no database access unless the user
+passes the Ace-derived Cloudflare Access policy. Adding another hosted provider
+requires a provisioner change and deployment.
 
 ### 2026-08-30 — Fence SQL execution behind read-only regional resolution
 
