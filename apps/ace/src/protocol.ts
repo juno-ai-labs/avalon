@@ -99,15 +99,6 @@ export const MANAGED_MODELS = [
   },
   {
     rank: 8,
-    rankReason: 'Background · connector activity',
-    role: 'activity_structured',
-    key: 'agent-model-activity-structured',
-    label: 'Activity classifier',
-    description: 'Turns connector activity into the structured semantic signal used to match activity-triggered automations.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
-  },
-  {
-    rank: 9,
     rankReason: 'Background · candidate creation',
     role: 'work_opportunity_admission',
     key: 'agent-model-work-opportunity-admission',
@@ -116,7 +107,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 10,
+    rank: 9,
     rankReason: 'Background · per-person ordering',
     role: 'work_opportunity_ranking',
     key: 'agent-model-work-opportunity-ranking',
@@ -125,7 +116,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
   },
   {
-    rank: 11,
+    rank: 10,
     rankReason: 'Specialized · dashboard refreshes',
     role: 'block_dashboard',
     key: 'agent-model-block-dashboard',

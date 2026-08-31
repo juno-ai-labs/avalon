@@ -27,6 +27,13 @@ describe("work-stream schema migration in workerd", () => {
          VALUES ('resource-1', 'user-1', 1, 'context',
                  '{"id":"resource-1","title":"Preserve this relation"}', 1, 1)`,
       );
+      state.storage.sql.exec(
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+            resource_json, attached_at, updated_at)
+         VALUES ('resource-suggestion', 'user-1', 0, 'suggested_activity',
+                 '{"id":"resource-suggestion","title":"Retain this attachment"}', 1, 1)`,
+      );
 
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
@@ -43,6 +50,10 @@ describe("work-stream schema migration in workerd", () => {
         relationship_type: "context",
         resource_json: '{"id":"resource-1","title":"Preserve this relation"}',
       });
+      expect(state.storage.sql.exec<{ relationship_type: string }>(
+        `SELECT relationship_type
+           FROM workstream_resource_links WHERE resource_id = 'resource-suggestion'`,
+      ).one()).toEqual({ relationship_type: "attachment" });
       expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
     });
   });
@@ -306,8 +317,9 @@ describe("work-stream schema migration in workerd", () => {
         `SELECT name FROM sqlite_schema
           WHERE type = 'table' AND name IN ('run_steering', 'agent_run_dispatches')`,
       ).toArray()).toEqual([]);
-      expect(state.storage.sql.exec(`SELECT authored_message_id FROM suggested_actions`).toArray())
-        .toEqual([{ authored_message_id: "message-1" }]);
+      expect(state.storage.sql.exec(
+        `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'suggested_actions'`,
+      ).toArray()).toEqual([]);
       expect(state.storage.sql.exec(`SELECT stream_id FROM active_output_turns`).toArray())
         .toEqual([]);
       expect(state.storage.sql.exec(`SELECT text FROM active_output_chunks`).toArray())

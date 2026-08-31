@@ -3,7 +3,6 @@ import { Hono, type Context } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
-  ActivitySuggestionSchema,
   AddParticipantRequestSchema,
   ApplyWorkstreamBatchRequestSchema,
   AnswerElicitationRequestSchema,
@@ -48,7 +47,6 @@ const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
 const resourceParam = z.object({ id: IdSchema, resourceId: IdSchema });
 const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
-const suggestionParam = z.object({ id: IdSchema, suggestionId: IdSchema });
 const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
   // Timestamps are still accepted for clients holding pre-cutover cursors;
@@ -83,10 +81,6 @@ const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
 const AnsweredElicitationSchema = z.object({
   elicitation: ElicitationSchema.optional(),
 }).strict();
-const ResolvedSuggestionSchema = z.object({
-  suggestion: ActivitySuggestionSchema.optional(),
-  resourceId: IdSchema.nullable(),
-});
 const RetriedRunSchema = z.object({ harnessRunId: IdSchema });
 /**
  * What every pin mutation answers with: the caller's pinned work streams, in
@@ -354,16 +348,6 @@ workstreamRoutes.post("/:id/elicitations/:elicitationId/answer", zValidator("par
   return c.json(AnsweredElicitationSchema.parse(
     await client.answerElicitation(param.elicitationId, c.req.valid("json")),
   ));
-});
-workstreamRoutes.post("/:id/activities/:suggestionId/accept", zValidator("param", suggestionParam), async (c) => {
-  const param = c.req.valid("param");
-  const client = await authoritativeWorkstreamClient(c, param.id);
-  return c.json(ResolvedSuggestionSchema.parse(await client.resolveSuggestion(param.suggestionId, "accepted")));
-});
-workstreamRoutes.post("/:id/activities/:suggestionId/dismiss", zValidator("param", suggestionParam), async (c) => {
-  const param = c.req.valid("param");
-  const client = await authoritativeWorkstreamClient(c, param.id);
-  return c.json(ResolvedSuggestionSchema.parse(await client.resolveSuggestion(param.suggestionId, "dismissed")));
 });
 workstreamRoutes.post("/:id/stop", zValidator("param", idParam), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);

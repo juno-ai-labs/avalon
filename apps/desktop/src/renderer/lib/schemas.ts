@@ -124,7 +124,6 @@ export const messageSchema = z
       'text',
       'tool_event',
       'elicitation',
-      'activity_suggestion',
       'system',
     ]),
     text: z.string().optional(),

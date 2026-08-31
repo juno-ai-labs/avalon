@@ -1214,7 +1214,6 @@ already have committed across the object boundary.
 | `workspace_workstream_viewers` | One authoritative viewer overlay per work stream/user, independently fenced by generation, viewer `waterline`, UUIDv7 source event, and hash. It supplies participation, listability, unread/mention state, and read fences and cascades from the common row. |
 | `workspace_workstream_pins` | User-ordered pins referencing the directory row; all pin writes and reorder operations execute in this object. |
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
-| `workspace_workstream_suggestion_feedback` | Resolved work-stream action feedback indexed for workspace discovery and ranking. The action itself remains in its SubstreamAgent. |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
 | `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
@@ -1306,7 +1305,7 @@ join crosses an object boundary.
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
 | `transcript_compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints reference immutable model-only facts per principal/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
-| `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `suggested_activity`, `inbound_email`, or `context`), the authorization revision every relationship change advances, and operational suggestion overlays. `generated` derives artifact direction; every other value derives source direction. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
+| `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
 | `block_dashboard_configuration_versions`, `block_dashboard_block_runs`, `block_dashboard_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
@@ -1450,6 +1449,24 @@ directory write at all.
 **Why:** Aligns person mentions with the URL-style schemes the rest of the
 product teaches (`resource://`), so a model that generalizes does not produce a
 form the chip matcher and notification reducers miss.
+
+### 2026-08-30 — Suggested context state was retired from every object layer
+
+**What changed:** SubstreamAgent migration 35 drops `suggested_actions`, its
+audience triggers, and pending suggestion outbox rows; old `suggested_activity`
+links become ordinary attachments. WorkstreamDO migration 4 removes the
+suggestion-feedback effect kind and pending rows. WorkspaceDO migration 25 drops
+the feedback projection. The runtime exposes no suggestion RPCs.
+
+**Why:** Removing the Suggested context product requires removing its durable
+authority and delivery machinery, not merely hiding its desktop card.
+
+**Considered and rejected:** Retaining the tables for a possible re-enable.
+That would preserve unused authorization invariants, alarms, and cross-object
+effects as permanent maintenance surface.
+
+**Consequences:** Accepted resources remain attached. Pending cards and feedback
+are intentionally discarded, and released migration versions remain immutable.
 
 ### 2026-08-30 — Sidebar facepile omits the current viewer
 

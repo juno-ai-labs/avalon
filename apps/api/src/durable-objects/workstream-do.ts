@@ -425,6 +425,39 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `CREATE INDEX durable_outbox_delivery_idx
       ON durable_outbox(state, not_before, created_at, message_id)`,
   ],
+}, {
+  version: 4,
+  description: "retire context-suggestion deliveries from the durable outbox",
+  statements: [
+    `CREATE TABLE durable_outbox_without_suggestions (
+      message_id TEXT PRIMARY KEY,
+      partition_key TEXT NOT NULL,
+      source_version INTEGER NOT NULL CHECK (source_version > 0),
+      source_epoch INTEGER NOT NULL CHECK (source_epoch > 0),
+      effect_kind TEXT NOT NULL CHECK (effect_kind IN (
+        'directory_common', 'directory_user', 'activity_event',
+        'mention_notification', 'participant_notification'
+      )),
+      payload_json TEXT NOT NULL CHECK (
+        json_valid(payload_json) AND length(CAST(payload_json AS BLOB)) <= 1900000
+      ),
+      payload_hash TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'inflight')),
+      attempts INTEGER NOT NULL CHECK (attempts >= 0),
+      not_before INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT`,
+    `INSERT INTO durable_outbox_without_suggestions
+       (message_id, partition_key, source_version, source_epoch, effect_kind,
+        payload_json, payload_hash, state, attempts, not_before, created_at)
+     SELECT message_id, partition_key, source_version, source_epoch, effect_kind,
+            payload_json, payload_hash, state, attempts, not_before, created_at
+       FROM durable_outbox WHERE effect_kind != 'suggestion_feedback'`,
+    `DROP TABLE durable_outbox`,
+    `ALTER TABLE durable_outbox_without_suggestions RENAME TO durable_outbox`,
+    `CREATE INDEX durable_outbox_delivery_idx
+      ON durable_outbox(state, not_before, created_at, message_id)`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -2345,9 +2378,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       requiredProjectionVersion = (projection?.next_version ?? 1) - 1;
       if (requiredProjectionVersion <= 0) throw new Error("workstream_notification_projection_dependency_uncommitted");
     }
-    const messageId = source.effect.kind === "suggestion_feedback"
-      ? uuidV7(now)
-      : `substream:${substreamId}:${source.messageId}`;
+    const messageId = `substream:${substreamId}:${source.messageId}`;
     const payloadHash = workstreamRegionalEffectHash(source.effect, requiredProjectionVersion);
     this.insertOutbox({
       ...source,
@@ -2402,7 +2433,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<StoredEnvelopeRow>(
       `SELECT payload_json, payload_hash, attempts FROM durable_outbox
         WHERE state IN ('pending', 'inflight')
-          AND effect_kind IN ('directory_common', 'directory_user', 'suggestion_feedback')
+          AND effect_kind IN ('directory_common', 'directory_user')
         ORDER BY CASE effect_kind
                    WHEN 'directory_common' THEN 0
                    WHEN 'directory_user' THEN 1
