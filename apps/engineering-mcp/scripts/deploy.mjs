@@ -10,6 +10,12 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
 const mcpDomain = "mcp.internal.rallywith.ai";
 const aceDomain = "ace.internal.rallywith.ai";
+const hostedMcpRedirectUris = [
+  "https://claude.ai/*",
+  "https://chatgpt.com/*",
+  "https://cursor.com/*",
+  "https://www.cursor.com/*",
+];
 const generatedConfig = join(appDirectory, "wrangler.generated.json");
 
 if (!accountId) throw new Error("CLOUDFLARE_ACCOUNT_ID is required");
@@ -83,6 +89,11 @@ async function ensureAccessApplication() {
   const current = existing
     ? await cloudflare(`/access/apps/${encodeURIComponent(existing.id)}`)
     : null;
+  const currentAllowedRedirectUris = Array.isArray(
+    current?.oauth_configuration?.dynamic_client_registration?.allowed_uris,
+  )
+    ? current.oauth_configuration.dynamic_client_registration.allowed_uris
+    : [];
   const application = {
     name: "Rally engineering MCP",
     type: "self_hosted",
@@ -98,6 +109,10 @@ async function ensureAccessApplication() {
         enabled: true,
         allow_any_on_localhost: true,
         allow_any_on_loopback: true,
+        allowed_uris: [...new Set([
+          ...currentAllowedRedirectUris,
+          ...hostedMcpRedirectUris,
+        ])],
       },
       ...(current?.oauth_configuration?.grant
         ? { grant: current.oauth_configuration.grant }

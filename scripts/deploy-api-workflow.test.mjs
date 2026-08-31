@@ -280,6 +280,15 @@ test('deploys the Managed OAuth engineering MCP only after both regional APIs ar
   assert.match(provisioner, /dynamic_client_registration:\s*\{[\s\S]{0,180}enabled: true,/u);
   assert.match(provisioner, /allow_any_on_localhost: true/u);
   assert.match(provisioner, /allow_any_on_loopback: true/u);
+  assert.match(provisioner, /"https:\/\/claude\.ai\/\*"/u);
+  assert.match(provisioner, /"https:\/\/chatgpt\.com\/\*"/u);
+  assert.match(provisioner, /"https:\/\/cursor\.com\/\*"/u);
+  assert.match(provisioner, /"https:\/\/www\.cursor\.com\/\*"/u);
+  assert.match(
+    provisioner,
+    /allowed_uris:\s*\[\.\.\.new Set\(\[\s*\.\.\.currentAllowedRedirectUris,\s*\.\.\.hostedMcpRedirectUris,?\s*\]\)\]/su,
+    'hosted callback patterns must be merged with administrator-managed redirect URIs',
+  );
   assert.match(provisioner, /current\?\.oauth_configuration\?\.grant/u);
   assert.match(provisioner, /config\.vars\.ACCESS_APPLICATION_AUD = audience/u);
   assert.match(provisioner, /cloudflareList\("\/access\/apps"\)/u);
