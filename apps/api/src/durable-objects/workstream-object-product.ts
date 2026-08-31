@@ -1,6 +1,5 @@
 import {
   AcknowledgeWorkstreamReadRequestSchema,
-  ActivitySuggestionSchema,
   AnswerElicitationRequestSchema,
   MESSAGE_MAX_CHARACTERS,
   MentionSchema,
@@ -18,7 +17,6 @@ import {
   WorkstreamWorkflowInputSchema,
   workstreamParticipantPreview,
   type Elicitation,
-  type ActivitySuggestion,
   type Message,
   type ResourceRelationshipType,
   type WorkstreamResource,
@@ -50,15 +48,9 @@ import {
   connectorSupportsResourceHydration,
 } from "../lib/connector-registry";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import type { WorkstreamReaderAudience } from "../lib/audience-containment";
 import { logWarn } from "../observability/logger";
-import {
-  ContentAudienceSchema,
-  contentAudienceContainsWorkstream,
-  type ContentAudience,
-  type WorkstreamReaderAudience,
-} from "../lib/audience-containment";
 import { prepareMentionMarkdown, type MentionPerson } from "../lib/message-mentions";
-import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
 import {
@@ -144,22 +136,6 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
 }).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "A message must include text or an attachment",
 });
-
-export const WorkstreamObjectCreateSuggestionInputSchema = z.object({
-  id: z.string().uuid(),
-  activityId: z.string().uuid(),
-  title: z.string().min(1).max(300),
-  summary: z.string().max(2_000),
-  confidence: z.number().min(0).max(1),
-  reason: z.string().min(1).max(1_200),
-  matchedEntities: z.array(z.string().max(500)).max(100),
-  source: z.enum(["contextual_routing", "suggested_work"]),
-  sourceAudience: ContentAudienceSchema,
-}).strict();
-
-export type WorkstreamObjectCreateSuggestionInput = z.infer<
-  typeof WorkstreamObjectCreateSuggestionInputSchema
->;
 
 export const InitializeWorkstreamObjectInputSchema = z.object({
   workspaceId: WorkspaceIdSchema,
@@ -1449,9 +1425,6 @@ export class WorkstreamObjectProductService {
     }
     const now = Date.now();
     const scopeChanged = input.scope !== undefined && input.scope !== before.scope;
-    if (scopeChanged && input.scope === "workspace") {
-      this.assertAcceptedContentContains({ scope: "workspace" });
-    }
     const joined = scopeChanged && input.scope === "personal" && !this.isParticipant(auth.userId);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
@@ -1734,7 +1707,6 @@ export class WorkstreamObjectProductService {
       this.connections(auth.userId),
     ]);
     const elicitations = this.elicitations();
-    const suggestions = this.suggestions();
     const latestRun = first(this.storage.sql.exec<{
       run_id: string; origin: string; status: string; model: string | null;
       error_json: string | null; started_at: number; completed_at: number | null; created_at: number;
@@ -1752,7 +1724,6 @@ export class WorkstreamObjectProductService {
       connections,
       backgroundTasks: this.backgroundTasks(),
       openElicitations: elicitations,
-      suggestions,
       latestHarnessRunId: latestRun?.run_id ?? null,
       latestHarnessRun: latestRun ? {
         id: latestRun.run_id,
@@ -2153,13 +2124,6 @@ export class WorkstreamObjectProductService {
     ).bind(auth.workspaceId, userId).first<{ one: number }>();
     if (!member) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
-    }
-    const audience = this.readerAudience();
-    if (audience.scope === "personal" && !audience.userIds.includes(userId)) {
-      this.assertAcceptedContentContains({
-        scope: "personal",
-        userIds: [...audience.userIds, userId],
-      });
     }
     // Both names are read before the commit because the effects that carry
     // them are built inside it: an effect callback runs against object SQL and
@@ -2563,277 +2527,6 @@ export class WorkstreamObjectProductService {
       `SELECT user_id FROM participants WHERE status = 'active'`,
     ).toArray().map((participant) => participant.user_id);
     return { scope: "personal", userIds };
-  }
-
-  private sourceAudience(value: string | null): ContentAudience | null {
-    const intent = parseJson<{ sourceAudience?: unknown }>(value, {});
-    const parsed = ContentAudienceSchema.safeParse(intent.sourceAudience);
-    return parsed.success ? parsed.data : null;
-  }
-
-  /** Accepted activity resources remain attached, so their audience remains a lifetime fence. */
-  private assertAcceptedContentContains(targetAudience: WorkstreamReaderAudience): void {
-    const rows = this.storage.sql.exec<{ share_intent_json: string | null }>(
-      `SELECT share_intent_json FROM suggested_actions WHERE status = 'accepted'`,
-    ).toArray();
-    for (const row of rows) {
-      const sourceAudience = this.sourceAudience(row.share_intent_json);
-      if (sourceAudience && contentAudienceContainsWorkstream(sourceAudience, targetAudience)) continue;
-      throw new ApiError(
-        409,
-        "workstream_audience_restricted_content",
-        "This work stream contains accepted content that the wider audience cannot view",
-      );
-    }
-  }
-
-  private suggestions(): WorkstreamDetail["suggestions"] {
-    if (!SUGGESTED_CONTEXT_ENABLED) return [];
-    const root = this.root();
-    const targetAudience = this.readerAudience(root);
-    return this.storage.sql.exec<{
-      action_id: string; source_activity_id: string; display_title: string; display_body: string;
-      share_intent_json: string | null; status: string; created_at: number; resolved_at: number | null;
-    }>(
-      `SELECT action_id, source_activity_id, display_title, display_body, share_intent_json,
-              status, created_at, resolved_at
-         FROM suggested_actions WHERE status = 'pending'
-        ORDER BY created_at DESC, action_id`,
-    ).toArray().flatMap((row) => {
-      const sourceAudience = this.sourceAudience(row.share_intent_json);
-      if (!sourceAudience || !contentAudienceContainsWorkstream(sourceAudience, targetAudience)) {
-        return [];
-      }
-      const intent = parseJson<{ confidence?: number; reason?: string }>(row.share_intent_json, {});
-      return [{
-        id: row.action_id,
-        activityId: row.source_activity_id,
-        workstreamId: root.workstream_key,
-        title: truncateUtf16Safe(row.display_title, 300),
-        summary: truncateUtf16Safe(row.display_body, 2_000),
-        confidence: Math.max(0, Math.min(1, Number(intent.confidence ?? 0))),
-        reason: truncateUtf16Safe(intent.reason ?? row.display_body, 1_200),
-        status: "pending" as const,
-        createdAt: iso(row.created_at)!,
-        resolvedAt: iso(row.resolved_at),
-      }];
-    });
-  }
-
-  private suggestion(actionId: string): ActivitySuggestion | undefined {
-    const root = this.root();
-    const row = first(this.storage.sql.exec<{
-      action_id: string; source_activity_id: string; display_title: string; display_body: string;
-      share_intent_json: string | null; status: string; created_at: number; resolved_at: number | null;
-    }>(
-      `SELECT action_id, source_activity_id, display_title, display_body, share_intent_json,
-              status, created_at, resolved_at
-         FROM suggested_actions WHERE action_id = ? ORDER BY version DESC LIMIT 1`,
-      actionId,
-    ));
-    if (!row || !["pending", "accepted", "dismissed"].includes(row.status)) return undefined;
-    const sourceAudience = this.sourceAudience(row.share_intent_json);
-    if (!sourceAudience || !contentAudienceContainsWorkstream(sourceAudience, this.readerAudience(root))) {
-      return undefined;
-    }
-    const intent = parseJson<{ confidence?: number; reason?: string }>(row.share_intent_json, {});
-    return ActivitySuggestionSchema.parse({
-      id: row.action_id,
-      activityId: row.source_activity_id,
-      workstreamId: root.workstream_key,
-      title: truncateUtf16Safe(row.display_title, 300),
-      summary: truncateUtf16Safe(row.display_body, 2_000),
-      confidence: Math.max(0, Math.min(1, Number(intent.confidence ?? 0))),
-      reason: truncateUtf16Safe(intent.reason ?? row.display_body, 1_200),
-      status: row.status,
-      createdAt: iso(row.created_at),
-      resolvedAt: iso(row.resolved_at),
-    });
-  }
-
-  async createSuggestion(
-    workspaceId: string,
-    rawInput: WorkstreamObjectCreateSuggestionInput,
-  ): Promise<{ suggestion: ActivitySuggestion; inserted: boolean }> {
-    const root = this.root();
-    if (root.parent_workspace_key !== workspaceId) {
-      throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
-    }
-    const input = WorkstreamObjectCreateSuggestionInputSchema.parse(rawInput);
-    if (!contentAudienceContainsWorkstream(input.sourceAudience, this.readerAudience(root))) {
-      throw new ApiError(
-        403,
-        "suggestion_audience_mismatch",
-        "The activity audience does not contain every reader of this work stream",
-      );
-    }
-    const now = Date.now();
-    const inserted = this.storage.sql.exec<{ action_id: string }>(
-      `INSERT OR IGNORE INTO suggested_actions
-         (action_id, version, source_activity_id, delivery_id, audience_kind,
-          audience_user_id, provenance_ref, authorization_selector_hash,
-          source_revisions_json, source_authorization_epoch, display_title,
-          display_body, status, created_at, expires_at, resolved_at, retracted_at,
-          resolved_by_user_id, resolution_client_id, share_intent_json,
-          authored_message_id, feedback_message_id)
-       VALUES (?, 1, ?, ?, 'workstream', NULL, ?, 'regional-activity-authority',
-               '[]', 0, ?, ?, 'pending', ?, 253402300799000, NULL, NULL,
-               NULL, NULL, ?, NULL, NULL)
-       RETURNING action_id`,
-      input.id,
-      input.activityId,
-      `suggestion:${input.source}:${input.activityId}`,
-      `activity:${input.activityId}`,
-      input.title,
-      input.summary,
-      now,
-      JSON.stringify({
-        confidence: input.confidence,
-        reason: input.reason,
-        matchedEntities: input.matchedEntities,
-        source: input.source,
-        sourceAudience: input.sourceAudience,
-      }),
-    ).toArray().length > 0;
-    const suggestion = this.suggestion(input.id);
-    if (!suggestion) {
-      const replay = first(this.storage.sql.exec<{ action_id: string }>(
-        `SELECT action_id FROM suggested_actions WHERE delivery_id = ?`,
-        `suggestion:${input.source}:${input.activityId}`,
-      ));
-      const existing = replay ? this.suggestion(replay.action_id) : undefined;
-      if (!existing) throw new Error("workstream_suggestion_reload_failed");
-      return { suggestion: existing, inserted: false };
-    }
-    return { suggestion, inserted };
-  }
-
-  async resolveSuggestion(
-    auth: AuthContext,
-    actionId: string,
-    action: "accepted" | "dismissed",
-  ): Promise<{ suggestion: ActivitySuggestion | undefined; resourceId: string | null; changed: boolean }> {
-    await this.authorize(auth);
-    const existing = this.suggestion(actionId);
-    if (!existing) throw new ApiError(404, "suggestion_not_found", "Activity suggestion not found");
-    if (existing.status !== "pending") {
-      if (existing.status !== action) {
-        throw new ApiError(409, "suggestion_already_resolved", existing.status === "accepted"
-          ? "This suggestion was already added to the work stream"
-          : "This suggestion was already dismissed");
-      }
-      return {
-        suggestion: existing,
-        resourceId: action === "accepted"
-          ? await this.attachedActivityResourceId(existing.activityId)
-          : null,
-        changed: false,
-      };
-    }
-    const resource = action === "accepted"
-      ? await this.activityResource(existing.activityId, auth.workspaceId)
-      : null;
-    const now = Date.now();
-    const sourceRow = first(this.storage.sql.exec<{ share_intent_json: string | null }>(
-      `SELECT share_intent_json FROM suggested_actions WHERE action_id = ?`,
-      actionId,
-    ));
-    const source = parseJson<{ source?: string }>(sourceRow?.share_intent_json ?? null, {}).source
-      === "suggested_work" ? "suggested_work" as const : "contextual_routing" as const;
-    const committed = await this.objectStore.commitWithRegionalEffects(
-      (sql) => {
-        const changed = sql.exec<{ action_id: string }>(
-        `UPDATE suggested_actions SET status = ?, resolved_at = ?,
-                resolved_by_user_id = ?, resolution_client_id = ?
-          WHERE action_id = ? AND status = 'pending'
-          RETURNING action_id`,
-        action, now, auth.userId, `${auth.userId}:${action}`, actionId,
-      ).toArray().length > 0;
-      if (changed && resource) {
-        sql.exec(
-          `INSERT INTO workstream_resource_links
-             (resource_id, attached_by_user_id, watch_enabled, relationship_type,
-              resource_json, attached_at, updated_at)
-           VALUES (?, ?, 0, 'suggested_activity', ?, ?, ?)
-           ON CONFLICT(resource_id) DO NOTHING`,
-          resource.id, auth.userId, JSON.stringify(resource.descriptor), now, now,
-        );
-        sql.exec(
-          `INSERT INTO resource_inventory_revision(id, revision, updated_at) VALUES (1, 1, ?)
-           ON CONFLICT(id) DO UPDATE SET revision = revision + 1, updated_at = excluded.updated_at`,
-          now,
-        );
-      }
-        return changed;
-      },
-      (changed) => changed ? [
-        {
-          partitionKey: `suggestion:${actionId}`,
-          sourceVersion: 1,
-          dedupeKey: `suggestion-feedback:${actionId}:${action}`,
-          effect: {
-            kind: "suggestion_feedback" as const,
-            actionId,
-            activityId: existing.activityId,
-            source,
-            status: action,
-            resolvedAt: iso(now)!,
-            resolvedByUserId: auth.userId,
-          },
-        },
-        ...(resource ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : []),
-      ] : [],
-    );
-    const changed = committed.result;
-    const resolved = this.suggestion(actionId);
-    if (!resolved) throw new Error("workstream_suggestion_reload_failed");
-    if (!changed && resolved.status !== action) {
-      throw new ApiError(409, "suggestion_resolution_conflict", "This suggestion could not be resolved. Try again.");
-    }
-    return { suggestion: resolved, resourceId: resource?.id ?? null, changed };
-  }
-
-  private async activityResource(
-    activityId: string,
-    workspaceId: string,
-  ): Promise<{ id: string; descriptor: Record<string, unknown> } | null> {
-    const row = await this.workspaceDatabase(workspaceId).prepare(
-      `SELECT resource.id, resource.connection_id, resource.resource_type,
-              resource.provider, resource.provider_resource_id, resource.title,
-              resource.mime_type, resource.content_ref, resource.canonical_url,
-              resource.metadata_json
-         FROM workspace_connector_events activity
-         JOIN resources resource
-           ON resource.provider = activity.provider
-          AND resource.provider_resource_id = activity.provider_resource_id
-          AND (resource.connection_id = activity.connection_id
-               OR (resource.connection_id IS NULL AND activity.connection_id IS NULL))
-        WHERE activity.event_id = ? AND resource.workspace_id = ? LIMIT 1`,
-    ).bind(activityId, workspaceId).first<Record<string, unknown>>();
-    if (!row) return null;
-    return {
-      id: String(row.id),
-      descriptor: {
-        id: String(row.id),
-        connectionId: row.connection_id == null ? null : String(row.connection_id),
-        type: String(row.resource_type),
-        provider: String(row.provider),
-        providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
-        title: String(row.title),
-        mimeType: row.mime_type == null ? null : String(row.mime_type),
-        contentRef: row.content_ref == null ? null : String(row.content_ref),
-        canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
-        metadata: parseJson(String(row.metadata_json ?? "{}"), {}),
-      },
-    };
-  }
-
-  private async attachedActivityResourceId(activityId: string): Promise<string | null> {
-    const resource = await this.activityResource(activityId, this.root().parent_workspace_key);
-    if (!resource) return null;
-    return first(this.storage.sql.exec<{ resource_id: string }>(
-      `SELECT resource_id FROM workstream_resource_links WHERE resource_id = ?`, resource.id,
-    ))?.resource_id ?? null;
   }
 
   private backgroundTasks(): WorkstreamDetail["backgroundTasks"] {
@@ -3642,14 +3335,6 @@ export class WorkstreamObjectProductService {
     // participant-add API. A malformed or spoofed range cannot smuggle its raw
     // target into the audience after canonicalization rejects it.
     const confirmedParticipantUserIds = input.confirmedParticipantUserIds.filter((userId) => personIds.includes(userId));
-    if (root.scope === "personal" && confirmedParticipantUserIds.length > 0) {
-      const currentAudience = this.readerAudience(root);
-      if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
-      this.assertAcceptedContentContains({
-        scope: "personal",
-        userIds: [...new Set([...currentAudience.userIds, ...confirmedParticipantUserIds])],
-      });
-    }
     const unconfirmed = personIds.filter((userId) =>
       !this.isParticipant(userId) && !confirmedParticipantUserIds.includes(userId));
     if (root.scope === "personal" && unconfirmed.length > 0) {

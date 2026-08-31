@@ -43,7 +43,6 @@ const baseMessage: Message = {
 
 const actions = {
   onAnswerElicitation: vi.fn(async () => undefined),
-  onResolveSuggestion: vi.fn(async () => undefined),
 };
 
 describe('MessageBlock model timing', () => {
@@ -81,58 +80,6 @@ describe('MessageBlock model timing', () => {
     expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
     expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
-  });
-});
-
-describe('MessageBlock suggested context', () => {
-  const suggestionMessage: Message = {
-    ...baseMessage,
-    id: 'suggestion-suggestion-one',
-    authorType: 'system',
-    author: undefined,
-    messageType: 'activity_suggestion',
-    text: undefined,
-    activitySuggestion: {
-      id: 'suggestion-one',
-      title: 'Review requested on the privacy fix',
-      source: 'GitHub',
-      reason: 'The pull request changes the same work-stream authorization boundary.',
-      status: 'pending',
-    },
-  };
-
-  it('renders the evidence and resolves either action through the suggestion id', async () => {
-    const onResolveSuggestion = vi.fn(async () => undefined);
-    render(
-      <MessageBlock
-        {...actions}
-        message={suggestionMessage}
-        onResolveSuggestion={onResolveSuggestion}
-      />,
-    );
-
-    expect(screen.getByText('Suggested context')).toBeInTheDocument();
-    expect(screen.getByText('Review requested on the privacy fix')).toBeInTheDocument();
-    expect(screen.getByText('GitHub')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Add to work stream/u }));
-
-    await waitFor(() => expect(onResolveSuggestion).toHaveBeenCalledWith('suggestion-one', 'accept'));
-  });
-
-  it('renders an accepted suggestion without offering another decision', () => {
-    render(
-      <MessageBlock
-        {...actions}
-        message={{
-          ...suggestionMessage,
-          activitySuggestion: { ...suggestionMessage.activitySuggestion!, status: 'accepted' },
-        }}
-      />,
-    );
-
-    expect(screen.getByText('Added to this work stream')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Add to work stream/u })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Dismiss/u })).not.toBeInTheDocument();
   });
 });
 

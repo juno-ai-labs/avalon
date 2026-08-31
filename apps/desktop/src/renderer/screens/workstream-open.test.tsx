@@ -93,7 +93,6 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
     connections: [],
     backgroundTasks: [],
     openElicitations: [],
-    suggestions: [],
     latestHarnessRunId: null,
     latestHarnessRun: null,
     automationRuns: [],

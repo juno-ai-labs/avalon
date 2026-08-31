@@ -86,7 +86,6 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Activity classifier | `agent-model-activity-structured` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
@@ -94,8 +93,7 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 The first five names match the `AgentInferenceSource` values written to the
 inference ledger, so a ledger row and a flag key name the same agent. The rest
 are the standalone structured-output agents: message addressing uses the
-agent-harness classifier helper; work-stream naming, semantic activity
-triggering, the two halves of suggested work, and the
+agent-harness classifier helper; work-stream naming, the two halves of suggested work, and the
 work-stream description loop use the bounded structured-inference gateway.
 Durable-memory query and document embeddings use the same gateway's native
 OpenRouter embeddings path but deliberately have no Flagship role. Their fixed
@@ -1099,6 +1097,23 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-30 — The Suggested context model route was retired
+
+**What changed:** `activity_structured` and
+`agent-model-activity-structured` were removed from the shared role contract,
+ACE catalog, deployment defaults, and this registry.
+
+**Why:** The only consumer was the removed Suggested context classifier. A
+model flag without a runnable agent is configuration that falsely appears
+operable.
+
+**Considered and rejected:** Leaving the route reserved for a future classifier.
+A future feature can introduce a role whose name and default match its actual
+contract.
+
+**Consequences:** ACE exposes ten model routes, and no deployment creates the
+retired Flagship key.
 
 ### 2026-08-28 — One producer copies an automation's pin, from a frozen run context
 

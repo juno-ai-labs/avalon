@@ -29,7 +29,6 @@ const RECIPIENT_ID = "00000000-0000-7000-8000-0000000000a6";
 const AUTHOR_ID = "00000000-0000-7000-8000-0000000000a7";
 const ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a8";
 const RECOVERED_ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a9";
-const OUTSIDER_ID = "00000000-0000-7000-8000-0000000000aa";
 
 function activateRealtimeExecution(storage: DurableObjectStorage, now: number): void {
   const runs = new WorkstreamHarnessRunStorage(storage);
@@ -110,7 +109,6 @@ const EXPECTED_TABLES = [
   "substream_agent_identity",
   "substream_loops",
   "substreams",
-  "suggested_actions",
   "terminal_imported_resources",
   "terminal_publication_grants",
   "terminal_repository",
@@ -593,73 +591,6 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
-  it("keeps accepted restricted suggestions contained across direct audience writes", () => {
-    const database = new DatabaseSync(":memory:");
-    const storage = objectStorage(database);
-    try {
-      applyWorkstreamObjectSchema(storage, "worker-one", 1_000);
-      database.prepare(
-        `INSERT INTO workstream
-           (id, workstream_key, parent_workspace_key, region, authority_mode,
-            authority_generation, title, description, scope, exact_state,
-            state_reason_code, next_sequence_number, next_attention_ordinal,
-            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
-            deletion_epoch, run_revision, created_at, last_people_activity_at,
-            state_changed_at, updated_at)
-         VALUES (1, ?, ?, 'global', 'authoritative', 1, '', '', 'personal', 'idle',
-                 'test', 1, 1, 1, 0, 0, 1, 0, 1, 1000, 1000, 1000, 1000)`,
-      ).run(WORKSTREAM_ID, WORKSPACE_ID);
-      database.prepare(
-        `INSERT INTO participants
-           (user_id, participation_reason, added_by_user_id, status,
-            participant_epoch, added_at, removed_at, updated_at)
-         VALUES (?, 'creator', ?, 'active', 1, 1000, NULL, 1000)`,
-      ).run(AUTHOR_ID, AUTHOR_ID);
-      database.prepare(
-        `INSERT INTO suggested_actions
-           (action_id, version, source_activity_id, delivery_id, audience_kind,
-            audience_user_id, provenance_ref, authorization_selector_hash,
-            source_revisions_json, source_authorization_epoch, display_title,
-            display_body, status, created_at, expires_at, share_intent_json)
-         VALUES (?, 1, 'activity', 'restricted-delivery', 'workstream', NULL,
-                 'activity:1', 'selector', '[]', 0, 'Private title', 'Private body',
-                 'pending', 1000, 2000, ?)`,
-      ).run(RECIPIENT_ID, JSON.stringify({
-        sourceAudience: { scope: "users", userIds: [AUTHOR_ID] },
-      }));
-      database.prepare(
-        `UPDATE suggested_actions SET status = 'accepted', resolved_at = 1500,
-                resolved_by_user_id = ?, resolution_client_id = 'accept-restricted'
-          WHERE action_id = ?`,
-      ).run(AUTHOR_ID, RECIPIENT_ID);
-
-      expect(() => database.prepare(
-        `UPDATE suggested_actions SET share_intent_json = ? WHERE action_id = ?`,
-      ).run(JSON.stringify({ sourceAudience: { scope: "workspace" } }), RECIPIENT_ID))
-        .toThrow("accepted_suggestion_source_audience_immutable");
-      expect(() => database.prepare(
-        `DELETE FROM suggested_actions WHERE action_id = ?`,
-      ).run(RECIPIENT_ID)).toThrow("accepted_suggestion_source_audience_immutable");
-      expect(() => database.prepare(
-        `INSERT INTO participants
-           (user_id, participation_reason, added_by_user_id, status,
-            participant_epoch, added_at, removed_at, updated_at)
-         VALUES (?, 'explicit', ?, 'active', 1, 1600, NULL, 1600)`,
-      ).run(OUTSIDER_ID, AUTHOR_ID)).toThrow("workstream_audience_restricted_content");
-      expect(() => database.prepare(
-        `UPDATE workstream SET scope = 'workspace', scope_epoch = scope_epoch + 1
-          WHERE id = 1`,
-      ).run()).toThrow("workstream_audience_restricted_content");
-
-      expect(database.prepare(
-        `SELECT user_id FROM participants WHERE status = 'active' ORDER BY user_id`,
-      ).all()).toEqual([{ user_id: AUTHOR_ID }]);
-      expect(database.prepare("SELECT scope FROM workstream WHERE id = 1").get())
-        .toEqual({ scope: "personal" });
-    } finally {
-      database.close();
-    }
-  });
 
   it("retires the reader-less cutover tables on an object that already holds rows in them", () => {
     const database = new DatabaseSync(":memory:");
@@ -785,7 +716,7 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
-  it("enforces substream, semantic-part, and suggested-action shapes in SQLite", () => {
+  it("enforces substream and semantic-part shapes in SQLite", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
     try {
@@ -825,35 +756,6 @@ describe("the Workstream Durable Object relational schema", () => {
          VALUES (?, '0', 1, 'assistant', 'tool_call', 'agent', '',
                  'people', 0, 1000, 1000)`,
       ).run(MESSAGE_ID)).toThrow();
-      expect(() => database.prepare(
-        `INSERT INTO suggested_actions
-           (action_id, version, source_activity_id, delivery_id, audience_kind,
-            audience_user_id, provenance_ref, authorization_selector_hash,
-            source_revisions_json, source_authorization_epoch, display_title,
-            display_body, status, created_at, expires_at)
-         VALUES (?, 1, 'activity', 'delivery', 'workstream', NULL, 'activity:1',
-                 'selector', '[]', 0, 'Title', 'Body', 'accepted', 1000, 2000)`,
-      ).run(RECIPIENT_ID)).toThrow();
-
-      database.prepare(
-        `INSERT INTO suggested_actions
-           (action_id, version, source_activity_id, delivery_id, audience_kind,
-            audience_user_id, provenance_ref, authorization_selector_hash,
-            source_revisions_json, source_authorization_epoch, display_title,
-            display_body, status, created_at, expires_at)
-         VALUES (?, 1, 'activity', 'delivery-valid', 'workstream', NULL, 'activity:1',
-                 'selector', '[]', 0, 'Title', 'Body', 'pending', 1000, 2000)`,
-      ).run(RECIPIENT_ID);
-      database.prepare(
-        `UPDATE suggested_actions SET status = 'accepted', resolved_at = 1500,
-                resolved_by_user_id = ?, resolution_client_id = 'accept-once'
-          WHERE action_id = ?`,
-      ).run(AUTHOR_ID, RECIPIENT_ID);
-      expect(() => database.prepare(
-        `UPDATE suggested_actions SET status = 'pending', resolved_at = NULL,
-                resolved_by_user_id = NULL, resolution_client_id = NULL
-          WHERE action_id = ?`,
-      ).run(RECIPIENT_ID)).toThrow("suggested_action_terminal_status_immutable");
     } finally {
       database.close();
     }

@@ -207,7 +207,6 @@ export const AGENT_MODEL_ROLES = [
   "meeting_notes",
   "addressing_classifier",
   "workstream_naming",
-  "activity_structured",
   "work_opportunity_admission",
   "work_opportunity_ranking",
   "workstream_description",
@@ -223,7 +222,6 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   meeting_notes: "agent-model-meeting-notes",
   addressing_classifier: "agent-model-addressing-classifier",
   workstream_naming: "agent-model-workstream-naming",
-  activity_structured: "agent-model-activity-structured",
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
   workstream_description: "agent-model-workstream-description",
@@ -1079,19 +1077,6 @@ export const ElicitationSchema = z.object({
   answeredAt: TimestampSchema.nullable()
 });
 
-export const ActivitySuggestionSchema = z.object({
-  id: IdSchema,
-  activityId: IdSchema,
-  workstreamId: IdSchema,
-  title: z.string().min(1).max(300),
-  summary: z.string().max(2000),
-  confidence: z.number().min(0).max(1),
-  reason: z.string().min(1).max(1200),
-  status: z.enum(["pending", "accepted", "dismissed"]),
-  createdAt: TimestampSchema,
-  resolvedAt: TimestampSchema.nullable()
-});
-
 export const BlockDashboardBlockRunStatusSchema = z.enum([
   "queued",
   "running",
@@ -1158,7 +1143,11 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   connections: z.array(ConnectionSchema),
   backgroundTasks: z.array(BackgroundTaskSchema).default([]),
   openElicitations: z.array(ElicitationSchema),
-  suggestions: z.array(ActivitySuggestionSchema),
+  /**
+   * Rollout tombstone for desktop builds that still require this response key.
+   * New Workers always serialize an empty array and current clients ignore it.
+   */
+  suggestions: z.array(z.unknown()).default([]),
   latestHarnessRunId: IdSchema.nullable(),
   latestHarnessRun: HarnessRunMetadataSchema.nullable().optional(),
 });
@@ -1911,9 +1900,7 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("add_participant"), userId: IdSchema }),
   z.object({ type: z.literal("remove_participant"), userId: IdSchema }),
   z.object({ type: z.literal("attach_resource"), resourceId: IdSchema }),
-  z.object({ type: z.literal("detach_resource"), resourceId: IdSchema }),
-  z.object({ type: z.literal("accept_activity_suggestion"), suggestionId: IdSchema }),
-  z.object({ type: z.literal("dismiss_activity_suggestion"), suggestionId: IdSchema })
+  z.object({ type: z.literal("detach_resource"), resourceId: IdSchema })
 ]);
 
 /** Workspace-owned query surfaces kept coherent by the one WorkspaceDO socket. */
@@ -2587,8 +2574,11 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("participant_removed"), userId: IdSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("resource_attached"), resource: WorkstreamResourceSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("resource_updated"), resource: WorkstreamResourceSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: ActivitySuggestionSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: ActivitySuggestionSchema }),
+  // Parse-only rollout compatibility for events emitted by the previous
+  // Worker while a newer desktop is already running. No current producer or
+  // consumer uses the payload.
+  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: z.unknown() }),
+  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: z.unknown() }),
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_configuration_updated"), blockDashboard: BlockDashboardSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_block_run_updated"), run: BlockDashboardBlockRunSchema }),
   ServerEventBaseSchema.extend({
@@ -2886,14 +2876,6 @@ export const WORKSTREAM_NAMING_GRACE_MS = 60_000;
  */
 export const WorkstreamNameResultSchema = z.object({
   title: z.string().trim().min(1).max(80)
-});
-
-export const ActivityRoutingResultSchema = z.object({
-  candidateWorkstreamId: IdSchema.nullable(),
-  confidence: z.number().min(0).max(1),
-  reason: z.string().min(1).max(1000),
-  matchedEntities: z.array(z.string()),
-  suggest: z.boolean()
 });
 
 export const ToolDefinitionSchema = z.object({
@@ -3293,7 +3275,6 @@ export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
-export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
 export type WorkOpportunity = z.infer<typeof WorkOpportunitySchema>;
 export type WorkOpportunityPage = z.infer<typeof WorkOpportunityPageSchema>;
 export type BlockDashboard = z.infer<typeof BlockDashboardSchema>;
@@ -3411,7 +3392,6 @@ export type TerminalWorkstreamState = z.infer<typeof TerminalWorkstreamStateSche
 export type SlackSearchAuthorization = z.infer<typeof SlackSearchAuthorizationSchema>;
 export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
 export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;
-export type ActivityRoutingResult = z.infer<typeof ActivityRoutingResultSchema>;
 export type WorkstreamNameResult = z.infer<typeof WorkstreamNameResultSchema>;
 export type ToolDefinition = z.infer<typeof ToolDefinitionSchema>;
 export type ConnectorSurface = z.infer<typeof ConnectorSurfaceSchema>;

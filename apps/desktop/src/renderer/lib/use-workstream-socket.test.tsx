@@ -307,7 +307,6 @@ function wireWorkstreamDetail(overrides: Record<string, unknown> = {}): Record<s
     resources: [],
     connections: [],
     openElicitations: [],
-    suggestions: [],
     latestHarnessRunId: null,
     ...overrides,
   };

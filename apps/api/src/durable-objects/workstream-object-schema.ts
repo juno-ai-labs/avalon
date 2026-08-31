@@ -18,11 +18,26 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 34;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 35;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
-const RESOURCE_RELATIONSHIP_CHECK_VALUES = RESOURCE_RELATIONSHIP_TYPES
+// Frozen for the v1 and v31 migration hashes. The current vocabulary no longer
+// contains `suggested_activity`; migration 35 rebuilds the live table with the
+// current contract after preserving accepted links as ordinary attachments.
+const LEGACY_RESOURCE_RELATIONSHIP_TYPES = [
+  "attachment",
+  "message_attachment",
+  "origin",
+  "generated",
+  "suggested_activity",
+  "inbound_email",
+  "context",
+] as const;
+const RESOURCE_RELATIONSHIP_CHECK_VALUES = LEGACY_RESOURCE_RELATIONSHIP_TYPES
+  .map((relationshipType) => `'${relationshipType}'`)
+  .join(", ");
+const CURRENT_RESOURCE_RELATIONSHIP_CHECK_VALUES = RESOURCE_RELATIONSHIP_TYPES
   .map((relationshipType) => `'${relationshipType}'`)
   .join(", ");
 
@@ -2658,6 +2673,49 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     statements: [
       `DROP TRIGGER IF EXISTS pending_loop_inputs_prepared_immutable`,
       pendingLoopInputsPreparedImmutableTrigger(),
+    ],
+  },
+  {
+    version: 35,
+    description: "retire suggested context state and preserve accepted resources as attachments",
+    statements: [
+      // A pending feedback effect belongs to a product that no longer has a
+      // receiver. Removing it here keeps the generic outbox from retrying a
+      // payload whose protocol has been retired.
+      `DELETE FROM durable_outbox WHERE partition_key GLOB 'suggestion:*'`,
+      `DROP TRIGGER IF EXISTS accepted_suggestion_source_audience_immutable`,
+      `DROP TRIGGER IF EXISTS accepted_suggestion_source_audience_retained`,
+      `DROP TRIGGER IF EXISTS participants_restricted_content_insert`,
+      `DROP TRIGGER IF EXISTS participants_restricted_content_reactivate`,
+      `DROP TRIGGER IF EXISTS workstream_restricted_content_scope`,
+      `DROP TABLE suggested_actions`,
+      // Resources a person previously accepted remain useful context. They are
+      // no longer suggestion state, so normalize the relationship before the
+      // CHECK-constrained table is rebuilt without that retired vocabulary.
+      `UPDATE workstream_resource_links
+          SET relationship_type = 'attachment'
+        WHERE relationship_type = 'suggested_activity'`,
+      `CREATE TABLE workstream_resource_links_v35 (
+        resource_id TEXT PRIMARY KEY,
+        attached_by_user_id TEXT,
+        watch_enabled INTEGER NOT NULL CHECK (watch_enabled IN (0, 1)),
+        relationship_type TEXT NOT NULL CHECK (
+          relationship_type IN (${CURRENT_RESOURCE_RELATIONSHIP_CHECK_VALUES})
+        ),
+        resource_json TEXT NOT NULL CHECK (json_valid(resource_json)),
+        attached_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+      `INSERT INTO workstream_resource_links_v35
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+          resource_json, attached_at, updated_at)
+       SELECT resource_id, attached_by_user_id, watch_enabled, relationship_type,
+              resource_json, attached_at, updated_at
+         FROM workstream_resource_links`,
+      `DROP TABLE workstream_resource_links`,
+      `ALTER TABLE workstream_resource_links_v35 RENAME TO workstream_resource_links`,
+      `CREATE INDEX workstream_resource_links_relation_idx
+         ON workstream_resource_links(relationship_type, attached_at, resource_id)`,
     ],
   },
 ];

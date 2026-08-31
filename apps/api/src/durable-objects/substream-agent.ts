@@ -212,7 +212,6 @@ import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   InitializeWorkstreamObjectInputSchema,
   WorkstreamObjectCreateMessageInputSchema,
-  WorkstreamObjectCreateSuggestionInputSchema,
   WorkstreamObjectProductService,
   type WorkstreamLoopActivationRequest,
 } from "./workstream-object-product";
@@ -285,11 +284,6 @@ const RuntimeResourceRequestSchema = z.object({
   attachedByUserId: IdSchema.nullable(),
   relationshipType: ResourceRelationshipTypeSchema.optional(),
 }).strict();
-const RuntimeSuggestionRequestSchema = z.object({
-  workspaceId: IdSchema,
-  workstreamId: IdSchema,
-  input: WorkstreamObjectCreateSuggestionInputSchema,
-}).strict();
 const RuntimeReaderAudienceRequestSchema = z.object({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
@@ -340,8 +334,6 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema }).strict(),
   z.object({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }).strict(),
   z.object({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }).strict(),
-  z.object({ operation: z.literal("resolve_suggestion"), auth: ProductAuthSchema,
-    suggestionId: IdSchema, action: z.enum(["accepted", "dismissed"]) }).strict(),
   z.object({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema }).strict(),
   z.object({
@@ -395,7 +387,6 @@ interface AuthRoleRow {
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
 export type SubstreamProductRequest = z.infer<typeof ProductRequestSchema>;
 export type SubstreamRuntimeResourceRequest = z.infer<typeof RuntimeResourceRequestSchema>;
-export type SubstreamRuntimeSuggestionRequest = z.infer<typeof RuntimeSuggestionRequestSchema>;
 export type SubstreamRuntimeBootstrapRequest = z.infer<typeof RuntimeBootstrapRequestSchema>;
 export type SubstreamTimerRefreshRequest = z.infer<typeof AgentTimerRefreshRequestSchema>;
 export type SubstreamPublishedEvent = z.infer<typeof RoomIdentitySchema> & {
@@ -535,8 +526,6 @@ const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
   "resource_updated",
   "elicitation_created",
   "elicitation_answered",
-  "activity_suggestion_created",
-  "activity_suggestion_resolved",
   "block_dashboard_configuration_updated",
 ]);
 
@@ -1069,10 +1058,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.acceptRuntimeResource(request);
     }
 
-    if (request.method === "POST" && url.pathname === "/internal/runtime-suggestion") {
-      return this.acceptRuntimeSuggestion(request);
-    }
-
     if (request.method === "POST" && url.pathname === "/internal/runtime-bootstrap") {
       return this.acceptRuntimeBootstrap(request);
     }
@@ -1343,11 +1328,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async executeTerminalOperation(input: TerminalOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptTerminalOperation(this.rpcRequest(input)));
-  }
-
-  async createRuntimeSuggestion(input: SubstreamRuntimeSuggestionRequest): Promise<DurableObjectRpcResult> {
-    await this.initialized;
-    return responseToRpcResult(await this.acceptRuntimeSuggestion(this.rpcRequest(input)));
   }
 
   async bootstrapRuntime(input: SubstreamRuntimeBootstrapRequest): Promise<DurableObjectRpcResult> {
@@ -2021,31 +2001,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     );
   }
 
-  private async acceptRuntimeSuggestion(request: Request): Promise<Response> {
-    const parsed = RuntimeSuggestionRequestSchema.safeParse(await request.json().catch(() => null));
-    if (!parsed.success) return jsonResponse({ error: "invalid_runtime_suggestion" }, 400);
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== parsed.data.workspaceId
-      || identity.workstreamId !== parsed.data.workstreamId) {
-      return jsonResponse({ error: "workstream_runtime_identity_mismatch" }, 409);
-    }
-    try {
-      const result = await this.product.createSuggestion(parsed.data.workspaceId, parsed.data.input);
-      if (result.inserted) {
-        await this.publishLocalProductEvent(identity, {
-          type: "activity_suggestion_created",
-          suggestion: result.suggestion,
-        });
-      }
-      return jsonResponse(result);
-    } catch (error) {
-      return jsonResponse({
-        error: error instanceof Error ? error.message : "runtime_suggestion_create_failed",
-      }, 409);
-    }
-  }
-
   private async acceptRuntimeBootstrap(request: Request): Promise<Response> {
     const parsed = RuntimeBootstrapRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_runtime_bootstrap" }, 400);
@@ -2307,20 +2262,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (request.operation === "detach_resource") {
         await this.product.detachResource(current, request.resourceId);
         return jsonResponse({ ok: true });
-      }
-      if (request.operation === "resolve_suggestion") {
-        const result = await this.product.resolveSuggestion(
-          current,
-          request.suggestionId,
-          request.action,
-        );
-        if (result.changed && result.suggestion) {
-          await this.publishLocalProductEvent(identity, {
-            type: "activity_suggestion_resolved",
-            suggestion: result.suggestion,
-          });
-        }
-        return jsonResponse({ suggestion: result.suggestion, resourceId: result.resourceId });
       }
       if (request.operation === "answer_elicitation") {
         const result = await this.product.answerElicitation(

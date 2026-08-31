@@ -130,8 +130,6 @@ import {
   WorkspaceDirectoryExistsRequestSchema,
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryDueRequestSchema,
-  WorkspaceDirectoryFeedbackRequestSchema,
-  WorkspaceDirectoryFeedbackResultSchema,
   WorkspaceDirectoryListRequestSchema,
   WorkspaceDirectoryLookupRequestSchema,
   WorkspaceDirectoryLookupResultSchema,
@@ -149,7 +147,6 @@ import {
   WorkspaceDirectoryResourceAccessResultSchema,
   WorkspaceDirectoryResourceRequestSchema,
   WorkspaceDirectoryResourceResultSchema,
-  WorkspaceDirectoryRoutingCandidatesRequestSchema,
   WorkspaceDirectoryScheduleTargetsRequestSchema,
   WorkspaceDirectoryScheduleTargetsResultSchema,
   WorkspaceDirectoryVisibilityRequestSchema,
@@ -166,8 +163,6 @@ import {
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
   type WorkspaceDirectoryExistsRequest,
-  type WorkspaceDirectoryFeedbackRequest,
-  type WorkspaceDirectoryFeedbackResult,
   type WorkspaceDirectoryListRequest,
   type WorkspaceDirectoryLookupRequest,
   type WorkspaceDirectoryLookupResult,
@@ -185,7 +180,6 @@ import {
   type WorkspaceDirectoryNotificationState,
   type WorkspaceDirectoryResourceRequest,
   type WorkspaceDirectoryResourceResult,
-  type WorkspaceDirectoryRoutingCandidatesRequest,
   type WorkspaceDirectoryScheduleTargetsRequest,
   type WorkspaceDirectoryScheduleTargetsResult,
   type WorkspaceDirectoryVisibilityRequest,
@@ -2231,6 +2225,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE workspace_workstream_viewers
        ADD COLUMN participant_added_at INTEGER
          CHECK (participant_added_at IS NULL OR participant_added_at >= 0)`,
+  ],
+}, {
+  version: 25,
+  description: "retire work-stream context suggestion feedback",
+  statements: [
+    `DROP TABLE workspace_workstream_suggestion_feedback`,
   ],
 }];
 
@@ -7948,108 +7948,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  async routingCandidates(
-    input: WorkspaceDirectoryRoutingCandidatesRequest,
-  ): Promise<WorkspaceDirectoryLookupResult> {
-    await this.initialized;
-    const request = WorkspaceDirectoryRoutingCandidatesRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const restrictedJson = request.audience.scope === "users"
-      ? JSON.stringify(request.audience.userIds)
-      : "[]";
-    const audienceScope = request.audience.scope;
-    const excludedJson = JSON.stringify(request.excludedWorkstreamIds);
-    const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-      `${SELECT_WORKSPACE_DIRECTORY}
-       WHERE directory.archived_at IS NULL
-         AND directory.system_kind IS NULL
-         AND directory.exact_state IN ('idle', 'running', 'interrupting', 'preparing_context',
-                                       'waiting_capacity', 'needs_input', 'scheduled')
-         AND ((? = 'workspace' AND directory.scope = 'workspace')
-           OR (? = 'users' AND (
-             directory.scope = 'personal'
-             AND NOT EXISTS (
-               SELECT 1 FROM workspace_workstream_viewers reader
-                WHERE reader.workstream_id = directory.workstream_id
-                  AND reader.authority_generation = directory.authority_generation
-                  AND reader.is_participant = 1
-                  AND reader.user_id NOT IN (SELECT value FROM json_each(?))
-             )
-             AND EXISTS (
-               SELECT 1 FROM workspace_workstream_viewers allowed
-                WHERE allowed.workstream_id = directory.workstream_id
-                  AND allowed.authority_generation = directory.authority_generation
-                  AND allowed.user_id IN (SELECT value FROM json_each(?))
-                  AND allowed.is_participant = 1
-             )
-           )))
-         AND (
-           SELECT COUNT(*) FROM workspace_workstream_suggestion_feedback dismissed
-            WHERE dismissed.workstream_id = directory.workstream_id
-              AND dismissed.source = 'contextual_routing'
-              AND dismissed.status = 'dismissed'
-              AND dismissed.resolved_at >= ?
-              AND dismissed.resolved_at > COALESCE((
-                SELECT MAX(accepted.resolved_at)
-                  FROM workspace_workstream_suggestion_feedback accepted
-                 WHERE accepted.workstream_id = directory.workstream_id
-                   AND accepted.source = 'contextual_routing'
-                   AND accepted.status = 'accepted'
-              ), 0)
-         ) < ?
-         AND directory.workstream_id NOT IN (SELECT value FROM json_each(?))
-       ORDER BY directory.last_activity_at DESC, directory.workstream_id
-       LIMIT ?`,
-      "",
-      "",
-      audienceScope,
-      audienceScope,
-      restrictedJson,
-      restrictedJson,
-      epoch(request.feedbackSince),
-      request.dismissalLimit,
-      excludedJson,
-      request.limit,
-    ).toArray();
-    return WorkspaceDirectoryLookupResultSchema.parse({ items: rows.map(internalDirectoryItem) });
-  }
-
-  async suggestionFeedback(
-    input: WorkspaceDirectoryFeedbackRequest,
-  ): Promise<WorkspaceDirectoryFeedbackResult> {
-    await this.initialized;
-    const request = WorkspaceDirectoryFeedbackRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const rows = this.state.storage.sql.exec<{
-      workstream_id: string;
-      activity_id: string;
-      status: "accepted" | "dismissed";
-      resolved_at: number;
-      resolved_by_user_id: string;
-    }>(
-      `SELECT feedback.workstream_id, feedback.activity_id, feedback.status,
-              feedback.resolved_at, feedback.resolved_by_user_id
-         FROM workspace_workstream_suggestion_feedback feedback
-         JOIN workspace_connector_events event ON event.event_id = feedback.activity_id
-        WHERE feedback.source = ? AND feedback.resolved_at >= ?
-          AND event.provider = ? AND event.event_type = ?
-        ORDER BY feedback.resolved_at, feedback.workstream_id, feedback.action_id`,
-      request.source,
-      epoch(request.since),
-      request.provider,
-      request.eventType,
-    ).toArray();
-    return WorkspaceDirectoryFeedbackResultSchema.parse({
-      items: rows.map((row) => ({
-        workstreamId: row.workstream_id,
-        activityId: row.activity_id,
-        status: row.status,
-        resolvedAt: iso(row.resolved_at),
-        resolvedByUserId: row.resolved_by_user_id || null,
-      })),
-    });
-  }
-
   async resourceAccess(
     input: WorkspaceDirectoryResourceAccessRequest,
   ): Promise<WorkspaceDirectoryResourceAccessResult> {
@@ -8481,48 +8379,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             changed = true;
             participantMembershipChanged = wasParticipant !== effect.isParticipant;
           }
-        }
-      } else if (envelope.effect.kind === "suggestion_feedback") {
-        const effect = envelope.effect;
-        const current = this.state.storage.sql.exec<{
-          authority_generation: number;
-          waterline: number;
-        }>(
-          `SELECT authority_generation, waterline
-             FROM workspace_workstream_suggestion_feedback
-            WHERE workstream_id = ? AND action_id = ?`,
-          envelope.workstreamId,
-          effect.actionId,
-        ).toArray()[0];
-        if (!current
-          || envelope.generation > current.authority_generation
-          || (envelope.generation === current.authority_generation
-            && envelope.sourceVersion > current.waterline)) {
-          this.state.storage.sql.exec(
-            `INSERT INTO workspace_workstream_suggestion_feedback
-               (workstream_id, action_id, activity_id, source, status, resolved_at,
-                resolved_by_user_id, authority_generation, waterline, source_event_id, projected_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(workstream_id, action_id) DO UPDATE SET
-               activity_id = excluded.activity_id, source = excluded.source,
-               status = excluded.status, resolved_at = excluded.resolved_at,
-               resolved_by_user_id = excluded.resolved_by_user_id,
-               authority_generation = excluded.authority_generation,
-               waterline = excluded.waterline,
-               source_event_id = excluded.source_event_id,
-               projected_at = excluded.projected_at`,
-            envelope.workstreamId,
-            effect.actionId,
-            effect.activityId,
-            effect.source,
-            effect.status,
-            epoch(effect.resolvedAt),
-            effect.resolvedByUserId,
-            envelope.generation,
-            envelope.sourceVersion,
-            envelope.messageId,
-            now,
-          );
         }
       }
 

@@ -149,23 +149,12 @@ export const WorkstreamParticipantNotificationEffectSchema = z.object({
   occurredAt: TimestampSchema,
 }).strict();
 
-export const WorkstreamSuggestionFeedbackEffectSchema = z.object({
-  kind: z.literal("suggestion_feedback"),
-  actionId: IdSchema,
-  activityId: IdSchema,
-  source: z.enum(["contextual_routing", "suggested_work"]),
-  status: z.enum(["accepted", "dismissed"]),
-  resolvedAt: TimestampSchema,
-  resolvedByUserId: IdSchema,
-}).strict();
-
 export const WorkstreamRegionalEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
   WorkstreamActivityEffectSchema,
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
-  WorkstreamSuggestionFeedbackEffectSchema,
 ]);
 
 /**
