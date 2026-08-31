@@ -135,15 +135,17 @@ definition.
 ### Mentions
 
 A person mention arrives as a link with a `person://<uuid>` href — bare
-`person:<uuid>` is still accepted so stored transcript text keeps resolving —
-and a connector mention as `connector:<type>:<label>`. `urlTransform` lets
-exactly those two schemes through untouched — everything else goes through
+`person:<uuid>` is still accepted so stored transcript text keeps resolving.
+A connector mention is minted at render time as
+`connector://<token>:<type>` (bare `connector:<token>:<type>` still accepted)
+and is *not* a citation scheme. `urlTransform` lets `resource:`, `person:`, and
+those connector mention hrefs through untouched — everything else goes through
 react-markdown's `defaultUrlTransform` — and the `a` override is where they are
 decided. A `person:` / `person://` href resolves against the `mentions` prop and
-becomes a `MentionChip`; a `connector:` href minted by this render's own token
-becomes a connector chip. Neither is ever emitted as a navigable link. Every
-other link renders as an external one, with `target="_blank"` and
-`rel="noopener noreferrer"`.
+becomes a `MentionChip`; a tokened connector href becomes a connector chip via
+the identity path before the citation matrix. Neither is ever emitted as a
+navigable link. Every other link renders as an external one, with
+`target="_blank"` and `rel="noopener noreferrer"`.
 
 The connector token is created once per mounted body, so a link keeps its
 identity across re-renders and a `connector:` string that merely appears in the
@@ -378,10 +380,12 @@ written this way is a sign it is not a typography override.
   file is a regression waiting for the next person who splits a stylesheet, and
   it fails silently and visually, which is the combination this module has
   already been bitten by once.
-- **A mention link is never navigable.** `person:` and `connector:` survive
+- **A mention link is never navigable.** `person:` / `person://` and
+  render-minted `connector:` / `connector://` hrefs survive
   `urlTransform` only so the `a` override can turn them into chips or, failing
   that, into inert text. If one ever reached the DOM as an `href`, a model would
-  be choosing a destination.
+  be choosing a destination. Connector is not a citation scheme; chips go
+  through the identity path before the matrix.
 - **A connector chip requires this render's token.** Without it the link is text
   someone wrote rather than a mention Rally minted, and it renders as a
   fallback span.
@@ -389,10 +393,11 @@ written this way is a sign it is not a typography override.
   else.** A chip adds an affordance, never disclosure: the label is the model's
   own words, already in the message. This is also what an unauthorized target
   renders as, which is why it is indistinguishable from one that does not exist.
-- **`urlTransform` passes exactly three schemes, in two positions.** `resource:`,
-  `person:` and `connector:`, on `a[href]` and `img[src]`. Everything else goes
-  through `defaultUrlTransform`, which empties what it rejects. Widening this is
-  how a model-chosen destination reaches the DOM.
+- **`urlTransform` passes citation schemes plus connector mention hrefs, in two
+  positions.** `resource:`, `person:` / `person://`, and `connector:` /
+  `connector://`, on `a[href]` and `img[src]`. Everything else goes through
+  `defaultUrlTransform`, which empties what it rejects. Widening this is how a
+  model-chosen destination reaches the DOM.
 - **The matrix has no fallthrough.** Every cell is written, or the compiler
   refuses the table. An `else` branch here is a silent gap by another name.
 - **A citation's sources are reachable on whatever surface it renders on.** In
@@ -579,6 +584,68 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — Connector chips and embeds show connection state
+
+**What changed:** Inline connector chips gain a brand mark and an aggregate
+connection status. Image-syntax `![Name](connector://<type>)` renders a
+horizontal card (citation-card tokens, provider-card content) with personal and
+workspace status. Connector chips and marks use neutral transcript surfaces;
+only connection status carries success or warning colour. The compact card uses
+one consistent inset and keeps its bare provider mark at the top left. The
+inline chip omits the composer's leading `@`; stored text and offsets retain it.
+The work-stream screen supplies live `/connections` data via
+`ConnectorConnectionsProvider`. A still-loading or failed query supplies no
+status, because an unresolved list is not evidence that a connection is
+missing. Once resolved, every matching credential in a scope contributes to a
+stable status and capability union. Google Mail/Calendar and Drive/Docs/Sheets
+remain the real shared `google` connector type; the visible label selects the
+capability family, so one bundle cannot claim that the other is connected.
+
+**Why:** Offset-backed connector mentions were label-only text chips, so a
+reader could not tell whether the named connector was usable. Resource embeds
+already set the transcript card vocabulary; connector announcements reuse that
+surface language rather than inventing a third card system.
+
+**What a future change has to respect:** Connector remains outside
+`CitationTarget`. Chip minting still requires the per-render token; embeds use
+the bare `connector://<type>` form. Status comes from the connections list, never
+from the message text. Treat the list as unresolved until query data exists,
+aggregate all same-scope credentials rather than choosing the first, and keep
+connector href parsing in `@rally/contracts/citations` so chip and embed syntax
+cannot drift.
+
+### 2026-08-30 — Connector is not a citation scheme
+
+**What changed:** `CitationTarget` / `citationScheme` no longer recognize
+`connector:`. Connector mention chips still mint `connector://` at render time
+and still pass `urlTransform`, but `CitationLink` routes them through the
+identity path before the matrix; the matrix has no connector cell.
+
+**Why:** Connector mentions are presentation minted from stored offsets, not
+something a model cites. Keeping them in the citation allowlist forced every
+new scheme position (link / embed / footnote) to invent a connector look, and
+conflated two different protocols.
+
+**What a future change has to respect:** Do not re-add `connector` to
+`CitationTarget`. Chip minting stays on `connectorMentionHref`; identity
+routing stays ahead of the matrix.
+
+### 2026-08-30 — Connector mention chips use the URL-style `connector://` house form
+
+**What changed:** The desktop renderer mints per-render connector chips as
+`[@Label](connector://<token>:<type>)`. The chip matcher accepts both that
+spelling and the legacy bare `connector:<token>:<type>`. Shared helpers live
+beside the person-mention ones in `packages/contracts/src/citations.ts`.
+
+**Why:** Person mentions and `resource://` citations already teach URL-style
+schemes. Connector chips were the last bare-form holdout in the same render
+path, and keeping two styles for adjacent identity schemes invites the same
+generalization miss person mentions already hit.
+
+**What a future change has to respect:** Emit through `connectorMentionHref`;
+read through `connectorTypeFromMentionHref`. Stored messages still carry plain
+`@Label` text plus offsets — only the render-time mint uses the scheme.
 
 ### 2026-08-30 — Person mentions use the URL-style `person://` house form
 

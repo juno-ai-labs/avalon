@@ -257,6 +257,7 @@ export interface WorkstreamConnection {
   displayName: string;
   scope: Scope;
   ownerName?: string;
+  /** API states only; `missing` is derived by the renderer from an empty resolved list. */
   status: 'healthy' | 'reconnect_required' | 'disabled';
   capabilities?: string[];
   settingsKind?: 'github_repository_access';
