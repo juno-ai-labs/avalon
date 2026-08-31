@@ -342,6 +342,10 @@ width all name design tokens. Relationship lines use
 `cmp.markdown.diagram-line`, aliased to the strongest line-ramp step in each
 theme; ordinary container borders stay deliberately quieter. Switching
 appearance causes the diagram to render again from the newly resolved values.
+Mermaid's numeric configuration takes pixel counts, and reading a custom
+property does not convert units: `font-size-prose`, `radius-md`, and
+`border-hairline` must therefore remain `px` lengths. The adapter rejects any
+other unit rather than silently passing a partial measurement.
 
 ### The navigation is translucent
 
