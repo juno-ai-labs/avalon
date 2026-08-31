@@ -2858,9 +2858,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       ...input.defaultPluginIds,
       ...Object.values(input.activitySourcePluginIds),
     ])];
+    // WorkspaceDO owns `connector_connections`; see `resolveDeliveryTargets`.
     const connections = selectedPluginIds.length === 0
       ? { results: [] }
-      : await this.env.DB.prepare(
+      : await withWorkspaceRuntimeDatabase(this.env, asWorkspaceId(input.workspaceId)).DB.prepare(
         `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status
            FROM connector_connections WHERE workspace_id = ?`,
       ).bind(input.workspaceId).all<{
@@ -3156,6 +3157,18 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     if (input.scope !== "personal" && input.deliveryTargets.length > 0) {
       throw new Error("automation_personal_delivery_required");
     }
+    // `connector_connections` and `slack_user_links` live in WorkspaceDO, not
+    // in regional D1, so they are reached through the workspace runtime port.
+    // The object's own `this.env.DB` is the regional binding — the two tables
+    // were dropped from it by migration 0090 — and reading them there raised
+    // `no such table`, which is not one of this object's snake_case codes, so
+    // every attempt to save a connector destination answered 500 rather than
+    // saving or refusing. `users` stays on the regional binding, which is the
+    // authority that has it.
+    const workspaceDatabase = withWorkspaceRuntimeDatabase(
+      this.env,
+      asWorkspaceId(input.workspaceId),
+    ).DB;
     const resolved: AutomationRunContextV1["deliveryTargets"] = [];
     for (const target of input.deliveryTargets) {
       if (target.type === "email") {
@@ -3166,7 +3179,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         resolved.push({ type: "email", emailAddress: user.email });
         continue;
       }
-      const connection = await this.env.DB.prepare(
+      const connection = await workspaceDatabase.prepare(
         `SELECT status, scope, owner_user_id FROM connector_connections
           WHERE workspace_id = ? AND id = ?`,
       ).bind(input.workspaceId, target.connectionId).first<{
@@ -3179,7 +3192,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         || connection.status === "disabled"
         || (connection.scope === "personal" && connection.owner_user_id !== input.authorUserId)
       ) throw new Error("automation_delivery_connection_unavailable");
-      const link = await this.env.DB.prepare(
+      const link = await workspaceDatabase.prepare(
         `SELECT slack_team_id, slack_user_id FROM slack_user_links
           WHERE workspace_id = ? AND connection_id = ? AND user_id = ? AND status = 'active'`,
       ).bind(input.workspaceId, target.connectionId, input.authorUserId).first<{
