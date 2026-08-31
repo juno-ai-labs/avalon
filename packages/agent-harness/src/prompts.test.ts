@@ -71,7 +71,7 @@ describe("prompt renderers", () => {
             { authorType: "agent", authorName: "Rally", message: "The release is still running." },
           ],
         }),
-        hash: "c3426745bed239052a2f2a2fd57a1d3c9ad7323bfd0f907e7346d749210371bd",
+        hash: "c3df677d60beadbf17b9e438bf6d44d1f59ed4628973b6f49aef939bc0e9c8d7",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -386,7 +386,7 @@ describe("prompt renderers", () => {
     expect(system!.content).toContain("not when using the ordinary word");
     // The two facts a small model cannot infer: what Rally is in this
     // conversation, and that history renders a mention as a person:// link.
-    expect(system!.content).toContain("Rally is the AI agent present in every workstream");
+    expect(system!.content).toContain("shared conversation between human teammates and an AI Agent Rally");
     expect(system!.content).toContain("in recentMessages a mention appears as [@Name](person://<id>)");
   });
 
