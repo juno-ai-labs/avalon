@@ -42,13 +42,29 @@ const DecimalStringSchema = z.string().refine((value) => {
 }, "Expected a non-negative decimal string");
 
 const CachedTokenModelPricingSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   fetchedAtMs: z.number().int().nonnegative(),
   inputUsdPerM: DecimalStringSchema,
   cachedInputUsdPerM: DecimalStringSchema,
   outputUsdPerM: DecimalStringSchema,
+  overrides: z.array(z.object({
+    minPromptTokens: z.number().int().nonnegative(),
+    inputUsdPerM: DecimalStringSchema,
+    cachedInputUsdPerM: DecimalStringSchema,
+    outputUsdPerM: DecimalStringSchema,
+  })).superRefine((overrides, context) => {
+    for (let index = 0; index < overrides.length; index += 1) {
+      if (index > 0 && overrides[index]!.minPromptTokens <= overrides[index - 1]!.minPromptTokens) {
+        context.addIssue({
+          code: "custom",
+          message: "Pricing overrides must have strictly increasing prompt-token thresholds",
+          path: [index, "minPromptTokens"],
+        });
+      }
+    }
+  }),
   endpointCount: z.number().int().positive(),
-  sourceFingerprint: z.string().startsWith("openrouter-endpoint-average:v1:"),
+  sourceFingerprint: z.string().startsWith("openrouter-endpoint-average:v2:"),
 });
 
 const CachedImageModelPricingSchema = z.object({
@@ -72,6 +88,12 @@ const EndpointEnvelopeSchema = z.object({
         prompt: z.string(),
         completion: z.string(),
         input_cache_read: z.string().nullish(),
+        overrides: z.array(z.object({
+          min_prompt_tokens: z.number().int().nonnegative().optional(),
+          prompt: z.string().nullish(),
+          completion: z.string().nullish(),
+          input_cache_read: z.string().nullish(),
+        }).passthrough()).optional().default([]),
       }).passthrough(),
     }).passthrough()).min(1),
   }).passthrough(),
@@ -121,6 +143,12 @@ export function createAzureModelPricingResolver(
         inputUsdPerM: Number(pricing.inputUsdPerM),
         cachedInputUsdPerM: Number(pricing.cachedInputUsdPerM),
         outputUsdPerM: Number(pricing.outputUsdPerM),
+        overrides: pricing.overrides.map((override) => ({
+          minPromptTokens: override.minPromptTokens,
+          inputUsdPerM: Number(override.inputUsdPerM),
+          cachedInputUsdPerM: Number(override.cachedInputUsdPerM),
+          outputUsdPerM: Number(override.outputUsdPerM),
+        })),
         sourceFingerprint: pricing.sourceFingerprint,
       });
     }
@@ -162,7 +190,7 @@ async function fetchModelPricing(
   if (!response.ok) throw new Error(`OpenRouter endpoint catalog failed for ${modelId} (${response.status})`);
   const envelope = EndpointEnvelopeSchema.parse(await response.json());
   return CachedTokenModelPricingSchema.parse({
-    version: 1,
+    version: 2,
     fetchedAtMs,
     ...averageEndpointPricing(modelId, envelope.data.endpoints),
   });
@@ -239,25 +267,81 @@ function averageEndpointPricing(
   endpoints: z.infer<typeof EndpointEnvelopeSchema>["data"]["endpoints"],
 ) {
   const endpointCount = endpoints.length;
-  const inputUsdPerM = averageUsdPerMillion(endpoints.map((endpoint) => endpoint.pricing.prompt));
-  const cachedInputUsdPerM = averageUsdPerMillion(endpoints.map((endpoint) => (
-    endpoint.pricing.input_cache_read ?? endpoint.pricing.prompt
-  )));
-  const outputUsdPerM = averageUsdPerMillion(endpoints.map((endpoint) => endpoint.pricing.completion));
+  const thresholds = Array.from(new Set(endpoints.flatMap((endpoint) => (
+    endpoint.pricing.overrides.flatMap((override) => (
+      override.min_prompt_tokens === undefined ? [] : [override.min_prompt_tokens]
+    ))
+  )))).sort((left, right) => left - right);
+  const baseRates = averageEndpointRatesAtThreshold(endpoints, 0);
+  const overrides = thresholds
+    .filter((threshold) => threshold > 0)
+    .map((minPromptTokens) => ({
+      minPromptTokens,
+      ...averageEndpointRatesAtThreshold(endpoints, minPromptTokens),
+    }));
   return {
-    inputUsdPerM,
-    cachedInputUsdPerM,
-    outputUsdPerM,
+    ...baseRates,
+    overrides,
     endpointCount,
     sourceFingerprint: [
-      "openrouter-endpoint-average:v1",
+      "openrouter-endpoint-average:v2",
       modelId,
       endpointCount,
-      inputUsdPerM,
-      cachedInputUsdPerM,
-      outputUsdPerM,
+      baseRates.inputUsdPerM,
+      baseRates.cachedInputUsdPerM,
+      baseRates.outputUsdPerM,
+      ...overrides.map((override) => [
+        override.minPromptTokens,
+        override.inputUsdPerM,
+        override.cachedInputUsdPerM,
+        override.outputUsdPerM,
+      ].join(":")),
     ].join(":"),
   };
+}
+
+function averageEndpointRatesAtThreshold(
+  endpoints: z.infer<typeof EndpointEnvelopeSchema>["data"]["endpoints"],
+  promptTokens: number,
+) {
+  const rates = endpoints.map((endpoint) => endpointRatesAtThreshold(endpoint.pricing, promptTokens));
+  return {
+    inputUsdPerM: averageUsdPerMillion(rates.map((rate) => rate.input)),
+    cachedInputUsdPerM: averageUsdPerMillion(rates.map((rate) => rate.cachedInput)),
+    outputUsdPerM: averageUsdPerMillion(rates.map((rate) => rate.output)),
+  };
+}
+
+function endpointRatesAtThreshold(
+  pricing: z.infer<typeof EndpointEnvelopeSchema>["data"]["endpoints"][number]["pricing"],
+  promptTokens: number,
+) {
+  let input = pricing.prompt;
+  let output = pricing.completion;
+  let cachedInput = pricing.input_cache_read ?? input;
+  let cachedInputFollowsInput = pricing.input_cache_read == null;
+  const overrides = [...pricing.overrides]
+    .filter((override) => override.min_prompt_tokens !== undefined)
+    .sort((left, right) => (
+      (left.min_prompt_tokens ?? Number.POSITIVE_INFINITY)
+      - (right.min_prompt_tokens ?? Number.POSITIVE_INFINITY)
+    ));
+  for (const override of overrides) {
+    if (override.min_prompt_tokens === undefined) continue;
+    if (override.min_prompt_tokens > promptTokens) break;
+    input = override.prompt ?? input;
+    output = override.completion ?? output;
+    if (override.input_cache_read === null) {
+      cachedInputFollowsInput = true;
+      cachedInput = input;
+    } else if (override.input_cache_read !== undefined) {
+      cachedInputFollowsInput = false;
+      cachedInput = override.input_cache_read;
+    } else if (cachedInputFollowsInput) {
+      cachedInput = input;
+    }
+  }
+  return { input, cachedInput, output };
 }
 
 /** Average decimal prices without first introducing binary floating-point noise. */

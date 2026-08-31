@@ -65,7 +65,13 @@ describe("OpenRouter endpoint-average pricing cache", () => {
       inputUsdPerM: 2.84,
       cachedInputUsdPerM: 0.71,
       outputUsdPerM: 8.52,
-      sourceFingerprint: "openrouter-endpoint-average:v1:x-ai/grok-4.6:5:2.84:0.71:8.52",
+      overrides: [{
+        minPromptTokens: 200_000,
+        inputUsdPerM: 5.68,
+        cachedInputUsdPerM: 1.42,
+        outputUsdPerM: 17.04,
+      }],
+      sourceFingerprint: "openrouter-endpoint-average:v2:x-ai/grok-4.6:5:2.84:0.71:8.52:200000:5.68:1.42:17.04",
     });
     expect(put).not.toHaveBeenCalled();
   });
@@ -89,13 +95,19 @@ describe("OpenRouter endpoint-average pricing cache", () => {
     expect(grok43Call).toBeDefined();
     const stored = JSON.parse(String(grok43Call![1])) as Record<string, unknown>;
     expect(stored).toEqual({
-      version: 1,
+      version: 2,
       fetchedAtMs: NOW,
       inputUsdPerM: "1.875",
       cachedInputUsdPerM: "0.3",
       outputUsdPerM: "3.75",
+      overrides: [{
+        minPromptTokens: 200_000,
+        inputUsdPerM: "3.75",
+        cachedInputUsdPerM: "0.6",
+        outputUsdPerM: "7.5",
+      }],
       endpointCount: 2,
-      sourceFingerprint: "openrouter-endpoint-average:v1:x-ai/grok-4.3:2:1.875:0.3:3.75",
+      sourceFingerprint: "openrouter-endpoint-average:v2:x-ai/grok-4.3:2:1.875:0.3:3.75:200000:3.75:0.6:7.5",
     });
     expect(stored).not.toHaveProperty("models");
     expect(result.models["x-ai/grok-4.6"]).toMatchObject({
@@ -197,19 +209,47 @@ function catalogFetcher(failingModelId?: string) {
     if (modelId === failingModelId) return new Response("unavailable", { status: 503 });
     if (modelId === "x-ai/grok-4.3") {
       return endpointResponse([
-        ["0.00000125", "0.0000002", "0.0000025"],
-        ["0.0000025", "0.0000004", "0.000005"],
+        ["0.00000125", "0.0000002", "0.0000025", [
+          [200_000, "0.0000025", "0.0000004", "0.000005"],
+        ]],
+        ["0.0000025", "0.0000004", "0.000005", [
+          [200_000, "0.000005", "0.0000008", "0.00001"],
+        ]],
       ]);
     }
     if (modelId === "x-ai/grok-4.6") {
       return endpointResponse([
-        ["0.000002", "0.0000005", "0.000006"],
-        ["0.000004", "0.000001", "0.000012"],
-        ["0.0000022", "0.00000055", "0.0000066"],
+        ["0.000002", "0.0000005", "0.000006", [
+          [200_000, "0.000004", "0.000001", "0.000012"],
+        ]],
+        ["0.000004", "0.000001", "0.000012", [
+          [200_000, "0.000008", "0.000002", "0.000024"],
+        ]],
+        ["0.0000022", "0.00000055", "0.0000066", [
+          [200_000, "0.0000044", "0.0000011", "0.0000132"],
+        ]],
       ]);
     }
     if (modelId === "deepseek/deepseek-v4-flash-0731") {
-      return endpointResponse([["0.000001", null, "0.000002"]]);
+      return Response.json({
+        data: {
+          endpoints: [{
+            pricing: {
+              prompt: "0.000001",
+              completion: "0.000002",
+              // OpenRouter also publishes time-of-day overrides. They are not
+              // prompt-size tiers and must not make the shared refresh fail.
+              overrides: [{
+                utc_start: 0,
+                utc_end: 1_400,
+                prompt: "0.000000352",
+                completion: "0.000001056",
+                input_cache_read: "0.0000000352",
+              }],
+            },
+          }],
+        },
+      });
     }
     if (modelId === "openai/gpt-image-2") {
       return imageEndpointResponse([
@@ -229,17 +269,30 @@ function catalogFetcher(failingModelId?: string) {
 }
 
 function endpointResponse(
-  rates: ReadonlyArray<readonly [string, string | null, string]>,
+  rates: ReadonlyArray<readonly [
+    string,
+    string | null,
+    string,
+    ReadonlyArray<readonly [number, string, string | null, string]>?,
+  ]>,
 ): Response {
   return Response.json({
     data: {
-      endpoints: rates.map(([input, cachedInput, output]) => ({
+      endpoints: rates.map(([input, cachedInput, output, overrides = []]) => ({
         pricing: {
           prompt: input,
           ...(cachedInput === null
             ? {}
             : { input_cache_read: cachedInput }),
           completion: output,
+          overrides: overrides.map(([minPromptTokens, overrideInput, overrideCachedInput, overrideOutput]) => ({
+            min_prompt_tokens: minPromptTokens,
+            prompt: overrideInput,
+            ...(overrideCachedInput === null
+              ? { input_cache_read: null }
+              : { input_cache_read: overrideCachedInput }),
+            completion: overrideOutput,
+          })),
         },
       })),
     },
@@ -262,23 +315,41 @@ function imageEndpointResponse(
 
 function pricingJson(modelId: string, fetchedAtMs: number, numeric = false): string {
   const values = modelId === "x-ai/grok-4.6"
-    ? ["2.84", "0.71", "8.52", 5]
-    : ["1.875", "0.3", "3.75", 4];
-  const [inputUsdPerM, cachedInputUsdPerM, outputUsdPerM, endpointCount] = values;
+    ? ["2.84", "0.71", "8.52", "5.68", "1.42", "17.04", 5]
+    : ["1.875", "0.3", "3.75", "3.75", "0.6", "7.5", 4];
+  const [
+    inputUsdPerM,
+    cachedInputUsdPerM,
+    outputUsdPerM,
+    overrideInputUsdPerM,
+    overrideCachedInputUsdPerM,
+    overrideOutputUsdPerM,
+    endpointCount,
+  ] = values;
   return JSON.stringify({
-    version: 1,
+    version: 2,
     fetchedAtMs,
     inputUsdPerM: numeric ? Number(inputUsdPerM) : inputUsdPerM,
     cachedInputUsdPerM: numeric ? Number(cachedInputUsdPerM) : cachedInputUsdPerM,
     outputUsdPerM: numeric ? Number(outputUsdPerM) : outputUsdPerM,
+    overrides: [{
+      minPromptTokens: 200_000,
+      inputUsdPerM: numeric ? Number(overrideInputUsdPerM) : overrideInputUsdPerM,
+      cachedInputUsdPerM: numeric ? Number(overrideCachedInputUsdPerM) : overrideCachedInputUsdPerM,
+      outputUsdPerM: numeric ? Number(overrideOutputUsdPerM) : overrideOutputUsdPerM,
+    }],
     endpointCount,
     sourceFingerprint: [
-      "openrouter-endpoint-average:v1",
+      "openrouter-endpoint-average:v2",
       modelId,
       endpointCount,
       inputUsdPerM,
       cachedInputUsdPerM,
       outputUsdPerM,
+      200_000,
+      overrideInputUsdPerM,
+      overrideCachedInputUsdPerM,
+      overrideOutputUsdPerM,
     ].join(":"),
   });
 }

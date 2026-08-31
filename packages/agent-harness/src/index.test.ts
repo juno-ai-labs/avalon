@@ -3046,6 +3046,40 @@ describe("agent harness", () => {
     });
   });
 
+  it("uses the OpenRouter long-context tier for the complete Azure Grok prompt", async () => {
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "long answer" }, finish_reason: "stop" }],
+      usage: {
+        // Azure Grok reports these as disjoint buckets. Together they cross
+        // OpenRouter's 200k prompt threshold even though prompt_tokens alone
+        // does not.
+        prompt_tokens: 199_999,
+        completion_tokens: 0,
+        total_tokens: 199_999,
+        prompt_tokens_details: { cached_tokens: 2 },
+      },
+    }])) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "x-ai/grok-4.3",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        workspaceId: "workspace-azure-grok-43-long-context",
+      }),
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    })).resolves.toMatchObject({ status: "completed", model: "x-ai/grok-4.3" });
+
+    // Bind prices the disjoint input buckets once each, using the 200k+
+    // OpenRouter-average tier: $3.75/M uncached and $0.60/M cached.
+    expect(attempts[0]).toMatchObject({
+      provider: "azure",
+      inputTokens: 199_999,
+      cachedInputTokens: 2,
+      costCents: 74.9997,
+    });
+  });
+
   it("lets Bind skip an Azure binding that cannot satisfy the turn capabilities", async () => {
     const urls: string[] = [];
     const fetcher = vi.fn(async (request: RequestInfo | URL) => {
@@ -6531,14 +6565,26 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
                   inputUsdPerM: 1.875,
                   cachedInputUsdPerM: 0.3,
                   outputUsdPerM: 3.75,
-                  sourceFingerprint: "openrouter-endpoint-average:v1:test:grok-4.3",
+                  overrides: [{
+                    minPromptTokens: 200_000,
+                    inputUsdPerM: 3.75,
+                    cachedInputUsdPerM: 0.6,
+                    outputUsdPerM: 7.5,
+                  }],
+                  sourceFingerprint: "openrouter-endpoint-average:v2:test:grok-4.3",
                 });
               } else if (modelId === "x-ai/grok-4.6") {
                 prices.set(modelId, {
                   inputUsdPerM: 2.84,
                   cachedInputUsdPerM: 0.71,
                   outputUsdPerM: 8.52,
-                  sourceFingerprint: "openrouter-endpoint-average:v1:test:grok-4.6",
+                  overrides: [{
+                    minPromptTokens: 200_000,
+                    inputUsdPerM: 5.68,
+                    cachedInputUsdPerM: 1.42,
+                    outputUsdPerM: 17.04,
+                  }],
+                  sourceFingerprint: "openrouter-endpoint-average:v2:test:grok-4.6",
                 });
               }
             }

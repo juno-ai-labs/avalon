@@ -492,8 +492,10 @@ field. When that happens, the configured fallback is the unweighted arithmetic
 mean of OpenRouter's published endpoint prices for that canonical model—not the
 top-level model-catalog price, which OpenRouter documents as the lowest endpoint
 price. On 2026-08-30 the four 4.3 endpoints averaged $1.875 input, $0.30 cached
-input, and $3.75 output per million tokens. The five 4.6 endpoints averaged
-$2.84 / $0.71 / $8.52. A dedicated Global cron refreshes those rates hourly,
+input, and $3.75 output per million tokens through the first 200,000 prompt
+tokens, then $3.75 / $0.60 / $7.50. The five 4.6 endpoints averaged
+$2.84 / $0.71 / $8.52, then $5.68 / $1.42 / $17.04 at the same OpenRouter
+catalog threshold. A dedicated Global cron refreshes those rates hourly,
 writes each model under its canonical OpenRouter ID in the shared regional KV,
 and preserves the decimal costs as strings. The inventory covers every model in
 the developer-mode manual selector plus every Monad production Azure
@@ -501,6 +503,8 @@ deployment carried by OpenRouter: fourteen unique IDs on that date. API inferenc
 only reads the cache; it never fetches or writes pricing. Azure's Retail Prices
 API separately published 4.3 Global meters but no 4.6 meter that day; that API
 is useful corroboration, not this fallback's rate authority.
+The Azure agent route does not enable provider web search, so the separate
+per-search catalog charge is neither incurred nor folded into token rates.
 
 Empty completions, truncated tool calls, and fallback-eligible failures may
 retry or traverse configured provider and model stages only before an assistant
@@ -512,7 +516,10 @@ never route onward.
 
 OpenRouter reports dollars directly. Azure reports token counts, so Rally feeds
 the cached per-million-token rates and declared disjoint Grok cache semantics
-through Bind's configured-rate billing function. A missing, malformed, or
+through Bind's configured-rate billing function. Azure reports cached Grok
+tokens alongside rather than inside `prompt_tokens`, so Rally adds both input
+buckets only to select the OpenRouter prompt-size tier; Bind still prices each
+bucket exactly once. A missing, malformed, or
 legacy numeric-cost record removes that Azure candidate before the request;
 stale valid pricing remains usable. Missing or internally inconsistent final
 Azure usage fails the attempt; it is never recorded as a zero-cost call and
@@ -1126,8 +1133,9 @@ in the inference ledger. The host resolves an unweighted average of all
 OpenRouter endpoints for each bound Grok model and gives those rates to Bind.
 One public-metadata record per canonical OpenRouter model ID is cached in a
 Cloudflare KV namespace shared by the Global and EU Workers. A dedicated Global
-cron refreshes the developer-selector and Azure-deployment union hourly; costs
-remain decimal strings in KV and are converted only at Bind's billing boundary.
+cron refreshes the developer-selector and Azure-deployment union hourly; base
+and prompt-threshold override costs remain decimal strings in KV and are
+converted only at Bind's billing boundary.
 
 **Why:** Monad production carries Global Standard version-1 deployments for
 both Grok models, while Rally sent every agent turn through OpenRouter even though its
@@ -1138,7 +1146,9 @@ had to preserve cost ceilings: Azure returns usage rather than dollars, and
 Grok's cached count is disjoint from `prompt_tokens` while reasoning is separate
 from `completion_tokens`, so ordinary subset billing would either undercount or
 reject a valid response. When Azure omits dollars, both bindings use the most
-recent valid average of OpenRouter endpoint rates. Using the catalog's cheapest
+recent valid average of OpenRouter endpoint rates, including the 200,000-token
+long-context override rather than silently billing a large request at the base
+rate. Using the catalog's cheapest
 headline price was rejected because it would systematically understate the
 intended market-average fallback. Keeping those rates as dated source constants
 was also rejected because endpoint inventory changes independently of a Rally
