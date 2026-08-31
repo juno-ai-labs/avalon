@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
 import type { ElicitationData, Message } from '../lib/types';
+import { applyTheme } from '../lib/theme';
 import {
   createConnectorMentionToken,
   ElicitationPanel,
@@ -17,15 +18,38 @@ const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => 
 ));
 const desktopServicesAvailable = vi.hoisted(() => vi.fn(() => true));
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn(async () => undefined));
+const setWindowTheme = vi.hoisted(() => vi.fn(async () => undefined));
+const initializeMermaid = vi.hoisted(() => vi.fn());
+const mermaidRender = vi.hoisted(() => vi.fn());
+const getMermaidDiagram = vi.hoisted(() => vi.fn(async () => ({ db: {} })));
+const getMermaidConfig = vi.hoisted(() => vi.fn(() => ({ maxTextSize: 50_000 })));
+const readMermaidThemeConfig = vi.hoisted(() => vi.fn(
+  () => ({
+    fontFamily: 'token-font',
+    fontSize: 13,
+    themeCSS: 'token-derived-theme',
+    themeVariables: { primaryColor: 'token' },
+  }),
+));
 
 vi.mock('../lib/platform', () => ({
-  desktopBridge: () => ({ copyText, exportMessage, reportTelemetryProductIntent }),
+  desktopBridge: () => ({ copyText, exportMessage, reportTelemetryProductIntent, setWindowTheme }),
   desktopServicesAvailable,
 }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
     <span data-paused={String(paused)} data-size={size} data-state={state} data-testid="thinking-orb" />
   ),
+}));
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: initializeMermaid,
+    mermaidAPI: { getConfig: getMermaidConfig, getDiagramFromText: getMermaidDiagram },
+    render: mermaidRender,
+  },
+}));
+vi.mock('./markdown-mermaid-theme', () => ({
+  readMermaidThemeConfig,
 }));
 
 afterEach(() => vi.useRealTimers());
@@ -776,15 +800,257 @@ describe('MessageBlock markdown', () => {
       id: 'message-unsupported-language',
       authorType: 'agent',
       author: undefined,
-      text: '```mermaid\ngraph TD; A-->B\n```',
+      text: '```brainfuck\n+[-->-[>>+>-----<<]<--<---]>-.\n```',
     };
 
     render(<MessageBlock {...actions} message={message} />);
 
-    expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'mermaid');
+    expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'brainfuck');
     expect(document.querySelector('.prism-code')).toHaveClass('language-plain');
-    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.getByText('+[-->-[>>+>-----<<]<--<---]>-.')).toBeVisible();
+    expect(screen.getByText('Brainfuck')).toHaveClass('markdown-code-language');
+  });
+
+  it('renders a completed Mermaid fence as a strict, theme-aware diagram', async () => {
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Rendered graph</text></svg>' });
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-mermaid',
+      authorType: 'agent',
+      author: undefined,
+      text: '```mermaid\ngraph TD; A-->B\n```',
+    };
+
+    const { container } = render(<MessageBlock {...actions} message={message} />);
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(container.querySelector('.markdown-mermaid-diagram svg')).not.toBeNull();
+    expect(container.querySelector('.markdown-mermaid-svg')).toHaveStyle({ width: '40px' });
+    expect(screen.getByText('Rendered graph')).toBeVisible();
+    expect(initializeMermaid).toHaveBeenCalledWith(expect.objectContaining({
+      altFontFamily: 'token-font',
+      fontFamily: 'token-font',
+      fontSize: 13,
+      flowchart: { htmlLabels: false },
+      htmlLabels: false,
+      securityLevel: 'strict',
+      startOnLoad: false,
+      suppressErrorRendering: true,
+      theme: 'base',
+      look: 'classic',
+      themeCSS: 'token-derived-theme',
+      themeVariables: { primaryColor: 'token' },
+    }));
+    expect(initializeMermaid.mock.calls[0]?.[0]?.secure).toEqual(expect.arrayContaining([
+      'securityLevel',
+      'htmlLabels',
+      'theme',
+      'themeCSS',
+      'themeVariables',
+      'fontFamily',
+      'altFontFamily',
+      'fontSize',
+      'look',
+    ]));
+    expect(mermaidRender).toHaveBeenCalledWith(expect.stringMatching(/^rally-mermaid-[A-Za-z0-9_-]+$/u), 'graph TD; A-->B');
+    expect(screen.getByRole('img', { name: 'Mermaid diagram' })).toHaveAccessibleDescription('Diagram source: graph TD; A-->B');
     expect(screen.getByText('Mermaid')).toHaveClass('markdown-code-language');
+    expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
+  });
+
+  it('keeps invalid Mermaid readable as source', async () => {
+    mermaidRender.mockRejectedValueOnce(new Error('syntax error'));
+
+    render(<MarkdownBody>{'```mermaid\nnot a diagram\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(screen.getByText('not a diagram')).toBeVisible();
+  });
+
+  it('rejects Mermaid source above its configured text limit before parsing', async () => {
+    const parseCallBaseline = getMermaidDiagram.mock.calls.length;
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidConfig.mockReturnValueOnce({ maxTextSize: 12 });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(getMermaidDiagram).toHaveBeenCalledTimes(parseCallBaseline);
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('rejects external resources in Mermaid SVG style blocks', async () => {
+    mermaidRender.mockResolvedValueOnce({
+      svg: '<svg viewBox="0 0 40 20"><style>.node { fill: url(https://example.invalid/beacon); }</style><text>Unsafe graph</text></svg>',
+    });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(screen.queryByText('Unsafe graph')).toBeNull();
+  });
+
+  it('rejects forbidden elements in generated Mermaid SVG', async () => {
+    mermaidRender.mockResolvedValueOnce({
+      svg: '<svg viewBox="0 0 40 20"><foreignObject><div>Unsafe graph</div></foreignObject></svg>',
+    });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(screen.queryByText('Unsafe graph')).toBeNull();
+  });
+
+  it('rejects parsed Mermaid CSS resources before rendering', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidDiagram.mockResolvedValueOnce({
+      db: { getClasses: () => new Map([['remote', { styles: ['fill:url(https://example.invalid/beacon)'] }]]) },
+    });
+
+    render(<MarkdownBody>{'```mermaid\nflowchart TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('rejects parsed block styles before rendering', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidDiagram.mockResolvedValueOnce({
+      db: { getBlocksFlat: () => [{ styles: ['fill:url(https://example.invalid/beacon)'] }] },
+    });
+
+    render(<MarkdownBody>{'```mermaid\nblock-beta\n  A["Review"]\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('rejects diagram-independent CSS resource functions before rendering', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    const source = `block-beta
+  A["Review"]
+  style A fill:url(https://example.invalid/beacon.svg)`;
+
+    render(<MarkdownBody>{`\`\`\`mermaid\n${source}\n\`\`\``}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('allows CSS-looking text in a Mermaid label', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Read url(https://example.com)</text></svg>' });
+    const source = 'flowchart TD\n  A["Read url(https://example.com)"]';
+
+    render(<MarkdownBody>{`\`\`\`mermaid\n${source}\n\`\`\``}</MarkdownBody>);
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
+  it('keeps Mermaid source in stills, glances, and streams, then renders the settled turn', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Settled graph</text></svg>' });
+    const markdown = '```mermaid\ngraph TD; A-->B\n```';
+    const view = render(<MarkdownBody still>{markdown}</MarkdownBody>);
+
+    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.queryByRole('img', { name: 'Mermaid diagram' })).toBeNull();
+
+    view.rerender(<MarkdownBody glance>{markdown}</MarkdownBody>);
+    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.queryByRole('img', { name: 'Mermaid diagram' })).toBeNull();
+
+    view.rerender(<MarkdownBody streaming>{markdown}</MarkdownBody>);
+    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.queryByRole('img', { name: 'Mermaid diagram' })).toBeNull();
+
+    view.rerender(<MarkdownBody>{markdown}</MarkdownBody>);
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(screen.getByText('Settled graph')).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
+  it('serialises Mermaid renders and resolves each theme when its queued work starts', async () => {
+    let resolveFirst!: (value: { svg: string }) => void;
+    const firstRender = new Promise<{ svg: string }>((resolve) => { resolveFirst = resolve; });
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    const themeCallBaseline = readMermaidThemeConfig.mock.calls.length;
+    mermaidRender
+      .mockImplementationOnce(() => firstRender)
+      .mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Second graph</text></svg>' });
+
+    render(
+      <>
+        <MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>
+        <MarkdownBody>{'```mermaid\ngraph TD; C-->D\n```'}</MarkdownBody>
+      </>,
+    );
+
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1));
+    expect(readMermaidThemeConfig).toHaveBeenCalledTimes(themeCallBaseline + 1);
+
+    await act(async () => { resolveFirst({ svg: '<svg viewBox="0 0 40 20"><text>First graph</text></svg>' }); });
+
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 2));
+    expect(readMermaidThemeConfig).toHaveBeenCalledTimes(themeCallBaseline + 2);
+    expect(screen.getByText('First graph')).toBeVisible();
+    expect(await screen.findByText('Second graph')).toBeVisible();
+  });
+
+  it('skips Mermaid work that unmounts before its turn in the render queue', async () => {
+    let resolveFirst!: (value: { svg: string }) => void;
+    const firstRender = new Promise<{ svg: string }>((resolve) => { resolveFirst = resolve; });
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender
+      .mockImplementationOnce(() => firstRender)
+      .mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Discarded graph</text></svg>' });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+    const queued = render(<MarkdownBody>{'```mermaid\ngraph TD; C-->D\n```'}</MarkdownBody>);
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1));
+
+    queued.unmount();
+    await act(async () => {
+      resolveFirst({ svg: '<svg viewBox="0 0 40 20"><text>Kept graph</text></svg>' });
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText('Kept graph')).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
+  it('skips Mermaid rendering when work unmounts during resource preflight', async () => {
+    let resolvePreflight!: (value: { db: object }) => void;
+    const pendingPreflight = new Promise<{ db: object }>((resolve) => { resolvePreflight = resolve; });
+    const parseCallBaseline = getMermaidDiagram.mock.calls.length;
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidDiagram.mockImplementationOnce(() => pendingPreflight);
+    mermaidRender.mockResolvedValue({ svg: '<svg viewBox="0 0 40 20"><text>Current graph</text></svg>' });
+
+    const stale = render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+    await waitFor(() => expect(getMermaidDiagram).toHaveBeenCalledTimes(parseCallBaseline + 1));
+    stale.unmount();
+    render(<MarkdownBody>{'```mermaid\ngraph TD; C-->D\n```'}</MarkdownBody>);
+
+    await act(async () => { resolvePreflight({ db: {} }); });
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
+  it('re-renders a settled Mermaid diagram when the resolved theme changes', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender.mockResolvedValue({ svg: '<svg viewBox="0 0 40 20"><text>Themed graph</text></svg>' });
+
+    const view = render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1));
+
+    act(() => { applyTheme({ family: 'air', mode: 'dark' }); });
+
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 2));
+    view.unmount();
+    act(() => { applyTheme({ family: 'terra', mode: 'light' }); });
   });
 
   it('keeps code copy retryable when clipboard access is unavailable', async () => {

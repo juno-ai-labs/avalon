@@ -78,6 +78,14 @@ that hover does not exist and its popover is hidden two paragraphs above. Withou
 it the card printed numbered pills over nothing — the claims kept their markers
 and the sources left the file entirely.
 
+A Mermaid fence is deliberately saved as its highlighted source rather than as
+the live diagram. Mermaid rendering is asynchronous, while the detached
+`MarkdownBody` root is serialized synchronously; capturing that live branch
+would save whichever loading state happened to win the race. The source is the
+complete, deterministic content and keeps the diagram reproducible. If exports
+need SVG later, the export operation must await a prepared render before taking
+`innerHTML`.
+
 The colours are the light inverse of the application's, with one deliberate
 exception — a code block stays dark. The highlighter writes its colours as inline
 styles chosen for a dark background, and repainting them on white would mean
@@ -273,6 +281,21 @@ Two traps:
 
 ## Changelog
 
+### 2026-08-30 — Mermaid diagrams save as source
+
+**What changed:** A `mermaid` fence remains the ordinary highlighted code block
+when `MarkdownBody` renders with `still`, even though it becomes an SVG diagram
+on live reader surfaces.
+
+**Why:** Mermaid rendering is asynchronous and the export root is intentionally
+serialized in one synchronous pass. Mounting the live branch would save a
+loading fallback nondeterministically; source preserves every byte needed to
+reproduce the diagram and keeps the established no-suspension export contract.
+
+**What a future change has to respect:** rendering diagrams into exports means
+preparing the SVG before serialization and awaiting it explicitly. Do not make
+the detached root race an effect or add a fixed wait.
+
 ### 2026-08-30 — The card composes the tile the way the app composes it
 
 **What changed:** the export `.citation-card` takes the app's `gap: 9px` and
@@ -415,7 +438,7 @@ text off the device to have a picture of it made.
 
 Three details are load-bearing and look arbitrary from inside the file:
 
-- **The document is served over `avalon-export://` rather than handed to the
+- **The document is served over `rallywithai-export://` rather than handed to the
   window as a `data:` URL.** Chromium refuses a top-level `data:` navigation past
   roughly 128 KB, which a message with a table in it reaches; the failure is an
   opaque `ERR_FAILED` at load. A scheme also carries a real CSP response header.

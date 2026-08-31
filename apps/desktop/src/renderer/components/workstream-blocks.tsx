@@ -60,6 +60,7 @@ import {
   MarkdownCollapseSection,
   useMarkdownCollapse,
 } from './markdown-collapse';
+import { MarkdownMermaid } from './markdown-mermaid';
 import {
   CitationFootnoteItem,
   CitationFootnoteSection,
@@ -184,10 +185,11 @@ interface MessageCopyTelemetry {
   workstreamId: string;
 }
 
-function MarkdownCodeBlock({ code, glance, language, telemetry }: {
+function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }: {
   code: string;
   glance?: boolean;
   language: string;
+  renderDiagrams?: boolean;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
@@ -216,6 +218,25 @@ function MarkdownCodeBlock({ code, glance, language, telemetry }: {
     }
   };
 
+  const highlighted = (
+    <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
+      {({ className, getLineProps, getTokenProps, style, tokens }) => (
+        <pre className={className} style={style}>
+          <code>
+            {tokens.map((line, lineIndex) => (
+              <span {...getLineProps({ line })} key={lineIndex}>
+                {line.map((token, tokenIndex) => (
+                  <span {...getTokenProps({ token })} key={tokenIndex} />
+                ))}
+                {lineIndex < tokens.length - 1 ? '\n' : null}
+              </span>
+            ))}
+          </code>
+        </pre>
+      )}
+    </Highlight>
+  );
+
   return (
     <div className="markdown-code-block" data-language={normalizedLanguage}>
       {glance ? null : (
@@ -226,28 +247,16 @@ function MarkdownCodeBlock({ code, glance, language, telemetry }: {
           </button>
         </div>
       )}
-      <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
-        {({ className, getLineProps, getTokenProps, style, tokens }) => (
-          <pre className={className} style={style}>
-            <code>
-              {tokens.map((line, lineIndex) => (
-                <span {...getLineProps({ line })} key={lineIndex}>
-                  {line.map((token, tokenIndex) => (
-                    <span {...getTokenProps({ token })} key={tokenIndex} />
-                  ))}
-                  {lineIndex < tokens.length - 1 ? '\n' : null}
-                </span>
-              ))}
-            </code>
-          </pre>
-        )}
-      </Highlight>
+      {renderDiagrams && normalizedLanguage === 'mermaid'
+        ? <MarkdownMermaid code={code} fallback={highlighted} />
+        : highlighted}
     </div>
   );
 }
 
-function MarkdownCode({ children, className, glance, telemetry }: React.ComponentProps<'code'> & {
+function MarkdownCode({ children, className, glance, renderDiagrams, telemetry }: React.ComponentProps<'code'> & {
   glance?: boolean;
+  renderDiagrams?: boolean;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
   const source = String(children ?? '');
@@ -261,6 +270,7 @@ function MarkdownCode({ children, className, glance, telemetry }: React.Componen
       code={source.replace(/\n$/u, '')}
       glance={glance}
       language={languageMatch?.[1]?.toLowerCase() ?? ''}
+      renderDiagrams={renderDiagrams}
       telemetry={telemetry}
     />
   );
@@ -749,6 +759,10 @@ export function MarkdownBody({
         <MarkdownCode
           {...properties}
           glance={glance}
+          // An open fence changes on every streaming commit, and Mermaid's
+          // asynchronous parse cannot be cancelled. Render once the turn is
+          // complete; glances and saved stills deliberately keep source code.
+          renderDiagrams={!glance && !still && !streaming}
           telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
         />
       ),
@@ -768,7 +782,7 @@ export function MarkdownBody({
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
-  }), [glance, mentions, messageId, token, workstreamId]);
+  }), [glance, mentions, messageId, still, streaming, token, workstreamId]);
   // Heading overrides are a second map so a nested h3 in a section body does
   // not grow a chevron: only the section's own heading markdown uses these.
   const headingComponents = useMemo<MarkdownComponents>(() => ({

@@ -16,6 +16,8 @@ one of them silently missed the others; the changelog records what that cost.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, heading collapse, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. |
+| `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The asynchronous Mermaid SVG render, strict untrusted-input configuration, active-token configuration, and source fallback. Mermaid's module-wide configuration and render calls are serialized here so two diagrams cannot race one another's theme. |
+| `apps/desktop/src/renderer/components/markdown-mermaid-theme.ts` | Maps Mermaid's rendering roles onto the active computed Rally design tokens. It owns no palette and does not branch on an appearance id. |
 | `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
 | `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that keeps an expanded section open while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
@@ -58,6 +60,33 @@ Inline code becomes `code.markdown-inline-code`; a block becomes
 unrecognised language falls back to `plain` after one pass through
 `markdownLanguageAliases`, so a fence labelled with something Prism has never
 heard of still renders as code.
+
+A completed `mermaid` fence instead renders as a diagram. It keeps the same
+header and copy button as a code block, so the exact source remains available
+without putting another control inside the SVG. Mermaid is configured with
+`securityLevel: strict`, HTML labels disabled and its security settings locked:
+the markdown is untrusted model or member input, so links, click handlers and
+raw HTML are not diagram features here. Its generated SVG is the renderer's one
+sanitised-markup insertion point. Render calls are serialized because Mermaid's
+configuration is module-global. Each render starts from Mermaid's configurable
+base theme and supplies concrete values resolved from Rally's active semantic
+tokens: surfaces, text, borders, state washes, chart series, typography, radius,
+and stroke width. Connections use `cmp.markdown.diagram-line`, which each theme
+aliases to its strongest line-ramp step; actor and cluster outlines remain on
+the quieter border roles. The SVG is regenerated when Rally's resolved
+appearance changes, so light and dark modes use the same role mapping with their
+own values.
+The SVG keeps the natural width in Mermaid's `viewBox` instead of obeying its
+generated `width="100%"`: wide diagrams scroll inside the code-block surface,
+while scaling a sequence diagram down to a narrow message would make its labels
+technically present and practically unreadable.
+While a turn streams, the fence stays highlighted source. Parsing an open fence
+on every reveal commit would start asynchronous work Mermaid cannot cancel and
+would discard almost all of it on the next token; the settled turn renders it
+once. A glance also keeps source because it lives inside a button, and a saved
+still keeps source because export serializes `MarkdownBody` synchronously. A
+parse failure says that the diagram could not be rendered and leaves that same
+source visible rather than replacing content with an error graphic.
 
 `MarkdownCodeBlock` renders a `.markdown-code-block-header` bar above the
 highlighted `pre`: the fence's language on the left as `.markdown-code-language`,
@@ -470,6 +499,9 @@ document has an opinion only about the part of it that is markdown.
 It renders untrusted text: everything it is given was written by a model, a
 meeting participant, or an inbound email. `react-markdown` does not evaluate HTML
 in its input and no `rehype-raw` is configured, so markup in the source is text.
+Mermaid is the one generated-markup exception: it receives only a `mermaid`
+fence, runs in strict mode with HTML labels and interaction disabled, and
+inserts the SVG Mermaid sanitised. Invalid input falls back to source.
 [`security.md`](security.md) owns the wider trust model.
 
 The *protocol* is shared; the *rendering* is not. `@rally/contracts/citations`
@@ -507,6 +539,8 @@ needs it should parse rather than widen the pattern again.
 
 - **A language Prism does not know** renders as `plain`. No error, no missing
   block.
+- **A Mermaid parse that rejects** renders a short failure line and the original
+  highlighted source. Mermaid does not write its own error SVG into the page.
 - **A failed copy** leaves the button in its idle state. `copyText` rejecting is
   swallowed deliberately; there is nothing useful to tell someone whose
   clipboard is unavailable, and the code is on screen either way.
@@ -584,6 +618,83 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — Mermaid diagrams use Rally's active tokens
+
+**What changed:** The Mermaid adapter now resolves the active theme's semantic
+tokens into Mermaid's base-theme roles instead of choosing Mermaid's generic
+`neutral` or `dark` palette. The mapping covers common nodes and connections,
+sequence actors and notes, states, tasks, requirements, chart series, font,
+radius, and stroke width. A dedicated `cmp.markdown.diagram-line` component
+token keeps arrows and message lines visible without promoting every diagram
+border to the same emphasis.
+
+**Why:** Brightness-aware was not design-system-aware. The generic Mermaid
+themes produced their own greys, borders, accent fills, typeface, and corner
+shape inside a Rally code block, so the diagram looked embedded rather than
+native in both modes.
+
+**Considered and rejected:** per-theme configuration objects would duplicate
+the theme JSON and require every future appearance to update component code.
+Broad CSS overrides would couple the application to generated selectors that
+vary by diagram kind. Resolving the already-active custom properties at the
+Mermaid boundary keeps theme ownership in the token files.
+
+**What a future change has to respect:** do not add literal colours or theme-id
+branches to the Mermaid adapter. Map a new Mermaid role to a design token, and
+inspect both lighting modes in Electron; token names do not by
+themselves prove readable contrast. Keep structural connections on the
+component line token and container outlines on the quieter border tokens.
+
+### 2026-08-30 — Mermaid fences render as diagrams
+
+**What changed:** A completed fenced block labelled `mermaid` renders Mermaid's
+sanitised SVG in every live `MarkdownBody` surface. It retains the code-block
+header and copy action, follows the current light or dark appearance, and falls
+back to highlighted source when parsing fails. Streaming turns, embed glances,
+and saved stills keep the source form. Mermaid runs with strict security, HTML
+labels disabled, post-render links removed, and serialized configure/render
+calls. Each queued job resolves the active tokens only when it starts; an
+unmounted job leaves the queue before it initializes Mermaid or after its
+resource preflight completes. Before parsing, the adapter applies Mermaid's
+initialized and secured text-size ceiling. `accTitle` and `accDescr` become the
+rendered image's accessible metadata; without them, the source remains available
+as its screen-reader description. A source preflight
+rejects external CSS resource functions in Mermaid style directives, and parsed
+flowchart image nodes and block styles are rejected before rendering, because
+Mermaid can load them while measuring or drawing. Labels remain ordinary text
+even when they contain CSS-looking words. SVG styling may use local
+`url(#fragment)` references for markers and gradients; parsed-style and output
+scans repeat the resource check as defense in depth.
+
+**Why:** Mermaid syntax was already arriving in agent answers, but the generic
+unknown-language fallback printed it as code — the failure shown in the product
+was a valid sequence diagram presented as implementation text. The renderer is
+the one markdown authority, so handling the fence there fixes work streams,
+notes, briefings, attachments and dashboard blocks together. Rendering only
+after a stream settles avoids launching an uncancellable asynchronous parse on
+every partial line; keeping source in a still preserves the export path's
+synchronous contract rather than saving a transient loading state.
+
+**Considered and rejected:** a second markdown renderer or a rehype Mermaid
+plug-in would split ownership or inject generated markup before the component
+could preserve copy/failure behavior. Loose Mermaid security was rejected
+because these diagrams are untrusted input and Rally does not need model-chosen
+HTML, links or click callbacks. Dynamic-importing Mermaid was rejected by the
+repository's static-import rule. Mermaid's published Tiny package was also
+rejected: its own package documentation says it is a CDN artifact that is not
+meant to be installed directly from npm, and using it through the bundler fails
+at runtime.
+
+**What a future change has to respect:** `mermaid.initialize` and `render` are a
+single serialized operation because configuration is global. Do not expose
+`bindFunctions`, loosen `securityLevel`, or let frontmatter re-enable HTML
+labels or replace Rally's theme inputs. Keep the post-render link removal and
+pre-render image-node and external-CSS-resource rejection, and keep the lifecycle
+check before token resolution so recycled transcript rows do not spend work on
+discarded diagrams.
+If saved diagrams become a requirement, make export await a completed render;
+do not serialize a live component's loading state.
 
 ### 2026-08-30 — Connector chips and embeds show connection state
 
@@ -667,7 +778,6 @@ already uses.
 through `personIdFromMentionHref` / `personMentionMarkdownPattern`. A surface
 that matches only one spelling reintroduces the chip/reduction miss for the
 other.
-
 ### 2026-08-30 — Collapsed heading preview fades from 60% to transparent
 
 **What changed:** The collapsed-section mask is a two-stop gradient from
