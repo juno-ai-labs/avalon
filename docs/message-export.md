@@ -235,7 +235,8 @@ The document is written from text a model produced, so it is treated the way
 [`security.md`](security.md) treats every model output.
 
 - `react-markdown` renders markup in its input as text — no `rehype-raw` — so the
-  HTML that crosses the bridge carries no script to begin with.
+  HTML that crosses the bridge carries no script to begin with. The closed bare
+  break-tag rewrite is the one exception and emits only an empty `<br>`.
 - The window that renders it has `sandbox`, `contextIsolation`, no preload, no
   Node integration, and no devtools, and the response carries
   `default-src 'none'; img-src data: https:; style-src 'unsafe-inline'`.
@@ -280,6 +281,22 @@ Two traps:
   `../lib/platform` mock, or the buttons throw on render.
 
 ## Changelog
+
+### 2026-08-30 — Export trust names the closed break-tag exception
+
+**What changed:** The export contract and this document now state that the
+shared Markdown renderer may emit an empty `<br>` from a bare break tag while
+every other source HTML remains text.
+
+**Why:** The break-tag affordance changed the markup crossing the renderer-to-
+main bridge, but the older trust wording still claimed that every source tag
+was text. The window remains safe because the rewrite is a closed empty-element
+case and its CSP still forbids script.
+
+**What a future change has to respect:** Keep the common contract, main-process
+interpolation comment, and this trust model aligned. Adding another generated
+element requires reviewing the bridge and export-window CSP, not merely widening
+the Markdown rewrite.
 
 ### 2026-08-30 — Mermaid diagrams save as source
 

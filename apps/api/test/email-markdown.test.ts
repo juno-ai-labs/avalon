@@ -34,6 +34,41 @@ describe("email markdown rendering", () => {
     expect(html).toContain("&lt;script");
   });
 
+  it("turns a bare break tag into a line break and still escapes every other tag", () => {
+    const html = markdownToEmailHtml('Hello<br/>World and <img src=x>\n\nUse `a<br/>b` as code.');
+
+    expect(html).toContain("Hello<br>World");
+    expect(html).not.toContain("Hello&lt;br");
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+    // A sample showing the tag stays a sample — the rewrite runs after code
+    // is parked, which is the same order the desktop renderer skips `code`.
+    expect(html).toContain("a&lt;br/&gt;b");
+  });
+
+  it("turns break tags into newlines in the plain-text part, except inside code", () => {
+    expect(markdownToEmailText("Hello<br/>World")).toContain("Hello\nWorld");
+    expect(markdownToEmailText("Use `a<br/>b` here")).toContain("a<br/>b");
+  });
+
+  it("keeps break-shaped text in generated link targets inert", () => {
+    const html = markdownToEmailHtml("[docs](https://example.com/<br>/tail)");
+
+    expect(html).toContain('href="https://example.com/&#60;br&#62;/tail"');
+    expect(html).not.toMatch(/href="[^"]*</u);
+  });
+
+  it("keeps preformatted table rows intact in both email parts", () => {
+    const markdown = "| Phase | Deliverables |\n| --- | --- |\n| One | migrations<br/>tests |";
+
+    expect(markdownToEmailHtml(markdown)).toContain("migrations&lt;br/&gt;tests");
+    expect(markdownToEmailText(markdown)).toContain("| One | migrations<br/>tests |");
+  });
+
+  it("reduces a break tag to a space in the inbox preview", () => {
+    expect(markdownToEmailPreheader("Hello<br/>World")).toBe("Hello World");
+  });
+
   it("refuses a link target that is not http", () => {
     // The label survives as text; only the anchor is withheld, so nothing is
     // silently swallowed and nothing dangerous is emitted.

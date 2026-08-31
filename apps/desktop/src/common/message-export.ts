@@ -17,8 +17,9 @@ export interface MessageExportRequest {
    * renderer in Rally and it lives in the renderer process — see
    * [`docs/markdown-rendering.md`](../../../../docs/markdown-rendering.md).
    * It never carries script: `react-markdown` renders markup in its input as
-   * text, and the export window runs the document under a policy that forbids
-   * script anyway.
+   * text, with only the closed bare-break rewrite producing an empty `<br>`,
+   * and the export window runs the document under a policy that forbids script
+   * anyway.
    */
   contentHtml: string;
   /**

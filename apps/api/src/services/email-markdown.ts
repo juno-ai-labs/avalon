@@ -18,7 +18,9 @@ import { escapeHtml } from "./resend";
  * most of what a general renderer emits, and rendering raw HTML would mean
  * rendering model output into an email. This covers the subset these emails
  * use, escapes everything before a single tag is added, and only ever emits an
- * `href` it built itself. What it does not understand — a table, a fenced
+ * `href` it built itself. The one HTML tag it will reconstruct from the source
+ * is a bare `<br/>`, after escaping, after parking code — a line break, not
+ * markup a model chose. What it does not understand — a table, a fenced
  * block — is kept verbatim inside a `<pre>` rather than flattened into a
  * paragraph, because a briefing's table read as one run-on line of pipes is
  * worse than a plain one.
@@ -58,6 +60,7 @@ const QUOTE_STYLE = `margin:0 0 16px;padding:12px 16px;background:${COLOR.surfac
 const PRE_STYLE = `margin:0 0 16px;padding:14px 16px;background:${COLOR.surfaceRaised};border:1px solid ${COLOR.line};border-radius:8px;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.5;color:${COLOR.inkSoft}`;
 const CODE_STYLE = `padding:2px 6px;border-radius:5px;background:${COLOR.surfaceRaised};border:1px solid ${COLOR.line};font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:${COLOR.inkSoft}`;
 export const RULE_STYLE = `border:0;border-top:1px solid ${COLOR.lineSoft};margin:26px 0`;
+const PIPE_TABLE_ROW_PATTERN = /^\s{0,3}\|.*\|\s*$/u;
 
 interface ListItem {
   /** Columns of leading whitespace, resolved against the list's own base. */
@@ -141,6 +144,10 @@ export function markdownToEmailText(markdown: string): string {
       lines.push("-".repeat(24));
       continue;
     }
+    if (PIPE_TABLE_ROW_PATTERN.test(line)) {
+      lines.push(stripInlineMarks(line, true, false));
+      continue;
+    }
     const heading = /^(#{1,6})\s+(.*)$/u.exec(line);
     if (heading) {
       lines.push(stripInlineMarks(heading[2]!, true));
@@ -191,18 +198,25 @@ export function markdownToEmailPreheader(markdown: string, limit = 160): string 
  * Shared by the plain-text part and the preheader, so the inbox preview and the
  * text body cannot disagree about which marks are punctuation and which are
  * formatting — they did, while one stripped `__bold__` and the other did not.
- * They differ on one thing only, and deliberately: the text part keeps a link's
- * target, because it is the reader's only way to follow it, while the preheader
- * is one line beside a subject and a URL in it is spent space.
+ * They differ deliberately where their surfaces do: the text part keeps a
+ * link's target because it is the reader's only way to follow it, while the
+ * preheader spends no space on URLs; and a preformatted pipe row keeps a break
+ * tag as characters rather than splitting the row.
  */
-function stripInlineMarks(value: string, keepLinkTargets = false): string {
-  return value
+function stripInlineMarks(value: string, keepLinkTargets = false, rewriteBreakTags = true): string {
+  let stripped = value
     .replace(/!\[([^\]]*)\]\(([^)]*)\)/gu, (_match, alt: string, href: string) => alt || href)
     .replace(/\[([^\][]+)\]\(([^)]*)\)/gu, (_match, label: string, href: string) =>
       keepLinkTargets && href ? `${label} (${href})` : label)
     .replace(/(\*\*|__)([^*_]+)\1/gu, "$2")
     .replace(/(^|[\s(])([*_])([^\s*_][^*_]*[^\s*_]|[^\s*_])\2(?=[\s.,;:)!?]|$)/gu, "$1$3")
-    .replace(/~~([^~]+)~~/gu, "$1")
+    .replace(/~~([^~]+)~~/gu, "$1");
+  if (rewriteBreakTags) {
+    // Break tags become newlines, except inside a code span that is showing
+    // the tag. The code pass has to run first or `` `a<br/>b` `` would split.
+    stripped = stripped.replace(/`[^`]+`|<br\s*\/?>/giu, (match) => (match.startsWith("`") ? match : "\n"));
+  }
+  return stripped
     .replace(/`([^`]+)`/gu, "$1")
     .trimEnd();
 }
@@ -254,7 +268,7 @@ function blocksFromMarkdown(markdown: string): Block[] {
     // A table is not rendered as a table — there is no table model here — but
     // it is not flattened either: the rows keep their breaks and their columns
     // line up in a monospace block, which a reader can still use.
-    if (/^\s{0,3}\|.*\|\s*$/u.test(line)) {
+    if (PIPE_TABLE_ROW_PATTERN.test(line)) {
       if (current?.kind !== "preformatted") {
         flush();
         current = { kind: "preformatted", lines: [] };
@@ -384,11 +398,12 @@ const CODE_PLACEHOLDER = "\u0000";
  * and can only ever produce markup this function built. Two orderings inside
  * that are load-bearing, and both were defects before they were:
  *
- * - A link's target is written with `*`, `_` and backticks encoded, because the
- *   emphasis and code passes that follow would otherwise match *inside* the
- *   `href` and splice this function's own quoted templates into the attribute,
- *   breaking the destination and spilling the rest of the tag into visible
- *   text. The entities decode to the same URL for the reader.
+ * - A link's target is written with `*`, `_`, backticks and escaped angle
+ *   brackets encoded, because the emphasis, code and break-tag passes that
+ *   follow would otherwise match *inside* the `href` and splice this function's
+ *   own quoted templates into the attribute, breaking the destination and
+ *   spilling the rest of the tag into visible text. The numeric entities decode
+ *   to the same URL for the reader.
  * - A code span is parked behind a placeholder before emphasis runs, so
  *   `` `a _b_ c` `` stays code rather than growing an `<em>` inside it.
  */
@@ -423,6 +438,10 @@ function renderInline(value: string): string {
     codeSpans.push(`<code style="${CODE_STYLE}">${code}</code>`);
     return `${CODE_PLACEHOLDER}${codeSpans.length - 1}${CODE_PLACEHOLDER}`;
   });
+  // Bare break tags are the one HTML construct this renderer honours, after
+  // code has been parked so a sample showing the tag stays a sample. Every
+  // other tag is already an entity from `escapeHtml` and stays one.
+  html = html.replace(/&lt;br\s*\/?&gt;/giu, "<br>");
   html = html.replace(/\*\*([^*]+)\*\*/gu, (_match, bold: string) =>
     `<strong style="color:${COLOR.ink};font-weight:650">${bold}</strong>`);
   // Both emphasis marks, and asterisks only after bold has consumed its pairs.
@@ -442,5 +461,8 @@ function renderInline(value: string): string {
 
 /** The characters a later pass could match inside an `href`, made inert. */
 function encodeLinkTarget(href: string): string {
-  return href.replace(/[*_`]/gu, (character) => `&#${character.codePointAt(0)};`);
+  return href
+    .replace(/&lt;/giu, "&#60;")
+    .replace(/&gt;/giu, "&#62;")
+    .replace(/[*_`]/gu, (character) => `&#${character.codePointAt(0)};`);
 }
