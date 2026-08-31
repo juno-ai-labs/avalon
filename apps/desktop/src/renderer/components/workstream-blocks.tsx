@@ -689,6 +689,7 @@ const EMPTY_DEFINITION_BLOCKS: string[] = [];
 export function MarkdownBody({
   children,
   citations,
+  collapseHeadings = false,
   glance = false,
   mentions = NO_MENTIONS,
   still = false,
@@ -704,6 +705,12 @@ export function MarkdownBody({
    * carried.
    */
   citations?: CitationContext;
+  /**
+   * Whether h2-h6 sections use the compact accordion treatment. It is opt-in
+   * because the main message feed is the one compact scanning surface; document
+   * readers and every other Markdown host render the source fully expanded.
+   */
+  collapseHeadings?: boolean;
   /**
    * This body is a glance inside an embed card, not a reader. Links, images,
    * and code-block copy controls stay out of the DOM so the card remains one
@@ -865,12 +872,14 @@ export function MarkdownBody({
   );
   const collapseParts = useMemo(() => {
     // A glance is already clamped; a still is a picture that cannot be
-    // toggled. A document with no collapsible heading keeps the single-parse
-    // path so streaming's settled/streaming DOM still match.
-    if (glance || still || markdown === '') return null;
+    // toggled. A surface can also opt out while retaining the ordinary link
+    // and citation behavior that `still` deliberately changes. A document
+    // with no collapsible heading keeps the single-parse path so streaming's
+    // settled/streaming DOM still match.
+    if (!collapseHeadings || glance || still || markdown === '') return null;
     const parts = splitCollapsibleMarkdown(markdown);
     return parts.some((part) => part.type === 'section') ? parts : null;
-  }, [glance, markdown, still]);
+  }, [collapseHeadings, glance, markdown, still]);
   const collapseSectionIds = useMemo(
     () => collapseParts?.flatMap((part) => (part.type === 'section' ? [part.id] : [])) ?? [],
     [collapseParts],
@@ -1162,6 +1171,7 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
 
 export function AssistantMessageContent({
   citations,
+  collapseHeadings = false,
   // The hoisted constant, not `= []`: a per-render array here would feed
   // MarkdownBody an always-new `mentions` and defeat its streaming memo.
   mentions = NO_MENTIONS,
@@ -1171,6 +1181,7 @@ export function AssistantMessageContent({
   telemetry,
 }: {
   citations?: CitationContext;
+  collapseHeadings?: boolean;
   mentions?: MessageMention[];
   showCopy?: boolean;
   streaming?: boolean;
@@ -1179,7 +1190,7 @@ export function AssistantMessageContent({
 }): React.JSX.Element {
   return (
     <>
-      {text ? <MarkdownBody citations={citations} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody> : null}
+      {text ? <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody> : null}
       {showCopy && !streaming && text && (
         <AssistantMessageActions citations={citations} mentions={mentions} telemetry={telemetry} text={text} />
       )}
@@ -1839,6 +1850,7 @@ export function MessageBlock({
               ) : null}
               <AssistantMessageContent
                 citations={citations}
+                collapseHeadings
                 mentions={message.mentions}
                 streaming={message.streaming}
                 text={message.text ?? ''}
