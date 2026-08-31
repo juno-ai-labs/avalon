@@ -1999,10 +1999,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       ? [{ id: "file-parser", pdf: { engine: "native" } }]
       : [];
     const reasoningEffort = args.reasoningEffort ?? args.input.config.reasoningEffort;
-    const azurePricing = await resolveAzureModelPricing();
+    const fallbackModels = args.fallbackModels ?? args.input.config.fallbackModels ?? [];
+    const azurePricing = routeIncludesAzureBinding([intendedModel, ...fallbackModels])
+      ? await resolveAzureModelPricing()
+      : new Map();
     const plan = routePlan(
       intendedModel,
-      args.fallbackModels ?? args.input.config.fallbackModels ?? [],
+      fallbackModels,
       args.input.workspaceId,
       args.input.config,
       azurePricing,
@@ -2985,6 +2988,13 @@ function routePlan(
     requirements,
     stages,
   };
+}
+
+function routeIncludesAzureBinding(models: readonly string[]): boolean {
+  return models.some((model) => {
+    const canonical = canonicalModelIdSchema.safeParse(model);
+    return canonical.success && AZURE_MODEL_BINDINGS.has(canonical.data);
+  });
 }
 
 function routeCapabilities(request: {

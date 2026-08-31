@@ -3006,6 +3006,58 @@ describe("agent harness", () => {
     ]);
   });
 
+  it("does not resolve Azure pricing for a route with no Azure-bound model", async () => {
+    const urls: string[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      urls.push(String(request));
+      return streamResponse([{
+        choices: [{ delta: { content: "openrouter only" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, cost: 0.01 },
+      }]);
+    }) as typeof fetch;
+    const resolveAzureModelPricing = vi.fn(() => (
+      new Promise<ReadonlyMap<string, AzureModelPricing>>(() => {})
+    ));
+
+    await expect(runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "google/gemini-3.6-flash",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        workspaceId: "workspace-non-azure-model",
+      }),
+      resolveAzureModelPricing,
+    })).resolves.toMatchObject({ status: "completed", content: "openrouter only" });
+
+    expect(resolveAzureModelPricing).not.toHaveBeenCalled();
+    expect(urls).toEqual(["https://openrouter.ai/api/v1/chat/completions"]);
+  });
+
+  it("omits Azure and continues on OpenRouter when pricing resolution rejects", async () => {
+    const urls: string[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      urls.push(String(request));
+      return streamResponse([{
+        choices: [{ delta: { content: "priced fallback" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, cost: 0.01 },
+      }]);
+    }) as typeof fetch;
+    const resolveAzureModelPricing = vi.fn(async () => {
+      throw new Error("pricing unavailable");
+    });
+
+    await expect(runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "x-ai/grok-4.3",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        workspaceId: "workspace-azure-pricing-rejected",
+      }),
+      resolveAzureModelPricing,
+    })).resolves.toMatchObject({ status: "completed", content: "priced fallback" });
+
+    expect(resolveAzureModelPricing).toHaveBeenCalledTimes(1);
+    expect(urls).toEqual(["https://openrouter.ai/api/v1/chat/completions"]);
+  });
+
   it("routes Grok 4.6 reasoning through its Azure deployment and prices cached usage", async () => {
     let requestBody: Record<string, unknown> = {};
     const attempts: InferenceAttemptEvent[] = [];
