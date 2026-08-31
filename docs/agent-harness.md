@@ -469,7 +469,10 @@ network request rather than sending a body the deployment may reject.
 The Azure transport is enabled only when its dedicated endpoint and API key are
 both present. Those values are separate from realtime-dictation configuration,
 so configuring an EU dictation resource cannot accidentally send an EU work
-stream to the Global Monad production inference resource. Azure receives the
+stream to the Global Monad production inference resource. A shared contract
+accepts only an HTTPS resource root or `/openai/v1` base, so an endpoint the
+transport cannot address fails Worker startup rather than the first model turn.
+Azure receives the
 deployment name as `model`, the standard OpenAI-compatible message/tool body,
 and `reasoning_effort` only for a binding that declares it. OpenRouter-only
 Broadcast fields, plugins, routing metadata, and headers never cross that
@@ -500,7 +503,9 @@ writes each model under its canonical OpenRouter ID in the shared regional KV,
 and preserves the decimal costs as strings. The inventory covers every model in
 the developer-mode manual selector plus every Monad production Azure
 deployment carried by OpenRouter: fourteen unique IDs on that date. API inference
-only reads the cache; it never fetches or writes pricing. Azure's Retail Prices
+only reads the cache when the primary or a fallback model has an Azure binding;
+it never fetches or writes pricing. A failed cache read omits Azure and leaves
+OpenRouter available. Azure's Retail Prices
 API separately published 4.3 Global meters but no 4.6 meter that day; that API
 is useful corroboration, not this fallback's rate authority.
 The Azure agent route does not enable provider web search, so the separate
@@ -1135,7 +1140,9 @@ One public-metadata record per canonical OpenRouter model ID is cached in a
 Cloudflare KV namespace shared by the Global and EU Workers. A dedicated Global
 cron refreshes the developer-selector and Azure-deployment union hourly; base
 and prompt-threshold override costs remain decimal strings in KV and are
-converted only at Bind's billing boundary.
+converted only at Bind's billing boundary. Startup now validates the Azure
+endpoint against the same exact contract used by the transport, and turns whose
+primary and fallback models are all OpenRouter-only do not read pricing KV.
 
 **Why:** Monad production carries Global Standard version-1 deployments for
 both Grok models, while Rally sent every agent turn through OpenRouter even though its

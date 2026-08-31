@@ -17,6 +17,7 @@ import {
   AutomationDraftSchema,
   asUserId
 } from "@rally/contracts";
+import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { createStreamWatchdog } from "@juno-ai/bind/completion";
 import { chatRequestToJSON } from "@openrouter/sdk/models/chatrequest.js";
@@ -1352,19 +1353,14 @@ export class AzureOpenAIClient {
 }
 
 function azureChatCompletionsUrl(endpoint: string): string {
-  let url: URL;
-  try {
-    url = new URL(endpoint.trim());
-  } catch {
-    throw new AzureOpenAIRequestError("AZURE_OPENAI_ENDPOINT must be a valid URL");
+  const parsed = AzureInferenceEndpointSchema.safeParse(endpoint.trim());
+  if (!parsed.success) {
+    throw new AzureOpenAIRequestError(
+      "AZURE_OPENAI_ENDPOINT must be an HTTPS resource root or /openai/v1 base",
+    );
   }
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
-    throw new AzureOpenAIRequestError("AZURE_OPENAI_ENDPOINT must be an HTTPS resource endpoint");
-  }
+  const url = new URL(parsed.data);
   const path = url.pathname.replace(/\/+$/u, "");
-  if (path && path !== "/openai/v1") {
-    throw new AzureOpenAIRequestError("AZURE_OPENAI_ENDPOINT must be a resource root or end in /openai/v1");
-  }
   url.pathname = `${path || "/openai/v1"}/chat/completions`;
   return url.toString();
 }

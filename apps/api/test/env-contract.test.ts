@@ -143,6 +143,19 @@ describe("environment contract", () => {
     }))).toThrow(/AZURE_INFERENCE_ENDPOINT and AZURE_INFERENCE_API_KEY must be configured together/u);
   });
 
+  it("rejects Azure inference endpoints the transport cannot address", () => {
+    for (const endpoint of [
+      "http://monad-prod-resource.services.ai.azure.com",
+      "https://monad-prod-resource.services.ai.azure.com/openai/deployments/grok-4.3",
+      "https://monad-prod-resource.services.ai.azure.com?api-version=preview",
+    ]) {
+      expect(() => assertEnvContract(contractCompleteEnv({
+        AZURE_INFERENCE_ENDPOINT: endpoint,
+        AZURE_INFERENCE_API_KEY: "azure-key",
+      }))).toThrow(/AZURE_INFERENCE_ENDPOINT is invalid/u);
+    }
+  });
+
   it("reports every offending key at once", () => {
     const env = contractCompleteEnv({ AVALON_REGION: "us" as never, PUBLIC_API_BASE_URL: "not-a-url" });
     delete (env as Partial<Env>).OPENROUTER_API_KEY;
