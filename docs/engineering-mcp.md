@@ -29,7 +29,8 @@ by virtue of product membership.
 Cloudflare Access terminates MCP OAuth and Dynamic Client Registration at the
 custom hostname. Dynamic registration accepts installed-client loopback
 callbacks and hosted callbacks under the supported Claude, ChatGPT, and Cursor
-origins. The origin independently verifies the signed
+origins. The MCP transport admits those same hosted request origins after
+authentication. The origin independently verifies the signed
 `Cf-Access-Jwt-Assertion`, including issuer and this application's dedicated
 audience. A verified request reaches the stateless MCP handler; every other
 request fails closed.
@@ -190,6 +191,28 @@ Changing that managed provider list remains an explicit Access administration
 decision.
 
 ## Changelog
+
+### 2026-08-30 — Admit hosted origins to the MCP transport
+
+**What changed:** The stateless MCP handler now admits request `Origin` headers
+from the supported Claude, ChatGPT, and Cursor hosted providers. Redirect URI
+patterns and transport-origin hostnames now share one checked-in provider
+registry.
+
+**Why:** Managed OAuth successfully authorized Claude Code on the web, but the
+Agents SDK rejected Claude's subsequent MCP handshake because its default
+origin policy for a custom domain admits only localhost-class origins. Claude
+reported the resulting `403` as an authorized account with no MCP server.
+
+**Considered and rejected:** Disabling origin validation with `"*"` was rejected
+because the Access redirect policy already defines the hosted providers Rally
+intends to trust. Maintaining a second provider list inside the Worker was
+rejected because it would drift from the deployment allowlist.
+
+**Consequences:** Hosted handshakes from the registered providers reach the MCP
+server after Access authentication. Other browser origins remain rejected, and
+adding a provider requires one registry change that updates both OAuth
+registration and transport admission.
 
 ### 2026-08-30 — Admit hosted MCP clients through Managed OAuth
 

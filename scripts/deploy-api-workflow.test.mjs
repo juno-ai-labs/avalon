@@ -14,6 +14,10 @@ const engineeringMcpDeployPath = join(
   repositoryDirectory,
   'apps/engineering-mcp/scripts/deploy.mjs',
 );
+const engineeringMcpHostedClientsPath = join(
+  repositoryDirectory,
+  'apps/engineering-mcp/hosted-clients.json',
+);
 const capabilityEntrypointPaths = [
   join(repositoryDirectory, 'apps/api/src/document-processing-worker.ts'),
   join(repositoryDirectory, 'apps/api/src/terminal-provider-worker.ts'),
@@ -250,10 +254,12 @@ test('deploy verify shards workers the same way CI does', async () => {
 });
 
 test('deploys the Managed OAuth engineering MCP only after both regional APIs are healthy', async () => {
-  const [workflow, provisioner] = await Promise.all([
+  const [workflow, provisioner, hostedClientsSource] = await Promise.all([
     readFile(deployWorkflowPath, 'utf8'),
     readFile(engineeringMcpDeployPath, 'utf8'),
+    readFile(engineeringMcpHostedClientsPath, 'utf8'),
   ]);
+  const hostedClients = JSON.parse(hostedClientsSource);
   const regionalHealth = workflow.indexOf('- name: Verify regional health');
   const deployMcp = workflow.indexOf('- name: Deploy the engineering MCP after both regional entrypoints');
   const verifyMcp = workflow.indexOf(
@@ -280,10 +286,16 @@ test('deploys the Managed OAuth engineering MCP only after both regional APIs ar
   assert.match(provisioner, /dynamic_client_registration:\s*\{[\s\S]{0,180}enabled: true,/u);
   assert.match(provisioner, /allow_any_on_localhost: true/u);
   assert.match(provisioner, /allow_any_on_loopback: true/u);
-  assert.match(provisioner, /"https:\/\/claude\.ai\/\*"/u);
-  assert.match(provisioner, /"https:\/\/chatgpt\.com\/\*"/u);
-  assert.match(provisioner, /"https:\/\/cursor\.com\/\*"/u);
-  assert.match(provisioner, /"https:\/\/www\.cursor\.com\/\*"/u);
+  assert.deepEqual(hostedClients, {
+    oauthRedirectUriPatterns: [
+      'https://claude.ai/*',
+      'https://chatgpt.com/*',
+      'https://cursor.com/*',
+      'https://www.cursor.com/*',
+    ],
+    originHostnames: ['claude.ai', 'chatgpt.com', 'cursor.com', 'www.cursor.com'],
+  });
+  assert.match(provisioner, /hostedClients\.oauthRedirectUriPatterns/u);
   assert.match(
     provisioner,
     /allowed_uris:\s*\[\.\.\.new Set\(\[\s*\.\.\.currentAllowedRedirectUris,\s*\.\.\.hostedMcpRedirectUris,?\s*\]\)\]/su,

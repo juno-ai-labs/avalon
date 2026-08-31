@@ -10,13 +10,16 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 const deploymentToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
 const mcpDomain = "mcp.internal.rallywith.ai";
 const aceDomain = "ace.internal.rallywith.ai";
-const hostedMcpRedirectUris = [
-  "https://claude.ai/*",
-  "https://chatgpt.com/*",
-  "https://cursor.com/*",
-  "https://www.cursor.com/*",
-];
 const generatedConfig = join(appDirectory, "wrangler.generated.json");
+const hostedClients = JSON.parse(
+  await readFile(join(appDirectory, "hosted-clients.json"), "utf8"),
+);
+const hostedMcpRedirectUris = hostedClients.oauthRedirectUriPatterns;
+
+if (!Array.isArray(hostedMcpRedirectUris)
+  || hostedMcpRedirectUris.some((uri) => typeof uri !== "string" || !uri.startsWith("https://"))) {
+  throw new Error("hosted-clients.json must define HTTPS OAuth redirect URI patterns");
+}
 
 if (!accountId) throw new Error("CLOUDFLARE_ACCOUNT_ID is required");
 if (!deploymentToken) throw new Error("CLOUDFLARE_API_TOKEN is required");
