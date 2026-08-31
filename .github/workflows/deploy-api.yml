@@ -605,7 +605,7 @@ jobs:
       # MCP deployment untouched.
       - name: Deploy the engineering MCP after both regional entrypoints
         if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
-        run: pnpm --filter @rally/engineering-mcp deploy
+        run: pnpm --filter @rally/engineering-mcp run deploy
 
       - name: Verify the engineering MCP advertises OAuth to non-browser clients
         if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'

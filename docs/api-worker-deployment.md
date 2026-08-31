@@ -185,6 +185,26 @@ to the capability that uses it and is visible as a platform invocation.
 
 ## Changelog
 
+### 2026-08-30 — Disambiguate the engineering MCP deployment script
+
+**What changed:** The API workflow now invokes the engineering MCP package's
+deployment script with pnpm's explicit `run deploy` form, and its workflow test
+requires that exact command.
+
+**Why:** Pnpm 11 treated the prior filtered `deploy` invocation as pnpm's own
+package-deployment command and stopped after both regional APIs were healthy,
+before the MCP provisioner or OAuth probe could run.
+
+**Considered and rejected:** Renaming the package script would avoid the command
+collision but would needlessly change the established operator command. An
+unprotected textual replacement was rejected because the original workflow test
+proved ordering while allowing an invocation that could not execute.
+
+**Consequences:** Filtered invocations of a package script whose name collides
+with a pnpm command must use `pnpm --filter <package> run <script>`. The
+deployment workflow test prevents this command from regressing while retaining
+the regional health barrier.
+
 ### 2026-08-30 — Deploy the engineering MCP after the regional API barrier
 
 **What changed:** The verified build now dry-runs the engineering MCP, and a
