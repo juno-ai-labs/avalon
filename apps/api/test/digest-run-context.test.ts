@@ -63,8 +63,8 @@ function envFor(database: DatabaseSync): Env {
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
-    // Configured supported so the document section's absence below is the
-    // digest origin's doing rather than a region that has no workspace.
+    // Keep Terminal configured so this fixture exercises the external-delivery
+    // tie-breaker against the standing document policy.
     TERMINAL_REGION_CAPABILITY: "supported",
     DAYTONA_API_KEY: "daytona-key",
     DAYTONA_API_URL: "https://app.daytona.io/api",
@@ -210,6 +210,8 @@ describe("the window a scheduled digest run is given", () => {
     // rather than quoted from anybody.
     expect(brief?.content).toContain("2026-08-11T16:00:00.000Z");
     expect(brief?.content).toContain("covering 42 events");
+    expect(context.systemPrompt).toContain("# External delivery output");
+    expect(context.systemPrompt).toContain("put the complete usable result in the final message");
     if (!brief) throw new Error("digest activation context was not assembled");
     expect(workstreamActivationInput(brief)).toMatchObject({
       activationInputId: `activation:["digest_delivery","${DELIVERY}",null]`,
@@ -223,6 +225,20 @@ describe("the window a scheduled digest run is given", () => {
         },
       },
     });
+  });
+
+  it("gives a HyperSight run its block submission surface", async () => {
+    const env = envFor(seededDatabase());
+
+    const context = await loadRunPromptContext(env, workflowInput({
+      reason: "block_dashboard_block",
+      digestDeliveryId: null,
+      triggerMessageId: null,
+    }), lease, workstream);
+
+    expect(context.systemPrompt).toContain("# HyperSight block output");
+    expect(context.systemPrompt).toContain("Submit the finished Markdown through the block submission tool");
+    expect(context.systemPrompt).not.toContain("# External delivery output");
   });
 
   it("never carries the window in the system prompt", async () => {

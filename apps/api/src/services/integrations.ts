@@ -5351,6 +5351,14 @@ async function loadRunPromptContext(
       title: workstream.title,
       objective: workstream.objective,
       executionAuthority: input.executionPrincipal.type,
+      outputSurface: input.reason === "block_dashboard_block"
+        ? "block_dashboard"
+        : input.reason === "inbound_email"
+          || Boolean(input.digestDeliveryId)
+          || Boolean(input.slackOrigin)
+          || (automationContext?.resultDelivery.length ?? 0) > 0
+          ? "external_delivery"
+          : "workstream",
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { automation: automationContext } : {}),
     }),
