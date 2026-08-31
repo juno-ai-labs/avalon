@@ -3,8 +3,10 @@ import {
   citationFootnotes,
   citationScheme,
   connectorMentionHref,
+  connectorTypeFromEmbedHref,
   connectorTypeFromMentionHref,
   embeddedResourceCitations,
+  isConnectorHref,
   parseCitationHref,
   personIdFromMentionHref,
   personMentionHref,
@@ -121,6 +123,21 @@ describe("connector mention hrefs", () => {
     expect(connectorTypeFromMentionHref("connector:ops", "tok")).toBeUndefined();
     expect(connectorTypeFromMentionHref("connector:%", "tok")).toBeUndefined();
     expect(connectorTypeFromMentionHref(undefined, "tok")).toBeUndefined();
+  });
+
+  it("reads only bare connector embed hrefs", () => {
+    expect(connectorTypeFromEmbedHref("connector://google")).toBe("google");
+    expect(connectorTypeFromEmbedHref("connector:GOOGLE_DRIVE")).toBe("google_drive");
+    expect(connectorTypeFromEmbedHref("connector://tok:google")).toBeUndefined();
+    expect(connectorTypeFromEmbedHref("connector:%")).toBeUndefined();
+    expect(connectorTypeFromEmbedHref("https://example.com")).toBeUndefined();
+  });
+
+  it("recognizes connector hrefs without making them citations", () => {
+    expect(isConnectorHref("connector://google")).toBe(true);
+    expect(isConnectorHref("CONNECTOR://tok:google")).toBe(true);
+    expect(isConnectorHref("resource://google")).toBe(false);
+    expect(isConnectorHref(undefined)).toBe(false);
   });
 });
 

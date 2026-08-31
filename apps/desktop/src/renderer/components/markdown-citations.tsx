@@ -7,6 +7,7 @@ import {
   type CitationTarget,
   type FootnoteCitation,
   citationScheme,
+  isConnectorHref,
   parseCitationHref,
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -649,7 +650,7 @@ export function CitationLink({ anchor, children, footnoteRef, href, identity }: 
   // Connector chips are minted at render time and are not a citation scheme.
   // Route them through the host's identity path before the matrix, or they
   // would land in `unknown` as a navigable (or emptied) anchor.
-  if (href !== undefined && href.startsWith('connector:')) {
+  if (isConnectorHref(href)) {
     return <>{identity()}</>;
   }
   const cell = LINK_CELLS[citationScheme(href)];

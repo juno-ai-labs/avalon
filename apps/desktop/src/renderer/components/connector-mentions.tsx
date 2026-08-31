@@ -12,14 +12,14 @@ import type { PluginBrandMark } from '../lib/plugin-marks';
 import type { WorkstreamConnection } from '../lib/types';
 import { ConnectorMark } from './primitives';
 
-const ConnectorConnectionsContext = createContext<readonly WorkstreamConnection[]>([]);
+const ConnectorConnectionsContext = createContext<readonly WorkstreamConnection[] | undefined>([]);
 
 export function ConnectorConnectionsProvider({
   children,
   connections,
 }: {
   children: React.ReactNode;
-  connections: readonly WorkstreamConnection[];
+  connections: readonly WorkstreamConnection[] | undefined;
 }): React.JSX.Element {
   return (
     <ConnectorConnectionsContext.Provider value={connections}>
@@ -28,7 +28,7 @@ export function ConnectorConnectionsProvider({
   );
 }
 
-export function useConnectorConnections(): readonly WorkstreamConnection[] {
+export function useConnectorConnections(): readonly WorkstreamConnection[] | undefined {
   return useContext(ConnectorConnectionsContext);
 }
 
@@ -65,22 +65,30 @@ export function ConnectorMentionChip({
 }): React.JSX.Element {
   const connections = useConnectorConnections();
   const presentation = connectorPresentation(connectorType, label);
-  const status = connectorAggregateStatus(connectorScopeStates(connectorType, connections));
+  const status = connections === undefined
+    ? undefined
+    : connectorAggregateStatus(connectorScopeStates(
+        connectorType,
+        connections,
+        presentation.capabilityPrefixes,
+      ));
   const displayLabel = label.replace(/^@/u, '');
   return (
     <span
       className="mention-chip mention-chip-connector"
-      data-connector-status={status}
+      {...(status ? { 'data-connector-status': status } : {})}
       data-connector-type={connectorType}
     >
       {presentation.mark ? (
         <ConnectorProviderIcon className="mention-chip-connector-icon" mark={presentation.mark} />
       ) : null}
       <span className="mention-chip-label">{displayLabel}</span>
-      <span className={`mention-chip-status mention-chip-status-${status}`}>
-        <StatusGlyph status={status} />
-        <span>{connectorStatusLabel(status)}</span>
-      </span>
+      {status ? (
+        <span className={`mention-chip-status mention-chip-status-${status}`}>
+          <StatusGlyph status={status} />
+          <span>{connectorStatusLabel(status)}</span>
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -99,10 +107,12 @@ export function ConnectorEmbedCard({
 }): React.JSX.Element {
   const connections = useConnectorConnections();
   const presentation = connectorPresentation(connectorType, label);
-  const scopes = connectorScopeStates(connectorType, connections);
+  const scopes = connections === undefined
+    ? undefined
+    : connectorScopeStates(connectorType, connections, presentation.capabilityPrefixes);
   const title = label?.replace(/^@/u, '') || presentation.name;
-  const capabilityCount = scopes
-    .flatMap((scope) => scope.connection?.capabilities ?? [])
+  const capabilityCount = (scopes ?? [])
+    .flatMap((scope) => scope.capabilities)
     .filter((value, index, all) => all.indexOf(value) === index)
     .length;
 
@@ -115,27 +125,31 @@ export function ConnectorEmbedCard({
       <div className="citation-connector-card-body">
         <strong className="citation-connector-card-title">{title}</strong>
         <p className="citation-connector-card-description">{presentation.description}</p>
-        <p className="citation-connector-card-meta">
-          {capabilityCount > 0
-            ? `${capabilityCount} ${capabilityCount === 1 ? 'capability' : 'capabilities'}`
-            : 'No capabilities on a connected account yet'}
-        </p>
+        {scopes ? (
+          <p className="citation-connector-card-meta">
+            {capabilityCount > 0
+              ? `${capabilityCount} ${capabilityCount === 1 ? 'capability' : 'capabilities'}`
+              : 'No capabilities on a connected account yet'}
+          </p>
+        ) : null}
       </div>
-      <ul className="citation-connector-card-scopes">
-        {scopes.map((scope) => (
-          <li
-            className={`citation-connector-status citation-connector-status-${scope.status}`}
-            key={scope.scope}
-          >
-            <StatusGlyph status={scope.status} />
-            <span>
-              {connectorScopeLabel(scope.scope)}
-              {' · '}
-              {connectorStatusLabel(scope.status)}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {scopes ? (
+        <ul className="citation-connector-card-scopes">
+          {scopes.map((scope) => (
+            <li
+              className={`citation-connector-status citation-connector-status-${scope.status}`}
+              key={scope.scope}
+            >
+              <StatusGlyph status={scope.status} />
+              <span>
+                {connectorScopeLabel(scope.scope)}
+                {' · '}
+                {connectorStatusLabel(scope.status)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </article>
   );
 }
