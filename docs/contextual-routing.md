@@ -12,9 +12,9 @@ This page is the historical record for the retired feature. The four Suggested W
 | Suggested Work admission | Existing work streams are duplicate-detection context only and can never be destinations. |
 | Work-stream detail | Emits an empty `suggestions` rollout tombstone for older desktop builds; current desktop code ignores the field. |
 | Realtime protocol | Old suggestion event names remain parse-only during rolling deployment and have no producer or consumer. |
-| SubstreamAgent storage | Migration 35 drops `suggested_actions`, removes its outbox rows and audience triggers, and converts old `suggested_activity` resource links to ordinary `attachment` links. |
-| WorkstreamDO and WorkspaceDO | Forward migrations discard suggestion-feedback deliveries and drop the workspace feedback projection. |
-| Desktop | Does not construct, render, resolve, or cache Suggested context cards. Canonical blocks from an older Worker are filtered out. |
+| SubstreamAgent storage | Migration 35 drops `suggested_actions`, removes its outbox rows, converts old `suggested_activity` links to `attachment`, and retains accepted items' source audiences as generic immutable content fences. Those fences continue to block participant or scope widening that would expose the attachment. |
+| WorkstreamDO and WorkspaceDO | Forward migrations discard stored suggestion-feedback state. Parse-only tombstones acknowledge an in-flight feedback envelope from an older isolate without applying or persisting it. |
+| Desktop | Does not construct, render, resolve, or cache Suggested context cards. Canonical blocks from an older Worker are filtered out. A parse-only resource relationship accepts an old Worker's snapshot/event and immediately normalizes it to `attachment`. |
 
 The rollout tombstones are compatibility boundaries, not a dormant implementation or a re-enable switch. Reintroducing a work-stream suggestion product would be a new feature with new contracts and storage rather than a reversal of these migrations.
 
@@ -22,13 +22,13 @@ The rollout tombstones are compatibility boundaries, not a dormant implementatio
 
 ### 2026-08-30 — Suggested context was removed
 
-**What changed:** Both producers, the activity classifier, acceptance and dismissal routes, realtime handling, desktop card, feedback projection, and object-local suggestion state were removed. Forward migrations discard pending feedback and cards while retaining accepted resource relationships as ordinary attachments.
+**What changed:** Both producers, the activity classifier, acceptance and dismissal routes, realtime handling, desktop card, feedback projection, and object-local suggestion state were removed. Forward migrations discard pending feedback and cards while retaining accepted resource relationships as ordinary attachments. The accepted content's source audience survives only as an immutable generic privacy fence. Rolling-deploy parsers consume old resource and feedback envelopes without restoring the retired product vocabulary.
 
 **Why:** The work-stream card was an unsolicited interruption and was not useful enough to keep as a parallel destination beside watches, automations, and Suggested Work.
 
 **Considered and rejected:** Hiding the renderer while retaining classifiers and storage, or leaving Suggested Work able to route into an existing work stream. Both keep a dormant second product path and its authorization and rollout burden.
 
-**Consequences:** Unclaimed activity now has one speculative destination, Suggested Work on the home screen. Old wire names and an empty snapshot field remain only long enough to make mixed-version deployment safe.
+**Consequences:** Deterministic matching durably claims an event before Suggested Work sees it, including on retries after every matching delivery settles. Unclaimed activity has one speculative destination, Suggested Work on the home screen. Old wire names and an empty snapshot field remain only long enough to make mixed-version deployment safe.
 
 
 ### 2026-08-24 — Suggested context returns behind source-to-target audience fences

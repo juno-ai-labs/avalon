@@ -48,7 +48,12 @@ import {
   connectorSupportsResourceHydration,
 } from "../lib/connector-registry";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import type { WorkstreamReaderAudience } from "../lib/audience-containment";
+import {
+  ContentAudienceSchema,
+  contentAudienceContainsWorkstream,
+  type ContentAudience,
+  type WorkstreamReaderAudience,
+} from "../lib/audience-containment";
 import { logWarn } from "../observability/logger";
 import { prepareMentionMarkdown, type MentionPerson } from "../lib/message-mentions";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -1425,6 +1430,9 @@ export class WorkstreamObjectProductService {
     }
     const now = Date.now();
     const scopeChanged = input.scope !== undefined && input.scope !== before.scope;
+    if (scopeChanged && input.scope === "workspace") {
+      this.assertRetainedContentContains({ scope: "workspace" });
+    }
     const joined = scopeChanged && input.scope === "personal" && !this.isParticipant(auth.userId);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
@@ -2125,6 +2133,13 @@ export class WorkstreamObjectProductService {
     if (!member) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
+    const audience = this.readerAudience();
+    if (audience.scope === "personal" && !audience.userIds.includes(userId)) {
+      this.assertRetainedContentContains({
+        scope: "personal",
+        userIds: [...audience.userIds, userId],
+      });
+    }
     // Both names are read before the commit because the effects that carry
     // them are built inside it: an effect callback runs against object SQL and
     // cannot await a regional round trip.
@@ -2527,6 +2542,27 @@ export class WorkstreamObjectProductService {
       `SELECT user_id FROM participants WHERE status = 'active'`,
     ).toArray().map((participant) => participant.user_id);
     return { scope: "personal", userIds };
+  }
+
+  private contentFenceAudience(value: string): ContentAudience | null {
+    const parsed = ContentAudienceSchema.safeParse(parseJson<unknown>(value, null));
+    return parsed.success ? parsed.data : null;
+  }
+
+  /** Retained attachments cannot acquire readers outside their original source audience. */
+  private assertRetainedContentContains(targetAudience: WorkstreamReaderAudience): void {
+    const rows = this.storage.sql.exec<{ audience_json: string }>(
+      `SELECT audience_json FROM content_audience_fences`,
+    ).toArray();
+    for (const row of rows) {
+      const sourceAudience = this.contentFenceAudience(row.audience_json);
+      if (sourceAudience && contentAudienceContainsWorkstream(sourceAudience, targetAudience)) continue;
+      throw new ApiError(
+        409,
+        "workstream_audience_restricted_content",
+        "This work stream contains retained content that the wider audience cannot view",
+      );
+    }
   }
 
   private backgroundTasks(): WorkstreamDetail["backgroundTasks"] {
@@ -3335,6 +3371,14 @@ export class WorkstreamObjectProductService {
     // participant-add API. A malformed or spoofed range cannot smuggle its raw
     // target into the audience after canonicalization rejects it.
     const confirmedParticipantUserIds = input.confirmedParticipantUserIds.filter((userId) => personIds.includes(userId));
+    if (root.scope === "personal" && confirmedParticipantUserIds.length > 0) {
+      const currentAudience = this.readerAudience(root);
+      if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
+      this.assertRetainedContentContains({
+        scope: "personal",
+        userIds: [...new Set([...currentAudience.userIds, ...confirmedParticipantUserIds])],
+      });
+    }
     const unconfirmed = personIds.filter((userId) =>
       !this.isParticipant(userId) && !confirmedParticipantUserIds.includes(userId));
     if (root.scope === "personal" && unconfirmed.length > 0) {

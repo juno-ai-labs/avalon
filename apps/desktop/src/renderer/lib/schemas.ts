@@ -153,17 +153,6 @@ export const messageSchema = z
       })
       .passthrough()
       .optional(),
-    activitySuggestion: z
-      .object({
-        id: z.string(),
-        title: z.string(),
-        source: z.string().optional(),
-        occurredAt: z.string().optional(),
-        reason: z.string(),
-        status: z.enum(['pending', 'accepted', 'dismissed']),
-      })
-      .passthrough()
-      .optional(),
   })
   .passthrough();
 

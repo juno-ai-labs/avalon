@@ -30,7 +30,7 @@ route them are in [`feature-flags.md`](feature-flags.md).
 
 ```
 connector activity / Rally mention
-  → WorkspaceDO event → connector-event Workflow: watches and automations
+  → WorkspaceDO event → Queue processing: watches and automations
   → nothing claimed it? enqueueActivityOpportunity()
   → WorkspaceDO.opportunity_batch_windows          (10-minute debounce, 60-minute cap)
   → WorkspaceDO alarm → fenced admission Workflow

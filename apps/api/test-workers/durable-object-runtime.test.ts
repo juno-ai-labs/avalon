@@ -57,6 +57,7 @@ import {
 } from "../src/durable-objects/names";
 import {
   workstreamRegionalEffectHash,
+  type WireWorkstreamRegionalEffect,
   type WorkstreamRegionalEffect,
 } from "../src/durable-objects/workstream-regional-effect";
 import {
@@ -228,7 +229,7 @@ function nextMessages(socket: WebSocket, count: number): Promise<MessageEvent[]>
 }
 
 function effectEnvelope(
-  effect: WorkstreamRegionalEffect,
+  effect: WireWorkstreamRegionalEffect,
   messageId: string,
   sourceVersion = 1,
   workstreamId = WORKSTREAM_ID,
@@ -496,6 +497,65 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     expect(reused.status).toBe(200);
     expect(JSON.parse(reused.bodyJson)).toEqual({ ok: true, accepted: 1 });
+  });
+
+  it("acknowledges in-flight suggestion feedback from older isolates without reviving its state", async () => {
+    await seedOpenAuthority();
+    const effect: WireWorkstreamRegionalEffect = {
+      kind: "suggestion_feedback",
+      actionId: "00000000-0000-7000-8000-0000000001e1",
+      activityId: "00000000-0000-7000-8000-0000000001e2",
+      source: "suggested_work",
+      status: "accepted",
+      resolvedAt: "2026-08-30T12:00:00.000Z",
+      resolvedByUserId: USER_ID,
+    };
+    const envelope = effectEnvelope(
+      effect,
+      "00000000-0000-7000-8000-0000000001e3",
+    );
+    const parent = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+
+    const childHandoff = await parent.receiveSubstreamEffects({
+      substreamId: "0",
+      envelopes: [envelope],
+    });
+    expect(childHandoff.status).toBe(200);
+    expect(JSON.parse(childHandoff.bodyJson)).toEqual({ ok: true, accepted: 1 });
+    await runInDurableObject(parent, (_instance: WorkstreamDO, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT message_id FROM child_effect_receipts WHERE message_id = ?`,
+        envelope.messageId,
+      ).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(
+        `SELECT message_id FROM durable_outbox WHERE message_id = ?`,
+        envelope.messageId,
+      ).toArray()).toEqual([]);
+    });
+
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const directoryHandoff = await workspace.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [envelope],
+    });
+    expect(directoryHandoff).toEqual({
+      accepted: [{ messageId: envelope.messageId, payloadHash: envelope.payloadHash }],
+      directoryChanged: false,
+    });
+    await runInDurableObject(workspace, (_instance: WorkspaceDO, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM workspace_workstream_effect_receipts
+          WHERE message_id = ?`,
+        envelope.messageId,
+      ).one()).toEqual({ count: 1 });
+      expect(state.storage.sql.exec(
+        `SELECT name FROM sqlite_schema WHERE name LIKE '%suggestion_feedback%'`,
+      ).toArray()).toEqual([]);
+    });
   });
 
   it("flushes a creation snapshot through both parents before a route can be advertised", async () => {
