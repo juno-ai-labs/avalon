@@ -64,13 +64,14 @@ describe("prompt renderers", () => {
           message: "Can Rally check the connected GitHub repository and tell Morgan what changed?",
           activeTask: true,
           connectorMentions: ["github"],
+          humanMentions: ["Morgan"],
           addressesRally: true,
           recentMessages: [
             { authorType: "human", authorName: "Morgan", message: "Did the release finish?" },
             { authorType: "agent", authorName: "Rally", message: "The release is still running." },
           ],
         }),
-        hash: "d2e720139a19615ec9308a4b40d9c19de31b6a8377e75319a37933b4813ecc98",
+        hash: "6114735828454fc96caea7b7e50ab7e3ec82538478e372d1a7aaca2d31dea005",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -318,6 +319,7 @@ describe("prompt renderers", () => {
       message: currentMessage,
       activeTask: false,
       connectorMentions: [],
+      humanMentions: [],
       addressesRally: false,
       recentMessages: Array.from({ length: 12 }, (_, index) => ({
         authorType: index % 2 === 0 ? "human" as const : "agent" as const,
@@ -335,6 +337,28 @@ describe("prompt renderers", () => {
     expect(payload.recentMessages.at(-1)).toMatchObject({ authorName: "Rally" });
     expect(payload.recentMessages.every((message) => Array.from(message.message).length === 1_000)).toBe(true);
     expect(payload.currentMessage).toBe(currentMessage);
+  });
+
+  it("routes a person-directed message to its person, in the words the rule needs", () => {
+    const [system] = renderAddressingMessages({
+      message: "irrelevant",
+      activeTask: false,
+      connectorMentions: [],
+      humanMentions: [],
+      addressesRally: false,
+    });
+
+    // The rule that stops Rally answering a message aimed at a teammate, held
+    // by exact wording rather than the golden hash, which a later prompt edit
+    // re-baselines by design: the rule could leave with the hash and no test
+    // would say so.
+    expect(system!.content).toContain(
+      "classify human_only, even during an active task or after Rally spoke",
+    );
+    // Its two tie-breaks: a person mention never suppresses a real request to
+    // Rally, and the product name alone is not an address.
+    expect(system!.content).toContain("Mentioning a person never cancels a request to Rally");
+    expect(system!.content).toContain("not when using the ordinary word");
   });
 
   it("keeps draft and provider injection text out of system messages", () => {
@@ -380,6 +404,17 @@ describe("prompt renderers", () => {
       openingMessage: injection,
     });
 
+    // Addressing classifies member-authored text, and mentioned display names
+    // are member-authored profile strings, so both are outside content here.
+    const addressingMessages = renderAddressingMessages({
+      message: injection,
+      activeTask: false,
+      connectorMentions: [],
+      humanMentions: [injection],
+      addressesRally: false,
+      recentMessages: [{ authorType: "human", authorName: injection, message: injection }],
+    });
+
     // By role rather than by index: what matters is that no system message
     // carries the draft's text and some user message does, which stays true
     // however many user-role messages the renderer grows.
@@ -399,6 +434,9 @@ describe("prompt renderers", () => {
     expect(nameMessages[0]!.content).not.toContain(injection);
     expect(nameMessages[1]).toMatchObject({ role: "user" });
     expect(nameMessages[1]!.content).toContain(injection);
+    expect(addressingMessages[0]!.content).not.toContain(injection);
+    expect(addressingMessages[1]).toMatchObject({ role: "user" });
+    expect(addressingMessages[1]!.content).toContain(injection);
 
     const descriptionMessages = renderWorkstreamDescriptionMessages({
       title: injection,

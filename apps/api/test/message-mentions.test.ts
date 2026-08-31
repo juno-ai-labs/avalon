@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isCanonicalPersonMention,
+  mentionedPersonNames,
   prepareMentionMarkdown,
   renderPersonMentionMarkdown,
 } from "../src/lib/message-mentions";
@@ -89,6 +90,48 @@ describe("canonical person mention Markdown", () => {
 
     expect(prepared.text).toBe(`Ask [@Ada Lovelace](person://${adaId}).`);
     expect(prepared.mentions.map((mention) => mention.userId)).toEqual([adaId]);
+  });
+
+  it("names a message's human audience once each, in document order", () => {
+    const text = "Ask @Grace Hopper and @Ada Lovelace — @Grace Hopper knows @linear too.";
+    const prepared = prepareMentionMarkdown(text, [
+      { type: "person", userId: graceId, connectorType: null, startOffset: 4, endOffset: 17 },
+      { type: "person", userId: adaId, connectorType: null, startOffset: 22, endOffset: 35 },
+      { type: "person", userId: graceId, connectorType: null, startOffset: 38, endOffset: 51 },
+      { type: "connector", userId: null, connectorType: "linear", startOffset: 58, endOffset: 65 },
+    ], new Map([
+      [adaId, { id: adaId, name: "Ada Lovelace", avatarUrl: null }],
+      [graceId, { id: graceId, name: "Grace Hopper", avatarUrl: null }],
+    ]));
+
+    // The addressing classifier is told who the message is aimed at through
+    // this list: people only, first mention first, one entry per person.
+    expect(mentionedPersonNames(prepared.mentions)).toEqual(["Grace Hopper", "Ada Lovelace"]);
+
+    // Direct fixture rather than the preparation pipeline: prepared connector
+    // mentions never carry a display name today, so only a handcrafted one can
+    // prove it is the person filter that keeps tools out of the audience.
+    expect(mentionedPersonNames([{
+      type: "connector",
+      userId: null,
+      connectorType: "linear",
+      startOffset: 0,
+      endOffset: 7,
+      displayName: "Linear",
+    }])).toEqual([]);
+  });
+
+  it("names nobody for a message whose mentions were all rejected", () => {
+    const text = "Ask @Ada Lovelace.";
+    const prepared = prepareMentionMarkdown(text, [
+      { type: "person", userId: graceId, connectorType: null, startOffset: 4, endOffset: 17 },
+    ], new Map([
+      [graceId, { id: graceId, name: "Grace Hopper", avatarUrl: null }],
+    ]));
+
+    // The spoofed range was dropped by preparation, so the audience list must
+    // not resurrect it: a rejected mention is not who the message is aimed at.
+    expect(mentionedPersonNames(prepared.mentions)).toEqual([]);
   });
 
   it("escapes labels in the Markdown link slot", () => {
