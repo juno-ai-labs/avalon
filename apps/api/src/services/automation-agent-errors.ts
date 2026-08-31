@@ -16,10 +16,12 @@ import { ApiError } from "../lib/api-error";
  */
 type AutomationErrorStatus = 403 | 404 | 409 | 422 | 503;
 
-const AUTOMATION_ERROR_RESPONSES: Readonly<Record<string, {
+interface AutomationErrorResponse {
   status: AutomationErrorStatus;
   message: string;
-}>> = {
+}
+
+const AUTOMATION_ERROR_RESPONSES = {
   automation_access_denied: { status: 403, message: "You do not have access to this automation." },
   automation_authority_mismatch: { status: 403, message: "You do not have access to this automation." },
   automation_identity_mismatch: { status: 404, message: "This automation could not be found." },
@@ -31,6 +33,17 @@ const AUTOMATION_ERROR_RESPONSES: Readonly<Record<string, {
   automation_personal_connection_access_denied: {
     status: 403,
     message: "This automation uses a connection you do not have access to.",
+  },
+  // WorkspaceDO's two membership refusals, on the first authoring send and on
+  // the sidebar list. Without rows they matched `SAFE_CODE` and answered 409 —
+  // the status a client retries, for the one condition retrying never resolves.
+  automation_author_access_denied: {
+    status: 403,
+    message: "You do not have access to this workspace's automations.",
+  },
+  automation_directory_access_denied: {
+    status: 403,
+    message: "You do not have access to this workspace's automations.",
   },
   automation_compiler_busy: {
     status: 409,
@@ -48,8 +61,12 @@ const AUTOMATION_ERROR_RESPONSES: Readonly<Record<string, {
     message: "This automation is not ready yet. Answer Rally's outstanding question first.",
   },
   automation_definition_revision_stale: {
+    // Not "reload": by the time anybody reads this the newer draft has already
+    // arrived over the automation's socket, and the desktop has no reload
+    // control to name. Re-reading the summary and pressing the button again is
+    // the recovery, on every client.
     status: 409,
-    message: "This draft changed while you were reviewing it. Reload and try again.",
+    message: "This draft changed while you were reviewing it. Review the updated draft, then create it again.",
   },
   automation_pending_elicitation: {
     status: 409,
@@ -91,8 +108,70 @@ const AUTOMATION_ERROR_RESPONSES: Readonly<Record<string, {
     status: 503,
     message: "Rally is finishing an update to automations. Try again in a moment.",
   },
-  automation_draft_id_required: { status: 422, message: "This request is missing its draft." },
-};
+  // "Request" is the HTTP object, not anything on the screen, and "draft" is
+  // already the sidebar's word for the thing being created.
+  automation_draft_id_required: { status: 422, message: "This automation has no draft to create from." },
+} satisfies Readonly<Record<string, AutomationErrorResponse>>;
+
+/**
+ * A code the table above answers for.
+ *
+ * A misspelling is not catastrophic — every plausible typo keeps the
+ * `automation_` prefix, so `SAFE_CODE` below catches it and answers a generic
+ * 409 rather than a 500. What the union buys is that the specific status and
+ * sentence cannot be lost silently at a call site nobody wrote a test for.
+ */
+type AutomationRefusalCode = keyof typeof AUTOMATION_ERROR_RESPONSES;
+
+/**
+ * The same object, widened for the lookup that starts from a code an object
+ * threw rather than from a key the compiler checked. One table, two views: the
+ * `| undefined` is what `satisfies` leaves room for, and it is also what keeps
+ * a thrown `"constructor"` or `"toString"` from finding an `Object.prototype`
+ * member and building an `ApiError` with no status.
+ */
+const RESPONSE_BY_CODE: Readonly<Record<string, AutomationErrorResponse | undefined>> =
+  AUTOMATION_ERROR_RESPONSES;
+
+/**
+ * An `ApiError` that has crossed a Durable Object RPC boundary.
+ *
+ * The object throws snake_case codes, but the collaborators it calls inside a
+ * request do not: `WorkstreamEmailRoutingService.reserveAutomation`, which
+ * `acceptDraft` reaches to claim the automation's address, throws `ApiError`
+ * — including the 503 an EU region raises when the Global address registry is
+ * unreachable. Cloudflare preserves an error's `name`, `message` and own
+ * properties across RPC but not its class, so `instanceof` misses, the message
+ * is a human sentence rather than a code, and both the table and `SAFE_CODE`
+ * step over the status and code sitting on the object. Every one of those
+ * deliberate refusals reached the member as `500 internal_error`.
+ *
+ * Recognised by shape, which is what survives: `ApiError` is the only error in
+ * this tree carrying both a numeric `status` and a string `code`.
+ *
+ * Honest about its own coverage: the workers test pool preserves the class, so
+ * `automation-agent.test.ts`'s "answers an ApiError raised inside the object"
+ * passes with this rebuild removed. That test guards the outcome — the member
+ * gets the author's 503, not a 500 — and this rebuild is what makes the outcome
+ * hold where the class does not survive, which review reported for a deployed
+ * RPC hop and which no suite here can reproduce. It cannot change behaviour
+ * where `instanceof` already matched: that branch returns above this one.
+ */
+function apiErrorAcrossRpc(error: unknown): ApiError | null {
+  if (!(error instanceof Error) || error.name !== "ApiError") return null;
+  const { status, code, details } = error as Error & {
+    status?: unknown;
+    code?: unknown;
+    details?: unknown;
+  };
+  if (typeof status !== "number" || typeof code !== "string") return null;
+  return new ApiError(
+    status as ConstructorParameters<typeof ApiError>[0],
+    code,
+    error.message,
+    details === undefined ? undefined : details as Record<string, unknown>,
+  );
+}
 
 /** Codes that are safe to return verbatim with a generic sentence. */
 const SAFE_CODE = /^(automation|memory|email)_[a-z0-9_]+$/u;
@@ -104,10 +183,12 @@ const SAFE_CODE = /^(automation|memory|email)_[a-z0-9_]+$/u;
  * reasoned about, and quietly answering 409 for it would hide a real defect
  * behind a retry.
  */
-export function automationApiError(error: unknown): never {
+function automationApiError(error: unknown): never {
   if (error instanceof ApiError) throw error;
+  const rebuilt = apiErrorAcrossRpc(error);
+  if (rebuilt) throw rebuilt;
   const code = error instanceof Error ? error.message : "";
-  const mapped = AUTOMATION_ERROR_RESPONSES[code];
+  const mapped = RESPONSE_BY_CODE[code];
   if (mapped) throw new ApiError(mapped.status, code, mapped.message);
   if (SAFE_CODE.test(code)) {
     throw new ApiError(409, code, "This automation could not complete that request.");
@@ -122,4 +203,22 @@ export async function withAutomationErrors<T>(work: () => Promise<T>): Promise<T
   } catch (error) {
     automationApiError(error);
   }
+}
+
+/**
+ * Refuse from the REST boundary itself, in the object's own vocabulary.
+ *
+ * `withAutomationErrors` maps what an AutomationAgent throws, but three
+ * refusals on the create path are decided in `AutomationAgentService` before or
+ * between its RPCs: a request carrying no draft id, a draft the compiler has
+ * not compiled yet, and a submitted draft that no longer matches the stored
+ * definition. The first and third were raised as bare `Error`s outside that
+ * wrapper, so the sentences written for them here were never read — `POST
+ * /automations` answered `500 internal_error` / "An unexpected error occurred",
+ * logged at error severity, for a person whose only fault was reviewing a draft
+ * the compiler had since revised.
+ */
+export function automationRefusal(code: AutomationRefusalCode): never {
+  const mapped = AUTOMATION_ERROR_RESPONSES[code];
+  throw new ApiError(mapped.status, code, mapped.message);
 }
