@@ -21,6 +21,7 @@ const reportTelemetryProductIntent = vi.hoisted(() => vi.fn(async () => undefine
 const setWindowTheme = vi.hoisted(() => vi.fn(async () => undefined));
 const initializeMermaid = vi.hoisted(() => vi.fn());
 const mermaidRender = vi.hoisted(() => vi.fn());
+const getMermaidDiagram = vi.hoisted(() => vi.fn(async () => ({ db: {} })));
 const readMermaidThemeConfig = vi.hoisted(() => vi.fn(
   () => ({
     fontFamily: 'token-font',
@@ -40,7 +41,11 @@ vi.mock('thinking-orbs', () => ({
   ),
 }));
 vi.mock('mermaid', () => ({
-  default: { initialize: initializeMermaid, render: mermaidRender },
+  default: {
+    initialize: initializeMermaid,
+    mermaidAPI: { getDiagramFromText: getMermaidDiagram },
+    render: mermaidRender,
+  },
 }));
 vi.mock('./markdown-mermaid-theme', () => ({
   readMermaidThemeConfig,
@@ -877,6 +882,18 @@ describe('MessageBlock markdown', () => {
 
     expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(screen.queryByText('Unsafe graph')).toBeNull();
+  });
+
+  it('rejects parsed Mermaid CSS resources before rendering', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidDiagram.mockResolvedValueOnce({
+      db: { getClasses: () => new Map([['remote', { styles: ['fill:url(https://example.invalid/beacon)'] }]]) },
+    });
+
+    render(<MarkdownBody>{'```mermaid\nflowchart TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
 
   it('keeps Mermaid source in stills, glances, and streams, then renders the settled turn', async () => {
