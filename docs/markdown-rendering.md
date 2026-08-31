@@ -650,11 +650,12 @@ labels disabled, post-render links removed, and serialized configure/render
 calls. Each queued job resolves the active tokens only when it starts; an
 unmounted job leaves the queue before it initializes Mermaid. `accTitle` and
 `accDescr` become the rendered image's accessible metadata; without them, the
-source remains available as its screen-reader description. Parsed flowchart
-image nodes and parsed styles with external resources are rejected before
-rendering because Mermaid can load them while measuring or drawing. SVG styling
-may use local `url(#fragment)` references for markers and gradients; the output
-scan repeats that CSS-resource check before insertion as defense in depth.
+source remains available as its screen-reader description. A diagram-independent
+source preflight rejects external CSS resource functions, and parsed flowchart
+image nodes are rejected before rendering, because Mermaid can load either while
+measuring or drawing. SVG styling may use local `url(#fragment)` references for
+markers and gradients; parsed-style and output scans repeat the resource check
+as defense in depth.
 
 **Why:** Mermaid syntax was already arriving in agent answers, but the generic
 unknown-language fallback printed it as code — the failure shown in the product
