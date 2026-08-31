@@ -2716,8 +2716,6 @@ pre {
 .mention-chip-avatar > span { text-box: trim-both cap alphabetic; }
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
-.mention-chip-icon { align-items: center; color: inherit; display: inline-flex; flex: 0 0 auto; height: 14px; justify-content: center; width: 14px; }
-.markdown-body .mention-chip-icon .connector-mark { height: 12px; width: 12px; }
 /* Connector mentions keep the company mark but not Settings' citron control
    treatment. In transcript prose, only connection state carries colour. */
 .mention-chip-connector-icon.provider-icon {

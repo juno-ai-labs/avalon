@@ -11,53 +11,52 @@ export interface ConnectorPresentation {
   readonly name: string;
   readonly description: string;
   readonly mark: PluginBrandMark | null;
+  /** Capability families a same-provider connection must carry for this label. */
+  readonly capabilityPrefixes?: readonly string[];
 }
 
-const CATALOG: Readonly<Record<string, { readonly name: string; readonly description: string; readonly mark: PluginBrandMark | null }>> = {
-  google: {
-    name: 'Google Mail + Calendar',
-    description: 'Search Gmail, create drafts, send mail, and work with calendar events.',
-    mark: 'google',
-  },
-  google_drive: {
-    name: 'Google Drive + Docs + Sheets',
-    description: 'Read Drive files and work with Google Docs and Sheets content.',
-    mark: 'google-drive',
-  },
+type CatalogEntry = { readonly name: string; readonly description: string };
+
+const GOOGLE_MAIL: CatalogEntry & { readonly capabilityPrefixes: readonly string[] } = {
+  name: 'Google Mail + Calendar',
+  description: 'Search Gmail, create drafts, send mail, and work with calendar events.',
+  capabilityPrefixes: ['gmail.', 'calendar.'],
+};
+
+const GOOGLE_FILES: CatalogEntry & { readonly capabilityPrefixes: readonly string[] } = {
+  name: 'Google Drive + Docs + Sheets',
+  description: 'Read Drive files and work with Google Docs and Sheets content.',
+  capabilityPrefixes: ['drive.', 'docs.', 'sheets.'],
+};
+
+const CATALOG: Readonly<Record<string, CatalogEntry>> = {
   github: {
     name: 'GitHub',
     description: 'Repositories, issues, pull requests, checks, and development events.',
-    mark: 'github',
   },
   granola: {
     name: 'Granola',
     description: 'Personal meeting context through Granola MCP, or workspace notes and transcripts through an admin API key.',
-    mark: 'granola',
   },
   linear: {
     name: 'Linear',
     description: 'Connect personally to act as you, or install Rally for shared workspace access and real-time activity.',
-    mark: 'linear',
   },
   slack: {
     name: 'Slack',
     description: 'Messages, files, people, canvases, conversations, and the Rally workspace Agent.',
-    mark: 'slack',
   },
   notion: {
     name: 'Notion',
     description: 'Your Notion through its live MCP tools, or selected pages and change notifications shared with your Rally workspace.',
-    mark: 'notion',
   },
   x: {
     name: 'Public X via TwitterAPI.io',
     description: 'Read-only public X timelines, threads, replies, and Lists using a Rally-managed third-party API key.',
-    mark: 'x',
   },
   generic_webhook: {
     name: 'Inbound webhook',
     description: 'Receive signed activity from systems that do not have a native Rally connector.',
-    mark: null,
   },
 };
 
@@ -66,41 +65,82 @@ export type ConnectorScopeStatus = 'healthy' | 'reconnect_required' | 'disabled'
 export interface ConnectorScopeState {
   readonly scope: 'you' | 'workspace';
   readonly status: ConnectorScopeStatus;
-  readonly connection?: WorkstreamConnection;
+  readonly connections: readonly WorkstreamConnection[];
+  readonly capabilities: readonly string[];
+}
+
+function googlePresentation(displayName?: string): ConnectorPresentation {
+  const renderedName = displayName?.replace(/^@/u, '');
+  const normalizedName = renderedName?.toLowerCase() ?? '';
+  const bundle = /drive|docs|sheets/u.test(normalizedName)
+    ? GOOGLE_FILES
+    : /gmail|mail|calendar/u.test(normalizedName)
+      ? GOOGLE_MAIL
+      : undefined;
+  const markName = bundle?.name ?? renderedName;
+  return {
+    name: renderedName || bundle?.name || 'Google Workspace',
+    description: bundle?.description ?? 'Mail, calendar, Drive, Docs, and Sheets through connected Google accounts.',
+    mark: connectorBrandMark('google', markName),
+    ...(bundle ? { capabilityPrefixes: bundle.capabilityPrefixes } : {}),
+  };
 }
 
 export function connectorPresentation(
   connectorType: string,
   displayName?: string,
 ): ConnectorPresentation {
+  if (connectorType === 'google') return googlePresentation(displayName);
   const entry = CATALOG[connectorType];
+  const renderedName = displayName?.replace(/^@/u, '');
   return {
-    name: displayName?.replace(/^@/u, '') || entry?.name || connectorType,
+    name: renderedName || entry?.name || connectorType,
     description: entry?.description ?? 'Workspace connector.',
-    mark: entry?.mark ?? connectorBrandMark(connectorType, displayName),
+    mark: connectorBrandMark(connectorType, renderedName),
   };
 }
 
-/** Personal and workspace rows for one connector type, always both. */
+function bestConnectorStatus(statuses: readonly ConnectorScopeStatus[]): ConnectorScopeStatus {
+  if (statuses.includes('healthy')) return 'healthy';
+  if (statuses.includes('reconnect_required')) return 'reconnect_required';
+  if (statuses.includes('disabled')) return 'disabled';
+  return 'missing';
+}
+
+function connectionMatchesCapabilities(
+  connection: WorkstreamConnection,
+  capabilityPrefixes: readonly string[] | undefined,
+): boolean {
+  if (!capabilityPrefixes?.length) return true;
+  return connection.capabilities?.some((capability) =>
+    capabilityPrefixes.some((prefix) => capability.startsWith(prefix))) ?? false;
+}
+
+/**
+ * Personal and workspace rows for one connector presentation, always both.
+ * Every applicable credential contributes: response order cannot change status
+ * and capability unions remain stable across reconnects and account additions.
+ */
 export function connectorScopeStates(
   connectorType: string,
   connections: readonly WorkstreamConnection[],
+  capabilityPrefixes?: readonly string[],
 ): readonly [ConnectorScopeState, ConnectorScopeState] {
-  const matching = connections.filter((connection) => connection.connectorType === connectorType);
-  const personal = matching.find((connection) => connection.scope === 'you');
-  const workspace = matching.find((connection) => connection.scope === 'workspace');
-  return [
-    {
-      scope: 'you',
-      status: personal?.status ?? 'missing',
-      ...(personal ? { connection: personal } : {}),
-    },
-    {
-      scope: 'workspace',
-      status: workspace?.status ?? 'missing',
-      ...(workspace ? { connection: workspace } : {}),
-    },
-  ];
+  const matching = connections.filter((connection) =>
+    connection.connectorType === connectorType &&
+    connectionMatchesCapabilities(connection, capabilityPrefixes));
+  const state = (scope: 'you' | 'workspace'): ConnectorScopeState => {
+    const scopeConnections = matching.filter((connection) => connection.scope === scope);
+    const capabilities = [...new Set(scopeConnections.flatMap((connection) => connection.capabilities ?? []))]
+      .sort();
+    return {
+      scope,
+      status: bestConnectorStatus(scopeConnections.map((connection) => connection.status)),
+      connections: scopeConnections,
+      capabilities,
+    };
+  };
+  return [state('you'), state('workspace')];
 }
 
 /**
@@ -110,10 +150,7 @@ export function connectorScopeStates(
 export function connectorAggregateStatus(
   states: readonly ConnectorScopeState[],
 ): ConnectorScopeStatus {
-  if (states.some((state) => state.status === 'healthy')) return 'healthy';
-  if (states.some((state) => state.status === 'reconnect_required')) return 'reconnect_required';
-  if (states.some((state) => state.status === 'disabled')) return 'disabled';
-  return 'missing';
+  return bestConnectorStatus(states.map((state) => state.status));
 }
 
 export function connectorStatusLabel(status: ConnectorScopeStatus): string {
@@ -127,22 +164,4 @@ export function connectorStatusLabel(status: ConnectorScopeStatus): string {
 
 export function connectorScopeLabel(scope: 'you' | 'workspace'): string {
   return scope === 'you' ? 'Personal' : 'Workspace';
-}
-
-/**
- * Connector type from an embed href (`connector://google`) or a tokened mention
- * (`connector://tok:google`). Embeds do not carry a render token.
- */
-export function connectorTypeFromHref(href: string | undefined): string | undefined {
-  if (href === undefined) return undefined;
-  const tokened = href.match(/^connector:(?:\/\/)?[0-9a-z]+:(.+)$/iu);
-  if (tokened) {
-    try {
-      return decodeURIComponent(tokened[1] ?? '');
-    } catch {
-      return undefined;
-    }
-  }
-  const bare = href.match(/^connector:(?:\/\/)?([A-Za-z0-9_-]+)$/iu);
-  return bare?.[1]?.toLowerCase();
 }
