@@ -243,6 +243,12 @@ export const WorkspaceExternalEventDeliveryQueueMessageSchema = z.object({
 }).strict();
 
 export const WorkspaceExternalEventMatchResultSchema = z.object({
+  /**
+   * Durable claim witness across retries. Unlike `deliveries`, this remains
+   * true after matching deliveries have already settled and no longer need to
+   * be re-enqueued.
+   */
+  claimed: z.boolean(),
   deliveries: z.array(WorkspaceExternalEventDeliveryQueueMessageSchema),
 }).strict();
 

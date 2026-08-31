@@ -21,11 +21,39 @@ describe("work-stream schema migration in workerd", () => {
         now: 1_000,
       });
       state.storage.sql.exec(
+        `INSERT INTO workstream (
+           id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
+           authority_mode, authority_generation, title, description, preview, scope,
+           exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+           unread_tracking_start_ordinal, authority_epoch, scope_epoch,
+           source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
+           created_at, last_people_activity_at, state_changed_at, updated_at
+         ) VALUES (
+           1, 'workstream-1', 'workspace-1', NULL, 0, 'global',
+           'authoritative', 1, 'Fixture', '', '', 'personal',
+           'idle', 'seeded', 1, 1, 0, 0, 0,
+           0, 0, 0, 0, 1, 1, 1, 1
+         )`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO participants
+           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+            added_at, removed_at, first_opened_at, updated_at)
+         VALUES ('user-1', 'explicit', 'user-1', 'active', 0, 1, NULL, 1, 1)`,
+      );
+      state.storage.sql.exec(
         `INSERT INTO workstream_resource_links
            (resource_id, attached_by_user_id, watch_enabled, relationship_type,
             resource_json, attached_at, updated_at)
          VALUES ('resource-1', 'user-1', 1, 'context',
                  '{"id":"resource-1","title":"Preserve this relation"}', 1, 1)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+            resource_json, attached_at, updated_at)
+         VALUES ('resource-suggestion', 'user-1', 0, 'suggested_activity',
+                 '{"id":"resource-suggestion","title":"Retain this attachment"}', 1, 1)`,
       );
 
       applyDurableObjectSqliteMigrations({
@@ -43,6 +71,10 @@ describe("work-stream schema migration in workerd", () => {
         relationship_type: "context",
         resource_json: '{"id":"resource-1","title":"Preserve this relation"}',
       });
+      expect(state.storage.sql.exec<{ relationship_type: string }>(
+        `SELECT relationship_type
+           FROM workstream_resource_links WHERE resource_id = 'resource-suggestion'`,
+      ).one()).toEqual({ relationship_type: "attachment" });
       expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
     });
   });
@@ -228,10 +260,18 @@ describe("work-stream schema migration in workerd", () => {
            (action_id, version, source_activity_id, delivery_id, audience_kind,
             provenance_ref, authorization_selector_hash, source_revisions_json,
             source_authorization_epoch, display_title, display_body, status,
-            created_at, expires_at, authored_message_id)
+            created_at, expires_at, resolved_at, resolved_by_user_id,
+            resolution_client_id, share_intent_json, authored_message_id)
          VALUES ('action-1', 1, 'activity-1', 'delivery-1', 'workstream',
                  'source', 'selector', '{}', 1, 'Continue', 'Continue safely',
-                 'pending', 1, 9999, 'message-1')`,
+                 'accepted', 1, 9999, 2, 'user-1', 'resolution-1',
+                 '{"sourceAudience":{"scope":"users","userIds":["user-1"]}}',
+                 'message-1'),
+                ('action-1', 2, 'activity-1', 'delivery-2', 'workstream',
+                 'source', 'selector', '{}', 1, 'Continue v2', 'Continue safely',
+                 'accepted', 2, 9999, 3, 'user-1', 'resolution-2',
+                 '{"sourceAudience":{"scope":"users","userIds":["user-1"]}}',
+                 'message-1')`,
       );
       state.storage.sql.exec(
         `INSERT INTO active_output_turns
@@ -306,8 +346,52 @@ describe("work-stream schema migration in workerd", () => {
         `SELECT name FROM sqlite_schema
           WHERE type = 'table' AND name IN ('run_steering', 'agent_run_dispatches')`,
       ).toArray()).toEqual([]);
-      expect(state.storage.sql.exec(`SELECT authored_message_id FROM suggested_actions`).toArray())
-        .toEqual([{ authored_message_id: "message-1" }]);
+      expect(state.storage.sql.exec(
+        `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'suggested_actions'`,
+      ).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(
+        `SELECT fence_id, audience_json FROM content_audience_fences ORDER BY fence_id`,
+      ).toArray()).toEqual([
+        {
+          fence_id: "action-1:1",
+          audience_json: '{"scope":"users","userIds":["user-1"]}',
+        },
+        {
+          fence_id: "action-1:2",
+          audience_json: '{"scope":"users","userIds":["user-1"]}',
+        },
+      ]);
+      expect(() => state.storage.sql.exec(
+        `INSERT INTO participants
+           (user_id, participation_reason, added_by_user_id, status, participant_epoch,
+            added_at, removed_at, first_opened_at, updated_at)
+         VALUES ('user-2', 'explicit', 'user-1', 'active', 0, 2, NULL, NULL, 2)`,
+      )).toThrow(/workstream_audience_restricted_content/);
+      state.storage.sql.exec(
+        `INSERT INTO workstream (
+           id, workstream_key, parent_workspace_key, parent_do_id, parent_generation, region,
+           authority_mode, authority_generation, title, description, preview, scope,
+           exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+           unread_tracking_start_ordinal, authority_epoch, scope_epoch,
+           source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
+           created_at, last_people_activity_at, state_changed_at, updated_at
+         ) VALUES (
+           1, 'workstream-1', 'workspace-1', NULL, 0, 'global',
+           'authoritative', 1, 'Fixture', '', '', 'personal',
+           'idle', 'seeded', 1, 1, 0, 0, 0,
+           0, 0, 0, 0, 1, 1, 1, 1
+         ) ON CONFLICT(id) DO NOTHING`,
+      );
+      state.storage.sql.exec(`UPDATE workstream SET scope = 'personal' WHERE id = 1`);
+      expect(state.storage.sql.exec(`SELECT scope FROM workstream WHERE id = 1`).one())
+        .toEqual({ scope: "personal" });
+      expect(state.storage.sql.exec<{ sql: string | null }>(
+        `SELECT sql FROM sqlite_schema
+          WHERE type = 'trigger' AND name = 'workstream_restricted_content_scope'`,
+      ).one().sql).toContain("content_audience_fences");
+      expect(() => state.storage.sql.exec(
+        `UPDATE workstream SET scope = 'workspace' WHERE id = 1`,
+      )).toThrow(/workstream_audience_restricted_content/);
       expect(state.storage.sql.exec(`SELECT stream_id FROM active_output_turns`).toArray())
         .toEqual([]);
       expect(state.storage.sql.exec(`SELECT text FROM active_output_chunks`).toArray())

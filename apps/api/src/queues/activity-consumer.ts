@@ -1,11 +1,7 @@
-import {
-  renderActivityRoutingMessages,
-} from "@rally/agent-harness";
 import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@rally/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
-  ActivityRoutingResultSchema,
   SlackIngressQueueMessageSchema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   asAutomationId,
@@ -28,25 +24,12 @@ import {
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
 import type { AuthContext } from "../env";
-import { contentAudienceContainsWorkstream } from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
 import { uuidV7 } from "../lib/uuid-v7";
-import {
-  BASE_CONFIDENCE_FLOOR,
-  DISMISSAL_RUN_LIMIT,
-  OPERATIONAL_CONFIDENCE_FLOOR,
-  dismissalRunCutoff,
-  suggestionAdmission,
-} from "../services/activity-routing-feedback";
-import {
-  createActivitySuggestion,
-} from "../services/activity-suggestion-service";
 import { SlackAgentService } from "../services/slack-agent-service";
-import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
-import { diagnosticErrorCode, logDebug, logInfo, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -96,19 +79,6 @@ interface ActivityRow {
 }
 
 
-
-const routingJsonSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    candidateWorkstreamId: { type: ["string", "null"], format: "uuid" },
-    confidence: { type: "number", minimum: 0, maximum: 1 },
-    reason: { type: "string" },
-    matchedEntities: { type: "array", items: { type: "string" } },
-    suggest: { type: "boolean" }
-  },
-  required: ["candidateWorkstreamId", "confidence", "reason", "matchedEntities", "suggest"]
-};
 
 function parseRecord(value: string): Record<string, unknown> {
   try {
@@ -579,11 +549,6 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
 
       try {
         await processConnectorEvent(env, claim.event);
-        const matched = await workspace.matchExternalEventDestinations({
-          workspaceId: input.workspaceId,
-          eventId: input.eventId,
-        });
-        await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(delivery)));
       } catch (error) {
         const errorCode = diagnosticErrorCode(error, "connector_event_processing_failed");
         const reason = error instanceof Error
@@ -765,25 +730,29 @@ export async function processConnectorEvent(
 ): Promise<void> {
   const activity = activityRowFromWorkspaceEvent(event);
   env = withWorkspaceRuntimeDatabase(env, activity.workspace_id);
-  // WorkspaceDO's typed registration index is the only automation/watch
-  // fan-out. The old D1 scans were a second matcher with stale authority.
-  // Contextual routing is therefore all this step still decides, and the
-  // opportunity is enqueued whenever it declines.
-  const routedContextually = SUGGESTED_CONTEXT_ENABLED
-    ? await routeContextually(env, activity)
-    : false;
-  if (!routedContextually) {
+  // Match first and ask WorkspaceDO for its durable claim witness. The list of
+  // deliveries is only the work still pending; a retry after those deliveries
+  // settle must still know the activity was claimed and keep it out of
+  // Suggested Work.
+  const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
+  const matched = await workspace.matchExternalEventDestinations({
+    workspaceId: activity.workspace_id,
+    eventId: activity.id,
+  });
+  if (!matched.claimed) {
     await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   }
   await projectActivityEvent(env, activity);
+  await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(delivery)));
   logInfo(env, "connector_event_processing_completed", {
     workspace_id: activity.workspace_id,
     connection_id: activity.connection_id,
     connector_type: activity.connector_type,
     provider: activity.provider,
     connector_event_id: activity.id,
-    routed_contextually: routedContextually,
-    opportunity_enqueued: !routedContextually,
+    deterministic_route_claimed: matched.claimed,
+    deterministic_delivery_count: matched.deliveries.length,
+    opportunity_enqueued: !matched.claimed,
     outcome: "processed",
   });
 }
@@ -889,10 +858,8 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
 /**
  * Whether this connector activity may be read back to a person in a digest.
  *
- * This answers the digest question only. Contextual routing reads the same
- * declaration through `declaredConfidenceFloor`, which treats it as a prior
- * rather than a verdict and reaches a different answer on purpose; do not merge
- * the two.
+ * This answers the digest question only. Suggested Work reads the same activity
+ * independently and must not inherit this notification choice.
  *
  * The connector's manifest is the authority, keyed on the event type — the one
  * thing an activity durably carries all the way from the provider to the log.
@@ -943,159 +910,6 @@ function connectorActorLabel(activity: ActivityRow): string {
   return activity.provider;
 }
 
-/**
- * Where an event type's confidence bar starts, before this workspace has said
- * anything about it.
- *
- * The manifest's digestibility partition is the only standing judgement about
- * an event type that exists, so it is worth reading — but it answers a
- * different question ("should somebody be told this on a schedule"), and it is
- * read here as a prior rather than a veto. An empty `digestible` list is the
- * absence of a judgement rather than a negative one: the generic webhook
- * classifies nothing as news because Avalon cannot parse what a caller posts,
- * which says nothing at all about whether that payload belongs in a work
- * stream. A connector that drew no line gets no prior.
- *
- * A registry that cannot answer leaves the bar at the base. Withholding is
- * right when the question is "may this reach somebody's inbox" and wrong here,
- * where the cost of a missing answer would be one misconfigured credential
- * silently disabling contextual routing for a whole region.
- */
-function declaredConfidenceFloor(env: Env, activity: ActivityRow): number {
-  try {
-    const digestible = connectorRegistryForEnv(env)
-      .get(activity.connector_type)
-      .manifest
-      .digestibleActivityTypes;
-    if (digestible.length === 0) return BASE_CONFIDENCE_FLOOR;
-    return digestible.includes(activity.event_type)
-      ? BASE_CONFIDENCE_FLOOR
-      : OPERATIONAL_CONFIDENCE_FLOOR;
-  } catch {
-    // `activityIsDigestible` logs the same failure for the same activity a few
-    // steps later, on the projection path; a second line would only double it.
-    return BASE_CONFIDENCE_FLOOR;
-  }
-}
-
-/**
- * The speculative half of routing: no watch and no automation asked for this
- * activity, so a model is asked whether one of the work streams a person is
- * already using is about it, and a card offering the attachment is written if
- * it says yes.
- *
- * Nothing here is asked for, which is why every gate below withholds rather
- * than admits. `docs/contextual-routing.md` owns the whole of it.
- */
-async function routeContextually(
-  env: Env,
-  activity: ActivityRow,
-): Promise<boolean> {
-  if (!env.OPENROUTER_API_KEY) return false;
-
-  const admission = await suggestionAdmission(env, {
-    workspaceId: asWorkspaceId(activity.workspace_id),
-    provider: activity.provider,
-    eventType: activity.event_type,
-    declaredFloor: declaredConfidenceFloor(env, activity),
-  });
-  // Asked before the candidates are selected and before the model is called: an
-  // event type this workspace has only ever dismissed cannot produce a card at
-  // any confidence, so buying an inference to discover that is pure waste.
-  if (admission.suppressed) {
-    // Suppression is invisible from the outside — the absence of a card looks
-    // exactly like a model that declined. Logged at debug rather than info
-    // because it fires once per ingested activity: a suppressed high-volume
-    // type would otherwise write thousands of identical lines a day at the
-    // production log level. `docs/contextual-routing.md` has the query that
-    // answers the same question from the rows.
-    logDebug(env, "contextual_routing_event_type_suppressed", {
-      workspace_id: activity.workspace_id,
-      provider: activity.provider,
-      event_type: activity.event_type,
-      dismissed: admission.dismissed,
-      dismissers: admission.dismissers,
-    });
-    return false;
-  }
-  const restrictedUserIds = restrictedActivityUserIds(activity);
-  if (restrictedUserIds?.length === 0) return false;
-  const sourceAudience = restrictedUserIds === null
-    ? { scope: "workspace" as const }
-    : { scope: "users" as const, userIds: restrictedUserIds };
-  // The dismissal run and the already-routed exclusion the D1 arm expressed as
-  // subqueries are the object's now; the shape it returns is mapped to the
-  // candidate rows the prompt renderer takes.
-  //
-  // Nothing to exclude from here any more. The exclusion used to be the
-  // work streams this same invocation had just routed the activity into
-  // directly, from the consumer's own D1 watch scan — and that fan-out is
-  // WorkspaceDO's typed registration index now, so the object is the only
-  // side that knows what it already routed. An empty list is stated rather
-  // than dropped so the call still says which side owns the question.
-  const candidates = await (await workspaceDirectory(env, asWorkspaceId(activity.workspace_id)))
-    .routingCandidates({
-      workspaceId: activity.workspace_id,
-      audience: sourceAudience,
-      excludedWorkstreamIds: [],
-      feedbackSince: dismissalRunCutoff(),
-      dismissalLimit: DISMISSAL_RUN_LIMIT,
-      limit: 12,
-    }).then((result) => ({ results: result.items.map((item) => ({
-      id: item.workstreamId,
-      title: item.title,
-      objective: item.description,
-      last_activity_at: item.lastActivityAt,
-    })) }));
-  const eligible = candidates.results;
-  if (eligible.length === 0) return false;
-
-  const { result } = await runStructuredInference(env, {
-    role: "activity_structured",
-    context: { workspaceId: activity.workspace_id },
-    messages: renderActivityRoutingMessages({
-      activity: {
-        provider: activity.provider,
-        eventType: activity.event_type,
-        title: activity.title,
-        summary: activity.summary,
-        textSnippet: activity.text_snippet.slice(0, 2_000),
-        entityKeys: parseStrings(activity.entity_keys_json),
-      },
-      candidates: eligible.map((candidate) => ({
-        id: candidate.id,
-        title: candidate.title,
-        objective: candidate.objective.slice(0, 1_000),
-        lastActivityAt: candidate.last_activity_at,
-      })),
-    }),
-    schemaName: "activity_workstream_route",
-    jsonSchema: routingJsonSchema,
-    parse: (value) => ActivityRoutingResultSchema.parse(value)
-  });
-
-  // The floor is the event type's own record in this workspace rather than a
-  // constant. `confidence` is the model grading its own answer, so it is not
-  // evidence about a type whose past high-confidence matches were all dismissed
-  // — raising the bar under it is the only thing that reaches that case.
-  if (!result.suggest || result.confidence < admission.confidenceFloor || !result.candidateWorkstreamId) return false;
-  if (!eligible.some((candidate) => candidate.id === result.candidateWorkstreamId)) return false;
-  await createActivitySuggestion(env, {
-    region: activity.workspace_region,
-    workspaceId: asWorkspaceId(activity.workspace_id),
-    activityId: activity.id,
-    activityTitle: activity.title,
-    activitySummary: activity.summary,
-    workstreamId: asWorkstreamId(result.candidateWorkstreamId),
-    confidence: result.confidence,
-    reason: result.reason,
-    matchedEntities: result.matchedEntities,
-    source: "contextual_routing",
-    sourceAudience,
-  });
-  return true;
-}
-
 function workspaceDirectory(env: Env, workspaceId: WorkspaceId) {
   return durableObjectStubForWorkspace(
     env,
@@ -1109,6 +923,4 @@ export const __testing = {
   matchesFilters,
   projectActivityEvent,
   restrictedActivityUserIds,
-  routeContextually,
-  contentAudienceContainsWorkstream,
 };

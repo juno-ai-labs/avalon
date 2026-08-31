@@ -1,7 +1,6 @@
 import type { ElicitationData, Message, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
 import {
-  ActivitySuggestionSchema,
   ElicitationSchema,
   type TranscriptActivity,
   type PendingTranscriptInput,
@@ -19,8 +18,7 @@ export type TranscriptOverlayIdentity =
   | { type: 'loop_input'; inputId: string; futureTurnId: string }
   | { type: 'assistant_turn'; turnId: string }
   | { type: 'tool_call'; toolCallId: string }
-  | { type: 'elicitation'; elicitationId: string }
-  | { type: 'activity_suggestion'; suggestionId: string };
+  | { type: 'elicitation'; elicitationId: string };
 
 export type TranscriptOverlayProvenance =
   | { source: 'client_command'; phase: 'sending' | 'accepted' }
@@ -113,17 +111,6 @@ const activityReceiptMonotonic = new WeakMap<TranscriptActivity, {
   receivedAt: number;
 }>();
 
-export function dismissedSuggestionIdsQueryKey(workstreamId: string): readonly ['dismissed-suggestion-ids', string] {
-  return ['dismissed-suggestion-ids', workstreamId];
-}
-
-export function appendDismissedSuggestionId(
-  current: readonly string[] | undefined,
-  suggestionId: string,
-): readonly string[] {
-  return current?.includes(suggestionId) ? current : [...(current ?? []), suggestionId];
-}
-
 export function createTextMessage({ text, ...message }: TextMessageInput): Message {
   return { ...message, messageType: 'text', text };
 }
@@ -144,8 +131,6 @@ export function isSameLogicalMessage(left: Message, right: Message): boolean {
   )) return true;
   if (right.clientMessageId && right.clientMessageId === left.id) return true;
   if (left.elicitation && right.elicitation && left.elicitation.id === right.elicitation.id) return true;
-  if (left.activitySuggestion && right.activitySuggestion
-    && left.activitySuggestion.id === right.activitySuggestion.id) return true;
   return Boolean(left.toolEvent && right.toolEvent
     && (left.toolEvent.toolCallId ?? left.toolEvent.id) === (right.toolEvent.toolCallId ?? right.toolEvent.id));
 }
@@ -257,6 +242,9 @@ export function orderedTranscriptMessages(
     .flatMap((turn) => turn.blocks
       .slice()
       .sort((left, right) => left.blockIndex - right.blockIndex)
+      // Older Workers may have projected a Suggested context block before the
+      // feature was retired. It is no longer part of the feed.
+      .filter((block) => !(block.type === 'text' && block.messageType === 'suggestion'))
       .map((block): Message => {
         const rememberOrder = (messageId: string): void => {
           // An open elicitation and its durable answer deliberately share one
@@ -295,9 +283,6 @@ export function orderedTranscriptMessages(
           const elicitation = ElicitationSchema.safeParse(
             'elicitation' in structured ? structured['elicitation'] : structured,
           );
-          const suggestion = ActivitySuggestionSchema.safeParse(
-            'suggestion' in structured ? structured['suggestion'] : structured,
-          );
           const statusKind = structured['kind'] === 'assistant_turn_failed'
             || structured['kind'] === 'assistant_turn_stopped'
             ? structured['kind']
@@ -307,9 +292,9 @@ export function orderedTranscriptMessages(
             : 'assistant_turn_interrupted';
           const messageType: Message['messageType'] = statusKind
             ? 'system'
-            : block.messageType === 'suggestion'
-            ? 'activity_suggestion'
-            : block.messageType ?? 'text';
+            : block.messageType === 'elicitation' || block.messageType === 'system'
+              ? block.messageType
+              : 'text';
           const messageId = elicitation.success ? elicitationMessageId(elicitation.data.id) : block.blockId;
           rememberOrder(messageId);
           return {
@@ -336,16 +321,6 @@ export function orderedTranscriptMessages(
               ? { contextLabel: structured['label'] }
               : {}),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
-            ...(suggestion.success ? {
-              activitySuggestion: {
-                id: suggestion.data.id,
-                title: suggestion.data.title,
-                source: 'Activity',
-                occurredAt: suggestion.data.createdAt,
-                reason: suggestion.data.reason,
-                status: suggestion.data.status,
-              },
-            } : {}),
           };
         }
         if (block.type === 'thinking') {
@@ -565,7 +540,6 @@ export function orderedTranscriptMessages(
 
 function canonicalLogicalMessageKey(message: Message): string {
   if (message.elicitation) return `elicitation:${message.elicitation.id}`;
-  if (message.activitySuggestion) return `activity_suggestion:${message.activitySuggestion.id}`;
   if (message.toolEvent) {
     return `tool_call:${message.toolEvent.toolCallId ?? message.toolEvent.id}`;
   }
@@ -597,8 +571,6 @@ export function transcriptOverlaysWithoutCanonicalMatch(
   }));
   const elicitationIds = new Set(canonical.flatMap((message) =>
     message.elicitation ? [message.elicitation.id] : []));
-  const suggestionIds = new Set(canonical.flatMap((message) =>
-    message.activitySuggestion ? [message.activitySuggestion.id] : []));
   return overlays.filter((overlay) => {
     const identity = overlay.identity;
     if (identity.type === 'client_message') {
@@ -609,7 +581,7 @@ export function transcriptOverlaysWithoutCanonicalMatch(
     if (identity.type === 'assistant_turn') return !settledAssistantTurnIds.has(identity.turnId);
     if (identity.type === 'tool_call') return !toolCallIds.has(identity.toolCallId);
     if (identity.type === 'elicitation') return !elicitationIds.has(identity.elicitationId);
-    return !suggestionIds.has(identity.suggestionId);
+    return false;
   });
 }
 
@@ -673,7 +645,6 @@ export function transcriptOverlayIdentityKey(identity: TranscriptOverlayIdentity
     case 'assistant_turn': return `assistant_turn:${identity.turnId}`;
     case 'tool_call': return `tool_call:${identity.toolCallId}`;
     case 'elicitation': return `elicitation:${identity.elicitationId}`;
-    case 'activity_suggestion': return `activity_suggestion:${identity.suggestionId}`;
   }
 }
 
