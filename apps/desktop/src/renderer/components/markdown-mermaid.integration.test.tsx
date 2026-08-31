@@ -90,4 +90,17 @@ flowchart TD
         return href.startsWith('#');
       })).toBe(true);
   });
+
+  it('rejects external CSS resources emitted by real Mermaid styling syntax', async () => {
+    const source = `flowchart TD
+  A[Review] --> B[Done]
+  classDef remote fill:url(https://example.invalid/beacon)
+  class B remote`;
+
+    const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(container.querySelector('pre')?.textContent).toBe(source);
+    expect(screen.queryByRole('img')).toBeNull();
+  });
 });

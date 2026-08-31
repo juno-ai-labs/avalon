@@ -868,6 +868,17 @@ describe('MessageBlock markdown', () => {
     expect(screen.getByText('not a diagram')).toBeVisible();
   });
 
+  it('rejects external resources in Mermaid SVG style blocks', async () => {
+    mermaidRender.mockResolvedValueOnce({
+      svg: '<svg viewBox="0 0 40 20"><style>.node { fill: url(https://example.invalid/beacon); }</style><text>Unsafe graph</text></svg>',
+    });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(screen.queryByText('Unsafe graph')).toBeNull();
+  });
+
   it('keeps Mermaid source in stills, glances, and streams, then renders the settled turn', async () => {
     const renderCallBaseline = mermaidRender.mock.calls.length;
     mermaidRender.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Settled graph</text></svg>' });
