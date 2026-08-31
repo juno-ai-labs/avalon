@@ -474,14 +474,14 @@ describe('MessageBlock markdown', () => {
       id: 'message-person-mention',
       authorType: 'agent',
       author: undefined,
-      text: `Ask [@Spoofed label](person:${personId}) for a review.`,
+      text: `Ask [@Spoofed label](person://${personId}) for a review.`,
       mentions: [{
         type: 'person',
         personId,
         displayName: 'Ada Lovelace',
         avatarUrl: 'https://example.com/ada.png',
         startOffset: 4,
-        endOffset: 65,
+        endOffset: 67,
       }],
     };
 
@@ -493,6 +493,29 @@ describe('MessageBlock markdown', () => {
     expect(screen.queryByRole('link', { name: '@Ada Lovelace' })).not.toBeInTheDocument();
     expect(screen.queryByText('@Spoofed label')).not.toBeInTheDocument();
     expect(chip?.querySelector('img')).toHaveAttribute('src', 'https://example.com/ada.png');
+  });
+
+  it('still resolves a stored bare person: mention to a chip', () => {
+    const personId = '00000000-0000-7000-8000-000000000042';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-person-mention-legacy',
+      authorType: 'agent',
+      author: undefined,
+      text: `Ask [@Ada Lovelace](person:${personId}) for a review.`,
+      mentions: [{
+        type: 'person',
+        personId,
+        displayName: 'Ada Lovelace',
+        startOffset: 4,
+        endOffset: 65,
+      }],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(screen.getByText('@Ada Lovelace').closest('.mention-chip'))
+      .toHaveAttribute('data-person-id', personId);
   });
 
   it('keeps person Markdown inert when authoritative mention metadata is absent', () => {

@@ -134,14 +134,16 @@ definition.
 
 ### Mentions
 
-A person mention arrives as a link with a `person:<uuid>` href and a connector
-mention as `connector:<type>:<label>`. `urlTransform` lets exactly those two
-schemes through untouched — everything else goes through react-markdown's
-`defaultUrlTransform` — and the `a` override is where they are decided. A
-`person:` href resolves against the `mentions` prop and becomes a `MentionChip`;
-a `connector:` href minted by this render's own token becomes a connector chip.
-Neither is ever emitted as a navigable link. Every other link renders as an
-external one, with `target="_blank"` and `rel="noopener noreferrer"`.
+A person mention arrives as a link with a `person://<uuid>` href — bare
+`person:<uuid>` is still accepted so stored transcript text keeps resolving —
+and a connector mention as `connector:<type>:<label>`. `urlTransform` lets
+exactly those two schemes through untouched — everything else goes through
+react-markdown's `defaultUrlTransform` — and the `a` override is where they are
+decided. A `person:` / `person://` href resolves against the `mentions` prop and
+becomes a `MentionChip`; a `connector:` href minted by this render's own token
+becomes a connector chip. Neither is ever emitted as a navigable link. Every
+other link renders as an external one, with `target="_blank"` and
+`rel="noopener noreferrer"`.
 
 The connector token is created once per mounted body, so a link keeps its
 identity across re-renders and a `connector:` string that merely appears in the
@@ -577,6 +579,27 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — Person mentions use the URL-style `person://` house form
+
+**What changed:** New person mentions are authored as
+`[@Name](person://<uuid>)`. The desktop chip matcher, email/Slack mention
+reducers, and `isCanonicalPersonMention` accept both that spelling and the
+legacy bare `person:<uuid>` so stored transcript text keeps resolving. Shared
+helpers live beside the citation scheme allowlist in
+`packages/contracts/src/citations.ts`.
+
+**Why:** Guidance and `resource://` citations already teach URL-style schemes.
+Keeping person mentions on the bare form meant every prompt that mentioned both
+had to teach two styles, and models that generalized to `person://` produced
+links the chip matcher and notification reducers silently failed to recognize.
+One house form with dual accept is the same pattern `resource:` / `resource://`
+already uses.
+
+**What a future change has to respect:** Emit through `personMentionHref`; read
+through `personIdFromMentionHref` / `personMentionMarkdownPattern`. A surface
+that matches only one spelling reintroduces the chip/reduction miss for the
+other.
 
 ### 2026-08-30 — Collapsed heading preview fades from 60% to transparent
 

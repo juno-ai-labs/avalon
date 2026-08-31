@@ -54,8 +54,8 @@ function envFor(database: DatabaseSync, appEnv: "production" | "test" = "product
     AVALON_REGION: "global",
     APP_ENV: appEnv,
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
-    // Terminal configured supported, so the document section's absence below
-    // is the automation origin's doing and not a region that has no workspace.
+    // Keep Terminal configured so this fixture exercises the external-delivery
+    // tie-breaker against the standing document policy.
     TERMINAL_REGION_CAPABILITY: "supported",
     DAYTONA_API_KEY: "daytona-key",
     DAYTONA_API_URL: "https://app.daytona.io/api",
@@ -233,20 +233,11 @@ describe("what an automation run is told about its own delivery", () => {
     expect(context.systemPrompt).toContain('"channel": "email"');
     expect(context.systemPrompt).toContain('"destination": "alex@example.com"');
     expect(context.systemPrompt).toContain("# Result delivery");
+    expect(context.systemPrompt).toContain("# External delivery output");
+    expect(context.systemPrompt).toContain("put the complete usable result in the final message");
     expect(context.systemPrompt).toContain(
       "drop every recipient — to, cc, channel, or DM target — that matches one of those destinations",
     );
-  });
-
-  it("is not told to write its result as a document", async () => {
-    const env = envFor(seededDatabase());
-
-    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
-
-    // Rally delivers this run's final message to the frozen destinations; a
-    // document published to the rail is not in that message, so the owner
-    // would receive a briefing that describes a document they cannot see.
-    expect(context.systemPrompt).not.toContain("# Documents");
   });
 
   it("lists nothing when the automation has no destination beyond Avalon", async () => {
