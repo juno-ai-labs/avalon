@@ -53,6 +53,10 @@ export interface CitationResource {
   readonly mimeType?: string;
 }
 
+export type CitationPreview =
+  | { readonly kind: 'image'; readonly blob: Blob }
+  | { readonly kind: 'text'; readonly text: string };
+
 export interface CitationContext {
   /**
    * The cited resource under the viewer's own authorization, or `undefined`
@@ -64,15 +68,16 @@ export interface CitationContext {
   /** Where an opened citation goes. The host owns the route; this owns the click. */
   open: (target: CitationTarget) => void;
   /**
-   * The resource's markdown-converted text for the embed card's preview, or
-   * `undefined` for a resource this context cannot resolve. The text is the
-   * preview route's derivative — a Word file's markdown, a PDF's OCR — not the
-   * source bytes, and the promise settles only once the route has stopped
-   * answering "still preparing"; the card shows its skeleton exactly as long
-   * as the promise is open. Optional because a surface with no work stream
-   * behind it has no route to read, and the card then simply keeps its room.
+   * The resource content for the embed card's preview, or `undefined` for a
+   * resource this context cannot resolve. Images keep their bytes so the card
+   * can draw a thumbnail; everything else is the preview route's readable
+   * derivative — a Word file's markdown, a PDF's OCR. The promise settles only
+   * once the route has stopped answering "still preparing"; the card shows its
+   * skeleton exactly as long as the promise is open. Optional because a surface
+   * with no work stream behind it has no route to read, and the card then simply
+   * keeps its room.
    */
-  preview?: (resourceId: string) => Promise<string> | undefined;
+  preview?: (resourceId: string) => Promise<CitationPreview> | undefined;
 }
 
 /**
@@ -221,22 +226,22 @@ function ResourceChip({ label, resource, onOpen }: {
  * the foot, room between — rather than as a list row, so an announced resource
  * reads as a thing that was produced, not as another line of the sentence.
  *
- * The room is not always empty: when the host can read the resource's
- * markdown-converted text, the card shows the opening lines of it between the
- * badge and the title, clipped by the stylesheet — never scrolled — and shows
- * a shimmering skeleton for exactly as long as the derivative is still being
- * prepared. The preview is presentation, so it is `aria-hidden` and `inert`,
- * and the button's label stays the title alone. A still render skips it
- * entirely: a picture serialized mid-skeleton would keep the skeleton forever.
+ * The room is not always empty: an image resource shows a cropped thumbnail,
+ * and a readable document shows the opening lines of its converted markdown,
+ * clipped by the stylesheet — never scrolled. Both show a shimmering skeleton
+ * while the read is open. The preview is presentation, so it is `aria-hidden`
+ * (and text is `inert`), while the button's label stays the title alone. A still
+ * render skips it entirely: a picture serialized mid-skeleton would keep the
+ * skeleton forever.
  */
 function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   label: React.ReactNode;
   resource: CitationResource;
   onOpen: () => void;
-  preview?: ((resourceId: string) => Promise<string> | undefined) | undefined;
+  preview?: ((resourceId: string) => Promise<CitationPreview> | undefined) | undefined;
 }): React.JSX.Element {
   const { PreviewBody } = useCitationRender();
-  const [excerpt, setExcerpt] = useState<{ for: string; text?: string; open?: boolean }>({ for: '' });
+  const [excerpt, setExcerpt] = useState<{ for: string; src?: string; text?: string; open?: boolean }>({ for: '' });
   useEffect(() => {
     const request = preview?.(resource.id);
     if (!request) {
@@ -244,6 +249,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
       return;
     }
     let cancelled = false;
+    let objectUrl: string | undefined;
     // Announced unconditionally, including for a read the host has already
     // cached. React processes this update and the settled promise's own in one
     // commit, so a warm card re-running this effect — a refetch of the resource
@@ -253,8 +259,14 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
     // is created at all, so guarding it here would be a fix for nothing.
     setExcerpt({ for: resource.id, open: true });
     request
-      .then((text) => {
-        if (!cancelled) setExcerpt({ for: resource.id, text: previewExcerpt(text) });
+      .then((result) => {
+        if (cancelled) return;
+        if (result.kind === 'image') {
+          objectUrl = URL.createObjectURL(result.blob);
+          setExcerpt({ for: resource.id, src: objectUrl });
+          return;
+        }
+        setExcerpt({ for: resource.id, text: previewExcerpt(result.text) });
       })
       .catch(() => {
         // Every rejection — unavailable, unconvertible, retries spent — means
@@ -262,7 +274,10 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
         // stands on a surface that offers no preview at all.
         if (!cancelled) setExcerpt({ for: resource.id });
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
   }, [preview, resource.id]);
   // A commit can hand this mounted card a different resource before the effect
   // re-runs; matching on the id keeps the old resource's text off the new one.
@@ -280,6 +295,9 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
         <span aria-hidden="true" className="citation-card-preview-skeleton">
           <span /><span /><span />
         </span>
+      )}
+      {settled.src && (
+        <img alt="" aria-hidden="true" className="citation-card-image-preview" src={settled.src} />
       )}
       {settled.text !== undefined && settled.text !== '' && (
         <span aria-hidden="true" className="citation-card-preview" inert>
