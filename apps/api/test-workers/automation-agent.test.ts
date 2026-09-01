@@ -1231,3 +1231,103 @@ describe("AutomationAgent", () => {
     });
   });
 });
+
+describe("an automation the work stream owns", () => {
+  const OWNING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000c1";
+  const OTHER_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000c2";
+
+  /** Accepted, active, and owned by a room — the state an archive acts on. */
+  async function seedActiveOwnedAutomation(): Promise<void> {
+    await seedReadyDraft(readyDefinition("Weekly changelog"));
+    await pinWorkspaceIdentity();
+    await runInDurableObject(automationStub(), (_instance: AutomationAgent, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_acceptance
+           (id, definition_revision, request_hash, scope, owning_workstream_id,
+            default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+            delivery_targets_json, model_override, evaluator_projection_json,
+            evaluator_source_hash, accepted_at, activated_at)
+         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', '{}', '[]', NULL, '[]',
+                 'sha256:evaluators', 100, 101)`,
+        OWNING_WORKSTREAM_ID,
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_state
+            SET lifecycle = 'active', accepted_definition_revision = 1 WHERE id = 1`,
+      );
+    });
+  }
+
+  function lifecycleAndReason(): Promise<{ lifecycle: string; paused_reason: string | null }> {
+    return runInDurableObject(automationStub(), (_instance: AutomationAgent, state) =>
+      state.storage.sql.exec<{ lifecycle: string; paused_reason: string | null }>(
+        `SELECT lifecycle, paused_reason FROM automation_state WHERE id = 1`,
+      ).one());
+  }
+
+  it("follows its room into the archive and back out again", async () => {
+    await seedActiveOwnedAutomation();
+    const stub = automationStub();
+
+    expect(await stub.pauseForArchivedWorkstream({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: OWNING_WORKSTREAM_ID,
+    })).toEqual({ paused: true, outcomeCode: "automation_paused" });
+    // The reason is recorded, not just the lifecycle: unarchiving has to be
+    // able to tell what the archive paused from what a person paused.
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "paused", paused_reason: "workstream_archived" });
+
+    expect(await stub.resumeForUnarchivedWorkstream({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: OWNING_WORKSTREAM_ID,
+    })).toEqual({ resumed: true, outcomeCode: "automation_resumed" });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "active", paused_reason: null });
+  });
+
+  it("does not start an automation a person paused before the archive", async () => {
+    await seedActiveOwnedAutomation();
+    const stub = automationStub();
+
+    await stub.pause({
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID,
+      actorRole: "member",
+    });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "paused", paused_reason: "person" });
+
+    // Unarchiving resumes exactly what the archive paused. Without the reason
+    // these two rows are identical, and a room coming back would restart an
+    // automation somebody deliberately stopped.
+    expect(await stub.resumeForUnarchivedWorkstream({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: OWNING_WORKSTREAM_ID,
+    })).toEqual({ resumed: false, outcomeCode: "automation_not_paused_by_archive" });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "paused", paused_reason: "person" });
+  });
+
+  it("is not pausable by a work stream that merely receives from it", async () => {
+    await seedActiveOwnedAutomation();
+
+    // Ownership, not destination: a room an automation delivers into has no say
+    // over whether it runs.
+    expect(await automationStub().pauseForArchivedWorkstream({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: OTHER_WORKSTREAM_ID,
+    })).toEqual({ paused: false, outcomeCode: "automation_not_owned_by_workstream" });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "active", paused_reason: null });
+  });
+});
