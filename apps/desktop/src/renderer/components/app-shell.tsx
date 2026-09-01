@@ -141,6 +141,10 @@ export function workstreamMatchesBatchFilter(
   workstream: WorkstreamSummary,
   filter: WorkstreamBatchFilter,
 ): boolean {
+  // An automation's run work stream is kept out of the sidebar, so a grouping
+  // action never selects one — and this route, reached from the automation's
+  // own screen rather than from a heading, must not leave as though it had.
+  if (workstream.origin === 'automation') return false;
   if (!filter.includeSystem && workstream.systemKind != null) return false;
   if (filter.pinned !== undefined && (workstream.pinPosition !== null) !== filter.pinned) return false;
   const activityAt = Date.parse(workstream.lastActivityAt);
