@@ -840,7 +840,9 @@ describe('single-platform desktop identity routing', () => {
   it('does not navigate when a workspace-addressed work-stream link cannot be activated', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000020';
     bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
-    bridge.activateWorkspace.mockRejectedValueOnce(new Error('workspace_access_denied'));
+    bridge.activateWorkspace.mockRejectedValueOnce(new Error(
+      "Error invoking remote method 'onboarding:activate-workspace': Error: Workspace access is unavailable",
+    ));
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
     const before = window.location.hash;
