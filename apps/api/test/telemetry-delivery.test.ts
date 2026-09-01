@@ -55,6 +55,27 @@ function exceptionEnvelope(eventId: string) {
   };
 }
 
+function insertAcceptedException(
+  database: ReturnType<typeof migratedSqliteDatabase>,
+  delivery: ReturnType<typeof exceptionEnvelope>,
+): void {
+  database.prepare(`
+    INSERT INTO telemetry_accepted_events (
+      event_id, payload_hash, envelope_json, route, routing_basis,
+      analytics_subject_id, workspace_analytics_id, subject_user_id,
+      accepted_at, normalized_timestamp, delete_at, delivery_state
+    ) VALUES (?, ?, ?, 'global', 'explicit_binding', ?, NULL, NULL, ?, ?, ?, 'pending')
+  `).run(
+    delivery.eventId,
+    "payload-hash",
+    JSON.stringify(delivery),
+    "subject-1",
+    now,
+    now,
+    "2026-11-10T20:00:00.000Z",
+  );
+}
+
 describe("Global telemetry delivery", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -120,21 +141,7 @@ describe("Global telemetry delivery", () => {
   it("delegates JavaScript exceptions to the exception RPC method", async () => {
     const database = migratedSqliteDatabase();
     const delivery = exceptionEnvelope("018f22f2-4c22-7abc-8def-0123456789af");
-    database.prepare(`
-      INSERT INTO telemetry_accepted_events (
-        event_id, payload_hash, envelope_json, route, routing_basis,
-        analytics_subject_id, workspace_analytics_id, subject_user_id,
-        accepted_at, normalized_timestamp, delete_at, delivery_state
-      ) VALUES (?, ?, ?, 'global', 'explicit_binding', ?, NULL, NULL, ?, ?, ?, 'pending')
-    `).run(
-      delivery.eventId,
-      "payload-hash",
-      JSON.stringify(delivery),
-      "subject-1",
-      now,
-      now,
-      "2026-11-10T20:00:00.000Z",
-    );
+    insertAcceptedException(database, delivery);
     const sendTelemetryBatch = vi.fn();
     const sendJavascriptExceptionBatch = vi.fn(async () => ({
       result: "delivered" as const,
@@ -164,6 +171,97 @@ describe("Global telemetry delivery", () => {
         symbolicatedFrames: ["main.js:1:2"],
       })],
     }));
+    database.close();
+  });
+
+  it("commits a successful sibling when exception RPC transport rejects", async () => {
+    const database = migratedSqliteDatabase();
+    const ordinaryId = "018f22f2-4c22-7abc-8def-0123456789ab";
+    const exception = exceptionEnvelope("018f22f2-4c22-7abc-8def-0123456789af");
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      TELEMETRY_PAYLOADS: { get: vi.fn(async () => null) },
+      AVALON_REGION: "global",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      POSTHOG_DELIVERY: {
+        sendTelemetryBatch: vi.fn(async () => ({
+          result: "delivered" as const,
+          requestId: "posthog-request-mixed",
+          retryAfterMs: null,
+        })),
+        sendJavascriptExceptionBatch: vi.fn(async () => {
+          throw new Error("posthog_rpc_unavailable");
+        }),
+      },
+    });
+    await new TelemetryCollector(env).accept(envelope(ordinaryId), {
+      route: "global",
+      routingBasis: "geolocation_fallback",
+      analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
+      subjectUserId: null,
+      workspaceAnalyticsId: null,
+    });
+    insertAcceptedException(database, exception);
+
+    await expect(processTelemetryOutbox(env)).resolves.toMatchObject({
+      selected: 2,
+      delivered: 1,
+      retried: 1,
+    });
+    expect(database.prepare(`
+      SELECT event_id, delivery_state, attempt_count, next_attempt_at
+      FROM telemetry_accepted_events ORDER BY event_id
+    `).all()).toEqual([
+      {
+        event_id: ordinaryId,
+        delivery_state: "delivered",
+        attempt_count: 1,
+        next_attempt_at: null,
+      },
+      {
+        event_id: exception.eventId,
+        delivery_state: "retrying",
+        attempt_count: 1,
+        next_attempt_at: "2026-08-12T20:01:00.000Z",
+      },
+    ]);
+    database.close();
+  });
+
+  it("translates telemetry RPC transport rejection into durable retry", async () => {
+    const database = migratedSqliteDatabase();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      POSTHOG_DELIVERY: {
+        sendTelemetryBatch: vi.fn(async () => {
+          throw new Error("posthog_rpc_unavailable");
+        }),
+      },
+    });
+    await new TelemetryCollector(env).accept(
+      envelope("018f22f2-4c22-7abc-8def-0123456789ab"),
+      {
+        route: "global",
+        routingBasis: "geolocation_fallback",
+        analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
+        subjectUserId: null,
+        workspaceAnalyticsId: null,
+      },
+    );
+
+    await expect(processTelemetryOutbox(env)).resolves.toMatchObject({ retried: 1 });
+    expect(database.prepare(`
+      SELECT delivery_state, attempt_count, next_attempt_at
+      FROM telemetry_accepted_events
+    `).get()).toEqual({
+      delivery_state: "retrying",
+      attempt_count: 1,
+      next_attempt_at: "2026-08-12T20:01:00.000Z",
+    });
     database.close();
   });
 
@@ -246,19 +344,38 @@ describe("Global telemetry delivery", () => {
 
   it("never calls PostHog from EU and physically reaps expired internal rows", async () => {
     const database = migratedSqliteDatabase();
+    const misrouted = envelope("018f22f2-4c22-7abc-8def-0123456789ee");
     database.exec(`
       INSERT INTO telemetry_delivery_receipts
         (event_id, payload_hash, route, result_code, created_at, delete_at)
       VALUES ('expired', 'hash', 'eu', 'accepted', '2026-01-01', '2026-08-12T19:59:59.000Z');
     `);
+    database.prepare(`
+      INSERT INTO telemetry_accepted_events (
+        event_id, payload_hash, envelope_json, route, routing_basis,
+        analytics_subject_id, workspace_analytics_id, subject_user_id,
+        accepted_at, normalized_timestamp, delete_at, delivery_state
+      ) VALUES (?, 'hash', ?, 'global', 'explicit_binding', 'subject-eu-guard',
+                NULL, NULL, ?, ?, '2026-11-10T20:00:00.000Z', 'pending')
+    `).run(misrouted.eventId, JSON.stringify(misrouted), now, now);
     const fetchMock = vi.fn();
+    const sendTelemetryBatch = vi.fn();
+    const sendJavascriptExceptionBatch = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const result = await processTelemetryOutbox(createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "eu",
+      POSTHOG_HOST: "https://eu.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      POSTHOG_DELIVERY: { sendTelemetryBatch, sendJavascriptExceptionBatch },
     }));
     expect(result).toMatchObject({ selected: 0, expired: 1 });
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(sendTelemetryBatch).not.toHaveBeenCalled();
+    expect(sendJavascriptExceptionBatch).not.toHaveBeenCalled();
+    expect(database.prepare(
+      "SELECT delivery_state FROM telemetry_accepted_events WHERE event_id = ?",
+    ).get(misrouted.eventId)).toEqual({ delivery_state: "pending" });
     expect(database.prepare("SELECT COUNT(*) AS count FROM telemetry_delivery_receipts").get())
       .toEqual({ count: 0 });
     database.close();

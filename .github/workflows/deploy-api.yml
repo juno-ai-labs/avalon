@@ -121,6 +121,7 @@ jobs:
               pnpm --filter @rally/api build:terminal &&
               pnpm --filter @rally/api build:terminal:eu &&
               pnpm --filter @rally/api build:posthog &&
+              pnpm --filter @rally/api check:posthog-startup-boundary &&
               pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/engineering-mcp build &&
               pnpm --filter @rally/desktop test:release

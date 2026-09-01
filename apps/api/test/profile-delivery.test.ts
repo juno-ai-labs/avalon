@@ -16,6 +16,30 @@ describe('PostHog profile job delivery', () => {
     vi.unstubAllGlobals();
   });
 
+  it('has no destination path in EU', async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO telemetry_profile_jobs
+      (id, subject_user_id, job_kind, destination_analytics_id, anonymous_epoch_id,
+       properties_json, version, state, created_at, delete_at)
+      VALUES ('job-eu-guard', NULL, 'person_profile', 'person-1', NULL,
+              '{"name":"Ada"}', 1, 'pending', ?, ?)`)
+      .run('2026-08-12T19:00:00.000Z', '2026-11-10T20:00:00.000Z');
+    const sendProfileBatch = vi.fn();
+    const env = createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: 'eu',
+      POSTHOG_HOST: 'https://eu.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      POSTHOG_DELIVERY: { sendProfileBatch },
+    });
+
+    await expect(processProfileOutbox(env)).resolves.toEqual({
+      selected: 0, delivered: 0, retried: 0, terminal: 0, suppressed: 0,
+    });
+    expect(sendProfileBatch).not.toHaveBeenCalled();
+    expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get())
+      .toEqual({ state: 'pending' });
+    database.close();
+  });
+
   it('delivers the non-supersedable epoch transition exactly once before later person work', async () => {
     const database = migratedSqliteDatabase();
     database.prepare(`INSERT INTO users
@@ -68,6 +92,33 @@ describe('PostHog profile job delivery', () => {
     });
     await expect(processProfileOutbox(env)).resolves.toMatchObject({ suppressed: 1 });
     expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get()).toEqual({ state: 'suppressed' });
+    database.close();
+  });
+
+  it('translates profile RPC transport rejection into durable retry', async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO telemetry_profile_jobs
+      (id, subject_user_id, job_kind, destination_analytics_id, anonymous_epoch_id,
+       properties_json, version, state, created_at, delete_at)
+      VALUES ('job-rpc-retry', NULL, 'person_profile', 'person-1', NULL,
+              '{"name":"Ada"}', 1, 'pending', ?, ?)`)
+      .run('2026-08-12T19:00:00.000Z', '2026-11-10T20:00:00.000Z');
+    const env = createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: 'global',
+      POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      POSTHOG_DELIVERY: {
+        sendProfileBatch: vi.fn(async () => { throw new Error('posthog_rpc_unavailable'); }),
+      },
+    });
+
+    await expect(processProfileOutbox(env)).resolves.toMatchObject({ retried: 1 });
+    expect(database.prepare(`
+      SELECT state, attempt_count, next_attempt_at FROM telemetry_profile_jobs
+    `).get()).toEqual({
+      state: 'pending',
+      attempt_count: 1,
+      next_attempt_at: '2026-08-12T20:01:00.000Z',
+    });
     database.close();
   });
 

@@ -173,6 +173,7 @@ test('profiles all static service artifacts and uploads both regional sets befor
   assert.match(workflow, /steps\.upload_global\.outputs\.global_pricing/u);
   assert.match(workflow, /steps\.upload_global\.outputs\.global_posthog/u);
   assert.match(workflow, /pnpm --filter @rally\/api build:posthog/u);
+  assert.match(workflow, /pnpm --filter @rally\/api check:posthog-startup-boundary/u);
   assert.match(workflow, /apps\/api\/dist-posthog\/startup\.cpuprofile/u);
   assert.match(workflow, /pnpm --filter @rally\/api build:pricing/u);
   assert.match(workflow, /apps\/api\/dist-pricing\/startup\.cpuprofile/u);
