@@ -1132,15 +1132,12 @@ export function Sidebar({
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  // Drafts are unfinished automations, so they sit under the ones that run
-  // rather than interleaving with them by name. Among themselves they lead with
-  // the one touched most recently, which is the draft still being worked on.
-  const orderedAutomations = [
-    ...automations.filter((automation) => automation.status !== 'draft'),
-    ...automations
-      .filter((automation) => automation.status === 'draft')
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-  ];
+  // The server stopped listing drafts when the builder was retired — a draft is
+  // a conversation in progress and lives where that conversation is — but a
+  // client holding a socket-pushed list from before that change would still
+  // have one, and clicking it lands on "this automation has not been created
+  // yet". Filtered here as well, so an old row cannot outlive its screen.
+  const orderedAutomations = automations.filter((automation) => automation.status !== 'draft');
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
