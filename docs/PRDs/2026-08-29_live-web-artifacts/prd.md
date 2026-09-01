@@ -29,7 +29,19 @@
 > [architecture](../../architecture.md), [security](../../security.md),
 > [access revocation](../../access-revocation.md),
 > [regionalization](../../regionalization.md),
-> [domain migration](../../domain-migration.md). Standing contract:
+> [domain migration](../../domain-migration.md),
+> [Durable Object SQLite](../../durable-object-sqlite.md) (required
+> reading for the facet data plane, implementers and reviewers alike),
+> [Durable Object migration tracking](../../durable-object-migration-tracking.md),
+> [branded identifiers](../../branded-ids.md),
+> [choosing queues or RPC](../../choosing-queues-or-rpc.md),
+> [agent tools](../../agent-tools.md),
+> [writing skills](../../writing-skills.md),
+> [feature flags](../../feature-flags.md). This PRD creates a subsystem
+> no existing document owns; the implementing change adds
+> `docs/live-web-artifacts.md` to the shape in
+> [module documents](../../module-documents.md) and registers it in
+> [the documentation index](../../README.md). Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
 ## Summary
@@ -166,7 +178,7 @@ motivation is structural, and stated as such.
    The capability-binding pattern (a fenced gateway binding Rally injects)
    is the only future path, and it is its own PRD when something needs it.
 4. **Custom domains, custom subdomain names, or vanity URLs.** Rejected.
-   Artifact hostnames are Rally-allocated labels on the artifact serving
+   An artifact's hostname label is its own id on the artifact serving
    domain; naming is a product surface this change does not open.
 5. **A general application platform.** Rejected. No build pipelines, no
    npm installs at serve time, no frameworks resolved server-side, no
@@ -197,20 +209,27 @@ motivation is structural, and stated as such.
    workstream now** rather than left indefinite — so this deferral is
    expected to be short-lived, and nothing in this PRD needs to change
    when it lands: EU artifacts follow automatically.
-10. **Defensive numbers are the team's, and two are already set.** Per
-    the open-limit rule, the guards this design names ship open with
-    the handover arithmetic — bundle size, file count, per-request body
-    size, the per-session request-rate ceiling (the guard that bounds a
-    buggy or hostile poll loop — key design decision 6, with rate
-    ceiling × session lifetime × concurrent viewers as the worst-case
-    burn per artifact), the visibility-cache interval (key design
+10. **Defensive numbers are the team's, and three are already set.**
+    Per the open-limit rule, the guards this design names ship open
+    with the handover arithmetic — bundle size, file count,
+    per-request body size, the visibility-cache interval (key design
     decision 6 — how stale a work-stream visibility answer may be, and
     so how long a viewer keeps artifact access after losing it),
-    query-tool row and time bounds, and error-log
-    retention. Two were handed over and answered during this PRD's
-    review, so they ship as values rather than open: the viewer-session
-    lifetime is 24 hours (decision 6) and the per-artifact storage
-    quota is 100 MB (decision 12).
+    query-tool row and time bounds, and error-log retention. Three
+    were handed over and answered during this PRD's review, so they
+    ship as values rather than open: the viewer-session lifetime is
+    24 hours and the per-session request-rate ceiling is 300 requests
+    per minute (both decision 6), and the per-artifact storage quota
+    is 100 MB (decision 12).
+
+    **The rate ceiling was answered rather than opened, deliberately,
+    because the sleep guarantee depends on it.** Decision 6 bounds
+    compute per open at rate ceiling × session lifetime × concurrent
+    viewers; left open, that product is unbounded and the guarantee
+    the design leans on does not hold at launch. The limit rule admits
+    exactly this route — a number the team was asked for and
+    answered — so it is a value here rather than a placeholder to be
+    discovered by a bill.
 11. **Any artifact storage mechanism other than the facet.** Rejected for
     V1: no Rally-mediated key-value binding (a curated `STORAGE` API was
     designed and dropped — with a real database available, a KV facade in
@@ -447,11 +466,34 @@ None yet.
    domain.** Serving is a new Worker (`avalon-artifacts-global` /
    `avalon-artifacts-eu`) — not routes on `avalon-api-*` — so untrusted
    execution shares nothing with the API origin, its secrets, or its blast
-   radius. Artifacts are served from per-artifact subdomains of
+   radius.
+
+   **What "dedicated" means here is the deployed unit, not the source
+   tree.** The serving Worker is a second entrypoint inside `apps/api`
+   with its own Wrangler configuration, its own routes, and its own
+   binding set — a separate Worker, separately deployed, on a separate
+   origin. It is not a second app, because the thing it most needs is
+   `durableObjectStubForRegion`: the one supported resolver for product
+   Durable Objects, which lives in `apps/api/src/lib/` and encodes the
+   jurisdiction-before-`idFromName` rule that decision 4 depends on. A
+   second app would mean either moving that resolver into a shared
+   package — a rename across every call site in `apps/api`, plus the
+   two ESLint rules that name paths and bindings — or reimplementing it,
+   which would put a second authority on jurisdiction routing in the
+   tree and make a wrong-jurisdiction artifact object a live
+   possibility. Sharing a source tree costs the isolation argument
+   nothing: it is about which bindings the deployed Worker holds and
+   what a compromise of it reaches, and the waistline below is
+   unchanged. What the implementing change owes is the check that keeps
+   it honest — the artifact Worker's build must not pull API bindings,
+   secrets, or D1 in through a shared import, and that is asserted, not
+   assumed.
+
+   Artifacts are served from per-artifact subdomains of
    **`rallyusercontent.com`** — a domain the team already owns, in the
    `*usercontent.com` idiom the industry uses for exactly this
-   isolation — as `<label>-g.rallyusercontent.com` and
-   `<label>-eu.rallyusercontent.com`, wildcard-routed per region.
+   isolation — as `<artifact-id>-g.rallyusercontent.com` and
+   `<artifact-id>-eu.rallyusercontent.com`, wildcard-routed per region.
 
    **The region rides in the label, one level deep, deliberately.**
    Cloudflare's Universal SSL covers the apex and a *single* level of
@@ -461,7 +503,7 @@ None yet.
    Certificate Manager or Total TLS was bought and configured. Folding
    the region into the label keeps one wildcard, keeps the
    region-distinct routing decision 8 depends on, and costs nothing
-   recurring. The alternative — the dotted `<label>.g.…` form plus
+   recurring. The alternative — the dotted `<artifact-id>.g.…` form plus
    ACM — is a live option if the team would rather pay for the nicer
    shape, and it is named in Provider configuration so the cost is
    visible rather than discovered at first handshake. Rejected:
@@ -488,8 +530,9 @@ None yet.
    binding rather than serving the server module's source — no secret
    can be in it (the sandbox guarantees that), but serving it is
    surface nobody asked for.
-4. **One supervisor Durable Object per artifact, addressed by its
-   hostname label, hosting the model's storage class as a facet.** A new
+4. **One supervisor Durable Object per artifact, addressed by the
+   artifact id its hostname carries, hosting the model's storage class
+   as a facet.** A new
    jurisdiction-pinned `ArtifactHostDO` owns the artifact's
    serving-side truth: current version
    pointer, viewer-session issuance and checks, the bounded error log —
@@ -513,35 +556,74 @@ None yet.
    permanently removes the facet's database through the same lifecycle
    that deletes the resource.
 
-   **The hostname is the address, and that is what makes serving
-   possible at all.** The serving Worker holds no D1 (see Security and
-   trust model), so given nothing but `Host:
-   <label>-<region>.rallyusercontent.com` it must reach the right object
-   without a lookup: it takes the label straight from the host and calls
-   `idFromName(label)` on the regional `ArtifactHostDO` namespace. No
-   index, no directory hop, no per-request database read on the hot
-   path — and the DO itself holds the resource linkage, so everything
-   else (which work stream, which version, which bucket prefix) comes
-   from the object once it is addressed. Rejected: *addressing by
-   artifact id with a hostname→id index*, which is what "addressed
-   through the same stub helper every other DO uses" would have meant.
-   It needs a region-wide index the serving Worker cannot read, and
-   `artifact_registry` cannot be that index: it lives beside the
-   resource authority in WorkspaceDO, which is a **per-workspace**
-   database, so a `UNIQUE` constraint on `label` there is unique per
-   workspace and two workspaces could mint the same host.
+   **The hostname is the address, the label is the artifact's own UUID,
+   and that combination is what makes serving possible without a
+   lookup.** The serving Worker holds no D1 (see Security and trust
+   model), so given nothing but `Host:
+   <artifact-id>-<region>.rallyusercontent.com` it must reach the right
+   object with nothing else in hand. It takes the id straight from the
+   host, parses it as a UUID, and resolves the stub through
+   `durableObjectStubForRegion` — **the same resolver every other
+   Durable Object in this repository comes from** — under the name
+   `artifactHostDOName(region, artifactId)`, which is
+   `<region>:artifact:<artifact-id>`. No index, no directory hop, no
+   per-request database read on the hot path; the DO itself holds the
+   resource linkage, so everything else (which work stream, which
+   version, which bucket prefix) comes from the object once it is
+   addressed.
 
-   Uniqueness therefore belongs to the one thing that is already
-   region-wide: the namespace itself. A label is minted by a small
-   regional allocator — an `ArtifactLabelDO`, one per region, addressed
-   by a fixed name — which generates a random label, claims it in its
-   own SQL, and hands it back; a collision costs a regenerate, never
-   correctness, exactly as the resource slug allocator works today.
-   `artifact_registry`'s copy of the label is a per-workspace
-   convenience for listing and cleanup, not the uniqueness guarantee.
-   Rejected: *a Rally-mediated key-value binding backed by this DO*
-   (non-goal 11 — a KV facade over a real database is a second storage
-   contract for less power); *artifact state in workspace-owned resource
+   Three consequences of using the house resolver rather than a private
+   one, each of which an implementation would otherwise get wrong:
+   - *The name is opaque by construction, and the allowlist must say
+     so.* `isOpaqueDurableObjectName` admits region tokens, UUIDs, and
+     a closed set of fixed role words, so `artifact` joins
+     `block-dashboard` in `FIXED_SEGMENTS` — the one-line change that
+     file's own comment invites. Without it the object's migration
+     report silently degrades to `objectName: null`
+     (`migration-reporting.ts`), which is what happens to
+     `AutomationAgent` today: `automation` was never added, so every
+     one of its reports has been losing the operator-facing name. Fix
+     that in the same change; it is the same line.
+   - *The location hint comes from the publish, not from serving.*
+     `durableObjectStubForRegion` wants a hint, and the serving Worker
+     has no D1 to read the workspace's placement affinity from. It does
+     not need one: an artifact object's **first** `get()` happens at
+     publish, from the API Worker, which resolves it through
+     `durableObjectStubForWorkspace` with the workspace's own affinity.
+     Cloudflare honours a hint only on first lookup, so the serving
+     Worker passing the regional fallback afterwards is a no-op against
+     an object already placed. Get this wrong and artifact objects are
+     minted a continent away from the work streams they check
+     visibility against.
+   - *The lint rule has to learn the binding.*
+     `durable-object-region-routing` matches a hardcoded set of binding
+     names, so `ARTIFACT_HOSTS` is added to it or the new namespace is
+     simply not covered by the rule that forbids raw namespace access.
+
+   **Using the artifact's own id as the label deletes the allocator
+   this design first reached for.** An earlier draft minted a short
+   random label from a regional `ArtifactLabelDO` and rejected
+   "addressing by artifact id" along with it — but what that rejection
+   was actually about is a *hostname→id index*, not the id. There is no
+   index here: the host **is** the id. Region-wide uniqueness, the only
+   property the allocator existed to guarantee, is what a UUID already
+   is; `artifact_registry` in WorkspaceDO is a **per-workspace**
+   database and could never have provided it, which is the whole reason
+   an allocator was reached for. So the allocator goes, and with it a
+   region-wide singleton sitting in the write path of every publish,
+   its collision-regenerate loop, and a second DO class to migrate and
+   name. The `artifact_id` column carries an `ArtifactId` brand per
+   [`branded-ids.md`](../../branded-ids.md), because it is now used to
+   build a Durable Object name — the exact confusion that document
+   exists to prevent. The one thing paid for it is a 36-character
+   hostname label, which no participant types: the address people hold
+   is the canonical `rallywith.ai` link, and **Copy link** hands them
+   that, never the artifact origin. Rejected: *a short random label
+   plus the allocator* (machinery, a new DO class, and a widened name
+   allowlist, all bought with a prettier hostname nobody reads);
+   *a Rally-mediated key-value binding backed by this DO* (non-goal
+   11 — a KV facade over a real database is a second storage contract
+   for less power); *artifact state in workspace-owned resource
    storage* (the deeper platform tie, held in [research](research.md)).
 5. **Active artifacts are one module with at most two shapes, and one
    injected binding.** The server module is the directory's root
@@ -564,15 +646,30 @@ None yet.
    bindings: requests reach the module with Rally's viewer cookie
    stripped. What every request *does* carry is the viewer's workspace
    identity, as two trusted headers the serving side injects on every
-   request regardless of method — `Rally-Viewer-Id` (the stable member
-   id) and `Rally-Viewer-Name` (the display name, percent-encoded
+   request regardless of method — `x-rally-viewer-id` (the stable member
+   id) and `x-rally-viewer-name` (the display name, percent-encoded
    UTF-8; a header value is ASCII-only by RFC 7230, so a name needs
    *some* encoding, and this one is deliberately the `decodeURIComponent`
    idiom rather than RFC 8187's `UTF-8''…` form — chosen for how
    reliably a small model decodes it, and called out here and in the
    injection code so nobody mistakes a house convention for a standard
    header encoding) — after first stripping any inbound headers of those names,
-   so a page or proxy can never forge them (decision 13). The plugin
+   so a page or proxy can never forge them (decision 13).
+
+   **The names are the house ones, which is not cosmetic here.**
+   `packages/contracts/src/http-headers.ts` owns the product header
+   prefix — every product header is minted `x-rally-*` and listed in
+   `RALLY_HEADERS`, with `x-avalon-*` still honoured inbound under the
+   rename's *switch what is written, widen what is read* rule. These
+   two join that table rather than inventing a parallel `Rally-…`
+   spelling beside it. The consequence lands on the strip, which is the
+   anti-spoof mechanism: it must remove the **superseded aliases too**
+   (`x-avalon-viewer-id`, `x-avalon-viewer-name`, via
+   `rallyHeaderAliases`), because a header family whose readers widen
+   and whose stripper does not is a family with a forgeable back door.
+   Header names are case-insensitive, so the lowercase spelling here
+   and the `request.headers.get("x-rally-viewer-id")` the skill teaches
+   are the same header. The plugin
    prompt carries the TypeScript declarations, headers included, per
    Cloudflare's own advice that typed declarations are how an agent
    learns a binding. Rejected: *a Cap'n Web RPC contract between page and
@@ -587,7 +684,7 @@ None yet.
    visibility), which returns a single-use, purpose-scoped access
    **code**. The code never travels in a request URL: the desktop (or
    the browser hand-off) lands on
-   `https://<label>-<region>.rallyusercontent.com/__rally/open#<code>`,
+   `https://<artifact-id>-<region>.rallyusercontent.com/__rally/open#<code>`,
    where a tiny Rally-served bootstrap page — not artifact code — reads
    `location.hash`, `POST`s the code to `/__rally/redeem` in the request
    body. **That endpoint never serves artifact content**: it consumes
@@ -614,10 +711,35 @@ None yet.
    hold a removed viewer's access open for the session's whole life:
    - *Session and membership revocation is a D1 fact*, so it arrives the
      way every other one does: `ArtifactHostDO` joins the existing
-     access-revocation queue's fan-out as a child the artifact's work
-     stream names, and drops the named principal's sessions when the
-     message reaches it. No new mechanism, one new hop in a walk that
-     already exists.
+     access-revocation queue's fan-out and drops the named principal's
+     sessions when the message reaches it. No new mechanism, one new
+     hop in a walk that already exists.
+
+     **It hangs off the workspace hop, not the work-stream hop, and
+     that follows from where the registry lives.**
+     `access-revocation.md`'s rule is that only an object knows its own
+     children, from its own SQL — and `artifact_registry` sits beside
+     the resource authority in **WorkspaceDO**, so `WorkspaceDO` is the
+     object that can name artifacts and `WorkstreamDO` is not. This is
+     the `AutomationAgent` shape exactly: a sibling of the work streams
+     under a workspace, named from a workspace-owned directory table,
+     and a leaf of its own. The alternative — a second artifact list in
+     `WorkstreamDO`'s SQL, so the work stream could name its own
+     children — was rejected for being a duplicate of a fact
+     `WorkspaceDO` already owns, which is the divergence that rule
+     exists to prevent. The cost is a wider fan-out: a membership
+     change wakes every artifact object in the workspace rather than
+     one work stream's. That is the cost the walk already accepts and
+     names — "a hop that finds nothing to close costs one call" — and
+     the lists there are deliberately generous for the same reason.
+     One thing `ArtifactHostDO` does *not* inherit: the four existing
+     `revokeSocketAccess` implementations walk `state.getWebSockets()`,
+     and an artifact host holds no sockets. It drops rows from
+     `viewer_sessions` instead, under the same method name and the same
+     child-naming contract, and returns no children. Choosing the queue
+     for this hop rather than a direct RPC is recorded in
+     [`choosing-queues-or-rpc.md`](../../choosing-queues-or-rpc.md),
+     which owns that decision.
    - *Work-stream visibility is not a D1 fact* — it lives in the owning
      object's own SQL, and the same document rejects routing it through
      the queue. So the artifact host does not guess: it asks the
@@ -636,11 +758,16 @@ None yet.
    page's client code does. The lifetime is **24 hours** — a team-set
    value, not an author's guess: one re-open per day at most for a
    person actually working, and an abandoned-but-visible page burns at
-   most a day of modest polling. The rate ceiling ships open under the
-   limit rule. A well-behaved page goes
+   most a day of modest polling. The ceiling is **300 requests per
+   minute per session** — also team-set: a poll page refreshing its
+   tally every five seconds needs about twelve, so 300 leaves room for
+   a page firing several parallel fetches per interaction without
+   anyone meeting the guard by accident, and it caps a runaway loop at
+   432,000 requests per viewer-session per day rather than at whatever
+   a `setInterval` bug can emit. A well-behaved page goes
    quiet at expiry (the skill's polling rules stop on auth failure); a
-   buggy or hostile one is bounded by the per-session request-rate
-   ceiling answering 429 (non-goal 10). Re-minting is the desktop's
+   buggy or hostile one is bounded by that ceiling answering 429
+   (non-goal 10). Re-minting is the desktop's
    seamless open flow when a person is actually there; the accepted
    casualty is a wall dashboard left up past expiry, which is a
    deliberate future exception if ever wanted, not a default. One cost
@@ -819,8 +946,8 @@ None yet.
     *pinned version links* — a shared link that silently shows a stale
     site is the confusion this rule exists to prevent; *serving prior
     versions at distinct hostnames* — a second origin per version
-    multiplies the access flow and the label allocator for no product
-    gain.
+    multiplies the access flow and mints a supervisor object per
+    version, for no product gain.
 12. **The data plane: one Rally host class inside the facet backs the
     rail, the export, and the agent tools — composed with the model's
     class, never subclassing it.** Rally assembles the dynamic worker's
@@ -836,7 +963,29 @@ None yet.
     (see below — the rollback is the last line, not the only one), a
     table page/CSV stream
     for the rail's Data view and export, and a database-size read for
-    the storage quota. That quota is **100 MB per artifact**, a
+    the storage quota.
+
+    **The page and export paths need a dynamic table name, which the
+    house SQL rule forbids by the obvious route.**
+    [`durable-object-sqlite.md`](../../durable-object-sqlite.md) — which
+    both implementer and reviewer must read for this change — is
+    explicit that a parameter cannot bind an identifier and that any
+    dynamic identifier comes from a closed, code-owned allowlist. Here
+    the table names are the *model's*, so no code-owned allowlist can
+    exist and the rule cannot be satisfied as written. What satisfies
+    its intent instead: the allowlist is built at request time from the
+    facet's own `sqlite_master`, the caller's table name is admitted
+    only by exact match against that list, and the matched name is
+    quoted as an identifier rather than interpolated. The list is the
+    database's, not the caller's, so a name that is not a real table in
+    this facet never reaches SQL — and this is written down because the
+    naive implementation is a string template and it would pass review
+    from anyone who had not read this paragraph. `query_artifact_data`
+    is the one deliberate exception to "bind all values", since its
+    whole contract is model-authored SQL; that is what the admission
+    check below is for.
+
+    That quota is **100 MB per artifact**, a
     team-set value — orders of magnitude above any legitimate V1
     artifact, small enough to contain a runaway writer — and it is
     honestly a **threshold, not a hard cap**: the model's class holds
@@ -889,7 +1038,7 @@ None yet.
     authenticated against a workspace member, and the workplace
     expectation is that a poll knows who voted, the way every message
     already carries its author. So the serving side injects
-    `Rally-Viewer-Id` and `Rally-Viewer-Name` into **every** request it
+    `x-rally-viewer-id` and `x-rally-viewer-name` into **every** request it
     forwards to artifact code, all methods alike, immediately after the
     session check that established who the viewer is — and immediately
     after stripping any inbound headers of those names, which is the
@@ -917,7 +1066,7 @@ None yet.
     The contract is born guest-ready, because public sharing (non-goal
     2) is deferred, not rejected: **an anonymous viewer is represented
     by the absence of both headers**, so
-    `request.headers.get("Rally-Viewer-Id")` returns `null` — the real
+    `request.headers.get("x-rally-viewer-id")` returns `null` — the real
     value, via the single most pretrained header idiom there is — and
     the natural falsy check a model writes today handles guests
     correctly the day they exist. In V1 the headers are always present
@@ -991,10 +1140,14 @@ authoritative.
   produced, MIME `application/zip`. The existing slug, version-number,
   and lifecycle columns apply unchanged.
 - A new `artifact_registry` table beside the resource authority in
-  WorkspaceDO: `artifact_id`, `resource_id`, `workstream_id`, the
-  allocated hostname `label` (unique, region-wide via the label
-  allocator), `mode` (`static` | `active`, derived at publish from the
-  directory's root entry), `current_version`, `manifest_ref`, timestamps.
+  WorkspaceDO: `artifact_id` (an `ArtifactId`, and the artifact's
+  hostname label — region-wide unique because it is a UUID, so this
+  table needs no uniqueness machinery and is not an allocator),
+  `resource_id`, `workstream_id`, `mode` (`static` | `active`, derived
+  at publish from the directory's root entry), `current_version`,
+  `manifest_ref`, timestamps. It is also what names the artifact
+  children of the workspace's access-revocation hop (key design
+  decision 6).
 - Version history: the existing versioning layer's rows, unchanged — a
   site republish is one more pointer swap at the same capture site, with
   `storage_kind` naming the manifest-shaped reference.
@@ -1046,15 +1199,34 @@ The new trust surface is the point of this PRD, so it is stated in full.
   `<meta>` CSP can only further restrict, and a conflicting header
   loses to the stricter policy): `default-src 'self'`, `connect-src
   'self'`, `form-action 'self'`, `base-uri 'self'`, `object-src
-  'none'`, and `frame-ancestors` naming only Rally's own viewing
-  surfaces. This is what actually makes the skill's "no network" and
-  "carry your own assets" rules true rather than merely advisory, and
-  it is why the skill forbids CDN links: under this policy they would
-  not load anyway. The inline `<script>`/`<style>` the skill's examples
-  use are permitted by the V1 policy — nonces would be the tighter
-  design and are a deliberate follow-up, since the threat here is
-  egress rather than injection into a page whose author is already the
-  model.
+  'none'`, `frame-ancestors 'none'`, `img-src 'self' data:`, and
+  `script-src`/`style-src` of `'self' 'unsafe-inline'`. This is what
+  actually makes the skill's "no network" and "carry your own assets"
+  rules true rather than merely advisory, and it is why the skill
+  forbids CDN links: under this policy they would not load anyway.
+
+  **Two of those directives are written out rather than left to
+  `default-src`, because inheriting it would break every page V1
+  builds.** `'self'` does not permit inline code: with no `script-src`
+  or `style-src` of their own, the inline `<script>` and `<style>`
+  block the skill's worked examples teach would both be refused, and
+  every artifact would fail on its first load. So `'unsafe-inline'` is
+  named explicitly and deliberately — the threat this policy exists to
+  stop is *egress*, not injection into a page whose author is already
+  the model, and the egress directives (`connect-src`, `form-action`,
+  `default-src`) are untouched by it. Per-response nonces are the
+  tighter design and stay a deliberate follow-up; they mean rewriting
+  model-authored HTML on the serving path, which is not worth doing for
+  a threat that is not V1's. `img-src` likewise gains `data:`, since a
+  model embedding a small inline image is ordinary and `'self'` alone
+  would drop it silently.
+
+  `frame-ancestors` is `'none'` rather than an allowlist of Rally
+  surfaces, because key design decision 10 leaves nothing to allow: the
+  rail preview is a top-level `WebContentsView` and the pop-out is a
+  window, so no Rally origin ever frames an artifact. An allowlist here
+  would be a standing invitation to reintroduce the `<iframe>` that
+  decision rejects.
 - **Artifact code is untrusted, and the server sandbox is
   capability-based.**
   `globalOutbound: null` — `fetch()` and `connect()` throw. The module's
@@ -1148,8 +1320,8 @@ The new trust surface is the point of this PRD, so it is stated in full.
   authority.
 - **Viewer identity enters artifact code as trusted headers, and
   nothing a page can send can forge them** (key design decision 13).
-  Every forwarded request carries `Rally-Viewer-Id` and
-  `Rally-Viewer-Name`, injected after the session check and after
+  Every forwarded request carries `x-rally-viewer-id` and
+  `x-rally-viewer-name`, injected after the session check and after
   stripping inbound headers of those names — the strip is the security
   property and has its own test. The identity is workspace member
   identity (id and display name), never a credential: the viewer
@@ -1215,21 +1387,43 @@ published by its file path, never by its folder.
   is that `filePath` may now name a directory beneath
   `AVALON_RESOURCE_DIR`. No parameter is added: the publish kind is
   resolved from the directory's root entry per key design decision 9.
-- Successful `output`, by what the path resolved to: a *file* returns
-  today's shape, byte-for-byte unchanged. A *site* directory returns
-  `{ resourceId, slug, resourceType: "generated_site",
-  attachmentKind: "site", url, mode: "static" | "active", version,
-  mimeType, fileCount, totalBytes, manifestSha256, createdAt }` — the
-  URL and slug because the model's next step is citing the artifact;
-  `version` because revision narration wants it; `mimeType` is the
-  site-manifest vendor type the Data model fixes; `attachmentKind` the
-  registry's `site` kind (see Attachment rails below). An
-  *archive* directory returns the existing download-only archive shape
-  (`resourceType: "generated_file"`, `attachmentKind: "other"`, the
-  archive's mime type and size) plus `fileCount` and `totalBytes` for
-  what was bundled. In every case the result names the kind it
-  published, which is what makes the archive fallback recoverable at a
-  glance. Persisted values on replay, per the family rule.
+- Successful `output` becomes **a discriminated union on
+  `resourceType`, and that is a contract change worth stating as one**
+  rather than a shape that quietly varies. Today the tool has one
+  output; after this widening it has three, and a model reading the
+  registry must be able to tell which it got without guessing. Every
+  member carries `resourceType`, `attachmentKind`, `resourceId`,
+  `title`, `provider: "avalon_generated"`, and `createdAt`, so the
+  discriminant and the identity are always in the same places:
+
+  - *File* — `resourceType: "generated_file"`, unchanged
+    byte-for-byte from today: `{ resourceId, title, resourceType,
+    provider, mimeType, sizeBytes, sourceSha256, attachmentKind,
+    contentMode, derivativeStatus, createdAt }`. No field is added,
+    removed, or renamed; a caller that never publishes a directory
+    cannot observe this change.
+  - *Site* — `resourceType: "generated_site"`,
+    `attachmentKind: "site"`, adding `{ slug, url, mode: "static" |
+    "active", version, fileCount, totalBytes, manifestSha256 }` and
+    carrying `mimeType` as the site-manifest vendor type the Data
+    model fixes. `sizeBytes` is `totalBytes` and `sourceSha256` is
+    `manifestSha256` — named for what they actually hash rather than
+    reused, because a manifest hash is not a file hash and a caller
+    comparing them would be wrong. `contentMode` and
+    `derivativeStatus` are **absent**: a site has no single content
+    body to read and no derivative to wait on. `url` and `slug`
+    because the model's next step is citing the artifact; `version`
+    because revision narration wants it.
+  - *Archive* — `resourceType: "generated_file"`,
+    `attachmentKind: "other"`: today's file shape exactly, over the
+    zip Rally produced, plus `{ fileCount, totalBytes }` describing
+    what was bundled. It shares its `resourceType` with the file
+    member because it *is* a generated file; `fileCount` is what
+    distinguishes it, and nothing downstream needs to.
+
+  In every case the result names the kind it published, which is what
+  makes the archive fallback recoverable at a glance. Persisted values
+  on replay, per the family rule.
 - Identity and replay: `(work stream, normalized path)` per key design
   decision 7, files and directories alike. Equal content (manifest hash
   for a directory) returns the existing resource untouched; a different
@@ -1286,9 +1480,23 @@ registry treatment as the publish side rather than a passing mention.
   is ordinary source to the sandbox — a model that could not see its
   own server could not revise it, and acceptance flow 13 walks exactly
   that path when a participant asks to see the source.
-- Output names what landed: the resource id, the destination root, the
-  file count, and the outcome (`created`, `replaced`, or deterministic
-  `reused`), matching the family's existing outcome vocabulary.
+- Output names what landed, and **reuses `filePath` for the destination
+  root rather than adding a key beside it**: a site import returns
+  `{ resourceId, filePath, outcome, mimeType, sizeBytes, sourceSha256,
+  fileCount }`, where `filePath` is the directory root the tree
+  materialized into and is exactly the path a republish then passes to
+  `terminal_publish_resource`. That is the whole reason not to
+  introduce a `destinationRoot`: the round-trip is `filePath` in,
+  `filePath` out, and a second name for the same value is a second
+  thing a model can pick wrongly. `fileCount` is the one added field
+  and is what marks the result as a tree. `mimeType` is the
+  site-manifest type, `sizeBytes` the tree's total, `sourceSha256` the
+  manifest hash — the same renaming discipline the publish side
+  applies, in reverse. `outcome` stays the family's existing
+  vocabulary (`created`, `replaced`, or deterministic `reused`); for a
+  tree, `replaced` means the whole-tree replacement below, never a
+  merge. A file or archive import is unchanged and returns no
+  `fileCount`.
 - Failures reuse the family's codes — `destination_exists`,
   `destination_not_regular`, `resource_not_ready`, `limit_exceeded` —
   with no new vocabulary for the directory case.
@@ -1321,8 +1529,24 @@ and whose `suggestedCall` allowlist grows by one member.
 That allowlist is a four-member discriminated union today, not two:
 `workstream_read_resource` and `workstream_view_resource` alongside
 `automation_read_resource` and `automation_view_resource`, chosen at
-throw time by the tool family's `modelToolPrefix`. The remediation is
-therefore **prefix-aware**, because the same failure fires from
+throw time by the tool family's `modelToolPrefix`.
+
+**Adding `terminal_import_resource` widens what a remediation is
+allowed to suggest, and the widening is deliberate rather than an enum
+bump.** All four members today are read-only, `resourceId`-shaped calls
+a model can safely make blind; import materializes a directory tree on
+the sandbox filesystem and accepts `overwrite`. What makes it
+acceptable is that the suggestion carries `{ resourceId }` alone — the
+create-only form, which refuses a non-empty destination with
+`destination_exists` rather than replacing anything — so the suggested
+call is destructive in neither its shape nor its default, and a model
+that follows it blind cannot lose work. `overwrite` remains reachable
+only when the model asks for it itself. The sanitizer validates the
+member like any other, so a suggestion carrying `overwrite` is
+rejected as an undeclared field rather than forwarded.
+
+The remediation is
+also **prefix-aware**, because the same failure fires from
 automation-prefixed runs and the tool it names is a Terminal one:
 - a `workstream`-prefixed run gets `suggestedCall:
   terminal_import_resource`, the redirect described above;
@@ -1467,9 +1691,9 @@ rather than papered over.
   `domain-migration.md` and the runbook in the implementing change.
 - **No certificate purchase is required, and that is a design
   constraint rather than luck:** Universal SSL covers the apex and one
-  subdomain level, which the flattened `<label>-<region>` form stays
+  subdomain level, which the flattened `<artifact-id>-<region>` form stays
   inside (key design decision 2). Should the team prefer the dotted
-  `<label>.g.…` form, it is two levels deep and needs Advanced
+  `<artifact-id>.g.…` form, it is two levels deep and needs Advanced
   Certificate Manager or Total TLS — a recurring cost to approve
   *before* the dark deploy, since without it every artifact open fails
   the TLS handshake.
@@ -1483,9 +1707,18 @@ rather than papered over.
    with its facet hosting and wrapper, the widened publish path, and
    the two data read tools deploy with the standing-policy module
    absent — directory publishing works but nothing steers to it, so
-   dogfooding is by explicit ask. The wrapper's workerd proofs
-   (read-only rollback, abort-and-reload on republish, facet deletion)
-   gate this deploy, not the flag flip.
+   dogfooding is by explicit ask. The wrapper's workerd proofs gate
+   this deploy, not the flag flip: abort-and-reload on republish, facet
+   deletion, the storage-threshold crossing and constructor-time write
+   of decision 12 — and, first among them, **the read-only admission
+   check of `query_artifact_data`**. That one is a gate rather than a
+   test because it is the only place in this design where a security
+   boundary rests on a mechanism nobody here has run yet: what
+   `ctx.storage.sql.exec` actually accepts in a single call, and
+   whether the platform offers a read-only authorizer at all, decides
+   whether admission is a cheap platform flag or a statement parser
+   Rally owns and must keep correct against SQLite's dialect. Answer it
+   on real workerd before the parser becomes the answer by default.
 2. `live-artifacts-enabled` ships as a client feature flag in the
    established fail-closed pattern — presentation-only, gating the rail's
    site-artifact detail (preview pane, Data view, Pop out, link, error
@@ -1545,7 +1778,7 @@ rather than papered over.
    and exports them as CSV. A query tool call that attempts a write
    (`INSERT`, tested directly) changes nothing — the rollback guard
    holds on real workerd. A request sent with a forged
-   `Rally-Viewer-Id` header reaches the module carrying the *session's*
+   `x-rally-viewer-id` header reaches the module carrying the *session's*
    identity, never the forged one — the inbound strip holds — and a
    test module built for the guest branch behaves correctly when the
    headers are absent.
@@ -1561,7 +1794,12 @@ rather than papered over.
    sessions stop working, and a participant who loses *work-stream
    visibility* — which that queue deliberately does not carry — loses
    artifact access within the visibility cache's bounded interval,
-   proven against a real `WorkstreamDO` rather than a double.
+   proven against a real `WorkstreamDO` rather than a double. The
+   fan-out itself is proven at the hop that names artifacts:
+   `WorkspaceDO` returns one artifact child per row in
+   `artifact_registry`, an artifact host that holds no sessions is a
+   hop that closes nothing and returns no children, and the walk
+   reaches artifacts in a workspace whose work streams have none.
 6. The access code never appears in a request URL: the open flow
    redeems it from the fragment through a `POST` body, and an
    end-to-end capture of the artifact origin's requests contains no
@@ -1620,7 +1858,19 @@ rather than papered over.
 17. The Rally implementation brief carries the artifact-runtime clause
    this PRD proposes under **Impact on the product contract** — the
    amendment lands with the implementing change, not after it.
-18. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
+18. A page carrying an inline `<script>` and an inline `<style>` — the
+   shape the skill's worked examples teach — renders and runs under the
+   served CSP, while the same page's attempt to `fetch` an off-origin
+   host, load a CDN script, and post a form off-origin are all refused
+   by the policy rather than by the skill's advice. A `<meta>` CSP in
+   model-authored markup cannot loosen any of it.
+19. `docs/live-web-artifacts.md` exists to the module-document shape,
+   is registered in the documentation index, and carries the changelog
+   entry for this change; `domain-migration.md`, `agent-tools.md`,
+   `security.md`, `access-revocation.md`, `feature-flags.md`, and
+   `data-model.md` are updated in the same change as the code they
+   describe.
+20. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
    workerd suite pass; every new test is shown to fail when its
    protected behavior is broken; the rail (preview and Data view),
    artifact window, and error surfaces are captured from a real window.
