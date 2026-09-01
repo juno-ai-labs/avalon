@@ -93,6 +93,25 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(withoutTerminal)).toThrow(/TERMINAL_PROVIDER is missing/u);
   });
 
+  it("requires PostHog delivery only in Global production", () => {
+    const global = contractCompleteEnv() as Env & { POSTHOG_DELIVERY?: object };
+    delete global.POSTHOG_DELIVERY;
+    expect(() => assertEnvContract(global)).toThrow(/POSTHOG_DELIVERY is missing/u);
+
+    const eu = contractCompleteEnv({
+      AVALON_REGION: "eu",
+      PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com",
+    }) as Env & { POSTHOG_DELIVERY?: object };
+    delete eu.POSTHOG_DELIVERY;
+    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+    delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+    delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;
+    delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE;
+    delete (eu as Partial<Env>).ANALYTICS_LAKEHOUSE_QUEUE;
+    delete (eu as Partial<Env>).ANALYTICS_LAKEHOUSE;
+    expect(() => assertEnvContract(eu)).not.toThrow();
+  });
+
   it("requires the shared inference-pricing KV binding", () => {
     const env = contractCompleteEnv();
     delete (env as Partial<Env>).INFERENCE_PRICING_CACHE;

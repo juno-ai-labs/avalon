@@ -1,5 +1,5 @@
 import type { Env } from '../env';
-import { sendPostHogCrashBatch, type GlobalCrashDeliveryRow } from './posthog-adapter';
+import type { GlobalCrashDeliveryRow } from './posthog-delivery-contract';
 import { destinationCircuitAllows, recordDestinationOutcome } from './operations';
 
 const MAINTENANCE_BATCH_SIZE = 100;
@@ -39,7 +39,10 @@ export interface CrashDeliverySummary {
 
 export async function processCrashOutbox(env: Env): Promise<CrashDeliverySummary> {
   const summary: CrashDeliverySummary = { selected: 0, delivered: 0, retried: 0, terminal: 0, suppressed: 0 };
-  if (env.AVALON_REGION !== 'global' || !env.POSTHOG_HOST || !env.POSTHOG_PROJECT_TOKEN) return summary;
+  if (env.AVALON_REGION !== 'global'
+    || !env.POSTHOG_HOST
+    || !env.POSTHOG_PROJECT_TOKEN
+    || !env.POSTHOG_DELIVERY) return summary;
   const now = new Date();
   if (!await destinationCircuitAllows(env, 'posthog_crash', now)) return summary;
   const pending = await env.DB.prepare(
@@ -84,7 +87,7 @@ export async function processCrashOutbox(env: Env): Promise<CrashDeliverySummary
       fingerprint: row.issue_fingerprint,
       report: JSON.parse(row.structured_report_json) as unknown,
     };
-    const result = await sendPostHogCrashBatch({
+    const result = await env.POSTHOG_DELIVERY.sendCrashBatch({
       host: env.POSTHOG_HOST,
       projectToken: env.POSTHOG_PROJECT_TOKEN,
       rows: [delivery],
