@@ -563,6 +563,26 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **Every write to `application-settings.json` goes through the one shared queue
   and re-reads before merging.** Two owners serializing on different primitives is
   how a lost update becomes a credential deletion on the next launch.
+- **Model-authored web content is never same-origin with the application, the
+  API, or another artifact.** A live artifact serves from a per-artifact
+  subdomain of a registrable domain that is not `rallywith.ai`, so it is never
+  cookie-adjacent to the product apex and one artifact cannot read another's
+  storage, cookies, or DOM.
+- **Separate artifact origins do not close cross-artifact CSRF, and the serving
+  Worker does.** Every artifact is a subdomain of one registrable domain, so two
+  artifacts are same-*site*: `SameSite` does not stop script in one sending a
+  **credentialed** request to another, and a simple `POST` needs no preflight, so
+  the victim's model-written handler would still run even though CORS hid the
+  response. Admission is by fetch metadata — `same-origin`, or `none` for a
+  genuine top-level `GET` — refused before untrusted code runs, and refused for
+  GETs too, because artifact code may treat any method as a write.
+- **A new ticket audience never issues a ticket in a URL.** Cloudflare records
+  whole URLs into the invocation log, Logpush, and traces, and no redaction here
+  reaches them. An artifact's access code travels in a fragment, which a browser
+  never sends to a server, and is redeemed through a request body at an endpoint
+  that never serves artifact content — so no artifact document is ever loaded at
+  a location that held it. Single-use redemption bounds replay; it does not keep
+  a secret out of a log, and is not on its own compliance.
 - **Nothing that protects data is scoped by a feature flag.** Flag targeting is a
   product scope; a flag that cannot be evaluated keeps its last answer, which is
   the wrong failure mode for a confidentiality boundary.
@@ -641,6 +661,7 @@ does not own the subsystems on either side of them:
 | The windowless menu bar surface | [`menu-bar.md`](menu-bar.md) |
 | Telemetry contracts, opt-out, identities, crash lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Public-site anonymous identity, event surface, and handoff negative space | [`public-site-telemetry.md`](public-site-telemetry.md) |
+| The artifact runtime's fences, the facet data plane, and what a published directory becomes | [`live-web-artifacts.md`](live-web-artifacts.md) |
 | Rotating a key or responding to an incident | [`runbook.md`](runbook.md) |
 | Access Managed OAuth and destructive operator SQLite inspection | [`engineering-mcp.md`](engineering-mcp.md) |
 
@@ -730,6 +751,34 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-01 — Model-authored web content gets its own origins, and its own fences
+
+**What changed:** Three invariants for the artifact runtime — separate origins
+for model-authored content, the fetch-metadata admission that closes
+cross-artifact CSRF, and the rule that a new ticket audience never issues a
+ticket in a URL.
+
+**Why:** Serving model-authored HTML is a genuinely new trust surface, and two
+of its hazards are ones origin separation alone does *not* close. Every artifact
+is a subdomain of one registrable domain, so two artifacts are same-site:
+`SameSite` does not stop a credentialed request between them, and a simple
+`POST` needs no preflight, so the victim's handler runs even though CORS hides
+the response. Closing that at the serving Worker is the only place it can be
+closed once, for every artifact, without trusting model-written handlers to
+defend themselves — which is why GETs are refused too, since nothing about such
+a handler makes it safe by method.
+
+The URL rule is the existing ticket rule applied to a new audience: Cloudflare
+records whole URLs into the invocation log, Logpush, and traces, and no
+redaction in this repository reaches them. A fragment is never sent to a server,
+so the code redeems through a request body at an endpoint that never serves
+artifact content.
+
+**Considered and rejected:** capability URLs — "anyone with the link" — which
+contradict the house rule that knowing an identifier grants nothing; and relying
+on single-use redemption alone, which bounds replay but cannot keep a secret out
+of a log.
 
 ### 2026-09-01 — External workspace targets cannot rely on local authority
 
