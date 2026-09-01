@@ -266,6 +266,26 @@ export const WorkspaceDirectoryExposeRunRequestSchema = z.strictObject({
   scope: z.enum(["personal", "workspace"]).nullable(),
 });
 
+/**
+ * Which automations a work stream owns, for an effect that follows the room.
+ *
+ * Answered from the directory rather than by asking each automation object,
+ * because the caller does not yet know which objects to ask — that is the
+ * question. Lifecycle rides along so a caller can skip an automation an
+ * archive has nothing to do to.
+ */
+export const WorkspaceDirectoryOwnedAutomationsRequestSchema = z.strictObject({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+});
+
+export const WorkspaceDirectoryOwnedAutomationsSchema = z.strictObject({
+  automations: z.array(z.strictObject({
+    automationId: IdSchema,
+    lifecycle: z.string().min(1).max(40),
+  }).strict()),
+});
+
 export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
 export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,

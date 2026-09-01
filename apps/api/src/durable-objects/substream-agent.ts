@@ -2319,6 +2319,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (request.operation === "update") {
         const result = await this.product.update(current, request.input);
         for (const event of result.events) await this.publishLocalProductEvent(identity, event);
+        // Archiving a room is a decision about the room, and the automations it
+        // owns follow it. After the commit rather than inside it: each one is
+        // its own object, and the work stream's own state must be settled
+        // before anything reads it back.
+        if (typeof request.input?.archived === "boolean") {
+          await this.applyArchiveToOwnedAutomations(identity, request.input.archived);
+        }
         return jsonResponse(result.workstream);
       }
       if (request.operation === "acknowledge_read") {
@@ -3595,6 +3602,59 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       workstreamId: input.workstreamId,
     });
     return settlementDiagnosticCode;
+  }
+
+  /**
+   * Pause or resume the automations this work stream owns.
+   *
+   * Best effort per automation, and deliberately so: one object refusing —
+   * already paused, paused by a person before the archive, no longer owned —
+   * must not stop the rest, and none of those refusals is a failure. An
+   * automation the archive did not pause is not one unarchiving may start.
+   */
+  private async applyArchiveToOwnedAutomations(
+    identity: { workspaceId: string; workstreamId: string },
+    archived: boolean,
+  ): Promise<void> {
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(identity.workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)),
+    );
+    const owned = await workspace.automationsOwnedByWorkstream({
+      workspaceId: identity.workspaceId,
+      workstreamId: identity.workstreamId,
+    });
+    for (const entry of owned.automations) {
+      try {
+        const automation = await durableObjectStubForWorkspace(
+          this.env,
+          this.env.AUTOMATION_AGENTS,
+          asWorkspaceId(identity.workspaceId),
+          automationAgentName(
+            this.env.AVALON_REGION,
+            asWorkspaceId(identity.workspaceId),
+            asAutomationId(entry.automationId),
+          ),
+        );
+        const request = {
+          schemaVersion: 1 as const,
+          automationId: entry.automationId,
+          workspaceId: identity.workspaceId,
+          workstreamId: identity.workstreamId,
+        };
+        if (archived) await automation.pauseForArchivedWorkstream(request);
+        else await automation.resumeForUnarchivedWorkstream(request);
+      } catch (error) {
+        logWarn(this.env, "automation_archive_effect_failed", {
+          workspace_id: identity.workspaceId,
+          workstream_id: identity.workstreamId,
+          automation_id: entry.automationId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
   }
 
   /**

@@ -592,6 +592,33 @@ idempotent per workspace.
 
 ## Changelog
 
+### 2026-09-01 — An owned automation follows its room into the archive
+
+**What changed:** AutomationAgent answers `pauseForArchivedWorkstream` and
+`resumeForUnarchivedWorkstream`, and `pause`/`resume` now write and clear
+`automation_state.paused_reason`. Archiving or unarchiving a work stream fans
+out to the automations it owns, found through WorkspaceDO's
+`automationsOwnedByWorkstream`.
+
+**Why:** A room's automations belong to the room, so a decision about the room
+is a decision about them — that is what ownership buys over a creator who may
+be gone. The two new entry points skip the manager check because nobody is
+acting on the automation; they check ownership instead, so a room an automation
+merely delivers into has no say over whether it runs.
+
+**Considered and rejected:** Resuming every paused automation when a room comes
+back. Without `paused_reason`, an automation somebody deliberately stopped and
+one the archive stopped are the same row, and unarchiving would restart the
+first. Also rejected: doing this inside the work stream's own commit — each
+automation is a separate object, so the fan-out is asynchronous and happens
+after the room's state is settled.
+
+**Consequences:** The fan-out is best effort per automation and every refusal is
+a decision rather than a failure: already paused, paused by a person, no longer
+owned. One object refusing must not stop the rest, so failures are logged and
+the loop continues. An automation whose pause reason is `person` is invisible to
+unarchiving, permanently, until a person resumes it.
+
 ### 2026-09-01 — An automation a work stream can own
 
 **What changed:** `workstream` joins the automation scope vocabulary.

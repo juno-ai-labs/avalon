@@ -1598,6 +1598,78 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   async pause(input: { automationId: string; workspaceId: string; userId: string; actorRole?: string }): Promise<void> {
     await this.initialized;
     this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
+    await this.pauseWithReason("person");
+  }
+
+  /**
+   * Pause because the work stream that owns this automation was archived.
+   *
+   * No manager check: nobody is acting on the automation. Archiving a room is a
+   * decision about the room, and its automations follow it — which is the whole
+   * point of the room owning them rather than a person who may be gone.
+   */
+  async pauseForArchivedWorkstream(input: unknown): Promise<{ paused: boolean; outcomeCode: string }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      automationId: z.string().uuid(),
+      workspaceId: z.string().uuid(),
+      workstreamId: z.string().uuid(),
+    }).strict().parse(input);
+    const identity = this.identity();
+    if (identity.automation_id !== request.automationId
+      || identity.workspace_id !== request.workspaceId) {
+      throw new Error("automation_identity_mismatch");
+    }
+    const acceptance = this.acceptance();
+    // Only for the room that owns it. A room cannot pause an automation that
+    // merely delivers to it.
+    if (!acceptance || acceptance.owning_workstream_id !== request.workstreamId) {
+      return { paused: false, outcomeCode: "automation_not_owned_by_workstream" };
+    }
+    if (this.lifecycle() === "paused") return { paused: false, outcomeCode: "automation_already_paused" };
+    if (this.lifecycle() !== "active" && this.lifecycle() !== "activating") {
+      return { paused: false, outcomeCode: "automation_not_pausable" };
+    }
+    await this.pauseWithReason("workstream_archived");
+    return { paused: true, outcomeCode: "automation_paused" };
+  }
+
+  /**
+   * Resume exactly what an archive paused.
+   *
+   * `paused_reason` is why this column exists: unarchiving a room must not
+   * restart an automation somebody paused by hand before the archive, and
+   * without the reason recorded the two are the same row.
+   */
+  async resumeForUnarchivedWorkstream(input: unknown): Promise<{ resumed: boolean; outcomeCode: string }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      automationId: z.string().uuid(),
+      workspaceId: z.string().uuid(),
+      workstreamId: z.string().uuid(),
+    }).strict().parse(input);
+    const identity = this.identity();
+    if (identity.automation_id !== request.automationId
+      || identity.workspace_id !== request.workspaceId) {
+      throw new Error("automation_identity_mismatch");
+    }
+    const acceptance = this.acceptance();
+    if (!acceptance || acceptance.owning_workstream_id !== request.workstreamId) {
+      return { resumed: false, outcomeCode: "automation_not_owned_by_workstream" };
+    }
+    const reason = this.state.storage.sql.exec<{ paused_reason: string | null }>(
+      `SELECT paused_reason FROM automation_state WHERE id = 1`,
+    ).toArray()[0]?.paused_reason ?? null;
+    if (this.lifecycle() !== "paused" || reason !== "workstream_archived") {
+      return { resumed: false, outcomeCode: "automation_not_paused_by_archive" };
+    }
+    await this.resumeFromPause();
+    return { resumed: true, outcomeCode: "automation_resumed" };
+  }
+
+  private async pauseWithReason(reason: "person" | "workstream_archived"): Promise<void> {
     if (this.lifecycle() === "paused") return;
     if (this.lifecycle() !== "active" && this.lifecycle() !== "activating") {
       throw new Error("automation_not_pausable");
@@ -1622,12 +1694,16 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         now,
       );
       this.state.storage.sql.exec(
-        `UPDATE automation_state SET lifecycle = 'paused', updated_at = ? WHERE id = 1`, now,
+        `UPDATE automation_state SET lifecycle = 'paused', paused_reason = ?, updated_at = ?
+          WHERE id = 1`,
+        reason,
+        now,
       );
       this.appendRealtimeEvent("automation_paused", {}, now);
       this.enqueueWorkspaceProjection({
         lifecycle: "paused",
         scope: acceptance.scope,
+        owningWorkstreamId: acceptance.owning_workstream_id,
         definition: this.currentDefinition()!,
         payloadHash: acceptance.evaluator_source_hash,
         now,
@@ -1653,6 +1729,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   async resume(input: { automationId: string; workspaceId: string; userId: string; actorRole?: string }): Promise<void> {
     await this.initialized;
     this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
+    await this.resumeFromPause();
+  }
+
+  private async resumeFromPause(): Promise<void> {
     if (this.lifecycle() === "active") return;
     if (this.lifecycle() !== "paused") throw new Error("automation_not_resumable");
     const acceptance = this.acceptance();
@@ -1714,12 +1794,15 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         now,
       );
       this.state.storage.sql.exec(
-        `UPDATE automation_state SET lifecycle = 'active', updated_at = ? WHERE id = 1`, now,
+        `UPDATE automation_state SET lifecycle = 'active', paused_reason = NULL, updated_at = ?
+          WHERE id = 1`,
+        now,
       );
       this.appendRealtimeEvent("activation_completed", { resume: true }, now);
       this.enqueueWorkspaceProjection({
         lifecycle: "active",
         scope: acceptance.scope,
+        owningWorkstreamId: acceptance.owning_workstream_id,
         definition: this.currentDefinition()!,
         payloadHash: acceptance.evaluator_source_hash,
         now,
@@ -1814,6 +1897,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       this.enqueueWorkspaceProjection({
         lifecycle: "deleted",
         scope: acceptance.scope,
+        owningWorkstreamId: acceptance.owning_workstream_id,
         definition: this.currentDefinition()!,
         payloadHash: acceptance.evaluator_source_hash,
         now,
@@ -4105,6 +4189,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       description: definition.description,
       emailAddress,
       scope: acceptance.scope,
+      owningWorkstreamId: acceptance.owning_workstream_id,
       status: state.lifecycle === "paused" ? "paused" : "active",
       // This object is the authority on the reason; the directory row is a copy
       // of it. `AutomationDetailSchema` is what turns the stored code into one

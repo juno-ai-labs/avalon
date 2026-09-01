@@ -142,6 +142,8 @@ import {
   WorkspaceDirectoryReadableIdsResultSchema,
   WorkspaceDirectoryDeliveryAuthorityRequestSchema,
   WorkspaceDirectoryExposeRunRequestSchema,
+  WorkspaceDirectoryOwnedAutomationsRequestSchema,
+  WorkspaceDirectoryOwnedAutomationsSchema,
   WorkspaceDirectoryDeliveryAuthoritySchema,
   WorkspaceDirectoryNotificationRequestSchema,
   WorkspaceDirectoryNotificationStateSchema,
@@ -8224,6 +8226,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         : [request.scope, request.workstreamId]),
     );
     return { exposed: true, outcomeCode: "workstream_exposed" };
+  }
+
+  /** Every automation this work stream owns, whatever its lifecycle. */
+  async automationsOwnedByWorkstream(
+    input: z.input<typeof WorkspaceDirectoryOwnedAutomationsRequestSchema>,
+  ): Promise<z.infer<typeof WorkspaceDirectoryOwnedAutomationsSchema>> {
+    await this.initialized;
+    const request = WorkspaceDirectoryOwnedAutomationsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const rows = this.state.storage.sql.exec<{ automation_id: string; lifecycle: string }>(
+      `SELECT automation_id, lifecycle FROM automation_directory
+        WHERE owning_workstream_id = ? ORDER BY automation_id`,
+      request.workstreamId,
+    ).toArray();
+    return WorkspaceDirectoryOwnedAutomationsSchema.parse({
+      automations: rows.map((row) => ({
+        automationId: row.automation_id,
+        lifecycle: row.lifecycle,
+      })),
+    });
   }
 
   async workstreamsForResource(
