@@ -60,11 +60,12 @@ calls `revokeSocketAccess`, and receives back the children that object knows
 about; each child becomes its own message on the same queue.
 
 ```
-workspace  ──▶ WorkspaceDO        ──▶ [workstreamIds] + [automationIds]
+workspace  ──▶ WorkspaceDO        ──▶ [workstreamIds] + [automationIds] + [artifactIds]
 workstream ──▶ WorkstreamDO       ──▶ [substreamIds] + [blockIds]
 substream  ──▶ SubstreamAgent     ──▶ (leaf)
 block      ──▶ BlockDashboardAgent ──▶ (leaf)
 automation ──▶ AutomationAgent    ──▶ (leaf)
+artifact   ──▶ ArtifactHostDO     ──▶ (leaf)
 ```
 
 The fan-out is queue-driven rather than one long call chain for three reasons: a
@@ -73,6 +74,23 @@ invocation holds the whole hierarchy open while a hundred objects wake; and the
 objects stay ignorant of the transport — they return lists, and the consumer
 decides what carries them onward. An object that later needs a different carrier,
 or a sixth object type, changes the consumer and nothing else.
+
+A **live artifact** is a sibling for the same reason, and holds no socket at all:
+what it holds is viewer sessions, and one that outlived a membership would keep
+serving a page to somebody no longer in the workspace. Its list comes from
+`artifact_registry`, which lives in WorkspaceDO beside the resource authority —
+so this is the only object that can name artifacts, and a work stream could not.
+Its `revokeSocketAccess` drops `viewer_sessions` rows under the same method name
+and the same child-naming contract, and returns no children. The list is
+deliberately unfiltered by person, matching the generosity the rest of this walk
+is built on: an artifact is readable by anyone who can see its work stream, so a
+hop that finds no session to drop costs one call.
+
+Every child list the consumer reads is defaulted to empty. That is about deploys
+rather than tidiness: the consumer and WorkspaceDO are separate deployments of
+one Worker, so during a rollout a consumer that knows about a new child kind can
+reach an object that does not yet name it, and reading `undefined.map` there
+would throw and drop a retraction.
 
 An automation is a *sibling* of the work streams under a workspace rather than a
 child of one: its room belongs to the workspace, so it hangs off the workspace
@@ -309,6 +327,34 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-01 — ArtifactHostDO joins the walk, holding sessions rather than sockets
+
+**What changed:** A live artifact's supervisor is now a child the workspace hop
+names, from `artifact_registry`. Its `revokeSocketAccess` drops viewer-session
+rows and returns no children. Every child list the consumer reads is defaulted
+to empty.
+
+**Why:** An artifact keeps its own viewer sessions, and nothing it can see would
+tell it a membership ended — the same reason every other object is on this queue.
+It hangs off the **workspace** rather than a work stream because
+`artifact_registry` lives in WorkspaceDO beside the resource authority, and this
+module's rule is that only the object holding a list can name its children; the
+work-stream framing that was first drafted would have needed a second copy of a
+fact WorkspaceDO already owns, which is the divergence that rule exists to
+prevent.
+
+The defaults are about rollouts, not tests: the consumer and WorkspaceDO are
+separate deployments of one Worker, so a consumer that knows about artifacts can
+reach an object that does not yet name them, and `undefined.map` there would
+throw and drop the retraction rather than merely reaching nothing new.
+
+**Considered and rejected:** filtering the artifact list by principal, to cut the
+fan-out. An artifact is readable by anyone who can see its work stream, so
+WorkspaceDO cannot tell which artifacts a person holds a session on without
+asking every work stream a question it would then have to cache — and the
+generous-list precedent already accepts that a hop finding nothing costs one
+call.
 
 ### 2026-08-31 — Self-leave and final-member abandonment publish the membership revocation
 
