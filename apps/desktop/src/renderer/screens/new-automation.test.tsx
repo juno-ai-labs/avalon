@@ -1006,7 +1006,12 @@ describe('New automation composer', () => {
     expect(screen.getAllByText(example)).toHaveLength(1);
   });
 
-  it('keeps assistant headings expanded without feed collapse controls', async () => {
+  // The draft conversation used to render its own loop around `MessageBlock`
+  // and pass none of the feed's row props, so an assistant answer here was the
+  // one place in Rally where a long response did not fold into sections. Both
+  // surfaces render `MessageFeed` now; this proves the draft gets the feed's
+  // headings rather than a second presentation of the same markdown.
+  it('folds assistant headings into the feed collapse controls', async () => {
     agentReply = {
       definition: draftDefinition({ followUpQuestion: null }),
       assistantMessage: '## Summary\n\nThe automation is ready.\n\n## Details\n\nIt checks every day.',
@@ -1018,11 +1023,9 @@ describe('New automation composer', () => {
 
     const assistantMessage = (await screen.findByRole('heading', { name: 'Summary' })).closest('article');
     expect(assistantMessage).not.toBeNull();
-    expect(assistantMessage!.querySelector('.markdown-collapse')).toBeNull();
-    expect(within(assistantMessage!).queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
-    expect(within(assistantMessage!).queryByRole('button', { name: 'Expand all sections' })).not.toBeInTheDocument();
+    expect(assistantMessage!.querySelectorAll('.markdown-collapse')).toHaveLength(2);
+    expect(within(assistantMessage!).getByRole('button', { name: 'Expand all sections' })).toBeVisible();
     expect(within(assistantMessage!).getByRole('heading', { name: 'Details' })).toBeVisible();
-    expect(within(assistantMessage!).getByText('It checks every day.')).toBeVisible();
   });
 
   it('retracts an abandoned narration turn without blanking the bubble', async () => {
