@@ -2369,3 +2369,43 @@ function expectNormalized(activities: Array<Record<string, unknown>>): void {
     ).not.toThrow();
   }
 }
+
+describe("Google watch relationships", () => {
+  /**
+   * Registry construction is where a missing relationship value fails, and it
+   * fails for every connector at once — so this asserts the descriptors are
+   * accepted, not merely that the manifest object contains them.
+   */
+  // Through the registry, not the manifest object: registry construction is
+  // where a relationship value the enum does not allow is rejected, and it is
+  // rejected for every connector at once.
+  const registry = new ConnectorRegistry([createGoogleConnector({
+    clientId: "google-client",
+    clientSecret: "google-secret",
+    redirectUri: "https://avalon.example/oauth/google/callback",
+  })]);
+  const triggers = registry.get("google").manifest.activityTriggers ?? [];
+  const relationshipsFor = (eventType: string): ReadonlyArray<{ relationship: string; resourceType: string }> =>
+    triggers.find((trigger) => trigger.eventType === eventType)?.resourceRelationships ?? [];
+
+  it("declares the watched file for each Drive event family", () => {
+    expect(relationshipsFor("sheets.spreadsheet_changed"))
+      .toEqual([{ relationship: "file", resourceType: "google_sheet" }]);
+    expect(relationshipsFor("docs.document_changed"))
+      .toEqual([{ relationship: "file", resourceType: "google_doc" }]);
+    expect(relationshipsFor("drive.file_changed"))
+      .toEqual([{ relationship: "file", resourceType: "drive_file" }]);
+  });
+
+  it("declares the watched thread on both mail events", () => {
+    expect(relationshipsFor("email.received"))
+      .toEqual([{ relationship: "thread", resourceType: "gmail_thread" }]);
+    expect(relationshipsFor("email.updated"))
+      .toEqual([{ relationship: "thread", resourceType: "gmail_thread" }]);
+  });
+
+  it("leaves calendar events unrelated to any attached resource", () => {
+    expect(relationshipsFor("calendar.event_changed")).toEqual([]);
+    expect(relationshipsFor("calendar.event_completed")).toEqual([]);
+  });
+});

@@ -1829,13 +1829,35 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           "sheets.spreadsheet_changed",
         ],
       }, {
-        "email.received": { filterFields: googleEmailActivityFilterFields },
-        "email.updated": { filterFields: googleEmailActivityFilterFields },
+        // `resourceRelationships` is what turns an attached resource's watch
+        // into routed events. Without it the reconciler builds an empty
+        // evaluator set, so the watch toggle in the UI creates a row, drives
+        // polling, and delivers nothing — which is what Google did until now,
+        // silently, for every Sheet, Doc, Drive file and mail thread anybody
+        // watched. The relationship names the watched entity itself rather than
+        // a container it sits in; Notion's `page` is the precedent.
+        "email.received": {
+          filterFields: googleEmailActivityFilterFields,
+          resourceRelationships: [{ relationship: "thread", resourceType: "gmail_thread" }],
+        },
+        "email.updated": {
+          filterFields: googleEmailActivityFilterFields,
+          resourceRelationships: [{ relationship: "thread", resourceType: "gmail_thread" }],
+        },
         "calendar.event_changed": { filterFields: googleCalendarChangedActivityFilterFields },
         "calendar.event_completed": { filterFields: googleCalendarCompletedActivityFilterFields },
-        "drive.file_changed": { filterFields: googleDriveActivityFilterFields },
-        "docs.document_changed": { filterFields: googleDriveActivityFilterFields },
-        "sheets.spreadsheet_changed": { filterFields: googleDriveActivityFilterFields },
+        "drive.file_changed": {
+          filterFields: googleDriveActivityFilterFields,
+          resourceRelationships: [{ relationship: "file", resourceType: "drive_file" }],
+        },
+        "docs.document_changed": {
+          filterFields: googleDriveActivityFilterFields,
+          resourceRelationships: [{ relationship: "file", resourceType: "google_doc" }],
+        },
+        "sheets.spreadsheet_changed": {
+          filterFields: googleDriveActivityFilterFields,
+          resourceRelationships: [{ relationship: "file", resourceType: "google_sheet" }],
+        },
       }),
       resourceTypes: ["gmail_thread", "calendar_event", "drive_file", "google_doc", "google_sheet"],
       tools: googleTools,
