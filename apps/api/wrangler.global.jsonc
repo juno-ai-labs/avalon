@@ -184,7 +184,8 @@
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
-      { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" }
+      { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
+      { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" }
     ]
   },
   // Append-only once deployed: v1/v2 are live history and must stay
@@ -198,7 +199,12 @@
   // keep a namespace of empty objects alive forever — and it is irreversible,
   // which is why it is its own tag rather than an edit to v1. v5 adds the
   // per-session Slack reaction ticker, whose alarm is per Slack thread rather
-  // than per workspace and so does not belong on WorkspaceDO.
+  // than per workspace and so does not belong on WorkspaceDO. v7 adds the live
+  // web artifact supervisor: one object per published artifact, named by the
+  // artifact id its hostname carries, which is what lets the artifact serving
+  // Worker reach it holding nothing but a Host header. Its facet classes are
+  // dynamic and deliberately absent from this list — only Rally's own classes
+  // are ever migrated here.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
     { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
@@ -209,7 +215,8 @@
     },
     { "tag": "v4", "deleted_classes": ["WorkspaceScheduler"] },
     { "tag": "v5", "new_sqlite_classes": ["SlackReactionTicker"] },
-    { "tag": "v6", "new_sqlite_classes": ["AutomationAgent"] }
+    { "tag": "v6", "new_sqlite_classes": ["AutomationAgent"] },
+    { "tag": "v7", "new_sqlite_classes": ["ArtifactHostDO"] }
   ],
   "queues": {
     "producers": [

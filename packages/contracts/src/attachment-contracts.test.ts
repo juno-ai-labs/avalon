@@ -24,6 +24,7 @@ describe("attachment contracts", () => {
       "spreadsheet",
       "presentation",
       "text",
+      "site",
       "other",
     ];
     expect(ATTACHMENT_KIND_ENTRIES.map((entry) => entry.kind)).toEqual(kinds);

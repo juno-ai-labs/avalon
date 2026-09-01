@@ -1,0 +1,207 @@
+/**
+ * Live web artifacts: the shapes both sides of the artifact boundary agree on.
+ *
+ * A live artifact is a directory a run published — a page, a dashboard, a poll —
+ * that Rally serves from an isolated per-artifact origin. Three parties read
+ * what is here and none may import another: `apps/api` writes the manifest at
+ * publish, the serving Worker reads it on every request, and the desktop
+ * renderer resolves the canonical URL for the rail. So the manifest schema, the
+ * MIME type that identifies it, and the hostname derivation live in contracts,
+ * parsed on both sides rather than trusted across.
+ *
+ * See `docs/live-web-artifacts.md` for the subsystem and
+ * `docs/PRDs/2026-08-29_live-web-artifacts/prd.md` for why it is shaped this
+ * way.
+ */
+import { z } from "zod";
+
+import { RALLY_HEADERS } from "./http-headers";
+import { ArtifactIdSchema } from "./identifiers";
+
+/**
+ * The MIME type of a site resource's stored content.
+ *
+ * A site's `content_ref` points at its *manifest*, not at any one page, so the
+ * resource's type has to name the manifest. It is deliberately precise rather
+ * than familiar: `text/html` would route a site into single-document read paths
+ * and converters that would then serve one page as though it were the resource,
+ * and `application/zip` would make a site indistinguishable from an archive
+ * publish, whose behavior is the opposite. An unrecognized precise type fails
+ * closed into the `other` attachment kind; a familiar wrong one fails open into
+ * a converter, which is the direction that corrupts.
+ *
+ * The brand word is `rally` rather than `avalon`: this identifier is stored
+ * forever on every site resource ever published, and a new one carries the
+ * product's real name rather than joining the rebrand inventory's someday list.
+ */
+export const SITE_MANIFEST_MIME_TYPE = "application/vnd.rally.site-manifest+json";
+
+/** What a published directory resolved to, decided by its root entry alone. */
+export const ArtifactModeSchema = z.enum(["static", "active"]);
+export type ArtifactMode = z.infer<typeof ArtifactModeSchema>;
+
+/**
+ * The entry file that decides an artifact's mode, in precedence order.
+ *
+ * `index.js` wins over `index.html` because a site with server behavior almost
+ * always ships both — the module routes its own paths and falls through to the
+ * page — so the presence of the module is the stronger signal.
+ */
+export const ARTIFACT_SERVER_ENTRY = "index.js";
+export const ARTIFACT_STATIC_ENTRY = "index.html";
+
+/**
+ * The class name a stateful artifact exports to get a database.
+ *
+ * Fixed rather than configurable, and fixed at a name a model will reach for
+ * without being told twice. Rally's bootstrap module imports exactly this
+ * binding from the published `index.js`; a site that exports something else is
+ * a stateless active site, which is a working outcome rather than an error.
+ */
+export const ARTIFACT_STORAGE_CLASS_NAME = "SiteData";
+
+/**
+ * The path prefix the server module never sees.
+ *
+ * Everything Rally serves on an artifact's own origin that is *not* artifact
+ * content lives under here: the access bootstrap, the redeem endpoint, and the
+ * prior-version mounts. Reserving one prefix is what lets a version render at a
+ * URL on the artifact's own origin without a second origin, a second cookie, or
+ * a second access flow — and the serving Worker strips it before forwarding, so
+ * a frozen module routes on the paths it was written against.
+ */
+export const ARTIFACT_RESERVED_PREFIX = "/__rally";
+
+/**
+ * The viewer identity every request carries into artifact code.
+ *
+ * Product headers are minted `x-rally-*` and read through `readRallyHeader`
+ * (see `http-headers.ts`); these two join that family rather than inventing a
+ * spelling beside it. They are injected by the serving side after the session
+ * check and after every inbound header of these names — canonical *and*
+ * superseded — has been stripped, which is the entire anti-spoof mechanism.
+ *
+ * Absence, not a sentinel, represents an anonymous viewer. `null` from
+ * `headers.get` is the most pretrained idiom there is and the natural falsy
+ * check a model writes handles it; a `"null"` string would be truthy and would
+ * leak the literal word into stored data, and an empty value behaves
+ * inconsistently across clients.
+ */
+export const ARTIFACT_VIEWER_ID_HEADER = RALLY_HEADERS.VIEWER_ID;
+export const ARTIFACT_VIEWER_NAME_HEADER = RALLY_HEADERS.VIEWER_NAME;
+
+/**
+ * One published file, as the serving Worker resolves a request against it.
+ *
+ * `contentType` is decided at publish from the file's own name and bytes and
+ * stored, rather than sniffed per request: the serving Worker holds no MIME
+ * machinery, and a type that could change between requests for identical bytes
+ * is a type a cache cannot be given a long TTL against.
+ */
+export const ArtifactManifestEntrySchema = z.object({
+  /** Directory-relative, `/`-separated, no leading slash. */
+  path: z.string().min(1).max(1_024),
+  contentType: z.string().min(1).max(160),
+  sizeBytes: z.number().int().nonnegative(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+}).strict();
+export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>;
+
+/**
+ * The whole of what one version of an artifact is.
+ *
+ * Written once at publish under a version-immutable key and never edited, which
+ * is what makes a long asset cache TTL safe and what lets a prior version be
+ * served by reading an older manifest rather than by reconstructing anything.
+ *
+ * `assets` deliberately excludes the server module: `index.js` is *module, not
+ * asset*, so a request for `/index.js` on an active artifact resolves against
+ * nothing and 404s. No secret can be in it — the sandbox guarantees that — but
+ * serving a site's source to its viewers is surface nobody asked for.
+ */
+export const ArtifactManifestSchema = z.object({
+  version: z.literal(1),
+  artifactId: ArtifactIdSchema,
+  artifactVersion: z.number().int().positive(),
+  mode: ArtifactModeSchema,
+  /** Whether the module exports the storage class, so the facet is run. */
+  stateful: z.boolean(),
+  /** Present when `mode` is `active`; the module's own digest. */
+  serverModuleSha256: z.string().regex(/^[0-9a-f]{64}$/u).nullable(),
+  assets: z.array(ArtifactManifestEntrySchema).max(10_000),
+  totalBytes: z.number().int().nonnegative(),
+  publishedAt: z.string().datetime({ offset: true }),
+}).strict();
+export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
+
+/**
+ * Where a version's bytes live in the region's payload bucket.
+ *
+ * Version-immutable by construction: nothing ever overwrites a key here, so a
+ * republish writes a new prefix and the old one stays readable for as long as a
+ * version row names it.
+ */
+export function artifactAssetKey(artifactId: string, version: number, path: string): string {
+  return `artifact/${artifactId}/v${version}/assets/${path}`;
+}
+
+export function artifactManifestKey(artifactId: string, version: number): string {
+  return `artifact/${artifactId}/v${version}/manifest.json`;
+}
+
+/**
+ * The isolate identity the Worker Loader caches a materialized artifact under.
+ *
+ * Version-scoped, so a republish that changed content mints a new isolate while
+ * an unchanged republish reuses the warm one — which is exactly the caching
+ * contract `LOADER.get` documents, expressed in the key rather than managed.
+ */
+export function artifactIsolateId(artifactId: string, version: number): string {
+  return `artifact:${artifactId}:v${version}`;
+}
+
+const ARTIFACT_HOST_SUFFIX = { global: "-g", eu: "-eu" } as const;
+
+/**
+ * The artifact's hostname label, and the whole of its address.
+ *
+ * **The region rides inside the label rather than as its own dotted segment.**
+ * Cloudflare's Universal SSL covers the apex and a *single* subdomain level, so
+ * `*.rallyusercontent.com` is certificated for free while `*.g.…` — two labels
+ * deep — is not, and would fail the TLS handshake on every artifact open until
+ * Advanced Certificate Manager was bought and configured. Flattening keeps one
+ * wildcard per zone and costs nothing recurring.
+ *
+ * The label is the artifact's own id, which is what lets the serving Worker
+ * reach the right supervisor object with nothing but a `Host` header and no
+ * database: it parses the id back out and names the object from it. A UUID is
+ * region-wide unique by construction, so nothing has to allocate or guarantee
+ * that separately.
+ */
+export function artifactHostLabel(artifactId: string, region: "global" | "eu"): string {
+  return `${artifactId}${ARTIFACT_HOST_SUFFIX[region]}`;
+}
+
+export function artifactOrigin(artifactId: string, region: "global" | "eu", domain: string): string {
+  return `https://${artifactHostLabel(artifactId, region)}.${domain}`;
+}
+
+const HOST_LABEL_PATTERN
+  = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(g|eu)$/u;
+
+/**
+ * Recover the artifact and region a request's `Host` names, or `null`.
+ *
+ * Total and parsing-only: it never throws and never reaches a database, because
+ * it runs on the serving Worker's hot path before anything is authorized. A
+ * host that does not match is not an artifact request, which the caller answers
+ * with the neutral page rather than an error naming what it expected.
+ */
+export function parseArtifactHost(
+  host: string,
+): { artifactId: string; region: "global" | "eu" } | null {
+  const label = host.trim().toLowerCase().split(":")[0]?.split(".")[0] ?? "";
+  const matched = HOST_LABEL_PATTERN.exec(label);
+  if (!matched?.[1] || !matched[2]) return null;
+  return { artifactId: matched[1], region: matched[2] === "eu" ? "eu" : "global" };
+}

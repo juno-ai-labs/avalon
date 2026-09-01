@@ -34,6 +34,7 @@ export * from "./automation-evaluators";
 export * from "./automation-agent";
 export * from "./identifiers";
 
+export * from "./artifacts";
 export * from "./attachment-contracts";
 export * from "./resource-relationships";
 export * from "./projects";

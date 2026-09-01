@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SITE_MANIFEST_MIME_TYPE } from "./artifacts";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
 
 /**
@@ -41,6 +42,7 @@ export const ATTACHMENT_KIND_ENTRIES = [
   { kind: "spreadsheet", description: "a spreadsheet or workbook such as XLSX" },
   { kind: "presentation", description: "a slide presentation such as PPTX" },
   { kind: "text", description: "another readable text, source-code, or structured-data file" },
+  { kind: "site", description: "a live web page or small web app published as a site" },
   { kind: "other", description: "a resource outside the readable or viewable kinds above" },
 ] as const;
 
@@ -53,6 +55,7 @@ const ATTACHMENT_KINDS = ATTACHMENT_KIND_ENTRIES.map((entry) => entry.kind) as [
   "spreadsheet",
   "presentation",
   "text",
+  "site",
   "other",
 ];
 
@@ -202,6 +205,10 @@ export function classifyAttachmentKind(input: {
     if (DOCUMENT_MIME_TYPES.has(mimeType)) return "document";
     if (SPREADSHEET_MIME_TYPES.has(mimeType)) return "spreadsheet";
     if (PRESENTATION_MIME_TYPES.has(mimeType)) return "presentation";
+    // Before the `+json` branch, which would otherwise claim it: a site
+    // manifest is JSON-shaped and is emphatically not a readable text
+    // resource. Its content tools redirect to the Terminal import instead.
+    if (mimeType === SITE_MANIFEST_MIME_TYPE) return "site";
     if (mimeType.startsWith("text/") || STRUCTURED_TEXT_MIME_TYPES.has(mimeType) || mimeType.endsWith("+json") || mimeType.endsWith("+xml")) {
       return "text";
     }
@@ -270,6 +277,28 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
   z.strictObject({
     tool: z.literal("automation_view_resource"),
     arguments: z.strictObject({ resourceIds: z.tuple([CanonicalUuidSchema]) }),
+  }),
+  /**
+   * The one member that is not a content read, and the one that needed an
+   * argument shape decided rather than copied.
+   *
+   * A site's source is not readable through the content tools — there is no
+   * single body to return — so the remediation for a read on one redirects to
+   * the Terminal import that materializes its directory. That widens what a
+   * suggestion may name: every other member here is a read a model can make
+   * blind, and an import writes a tree to the sandbox filesystem.
+   *
+   * What keeps it safe is that only the create-only form is expressible.
+   * `terminal_import_resource` also accepts `destinationPath` and `overwrite`,
+   * and neither appears here, so a suggested import lands on the deterministic
+   * path and refuses a non-empty destination with `destination_exists` rather
+   * than replacing anything. The object is strict, so a producer that tried to
+   * suggest `overwrite: true` is rejected by the sanitizer instead of
+   * forwarded to the model.
+   */
+  z.strictObject({
+    tool: z.literal("terminal_import_resource"),
+    arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
   }),
 ]);
 export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentToolCallSchema>;

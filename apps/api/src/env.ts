@@ -25,6 +25,7 @@ import type {
 import type { RegionalTelemetryBridgeRpcBinding } from "./telemetry/regional-bridge";
 import type { GlobalTelemetryControlRpcBinding } from "./telemetry/control";
 import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
+import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
@@ -65,6 +66,8 @@ export interface Env {
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   SLACK_REACTION_TICKERS: DurableObjectNamespace;
+  /** One supervisor per live web artifact, named by the artifact's own id. */
+  ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
   ACTIVITY_QUEUE: Queue;
   /** Regional durable hand-off from inference capture to Pipeline ingestion. */
   INFERENCE_LAKEHOUSE_QUEUE?: Queue;
@@ -320,6 +323,7 @@ const EnvContractSchema = z.object({
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   SLACK_REACTION_TICKERS: binding<DurableObjectNamespace>(),
+  ARTIFACT_HOSTS: binding<DurableObjectNamespace<ArtifactHostDO>>(),
   ACTIVITY_QUEUE: binding<Queue>(),
   INFERENCE_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
   ANALYTICS_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
