@@ -239,9 +239,7 @@ resource separately.
 - **Every archive path refuses the same notes.** A bulk archive is not a
   shortcut past ownership or a live recording: the sidebar grouping's
   **Archive all** selects only notes the viewer owns and is not recording, so
-  it can never take a note the single-row archive would have refused. It also
-  cannot reach past `SIDEBAR_LIST_LIMIT`, because there is no note pagination:
-  a note the list has no way to show is one nobody could have decided about.
+  it can never take a note the single-row archive would have refused.
 
 ## Boundary
 
@@ -413,6 +411,26 @@ already reads it, so that step is a scheduler and a budget rather than a new
 knob.
 
 ## Changelog
+
+### 2026-09-01 — The note list pages instead of stopping at 250
+
+**What changed:** The sidebar's note list is cursor-paged and its scroll loads
+the next page, so a workspace with more notes than `SIDEBAR_LIST_LIMIT` can
+reach all of them. The mechanism is in
+[`workstream-durable-object.md`](workstream-durable-object.md#changelog).
+
+**Why:** The cap was a ceiling rather than a page — no cursor, no load-more —
+so note 251 was unreachable. Harmless while the list was only read; not
+harmless once a grouping's **Archive all** could select notes the reader had no
+way to see and no way to restore.
+
+**Considered and rejected:** Fencing the archive to the visible window and
+leaving the list capped. That was the interim fix, and it makes 250 part of the
+archive's semantics while still leaving the notes beyond it unmanageable.
+
+**Consequences, and what a future change has to respect:** A note push carries
+a page rather than the list, so anything reading one has to merge when it is
+only the head — replacing unconditionally truncates a reader who has scrolled.
 
 ### 2026-09-01 — A note leaves with the sidebar grouping it sits in
 

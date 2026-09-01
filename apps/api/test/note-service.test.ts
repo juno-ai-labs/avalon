@@ -678,8 +678,11 @@ describe("NoteService", () => {
 
     await ownerService.archive(noteId);
 
-    await expect(ownerService.list(250)).resolves.toEqual({ items: [] });
-    await expect(new NoteService(env, otherAuth).list(250)).resolves.toEqual({ items: [] });
+    // `nextCursor` is part of the page now, and `null` is what says the list
+    // ends here rather than that a further page is being withheld.
+    await expect(ownerService.list(250)).resolves.toEqual({ items: [], nextCursor: null });
+    await expect(new NoteService(env, otherAuth).list(250))
+      .resolves.toEqual({ items: [], nextCursor: null });
     await expect(ownerService.get(noteId)).rejects.toMatchObject({ status: 404, code: "note_not_found" });
     await expect(ownerService.update(noteId, { title: "Renamed after archiving" }))
       .rejects.toMatchObject({ status: 404, code: "note_not_found" });

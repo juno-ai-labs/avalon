@@ -1441,6 +1441,48 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-01 — The note list pages, so nothing in it is out of reach
+
+**What changed:** The sidebar's note list is cursor-paged the way the
+work-stream list beside it is. `NOTE_SIDEBAR_SQL` takes a
+`(last_activity_at, id)` cursor and reads one row past the page to decide
+whether there is another; `listNoteSidebar`, the socket's connect payload, each
+`workspace_sidebar_list` push and `GET /notes` all carry `nextCursor`. On the
+client `useNotesQuery` replaces the socket-owned list — hand-rolled paging over
+a flat cache entry, for the same reason the work-stream query is hand-rolled:
+the versioned applier and `onChangeNoteScope` both write that entry with
+`setQueryData` and `useInfiniteQuery`'s paged shape would strand them. The
+sidebar's existing near-the-bottom handler now asks both lists. A note push
+merges when it is only the head of the list and replaces when it is the whole
+of it.
+
+**Why:** `SIDEBAR_LIST_LIMIT` was a ceiling for notes rather than a page —
+there was no cursor and no load-more anywhere in the product, so note 251 could
+not be reached at all. That was survivable while the list was only read, and
+stopped being survivable when a grouping's **Archive all** could select rows
+the reader had no way to see and could never restore. The interim fix fenced
+the archive to the visible window; paging removes the reason for the fence, so
+the batch surface goes back to naming the complete server-side total, which is
+the contract the work-stream half always had.
+
+**Considered and rejected:** Keeping the fence and leaving the list capped.
+That leaves a workspace with more than 250 notes permanently unable to see or
+manage the rest, and quietly makes 250 part of the archive's semantics.
+Also rejected: an epoch-millisecond cursor matching the work-stream one's
+spelling. `notes.last_activity_at` is an ISO string that the list orders as
+text, so a cursor in any other form has to be converted on every comparison;
+this one carries the stored value verbatim and the id breaks ties, because one
+write can stamp two notes in the same millisecond.
+
+**Consequences, and what a future change has to respect:** A push carries a
+page, not the list, so anything applying one has to decide merge or replace
+from `nextCursor` — replacing unconditionally snaps a scrolled reader back to
+one page with nothing on screen to explain it. Within the range a partial page
+spans it is authoritative, which is what removes an archived note; below that
+range it says nothing, and those rows are corrected by the refetch that walks
+every loaded page. The cursor's ordering must stay the list's ordering: a
+window ordered differently pages over a different list than the one on screen.
+
 ### 2026-09-01 — A grouping's action reaches only what that grouping showed
 
 **What changed:** `batchTargetIds` now carries
@@ -1481,14 +1523,11 @@ notes under that heading as well as the work streams. The same filter selects
 both: WorkspaceDO returns the note IDs beside the work-stream IDs from one
 `batchUpdateTargets` call, so the confirmation counts each half at the same
 instant, and `archiveNotesForBatch` applies the note half in one statement once
-the Queue chunks are published. Notes take four fences the range does not —
-the viewer must own the note, it must not be recording, it must not already be
-archived, and it must be inside the sidebar's own `SIDEBAR_LIST_LIMIT` window.
-The first three are the refusals the single-note archive already makes, so the
-preview's count and the archive agree. The fourth is there because notes have
-no cursor anywhere in the product: past the limit they are unreachable rather
-than unloaded, and an archive cannot be undone. The work-stream half is
-deliberately not fenced that way, because it pages. The dispatch row gained
+the Queue chunks are published. Notes take three fences the range does not —
+the viewer must own the note, it must not be recording, and it must not already
+be archived — which are the same three refusals the single-note archive makes,
+so the preview's count and the archive agree. The note list pages, so the count
+names the complete server-side total the way the work-stream half always has. The dispatch row gained
 `archived_note_count` (migration 26) as that half's receipt; `NULL` is "no note
 archive has run", which is what every pre-existing row and every `mark_read`
 operation means. `mark_read` does not reach notes at all, because a note has no
@@ -1529,10 +1568,10 @@ recording when the archive ran, and has since stopped, reads as taken when it
 was skipped. The range is compared against `notes.last_activity_at`, an ISO
 string, so any timestamp reaching that comparison has to be re-spelled as
 canonical UTC first — an offset that sorts differently would silently select
-the wrong group. The exposable-window fence is tied to the sidebar's own
-ordering and visibility in `NOTE_SIDEBAR_EXPOSABLE_IDS_SQL`; a window that
-ordered differently would expose a different 250 than the list it mirrors, and
-adding note pagination is what would let the fence go.
+the wrong group. The note list's paging is what lets the selection stay
+unbounded: a cursor-fenced `Archive all` would be naming rows the reader can no
+longer reach, and an unbounded one over an *unpaged* list would be naming rows
+they never could.
 
 ### 2026-08-31 — Batch receipts fit inside the object SQLite bind ceiling
 

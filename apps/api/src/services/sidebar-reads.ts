@@ -24,37 +24,46 @@ import type { NoteSummary } from "@rally/contracts";
 /** The sidebar never shows more than this many of either list. */
 export const SIDEBAR_LIST_LIMIT = 250;
 
-/** Parameters: workspace id, viewer id, limit. */
+/**
+ * One page of the note list, newest first.
+ *
+ * The cursor predicate is the mirror of the `ORDER BY` beneath it: strictly
+ * older, or the same instant and a lower id. Two notes can share a
+ * `last_activity_at` — one write stamps both `notes` rows in the same
+ * millisecond — so the id is what makes the order total and the paging exact.
+ * Without it a page boundary landing between two equal timestamps would repeat
+ * a row or skip one.
+ *
+ * Parameters: workspace id, viewer id, cursor timestamp or NULL, cursor
+ * timestamp, cursor id, limit.
+ */
 export const NOTE_SIDEBAR_SQL = `SELECT * FROM notes
   WHERE workspace_id = ? AND archived_at IS NULL
     AND (scope = 'workspace' OR owner_user_id = ?)
+    AND (? IS NULL OR last_activity_at < ?
+         OR (last_activity_at = ? AND id < ?))
   ORDER BY last_activity_at DESC, id DESC
   LIMIT ?`;
 
+/** The cursor that resumes the statement above after `row`. */
+export function noteSidebarCursor(row: { lastActivityAt: string; id: string }): string {
+  return `${row.lastActivityAt}:${row.id}`;
+}
+
 /**
- * The ids of exactly the notes the statement above can put on screen, for a
- * bulk action that must not reach past them.
+ * Split a cursor back into its ordering pair.
  *
- * The work-stream list pages, so a mass action over it deliberately counts more
- * rows than the client is holding: the rest are one scroll away. Notes have no
- * cursor and no load-more anywhere in the product, so past `SIDEBAR_LIST_LIMIT`
- * they are not *unloaded*, they are unreachable — and archiving one cannot be
- * undone. A grouping's **Archive all** is therefore fenced to this window: a
- * workspace with more notes than the limit keeps the rest, and they become
- * archivable when they are visible, which is the only point at which somebody
- * could have decided about them.
- *
- * Its visibility fence and ordering are the sidebar's own and must stay that
- * way — a window that ordered differently would expose a different 250 than the
- * list it claims to mirror.
- *
- * Parameters: workspace id, viewer id, limit.
+ * On the *last* colon: the timestamp half is an ISO string and carries two of
+ * its own, while a UUID carries none.
  */
-export const NOTE_SIDEBAR_EXPOSABLE_IDS_SQL = `SELECT id FROM notes
-  WHERE workspace_id = ? AND archived_at IS NULL
-    AND (scope = 'workspace' OR owner_user_id = ?)
-  ORDER BY last_activity_at DESC, id DESC
-  LIMIT ?`;
+export function parseNoteSidebarCursor(value: string): { lastActivityAt: string; id: string } {
+  const separator = value.lastIndexOf(":");
+  const lastActivityAt = value.slice(0, separator);
+  const id = value.slice(separator + 1);
+  if (!lastActivityAt || !id) throw new Error("note_sidebar_cursor_invalid");
+  return { lastActivityAt, id };
+}
+
 
 /** The `notes` columns the summary is built from. Rows carry more; those are ignored. */
 export const NoteSidebarRowSchema = z.object({

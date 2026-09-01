@@ -1,4 +1,4 @@
-import { IdSchema } from "@rally/contracts";
+import { IdSchema, NoteCursorSchema } from "@rally/contracts";
 import { z } from "zod";
 
 /**
@@ -175,6 +175,8 @@ export const WorkspaceNoteSidebarRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   limit: z.number().int().min(1),
+  /** Resume after this row; absent asks for the newest page. */
+  before: NoteCursorSchema.optional(),
 });
 
 /**
@@ -200,6 +202,7 @@ export const WorkspaceNoteSidebarListSchema = z.strictObject({
     updatedAt: TimestampSchema,
     archivedAt: TimestampSchema.nullable(),
   })),
+  nextCursor: NoteCursorSchema.nullable(),
 });
 
 export const WorkspaceNoteVisibilityRequestSchema = z.strictObject({

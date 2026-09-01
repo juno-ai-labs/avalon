@@ -5,10 +5,10 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { boundParameterChunks } from "./bound-parameters";
 
 import {
-  NOTE_SIDEBAR_EXPOSABLE_IDS_SQL,
   NOTE_SIDEBAR_SQL,
   NoteSidebarRowSchema,
-  SIDEBAR_LIST_LIMIT,
+  noteSidebarCursor,
+  parseNoteSidebarCursor,
   toNoteSummary,
 } from "../services/sidebar-reads";
 import {
@@ -191,19 +191,40 @@ export function workspaceNoteState(
   });
 }
 
-/** The sidebar list, from the same statement the workspace socket serves. */
+/**
+ * One page of the sidebar list, from the same statement the workspace socket
+ * serves.
+ *
+ * Reads `limit + 1` and returns `limit`: the extra row is how the page learns
+ * there is another without a second `COUNT(*)` over the same predicate, and it
+ * is dropped rather than returned. `nextCursor` is `null` exactly when the list
+ * ends here, which is what tells the client to stop asking.
+ */
 export function workspaceNoteSidebar(
   storage: DurableObjectStorage,
   workspaceId: string,
   userId: string,
   limit: number,
-): NoteSummary[] {
-  return storage.sql.exec<Record<string, SqlStorageValue>>(
+  before?: string,
+): { items: NoteSummary[]; nextCursor: string | null } {
+  const cursor = before === undefined ? null : parseNoteSidebarCursor(before);
+  const rows = storage.sql.exec<Record<string, SqlStorageValue>>(
     NOTE_SIDEBAR_SQL,
     workspaceId,
     userId,
-    limit,
+    cursor?.lastActivityAt ?? null,
+    cursor?.lastActivityAt ?? "",
+    cursor?.lastActivityAt ?? "",
+    cursor?.id ?? "",
+    limit + 1,
   ).toArray().map((row) => toNoteSummary(NoteSidebarRowSchema.parse(row)));
+  const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+  const last = items.at(-1);
+  return {
+    items,
+    nextCursor: hasMore && last ? noteSidebarCursor(last) : null,
+  };
 }
 
 /**
@@ -324,12 +345,10 @@ export function archiveWorkspaceNote(
  * live meeting window 404s the next segment save while capture keeps running;
  * and `archived_at` because an already-archived note is not in the group.
  *
- * The fourth fence is the sidebar's own window. The list is capped at
- * `SIDEBAR_LIST_LIMIT` and notes have no cursor anywhere in the product, so
- * beyond it they are unreachable rather than merely unloaded — and an archive
- * cannot be undone. `NOTE_SIDEBAR_EXPOSABLE_IDS_SQL` holds the ordering and
- * visibility that decide which notes those are; the work-stream half is
- * deliberately *not* fenced this way, because it pages.
+ * There is deliberately no fourth fence for the list's page size. The note
+ * list pages now, so a note below the fold is one scroll away rather than
+ * unreachable, and the confirmation's job is to name the complete server-side
+ * total — the same contract the work-stream half has always had.
  *
  * The preview counts this same selection, so the number in the confirmation is
  * the number of notes that will actually go.
@@ -338,8 +357,7 @@ const NOTE_BATCH_SELECTION_FENCE = `workspace_id = ? AND archived_at IS NULL
       AND owner_user_id = ?
       AND recording_status != 'recording'
       AND (? IS NULL OR last_activity_at >= ?)
-      AND (? IS NULL OR last_activity_at < ?)
-      AND id IN (${NOTE_SIDEBAR_EXPOSABLE_IDS_SQL})`;
+      AND (? IS NULL OR last_activity_at < ?)`;
 
 /**
  * `notes.last_activity_at` is an ISO string written by the server's own clock,
@@ -362,21 +380,10 @@ function noteBatchBindings(
   workspaceId: string,
   userId: string,
   filter: WorkstreamBatchFilter,
-): (string | number | null)[] {
+): (string | null)[] {
   const atOrAfter = noteRangeBound(filter.lastActivityAt?.atOrAfter);
   const before = noteRangeBound(filter.lastActivityAt?.before);
-  return [
-    workspaceId,
-    userId,
-    atOrAfter,
-    atOrAfter,
-    before,
-    before,
-    // The window subquery's own three, in its own order.
-    workspaceId,
-    userId,
-    SIDEBAR_LIST_LIMIT,
-  ];
+  return [workspaceId, userId, atOrAfter, atOrAfter, before, before];
 }
 
 /**
