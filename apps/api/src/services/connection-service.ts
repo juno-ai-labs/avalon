@@ -491,7 +491,7 @@ export class ConnectionService {
     scope: Scope;
     capabilities: string[];
     connectionId?: string;
-    desktopHandoffVersion?: 1 | 2;
+    desktopHandoffVersion: 1 | 2;
   }): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
@@ -522,7 +522,7 @@ export class ConnectionService {
       scope: input.scope,
       capabilityCount: capabilities.length,
       reconnect: input.connectionId !== undefined,
-      desktopHandoffVersion: input.desktopHandoffVersion ?? 1,
+      desktopHandoffVersion: input.desktopHandoffVersion,
     });
     const adapter = this.registry().get("google");
     const authorization = await adapter.beginAuthorization?.({
@@ -661,7 +661,7 @@ export class ConnectionService {
       scope: Scope;
       capabilities: string[];
       connectionId?: string;
-      desktopHandoffVersion?: 1 | 2;
+      desktopHandoffVersion: 1 | 2;
     },
   ): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
@@ -727,7 +727,7 @@ export class ConnectionService {
       scope: input.scope,
       capabilityCount: capabilities.length,
       reconnect: input.connectionId !== undefined,
-      desktopHandoffVersion: input.desktopHandoffVersion ?? 1,
+      desktopHandoffVersion: input.desktopHandoffVersion,
     });
     return { url: authorization.url, attemptId };
   }
@@ -736,7 +736,7 @@ export class ConnectionService {
     scope: Scope;
     capabilities: string[];
     connectionId?: string;
-    desktopHandoffVersion?: 1 | 2;
+    desktopHandoffVersion: 1 | 2;
   }): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
@@ -772,7 +772,7 @@ export class ConnectionService {
       scope: input.scope,
       capabilityCount: capabilities.length,
       reconnect: input.connectionId !== undefined,
-      desktopHandoffVersion: input.desktopHandoffVersion ?? 1,
+      desktopHandoffVersion: input.desktopHandoffVersion,
     });
     const url = new URL(`https://github.com/apps/${encodeURIComponent(this.env.GITHUB_APP_SLUG)}/installations/new`);
     url.searchParams.set("state", state);
@@ -1390,7 +1390,7 @@ export class ConnectionService {
     };
   }
 
-  async reconnect(id: string, desktopHandoffVersion: 1 | 2 = 1): Promise<ConnectorOAuthStart> {
+  async reconnect(id: string, desktopHandoffVersion: 1 | 2): Promise<ConnectorOAuthStart> {
     const connection = await this.loadAuthorized(id);
     if (connection.connector_type === "google") {
       return this.beginGoogle({
