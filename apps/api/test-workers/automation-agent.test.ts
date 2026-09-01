@@ -1258,6 +1258,16 @@ describe("an automation the work stream owns", () => {
     });
   }
 
+  /** The most recently queued workspace projection, as the outbox holds it. */
+  function newestProjection(): Promise<Record<string, unknown>> {
+    return runInDurableObject(automationStub(), (_instance: AutomationAgent, state) =>
+      JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM automation_outbox
+          WHERE effect_kind = 'workspace_projection'
+          ORDER BY created_at DESC, effect_id DESC LIMIT 1`,
+      ).one().payload_json) as Record<string, unknown>);
+  }
+
   function lifecycleAndReason(): Promise<{ lifecycle: string; paused_reason: string | null }> {
     return runInDurableObject(automationStub(), (_instance: AutomationAgent, state) =>
       state.storage.sql.exec<{ lifecycle: string; paused_reason: string | null }>(
@@ -1279,6 +1289,16 @@ describe("an automation the work stream owns", () => {
     // able to tell what the archive paused from what a person paused.
     expect(await lifecycleAndReason())
       .toEqual({ lifecycle: "paused", paused_reason: "workstream_archived" });
+    // The projection this pause queues has to carry the owning work stream
+    // beside the scope. The directory pairs the two with a CHECK, so a
+    // projection naming one without the other is rejected there — as an
+    // asynchronous outbox failure, which no assertion about this object's own
+    // lifecycle would ever notice.
+    expect(await newestProjection()).toMatchObject({
+      lifecycle: "paused",
+      scope: "workstream",
+      owningWorkstreamId: OWNING_WORKSTREAM_ID,
+    });
 
     expect(await stub.resumeForUnarchivedWorkstream({
       schemaVersion: 1,
