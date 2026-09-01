@@ -343,6 +343,39 @@ describe("connector tools selected for harness runs", () => {
     expect(withAzure.modeByTool.get("multimodal_generation_generate_audio")).toBe("write");
   });
 
+  it("authorizes every built-in plugin this run registered and denies unregistered or invented ids", async () => {
+    const database = new ToolSelectionDatabase([]);
+    const selected = await __integrationTesting.loadHarnessTools(createTestEnv({
+      ...env(database),
+      FIRECRAWL_API_KEY: "firecrawl-test-key",
+      AZURE_INFERENCE_ENDPOINT: "https://monad-prod-resource.services.ai.azure.com",
+      AZURE_INFERENCE_API_KEY: "azure-test-key",
+    }), workflowInput());
+
+    // Derived from the registered surface rather than a list repeated here: a
+    // built-in added later is covered by this test on the day it registers,
+    // which is the property whose absence let image generation ship denied.
+    const registeredBuiltinIds = selected.plugins
+      .filter((plugin) => !selected.frozenConnections.has(plugin.canonicalId))
+      .map((plugin) => plugin.canonicalId);
+    expect(registeredBuiltinIds).toContain("rally:multimodal-generation");
+    expect(registeredBuiltinIds).toContain("rally:web");
+    expect(registeredBuiltinIds).toContain("rally:workstream");
+    // The derivation this change made load-bearing, checked against a set the
+    // test built without it: a built-in registered under a `connection:` id
+    // would be counted by one and not the other.
+    expect(selected.builtinPluginIds).toEqual(new Set(registeredBuiltinIds));
+    for (const pluginId of registeredBuiltinIds) {
+      expect(__integrationTesting.builtinPluginAuthorization(pluginId, selected)).toBe("authorized");
+    }
+
+    // Terminal is absent without its provider configuration, so a restored
+    // activation hint naming it, or an id the model invented, must fail closed.
+    expect(registeredBuiltinIds).not.toContain("rally:terminal");
+    expect(__integrationTesting.builtinPluginAuthorization("rally:terminal", selected)).toBe("denied");
+    expect(__integrationTesting.builtinPluginAuthorization("rally:not-a-plugin", selected)).toBe("denied");
+  });
+
   it("resolves durable receipt policy from canonical identity, never a provider wire alias", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
@@ -632,6 +665,39 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.map((tool) => tool.definition.name)).toEqual(["drive.search"]);
   });
 
+  it("keeps the child's built-in authorization set narrower than the parent's", async () => {
+    const database = new ToolSelectionDatabase([]);
+    const parentInput = workflowInput();
+    const runtimeEnv = createTestEnv({
+      ...env(database),
+      FIRECRAWL_API_KEY: "firecrawl-test-key",
+      AZURE_INFERENCE_ENDPOINT: "https://monad-prod-resource.services.ai.azure.com",
+      AZURE_INFERENCE_API_KEY: "azure-test-key",
+    });
+    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
+    expect(__integrationTesting.builtinPluginAuthorization("rally:multimodal-generation", parentTools))
+      .toBe("authorized");
+
+    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
+      env: runtimeEnv,
+      parentInput,
+      childInput: childWorkflowInput(parentInput),
+      parentHarnessTools: parentTools,
+      selectedPluginIds: [],
+      assertChildOwned: async () => undefined,
+    });
+
+    // A sub-agent assembles its own built-ins, so authorization has to be
+    // answered from the child's set. Inheriting the parent's would activate a
+    // plugin the child never registered — and multimodal generation is the
+    // case that matters, since it is all writes.
+    expect(childTools.builtinPluginIds).toEqual(new Set(["rally:workstream", "rally:web"]));
+    expect(__integrationTesting.builtinPluginAuthorization("rally:multimodal-generation", childTools))
+      .toBe("denied");
+    expect(__integrationTesting.builtinPluginAuthorization("rally:terminal", childTools)).toBe("denied");
+    expect(__integrationTesting.builtinPluginAuthorization("rally:web", childTools)).toBe("authorized");
+  });
+
   it("does not give an inbound-email child an outbound Firecrawl channel", async () => {
     const database = new ToolSelectionDatabase([]);
     const parentInput = workflowInput();
@@ -661,6 +727,10 @@ describe("connector tools selected for harness runs", () => {
     ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("search");
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("fetch");
+    // Stripping the tools leaves no web plugin to register, so authorization
+    // has to refuse a `load_plugin` for it rather than rely on the empty surface.
+    expect(childTools.builtinPluginIds).toEqual(new Set(["rally:workstream"]));
+    expect(__integrationTesting.builtinPluginAuthorization("rally:web", childTools)).toBe("denied");
   });
 
   it("does not add plugin, schema, or result ceilings to child runs", () => {
