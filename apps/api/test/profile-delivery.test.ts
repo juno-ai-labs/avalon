@@ -22,29 +22,31 @@ describe('PostHog profile job delivery', () => {
       (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled)
       VALUES ('00000000-0000-4000-8000-000000000001', 'google-1', 'ada@example.com', 'Ada', ?, ?, 1)`)
       .run('2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+    const sendProfileBatch = vi.fn(async () => ({
+      result: 'delivered' as const,
+      requestId: 'posthog-profile-request-1',
+      retryAfterMs: null,
+    }));
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global', SESSION_SIGNING_KEY: 'test-key',
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      POSTHOG_DELIVERY: { sendProfileBatch },
     });
     const capability = (await new TelemetryBootstrapService(env).bootstrap(
       '018f22f2-4c22-7abc-8def-0123456789ab', 'US',
     )).capability;
     await linkAnonymousTelemetry(env, { userId: asUserId('00000000-0000-4000-8000-000000000001'), workspaceId: null, region: 'global' }, capability);
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 200 }));
-    vi.stubGlobal('fetch', fetch);
-
     await expect(processProfileOutbox(env)).resolves.toEqual({ selected: 1, delivered: 1, retried: 0, terminal: 0, suppressed: 0 });
-    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
-    expect(body.batch[0]).toMatchObject({
-      event: '$identify',
-      properties: {
-        $anon_distinct_id: '018f22f2-4c22-7abc-8def-0123456789ab',
-        $set: { email: 'ada@example.com', name: 'Ada' },
-      },
-    });
+    expect(sendProfileBatch).toHaveBeenCalledWith(expect.objectContaining({
+      rows: [expect.objectContaining({
+        kind: 'epoch_transition',
+        anonymousEpochId: '018f22f2-4c22-7abc-8def-0123456789ab',
+        properties: { email: 'ada@example.com', name: 'Ada' },
+      })],
+    }));
     expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get()).toEqual({ state: 'acknowledged' });
     await processProfileOutbox(env);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(sendProfileBatch).toHaveBeenCalledTimes(1);
     database.close();
   });
 
@@ -62,8 +64,8 @@ describe('PostHog profile job delivery', () => {
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global',
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      POSTHOG_DELIVERY: { sendProfileBatch: vi.fn() },
     });
-    vi.stubGlobal('fetch', vi.fn());
     await expect(processProfileOutbox(env)).resolves.toMatchObject({ suppressed: 1 });
     expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get()).toEqual({ state: 'suppressed' });
     database.close();
@@ -85,12 +87,16 @@ describe('PostHog profile job delivery', () => {
       '2026-08-12T19:02:00.000Z',
       deleteAt,
     );
+    const sendProfileBatch = vi.fn(async () => ({
+      result: 'delivered' as const,
+      requestId: 'posthog-profile-request-2',
+      retryAfterMs: null,
+    }));
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global',
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      POSTHOG_DELIVERY: { sendProfileBatch },
     });
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 200 }));
-    vi.stubGlobal('fetch', fetch);
 
     await expect(processProfileOutbox(env)).resolves.toEqual({
       selected: 3, delivered: 1, retried: 0, terminal: 2, suppressed: 0,
@@ -101,11 +107,14 @@ describe('PostHog profile job delivery', () => {
         { id: 'job-malformed', state: 'terminal', attempt_count: 1 },
         { id: 'job-valid', state: 'acknowledged', attempt_count: 1 },
       ]);
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)).batch[0]).toMatchObject({
-      event: '$set',
-      properties: { distinct_id: 'person-valid', $set: { name: 'Valid user' } },
-    });
+    expect(sendProfileBatch).toHaveBeenCalledTimes(1);
+    expect(sendProfileBatch).toHaveBeenCalledWith(expect.objectContaining({
+      rows: [expect.objectContaining({
+        kind: 'person_profile',
+        destinationAnalyticsId: 'person-valid',
+        properties: { name: 'Valid user' },
+      })],
+    }));
     database.close();
   });
 });

@@ -111,6 +111,10 @@
       "service": "avalon-api-terminal-global"
     },
     {
+      "binding": "POSTHOG_DELIVERY",
+      "service": "avalon-api-posthog-global"
+    },
+    {
       "binding": "EU_IDENTITY_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "RegionalIdentityBridge"

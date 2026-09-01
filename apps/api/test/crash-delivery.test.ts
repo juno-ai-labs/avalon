@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { gunzipSync } from 'node:zlib';
 import { CrashIngestService } from '../src/telemetry/crash-ingest';
 import { processPendingCrashReports } from '../src/telemetry/crash-processing';
 import {
@@ -42,9 +41,15 @@ describe('Global native crash delivery', () => {
       delete: vi.fn(async (key: string) => { objects.delete(key); }),
     });
     const report = { status: 'ok', crash_info: { type: 'EXC_BAD_ACCESS' }, threads: [{ frames: [{ function: 'main' }] }] };
+    const sendCrashBatch = vi.fn(async () => ({
+      result: 'delivered' as const,
+      requestId: 'posthog-crash-request-1',
+      retryAfterMs: null,
+    }));
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global', TELEMETRY_PAYLOADS: bucket,
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      POSTHOG_DELIVERY: { sendCrashBatch },
       CRASH_SYMBOLICATOR: createCloudflareTestBinding<DurableObjectNamespace<CrashSymbolicatorContainer>>({
         idFromName: () => createTestDurableObjectId('crash-symbolicator'),
         get: () => ({
@@ -66,33 +71,24 @@ describe('Global native crash delivery', () => {
       dump, subjectUserId: 'user-1', rateLimitSubject: 'user-1',
     });
     await processPendingCrashReports(env);
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 200 }));
-    vi.stubGlobal('fetch', fetch);
 
     await expect(processCrashOutbox(env)).resolves.toEqual({ selected: 1, delivered: 1, retried: 0, terminal: 0, suppressed: 0 });
-    const requestBody = fetch.mock.calls[0]?.[1]?.body;
-    const encoded = requestBody instanceof Blob
-      ? new Uint8Array(await requestBody.arrayBuffer())
-      : new TextEncoder().encode(String(requestBody));
-    const headers = new Headers(fetch.mock.calls[0]?.[1]?.headers);
-    const body = JSON.parse(headers.get('content-encoding') === 'gzip'
-      ? Buffer.from(gunzipSync(encoded)).toString('utf8')
-      : new TextDecoder().decode(encoded));
-    expect(body.batch[0]).toMatchObject({
-      event: '$exception',
-      properties: {
-        $process_person_profile: true,
-        $session_id: '018f22f2-4c22-7abc-8def-0123456789ad',
+    expect(sendCrashBatch).toHaveBeenCalledWith(expect.objectContaining({
+      host: 'https://us.i.posthog.com',
+      projectToken: 'phc_test',
+      rows: [expect.objectContaining({
+        processPersonProfile: true,
+        launchId: '018f22f2-4c22-7abc-8def-0123456789ad',
         channel: 'stable',
-        native_crash_report: expect.objectContaining({
+        report: expect.objectContaining({
           status: 'symbolicated',
           crash_type: 'EXC_BAD_ACCESS',
           mechanism: 'minidump',
           handled: false,
           process_role: 'renderer',
         }),
-      },
-    });
+      })],
+    }));
     expect(database.prepare('SELECT destination_state FROM telemetry_crash_reports').get())
       .toEqual({ destination_state: 'delivered' });
     database.close();

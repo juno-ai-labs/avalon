@@ -48,7 +48,8 @@ test('CI distributes the expensive verification work across independent lanes', 
   assert.equal(
     matrixCommand(workflow, 'typecheck-and-build-invariants'),
     'pnpm typecheck && pnpm --filter @rally/api build && '
-      + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/api build:pricing && '
+      + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/api build:posthog && '
+      + 'pnpm --filter @rally/api build:pricing && '
       + 'pnpm --filter @rally/desktop test:release',
   );
   assert.equal(
@@ -138,6 +139,7 @@ test('CI still runs every repository quality gate', async () => {
     'pnpm typecheck',
     'pnpm --filter @rally/api build',
     'pnpm --filter @rally/api build:eu',
+    'pnpm --filter @rally/api build:posthog',
     'pnpm --filter @rally/api build:pricing',
     'pnpm --filter @rally/desktop test:release',
     'pnpm test:scripts',
