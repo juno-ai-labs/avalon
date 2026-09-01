@@ -159,6 +159,9 @@ const FILE_KIND_LABELS: Record<AttachmentKind, string> = {
   spreadsheet: 'Spreadsheet',
   presentation: 'Deck',
   text: 'Text',
+  // A page people open, not a file they download — so the chip says what it
+  // is rather than what it is made of.
+  site: 'Site',
   other: 'File',
 };
 

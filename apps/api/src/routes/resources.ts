@@ -41,6 +41,25 @@ const ArtifactOpenResultSchema = z.object({
   mode: z.enum(["static", "active"]),
   stateful: z.boolean(),
 }).strict();
+const tableParam = idParam.extend({
+  // Model-designed names, so the shape is bounded but not otherwise assumed;
+  // whether the table exists is answered by the live schema, not by this.
+  table: z.string().min(1).max(200),
+});
+const tableQuery = z.object({ offset: z.coerce.number().int().nonnegative().default(0) });
+const ArtifactDataSchemaSchema = z.object({
+  tables: z.array(z.object({
+    name: z.string(),
+    columns: z.array(z.object({ name: z.string(), type: z.string() })),
+    rowCount: z.number().int().nonnegative(),
+  })),
+}).strict();
+const ArtifactDataPageSchema = z.object({
+  // Visitor-written values under model-designed columns: untrusted content the
+  // renderer displays as text and never as markup.
+  rows: z.array(z.record(z.string(), z.unknown())),
+  csv: z.string(),
+}).strict();
 const ArtifactErrorListSchema = z.array(z.object({
   occurredAt: z.number().int().nonnegative(),
   version: z.number().int().positive(),
@@ -100,6 +119,30 @@ resourceRoutes.get("/:id/artifact/errors", zValidator("param", idParam), async (
   c.json(ArtifactErrorListSchema.parse(
     await new ArtifactOpenService(c.env, getAuth(c)).errors(c.req.valid("param").id),
   )),
+);
+/** The tables a stateful artifact keeps, for the rail's Data view. */
+resourceRoutes.get("/:id/artifact/data", zValidator("param", idParam), async (c) =>
+  c.json(ArtifactDataSchemaSchema.parse(
+    await new ArtifactOpenService(c.env, getAuth(c)).describeData(c.req.valid("param").id),
+  )),
+);
+/**
+ * One page of one table, as rows and as CSV.
+ *
+ * Both come from one read, so the export can never disagree with what the view
+ * showed. The table name is admitted against the live schema inside the facet.
+ */
+resourceRoutes.get(
+  "/:id/artifact/data/:table",
+  zValidator("param", tableParam),
+  zValidator("query", tableQuery),
+  async (c) => {
+    const param = c.req.valid("param");
+    return c.json(ArtifactDataPageSchema.parse(
+      await new ArtifactOpenService(c.env, getAuth(c))
+        .pageData(param.id, param.table, c.req.valid("query").offset),
+    ));
+  },
 );
 resourceRoutes.get("/:id/versions", zValidator("param", idParam), async (c) =>
   c.json(ResourceRevisionListSchema.parse(
