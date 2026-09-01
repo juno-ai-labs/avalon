@@ -1302,7 +1302,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * unchanged; only the type is new, and `message_type` carries no CHECK, so
    * nothing here is a migration.
    *
-   * A retry after a crash lands the same row once and wakes the room once.
+   * A retry after a crash lands the same row once.
+   *
+   * **It does not yet wake the room.** Waking is the pending-input path — an
+   * admitted input produces an `activate_substream_loop` request when the loop
+   * is idle, which is how an external Slack message starts a run — and this
+   * appends canonically instead. The row lands, the room reads it, and the
+   * agent sees it the next time it runs for its own reasons; starting a run on
+   * arrival is the other half and is not written here rather than half-written.
    */
   async appendAutomationActivation(input: unknown): Promise<{
     outcome: "appended" | "replayed" | "refused";
