@@ -206,6 +206,7 @@ function workflowInput(deliveryTargets: DeliveryTarget[] = [{
       activitySourcePluginIds: {},
       connectorBindings: {},
       deliveryTargets,
+      owningWorkstreamId: null,
       modelOverride: null,
       executionPrincipal: { type: "user", userId: asUserId(OWNER) },
       trigger: { kind: "manual", requestedByUserId: asUserId(OWNER) },
