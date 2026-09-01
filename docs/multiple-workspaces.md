@@ -80,7 +80,9 @@ If the meeting guard refuses the change, the credential is missing, or regional
 membership has been revoked, activation fails closed: the current workspace and
 route remain unchanged and the deep-link failure window explains that the target
 could not be accessed. The target pair never substitutes for the regional API's
-membership check.
+membership check. The regional denial text includes “access is unavailable,” so
+the desktop classifies that exact denial before its broader transient-outage
+wording and does not tell a revoked member to check their connection.
 
 Settings opens in a separate window. When an addressed Settings, connector, or
 Slack handoff changes workspaces, the main window behind it moves to that
@@ -234,11 +236,14 @@ best-effort remote revocation.
 
 **What changed:** An addressed Settings, connector-result, or Slack handoff that
 changes workspaces resets the main window behind Settings to the new workspace's
-landing page. Same-workspace handoffs preserve the current route.
+landing page. Same-workspace handoffs preserve the current route, and regional
+membership denials retain access-failure wording through Electron IPC.
 
 **Why:** Real-window connector verification showed that authorization remained
 correct but closing Settings could expose the previous workspace's resource
-route, which then failed to load under the newly active credential.
+route, which then failed to load under the newly active credential. A suspended
+local membership also proved that the server's “access is unavailable” denial
+was being mistaken for a network outage.
 
 **Considered and rejected:** Leaving the stale route to fail closed, and always
 resetting the main window. The first turns a successful connector return into a

@@ -555,9 +555,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         await action(activated.api);
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : '';
+        const workspaceAccessDenied = /workspace[_ ]access(?:[_ ]is)?[_ ](?:denied|unavailable)/iu.test(message);
         reportDeepLinkFailure(
           /sign in/iu.test(message)
             ? message
+            : workspaceAccessDenied
+              ? 'Rally could not access the workspace this link belongs to.'
             : /reach|network|offline|timeout|unavailable/iu.test(message)
               ? 'Rally could not reach that workspace. Check your connection, then reopen this link.'
               : 'Rally could not access the workspace this link belongs to.',
