@@ -1117,7 +1117,17 @@ checked-in Monad Azure binding, and both through a flag variation naming them â€
 but neither could be *pinned*, which is the only way a developer selects a model
 per work stream. The gap was in the closed list alone, not in routing.
 
-Reordering was safe because nothing reads position 0. The contract's own comment
+**What the reorder did break** is prose that had quietly fused two facts: that
+`x-ai/grok-4.3` was first in the list, and that it is what
+`agent-model-workstream` serves. Step 7 of the desktop model-selector acceptance
+procedure in [`e2e.md`](e2e.md) said "pin explicitly to the first listed model"
+and expected the trigger to read **Grok 4.3**, which after the reorder pins
+Grok 4.6 and waits for a label that never appears. It now names Grok 4.3 as the
+flag's default and adds Grok 4.6 as the first entry, so the step proves the
+control reads a pin rather than a position. Step 3's model count went the same
+way and is now stated as the contract rather than a number.
+
+Reordering was otherwise safe because nothing reads position 0. The contract's own comment
 claimed the first entry was what the selector showed before anything was chosen,
 and that stopped being true when the unpinned state became a row of its own: the
 menu renders `UNPINNED_AGENT_MODEL` above every group and labels it **Default**,
