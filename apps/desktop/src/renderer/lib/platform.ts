@@ -434,6 +434,25 @@ const browserBridge: RallyDesktopBridge = {
   async openExternal(url) {
     window.open(url, '_blank', 'noopener,noreferrer');
   },
+  // The browser build has no main process to composite a view, and an iframe
+  // is exactly what the desktop's design refuses. So the preview is absent
+  // rather than approximated: `present` answers `false`, and the rail shows the
+  // same "open it in your browser" state it shows when a preview cannot render.
+  async presentArtifactPreview() {
+    return false;
+  },
+  async setArtifactPreviewBounds() {
+    // Nothing is composited, so there is nothing to move.
+  },
+  async setArtifactPreviewHidden() {
+    // Nothing is composited, so there is nothing to hide.
+  },
+  async closeArtifactPreview() {
+    // Nothing is composited, so there is nothing to tear down.
+  },
+  async popOutArtifact(request) {
+    window.open(request.url, '_blank', 'noopener,noreferrer');
+  },
   async openSettings(section) {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
     window.location.hash = `#${target}`;

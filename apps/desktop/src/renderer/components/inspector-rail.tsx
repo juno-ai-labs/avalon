@@ -33,6 +33,7 @@ import { type RailInspector, type RailVariant, useUiStore } from '../lib/ui-stor
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { ResourceIcon } from './markdown-citations';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, Modal, StatusDot } from './primitives';
+import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
 import { MarkdownBody } from './workstream-blocks';
 import { RailSurface } from './rail-surface';
 
@@ -46,6 +47,21 @@ interface InspectorRailProps {
    * where the detail stays the metadata card it has always been.
    */
   loadResourceContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
+  /**
+   * Everything the live-artifact detail needs, or absent.
+   *
+   * Absent is how the feature is off: a surface with no API session cannot mint
+   * access, and the `live-artifacts-enabled` flag decides whether the caller
+   * passes this at all. A site then falls back to the ordinary resource card,
+   * which is a working outcome rather than a hidden one.
+   */
+  siteArtifacts?: {
+    openArtifact: SiteResourceDetailProps['openArtifact'];
+    describeData: SiteResourceDetailProps['describeData'];
+    loadTable: SiteResourceDetailProps['loadTable'];
+    loadErrors: SiteResourceDetailProps['loadErrors'];
+    surface: SiteResourceDetailProps['surface'];
+  };
   workstream?: WorkstreamDetail;
   /**
    * The automations this work stream owns, newest first.
@@ -477,7 +493,16 @@ function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' |
  */
 function readableAsText(resource: WorkstreamResource): boolean {
   if (!resource.contentAvailable) return false;
-  return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) !== 'image';
+  const kind = classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType });
+  // A site has no single body to read — its stored content is a manifest, not a
+  // page — so the text preview would render the index rather than the site.
+  // Its own detail renders the page itself instead.
+  return kind !== 'image' && kind !== 'site';
+}
+
+/** Whether this resource is a live artifact Rally serves rather than a file. */
+function isSiteResource(resource: WorkstreamResource): boolean {
+  return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) === 'site';
 }
 
 function isImageResource(resource: WorkstreamResource): boolean {
@@ -702,15 +727,34 @@ function InspectorDetail({
   workstream,
   onRefreshResource,
   refreshingResourceId,
+  siteArtifacts,
 }: Pick<
   InspectorRailProps,
   'loadResourceContent' | 'workstream' | 'onRefreshResource' | 'refreshingResourceId'
+  | 'siteArtifacts'
 >): React.JSX.Element | null {
   const inspector = useUiStore((state) => state.inspector);
   if (!inspector || !workstream) return null;
   const resource = inspector.type === 'resource' ? workstream.resources.find((item) => item.id === inspector.id) : undefined;
 
   if (resource) {
+    // A live artifact is a page people open, not a record to describe. Behind
+    // the flag, because this is presentation: with it off a site falls back to
+    // the ordinary resource card, which still lists it, versions it, and lets
+    // it be removed. Nothing that protects the artifact is scoped by this.
+    if (siteArtifacts && isSiteResource(resource)) {
+      return (
+        <SiteResourceDetail
+          describeData={siteArtifacts.describeData}
+          loadErrors={siteArtifacts.loadErrors}
+          loadTable={siteArtifacts.loadTable}
+          openArtifact={siteArtifacts.openArtifact}
+          resourceId={resource.id}
+          surface={siteArtifacts.surface}
+          title={resource.title}
+        />
+      );
+    }
     // Direction says whether this work stream consumed or produced the
     // resource; the server-computed adapter capability says whether its
     // connector can actually fulfill a re-fetch.
@@ -880,6 +924,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
             onRefreshResource={props.onRefreshResource}
             refreshingResourceId={props.refreshingResourceId}
+            {...(props.siteArtifacts ? { siteArtifacts: props.siteArtifacts } : {})}
             workstream={props.workstream}
           />
         ) : railVariant === 'context' ? (

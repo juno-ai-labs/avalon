@@ -1108,6 +1108,33 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
     [api],
   );
+  /**
+   * Everything the live-artifact detail needs, or `undefined`.
+   *
+   * `undefined` is how the feature is off — the rail then renders a site as the
+   * ordinary resource card, which still lists, versions, and removes it. The
+   * flag gates presentation only: an artifact's authorization is structural and
+   * holds whether or not this is passed.
+   */
+  const siteArtifacts = useMemo(() => {
+    if (!api || featureFlags.data?.liveArtifactsEnabled !== true) return undefined;
+    const bridge = window.rally;
+    if (!bridge) return undefined;
+    return {
+      openArtifact: (resourceId: string) => api.openArtifact(resourceId),
+      describeData: (resourceId: string) => api.describeArtifactData(resourceId),
+      loadTable: (resourceId: string, table: string) => api.readArtifactTable(resourceId, table),
+      loadErrors: (resourceId: string) => api.readArtifactErrors(resourceId),
+      surface: {
+        present: bridge.presentArtifactPreview,
+        setBounds: bridge.setArtifactPreviewBounds,
+        close: bridge.closeArtifactPreview,
+        popOut: bridge.popOutArtifact,
+        copyText: bridge.copyText,
+        openExternal: bridge.openExternal,
+      },
+    };
+  }, [api, featureFlags.data?.liveArtifactsEnabled]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
   // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
@@ -2336,6 +2363,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data}
         resourceVersionsError={resourceVersions.error?.message}
+        {...(siteArtifacts ? { siteArtifacts } : {})}
         workstream={displayedDetail}
         workstreamAutomations={workstreamAutomations.data}
         workstreamAutomationsError={workstreamAutomations.error?.message}

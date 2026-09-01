@@ -34,6 +34,7 @@ exists.
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
 | `apps/api/src/services/artifact-open-service.ts` | The only door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. |
+| `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The rail's site detail: the pane it measures and hands over, the actions, the Data view, and the error log. |
 | `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp, the shared isolation contract, and the overlay rule. |
 
 ## How it works
@@ -169,6 +170,10 @@ is the only place that can forward into it.
   composites the preview over the rail; the renderer can only *ask for an
   artifact*, and the URL it supplies is checked here against the serving domain
   on a label boundary before anything loads.
+- **The pane distinguishes "not attempted" from "refused".** A boolean cannot,
+  and the gap between access arriving and the main process answering is not a
+  failure — a component that used one flashes an unavailable message on every
+  open of a page that is about to work.
 - **Everything the renderer measures is a request, not an instruction.** The
   preview rectangle is clamped to the window, because a wrong or hostile one
   would paint artifact content over the chrome a person needs to escape it. And
@@ -256,6 +261,7 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-site-publish.test.ts` | Kind resolution, the one-file refusal, the storage-class check, content types, the zip, and the asymmetric transition. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
+| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The rail detail: that it measures and hands over rather than embedding, that Copy link carries no code, that the Data panel only exists for a site that keeps data, and that the pane never flashes its unavailable state. |
 | `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, and the overlay collapse. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
@@ -347,10 +353,10 @@ zip); and an `<iframe>` for the rail preview (it would widen the renderer CSP to
 wildcard artifact host and graft remote model-authored content into the
 application DOM).
 
-**Not yet built:** the renderer half of the desktop surfaces — the rail's site
-resource detail, the region it reports for the preview, the Data view and its
-CSV export, and the pop-out window's chrome. The main process's side of all of
-them is here and tested, as are the API routes they call; what is missing is the
-React that calls them. The `live-artifacts-enabled` flag exists and gates them;
-nothing that protects data is scoped by it, so an artifact's authorization holds
-with the flag off.
+**Not yet built:** the rail's site detail exists and is tested but is not yet
+*mounted* — `inspector-rail.tsx` still renders the ordinary resource card for a
+site, and the flag that will gate it is wired end to end but reads nowhere. The
+overlay signal the main process accepts has no renderer caller yet either, so a
+dialog opened over a live preview would still be painted over. Nothing that
+protects data is scoped by the flag: an artifact's authorization is structural
+and holds with it off.

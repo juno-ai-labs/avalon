@@ -137,6 +137,49 @@ export class ArtifactOpenService {
     return row?.name ?? "";
   }
 
+  /**
+   * The tables a stateful artifact keeps, for the rail's **Data** view.
+   *
+   * Behind the same visibility as opening, because these rows are work-stream
+   * content: they were written by the page's visitors.
+   */
+  async describeData(resourceId: string): Promise<{
+    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
+  }> {
+    const opened = await this.open(resourceId);
+    if (!opened.stateful) return { tables: [] };
+    return await (await this.hostFor(opened.artifactId)).describeData();
+  }
+
+  /**
+   * One page of one table, as rows and as CSV.
+   *
+   * Both shapes come from one read so the export can never disagree with what
+   * the view showed. The table name is admitted against the live schema inside
+   * the facet, never interpolated here.
+   */
+  async pageData(resourceId: string, table: string, offset: number): Promise<{
+    rows: Record<string, unknown>[];
+    csv: string;
+  }> {
+    const opened = await this.open(resourceId);
+    if (!opened.stateful) return { rows: [], csv: "" };
+    const page = await (await this.hostFor(opened.artifactId)).pageData(table, offset, DATA_PAGE_ROWS);
+    if (!page.ok) {
+      throw new ApiError(404, "artifact_table_not_found", "That table is not part of this site's data.");
+    }
+    return { rows: page.rows, csv: toCsv(page.rows) };
+  }
+
+  private async hostFor(artifactId: string) {
+    return durableObjectStubForArtifact(
+      this.env,
+      this.env.ARTIFACT_HOSTS,
+      artifactHostDOName(this.env.AVALON_REGION, asArtifactId(artifactId)),
+      await workspacePlacementAffinity(this.env, this.auth.workspaceId),
+    );
+  }
+
   /** What the model's server module threw, for the rail's error log. */
   async errors(resourceId: string): Promise<{
     occurredAt: number;
@@ -149,12 +192,36 @@ export class ArtifactOpenService {
     // the artifact: an error log names request paths a page defines, and is not
     // something to hand to somebody who may not see the work stream.
     const opened = await this.open(resourceId);
-    const host = durableObjectStubForArtifact(
-      this.env,
-      this.env.ARTIFACT_HOSTS,
-      artifactHostDOName(this.env.AVALON_REGION, asArtifactId(opened.artifactId)),
-      await workspacePlacementAffinity(this.env, this.auth.workspaceId),
-    );
-    return await host.readErrors();
+    return await (await this.hostFor(opened.artifactId)).readErrors();
   }
+}
+
+/** How many rows one Data-view page holds. Matches the facet's own bound. */
+const DATA_PAGE_ROWS = 200;
+
+/**
+ * Render rows as CSV, quoting every field.
+ *
+ * Quoted unconditionally rather than only where a comma appears, because these
+ * are **model-designed columns holding visitor-written values**: deciding
+ * per-field which need quoting is a decision that gets one case wrong, and the
+ * wrong case is a value that breaks a row apart in a spreadsheet.
+ *
+ * A leading `=`, `+`, `-`, or `@` is prefixed with an apostrophe. A spreadsheet
+ * treats those as the start of a formula, so a visitor who types one into a
+ * sign-up sheet writes a formula into whoever opens the export.
+ */
+function toCsv(rows: readonly Record<string, unknown>[]): string {
+  if (rows.length === 0) return "";
+  const columns = Object.keys(rows[0] ?? {});
+  const lines = [columns.map(csvField).join(",")];
+  for (const row of rows) lines.push(columns.map((column) => csvField(row[column])).join(","));
+  return lines.join("\r\n");
+}
+
+function csvField(value: unknown): string {
+  if (value === null || value === undefined) return '""';
+  const text = value instanceof ArrayBuffer ? `<${value.byteLength} bytes>` : String(value);
+  const guarded = /^[=+\-@\t\r]/u.test(text) ? `'${text}` : text;
+  return `"${guarded.replaceAll('"', '""')}"`;
 }
