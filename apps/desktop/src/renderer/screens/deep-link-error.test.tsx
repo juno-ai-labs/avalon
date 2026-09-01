@@ -120,6 +120,8 @@ describe('the deep-link failure window', () => {
     state.getDeepLinkError.mockResolvedValue({ id: 1, message: 'Sign in could not be completed: access denied' });
     render(<DeepLinkErrorScreen />);
 
-    expect(await screen.findByRole('alertdialog', { name: 'Rally could not open that link' })).toBeVisible();
+    const dialog = await screen.findByRole('alertdialog', { name: 'Rally could not open that link' });
+    expect(dialog).toBeVisible();
+    expect(dialog).toHaveAccessibleDescription('Sign in could not be completed: access denied');
   });
 });
