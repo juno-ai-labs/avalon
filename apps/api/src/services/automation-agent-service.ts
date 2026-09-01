@@ -12,7 +12,6 @@ import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { automationAgentName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { issueAutomationSocketTicket } from "./socket-service";
 import { AutomationService } from "./automation-service";
 import { automationRefusal, withAutomationErrors } from "./automation-agent-errors";
 import { logWarn } from "../observability/logger";
@@ -51,102 +50,6 @@ export class AutomationAgentService {
     private readonly auth: AuthContext,
   ) {}
 
-  async admitFirstTurn(rawInput: AutomationDraftTurnRequest): Promise<AutomationDraftTurnAdmissionResult> {
-    const input = AutomationDraftTurnRequestSchema.extend({
-      clientCreationKey: IdSchema,
-    }).parse(rawInput);
-    const workspace = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
-    );
-    const claim = await withAutomationErrors(() => workspace.claimAutomationDraft({
-      schemaVersion: 1,
-      workspaceId: this.auth.workspaceId,
-      authorUserId: this.auth.userId,
-      region: this.env.AVALON_REGION,
-      clientCreationKey: input.clientCreationKey,
-    }));
-    const result = await this.admit(claim.automationId, input);
-    const payloadHash = `draft:${claim.automationId}:1:${result.transcriptSequence}`;
-    // Deliberately outside `withAutomationErrors`. Everything this call can
-    // throw is a fault rather than a refusal — a `ZodError` on its own strict
-    // schema, `workspace_object_identity_mismatch` from addressing the wrong
-    // object, or `automation_projection_hash_conflict`, which means two writers
-    // disagreed about a coordinate the directory already holds. The table this
-    // wrapper reads answers 403/404/409/422/503 and cannot express "fault", so
-    // wrapping would move a real defect onto `SAFE_CODE`'s generic 409 — the
-    // status a client retries — instead of the 500 that is true of it.
-    await workspace.applyAutomationProjection({
-      schemaVersion: 1,
-      automationId: claim.automationId,
-      workspaceId: this.auth.workspaceId,
-      authorUserId: this.auth.userId,
-      authorityGeneration: 1,
-      projectionVersion: result.projectionVersion ?? result.transcriptSequence,
-      payloadHash,
-      lifecycle: "draft",
-      scope: "personal",
-      title: "New automation",
-      description: "",
-      nextRunAt: null,
-      attentionCode: null,
-    });
-    return result;
-  }
-
-  async admitTurn(
-    automationId: string,
-    rawInput: AutomationDraftTurnRequest,
-  ): Promise<AutomationDraftTurnAdmissionResult> {
-    const input = AutomationDraftTurnRequestSchema.parse(rawInput);
-    return this.admit(asAutomationId(automationId), input);
-  }
-
-  async snapshot(automationId: string): Promise<AutomationAgentSnapshot> {
-    const id = asAutomationId(automationId);
-    const agent = await this.agent(id);
-    return withAutomationErrors(() => agent.readSnapshot({
-      automationId: id,
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-    }));
-  }
-
-  async cancel(automationId: string, runId: string): Promise<void> {
-    const id = asAutomationId(automationId);
-    const agent = await this.agent(id);
-    await withAutomationErrors(() => agent.cancelCompilerRun({
-      automationId: id,
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-      runId: IdSchema.parse(runId),
-    }));
-  }
-
-  async retry(automationId: string, runId: string): Promise<void> {
-    const id = asAutomationId(automationId);
-    const agent = await this.agent(id);
-    await withAutomationErrors(() => agent.retryCompilerRun({
-      automationId: id,
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-      runId: IdSchema.parse(runId),
-    }));
-  }
-
-  async socketTicket(automationId: string): Promise<{ url: string; ticket: string }> {
-    const id = asAutomationId(automationId);
-    await this.snapshot(id);
-    const ticket = await issueAutomationSocketTicket(this.env, this.auth, id);
-    const url = new URL(this.env.PUBLIC_API_BASE_URL);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = `/socket/automations/${id}`;
-    url.search = "";
-    return { url: url.toString(), ticket };
-  }
-
   /**
    * Accept the draft an agent proposed in a work stream, by its id alone.
    *
@@ -161,19 +64,18 @@ export class AutomationAgentService {
   async acceptAuthoredDraft(automationId: string): Promise<AutomationDetail> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
-    // The room first, then the draft. `readSnapshot` asserts authorship, which
-    // would have made this card pressable only by whoever happened to ask the
-    // agent for it — and a card only its author can accept is not a card the
-    // room decides.
-    const authoringRoom = await withAutomationErrors(() => agent.authoredInWorkstreamId());
-    const participant = authoringRoom !== null
-      && await this.participantOfWorkstream(authoringRoom);
+    // One read, in `accept`. This used to read here as a participant and then
+    // delegate to an `accept` that read again as the author — so the card still
+    // refused everyone but its author, and the participation check below it
+    // never ran. The card is the room's to press, so the room's read is the
+    // only one.
+    const participantOfAuthoringWorkstream = await this.participantOfAuthoringRoom(agent);
     const snapshot: AutomationAgentSnapshot = await withAutomationErrors(
       () => agent.readAuthoredSnapshot({
         automationId: id,
         workspaceId: this.auth.workspaceId,
         userId: this.auth.userId,
-        participantOfAuthoringWorkstream: participant,
+        participantOfAuthoringWorkstream,
       }),
     );
     if (snapshot.definition === null) automationRefusal("automation_definition_not_ready");
@@ -198,15 +100,21 @@ export class AutomationAgentService {
     if (!input.draftId) automationRefusal("automation_draft_id_required");
     const automationId = asAutomationId(input.draftId);
     const agent = await this.agent(automationId);
-    const snapshot: AutomationAgentSnapshot = await withAutomationErrors(() => agent.readSnapshot({
-      automationId,
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-    }));
-    // A draft whose first compiler run has not settled has no definition row at
-    // all, and `admitFirstTurn` hands the client its id the moment the turn is
-    // admitted — so this is reachable, and parsing `null` here threw the exact
-    // `ZodError`-to-500 this change exists to remove, one line above the fix.
+    // Read as a participant, not as the author. A proposal card is the room's
+    // to decide, so the person pressing it is usually not whoever typed the
+    // request — and an author-only read here is what made the card refuse
+    // everyone else while the participation check further down never ran.
+    const participantOfAuthoringWorkstream = await this.participantOfAuthoringRoom(agent);
+    const snapshot: AutomationAgentSnapshot = await withAutomationErrors(() =>
+      agent.readAuthoredSnapshot({
+        automationId,
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        participantOfAuthoringWorkstream,
+      }));
+    // A draft whose compiler run never settled has no definition row at all, so
+    // this is reachable, and parsing `null` here threw the exact
+    // `ZodError`-to-500 this branch exists to remove, one line above the fix.
     // A definition that is present but fails the schema is left to fault: the
     // server wrote something it can no longer read, which is not a refusal.
     if (snapshot.definition === null) automationRefusal("automation_definition_not_ready");
@@ -464,6 +372,20 @@ export class AutomationAgentService {
    * filtered by. False for every other scope, where it means nothing: the
    * automation object's own author and admin checks decide those.
    */
+  /**
+   * Whether the caller is a participant of the room this draft was written in.
+   *
+   * False for a draft written outside a work stream, which is not a refusal —
+   * `readAuthoredSnapshot` falls back to authorship for those, which is the
+   * only standing anybody has on a draft that belongs to no room.
+   */
+  private async participantOfAuthoringRoom(
+    agent: Awaited<ReturnType<AutomationAgentService["agent"]>>,
+  ): Promise<boolean> {
+    const authoringRoom = await withAutomationErrors(() => agent.authoredInWorkstreamId());
+    return authoringRoom !== null && await this.participantOfWorkstream(authoringRoom);
+  }
+
   /** Whether the caller is still in this room, asked of the room itself. */
   private async participantOfWorkstream(workstreamId: string): Promise<boolean> {
     const workspace = await durableObjectStubForWorkspace(

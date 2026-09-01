@@ -657,17 +657,6 @@ export interface AutomationDeliveryChoice {
   email?: boolean;
 }
 
-export interface AutomationCreateOptions {
-  /** Overrides the scope Rally suggested for the draft. */
-  scope?: AutomationScope;
-  delivery?: AutomationDeliveryChoice;
-  /**
-   * Pins the work stream each run of this automation creates to one OpenRouter
-   * model, ahead of the `agent-model-workstream` flag.
-   */
-  modelOverride?: AgentModelOverride;
-}
-
 export type AutomationScope = 'you' | 'workspace';
 
 export interface AutomationDetail extends AutomationSummary {
@@ -719,13 +708,6 @@ export interface AutomationDraftSummary {
   capabilities: string[];
   requiresSlackDelivery: boolean;
   requiresEmailDelivery: boolean;
-}
-
-export interface AutomationDraftResponse {
-  draftId: string;
-  assistantMessage?: string;
-  question?: AutomationDraftQuestion;
-  summary?: AutomationDraftSummary;
 }
 
 export interface WorkspaceTemplate {
