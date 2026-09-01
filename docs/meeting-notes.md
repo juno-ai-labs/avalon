@@ -446,6 +446,10 @@ converge, and why notes do not travel by Queue are in
 the notes behind. Nothing here excluded them deliberately; the batch was built
 over the work-stream directory, which notes are not in.
 
+The set is frozen when the dispatch is, so what the
+archive takes is what the confirmation counted rather than whatever matches by
+the time it runs.
+
 **Considered and rejected:** Looping the existing single-note archive over the
 selection. That turns one group into N transactions with N chances to half
 apply, and it would have to translate a 404 or a 409 per note into something

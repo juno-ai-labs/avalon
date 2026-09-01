@@ -529,14 +529,22 @@ describe("workspace notes", () => {
       includeSystem: false,
     } as const;
 
-    /** The dispatch row the note archive is fenced by, as the Worker opens it. */
-    async function freeze(operationId: string, requestHash: string): Promise<void> {
+    /**
+     * The dispatch the note archive is fenced by *and* selected from, as the
+     * Worker opens it: this is the transaction that freezes the note set.
+     */
+    async function freeze(
+      operationId: string,
+      requestHash: string,
+      selection: WorkstreamBatchFilter = filter,
+    ): Promise<void> {
       await workspace().beginWorkstreamBatchDispatch({
         workspaceId: WORKSPACE_ID,
         userId: OWNER,
         operationId,
         requestHash,
-        filter,
+        filter: selection,
+        update: { kind: "archive" },
       });
     }
 
@@ -544,14 +552,12 @@ describe("workspace notes", () => {
       operationId: string;
       requestHash: string;
       userId?: string;
-      filter?: WorkstreamBatchFilter;
     }) {
       return WorkspaceBatchNoteArchiveResultSchema.parse(await workspace().archiveNotesForBatch({
         workspaceId: WORKSPACE_ID,
         userId: input.userId ?? OWNER,
         operationId: input.operationId,
         requestHash: input.requestHash,
-        filter: input.filter ?? filter,
         at: LATER,
       }));
     }
@@ -638,6 +644,60 @@ describe("workspace notes", () => {
         .resolves.toEqual({ archivedNoteCount: 2, replayed: false });
     });
 
+    it("takes only what the dispatch froze, not what arrived while it published", async () => {
+      // The window the receipt alone does not close. Selecting the notes again
+      // at archive time would take whatever entered the range in between — and
+      // under an open-ended heading like "Last hour" that is any note touched
+      // since the reader read the count and pressed Continue. The Queue chunks
+      // go out between the two calls, so the window is real work, not an
+      // instant.
+      await seedNote({
+        noteId: nextId(), resourceId: nextId(), title: "Counted", lastActivityAt: IN_RANGE,
+      });
+      const operationId = "00000000-0000-7000-8000-000000000e07";
+      const requestHash = "fnv1a64:1212121212121212";
+      await freeze(operationId, requestHash);
+
+      await seedNote({
+        noteId: nextId(),
+        resourceId: nextId(),
+        title: "Arrived after the count",
+        lastActivityAt: IN_RANGE,
+      });
+
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: 1, replayed: false });
+      expect(await archivedTitles()).toEqual(["Counted"]);
+    });
+
+    it("skips a frozen note that has started recording since", async () => {
+      // Ownership cannot change under a frozen id, but recording can start —
+      // and archiving under a live meeting window 404s the next segment save.
+      // The note simply is not in the count, which is the answer the single-row
+      // archive gives too.
+      const recorded = nextId();
+      await seedNote({
+        noteId: recorded, resourceId: nextId(), title: "Started recording", lastActivityAt: IN_RANGE,
+      });
+      await seedNote({
+        noteId: nextId(), resourceId: nextId(), title: "Idle throughout", lastActivityAt: IN_RANGE,
+      });
+      const operationId = "00000000-0000-7000-8000-000000000e08";
+      const requestHash = "fnv1a64:1313131313131313";
+      await freeze(operationId, requestHash);
+
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(
+          `UPDATE notes SET recording_status = 'recording' WHERE id = ?`,
+          recorded,
+        );
+      });
+
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: 1, replayed: false });
+      expect(await archivedTitles()).toEqual(["Idle throughout"]);
+    });
+
     it("answers a retried operation with its receipt instead of widening", async () => {
       // The retry exists for the work streams' Queue chunks, and it reaches
       // here again on the way. "Last hour" has no upper bound, so re-selecting
@@ -688,16 +748,10 @@ describe("workspace notes", () => {
       });
       const operationId = "00000000-0000-7000-8000-000000000e05";
       const requestHash = "fnv1a64:ffffffffffffffff";
-      const pinnedOnly = { ...filter, pinned: true } as const;
-      await workspace().beginWorkstreamBatchDispatch({
-        workspaceId: WORKSPACE_ID,
-        userId: OWNER,
-        operationId,
-        requestHash,
-        filter: pinnedOnly,
-      });
+      const pinnedOnly = { ...filter, pinned: true };
+      await freeze(operationId, requestHash, pinnedOnly);
 
-      await expect(archive({ operationId, requestHash, filter: pinnedOnly }))
+      await expect(archive({ operationId, requestHash }))
         .resolves.toEqual({ archivedNoteCount: 0, replayed: false });
       expect(await archivedTitles()).toEqual([]);
     });

@@ -4,6 +4,7 @@ import {
   WorkspaceWorkstreamCursorSchema,
   WorkspaceWorkstreamStateVersionSchema,
   WorkstreamBatchFilterSchema,
+  WorkstreamBatchUpdateSchema,
   WorkstreamSchema,
 } from "@rally/contracts";
 import { z } from "zod";
@@ -101,6 +102,11 @@ export const WorkspaceBatchDispatchBeginRequestSchema = z.strictObject({
   operationId: IdSchema,
   requestHash: WorkstreamBatchRequestHashSchema,
   filter: WorkstreamBatchFilterSchema,
+  /**
+   * Which mutation this operation is, so the freeze knows whether the note half
+   * has a target set at all. Only `archive` reaches notes.
+   */
+  update: WorkstreamBatchUpdateSchema,
 });
 
 export const WorkspaceBatchDispatchBeginResultSchema = z.strictObject({
@@ -136,7 +142,6 @@ export const WorkspaceBatchNoteArchiveRequestSchema = z.strictObject({
   userId: IdSchema,
   operationId: IdSchema,
   requestHash: WorkstreamBatchRequestHashSchema,
-  filter: WorkstreamBatchFilterSchema,
   at: TimestampSchema,
 });
 

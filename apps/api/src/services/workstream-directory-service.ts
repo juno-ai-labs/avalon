@@ -2,6 +2,7 @@ import {
   WorkstreamSchema,
   type Workstream,
   type WorkstreamBatchFilter,
+  type WorkstreamBatchUpdate,
 } from "@rally/contracts";
 import { z } from "zod";
 
@@ -76,6 +77,7 @@ export class WorkstreamDirectoryService {
     operationId: string;
     requestHash: string;
     filter: WorkstreamBatchFilter;
+    update: WorkstreamBatchUpdate;
   }): Promise<{ items: string[]; targetCount: number }> {
     const workspace = await this.workspace();
     return WorkspaceBatchDispatchBeginResultSchema.parse(
