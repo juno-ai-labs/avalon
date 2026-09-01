@@ -11,7 +11,6 @@
 > Sheet, Doc, or Drive file actually route events. Companion:
 > [state](state.md). Subsystem references:
 > [automation lifecycle](../../automation-lifecycle.md),
-> [automation drafts](../../automation-drafts.md),
 > [connectors](../../connectors.md),
 > [feature flags](../../feature-flags.md),
 > [work-stream email addresses](../../workstream-email-addresses.md).
@@ -48,8 +47,9 @@ one idea:
    structured-output classifier — its own Flagship model role, editable in Ace —
    reads the result against the run's own trigger and frozen context and returns
    one of three dispositions: `done`, meaning nothing worth anyone's attention;
-   `deliver`, meaning post it into the owning work stream; or `new_workstream`,
-   meaning this is new work and deserves a room of its own. The run may still
+   `deliver`, meaning send it to the destinations the owner chose, which for a
+   room means posting it there; or `new_workstream`, meaning this is new work
+   and deserves a room of its own. The run may still
    declare `done` itself with `automation_report_no_result`, and that
    declaration wins without the classifier running at all.
 4. **A `deliver` disposition wakes the room.** The result is appended as a
@@ -65,12 +65,13 @@ time. What the classifier picks between is *whether* and *where among two
 places the owner already authorized* — never a room the owner did not choose.
 
 Two agent tools come with it, and both are about telling the truth rather than
-gaining reach. `automation_workstreams_search` exists because an authoring agent
-cannot see work streams at all and would otherwise invent the ID it records. And
-`automation_report_no_result` lets a run with nothing to say declare it, in its
-own words, ahead of the classifier — today that is guessed from the model's
-prose with a regex that recognizes one English phrasing about emails, which is
-survivable for your own inbox and not for a room full of colleagues.
+gaining reach. `automation_workstreams_search` exists because an agent drafting
+in one room cannot see any other, and would otherwise invent the ID it records
+when somebody names a different destination. And `automation_report_no_result`
+lets a run with nothing to say declare it, in its own words, ahead of the
+classifier — today that is guessed from the model's prose with a regex that
+recognizes one English phrasing about emails, which is survivable for your own
+inbox and not for a room full of colleagues.
 
 The PRD also closes a silent gap in resource watching. The Google connector
 declares `supportsWatches: true`, but none of its activity types declare
@@ -160,9 +161,9 @@ nothing arrives, and nobody can tell why.
 ## Goals
 
 1. An automation can be scoped to a work stream, which owns it: every active
-   participant can read, pause, edit, and delete it, and it keeps running
-   unchanged when the person who created it stops participating or leaves the
-   workspace.
+   participant finds it in that work stream's context rail, and can read, pause,
+   edit, and delete it. It keeps running unchanged when the person who created
+   it stops participating or leaves the workspace.
 2. A person can author an automation by asking the agent of the work stream they
    are in, and a person in that room accepts it. No model, on any loop, can
    activate an automation by itself.
@@ -191,8 +192,8 @@ nothing arrives, and nobody can tell why.
 9. An automation's external-event trigger can be scoped to one specific Google
    resource (a `resource_watch` trigger or a resource-scoped evaluator), and
    the compiler's validation accepts it.
-10. An authoring agent resolves a work stream the author named in conversation
-    to a canonical ID it was actually given, and never records one it invented.
+10. An authoring agent resolves a work stream somebody named in conversation to
+    a canonical ID it was actually given, and never records one it invented.
 11. The recruiter scenario above is authorable end to end from inside the work
     stream it is about, with no code written for it.
 
@@ -241,20 +242,30 @@ nothing arrives, and nobody can tell why.
 7. **No Google push channels.** Gmail Pub/Sub watches, Drive push
    notifications, and Calendar channels stay unbuilt; Google ingestion remains
    polling, and watch latency is bounded by the poll cadence. Deferred.
-8. **A work stream-scoped automation has one home, and it is the room.** It is
-   listed in the work stream's context rail (**The rail's Automations section**)
-   and **not** in the sidebar's automations section, which stays the list of a
-   person's own and the workspace's automations. A room's automation in a
-   personal list would be an object somebody sees without the context that
+8. **No sidebar entry for a room's automation, and no editor in the rail.** A
+   work stream-scoped automation has one home: the work stream's context rail
+   (**The rail's Automations section**). It does **not** join the sidebar's
+   automations list, which stays a person's own and the workspace's — a room's
+   automation there would be an object somebody sees without the context that
    explains it, in a list where pausing it affects people who are not looking at
-   that list. Opening one from the rail goes to the existing automation surface,
-   which is still the only place a definition is edited — a rail-sized second
-   editor is not in scope. Deferred.
-9. **No recurrence in `workstream_wakeups`.** A work stream agent's wake-ups
-   stay one-shot. Recurring schedules belong to automations, which already own
-   calendar arithmetic, timezone policy, and missed-occurrence behavior; a
-   second recurrence engine inside every work stream would duplicate all
-   three. Rejected.
+   that list. Rejected, not deferred: two homes is two lists to keep in
+   agreement. The rail also gets no editor; opening an automation from it goes
+   to the existing automation surface, which stays the only place a definition
+   is edited. Deferred, and cheap to revisit once the rail section has been
+   lived with.
+9. **No per-person copy of a room's automation results.** A work stream-scoped
+   automation delivers to its room and nowhere else; there is no "email me these
+   too" on it, because the email and Slack destinations name a person and this
+   object belongs to a room. The want is real — somebody reads their inbox at
+   09:00 — and the honest shape for it is a per-participant notification
+   preference on the work stream, not a second frozen destination that stops
+   working when that person moves on. Deferred to whoever owns notification
+   preferences.
+10. **No recurrence in `workstream_wakeups`.** A work stream agent's wake-ups
+    stay one-shot. Recurring schedules belong to automations, which already own
+    calendar arithmetic, timezone policy, and missed-occurrence behavior; a
+    second recurrence engine inside every work stream would duplicate all
+    three. Rejected.
 
 ## Product behavior
 
@@ -304,13 +315,17 @@ is. A person says "every Monday at nine, build the agenda for the client call
 from the pipeline sheet"; the agent loads the plugin, researches what it needs,
 and submits a draft.
 
-The draft is proposed, never activated. It surfaces in the room as the same
-draft object the automation surface already knows, and **a person in the room
-accepts it** — that acceptance is what freezes the definition, the scope, the
-connector bindings, and the destination set. No model on any loop can accept a
-draft. This is the trust boundary the whole feature rests on: an automation is a
-standing grant of the workspace's credentials on a schedule, and a run that
-reads untrusted email must not be able to mint one.
+The draft is proposed, never activated. It is an AutomationAgent in `draft`
+state, exactly as one begun anywhere else, whose author is the person whose
+request produced the run; the room's transcript carries a link to it, and that
+person **accepts it at `/automations/:id`**, where acceptance and its
+`assertAuthor` check already live
+([`automation-lifecycle.md`](../../automation-lifecycle.md#acceptance)). Rally
+builds no second acceptance surface, and no model on any loop can accept a
+draft. That is the trust boundary the whole feature rests on: acceptance is what
+freezes the definition, the scope, the connector bindings, and the destination
+set — a standing grant of the workspace's credentials on a schedule — and a run
+that reads untrusted email must not be able to mint one.
 
 Scope is part of the draft, and the person accepting it sees which one they are
 accepting:
@@ -319,7 +334,26 @@ accepting:
 | --- | --- | --- |
 | `personal` | Its author | Their email, their Slack Agent DM |
 | `workspace` | Workspace owners and admins | The destinations an admin chose |
-| `workstream` | Every active participant of the owning work stream | The owning work stream |
+| `workstream` | Every active participant of the owning work stream | The owning work stream, and nowhere else |
+
+For a `workstream`-scoped automation, scope and destination are one choice, not
+two: the scope names the owning room and acceptance materializes the
+work-stream destination from it, so a draft does not request one and cannot
+request a *different* one — that is what `personal` and `workspace` scope are
+for. Anything else would make "which room owns this" and "which room receives
+this" two fields that must agree, which is the drift this repository has paid
+for before.
+
+It also delivers to its room and to nothing else. The other two destination
+kinds resolve to *a person* — an email address, a Slack identity — and an object
+the room owns has no person to resolve them against; picking the accepting
+author would rebuild, inside the destination set, exactly the dependency on one
+individual that this scope exists to remove. Somebody who wants the Monday
+agenda in their own inbox as well has two honest answers today: read it in the
+room, or keep a personal automation of their own. A per-participant "copy me on
+this room's automations" preference is the real answer and is a different
+change — it is a *notification* setting, and it belongs with the rest of them
+rather than in a frozen destination set.
 
 A `workstream`-scoped automation is listed in its room's rail and nowhere else.
 It does not appear in the sidebar's automations section for its creator or for
@@ -371,7 +405,7 @@ It is resolved in this order:
    Flagship model role, `automation_result_disposition`, through the bounded
    structured-inference gateway every other classifier uses. It is given the
    automation's name and objective, the run's trigger kind and trigger summary,
-   the run's final message, and the dispositions of the last few runs of this
+   the run's final message, and the dispositions of the last three runs of this
    same automation — that last input is what stops a daily automation from
    opening a new room every day because each occurrence looks novel on its own.
    It returns `{ disposition, reason }` and nothing else; the reason is one
@@ -559,6 +593,20 @@ A delivery re-checks its destination at send time. For a work stream, that is:
    automation's in-flight run does not deliver — the same fence provider writes
    already respect.
 
+Archiving interacts with the first check rather than duplicating it: archiving a
+work stream pauses the automations it owns, so for those the archived-target case
+is a race — an occurrence already in flight when the archive landed — and the
+check that catches it is the append's. For a `personal` or `workspace`
+automation pointed at somebody else's room, archiving that room is not a pause,
+and this check is the only thing between the run and a dead destination.
+
+A `new_workstream` disposition has one failure of its own: the room cannot be
+created, because the day's cap is spent or the owning work stream has no active
+participants left to seat. It falls back to `deliver` into the owning work
+stream when that destination is live, and skips with a receipt naming the reason
+when it is not. Losing a result because the *container* choice failed would be
+the worst of both designs.
+
 That is the whole list, and it is short on purpose. **Nothing about a person's
 access is checked here.** Not the creator's participation, not the participation
 of whoever last edited the destination, not their workspace membership. An
@@ -635,10 +683,11 @@ accepted by the recruiter in the room, and listed in its rail:
    an automation at all: attach the Sheet to the work stream and enable watch
    for plain change notifications — those are ordinary resource-update rows.)
 3. Trigger: calendar, Mondays 09:00 in the client's timezone. The run reads the
-   pipeline and produces a 30-minute agenda. It is delivered to the room, and —
-   because this is the one the recruiter actually reads at 09:00 — to their
-   email as well. When the pipeline has not moved, the classifier returns `done`
-   and neither the room nor the inbox is interrupted.
+   pipeline and produces a 30-minute agenda, delivered into the room before the
+   09:30 call. It goes to the room and nowhere else — the recruiter reads it
+   where the search lives, and a copy in one person's inbox is the thing that
+   would stop working when they move on. When the pipeline has not moved, the
+   classifier returns `done` and nobody is interrupted.
 
 Six weeks later the recruiter moves to another search and is removed from the
 work stream. A colleague who joined it last month is now the person the Monday
@@ -782,66 +831,66 @@ None yet.
    is running in is not an exception to this so much as a case it does not
    reach: that ID is host-supplied context, never a name the model parsed.
 10. **The automations plugin is deferred on work-stream runs, not preloaded.**
-   Every work-stream run could carry the automation tools in its catalog, and
-   that is what preloading the plugin would mean: a tool family in every run's
-   prompt for a thing people ask for occasionally. It follows `rally:terminal`
-   instead — discoverable through `list_plugins` and `search_plugins`, loaded
-   when the conversation is actually about a standing behavior. Rejected:
-   preloading, which spends catalog tokens on every run in the fleet; and a
-   heuristic that preloads it when the message looks schedule-shaped, which is a
-   regex over prose making a tool-availability decision, and this document has
-   already retired one of those.
+    Every work-stream run could carry the automation tools in its catalog, and
+    that is what preloading the plugin would mean: a tool family in every run's
+    prompt for a thing people ask for occasionally. It follows `rally:terminal`
+    instead — discoverable through `list_plugins` and `search_plugins`, loaded
+    when the conversation is actually about a standing behavior. Rejected:
+    preloading, which spends catalog tokens on every run in the fleet; and a
+    heuristic that preloads it when the message looks schedule-shaped, which is a
+    regex over prose making a tool-availability decision, and this document has
+    already retired one of those.
 11. **The principal frozen on a work-stream destination is provenance, not a
-   predicate.** `PATCH /automations/:id` admits any workspace owner or admin
-   through `assertManager` (`automation-agent.ts:1619`) and resolves the new
-   destination against *that caller*, so the person who pointed an automation at
-   a room is not necessarily its author. The destination therefore records who
-   chose it — but as a fact for the run history and the rail, answering "who
-   pointed this here", not as something delivery re-tests (decision 4). An
-   earlier revision froze the same field for the opposite purpose and named it
-   `authorizedByUserId`; it is `chosenByUserId` now, because a name that says
-   "authorized" invites the next reader to re-check it.
+    predicate.** `PATCH /automations/:id` admits any workspace owner or admin
+    through `assertManager` (`automation-agent.ts:1619`) and resolves the new
+    destination against *that caller*, so the person who pointed an automation at
+    a room is not necessarily its author. The destination therefore records who
+    chose it — but as a fact for the run history and the rail, answering "who
+    pointed this here", not as something delivery re-tests (decision 4). An
+    earlier revision froze the same field for the opposite purpose and named it
+    `authorizedByUserId`; it is `chosenByUserId` now, because a name that says
+    "authorized" invites the next reader to re-check it.
 12. **The prose regex is retired, and what replaces it is a declaration first
-   and a classifier second.** `shouldSuppressAutomationResult` decides whether a
-   result is worth delivering by pattern-matching the model's sentence against
-   one English phrasing about emails. Keeping it alongside the new path would
-   leave two answers to one question, and the regex would win the disagreement:
-   a run reporting a real finding whose wording happens to match would be
-   silently withheld. The replacement has a strict precedence instead of a
-   second opinion — the run's own `automation_report_no_result` settles it when
-   the run called it, and the classifier is consulted only when the run said
-   nothing. That is one answer per run, and which mechanism produced it is
-   recorded on the run. Rejected: keeping the regex as a backstop, which is the
-   two-sources problem with an extra branch; and dropping the tool in favour of
-   the classifier alone, which spends an inference call to re-derive something
-   the run already knew and can state in its own words, and loses the reason
-   that makes an empty run inspectable.
+    and a classifier second.** `shouldSuppressAutomationResult` decides whether a
+    result is worth delivering by pattern-matching the model's sentence against
+    one English phrasing about emails. Keeping it alongside the new path would
+    leave two answers to one question, and the regex would win the disagreement:
+    a run reporting a real finding whose wording happens to match would be
+    silently withheld. The replacement has a strict precedence instead of a
+    second opinion — the run's own `automation_report_no_result` settles it when
+    the run called it, and the classifier is consulted only when the run said
+    nothing. That is one answer per run, and which mechanism produced it is
+    recorded on the run. Rejected: keeping the regex as a backstop, which is the
+    two-sources problem with an extra branch; and dropping the tool in favour of
+    the classifier alone, which spends an inference call to re-derive something
+    the run already knew and can state in its own words, and loses the reason
+    that makes an empty run inspectable.
 13. **A classifier, not another tool.** The obvious alternative to classifying
-   the result is to let the run choose its own disposition with a tool — it has
-   the most context, and the tool costs no extra inference. It is rejected on
-   the same boundary as decision 1: the run is the thing untrusted trigger
-   content steers, and "open a new work stream" is reach. A separate classifier
-   sees the run's *output* rather than executing inside it, cannot be
-   instructed by the content it is reading (its schema admits two or three enum
-   values and a sentence), and fails toward delivery. The one disposition the
-   run may choose for itself is the one that only ever withholds.
+    the result is to let the run choose its own disposition with a tool — it has
+    the most context, and the tool costs no extra inference. It is rejected on
+    the same boundary as decision 1: the run is the thing untrusted trigger
+    content steers, and "open a new work stream" is reach. A separate classifier
+    sees the run's *output* rather than executing inside it, cannot be
+    instructed by the content it is reading (its schema admits two or three enum
+    values and a sentence), and fails toward delivery. The one disposition the
+    run may choose for itself is the one that only ever withholds.
 14. **Acceptance stays human on every loop.** Giving work-stream agents the
-   authoring plugin does not give them the ability to activate what they draft.
-   An automation is a standing grant of connector credentials on a schedule; a
-   run that reads an inbound email must not be able to end with one. The agent
-   proposes and a participant accepts, which is the same boundary the automation
-   surface already keeps — this change moves where drafting happens, not who
-   says yes. Rejected: auto-accepting a draft the person asked for in the same
-   turn, which is indistinguishable, at the point of acceptance, from a draft an
-   injected instruction asked for.
+    authoring plugin does not give them the ability to activate what they draft.
+    An automation is a standing grant of connector credentials on a schedule; a
+    run that reads an inbound email must not be able to end with one. The agent
+    proposes and a participant accepts, which is the same boundary the automation
+    surface already keeps — this change moves where drafting happens, not who
+    says yes. Rejected: auto-accepting a draft the person asked for in the same
+    turn, which is indistinguishable, at the point of acceptance, from a draft an
+    injected instruction asked for.
 15. **A new work stream inherits the owning room's audience.** The
-   `new_workstream` arm could seat the new room with the automation's execution
-   principal alone, or with whoever the model names. Both are wrong in the same
-   direction: the room exists to continue work the owning room is already doing,
-   and its audience is the one the owner authorized when they chose the
-   destination. Inheriting scope and active participants means the arm changes
-   the *container* and never the reach. Rejected: naming participants from the
-   result's content, which is prompt injection with a guest list.
+    `new_workstream` arm could seat the new room with the automation's execution
+    principal alone, or with whoever the model names. Both are wrong in the same
+    direction: the room exists to continue work the owning room is already doing,
+    and its audience is the one the owner authorized when they chose the
+    destination. Inheriting scope and active participants means the arm changes
+    the *container* and never the reach. Rejected: naming participants from the
+    result's content, which is prompt injection with a guest list.
 
 ## Data model
 
@@ -889,12 +938,35 @@ automation** — `if (input.scope !== "personal" && input.deliveryTargets.length
 0) throw new Error("automation_personal_delivery_required")`
 (`automation-agent.ts:3156`). That guard is right about what it was written for:
 email and Slack DM destinations resolve to *a person's* address and identity, so
-a workspace automation has no coherent one. A work-stream destination has no
-such problem — it names a room, not a person — so the guard narrows to the two
-personal target kinds rather than to the scope. Getting this wrong in the
-permissive direction would let a workspace automation deliver to some accepting
-admin's inbox; getting it wrong in the restrictive direction makes the whole
-feature unreachable for exactly the automations that most want it.
+a workspace automation has no coherent one, and neither has a work stream's.
+So the guard keeps saying exactly that — the two *personal* target kinds require
+`personal` scope — and stops saying it by proxy through the length of the whole
+set. A work-stream destination names a room rather than a person and is admitted
+for any scope. Written the other way round, the change is one line and its
+failure modes are: permissive, and a workspace automation delivers to whichever
+admin last accepted it; restrictive, and the feature is unreachable for exactly
+the automations that most want it.
+
+### Archive is not a foreign key
+
+Deleting a work stream removes its automations through the foreign key above.
+Archiving one cannot: an archive is reversible, so the automations have to be
+*paused* and later resumed, and nothing in the schema does that on its own. The
+work-stream archive path therefore reads the automations naming it and pauses
+each one; unarchiving resumes them.
+
+That round trip needs one column, because resuming everything is wrong. An
+automation a person paused last month must not come back to life because
+somebody unarchived the room: `automation_state` gains
+`paused_reason TEXT CHECK (paused_reason IN ('person', 'workstream_archived'))`,
+written with the pause and cleared with the resume, and unarchive resumes only
+the rows that say `workstream_archived`. Without it, archive-and-unarchive is a
+way to silently undo a deliberate pause, which is the kind of thing nobody
+notices until an automation everybody thought was off delivers something.
+
+Both directions are idempotent: pausing a paused automation and resuming an
+active one are no-ops, because an archive can be replayed and a work stream can
+be archived while one of its automations is mid-acceptance.
 
 ### Ownership and management
 
@@ -1078,9 +1150,27 @@ same commit and is not required by anything here.
 
 ## Regional impact
 
-None crosses the boundary. The target work stream belongs to the same
-workspace as the automation, so delivery is an in-region object-to-object
-hop. The Global email-address registry is untouched.
+Delivery does not cross the boundary: the target work stream belongs to the same
+workspace as the automation, so appending an activation is an in-region
+object-to-object hop.
+
+Two of the new arms touch things that are not purely regional, and neither is a
+new crossing:
+
+- **Opening a work stream registers an email address**, and that registry is
+  Global ([`workstream-email-addresses.md`](../../workstream-email-addresses.md)).
+  The `new_workstream` arm inherits work-stream creation's existing dependency
+  on it exactly as a person pressing "new work stream" does — same path, same
+  failure mode if the registry is unreachable. Worth naming because an earlier
+  revision of this section said the registry was untouched, which was true only
+  while delivery could not create anything.
+- **The classifier's decision is inference**, and EU inference is deliberately
+  not archived to the lakehouse. So "why was this occurrence classified `done`"
+  is answerable from the run's stored `disposition_reason` in both regions, and
+  from the raw inference record only in Global. That is why the reason is a
+  column on the run rather than something reconstructed from a ledger:
+  [`runbook.md`](../../runbook.md) has no EU fallback to offer, and an operator
+  in the EU needs the answer from the same place either way.
 
 ## Security and trust model
 
@@ -1099,6 +1189,14 @@ hop. The Global email-address registry is untouched.
    that second rule, an automation would be a laundering step: content that
    could not drive a room's agent directly would drive it after passing through
    a run.
+   What that rule does *not* claim: a scheduled occurrence can also read
+   somebody's mailbox and quote it, and its activation wakes an unrestricted
+   run. The residual is deliberate and it is the risk the product already
+   carries — it is exactly what happens when a person pastes an email into a
+   work stream and asks the agent about it. The label is what carries it, and
+   the standing policy in the system prompt is what acts on the label. The
+   restriction above exists for the narrower case where *an outsider chose the
+   moment*, which is the part a person pasting content does not hand over.
 2. **The reach an owner grants at acceptance is the reach a run has.** Choosing
    a work-stream destination is choosing that its participants — present and
    future — receive this automation's results. That is the whole grant, and the
@@ -1306,9 +1404,17 @@ System-prompt guidance on the plugin's `systemMessage`, one paragraph per set:
 
 The two capability spellings differ on purpose and match where each tool is
 assembled. The drafting tools are listed explicitly and carry the
-`rally.automation.*` names its siblings already use; the run's plugins are
-built by filtering tools on a capability prefix (`workstream.`, `table.`,
-`memory.`), so the run tool takes `automation.` to be selected the same way.
+`rally.automation.*` names their siblings already use; a run's tool set is built
+by filtering on a capability prefix (`workstream.`, `table.`, `memory.`), so the
+run tool takes `automation.` to be selected the same way.
+
+**One existing tool changes shape rather than joining this table.**
+`automation_submit_draft` gains `scope: "workstream"` as an accepted value and
+takes the discriminated `requestedDelivery` union in place of its enum array
+(**Data model**). Its two new refusals —
+`automation_workstream_scope_requires_owner` and the existing participation and
+not-found codes applied to the new destination — are in the failure table below.
+Nothing else about it moves.
 
 `report_no_result` is `write` because it changes durable run state that
 delivery later reads, and `record_before_execute` because that write has no
@@ -1391,8 +1497,10 @@ so a fabricated ID fails there too.
 
 ```
 in the room: load_plugin {plugin:"rally:automations"}
-             automation_submit_draft { scope:"workstream", requestedDelivery:[{kind:"workstream", workstreamId:"<this room>"}], … }
-             -> a draft the person in the room accepts
+             automation_submit_draft { scope:"workstream", requestedDelivery:[], … }
+             -> a draft the person in the room accepts; the room is the
+                destination the scope implies, and is neither requested nor
+                joined by a person-shaped one
 
 elsewhere:   automation_workstreams_search {query:"Calm Enterprises"}
              -> { workstreams:[{id:"…a71", title:"CFO — Calm Enterprises", …}], totalMatches:1 }
@@ -1414,6 +1522,7 @@ frozen `resultDelivery` from the task context.
 | `automation_workstream_not_participant` | Submit names an ID the person being drafted for does not participate in | "You can only send results to a work stream that person is in. Find it with automation_workstreams_search and use an ID it returned." | Re-search, then resubmit |
 | `automation_workstream_not_found` | Submit names an unknown or archived ID | "This work stream ID was never resolved. Find the work stream with automation_workstreams_search and use an ID it returned." | Re-search, then resubmit |
 | `automation_workstream_scope_requires_owner` | Submit sets `scope:"workstream"` on a loop with no work stream of its own | "Only an agent running inside a work stream can create an automation that work stream owns. Choose personal or workspace scope." | Resubmit with another scope |
+| `automation_workstream_scope_destination_fixed` | Submit sets `scope:"workstream"` *and* a work-stream destination | "A work stream-scoped automation always delivers to the work stream that owns it, so do not request one. To send results somewhere else, use personal or workspace scope." | Resubmit without the destination |
 | `automation_no_result_already_reported` | Second call with a different reason | "This run already reported no result: `<the recorded reason>`. Finish the run without reporting again." | Stop; do not retry |
 | `automation_run_context_not_found` | Called on a run with no automation context | "This run is not an automation run and has no result delivery to withhold. Finish the run normally." | Stop; do not retry |
 
@@ -1486,6 +1595,7 @@ acknowledgement, a result that plainly starts new work — each with the
 disposition a person would have chosen. Watch two failures specifically:
 `done` on something that mattered (the invisible one), and `new_workstream` on
 the fourth identical weekly digest (the one that makes a workspace unusable).
+
 ## Rollout
 
 Six pieces, and the order matters because two of them change what existing
@@ -1498,11 +1608,14 @@ automations do.
    row carries the type yet, and every enumerator that must learn it fails
    loudly rather than silently when it has not. Land it before anything writes
    an activation.
-3. **The scope, the D1 table rebuild, and the rail section.** The rebuild is the
-   one irreversible-feeling step in the change, and it is a
+3. **The scope, the D1 table rebuild, the archive hook, and the rail section.**
+   The rebuild is the one irreversible-feeling step in the change, and it is a
    create-copy-drop-rename with four foreign keys pointing at the table. It
    ships on its own, verified against a copy of production data, before any
-   automation can be given the new scope. Nothing depends on it except
+   automation can be given the new scope. The archive hook and its
+   `paused_reason` column travel with it rather than after it: a scope that can
+   be owned by a work stream before archiving knows to pause it leaves rooms
+   that are archived and still delivering. Nothing depends on this piece except
    everything.
 4. **The automations plugin on work-stream runs.** Additive and deferred: a run
    that never loads it is unchanged. The reversal is removing it from the
@@ -1547,19 +1660,23 @@ lever that exists.
    `trigger.kind: "external_event"`; the room's agent starts a run with that
    activation as its trigger message; and that run has no connector write tools
    and no web access. Send the same email twice; still one row and one run.
-4. Fire a scheduled occurrence whose result is a routine update. The classifier
-   returns `deliver`, the room receives it, and the run history records
-   `disposition_source: "classified"` with the reason. Then fire one whose
-   result is "no changes this week" and assert `done`: no row in the room, no
-   email, a `skipped` receipt per destination, and the run still fully
-   inspectable on the run history.
+4. Fire a scheduled occurrence whose result is a routine update, from a
+   `personal` automation that names the room as a destination — so one run
+   exercises both a person-shaped destination and a room. The classifier returns
+   `deliver`, the room and the inbox both receive it, and the run history records
+   `disposition_source: "classified"` with the reason. Then fire one whose result
+   is "no changes this week" and assert `done`: no row in the room, no email, a
+   `skipped` receipt per destination, and the run still fully inspectable on the
+   run history.
 5. Fire an occurrence whose result plainly starts new work and assert
    `new_workstream`: exactly one work stream is created, seated with the owning
    room's scope and active participants, carrying the result as its opening
    message and the activation object as its structured content, linked from the
    run. Replay the delivery and assert no second room. Turn
    `mayOpenNewWorkstream` off and assert the arm is absent from the schema the
-   classifier is given, not merely unchosen.
+   classifier is given, not merely unchosen. Then set the daily cap to zero and
+   fire again: the result lands in the owning work stream instead, and the
+   receipt says why it was not a new room.
 6. Break the classifier — an unroutable model — and fire an occurrence. It
    delivers, and the run records `disposition_source: "default"`. This is the
    one failure direction that must never invert.
@@ -1579,9 +1696,12 @@ lever that exists.
    is accepted. Registry construction is where a missing enum value fails, and
    it fails for every connector at once, so this is worth its own assertion
    rather than being inferred from the watch working.
-10. Delete the owning work stream and assert its automations are gone — the
-    cascade, tested against the rebuilt table rather than assumed from the DDL —
-    and that no scheduled occurrence of a deleted automation is later admitted.
+10. Archive the owning work stream with two automations, one of which a person
+    had already paused. Both are paused; unarchive and assert only the other
+    resumes. Then delete the work stream and assert its automations are gone —
+    the cascade, tested against the rebuilt table rather than assumed from the
+    DDL — and that no scheduled occurrence of a deleted automation is later
+    admitted.
 
 ## Open questions
 
@@ -1603,8 +1723,8 @@ lever that exists.
    stream carries a daily automation, and it is independent of question 1
    because it is context cost, not presentation.
 4. **Whether `mayOpenNewWorkstream` should default on.** It defaults on here,
-   on the argument that somebody choosing a room as a destination has already
-   accepted that this automation produces rooms' worth of work. The opposite
+   on the argument that somebody accepting an automation that delivers into a
+   room has already accepted that it produces rooms' worth of work. The opposite
    reading — that opening a work stream is a bigger thing than posting in one
    and should be asked for explicitly — is defensible, and the answer probably
    depends on how the classifier's evaluation set behaves on the fourth
