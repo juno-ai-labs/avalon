@@ -232,6 +232,24 @@ export const WorkspaceDirectoryNotificationStateSchema = z.strictObject({
   emailAddress: z.string().email().max(254).nullable(),
 });
 
+/**
+ * What a delivery into a work stream needs to know before it writes.
+ *
+ * Only the fence and the archive flag: a caller holding this answers "may I
+ * still write here", not "what does this room look like". Keeping the shape
+ * that small is what stops it becoming a second, staler directory read.
+ */
+export const WorkspaceDirectoryDeliveryAuthorityRequestSchema = z.strictObject({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+});
+
+export const WorkspaceDirectoryDeliveryAuthoritySchema = z.strictObject({
+  authorityGeneration: z.number().int().positive(),
+  archived: z.boolean(),
+});
+
+export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
 export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
