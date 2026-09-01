@@ -346,6 +346,14 @@ export const CreateWorkspaceInvitationResponseSchema = z.object({
 export const AcceptWorkspaceInvitationRequestSchema = z.object({
   token: z.string().min(20).max(500)
 });
+export const WorkspaceDepartureSchema = z.object({
+  outcome: z.enum(["left", "abandoned"]),
+});
+export const WorkspaceAttentionSchema = z.object({
+  waitingForYou: z.number().int().nonnegative(),
+  waitingReason: z.enum(["mentioned", "needs_input", "unseen"]).nullable(),
+  hasUnreadActivity: z.boolean(),
+});
 
 /**
  * How often Control Tower rewrites its briefing while a meeting records, in
@@ -384,6 +392,8 @@ export const ClientFeatureFlagsSchema = z.object({
   suggestedWorkEnabled: z.boolean().default(false),
   /** Whether workspace-template surfaces are shown in Electron for this person. */
   automationWorkspaceTemplatesEnabled: z.boolean().default(false),
+  /** Whether Electron offers workspace switching and plural workspace setup. */
+  multipleWorkspacesEnabled: z.boolean().default(false),
   /**
    * Whether the Digest settings section may be shown in Electron for this
    * person. Defaults **true**, the opposite of every other Boolean above: a
@@ -3268,6 +3278,8 @@ export type WorkspaceInvitation = z.infer<typeof WorkspaceInvitationSchema>;
 export type WorkspaceInvitationPreview = z.infer<typeof WorkspaceInvitationPreviewSchema>;
 export type PendingWorkspaceInvitation = z.infer<typeof PendingWorkspaceInvitationSchema>;
 export type WorkspaceOnboardingState = z.infer<typeof WorkspaceOnboardingStateSchema>;
+export type WorkspaceDeparture = z.infer<typeof WorkspaceDepartureSchema>;
+export type WorkspaceAttention = z.infer<typeof WorkspaceAttentionSchema>;
 export type OnboardingRegionRequest = z.infer<typeof OnboardingRegionRequestSchema>;
 export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSchema>;
 export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSchema>;

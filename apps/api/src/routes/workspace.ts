@@ -8,6 +8,7 @@ import {
   UpdateUserTimezoneRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceInvitationSchema,
+  WorkspaceAttentionSchema,
   WorkspaceMemberSchema,
   WorkspaceSchema,
   TerminalWorkspaceSettingsSchema,
@@ -19,6 +20,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { WorkspaceService } from "../services/workspace-service";
+import { workspaceAttention } from "../services/workspace-attention-service";
 import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
 import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
 import { TerminalSettingsService } from "../services/terminal/settings";
@@ -41,6 +43,8 @@ function terminalSettingsService(c: Context<HonoAppEnv>): TerminalSettingsServic
 
 workspaceRoutes.get("/", async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getWorkspace())));
+workspaceRoutes.get("/attention", async (c) =>
+  c.json(WorkspaceAttentionSchema.parse(await workspaceAttention(c.env, getAuth(c)))));
 workspaceRoutes.get("/socket", async (c) => {
   const auth = getAuth(c);
   const ticket = await issueWorkspaceSocketTicket(c.env, auth);

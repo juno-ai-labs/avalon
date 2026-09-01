@@ -15,7 +15,9 @@ import {
   publishAccessRevocation,
   reapExpiredSessions,
 } from "../src/services/access-revocation";
-import { WorkspaceService } from "../src/services/workspace-service";
+import { AuthService } from "../src/services/auth-service";
+import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
+import { acceptInvitationForUser, WorkspaceService } from "../src/services/workspace-service";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -197,6 +199,169 @@ describe("removing a member", () => {
   });
 });
 
+describe("leaving a workspace", () => {
+  it("deletes the caller's membership and publishes the ordinary membership revocation", async () => {
+    const database = seed();
+    const { env, sent } = environment(database);
+
+    await expect(new WorkspaceService(env, auth(MEMBER, "member")).leaveWorkspace())
+      .resolves.toEqual({ outcome: "left" });
+
+    expect(database.prepare(
+      "SELECT 1 AS present FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+    ).get(WORKSPACE, MEMBER)).toBeUndefined();
+    expect(sent.map((message) => AccessRevocationMessageSchema.parse(message.body))).toEqual([
+      expect.objectContaining({
+        reason: "workspace_membership_removed",
+        workspaceId: WORKSPACE,
+        userId: MEMBER,
+        sessionId: null,
+      }),
+    ]);
+  });
+
+  it("refuses the sole owner while other active members remain", async () => {
+    const database = seed();
+    const { env, sent } = environment(database);
+
+    await expect(new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace())
+      .rejects.toMatchObject({ status: 409, code: "sole_workspace_owner" });
+
+    expect(database.prepare(
+      "SELECT status FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+    ).get(WORKSPACE, OWNER)).toEqual({ status: "active" });
+    expect(sent).toEqual([]);
+  });
+
+  it("abandons the workspace, suspends its final member, and revokes pending invitations atomically", async () => {
+    const database = seed();
+    database.prepare(
+      "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id != ?",
+    ).run(WORKSPACE, OWNER);
+    database.prepare(
+      `INSERT INTO workspace_invitations
+       (id, workspace_id, email, invited_by_user_id, token_hash, role, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, 'member', ?, ?)`,
+    ).run(
+      "00000000-0000-7000-8000-000000000099",
+      WORKSPACE,
+      "invited@example.test",
+      OWNER,
+      "token-hash",
+      "2099-01-01T00:00:00.000Z",
+      NOW,
+    );
+    const { env, sent } = environment(database);
+
+    await expect(new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace())
+      .resolves.toEqual({ outcome: "abandoned" });
+
+    expect(database.prepare("SELECT abandoned_at FROM workspaces WHERE id = ?").get(WORKSPACE))
+      .toEqual({ abandoned_at: expect.any(String) });
+    expect(database.prepare(
+      "SELECT role, status FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+    ).get(WORKSPACE, OWNER)).toEqual({ role: "owner", status: "suspended" });
+    expect(database.prepare(
+      "SELECT revoked_at FROM workspace_invitations WHERE workspace_id = ?",
+    ).get(WORKSPACE)).toEqual({ revoked_at: expect.any(String) });
+    expect(sent.map((message) => AccessRevocationMessageSchema.parse(message.body))).toEqual([
+      expect.objectContaining({ userId: OWNER, workspaceId: WORKSPACE, sessionId: null }),
+    ]);
+  });
+
+  it("never leaves an accepted member active inside an abandoned workspace", async () => {
+    const database = seed();
+    database.prepare(
+      "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id != ?",
+    ).run(WORKSPACE, OWNER);
+    database.prepare(
+      `INSERT INTO workspace_invitations
+       (id, workspace_id, email, invited_by_user_id, token_hash, role, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, 'member', ?, ?)`,
+    ).run(
+      "00000000-0000-7000-8000-000000000098",
+      WORKSPACE,
+      "member@example.test",
+      OWNER,
+      "race-token-hash",
+      "2099-01-01T00:00:00.000Z",
+      NOW,
+    );
+    const { env } = environment(database);
+
+    await Promise.allSettled([
+      new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace(),
+      acceptInvitationForUser(env, "00000000-0000-7000-8000-000000000098", {
+        id: MEMBER,
+        email: "member@example.test",
+      }),
+    ]);
+
+    const lifecycle = database.prepare(
+      `SELECT w.abandoned_at,
+              (SELECT COUNT(*) FROM workspace_members m
+               WHERE m.workspace_id = w.id AND m.status = 'active') AS active_members
+       FROM workspaces w WHERE w.id = ?`,
+    ).get(WORKSPACE) as { abandoned_at: string | null; active_members: number };
+    expect(lifecycle.abandoned_at === null || lifecycle.active_members === 0).toBe(true);
+  });
+
+  it("refuses invitation acceptance and fresh session issue for an abandoned workspace", async () => {
+    const database = seed();
+    database.prepare("UPDATE workspaces SET abandoned_at = ? WHERE id = ?").run(NOW, WORKSPACE);
+    database.prepare(
+      `INSERT INTO workspace_invitations
+       (id, workspace_id, email, invited_by_user_id, token_hash, role, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, 'member', ?, ?)`,
+    ).run(
+      "00000000-0000-7000-8000-000000000097",
+      WORKSPACE,
+      "member@example.test",
+      OWNER,
+      "abandoned-token-hash",
+      "2099-01-01T00:00:00.000Z",
+      NOW,
+    );
+    const { env } = environment(database);
+
+    await expect(acceptInvitationForUser(env, "00000000-0000-7000-8000-000000000097", {
+      id: MEMBER,
+      email: "member@example.test",
+    })).rejects.toMatchObject({ status: 404, code: "invitation_invalid" });
+    await expect(new AuthService(env).createRegionalSession(OWNER, WORKSPACE))
+      .rejects.toMatchObject({ status: 403, code: "workspace_access_denied" });
+  });
+
+  it("omits abandoned memberships and invitations from regional discovery", async () => {
+    const database = seed();
+    database.prepare("UPDATE workspaces SET abandoned_at = ? WHERE id = ?").run(NOW, WORKSPACE);
+    database.prepare(
+      `INSERT INTO workspace_invitations
+       (id, workspace_id, email, invited_by_user_id, token_hash, role, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, 'member', ?, ?)`,
+    ).run(
+      "00000000-0000-7000-8000-000000000096",
+      WORKSPACE,
+      "member@example.test",
+      OWNER,
+      "discovery-token-hash",
+      "2099-01-01T00:00:00.000Z",
+      NOW,
+    );
+    const { env } = environment(database);
+
+    await expect(new RegionalOnboardingService(env).discover({
+      platformUserId: MEMBER,
+      googleSubject: `google-${MEMBER}`,
+      email: "member@example.test",
+      name: "Member",
+      avatarUrl: null,
+      timezone: "UTC",
+      createdAt: NOW,
+    })).resolves.toMatchObject({ workspaces: [], invitations: [] });
+  });
+});
+
 describe("reaping expired sessions", () => {
   function insertSession(
     database: DatabaseSync,
@@ -311,10 +476,10 @@ describe("publishing a revocation", () => {
 });
 
 describe("the membership route", () => {
-  function app(): Hono<HonoAppEnv> {
+  function app(userId: string = OWNER, role: AuthContext["role"] = "owner"): Hono<HonoAppEnv> {
     const routes = new Hono<HonoAppEnv>();
     routes.use("*", async (context, next) => {
-      context.set("auth", auth(OWNER, "owner"));
+      context.set("auth", auth(userId, role));
       await next();
     });
     routes.route("/workspaces", workspaceMembershipRoutes);
@@ -356,6 +521,20 @@ describe("the membership route", () => {
     ).get(WORKSPACE, MEMBER) as { count: number };
     expect(remaining.count).toBe(1);
     expect(sent).toEqual([]);
+  });
+
+  it("lets the signed-in member leave their own workspace", async () => {
+    const database = seed();
+    const { env, sent } = environment(database);
+    const response = await app(MEMBER, "member").request(
+      `/workspaces/${WORKSPACE}/membership`,
+      { method: "DELETE" },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ outcome: "left" });
+    expect(sent).toHaveLength(1);
   });
 });
 

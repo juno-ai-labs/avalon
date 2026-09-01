@@ -272,6 +272,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
          WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
+           AND w.abandoned_at IS NULL
          ORDER BY m.joined_at, w.created_at`,
       ).bind(user.id, this.env.AVALON_REGION).all<Record<string, unknown>>(),
       this.env.DB.prepare(
@@ -283,7 +284,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          JOIN users inviter ON inviter.id = i.invited_by_user_id
          WHERE i.email = ? COLLATE NOCASE
            AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?
-           AND w.region = ?
+           AND w.region = ? AND w.abandoned_at IS NULL
          ORDER BY i.created_at DESC LIMIT 100`,
       ).bind(identity.email, nowIso(), this.env.AVALON_REGION).all<InvitationDiscoveryRow>(),
     ]);
@@ -478,7 +479,8 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const membership = await this.env.DB.prepare(
       `SELECT 1 AS present FROM workspace_members m
        JOIN workspaces w ON w.id = m.workspace_id
-       WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active' AND w.region = ?`,
+       WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
+         AND w.region = ? AND w.abandoned_at IS NULL`,
     ).bind(userId, workspaceId, this.env.AVALON_REGION).first<{ present: number }>();
     if (!membership) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
   }
@@ -1037,7 +1039,7 @@ export class PlatformOnboardingService {
 
   private requireGlobalControlPlane(): void {
     if (this.env.AVALON_REGION !== "global" || this.auth.region !== "global") {
-      throw new ApiError(409, "global_identity_required", "Sign in through the Rally platform before choosing an organization");
+      throw new ApiError(409, "global_identity_required", "Sign in through the Rally platform before choosing a workspace");
     }
   }
 

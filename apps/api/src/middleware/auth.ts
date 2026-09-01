@@ -68,7 +68,8 @@ async function authenticate(c: Context): Promise<IdentityAuthContext> {
       const member = await c.env.DB.prepare(
         `SELECT m.role FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
-         WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active' AND w.region = ?`,
+         WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active'
+           AND w.region = ? AND w.abandoned_at IS NULL`,
       )
         .bind(userId, workspaceId, c.env.AVALON_REGION)
         .first<{ role: "owner" | "admin" | "member" }>();
@@ -109,7 +110,7 @@ async function authenticate(c: Context): Promise<IdentityAuthContext> {
      LEFT JOIN users u ON u.id = s.user_id
      LEFT JOIN workspace_members m
        ON m.user_id = s.user_id AND m.workspace_id = s.workspace_id AND m.status = 'active'
-     LEFT JOIN workspaces w ON w.id = s.workspace_id
+     LEFT JOIN workspaces w ON w.id = s.workspace_id AND w.abandoned_at IS NULL
      WHERE s.id = ? AND s.user_id = ? AND s.region = ?
        AND s.revoked_at IS NULL AND s.expires_at > ?`,
   )
@@ -159,7 +160,7 @@ export const requireIdentityAuth: MiddlewareHandler<HonoAppEnv> = async (c, next
 export const requireAuth: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
   const auth = await timedAuthenticate(c);
   if (!auth.workspaceId || !auth.role) {
-    throw new ApiError(403, "workspace_setup_required", "Choose or join an organization to continue");
+    throw new ApiError(403, "workspace_setup_required", "Choose or join a workspace to continue");
   }
   c.set("auth", auth);
   requestDeferral(c)(touchLastSeen(c.env, auth.workspaceId, auth.userId));
@@ -175,7 +176,7 @@ export function getIdentityAuth(c: Context): IdentityAuthContext {
 export function getAuth(c: Context): AuthContext {
   const auth = getIdentityAuth(c);
   if (!auth.workspaceId || !auth.role) {
-    throw new ApiError(403, "workspace_setup_required", "Choose or join an organization to continue");
+    throw new ApiError(403, "workspace_setup_required", "Choose or join a workspace to continue");
   }
   return auth as AuthContext;
 }
