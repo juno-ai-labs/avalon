@@ -429,8 +429,19 @@ beforeEach(async () => {
 most changes do not need one locally. CI runs everything on every push, so a
 local full run buys confidence, not correctness.
 
-- **Documentation-only changes: run nothing.** No test covers prose. If the diff
-  touches only `docs/`, `README.md`, or comments, the gates have nothing to say.
+- **Documentation-only changes: run the documentation gates, not the suites.** No
+  suite covers prose, but two things do. `pnpm docs:check` scans every file under
+  `docs/` for a heading a rebase truncated, and it runs nowhere in CI, so a
+  documentation change that skips it is a documentation change nothing checked.
+  And three documents are executable contracts, read off disk and asserted on:
+  `docs/connector-digestibility.md` by
+  `packages/connectors/src/digestibility-doc.test.ts`,
+  `docs/workstream-email-addresses.md` by
+  `apps/api/test/workstream-email-address.test.ts`, and
+  `docs/domain-migration.md` by `apps/site/test/site.test.ts`. Editing one of
+  those runs its test too. For a document not on that list,
+  `grep -rn 'docs/<file>.md' --include='*.test.*' .` finds the tests that name
+  it; most hits only cite a document in a comment, and those need nothing.
 - **Ordinary changes: run the tests that cover what you touched.** One file, one
   test name, or the one package's suite. Add a second package only when the
   change crosses into it.
