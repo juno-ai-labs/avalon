@@ -249,6 +249,23 @@ export const WorkspaceDirectoryDeliveryAuthoritySchema = z.strictObject({
   archived: z.boolean(),
 });
 
+/**
+ * Stop hiding the work stream an automation occurrence already ran in.
+ *
+ * `scope` is the automation's, not the work stream's: a shared automation's
+ * output is shared, so a run worth reading is promoted to the workspace. There
+ * is no `workstream` here because a room's automation has nothing to expose —
+ * its results already arrive in a room people can see. Null leaves the work
+ * stream's scope alone, for a run frozen before the automation's scope was
+ * recorded beside it: revealing it narrowly is recoverable, and guessing
+ * `workspace` would hand somebody's run to everyone.
+ */
+export const WorkspaceDirectoryExposeRunRequestSchema = z.strictObject({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  scope: z.enum(["personal", "workspace"]).nullable(),
+});
+
 export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
 export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,

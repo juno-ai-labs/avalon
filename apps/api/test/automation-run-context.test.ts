@@ -207,6 +207,7 @@ function workflowInput(deliveryTargets: DeliveryTarget[] = [{
       connectorBindings: {},
       deliveryTargets,
       owningWorkstreamId: null,
+  scope: "personal" as const,
       modelOverride: null,
       executionPrincipal: { type: "user", userId: asUserId(OWNER) },
       trigger: { kind: "manual", requestedByUserId: asUserId(OWNER) },
