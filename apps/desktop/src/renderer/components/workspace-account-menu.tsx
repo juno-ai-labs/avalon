@@ -98,6 +98,7 @@ export function WorkspaceAccountMenu({
   const [actionError, setActionError] = useState<string | null>(null);
   const creationOperation = useRef<{ fingerprint: string; id: string } | null>(null);
   const invitationOperation = useRef<{ invitationId: string; id: string } | null>(null);
+  const workspaceNameInput = useRef<HTMLInputElement>(null);
   const backgroundAttention = enabled ? workspaces.flatMap((workspace) => {
     if (workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region) return [];
     const value = attention[desktopWorkspaceIdentityKey(workspace.region, workspace.id)];
@@ -345,13 +346,13 @@ export function WorkspaceAccountMenu({
             setCreating(false);
           }
         }}
+        initialFocusRef={workspaceNameInput}
         open={creating}
         title="Create a workspace"
       >
         <label className="field">
           <span>Workspace name</span>
           <input
-            autoFocus
             maxLength={120}
             onChange={(event) => setWorkspaceName(event.target.value)}
             onKeyDown={(event) => {
@@ -359,6 +360,7 @@ export function WorkspaceAccountMenu({
               event.preventDefault();
               submitWorkspaceCreation();
             }}
+            ref={workspaceNameInput}
             value={workspaceName}
           />
         </label>
