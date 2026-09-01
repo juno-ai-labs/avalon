@@ -1047,7 +1047,6 @@ export function Sidebar({
   onLoadMoreNotes,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
-  const openDraftId = useOpenDraftId();
   const location = useLocation();
   const navigate = useNavigate();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
@@ -1769,13 +1768,13 @@ export function Sidebar({
               <MessageSquarePlus aria-hidden="true" size={15} />
               <span>New work stream</span>
             </NavLink>
-            {/* Reopening a draft lands on this same path, where the active row
-                is the draft's own. Two entries lit at once would say the screen
-                is both a new automation and that one. */}
+            {/* Drafting happens by asking for it in a work stream, so this
+                starts one. The affordance stays because people look for it
+                here; what it opens is the conversation the agent drafts in. */}
             <NavLink
-              className={({ isActive }) => clsx('sidebar-action', isActive && openDraftId === null && 'is-active')}
+              className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
               onClick={() => markSurfaceEntrypoint('sidebar_new')}
-              to="/automations/new"
+              to="/workstreams/new"
             >
               <Plus aria-hidden="true" size={15} />
               <span>New automation</span>
