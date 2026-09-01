@@ -1215,7 +1215,7 @@ already have committed across the object boundary.
 | `workspace_workstream_pins` | User-ordered pins referencing the directory row; all pin writes and reorder operations execute in this object. |
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
-| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. |
+| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. The Worker publishes 50 messages per Queue call, below Cloudflare's 100-message platform maximum. WorkspaceDO records the whole chunk atomically through one JSON binding, independent of object SQLite's 100-parameter ceiling. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
 | `workspace_activity_event_targets` | Involvement edges such as mentioned/assigned; these never grant visibility and cascade with the event. |
 | `opportunity_batch_windows`, `opportunity_batch_events` | Debounced connector/message evidence, bounded attempts, Workflow leases, and terminal admission status; both share one not-yet-started token (`pending`), and the import maps legacy `queued` window rows onto it. Repeated mutation or settlement after `completed` is a no-op; a nonterminal lease mismatch remains fenced. |
@@ -1440,6 +1440,42 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-31 — Batch receipts fit inside the object SQLite bind ceiling
+
+**What changed:** The Worker publishes at most 50 mass-update messages per Queue
+call. WorkspaceDO records a published chunk by expanding one bound JSON array
+with `json_each`, rather than expanding its work-stream IDs into separate SQL
+parameters. The real-workerd directory suite also exercises 100 IDs directly so
+the receipt remains safe if the transport limit changes later. Review of the
+same boundary also moved readable-ID, internal directory-lookup, and draft
+attachment selection to one JSON binding each.
+
+**Why:** The receipt statement also binds its timestamp and operation ID. A
+100-message Queue chunk therefore became 102 SQL parameters, over object
+SQLite's 100-parameter ceiling, after the Queue had already accepted every
+message. The archive completed but the request returned an internal error and
+left those dispatch rows falsely pending. The accepted maxima on the three
+reviewed sibling reads produced 101, 252, and 102 parameters respectively, so
+they could fail through the same real-runtime ceiling.
+
+The product owner selected 50 messages per call during the incident follow-up;
+no load-derived or operational derivation beyond that explicit selection was
+recorded. Cloudflare's platform maximum remains 100 messages per `sendBatch`.
+
+**Considered and rejected:** Treating a smaller transport chunk as the only fix
+would leave the receipt coupled to the statement's current scalar count and
+allow a later batch-size increase to recreate the incident. Splitting one
+receipt into smaller SQL updates would make a single successfully published
+Queue chunk only partly recorded. The explicit 50-message call limit plus one
+JSON binding keeps both boundaries clear and the receipt atomic.
+
+**Consequences:** A 255-item change now uses six Queue calls instead of three.
+With the known SQLite failure removed, a retry skips each chunk whose dispatch
+receipt committed. A Queue-accepted chunk whose receipt did not commit can
+still be republished; child inbox receipts deduplicate it. Changes to this
+receipt must retain the real-workerd 100-ID case and must not expand caller IDs
+into individual binds alongside other parameters.
 
 ### 2026-08-30 — Person mention Markdown uses `person://`
 
