@@ -85,6 +85,7 @@ import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-
 import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "./workstream-regional-effect";
 import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
 import {
+  LOOP_EXECUTION_LEASE_MS,
   SubstreamLoopStorage,
   type PendingInputPreparationKind,
   type PendingInputPreparationRow,
@@ -422,7 +423,19 @@ function userFromRow(row: UserRow) {
  * connectors, automation labels, and pins resolve through WorkspaceDO.
  */
 export class WorkstreamObjectProductService {
-  private readonly activeInputPreparations = new Map<string, number>();
+  /**
+   * The admissions this isolate believes it is still preparing, by input id.
+   *
+   * `depth` is a re-entrancy count: a recovery takeover can legitimately run
+   * alongside the original. `claimedAt` is the first claim's instant and is
+   * never refreshed — the question it answers is *how long has this row been
+   * claimed without settling*, and a takeover that re-claims it must not reset
+   * that clock and hide an owner that is already gone.
+   */
+  private readonly activeInputPreparations = new Map<string, {
+    depth: number;
+    claimedAt: number;
+  }>();
 
   constructor(
     private readonly storage: DurableObjectStorage,
@@ -432,17 +445,39 @@ export class WorkstreamObjectProductService {
     private readonly loops = new SubstreamLoopStorage(storage),
   ) {}
 
-  private beginInputPreparation(inputId: string): void {
-    this.activeInputPreparations.set(
-      inputId,
-      (this.activeInputPreparations.get(inputId) ?? 0) + 1,
-    );
+  private beginInputPreparation(inputId: string, now: number): void {
+    const claim = this.activeInputPreparations.get(inputId);
+    this.activeInputPreparations.set(inputId, {
+      depth: (claim?.depth ?? 0) + 1,
+      claimedAt: claim?.claimedAt ?? now,
+    });
   }
 
   private endInputPreparation(inputId: string): void {
-    const active = this.activeInputPreparations.get(inputId) ?? 0;
-    if (active <= 1) this.activeInputPreparations.delete(inputId);
-    else this.activeInputPreparations.set(inputId, active - 1);
+    const claim = this.activeInputPreparations.get(inputId);
+    if (!claim || claim.depth <= 1) this.activeInputPreparations.delete(inputId);
+    else this.activeInputPreparations.set(inputId, { ...claim, depth: claim.depth - 1 });
+  }
+
+  /**
+   * Whether this isolate's claim on a preparation is still evidence its owner
+   * is running, rather than a claim whose owner the runtime cancelled.
+   *
+   * A cancelled invocation leaves the claim behind with nothing to release it,
+   * so without an expiry a surviving isolate would refuse to resume that row
+   * forever — and the head-of-line gate would hold every message queued behind
+   * it forever with it. The horizon is the object's existing one for exactly
+   * this question; see {@link LOOP_EXECUTION_LEASE_MS}.
+   */
+  private inputPreparationClaimIsLive(inputId: string, now: number): boolean {
+    const expiresAt = this.inputPreparationClaimExpiresAt(inputId);
+    return expiresAt !== null && now < expiresAt;
+  }
+
+  /** When this isolate's claim on a preparation stops being evidence of life. */
+  private inputPreparationClaimExpiresAt(inputId: string): number | null {
+    const claim = this.activeInputPreparations.get(inputId);
+    return claim === undefined ? null : claim.claimedAt + LOOP_EXECUTION_LEASE_MS;
   }
 
   private preparationFailureCode(error: unknown): string {
@@ -461,23 +496,8 @@ export class WorkstreamObjectProductService {
     if (preparation.state !== "preparing") {
       throw new Error(`pending_input_preparation_${preparation.state}`);
     }
-    this.beginInputPreparation(preparation.input_id);
+    this.beginInputPreparation(preparation.input_id, Date.now());
     try {
-      // Before the work, not only in the `finally`. The reservation is already
-      // durable and this invocation is the only thing that can settle it, but a
-      // cancelled invocation neither throws nor runs a `finally` — so arming
-      // only below leaves the object with no wake-up at all while an admitted
-      // message sits `preparing`, and the head-of-line gate then hides that
-      // message *and every message queued behind it* from the loop until
-      // something unrelated happens to touch the object. Same hazard, same
-      // horizon, and the same arm-before-you-await answer as
-      // `ScheduledDurableObject.armAlarmBeforeDueWork`. Inside the `try` so a
-      // storage failure here terminalizes the admission the way any other
-      // failure does, rather than stranding its claim.
-      await ensureStorageAlarmNoLaterThan(
-        this.storage,
-        Date.now() + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
-      );
       return await work();
     } catch (error) {
       this.loops.failInputPreparation({
@@ -497,15 +517,28 @@ export class WorkstreamObjectProductService {
     }
   }
 
-  private reserveInputPreparation(input: {
+  private async reserveInputPreparation(input: {
     root: RootRow;
     inputId: string;
     clientMessageId: string;
     preparationKind: PendingInputPreparationKind;
     envelope: unknown;
     now: number;
-  }): PendingInputPreparationRow {
+  }): Promise<PendingInputPreparationRow> {
     const loop = this.ensureExternalMessageLoop(input.root, input.now);
+    // Before the row, not after it. A `preparing` row is hidden from
+    // `pendingInputs` — and so is every input queued behind it — so nothing
+    // else in this object derives a wake-up for it, and a runtime cancellation
+    // neither throws nor runs a `finally`. Arming after the commit would leave
+    // a window, however narrow, in which the reservation is durable and the
+    // wake-up is not; arming first inverts that, and the worst an admission
+    // that then fails can cost is one wake that finds nothing to do. The
+    // horizon is the base class's, for the same cancellation it names — see
+    // `ScheduledDurableObject.armAlarmBeforeDueWork`.
+    await ensureStorageAlarmNoLaterThan(
+      this.storage,
+      input.now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
+    );
     return this.loops.reserveInputPreparation({
       inputId: input.inputId,
       loopId: loop.loop_id,
@@ -665,31 +698,40 @@ export class WorkstreamObjectProductService {
   nextRecoverableInputPreparationAt(now: number = Date.now()): number | null {
     if (this.terminalAttachmentReservation()) return now;
     const preparation = this.loops.oldestPreparingInput();
-    if (!preparation || this.activeInputPreparations.has(preparation.input_id)) return null;
-    return now;
+    if (!preparation) return null;
+    return this.inputPreparationClaimIsLive(preparation.input_id, now) ? null : now;
   }
 
   /**
-   * Whether an admitted message is still waiting on its preparation to settle,
-   * including one this isolate believes it is still running.
+   * When to look at an unsettled admission this isolate is still claiming.
    *
-   * Deliberately not folded into {@link nextRecoverableInputPreparationAt},
-   * which answers *may I resume it now* and must keep saying no while this
-   * isolate owns it. This answers the different question the alarm needs — is
-   * there durable admission work outstanding — because a mailbox row is hidden
-   * from `pendingInputs` until it settles, so nothing else derives a wake-up
-   * for it and the re-arm at the end of a handler would delete the object's
-   * only one.
+   * Deliberately separate from {@link nextRecoverableInputPreparationAt}, which
+   * answers *may I resume it now* and has to keep saying no while the claim is
+   * live, or the drain would re-enter a preparation that is genuinely running.
+   * This answers what the alarm needs instead: a `preparing` row is hidden from
+   * `pendingInputs` until it settles, so without this the re-arm at the end of
+   * a handler deletes the object's only wake-up and the admission is stranded.
+   *
+   * The instant is the claim's expiry rather than a heartbeat: a live claim
+   * needs no attention until it stops being evidence of a running owner, and
+   * waking every interval in the meantime would spend the object's alarm on a
+   * question whose answer cannot change until then.
    */
-  hasUnresolvedInputPreparation(): boolean {
-    return this.loops.oldestPreparingInput() !== undefined;
+  nextInputPreparationWakeAt(now: number = Date.now()): number | null {
+    const preparation = this.loops.oldestPreparingInput();
+    if (!preparation) return null;
+    const expiresAt = this.inputPreparationClaimExpiresAt(preparation.input_id);
+    return expiresAt !== null && now < expiresAt ? expiresAt : null;
   }
 
   async resumeOldestInputPreparation(): Promise<"none" | "active" | "settled"> {
     if (await this.recoverTerminalAttachmentReservation()) return "settled";
     const preparation = this.loops.oldestPreparingInput();
     if (!preparation) return "none";
-    if (this.activeInputPreparations.has(preparation.input_id)) return "active";
+    // A live claim is the original invocation still running; anything past the
+    // recovery horizon is a claim whose owner cannot be shown to exist, and
+    // resuming is idempotent against every durable row it re-enters.
+    if (this.inputPreparationClaimIsLive(preparation.input_id, Date.now())) return "active";
     let envelope: Record<string, unknown>;
     try {
       envelope = JSON.parse(preparation.envelope_json ?? "null") as Record<string, unknown>;
@@ -3135,7 +3177,7 @@ export class WorkstreamObjectProductService {
     }
     const existingPending = this.loops.inputByClientMessageId(input.clientMessageId);
     if (existingPending) return this.externalPendingMessageResult(existingPending, false);
-    const preparation = this.reserveInputPreparation({
+    const preparation = await this.reserveInputPreparation({
       root,
       inputId: input.messageId,
       clientMessageId: input.clientMessageId,
@@ -3212,7 +3254,7 @@ export class WorkstreamObjectProductService {
     }
     const pendingReplay = this.loops.inputByClientMessageId(input.clientMessageId);
     if (pendingReplay) return this.externalPendingMessageResult(pendingReplay, false);
-    const preparation = this.reserveInputPreparation({
+    const preparation = await this.reserveInputPreparation({
       root,
       inputId: input.messageId,
       clientMessageId: input.clientMessageId,
@@ -3369,7 +3411,7 @@ export class WorkstreamObjectProductService {
       return this.pendingMessageResult(existingPending, false);
     }
     const reservationNow = Date.now();
-    const preparation = this.reserveInputPreparation({
+    const preparation = await this.reserveInputPreparation({
       root: localRoot,
       inputId: uuidV7(reservationNow),
       clientMessageId: input.clientMessageId,
@@ -3910,7 +3952,7 @@ export class WorkstreamObjectProductService {
     }
     const localRoot = this.locallyAuthorizedRoot(auth);
     const reservationNow = Date.now();
-    const preparation = this.reserveInputPreparation({
+    const preparation = await this.reserveInputPreparation({
       root: localRoot,
       inputId: uuidV7(reservationNow),
       clientMessageId,

@@ -503,10 +503,10 @@ field.
 
 ### 2026-09-01 — An unsettled message admission is a SubstreamAgent wake reason
 
-**What changed:** `SubstreamAgent`'s run lane derives a keep-alive-horizon
-instant while any `pending_loop_input_mailbox` row is still `preparing`, and the
-product service arms directly at the cancellation-recovery horizon the moment it
-reserves one — a third deliberate direct-arm call site alongside the pending
+**What changed:** `SubstreamAgent`'s run lane derives the expiry of the
+in-memory claim over an unresolved `pending_loop_input_mailbox` row, and the
+product service arms directly at the cancellation-recovery horizon *before* it
+commits that row — a third deliberate direct-arm call site alongside the pending
 loop input and the unlinked execution receipt, and, like both of those, one that
 can only pull the alarm in.
 
@@ -519,15 +519,18 @@ cancelled — no throw, no `finally` — left a durable reservation with nothing
 rediscover it. The message and every message queued after it then waited for an
 unrelated request, which for a work stream nobody reopens never comes. This is
 the same hazard the pre-work arm exists for, reaching the one durable row that
-was not yet a wake reason.
+was not yet a wake reason. Arming *before* the commit rather than after is what
+makes it unconditional — an arm written second leaves a window, however narrow,
+where the row is durable and the wake-up is not.
 
 **Considered and rejected:** A stored `_internal_durable_alarms` kind per
 reservation would have survived the same way, with retry gating and a stall
 report for free, but it makes an admission write and cancel an index entry on a
 path whose whole point is to commit fast, and the entry would outlive nothing
-the derived instant does not already cover. The keep-alive horizon rather than
-the cancellation horizon for the ongoing derivation keeps a preparation that
-normally settles in milliseconds from heartbeating every two seconds.
+the derived instant does not already cover. A fixed heartbeat while the claim is
+held was rejected in favour of the claim's own expiry instant: a live claim
+cannot change its answer before then, so waking earlier spends the object's one
+alarm on a question nothing can have answered.
 
 ### 2026-08-28 — AutomationAgent adopts the base, with two stored kinds and two derived lanes
 
