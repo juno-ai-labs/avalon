@@ -3130,7 +3130,11 @@ export const ConnectorActivityTriggerDescriptorSchema = z.strictObject({
   eventFamilies: z.array(z.string().min(1).max(200)).default([]),
   filterFields: z.array(ConnectorActivityFilterFieldSchema).default([]),
   resourceRelationships: z.array(z.strictObject({
-    relationship: z.enum(["channel", "folder", "parent", "project", "repository", "page", "application"]),
+    // Duplicated from `ConnectorResourceRelationshipSchema` in
+    // `automation-evaluators.ts` rather than imported, and the two must be
+    // changed together: adding a value to only one type-checks and then rejects
+    // the manifest at registry construction, for every connector at once.
+    relationship: z.enum(["channel", "file", "folder", "parent", "project", "repository", "page", "thread", "application"]),
     resourceType: z.string().min(1).max(200),
   })).default([]),
   /**
