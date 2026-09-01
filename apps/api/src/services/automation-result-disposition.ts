@@ -35,10 +35,10 @@ export interface AutomationResultDispositionDecision {
   source: "classified" | "default";
 }
 
-const DecisionSchema = z.object({
+const DecisionSchema = z.strictObject({
   disposition: z.enum(["done", "deliver", "expose_workstream"]),
   reason: z.string().trim().min(1).max(300),
-}).strict();
+});
 
 /**
  * What one completed occurrence's result is worth, decided once.
