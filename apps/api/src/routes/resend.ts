@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -12,7 +12,7 @@ const ResendInboundResponseSchema = z.object({
   accepted: z.literal(true),
   duplicate: z.boolean(),
   ignored: z.boolean(),
-  routedCount: z.number().int().nonnegative(),
+  routedCount: z.number().int().safe().nonnegative(),
 });
 
 export const resendInboundRoutes = new Hono<HonoAppEnv>();

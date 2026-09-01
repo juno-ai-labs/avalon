@@ -11,7 +11,7 @@ import {
   asUserId,
   type WorkspaceId
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
 import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";

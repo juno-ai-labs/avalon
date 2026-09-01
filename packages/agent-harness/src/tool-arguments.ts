@@ -1,3 +1,5 @@
+import type { ZodValidationError } from "@rally/contracts/zod-error";
+import { isZodValidationError } from "@rally/contracts/zod-error";
 import { z } from "zod";
 
 const MAX_SCHEMA_DEPTH = 64;
@@ -11,6 +13,9 @@ type JsonObject = Record<string, unknown>;
 type NumericKind = "integer" | "number";
 type Normalized = { value: unknown; changed: boolean };
 type SchemaVisitBudget = { remaining: number };
+
+export type ToolInputValidationError = ZodValidationError;
+export { isZodValidationError };
 
 /**
  * Apply the one model-tolerance rule shared by every harness tool: a string may
@@ -47,7 +52,7 @@ export function validateToolArguments(
 }
 
 /** Turn a Zod issue tree into one bounded correction a routed model can act on. */
-export function formatToolArgumentValidationError(error: z.ZodError): string {
+export function formatToolArgumentValidationError(error: ToolInputValidationError): string {
   const issues = selectActionableIssues(error.issues).slice(0, MAX_VALIDATION_ISSUES);
   const details = issues.map(formatIssue).filter(Boolean);
   const message = details.length > 0

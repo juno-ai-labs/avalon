@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { pendingBindToolBatch } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
@@ -37,7 +38,7 @@ import {
   type WorkstreamTranscriptSnapshot,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import {
   revocationClosesSocket,
@@ -250,7 +251,7 @@ function isPersistedElicitationOutcome(value: unknown): boolean {
 }
 
 const SocketAttachmentSchema = z.object({
-  connectionId: z.string().uuid(),
+  connectionId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   substreamId: SubstreamIdSchema,
@@ -259,7 +260,7 @@ const SocketAttachmentSchema = z.object({
   // command on that socket triggers a normal reconnect for a fresh ticket.
   sessionId: z.string().min(1).max(200).optional(),
   connectedAt: z.string().datetime({ offset: true }),
-  afterSequence: z.number().int().nonnegative(),
+  afterSequence: z.number().int().safe().nonnegative(),
   subscribed: z.boolean().default(false),
   // Missing means a legacy client whose feed subscription still represented
   // viewing. Current proactive clients opt out and use WorkspaceDO presence.
@@ -268,7 +269,7 @@ const SocketAttachmentSchema = z.object({
   snapshotInFlight: z.boolean().default(false),
   transcriptSnapshot: z.object({
     snapshotId: z.string().min(1),
-    snapshotThrough: z.number().int().nonnegative(),
+    snapshotThrough: z.number().int().safe().nonnegative(),
     snapshotAtUtc: z.string().datetime({ offset: true }),
   }).nullable().default(null),
 });
@@ -291,7 +292,7 @@ const RuntimeReaderAudienceRequestSchema = z.object({
 const RuntimeBootstrapRequestSchema = z.object({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
-  generation: z.number().int().positive(),
+  generation: z.number().int().safe().positive(),
 }).strict();
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
 const AgentTerminalOutcomeSchema = z.object({
@@ -1193,14 +1194,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       workstreamId: z.string().min(1),
       substreamId: z.union([z.literal("0"), z.string().min(1)]),
       resourceId: z.string().min(1),
-      authorityGeneration: z.number().int().positive(),
+      authorityGeneration: z.number().int().safe().positive(),
       deliveryId: z.string().min(1),
       event: z.object({
         id: z.string().min(1),
         eventType: z.string().min(1),
         title: z.string().min(1),
         summary: z.string(),
-        occurredAt: z.number().int().nonnegative(),
+        occurredAt: z.number().int().safe().nonnegative(),
         audienceKind: z.enum(["workspace", "restricted"]),
         audienceUserIds: z.array(z.string().min(1)),
       }).strict(),
@@ -4638,9 +4639,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         substreamId: SubstreamIdSchema,
         userId: UserIdSchema,
         sessionId: z.string().min(1).max(200),
-        ticketId: z.string().uuid(),
-        ticketExpiresAt: z.coerce.number().int().positive(),
-        afterSequence: z.coerce.number().int().nonnegative().default(0)
+        ticketId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+        ticketExpiresAt: z.coerce.number().int().safe().positive(),
+        afterSequence: z.coerce.number().int().safe().nonnegative().default(0)
       })
       .safeParse({
         workspaceId:

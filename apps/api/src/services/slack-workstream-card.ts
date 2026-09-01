@@ -1,5 +1,5 @@
+import { isZodValidationError } from "@rally/contracts/zod-error";
 import { ConnectorError, slackApi } from "@rally/connectors";
-import { z } from "zod";
 
 import { sha256 } from "../lib/crypto";
 import { logWarn, type LogEnv } from "../observability/logger";
@@ -109,7 +109,7 @@ function slackErrorReason(error: unknown): string {
     }
     return error.code;
   }
-  if (error instanceof z.ZodError) return "invalid_slack_data";
+  if (isZodValidationError(error)) return "invalid_slack_data";
   return "unknown";
 }
 

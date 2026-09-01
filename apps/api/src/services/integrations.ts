@@ -1,3 +1,5 @@
+import { isZodValidationError } from "@rally/contracts/zod-error";
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   AVALON_CURRENT_TIME_TOOL_DEFINITION,
   AVALON_CORE_PLUGIN_ID,
@@ -94,7 +96,7 @@ import {
   type ConnectorToolContext,
   type ResolvedConnectorAdapter,
 } from "@rally/connectors";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { automationAgentName, substreamAgentName, workspaceDOName } from "../durable-objects/names";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -1808,8 +1810,8 @@ export async function compileAutomationDraft(
       provider: "openrouter",
       model: routing.model,
       error_name: error instanceof Error ? error.name : "UnknownError",
-      failure_code: compilerFailure?.code ?? (providerFailure ? "provider_failure" : error instanceof z.ZodError ? "validation_failure" : "unknown_failure"),
-      failure_kind: compilerFailure?.kind ?? (providerFailure ? "provider" : error instanceof z.ZodError ? "validation" : "unknown"),
+      failure_code: compilerFailure?.code ?? (providerFailure ? "provider_failure" : isZodValidationError(error) ? "validation_failure" : "unknown_failure"),
+      failure_kind: compilerFailure?.kind ?? (providerFailure ? "provider" : isZodValidationError(error) ? "validation" : "unknown"),
       retryable: compilerFailure?.retryable ?? (providerFailure ? providerFailure.status !== 401 && providerFailure.status !== 402 && providerFailure.status !== 403 : false),
     });
     throw error;
@@ -7516,7 +7518,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         },
       },
       execute: async (raw) => {
-        const args = z.object({ wakeupId: z.string().uuid() }).strict().parse(raw);
+        const args = z.object({ wakeupId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID") }).strict().parse(raw);
         const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.workstreamId);
         const outcome = await cancelWorkstreamWakeup(scheduling, { wakeupId: args.wakeupId });
         if (outcome === "not_found") {
@@ -7654,7 +7656,7 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
   const defaultSearchResults = Math.min(5, maxSearchResults);
   const searchInputSchema = z.object({
     query: z.string().trim().min(1).max(500),
-    limit: z.number().int().min(1).max(maxSearchResults).optional(),
+    limit: z.number().int().safe().min(1).max(maxSearchResults).optional(),
     recency: z.enum(["day", "week", "month", "year"]).optional(),
   });
   const fetchInputSchema = z.object({

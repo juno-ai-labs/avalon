@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "./env";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
@@ -10,7 +10,7 @@ export const InspectionWorkspaceRouteSchema = z.object({
   region: z.enum(["global", "eu"]),
   placement_affinity: z.string(),
   authority_state: z.literal("active"),
-  authority_generation: z.number().int().positive(),
+  authority_generation: z.number().int().safe().positive(),
 }).strict();
 export type InspectionWorkspaceRoute = z.infer<typeof InspectionWorkspaceRouteSchema>;
 
@@ -18,7 +18,7 @@ export const InspectionWorkstreamRouteSchema = z.object({
   workspace_id: z.string(),
   workstream_id: z.string(),
   object_name: z.string(),
-  authority_generation: z.number().int().positive(),
+  authority_generation: z.number().int().safe().positive(),
 }).strict();
 export type InspectionWorkstreamRoute = z.infer<typeof InspectionWorkstreamRouteSchema>;
 

@@ -3,7 +3,7 @@ import {
   type RunHarnessInput,
 } from "@rally/agent-harness";
 import { AGENT_MODEL_OVERRIDES } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Env } from "../env";
 
 /**
@@ -43,12 +43,12 @@ const DecimalStringSchema = z.string().refine((value) => {
 
 const CachedTokenModelPricingSchema = z.object({
   version: z.literal(2),
-  fetchedAtMs: z.number().int().nonnegative(),
+  fetchedAtMs: z.number().int().safe().nonnegative(),
   inputUsdPerM: DecimalStringSchema,
   cachedInputUsdPerM: DecimalStringSchema,
   outputUsdPerM: DecimalStringSchema,
   overrides: z.array(z.object({
-    minPromptTokens: z.number().int().nonnegative(),
+    minPromptTokens: z.number().int().safe().nonnegative(),
     inputUsdPerM: DecimalStringSchema,
     cachedInputUsdPerM: DecimalStringSchema,
     outputUsdPerM: DecimalStringSchema,
@@ -63,21 +63,21 @@ const CachedTokenModelPricingSchema = z.object({
       }
     }
   }),
-  endpointCount: z.number().int().positive(),
+  endpointCount: z.number().int().safe().positive(),
   sourceFingerprint: z.string().startsWith("openrouter-endpoint-average:v2:"),
 });
 
 const CachedImageModelPricingSchema = z.object({
   version: z.literal(1),
-  fetchedAtMs: z.number().int().nonnegative(),
+  fetchedAtMs: z.number().int().safe().nonnegative(),
   costs: z.array(z.object({
     billable: z.string().min(1),
     unit: z.string().min(1),
     costUsd: DecimalStringSchema,
-    endpointCount: z.number().int().positive(),
+    endpointCount: z.number().int().safe().positive(),
     variant: z.string().min(1).optional(),
   })).min(1),
-  endpointCount: z.number().int().positive(),
+  endpointCount: z.number().int().safe().positive(),
   sourceFingerprint: z.string().startsWith("openrouter-endpoint-average:v1:"),
 });
 
@@ -89,7 +89,7 @@ const EndpointEnvelopeSchema = z.object({
         completion: z.string(),
         input_cache_read: z.string().nullish(),
         overrides: z.array(z.object({
-          min_prompt_tokens: z.number().int().nonnegative().optional(),
+          min_prompt_tokens: z.number().int().safe().nonnegative().optional(),
           prompt: z.string().nullish(),
           completion: z.string().nullish(),
           input_cache_read: z.string().nullish(),

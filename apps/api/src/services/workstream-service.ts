@@ -13,7 +13,7 @@ import type {
   WorkstreamDetail,
   WorkstreamWorkflowInput,
 } from "@rally/contracts";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import type { AuthContext, Env } from "../env";
 import { substreamAgentName } from "../durable-objects/substream-agent";
 import { substreamLoopId, workspaceDOName } from "../durable-objects/names";

@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const ContentAudienceSchema = z.discriminatedUnion("scope", [
   z.object({ scope: z.literal("workspace") }).strict(),

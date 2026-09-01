@@ -1,6 +1,7 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { IdSchema } from '@rally/contracts';
 import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { TelemetryCollector, type TelemetryAcceptanceResult } from "./collector";
 import type { Env } from "../env";
 import { ensurePersonAnalyticsId, ensureWorkspaceAnalyticsId } from './authenticated';
@@ -9,7 +10,7 @@ const AnonymousTelemetryProjectionSchema = z.object({
   event: TelemetryEnvelopeSchema,
   route: z.literal("eu"),
   routingBasis: z.enum(["ip_geolocation", "geolocation_fallback"]),
-  analyticsSubjectId: z.string().uuid(),
+  analyticsSubjectId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   subjectUserId: z.null(),
   workspaceAnalyticsId: z.null(),
 }).strict();

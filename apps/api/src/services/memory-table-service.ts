@@ -5,7 +5,7 @@ import type {
 import { AutomationMemoryTableSchema, asWorkspaceId } from "@rally/contracts";
 import { nowIso } from "@rally/db";
 import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { workspaceDOName } from "../durable-objects/names";
@@ -100,7 +100,7 @@ const QuerySchema = z.object({
     direction: z.enum(["asc", "desc"]),
   }).strict()).optional(),
   select: z.array(z.string().min(1)).optional(),
-  pageSize: z.number().int().min(1).max(100).optional(),
+  pageSize: z.number().int().safe().min(1).max(100).optional(),
   cursor: z.string().min(1).optional(),
 }).strict();
 
@@ -114,7 +114,7 @@ const UpdateSchema = z.object({
   memoryTableId: z.string().min(1),
   rows: z.array(z.object({
     memoryTableRowId: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
+    expectedRevision: z.number().int().safe().positive(),
     values: z.record(z.string(), z.unknown()),
   }).strict()).min(1),
   rationale: z.string().trim().min(1).max(2_000),
@@ -124,7 +124,7 @@ const InvalidateSchema = z.object({
   memoryTableId: z.string().min(1),
   rows: z.array(z.object({
     memoryTableRowId: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
+    expectedRevision: z.number().int().safe().positive(),
   }).strict()).min(1),
   reason: z.string().trim().min(1).max(2_000),
 }).strict();

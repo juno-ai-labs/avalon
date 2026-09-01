@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   booleanValue,
   isRecord,

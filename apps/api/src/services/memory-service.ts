@@ -1,7 +1,8 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { OpenRouterError, type HarnessTool, type HarnessToolResult } from "@rally/agent-harness";
@@ -104,10 +105,16 @@ function workspaceMemoryObject(env: Env, workspaceId: string) {
  * "query"`: together, "neither key is allowed", and a model that believes it
  * retries with `{}`, which fails too.
  */
+const searchInputErrorMap: z.ZodErrorMap = () => ({
+  message: "Send exactly one of query or memoryItemId: query to search, memoryItemId to reread one known item.",
+});
 const SearchInputSchema = z.union([
-  z.object({ query: z.string().trim().min(1).max(2_000) }).strict(),
-  z.object({ memoryItemId: z.string().uuid() }).strict(),
-], { error: "Send exactly one of query or memoryItemId: query to search, memoryItemId to reread one known item." });
+  z.object({ query: z.string().trim().min(1).max(2_000) }, { errorMap: searchInputErrorMap }).strict(),
+  z.object(
+    { memoryItemId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID") },
+    { errorMap: searchInputErrorMap },
+  ).strict(),
+], { errorMap: searchInputErrorMap });
 
 const AddInputSchema = z.object({
   scopeKind: z.enum(MEMORY_SCOPE_KINDS),
@@ -117,16 +124,16 @@ const AddInputSchema = z.object({
 }).strict();
 
 const UpdateInputSchema = z.object({
-  memoryItemId: z.string().uuid(),
-  expectedRevision: z.number().int().positive(),
+  memoryItemId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  expectedRevision: z.number().int().safe().positive(),
   text: z.string().trim().min(1).max(16_000),
   expiresAt: z.string().datetime({ offset: true }).optional(),
   rationale: z.string().trim().min(1).max(2_000),
 }).strict();
 
 const InvalidateInputSchema = z.object({
-  memoryItemId: z.string().uuid(),
-  expectedRevision: z.number().int().positive(),
+  memoryItemId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  expectedRevision: z.number().int().safe().positive(),
   reason: z.string().trim().min(1).max(2_000),
 }).strict();
 
@@ -699,7 +706,7 @@ export async function freezeRunMemoryContext(
         memoryScopeId: z.string(),
         scopeKind: z.literal("automation"),
         text: z.string(),
-        revision: z.number().int().positive(),
+        revision: z.number().int().safe().positive(),
         expiresAt: z.string().nullable(),
       }).strict()) }).passthrough().parse(recalled.output).results
     : workspaceRecall!.results;

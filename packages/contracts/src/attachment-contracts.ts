@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { STRICT_UUID_PATTERN } from "./uuid-validation";
+import { z } from "zod/v3";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
 
 /**
@@ -211,12 +212,12 @@ export function classifyAttachmentKind(input: {
   return extension ? (EXTENSION_KINDS[extension] ?? "other") : "other";
 }
 
-const CanonicalUuidSchema = z.string().uuid().refine((value) => value === value.toLowerCase(), {
+const CanonicalUuidSchema = z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value === value.toLowerCase(), {
   message: "UUIDs must use canonical lowercase form",
 });
 const CursorSchema = z.string().min(1).max(2_048);
 const MimeTypeSchema = z.string().max(160).nullable();
-const NonNegativeIntegerSchema = z.number().int().nonnegative();
+const NonNegativeIntegerSchema = z.number().int().safe().nonnegative();
 
 export const ContentModeSchema = z.enum(["read", "view", "unsupported"]);
 export type ContentMode = z.infer<typeof ContentModeSchema>;
@@ -276,7 +277,7 @@ export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentTool
 
 export const AttachmentListResourcesArgumentsSchema = z.union([
   z.object({
-    limit: z.number().int().min(1).max(50).optional(),
+    limit: z.number().int().safe().min(1).max(50).optional(),
     attachmentKind: AttachmentKindSchema.optional(),
   }).strict(),
   z.object({ cursor: CursorSchema }).strict(),
@@ -291,12 +292,12 @@ export const AttachmentReadResourceArgumentsSchema = z.union([
 export const AttachmentSearchResourceArgumentsSchema = z.object({
   resourceId: CanonicalUuidSchema,
   query: z.string().min(1).max(1_000),
-  limit: z.number().int().min(1).max(5).optional(),
-  maxPassageCharacters: z.number().int().min(500).max(4_000).optional(),
+  limit: z.number().int().safe().min(1).max(5).optional(),
+  maxPassageCharacters: z.number().int().safe().min(500).max(4_000).optional(),
 }).strict();
 export const AttachmentViewResourceArgumentsSchema = z.object({
   resourceIds: z.array(CanonicalUuidSchema).min(1).max(8),
-  maxDimension: z.number().int().min(64).max(2_048).optional(),
+  maxDimension: z.number().int().safe().min(64).max(2_048).optional(),
 }).strict().superRefine((value, context) => {
   if (new Set(value.resourceIds).size !== value.resourceIds.length) {
     context.addIssue({ code: "custom", message: "resourceIds must be unique", path: ["resourceIds"] });
@@ -305,7 +306,7 @@ export const AttachmentViewResourceArgumentsSchema = z.object({
 export const AttachmentSummarizeResourceArgumentsSchema = z.object({
   resourceId: CanonicalUuidSchema,
   prompt: z.string().min(1).max(2_000).optional(),
-  maxOutputCharacters: z.number().int().min(2_000).max(20_000).optional(),
+  maxOutputCharacters: z.number().int().safe().min(2_000).max(20_000).optional(),
 }).strict();
 
 export const ATTACHMENT_TOOL_ARGUMENT_SCHEMAS = {
@@ -389,7 +390,7 @@ export const WorkstreamSearchResourceOutputSchema = z.object({
   totalMatches: NonNegativeIntegerSchema,
   returnedMatches: NonNegativeIntegerSchema,
   passages: z.array(z.object({
-    rank: z.number().int().positive(),
+    rank: z.number().int().safe().positive(),
     sectionLabel: z.string().nullable(),
     range: CharacterRangeSchema,
     text: z.string().max(4_000),
@@ -407,8 +408,8 @@ const ViewReasonCodeSchema = z.enum([
 ]).nullable();
 
 export const WorkstreamViewResourceOutputSchema = z.object({
-  requested: z.number().int().min(1).max(8),
-  returned: z.number().int().min(0).max(8),
+  requested: z.number().int().safe().min(1).max(8),
+  returned: z.number().int().safe().min(0).max(8),
   items: z.array(z.object({
     resourceId: CanonicalUuidSchema,
     title: z.string(),

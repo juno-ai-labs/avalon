@@ -24,7 +24,7 @@ import {
   type ListEngineeringWorkspacesResult,
 } from "@rally/contracts/engineering-inspection";
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { substreamAgentName, workspaceDOName } from "./durable-objects/names";
 import {
@@ -51,8 +51,8 @@ const WorkstreamDirectoryRowSchema = z.object({
   scope: z.string(),
   exact_state: z.string(),
   system_kind: z.string().nullable(),
-  last_activity_at: z.number().int().nonnegative(),
-  archived_at: z.number().int().nonnegative().nullable(),
+  last_activity_at: z.number().int().safe().nonnegative(),
+  archived_at: z.number().int().safe().nonnegative().nullable(),
 }).strict();
 
 const SubstreamDirectoryRowSchema = z.object({

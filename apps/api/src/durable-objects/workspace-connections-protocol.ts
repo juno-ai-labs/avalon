@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * The connector OAuth attempt lifecycle and webhook receipt claims, as
@@ -47,9 +47,9 @@ export const WorkspaceConnectorOAuthAttemptSchema = z.object({
   userId: IdSchema,
   workspaceId: IdSchema,
   telemetryOperationId: z.string().min(1).nullable(),
-  telemetryEventVersion: z.number().int().min(1),
+  telemetryEventVersion: z.number().int().safe().min(1),
   telemetryScope: z.enum(["personal", "workspace"]).nullable(),
-  telemetryCapabilityCount: z.number().int().nonnegative().nullable(),
+  telemetryCapabilityCount: z.number().int().safe().nonnegative().nullable(),
   telemetryReconnect: z.boolean(),
   createdAt: TimestampSchema,
 }).strict();
@@ -62,7 +62,7 @@ export const WorkspaceConnectorOAuthAttemptStartRequestSchema = z.object({
   userId: IdSchema,
   expiresAt: TimestampSchema,
   telemetryScope: z.enum(["personal", "workspace"]),
-  telemetryCapabilityCount: z.number().int().nonnegative(),
+  telemetryCapabilityCount: z.number().int().safe().nonnegative(),
   telemetryReconnect: z.boolean(),
   at: TimestampSchema,
 }).strict();

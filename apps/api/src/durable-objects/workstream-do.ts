@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   BlockDashboardPreferenceSchema,
@@ -19,7 +20,7 @@ import {
   type WorkstreamControlSocketEvent,
 } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { AuthContext, Env } from "../env";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
@@ -133,8 +134,8 @@ const WorkstreamSocketIdentitySchema = z.object({
   workstreamId: WorkstreamIdSchema,
   userId: UserIdSchema,
   sessionId: z.string().min(1).max(200),
-  ticketId: z.string().uuid(),
-  ticketExpiresAt: z.coerce.number().int().positive(),
+  ticketId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  ticketExpiresAt: z.coerce.number().int().safe().positive(),
 });
 
 type WorkstreamSocketIdentity = z.infer<typeof WorkstreamSocketIdentitySchema>;
@@ -525,7 +526,7 @@ function blockDashboardRun(row: BlockDashboardBlockRunRow): BlockDashboardBlockR
 function readSocketAttachment(socket: WebSocket): WorkstreamSocketAttachment | null {
   try {
     const parsed = WorkstreamSocketIdentitySchema.extend({
-      connectionId: z.string().uuid(),
+      connectionId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
       connectedAt: z.string().datetime({ offset: true }),
       subscribed: z.boolean(),
     }).safeParse(socket.deserializeAttachment());

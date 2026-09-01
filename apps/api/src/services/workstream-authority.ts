@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -60,10 +60,10 @@ export async function readWorkstreamAuthorityControl(
     };
     return {
       phase: WorkstreamAuthorityPhaseSchema.parse(row.phase),
-      generation: z.number().int().nonnegative().parse(row.generation),
-      requiredServingContractVersion: z.number().int().positive()
+      generation: z.number().int().safe().nonnegative().parse(row.generation),
+      requiredServingContractVersion: z.number().int().safe().positive()
         .parse(row.required_serving_contract_version),
-      servingContractVersion: z.number().int().nonnegative().parse(row.serving_contract_version),
+      servingContractVersion: z.number().int().safe().nonnegative().parse(row.serving_contract_version),
     };
   } catch (error) {
     if (error instanceof Error && /no such table: workstream_authority_control/iu.test(error.message)) {

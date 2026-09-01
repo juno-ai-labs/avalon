@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
+import { z } from "zod/v3";
 
 import type { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 
@@ -211,8 +212,8 @@ export function terminalOperationAffectsDirectory(operation: TerminalOperation):
 }
 
 export const TerminalOperationRequestSchema = z.object({
-  workspaceId: z.string().uuid(),
-  workstreamId: z.string().uuid(),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  workstreamId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   operation: z.string().min(1).max(64).refine(isTerminalOperation, {
     message: "unknown_terminal_operation",
   }),

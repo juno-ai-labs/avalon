@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * The workspace's scheduled digests, as questions rather than SQL.
@@ -19,8 +19,8 @@ import { z } from "zod";
  */
 
 const TimestampSchema = z.string().datetime({ offset: true });
-const MinuteOfDaySchema = z.number().int().min(0).max(1439);
-const DayMaskSchema = z.number().int().min(0).max(127);
+const MinuteOfDaySchema = z.number().int().safe().min(0).max(1439);
+const DayMaskSchema = z.number().int().safe().min(0).max(127);
 
 /** One configured digest, without its frozen destinations. */
 export const WorkspaceDigestScheduleSchema = z.object({
@@ -118,8 +118,8 @@ export const WorkspaceDigestRowStateRequestSchema = z.object({
 }).strict();
 
 export const WorkspaceDigestRowStateSchema = z.object({
-  rowCount: z.number().int().nonnegative(),
-  timezoneMismatches: z.number().int().nonnegative(),
+  rowCount: z.number().int().safe().nonnegative(),
+  timezoneMismatches: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const WorkspaceDigestReplaceRowsRequestSchema = z.object({
@@ -151,7 +151,7 @@ export const WorkspaceDigestCursorRequestSchema = z.object({
 }).strict();
 
 export const WorkspaceDigestCursorSchema = z.object({
-  cursorThrough: z.number().int().nonnegative().nullable(),
+  cursorThrough: z.number().int().safe().nonnegative().nullable(),
 }).strict();
 
 export const WorkspaceDigestClaimRequestSchema = z.object({
@@ -160,10 +160,10 @@ export const WorkspaceDigestClaimRequestSchema = z.object({
   digestScheduleId: IdSchema,
   userId: IdSchema,
   plannedFor: z.string().min(1),
-  cursorFrom: z.number().int().nonnegative().nullable(),
-  cursorThrough: z.number().int().nonnegative(),
-  eventCount: z.number().int().nonnegative(),
-  highlightCount: z.number().int().nonnegative(),
+  cursorFrom: z.number().int().safe().nonnegative().nullable(),
+  cursorThrough: z.number().int().safe().nonnegative(),
+  eventCount: z.number().int().safe().nonnegative(),
+  highlightCount: z.number().int().safe().nonnegative(),
   /** `empty` settles the occurrence at claim time: nothing runs, the cursor still moves. */
   status: z.enum(["empty", "planned"]),
   at: TimestampSchema,
@@ -225,8 +225,8 @@ export const WorkspaceDigestDeliveryContextSchema = z.object({
     id: IdSchema,
     userId: IdSchema,
     plannedFor: z.string(),
-    eventCount: z.number().int().nonnegative(),
-    highlightCount: z.number().int().nonnegative(),
+    eventCount: z.number().int().safe().nonnegative(),
+    highlightCount: z.number().int().safe().nonnegative(),
     status: z.enum(["planned", "running", "delivered", "empty", "failed"]),
     workstreamId: z.string().nullable(),
   }).strict().nullable(),
@@ -265,7 +265,7 @@ export const WorkspaceDigestTerminalContextRequestSchema = z.object({
 
 export const WorkspaceDigestTerminalContextSchema = z.object({
   targetTypes: z.array(z.string()),
-  priorDeliveredCount: z.number().int().nonnegative(),
+  priorDeliveredCount: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const WorkspaceDigestDeliveryTargetsRequestSchema = z.object({

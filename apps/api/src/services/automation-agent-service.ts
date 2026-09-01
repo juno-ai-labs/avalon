@@ -8,7 +8,7 @@ import {
   type AutomationDetail,
   type AutomationDraftTurnAdmissionResult,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { AuthContext, Env } from "../env";
 import { automationAgentName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";

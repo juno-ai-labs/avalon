@@ -1,19 +1,19 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { MULTIMODAL_GENERATION_MODEL, type ImageGenerationSizeSchema } from "./contract";
 
 const ImageUsageSchema = z.object({
-  input_tokens: z.number().int().nonnegative(),
+  input_tokens: z.number().int().safe().nonnegative(),
   input_tokens_details: z.object({
-    image_tokens: z.number().int().nonnegative(),
-    text_tokens: z.number().int().nonnegative(),
+    image_tokens: z.number().int().safe().nonnegative(),
+    text_tokens: z.number().int().safe().nonnegative(),
   }).passthrough(),
-  output_tokens: z.number().int().nonnegative(),
+  output_tokens: z.number().int().safe().nonnegative(),
   output_tokens_details: z.object({
-    image_tokens: z.number().int().nonnegative(),
-    text_tokens: z.number().int().nonnegative().optional(),
+    image_tokens: z.number().int().safe().nonnegative(),
+    text_tokens: z.number().int().safe().nonnegative().optional(),
   }).passthrough().optional(),
-  total_tokens: z.number().int().nonnegative(),
+  total_tokens: z.number().int().safe().nonnegative(),
 }).passthrough();
 
 const ImageResponseSchema = z.object({

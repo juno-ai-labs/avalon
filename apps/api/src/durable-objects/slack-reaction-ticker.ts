@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import { SlackAgentService } from "../services/slack-agent-service";
@@ -41,17 +41,17 @@ const StartRequestSchema = z.object({
    * which inherits the previous run's key.
    */
   deliveryKey: z.string(),
-  intervalMs: z.number().int().min(3_000).max(60_000),
+  intervalMs: z.number().int().safe().min(3_000).max(60_000),
 });
 
 const TickerStateSchema = z.object({
   workspace_id: z.string().min(1),
   session_id: z.string().min(1),
   delivery_key: z.string(),
-  interval_ms: z.number().int().positive(),
-  ticks: z.number().int().nonnegative(),
+  interval_ms: z.number().int().safe().positive(),
+  ticks: z.number().int().safe().nonnegative(),
   /** Identifies this rotation, so a resumed alarm can tell it was cancelled. */
-  started_at: z.number().int().nonnegative(),
+  started_at: z.number().int().safe().nonnegative(),
 });
 
 const MIGRATION_COMPONENT = "slack_reaction_ticker";

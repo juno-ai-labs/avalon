@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { STRICT_UUID_PATTERN } from "./uuid-validation";
+import { z } from "zod/v3";
 import { HttpUrlSchema } from "./url-schemas";
 
 const UtcTimestampSchema = z.string().datetime({ offset: true });
@@ -16,11 +17,11 @@ export const TranscriptIntervalSchema = z.object({
   intervalId: z.string().min(1),
   startedAtUtc: UtcTimestampSchema,
   stoppedAtUtc: UtcTimestampSchema.nullable(),
-  durationMs: z.number().int().nonnegative().nullable(),
-  elapsedMsAtSnapshot: z.number().int().nonnegative().nullable(),
+  durationMs: z.number().int().safe().nonnegative().nullable(),
+  elapsedMsAtSnapshot: z.number().int().safe().nonnegative().nullable(),
   boundarySource: z.enum(["rally", "provider", "normalized", "recovered"]),
   timingAccuracy: z.enum(["observed", "upper_bound"]),
-  revision: z.number().int().positive(),
+  revision: z.number().int().safe().positive(),
 });
 
 /**
@@ -56,9 +57,9 @@ export const TranscriptPluginRunSchema = z.object({
   displayName: z.string().min(1),
   state: z.enum(["active", "completed", "failed", "cancelled", "abandoned", "ambiguous"]),
   /** Total measured work. Null when the timing cannot be established. */
-  durationMs: z.number().int().nonnegative().nullable(),
+  durationMs: z.number().int().safe().nonnegative().nullable(),
   /** Set while the plugin is still running, for a live-ticking client. */
-  elapsedMsAtSnapshot: z.number().int().nonnegative().nullable(),
+  elapsedMsAtSnapshot: z.number().int().safe().nonnegative().nullable(),
   timingAccuracy: z.enum(["observed", "upper_bound"]),
   /** The calls this run made, in the order they were placed. */
   toolCallIds: z.array(z.string().min(1)),
@@ -69,26 +70,26 @@ export const TranscriptActivitySchema = z.object({
   parentActivityId: z.string().min(1).nullable(),
   scope: z.enum(["response", "assistant_turn", "plugin", "tool_call", "thinking", "compaction"]),
   subjectId: z.string().min(1),
-  callIndex: z.number().int().nonnegative().nullable(),
+  callIndex: z.number().int().safe().nonnegative().nullable(),
   label: z.string().min(1),
   state: z.enum(["active", "completed", "failed", "cancelled", "abandoned", "ambiguous"]),
   intervals: z.array(TranscriptIntervalSchema),
-  revision: z.number().int().positive(),
+  revision: z.number().int().safe().positive(),
 });
 
 export const TranscriptMentionSchema = z.object({
   type: z.enum(["person", "connector"]),
   userId: z.string().nullable(),
   connectorType: z.string().nullable(),
-  startOffset: z.number().int().nonnegative(),
-  endOffset: z.number().int().positive(),
+  startOffset: z.number().int().safe().nonnegative(),
+  endOffset: z.number().int().safe().positive(),
 });
 
 export const TranscriptAttachmentSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   fileName: z.string().min(1).max(300),
   mimeType: z.string().min(1).max(160),
-  sizeBytes: z.number().int().nonnegative(),
+  sizeBytes: z.number().int().safe().nonnegative(),
   contentAvailable: z.boolean(),
   createdAt: UtcTimestampSchema,
 });
@@ -96,7 +97,7 @@ export const TranscriptAttachmentSchema = z.object({
 export const TranscriptTextBlockSchema = z.object({
   type: z.literal("text"),
   blockId: z.string().min(1),
-  blockIndex: z.number().int().nonnegative(),
+  blockIndex: z.number().int().safe().nonnegative(),
   text: z.string(),
   streaming: z.boolean(),
   mentions: z.array(TranscriptMentionSchema).optional(),
@@ -108,11 +109,11 @@ export const TranscriptTextBlockSchema = z.object({
 export const TranscriptToolBlockSchema = z.object({
   type: z.literal("tool"),
   blockId: z.string().min(1),
-  blockIndex: z.number().int().nonnegative(),
+  blockIndex: z.number().int().safe().nonnegative(),
   toolCallId: z.string().min(1),
   pluginId: z.string().min(1).nullable(),
   toolName: z.string().min(1),
-  callIndex: z.number().int().nonnegative(),
+  callIndex: z.number().int().safe().nonnegative(),
   status: z.enum(["planned", "started", "completed", "failed", "ambiguous", "cancelled"]),
   participantSafeInput: z.unknown().nullable(),
   participantSafeResult: z.unknown().nullable(),
@@ -123,7 +124,7 @@ export const TranscriptToolBlockSchema = z.object({
 export const TranscriptThinkingBlockSchema = z.object({
   type: z.literal("thinking"),
   blockId: z.string().min(1),
-  blockIndex: z.number().int().nonnegative(),
+  blockIndex: z.number().int().safe().nonnegative(),
   providerEvidence: z.enum(["reasoning_summary", "reasoning_details", "reasoning_tokens"]),
   // Participant transcripts deliberately expose only evidence that thinking
   // occurred and its activity timing. Provider reasoning content stays in the
@@ -139,7 +140,7 @@ export const TranscriptBlockSchema = z.discriminatedUnion("type", [
 ]);
 
 export const TranscriptTurnSchema = z.object({
-  transcriptSequence: z.number().int().positive(),
+  transcriptSequence: z.number().int().safe().positive(),
   turnId: TranscriptTurnIdSchema,
   entryKind: z.enum(["conversation", "status"]),
   actor: z.enum(["human", "assistant", "external", "system"]),
@@ -157,11 +158,11 @@ export const TranscriptTurnSchema = z.object({
     displayName: z.string().min(1).max(180),
     avatarUrl: HttpUrlSchema.nullable(),
   }).nullable().optional(),
-  attentionOrdinal: z.number().int().positive().nullable(),
+  attentionOrdinal: z.number().int().safe().positive().nullable(),
   createdAtUtc: UtcTimestampSchema,
-  revision: z.number().int().positive(),
+  revision: z.number().int().safe().positive(),
   blocks: z.array(TranscriptBlockSchema),
-  blockCount: z.number().int().nonnegative().optional(),
+  blockCount: z.number().int().safe().nonnegative().optional(),
   activityId: z.string().min(1).nullable(),
   /**
    * True when a turn's serialized blocks alone exceed the realtime frame
@@ -212,8 +213,8 @@ export const TranscriptTurnSchema = z.object({
 });
 
 export const TranscriptRangeSchema = z.object({
-  startInclusive: z.number().int().positive(),
-  endExclusive: z.number().int().positive(),
+  startInclusive: z.number().int().safe().positive(),
+  endExclusive: z.number().int().safe().positive(),
 }).refine((range) => range.endExclusive >= range.startInclusive, "invalid_transcript_range");
 
 export const TranscriptRangeResultSchema = z.object({
@@ -241,9 +242,9 @@ export const TranscriptRangeResultSchema = z.object({
 export const PendingTranscriptInputSchema = z.object({
   inputId: z.string().min(1),
   futureTurnId: z.string().min(1),
-  inputSequence: z.number().int().positive(),
+  inputSequence: z.number().int().safe().positive(),
   deliveryMode: z.enum(["steer", "queue"]),
-  afterTranscriptSequence: z.number().int().nonnegative(),
+  afterTranscriptSequence: z.number().int().safe().nonnegative(),
   actor: z.enum(["human", "external", "system"]),
   authorUserId: z.string().nullable(),
   authorSnapshot: z.object({
@@ -296,10 +297,10 @@ export const PendingTranscriptInputSchema = z.object({
 
 export const WorkstreamTranscriptSnapshotSchema = z.object({
   snapshotId: z.string().min(1),
-  snapshotThrough: z.number().int().nonnegative(),
-  eventSequence: z.number().int().nonnegative(),
+  snapshotThrough: z.number().int().safe().nonnegative(),
+  eventSequence: z.number().int().safe().nonnegative(),
   snapshotAtUtc: UtcTimestampSchema,
-  unreadAnchorSequence: z.number().int().positive().nullable(),
+  unreadAnchorSequence: z.number().int().safe().positive().nullable(),
   unreadReason: z.enum(["no_unread", "anchor_unavailable"]).nullable(),
   ranges: z.array(TranscriptRangeResultSchema),
   activities: z.array(TranscriptActivitySchema),
@@ -322,24 +323,24 @@ export const WorkstreamTranscriptSnapshotSchema = z.object({
 export const WorkstreamTranscriptRangeRequestSchema = z.object({
   snapshotId: z.string().min(1),
   range: TranscriptRangeSchema,
-  resumeAfterEventSequence: z.number().int().nonnegative(),
+  resumeAfterEventSequence: z.number().int().safe().nonnegative(),
 });
 
 export const WorkstreamTranscriptEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("turn_upserted"),
-    eventSequence: z.number().int().positive(),
+    eventSequence: z.number().int().safe().positive(),
     turn: TranscriptTurnSchema,
   }),
   z.object({
     type: z.literal("activity_upserted"),
-    eventSequence: z.number().int().positive(),
+    eventSequence: z.number().int().safe().positive(),
     activity: TranscriptActivitySchema,
     snapshotAtUtc: UtcTimestampSchema,
   }),
   z.object({
     type: z.literal("resync_required"),
-    eventSequence: z.number().int().nonnegative(),
+    eventSequence: z.number().int().safe().nonnegative(),
     reason: z.enum(["history_unavailable", "snapshot_expired", "sequence_ahead"]),
   }),
 ]);

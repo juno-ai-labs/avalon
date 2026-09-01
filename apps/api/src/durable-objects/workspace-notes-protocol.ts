@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * The workspace's notes, transcript segments, and their two outboxes, as
@@ -41,8 +41,8 @@ export const WorkspaceNoteRecordSchema = z.object({
   recordingStatus: z.enum(["idle", "recording", "complete"]),
   manualNotesMarkdown: z.string(),
   liveNotesMarkdown: z.string(),
-  notesThroughSequence: z.number().int().nonnegative(),
-  recordedMs: z.number().int().nonnegative(),
+  notesThroughSequence: z.number().int().safe().nonnegative(),
+  recordedMs: z.number().int().safe().nonnegative(),
   startedAt: TimestampSchema.nullable(),
   endedAt: TimestampSchema.nullable(),
   generatedAt: TimestampSchema.nullable(),
@@ -56,9 +56,9 @@ export const WorkspaceNoteRecordSchema = z.object({
 export const WorkspaceNoteSegmentRecordSchema = z.object({
   id: IdSchema,
   noteId: IdSchema,
-  sequenceNumber: z.number().int().min(1),
-  startOffsetMs: z.number().int().nonnegative(),
-  endOffsetMs: z.number().int().nonnegative(),
+  sequenceNumber: z.number().int().safe().min(1),
+  startOffsetMs: z.number().int().safe().nonnegative(),
+  endOffsetMs: z.number().int().safe().nonnegative(),
   capturedAt: TimestampSchema,
   speakerLabel: z.string().nullable(),
   text: z.string(),
@@ -92,7 +92,7 @@ export const WorkspaceNoteUpdateRequestSchema = z.object({
   manualNotesMarkdown: z.string().optional(),
   scope: z.enum(["personal", "workspace"]).optional(),
   recordingStatus: z.enum(["idle", "recording", "complete"]).optional(),
-  recordedMs: z.number().int().nonnegative().optional(),
+  recordedMs: z.number().int().safe().nonnegative().optional(),
   // Present-and-null clears the instant; absent leaves it. The distinction is
   // the route contract's, and it survives the RPC because absence does.
   startedAt: TimestampSchema.nullable().optional(),
@@ -135,8 +135,8 @@ export const WorkspaceNoteSegmentAppendRequestSchema = z.object({
   userId: IdSchema,
   segmentId: IdSchema,
   clientSegmentId: IdSchema,
-  startOffsetMs: z.number().int().nonnegative(),
-  endOffsetMs: z.number().int().nonnegative(),
+  startOffsetMs: z.number().int().safe().nonnegative(),
+  endOffsetMs: z.number().int().safe().nonnegative(),
   capturedAt: TimestampSchema,
   speakerLabel: z.string().nullable(),
   text: z.string(),
@@ -160,10 +160,10 @@ export const WorkspaceNoteGenerationCommitRequestSchema = z.object({
   noteId: IdSchema,
   userId: IdSchema,
   liveNotesMarkdown: z.string(),
-  throughSequence: z.number().int().nonnegative(),
+  throughSequence: z.number().int().safe().nonnegative(),
   generatedAt: TimestampSchema,
   /** The cursor pair the caller read before inference; the commit lands only if both still hold. */
-  expectedThroughSequence: z.number().int().nonnegative(),
+  expectedThroughSequence: z.number().int().safe().nonnegative(),
   expectedGeneratedAt: TimestampSchema.nullable(),
 }).strict();
 
@@ -174,7 +174,7 @@ export const WorkspaceNoteGenerationCommitResultSchema = z.object({
 export const WorkspaceNoteSidebarRequestSchema = z.object({
   workspaceId: IdSchema,
   userId: IdSchema,
-  limit: z.number().int().min(1),
+  limit: z.number().int().safe().min(1),
 }).strict();
 
 /**
@@ -191,7 +191,7 @@ export const WorkspaceNoteSidebarListSchema = z.object({
     scope: z.enum(["personal", "workspace"]),
     title: z.string(),
     recordingStatus: z.enum(["idle", "recording", "complete"]),
-    recordedMs: z.number().int().nonnegative(),
+    recordedMs: z.number().int().safe().nonnegative(),
     startedAt: TimestampSchema.nullable(),
     endedAt: TimestampSchema.nullable(),
     generatedAt: TimestampSchema.nullable(),

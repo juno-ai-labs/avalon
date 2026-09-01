@@ -1,5 +1,6 @@
 import type { ModelMessage } from "@rally/agent-harness";
-import { z } from "zod";
+import { providerJsonSchema } from "@rally/contracts/json-schema";
+import { z } from "zod/v3";
 import type { Env } from "../env";
 import { runStructuredInference } from "./structured-inference";
 
@@ -64,7 +65,7 @@ export function createAttachmentSummaryRunner(env: Env): AttachmentSummaryRunner
         context,
         messages,
         schemaName: "attachment_summary",
-        jsonSchema: z.toJSONSchema(AttachmentSummarySchema) as Record<string, unknown>,
+        jsonSchema: providerJsonSchema(AttachmentSummarySchema),
         parse: (value) => AttachmentSummarySchema.parse(value),
         reasoningEffort: "low",
         signal,

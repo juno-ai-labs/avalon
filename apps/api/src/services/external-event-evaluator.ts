@@ -8,7 +8,7 @@ import {
   type ExternalEventPredicateLeafV1,
   type ExternalEventPredicateV1,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export type ExternalEventContextValue = string | number | boolean | readonly string[];
 export type ExternalEventEvaluationContext = Readonly<Record<string, ExternalEventContextValue>>;
@@ -211,7 +211,13 @@ function validatePredicate(
 function evaluatorIssue(index: number, path: readonly PropertyKey[], message: string): z.ZodError {
   return new z.ZodError([{
     code: "custom",
-    path: ["evaluators", index, ...path],
+    path: [
+      "evaluators",
+      index,
+      ...path.filter((part): part is string | number => (
+        typeof part === "string" || typeof part === "number"
+      )),
+    ],
     message,
   }]);
 }

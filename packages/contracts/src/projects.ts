@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { STRICT_UUID_PATTERN } from "./uuid-validation";
+import { z } from "zod/v3";
 
 export const PROJECT_ICON_KEYS = [
   "briefcase",
@@ -43,7 +44,7 @@ export const PROJECT_COLOR_KEYS = [
   "pink",
 ] as const;
 
-export const ProjectIdSchema = z.string().uuid().brand<"ProjectId">();
+export const ProjectIdSchema = z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").brand<"ProjectId">();
 export type ProjectId = z.infer<typeof ProjectIdSchema>;
 export const asProjectId = (value: string): ProjectId => ProjectIdSchema.parse(value);
 
@@ -64,9 +65,9 @@ export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 export const ProjectParticipantStateSchema = z.enum(["adding", "active", "removing", "removed"]);
 
 export const ProjectParticipantSchema = z.object({
-  userId: z.string().uuid(),
+  userId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   state: ProjectParticipantStateSchema,
-  generation: z.number().int().positive(),
+  generation: z.number().int().safe().positive(),
 }).strict();
 export type ProjectParticipant = z.infer<typeof ProjectParticipantSchema>;
 
@@ -77,12 +78,12 @@ export const ProjectSummarySchema = z.object({
   colorKey: ProjectColorKeySchema,
   scope: ProjectScopeSchema,
   status: ProjectStatusSchema,
-  presentationRevision: z.number().int().positive(),
-  audienceGeneration: z.number().int().positive(),
-  lifecycleGeneration: z.number().int().positive(),
+  presentationRevision: z.number().int().safe().positive(),
+  audienceGeneration: z.number().int().safe().positive(),
+  lifecycleGeneration: z.number().int().safe().positive(),
   participants: z.array(ProjectParticipantSchema),
-  workstreamIds: z.array(z.string().uuid()).default([]),
-  defaultResourceIds: z.array(z.string().uuid()).default([]),
+  workstreamIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).default([]),
+  defaultResourceIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).default([]),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
 }).strict();
@@ -105,7 +106,7 @@ export type UpdateProjectPresentationRequest = z.infer<typeof UpdateProjectPrese
 
 export const UpdateProjectAudienceRequestSchema = z.object({
   scope: ProjectScopeSchema,
-  participantUserIds: z.array(z.string().uuid()).min(1),
+  participantUserIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).min(1),
 }).strict();
 export type UpdateProjectAudienceRequest = z.infer<typeof UpdateProjectAudienceRequestSchema>;
 
@@ -115,7 +116,7 @@ export const ReorderProjectsRequestSchema = z.object({
 export type ReorderProjectsRequest = z.infer<typeof ReorderProjectsRequestSchema>;
 
 export const ProjectDirectorySchema = z.object({
-  waterline: z.number().int().nonnegative(),
+  waterline: z.number().int().safe().nonnegative(),
   items: z.array(ProjectSummarySchema),
 }).strict();
 export type ProjectDirectory = z.infer<typeof ProjectDirectorySchema>;

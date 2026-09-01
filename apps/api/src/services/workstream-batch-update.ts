@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   ApplyWorkstreamBatchRequestSchema,
   WorkstreamBatchAcceptedSchema,
@@ -9,7 +10,7 @@ import {
   type ApplyWorkstreamBatchRequest,
   type WorkstreamBatchFilter,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { substreamAgentName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
@@ -28,11 +29,11 @@ const QUEUE_SEND_BATCH_SIZE = 50;
 export const WorkstreamBatchUpdateQueueMessageSchema = z.object({
   kind: z.literal("workstream_batch_update"),
   region: z.enum(["global", "eu"]),
-  operationId: z.string().uuid(),
+  operationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   requestHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
-  workspaceId: z.string().uuid(),
-  workstreamId: z.string().uuid(),
-  userId: z.string().uuid(),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  workstreamId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  userId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   update: WorkstreamBatchUpdateSchema,
 }).strict();
 

@@ -1,5 +1,5 @@
 import { IdSchema, RegionSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { ApiError } from "./api-error";
 
@@ -87,7 +87,7 @@ export const NotionCallbackFailureInputSchema = z.object({
 });
 export const NotionChallengeInputSchema = z.object({
   verificationToken: z.string().min(1).max(1_000),
-  setupGeneration: z.number().int().positive().safe(),
+  setupGeneration: z.number().int().safe().positive(),
 });
 
 export const SlackRouteInputSchema = z.object({
@@ -184,7 +184,7 @@ export function parseRpcInput<T extends z.ZodTypeAny>(
     method,
     issues: parsed.error.issues.slice(0, 25).map((issue) => ({
       path: issue.path.map(String).join(".") || "(root)",
-      code: issue.code,
+      code: issue.code === "invalid_enum_value" ? "invalid_value" : issue.code,
     })),
   });
 }

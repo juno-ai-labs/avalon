@@ -1,5 +1,6 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { AutomationMemoryTableSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { sha256 } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -42,16 +43,16 @@ export const automationMemorySchemaStatements = [
 
 const FenceSchema = z.object({
   schemaVersion: z.literal(1),
-  automationId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  runId: z.string().uuid(),
-  harnessRunId: z.string().uuid(),
-  authorityGeneration: z.number().int().positive(),
+  automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  runId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  harnessRunId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  authorityGeneration: z.number().int().safe().positive(),
 }).strict();
 
 const SearchSchema = z.union([
   z.object({ query: z.string().trim().min(1).max(2_000) }).strict(),
-  z.object({ memoryItemId: z.string().uuid() }).strict(),
+  z.object({ memoryItemId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID") }).strict(),
 ]);
 const AddSchema = z.object({
   scopeKind: z.literal("automation"),
@@ -60,15 +61,15 @@ const AddSchema = z.object({
   rationale: z.string().trim().min(1).max(2_000),
 }).strict();
 const UpdateItemSchema = z.object({
-  memoryItemId: z.string().uuid(),
-  expectedRevision: z.number().int().positive(),
+  memoryItemId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  expectedRevision: z.number().int().safe().positive(),
   text: z.string().trim().min(1).max(16_000),
   expiresAt: z.string().datetime({ offset: true }).optional(),
   rationale: z.string().trim().min(1).max(2_000),
 }).strict();
 const InvalidateItemSchema = z.object({
-  memoryItemId: z.string().uuid(),
-  expectedRevision: z.number().int().positive(),
+  memoryItemId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  expectedRevision: z.number().int().safe().positive(),
   reason: z.string().trim().min(1).max(2_000),
 }).strict();
 
@@ -111,7 +112,7 @@ const TableQuerySchema = z.object({
   filter: FilterSchema.optional(),
   orderBy: z.array(z.object({ column: z.string().min(1), direction: z.enum(["asc", "desc"]) }).strict()).optional(),
   select: z.array(z.string().min(1)).optional(),
-  pageSize: z.number().int().min(1).max(100).optional(),
+  pageSize: z.number().int().safe().min(1).max(100).optional(),
   cursor: z.string().min(1).optional(),
 }).strict();
 const TableInsertSchema = z.object({
@@ -123,7 +124,7 @@ const TableUpdateSchema = z.object({
   memoryTableId: z.string().min(1),
   rows: z.array(z.object({
     memoryTableRowId: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
+    expectedRevision: z.number().int().safe().positive(),
     values: z.record(z.string(), z.unknown()),
   }).strict()).min(1),
   rationale: z.string().trim().min(1).max(2_000),
@@ -132,7 +133,7 @@ const TableInvalidateSchema = z.object({
   memoryTableId: z.string().min(1),
   rows: z.array(z.object({
     memoryTableRowId: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
+    expectedRevision: z.number().int().safe().positive(),
   }).strict()).min(1),
   reason: z.string().trim().min(1).max(2_000),
 }).strict();

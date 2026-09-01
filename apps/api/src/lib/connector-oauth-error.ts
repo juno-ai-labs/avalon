@@ -1,5 +1,5 @@
+import { isZodValidationError } from "@rally/contracts/zod-error";
 import { ConnectorError } from "@rally/connectors";
-import { z } from "zod";
 import { ApiError } from "./api-error";
 
 export interface ConnectorOAuthCallbackFailure {
@@ -61,7 +61,7 @@ export function classifyConnectorOAuthCallbackFailure(
       },
     };
   }
-  if (error instanceof z.ZodError) {
+  if (isZodValidationError(error)) {
     return {
       errorCode: "connector_provider_response_invalid",
       level: "error",

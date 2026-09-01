@@ -1,8 +1,10 @@
+import { isZodValidationError } from "@rally/contracts/zod-error";
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { personMentionMarkdownPattern, rewriteCitationsAsPlainText } from "@rally/contracts/citations";
 import { ConnectorError, connectorRetryAfterMs, slackApi } from "@rally/connectors";
 import { workstreamCanonicalUrl } from "@rally/contracts";
 import { nowIso } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
@@ -12,12 +14,12 @@ import { decryptVersionedConnectorCredentials } from "./connector-credential-env
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 const SlackMentionConnectionSchema = z.object({
-  id: z.string().uuid(),
-  workspace_id: z.string().uuid(),
+  id: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  workspace_id: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   provider_account_id: z.string().min(1),
   encrypted_credentials: z.string().min(1),
   credential_iv: z.string().min(1),
-  credential_key_version: z.coerce.number().int().positive(),
+  credential_key_version: z.coerce.number().int().safe().positive(),
   linked_slack_user_id: z.string().min(1).nullable(),
 }).strict();
 
@@ -636,7 +638,7 @@ function slackFailureReason(error: unknown): string {
     }
     return error.code;
   }
-  if (error instanceof z.ZodError) return "invalid_slack_data";
+  if (isZodValidationError(error)) return "invalid_slack_data";
   return error instanceof Error ? error.name : "unknown_error";
 }
 

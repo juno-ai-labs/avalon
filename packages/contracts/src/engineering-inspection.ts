@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { RegionSchema } from "./index";
 import {
@@ -29,8 +29,8 @@ export type InspectionSqlValue = z.infer<typeof InspectionSqlValueSchema>;
 export const InspectionSqlResultSchema = z.object({
   columns: z.array(z.string()),
   rows: z.array(z.record(z.string(), InspectionSqlValueSchema)),
-  rowsRead: z.number().int().nonnegative(),
-  rowsWritten: z.number().int().nonnegative(),
+  rowsRead: z.number().int().safe().nonnegative(),
+  rowsWritten: z.number().int().safe().nonnegative(),
 }).strict();
 export type InspectionSqlResult = z.infer<typeof InspectionSqlResultSchema>;
 
@@ -52,8 +52,8 @@ export const EngineeringWorkstreamSchema = z.object({
   scope: z.string(),
   state: z.string(),
   systemKind: z.string().nullable(),
-  lastActivityAt: z.number().int().nonnegative(),
-  archivedAt: z.number().int().nonnegative().nullable(),
+  lastActivityAt: z.number().int().safe().nonnegative(),
+  archivedAt: z.number().int().safe().nonnegative().nullable(),
 }).strict();
 export type EngineeringWorkstream = z.infer<typeof EngineeringWorkstreamSchema>;
 
@@ -91,7 +91,7 @@ export const SubstreamInspectionInputSchema = z.object({
 }).strict();
 export type SubstreamInspectionInput = z.infer<typeof SubstreamInspectionInputSchema>;
 
-const AuthorityGenerationSchema = z.number().int().positive();
+const AuthorityGenerationSchema = z.number().int().safe().positive();
 
 export const EngineeringWorkspaceTargetSchema = z.object({
   region: RegionSchema,

@@ -1,5 +1,7 @@
+import { isZodValidationError } from "@rally/contracts/zod-error";
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type { ToolDefinition } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   isProviderCredentialRejection,
   isRecord,
@@ -219,7 +221,7 @@ const listNotesInput = z.object({
   updatedAfter: granolaDateFilter.nullable().optional(),
   folderId: z.string().regex(/^fol_[A-Za-z0-9]{14}$/u).nullable().optional(),
   cursor: z.string().max(4_096).nullable().optional(),
-  pageSize: z.number().int().min(1).max(30).optional(),
+  pageSize: z.number().int().safe().min(1).max(30).optional(),
 }).strict();
 const getNoteInput = z.object({
   noteId: z.string().regex(/^not_[A-Za-z0-9]{14}$/u),
@@ -227,7 +229,7 @@ const getNoteInput = z.object({
 }).strict();
 const listFoldersInput = z.object({
   cursor: z.string().max(4_096).nullable().optional(),
-  pageSize: z.number().int().min(1).max(30).optional(),
+  pageSize: z.number().int().safe().min(1).max(30).optional(),
 }).strict();
 export interface GranolaWebhookEndpoint {
   id: string;
@@ -239,7 +241,7 @@ const GranolaWebhookEndpointSchema = z.object({
   signing_secret: z.string().regex(/^whsec_[A-Za-z0-9+/=_-]+$/u),
 }).passthrough();
 const GranolaWebhookEventSchema = z.object({
-  event_id: z.string().uuid(),
+  event_id: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   event_type: z.enum(["note.access_granted", "note.edited", "note.generated", "note.regenerated"]),
   note_id: z.string().regex(/^not_[A-Za-z0-9]{14}$/u),
   occurred_at: z.string().datetime({ offset: true }),
@@ -793,7 +795,7 @@ async function granolaOAuthCallbackStage<T>(
       const details = isRecord(error.details) ? error.details : {};
       throw new ConnectorError(error.code, error.message, { ...details, oauthStage });
     }
-    if (error instanceof z.ZodError) {
+    if (isZodValidationError(error)) {
       throw new ConnectorError(
         "provider_error",
         "Granola returned an unexpected OAuth or MCP response",

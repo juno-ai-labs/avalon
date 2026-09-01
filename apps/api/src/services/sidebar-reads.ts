@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { NoteSummary } from "@rally/contracts";
 
@@ -40,7 +40,7 @@ export const NoteSidebarRowSchema = z.object({
   scope: z.enum(["personal", "workspace"]),
   title: z.string(),
   recording_status: z.enum(["idle", "recording", "complete"]),
-  recorded_ms: z.number().int().nonnegative(),
+  recorded_ms: z.number().int().safe().nonnegative(),
   started_at: z.string().nullable(),
   ended_at: z.string().nullable(),
   generated_at: z.string().nullable(),

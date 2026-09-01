@@ -1,5 +1,5 @@
 import { ElicitationSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { ModelMessage } from "@rally/agent-harness";
 import type { Env } from "../env";
 import {

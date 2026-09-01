@@ -3,14 +3,14 @@ import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import { IdSchema, ResourceRevisionSchema, ResourceSchema } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { getAuth } from "../middleware/auth";
 import { ResourceService } from "../services/resource-service";
 
 const idParam = z.object({ id: IdSchema });
-const versionParam = idParam.extend({ version: z.coerce.number().int().positive() });
+const versionParam = idParam.extend({ version: z.coerce.number().int().safe().positive() });
 const resolveBody = z.object({
   connectionId: IdSchema,
   provider: z.string().min(1).max(80),
@@ -24,7 +24,7 @@ const watchQuery = z.object({ workstreamId: IdSchema });
 const listQuery = z.object({
   q: z.string().trim().max(200).optional(),
   cursor: z.string().min(1).max(500).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: z.coerce.number().int().safe().min(1).max(100).default(50),
 });
 
 const ResourcePageSchema = z.object({

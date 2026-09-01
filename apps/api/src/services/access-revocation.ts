@@ -1,5 +1,5 @@
 import { IdSchema, TimestampSchema, WorkspaceIdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import { logWarn } from "../observability/logger";

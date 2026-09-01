@@ -1,6 +1,6 @@
 import { IdSchema, WorkspaceDepartureRequestSchema, WorkspaceDepartureSchema } from "@rally/contracts";
 import { Hono } from "hono";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";

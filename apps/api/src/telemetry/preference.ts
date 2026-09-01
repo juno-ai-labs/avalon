@@ -1,24 +1,25 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { newId } from '@rally/db';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { Env } from '../env';
 import { ApiError } from '../lib/api-error';
 
-const UuidV7Schema = z.string().uuid().refine((value) => value[14] === '7');
+const UuidV7Schema = z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === '7');
 export const PreferenceProjectionSchema = z.object({
   preferenceSubjectHandle: UuidV7Schema,
   enabled: z.boolean(),
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
 }).strict();
 export const CanonicalPreferenceMutationSchema = z.object({
   preferenceSubjectHandle: UuidV7Schema,
   enabled: z.boolean(),
-  expectedVersion: z.number().int().nonnegative(),
+  expectedVersion: z.number().int().safe().nonnegative(),
   operationId: UuidV7Schema,
 }).strict();
 const CanonicalPreferenceResultSchema = z.object({
   result: z.enum(['applied', 'duplicate', 'conflict']),
   enabled: z.boolean(),
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
 }).strict();
 
 export type CanonicalPreferenceResult = z.infer<typeof CanonicalPreferenceResultSchema>;

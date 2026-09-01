@@ -11,7 +11,7 @@ import {
   type UpdateBlockDashboardRequest,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { BlockDashboardControlRequestSchema } from "../durable-objects/block-dashboard-protocol";
 import type { BlockDashboardContextFence } from "../durable-objects/block-dashboard-protocol";

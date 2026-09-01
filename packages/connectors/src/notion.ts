@@ -1,5 +1,6 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { createHostedMcpPassthrough } from "./hosted-mcp";
 import {
   base64,
@@ -242,12 +243,12 @@ const cursorSchema = z.string().min(1).max(500).nullable().optional();
 const searchSchema = z.object({
   query: z.string().trim().min(1).max(500),
   object: z.enum(["page", "data_source"]).optional(),
-  pageSize: z.number().int().min(1).max(25).default(20),
+  pageSize: z.number().int().safe().min(1).max(25).default(20),
   startCursor: cursorSchema,
 }).strict();
 const queryDataSourceSchema = z.object({
   dataSourceId: idSchema,
-  pageSize: z.number().int().min(1).max(25).default(20),
+  pageSize: z.number().int().safe().min(1).max(25).default(20),
   startCursor: cursorSchema,
 }).strict();
 const createPageSchema = z.object({
@@ -266,7 +267,7 @@ const updatePageSchema = z.object({
 const appendPageSchema = z.object({ pageId: idSchema, markdown: z.string().min(1).max(40_000) }).strict();
 const commentsListSchema = z.object({
   blockId: idSchema,
-  pageSize: z.number().int().min(1).max(25).default(20),
+  pageSize: z.number().int().safe().min(1).max(25).default(20),
   startCursor: cursorSchema,
 }).strict();
 const createCommentSchema = z.object({
@@ -1193,7 +1194,7 @@ function parseWebhookObject(rawBody: string, provider: string): Record<string, u
 
 function webhookUuid(record: Record<string, unknown>, key: string, message: string): string {
   const value = stringValue(record, key);
-  if (!value || !z.string().uuid().safeParse(value).success) throw new ConnectorError("provider_error", message);
+  if (!value || !z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").safeParse(value).success) throw new ConnectorError("provider_error", message);
   return value;
 }
 

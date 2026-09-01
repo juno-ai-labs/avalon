@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * Dictation admission, as one question to the workspace rather than four.
@@ -23,9 +23,9 @@ export const WorkspaceTranscriptionAdmitRequestSchema = z.object({
   /** The socket ticket being spent; consuming it is what makes it one-time. */
   ticketId: z.string().min(1).max(300),
   /** The ticket's own expiry, kept so the receipt can be swept on its schedule. */
-  ticketExpiresAtSeconds: z.number().int().nonnegative(),
+  ticketExpiresAtSeconds: z.number().int().safe().nonnegative(),
   sessionId: IdSchema,
-  nowSeconds: z.number().int().nonnegative(),
+  nowSeconds: z.number().int().safe().nonnegative(),
 }).strict();
 
 /**
@@ -40,7 +40,7 @@ export const WorkspaceTranscriptionAdmitRequestSchema = z.object({
 export const WorkspaceTranscriptionAdmitResultSchema = z.object({
   outcome: z.enum(["admitted", "ticket_replayed", "concurrency_limit"]),
   /** When the admitted session's lease runs out; absent on a refusal. */
-  expiresAtSeconds: z.number().int().nonnegative().nullable(),
+  expiresAtSeconds: z.number().int().safe().nonnegative().nullable(),
 }).strict();
 
 export const WorkspaceTranscriptionSessionRequestSchema = z.object({
@@ -49,7 +49,7 @@ export const WorkspaceTranscriptionSessionRequestSchema = z.object({
 }).strict();
 
 export const WorkspaceTranscriptionRenewRequestSchema = WorkspaceTranscriptionSessionRequestSchema
-  .extend({ nowSeconds: z.number().int().nonnegative() });
+  .extend({ nowSeconds: z.number().int().safe().nonnegative() });
 
 export const WorkspaceTranscriptionRenewResultSchema = z.object({
   /**
@@ -58,7 +58,7 @@ export const WorkspaceTranscriptionRenewResultSchema = z.object({
    * for a socket nobody is holding.
    */
   renewed: z.boolean(),
-  expiresAtSeconds: z.number().int().nonnegative().nullable(),
+  expiresAtSeconds: z.number().int().safe().nonnegative().nullable(),
 }).strict();
 
 export type WorkspaceTranscriptionAdmitRequest = z.infer<

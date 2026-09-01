@@ -28,7 +28,7 @@ import {
   WorkstreamSchema,
   WorkspaceWorkstreamCursorSchema,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
@@ -48,7 +48,7 @@ const participantParam = z.object({ id: IdSchema, userId: IdSchema });
 const resourceParam = z.object({ id: IdSchema, resourceId: IdSchema });
 const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
 const listQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(250).default(100),
+  limit: z.coerce.number().int().safe().min(1).max(250).default(100),
   // Timestamps are still accepted for clients holding pre-cutover cursors;
   // WorkspaceDO emits an opaque `(last_activity_at, workstream_id)` cursor so
   // tied timestamps cannot skip.

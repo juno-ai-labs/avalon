@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const RESOURCE_RELATIONSHIP_TYPES = [
   "attachment",

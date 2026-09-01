@@ -12,7 +12,7 @@ import {
   UpdateGitHubRepositoryAccessSettingsSchema,
 } from "@rally/contracts";
 import type { ConnectorOAuthProvider } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
@@ -160,7 +160,7 @@ const SlackLinkedSchema = z.object({
 const WebhookIngestionSchema = z.object({
   accepted: z.literal(true),
   duplicate: z.boolean(),
-  activityCount: z.number().int().nonnegative(),
+  activityCount: z.number().int().safe().nonnegative(),
 });
 const ConnectorWebhookIngestionSchema = z.object({
   duplicate: z.boolean(),

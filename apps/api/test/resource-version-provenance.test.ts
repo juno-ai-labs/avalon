@@ -7,7 +7,7 @@
  * and nothing about whether capture carried them into history.
  */
 import { asUserId, asWorkspaceId, ResourceRevisionSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 

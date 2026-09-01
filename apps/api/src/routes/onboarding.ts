@@ -12,7 +12,7 @@ import {
   type Session,
 } from "@rally/contracts";
 import { Hono, type Context } from "hono";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv, IdentityAuthContext } from "../env";
 import { getIdentityAuth } from "../middleware/auth";
 import { PlatformOnboardingService } from "../services/platform-onboarding-service";

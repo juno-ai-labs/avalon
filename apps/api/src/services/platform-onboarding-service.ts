@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   IanaTimezoneSchema,
   PendingWorkspaceInvitationSchema,
@@ -12,7 +13,7 @@ import {
 } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { newId, nowIso } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { sha256 } from "../lib/crypto";
@@ -32,7 +33,7 @@ import {
 } from "../telemetry/preference";
 
 export const platformIdentitySchema = z.object({
-  platformUserId: z.string().uuid(),
+  platformUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   googleSubject: z.string().min(1).max(255),
   email: z.string().email().max(254),
   name: z.string().min(1).max(255),
@@ -58,7 +59,7 @@ const regionalDiscoverySchema = z.object({
 
 const regionalActionBaseSchema = z.object({
   identity: platformIdentitySchema,
-  operationId: z.string().uuid(),
+  operationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   workspaceId: WorkspaceIdSchema,
   placementAffinity: WorkspacePlacementAffinitySchema,
   preference: PreferenceProjectionSchema,
@@ -69,11 +70,11 @@ export const regionalCreateSchema = regionalActionBaseSchema.extend({
   name: z.string().trim().min(2).max(120),
 });
 export const regionalAcceptSchema = regionalActionBaseSchema.extend({
-  invitationId: z.string().uuid(),
+  invitationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
 });
 export const regionalDeclineSchema = z.object({
   identity: platformIdentitySchema,
-  invitationId: z.string().uuid(),
+  invitationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
 });
 
 export type PlatformIdentity = z.infer<typeof platformIdentitySchema>;

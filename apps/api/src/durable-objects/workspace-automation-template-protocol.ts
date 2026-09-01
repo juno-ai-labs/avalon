@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * The workspace's automation template gallery, as questions rather than SQL.
@@ -80,7 +80,7 @@ export const WorkspaceAutomationTemplateVersionRequestSchema = z.object({
 export const WorkspaceAutomationTemplateVersionResultSchema = z.discriminatedUnion("outcome", [
   z.object({
     outcome: z.literal("added"),
-    versionNumber: z.number().int().positive(),
+    versionNumber: z.number().int().safe().positive(),
   }).strict(),
   z.object({ outcome: z.literal("template_not_found") }).strict(),
 ]);
@@ -90,7 +90,7 @@ export const WorkspaceAutomationTemplateSchema = z.object({
   ownerUserId: IdSchema.nullable(),
   name: z.string(),
   description: z.string(),
-  latestVersionNumber: z.number().int().positive(),
+  latestVersionNumber: z.number().int().safe().positive(),
   requiredCapabilitiesJson: z.string(),
   triggerDefinitionsJson: z.string(),
 }).strict();

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { workspaceDOName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -44,7 +44,7 @@ const responseSchema = z.object({
   results: z.array(z.object({
     columns: z.array(z.string()),
     rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.null()]))),
-    changes: z.number().int().nonnegative(),
+    changes: z.number().int().safe().nonnegative(),
   })),
 });
 

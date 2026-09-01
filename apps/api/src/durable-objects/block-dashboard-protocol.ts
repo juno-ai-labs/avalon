@@ -10,7 +10,7 @@ import {
   UpdateBlockDashboardRequestSchema,
   WorkstreamCompactionFenceSchema,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const CoordinatesSchema = z.object({
   workspaceId: WorkspaceIdSchema,
@@ -18,12 +18,12 @@ const CoordinatesSchema = z.object({
 }).strict();
 
 export const BlockDashboardSourceRefreshRequestSchema = CoordinatesSchema.extend({
-  triggerSequence: z.number().int().nonnegative(),
+  triggerSequence: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const BlockDashboardContextFenceSchema = z.object({
   /** Inclusive upper bound that is a complete provider-valid boundary. */
-  throughSequence: z.number().int().nonnegative(),
+  throughSequence: z.number().int().safe().nonnegative(),
   /** Exact compacted prefix, or null to begin at the start of the array. */
   compaction: WorkstreamCompactionFenceSchema.nullable(),
 }).strict();
@@ -49,46 +49,46 @@ export const BlockDashboardControlRequestSchema = z.discriminatedUnion("operatio
   }).strict(),
   CoordinatesSchema.extend({
     operation: z.literal("schedule_refresh"),
-    triggerSequence: z.number().int().nonnegative(),
+    triggerSequence: z.number().int().safe().nonnegative(),
     contextFence: BlockDashboardContextFenceSchema,
   }).strict(),
   CoordinatesSchema.extend({
     operation: z.literal("block_result"),
     blockId: IdSchema,
-    sourceVersion: z.number().int().positive(),
+    sourceVersion: z.number().int().safe().positive(),
     payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
     run: BlockDashboardBlockRunSchema,
   }).strict(),
   CoordinatesSchema.extend({
     operation: z.literal("import_authority_rows"),
-    generation: z.number().int().positive(),
+    generation: z.number().int().safe().positive(),
     configurations: z.array(z.object({
       configurationVersionId: IdSchema,
-      versionNumber: z.number().int().positive(),
+      versionNumber: z.number().int().safe().positive(),
       blocksJson: z.string().refine((value) => {
         try { return Array.isArray(JSON.parse(value)); } catch { return false; }
       }),
       createdByUserId: IdSchema,
-      createdAt: z.number().int().nonnegative(),
+      createdAt: z.number().int().safe().nonnegative(),
     }).strict()).max(250),
     runs: z.array(z.object({
       blockRunId: IdSchema,
       configurationVersionId: IdSchema,
       blockId: IdSchema,
       prompt: z.string().max(12_000),
-      triggerSequence: z.number().int().nonnegative(),
+      triggerSequence: z.number().int().safe().nonnegative(),
       harnessRunId: IdSchema,
       status: z.enum(["queued", "running", "completed", "failed", "stopped"]),
       markdown: z.string().nullable(),
       errorJson: z.string().nullable(),
-      createdAt: z.number().int().nonnegative(),
-      startedAt: z.number().int().nonnegative().nullable(),
-      completedAt: z.number().int().nonnegative().nullable(),
+      createdAt: z.number().int().safe().nonnegative(),
+      startedAt: z.number().int().safe().nonnegative().nullable(),
+      completedAt: z.number().int().safe().nonnegative().nullable(),
     }).strict()).max(250),
     preferences: z.array(z.object({
       userId: IdSchema,
       visible: z.boolean(),
-      updatedAt: z.number().int().nonnegative(),
+      updatedAt: z.number().int().safe().nonnegative(),
     }).strict()).max(250),
   }).strict(),
 ]);
@@ -101,9 +101,9 @@ export const BlockDashboardBlockDispatchSchema = z.object({
   blockRunId: IdSchema,
   harnessRunId: HarnessRunIdSchema,
   configurationVersionId: IdSchema,
-  configurationVersionNumber: z.number().int().positive(),
+  configurationVersionNumber: z.number().int().safe().positive(),
   prompt: z.string().min(1).max(12_000),
-  triggerSequence: z.number().int().nonnegative(),
+  triggerSequence: z.number().int().safe().nonnegative(),
   contextFence: BlockDashboardContextFenceSchema,
   createdAt: z.string().datetime({ offset: true }),
 }).strict();

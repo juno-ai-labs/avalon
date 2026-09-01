@@ -97,6 +97,7 @@ import {
 } from "./skills";
 import {
   formatToolArgumentValidationError,
+  isZodValidationError,
   normalizeToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
@@ -1621,7 +1622,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             signal: toolSignal,
           }), toolSignal);
         } catch (error) {
-          const downstreamValidationError = error instanceof z.ZodError;
+          const downstreamValidationError = isZodValidationError(error);
           // A tool may use Zod both for its initial argument parse and for
           // downstream provider/stored data. Only blame the model when its
           // normalized arguments also violate the schema it was shown.

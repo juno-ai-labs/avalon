@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   IdSchema,
   UserIdSchema,
@@ -54,7 +54,7 @@ export const AutomationDraftCreationClaimResultSchema = z.object({
 export const AutomationDraftTurnAdmissionResultSchema = z.object({
   automationId: AutomationIdSchema,
   turnId: IdSchema,
-  transcriptSequence: z.number().int().positive(),
+  transcriptSequence: z.number().int().safe().positive(),
   compilerRunId: IdSchema,
   admitted: z.boolean(),
   /**
@@ -65,18 +65,18 @@ export const AutomationDraftTurnAdmissionResultSchema = z.object({
    * not strictly newer — so both writers have to draw from the object's one
    * monotonic counter rather than each inventing a number.
    */
-  projectionVersion: z.number().int().positive().optional(),
+  projectionVersion: z.number().int().safe().positive().optional(),
 }).strict();
 
 export const AutomationDraftMessageSchema = z.object({
   turnId: IdSchema,
-  transcriptSequence: z.number().int().positive(),
+  transcriptSequence: z.number().int().safe().positive(),
   role: z.enum(["user", "assistant"]),
   authorUserId: UserIdSchema.nullable(),
   clientMessageId: IdSchema.nullable(),
   content: z.string(),
   attachmentIds: z.array(IdSchema),
-  createdAt: z.number().int().nonnegative(),
+  createdAt: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const AutomationAgentSnapshotSchema = z.object({
@@ -86,9 +86,9 @@ export const AutomationAgentSnapshotSchema = z.object({
   authorUserId: UserIdSchema,
   region: z.enum(["global", "eu"]),
   lifecycle: AutomationLifecycleStateSchema,
-  authorityGeneration: z.number().int().positive(),
+  authorityGeneration: z.number().int().safe().positive(),
   title: z.string(),
-  definitionRevision: z.number().int().nonnegative(),
+  definitionRevision: z.number().int().safe().nonnegative(),
   definition: z.unknown().nullable(),
   messages: z.array(AutomationDraftMessageSchema),
   activeCompilerRun: z.object({
@@ -104,10 +104,10 @@ export const AutomationAgentSnapshotSchema = z.object({
   }).strict().nullable(),
   pendingElicitation: z.object({
     id: IdSchema,
-    definitionRevision: z.number().int().positive(),
+    definitionRevision: z.number().int().safe().positive(),
     payload: z.unknown(),
   }).strict().nullable(),
-  eventSequence: z.number().int().nonnegative(),
+  eventSequence: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const AutomationSetEvaluatorRulesMutationSchema = z.object({
@@ -140,19 +140,19 @@ export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
     kind: z.literal("schedule"),
     scheduleId: IdSchema,
     scheduleKind: z.enum(["calendar", "interval"]),
-    plannedFor: z.number().int().nonnegative(),
+    plannedFor: z.number().int().safe().nonnegative(),
   }).strict(),
   z.object({
     kind: z.literal("external_event"),
     workspaceEventId: IdSchema,
     eventType: z.string().min(1),
-    occurredAt: z.number().int().nonnegative(),
+    occurredAt: z.number().int().safe().nonnegative(),
     payloadHash: z.string().min(1),
   }).strict(),
   z.object({
     kind: z.literal("inbound_email"),
     receiptId: IdSchema,
-    occurredAt: z.number().int().nonnegative(),
+    occurredAt: z.number().int().safe().nonnegative(),
   }).strict(),
 ]);
 
@@ -162,8 +162,8 @@ export const AutomationRunContextV1Schema = z.object({
   automationId: AutomationIdSchema,
   workspaceId: WorkspaceIdSchema,
   runId: IdSchema,
-  authorityGeneration: z.number().int().positive(),
-  definitionRevision: z.number().int().positive(),
+  authorityGeneration: z.number().int().safe().positive(),
+  definitionRevision: z.number().int().safe().positive(),
   definition: z.object({
     name: z.string().min(1),
     description: z.string().min(1),
@@ -190,7 +190,7 @@ export const AutomationRunContextV1Schema = z.object({
   }).strict().nullable().default(null),
   memoryScope: z.object({
     automationId: AutomationIdSchema,
-    authorityGeneration: z.number().int().positive(),
+    authorityGeneration: z.number().int().safe().positive(),
   }).strict(),
 }).strict();
 

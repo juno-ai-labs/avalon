@@ -18,6 +18,7 @@ import {
   asUserId
 } from "@rally/contracts";
 import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
+import { providerJsonSchema } from "@rally/contracts/json-schema";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { createStreamWatchdog } from "@juno-ai/bind/completion";
 import { chatRequestToJSON } from "@openrouter/sdk/models/chatrequest.js";
@@ -34,6 +35,7 @@ import type { ChatStreamChunk } from "@openrouter/sdk/models/chatstreamchunk.js"
 import type { ChatUsage } from "@openrouter/sdk/models/chatusage.js";
 import type { OpenRouterMetadata } from "@openrouter/sdk/models/openroutermetadata.js";
 import { z } from "zod";
+import { z as z3 } from "zod/v3";
 // Cycle: `bind-runtime` imports back from this module. Sound because every
 // value it takes is read inside a function body — see `runHarness` below.
 import { runHarnessWithBind } from "./bind-runtime";
@@ -43,6 +45,10 @@ import {
   type AddressingContextMessage,
 } from "./prompts";
 import { toolActivityName } from "./tool-activity";
+import {
+  isZodValidationError,
+  type ToolInputValidationError,
+} from "./tool-arguments";
 import type {
   BindLoopProjectionState,
   BindLoopTransition,
@@ -896,7 +902,7 @@ export class OpenRouterClient {
             });
             return parsed;
           } catch (error) {
-            if (error instanceof z.ZodError && !repaired) {
+            if (isZodValidationError(error) && !repaired) {
               repaired = true;
               const validationIssues = error.issues.slice(0, 25).map((issue) => ({
                 path: issue.path.map(String).join("."),
@@ -923,7 +929,7 @@ export class OpenRouterClient {
               attempt -= 1;
               continue;
             }
-            if (error instanceof z.ZodError) {
+            if (isZodValidationError(error)) {
               await emitDiagnostic({
                 stage: "validate",
                 schemaName: input.schemaName,
@@ -1683,7 +1689,7 @@ function structuredFailureKind(error: unknown, signal?: AbortSignal): string {
       ? "timeout"
       : "aborted";
   }
-  if (error instanceof z.ZodError) return "validation_error";
+  if (isZodValidationError(error)) return "validation_error";
   if (error instanceof OpenRouterRequestError) return "request_error";
   if (error instanceof OpenRouterError) {
     if (error.status === 408) return "timeout";
@@ -2727,10 +2733,10 @@ export async function compileAutomation(input: {
       },
     },
   ];
-  function evaluatorRuleIssues(raw: unknown): z.ZodError | null {
+  function evaluatorRuleIssues(raw: unknown): ToolInputValidationError | null {
         const parsed = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
         if (!parsed.success) return parsed.error;
-        const issues: z.core.$ZodIssue[] = [];
+        const issues: z3.ZodIssue[] = [];
         for (const [index, evaluator] of parsed.data.evaluators.entries()) {
           const plugin = catalog.find((candidate) => candidate.pluginId === evaluator.source.suggestedSourcePluginId);
           if (!plugin || !inspectedAutomationPluginIds.has(plugin.pluginId)) {
@@ -2738,7 +2744,6 @@ export async function compileAutomation(input: {
               code: "custom",
               path: ["evaluators", index, "source", "suggestedSourcePluginId"],
               message: "This plugin has not been inspected. Call automation_plugin_inspect with this plugin ID, then set the rules again using only the event types and filter fields it declares.",
-              input: evaluator.source.suggestedSourcePluginId,
             });
             continue;
           }
@@ -2753,7 +2758,6 @@ export async function compileAutomation(input: {
               code: "custom",
               path: ["evaluators", index, "source", "event"],
               message: "This plugin declares no event of that name or family. Use one of the event types listed by automation_plugin_inspect for this plugin.",
-              input: evaluator.source.event,
             });
             continue;
           }
@@ -2772,7 +2776,6 @@ export async function compileAutomation(input: {
               code: "custom",
               path: ["evaluators", index, "source", "resourceId"],
               message: "This resource is not one this plugin can watch. Find it with resources_search and use an ID it returns for this source binding.",
-              input: evaluator.source.resourceId,
             });
           }
           for (const eventType of eventTypes) {
@@ -2787,7 +2790,6 @@ export async function compileAutomation(input: {
                 code: "custom",
                 path: ["evaluators", index, "source", "resourceId"],
                 message: "This event cannot be filtered by that resource type. Use a resource whose type appears in the relationships automation_plugin_inspect lists for this event.",
-                input: evaluator.source.resourceId,
               });
             }
             if (!descriptor || evaluator.when.kind !== "dnf") continue;
@@ -2803,7 +2805,6 @@ export async function compileAutomation(input: {
                     code: "custom",
                     path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex],
                     message: "This filter field, operator, or value type is not one the plugin declares. Use a field from automation_plugin_inspect with one of the operators it lists and a value of the type it names.",
-                    input: leaf,
                   });
                 }
                 if (
@@ -2815,14 +2816,13 @@ export async function compileAutomation(input: {
                     code: "custom",
                     path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex, "value"],
                     message: "This person ID was never resolved. Find the person with people_search and use an ID it returned.",
-                    input: leaf.value,
                   });
                 }
               }
             }
           }
         }
-    return issues.length > 0 ? new z.ZodError(issues) : null;
+    return issues.length > 0 ? new z3.ZodError(issues) : null;
   }
   const timeTool = automationCurrentTimeTool(input.defaultTimezones);
   const requestElicitationTool: HarnessTool = {
@@ -3275,7 +3275,7 @@ function easyEnglishCurrentTime(
  * naming a field the executor is fine with is the same unwinnable loop with a
  * different field's name on it.
  */
-function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<AutomationDraft> {
+function parseAutomationSubmission(raw: unknown): ReturnType<typeof AutomationDraftSchema.safeParse> {
   return AutomationDraftSchema.safeParse(normalizeAutomationDraft(raw));
 }
 
@@ -3564,16 +3564,16 @@ export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
   },
 } as const satisfies ToolDefinition;
 
-export const RequestElicitationInputSchema = z.object({
-  prompt: z.string().min(1).max(4_000),
-  responseType: z.enum(["text", "radio", "single_select", "multi_select"]),
-  options: z.array(z.object({
-    value: z.string().min(1).max(200),
-    label: z.string().min(1).max(300),
-    description: z.string().max(800).nullable().default(null),
+export const RequestElicitationInputSchema = z3.object({
+  prompt: z3.string().min(1).max(4_000),
+  responseType: z3.enum(["text", "radio", "single_select", "multi_select"]),
+  options: z3.array(z3.object({
+    value: z3.string().min(1).max(200),
+    label: z3.string().min(1).max(300),
+    description: z3.string().max(800).nullable().default(null),
   }).strict()).max(30).default([]),
-  minimumSelections: z.number().int().nonnegative().default(0),
-  maximumSelections: z.number().int().positive().nullable().default(null),
+  minimumSelections: z3.number().int().nonnegative().default(0),
+  maximumSelections: z3.number().int().positive().nullable().default(null),
 }).strict().superRefine((input, context) => {
   if (input.responseType !== "text" && input.options.length === 0) {
     context.addIssue({
@@ -3591,7 +3591,7 @@ export const RequestElicitationInputSchema = z.object({
   }
 });
 
-export type RequestElicitationInput = z.infer<typeof RequestElicitationInputSchema>;
+export type RequestElicitationInput = z3.infer<typeof RequestElicitationInputSchema>;
 
 export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   name: "request_elicitation",
@@ -3600,7 +3600,7 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   capability: "elicitation.write",
   mode: "write",
   idempotency: "record_before_execute",
-  inputSchema: z.toJSONSchema(RequestElicitationInputSchema) as Record<string, unknown>,
+  inputSchema: providerJsonSchema(RequestElicitationInputSchema),
 } as const satisfies ToolDefinition;
 
 /**
@@ -3679,7 +3679,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     capability: "rally.automation.evaluators.set",
     mode: "write",
     idempotency: "record_before_execute",
-    inputSchema: z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema) as Record<string, unknown>,
+    inputSchema: providerJsonSchema(AutomationSetEvaluatorRulesInputV1Schema),
   },
   {
     name: "submit_draft",
@@ -3749,7 +3749,7 @@ export interface HarnessTool {
    * failure is silent in every log: `automation_submit_draft` shipped without
    * one and cost a production compile before anyone could see why.
    */
-  validateInput?: (input: unknown) => z.ZodError | null;
+  validateInput?: (input: unknown) => ToolInputValidationError | null;
   /** Execute in model-declared order before concurrent tools in the same batch. */
   serial?: boolean;
 }

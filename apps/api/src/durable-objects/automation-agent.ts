@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AutomationAgentSnapshotSchema,
@@ -33,7 +34,7 @@ import {
   RequestElicitationInputSchema,
   type AutomationCompilerStreamEvent,
 } from "@rally/agent-harness";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { sha256 } from "../lib/crypto";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -133,25 +134,25 @@ const DEFAULT_AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR = 30;
 
 const AutomationInboundEmailAdmissionSchema = z.object({
   schemaVersion: z.literal(1),
-  automationId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
+  automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   emailAddress: z.string().email(),
   resendEmailId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/u),
   svixId: z.string().min(1).max(200),
-  senderUserId: z.string().uuid().nullable(),
-  receivedAt: z.number().int().nonnegative(),
+  senderUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable(),
+  receivedAt: z.number().int().safe().nonnegative(),
   payloadRef: z.string().min(1),
-  resourceId: z.string().uuid(),
+  resourceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   textContent: z.string().min(1),
   structuredContent: z.record(z.string(), z.unknown()),
 }).strict();
 
 const AutomationAcceptDraftRequestSchema = z.object({
   schemaVersion: z.literal(1),
-  automationId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  authorUserId: z.string().uuid(),
-  definitionRevision: z.number().int().positive(),
+  automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  authorUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  definitionRevision: z.number().int().safe().positive(),
   scope: ScopeSchema,
   defaultPluginIds: z.array(ModelPluginIdSchema),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,
@@ -169,35 +170,35 @@ const AutomationAcceptDraftRequestSchema = z.object({
 
 const AutomationSocketRevocationSchema = z.object({
   reason: z.string().min(1),
-  workspaceId: z.string().uuid(),
-  userId: z.string().uuid().nullable(),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  userId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable(),
   sessionId: z.string().min(1).nullable(),
 }).strict();
 
 const AutomationSocketIdentitySchema = z.object({
-  workspaceId: z.string().uuid(),
-  userId: z.string().uuid(),
-  automationId: z.string().uuid(),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  userId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   sessionId: z.string().min(1),
   ticketId: z.string().min(1),
-  ticketExpiresAt: z.coerce.number().int().positive(),
+  ticketExpiresAt: z.coerce.number().int().safe().positive(),
 }).strict();
 
 const AutomationInboundEmailScreenSchema = z.object({
   schemaVersion: z.literal(1),
-  automationId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
+  automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   emailAddress: z.string().min(1),
   resendEmailId: z.string().min(1),
   /** Absent before the message is fetched; null once fetched and unresolvable. */
-  senderUserId: z.string().uuid().nullable().optional(),
+  senderUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable().optional(),
 }).strict();
 
 const AutomationLegacyImportRequestSchema = z.object({
   schemaVersion: z.literal(1),
-  automationId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  authorUserId: z.string().uuid(),
+  automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  authorUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   region: z.enum(["global", "eu"]),
   sourceHash: z.string().min(1),
   source: z.object({
@@ -211,23 +212,23 @@ const AutomationLegacyImportRequestSchema = z.object({
     deliveryTargets: AutomationRunContextV1Schema.shape.deliveryTargets,
     emailAddress: z.string().email().nullable(),
     modelOverride: AgentModelOverrideSchema.nullable(),
-    createdAt: z.number().int().nonnegative(),
-    updatedAt: z.number().int().nonnegative(),
+    createdAt: z.number().int().safe().nonnegative(),
+    updatedAt: z.number().int().safe().nonnegative(),
     schedules: z.array(z.object({
       scheduleId: z.string().min(1),
       kind: z.enum(["calendar", "interval"]),
       definition: z.record(z.string(), z.unknown()),
-      nextDueAt: z.number().int().nonnegative().nullable(),
+      nextDueAt: z.number().int().safe().nonnegative().nullable(),
     }).strict()),
     runs: z.array(z.object({
-      runId: z.string().uuid(),
-      workstreamId: z.string().uuid(),
+      runId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      workstreamId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
       triggerType: z.string().min(1),
-      plannedFor: z.number().int().nonnegative().nullable(),
+      plannedFor: z.number().int().safe().nonnegative().nullable(),
       status: z.enum(["scheduled", "running", "needs_input", "completed", "failed"]),
       workflowInstanceId: z.string().nullable(),
-      createdAt: z.number().int().nonnegative(),
-      updatedAt: z.number().int().nonnegative(),
+      createdAt: z.number().int().safe().nonnegative(),
+      updatedAt: z.number().int().safe().nonnegative(),
     }).strict()),
     memoryRecords: z.array(z.object({
       kind: z.enum([
@@ -249,14 +250,14 @@ const AutomationLegacyImportRequestSchema = z.object({
       resendEmailId: z.string().min(1),
       svixId: z.string().min(1),
       payloadRef: z.string().min(1).nullable(),
-      workstreamId: z.string().uuid().nullable(),
-      runId: z.string().uuid().nullable(),
-      receivedAt: z.number().int().nonnegative(),
+      workstreamId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable(),
+      runId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable(),
+      receivedAt: z.number().int().safe().nonnegative(),
       refused: z.boolean(),
     }).strict()).optional(),
     inboundEmailRateWindows: z.array(z.object({
-      windowStartedAt: z.number().int().nonnegative(),
-      acceptedCount: z.number().int().nonnegative(),
+      windowStartedAt: z.number().int().safe().nonnegative(),
+      acceptedCount: z.number().int().safe().nonnegative(),
     }).strict()).optional(),
   }).strict(),
 }).strict();
@@ -1024,10 +1025,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   async stageDraftSubmission(input: unknown): Promise<{ accepted: true }> {
     await this.initialized;
     const request = z.object({
-      automationId: z.string().uuid(),
-      workspaceId: z.string().uuid(),
-      authorUserId: z.string().uuid(),
-      compilerRunId: z.string().uuid(),
+      automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      authorUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      compilerRunId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
       providerCallId: z.string().min(1),
       inputHash: z.string().min(1),
       draft: AutomationDraftSchema,
@@ -1052,10 +1053,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   async stageDraftElicitation(input: unknown): Promise<{ accepted: true }> {
     await this.initialized;
     const request = z.object({
-      automationId: z.string().uuid(),
-      workspaceId: z.string().uuid(),
-      authorUserId: z.string().uuid(),
-      compilerRunId: z.string().uuid(),
+      automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      authorUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      compilerRunId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
       providerCallId: z.string().min(1),
       inputHash: z.string().min(1),
       elicitation: RequestElicitationInputSchema,
@@ -2034,12 +2035,12 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.object({
       schemaVersion: z.literal(1),
-      automationId: z.string().uuid(),
-      workspaceId: z.string().uuid(),
-      runId: z.string().uuid(),
-      workstreamId: z.string().uuid(),
-      workstreamGeneration: z.number().int().positive(),
-      sourceVersion: z.number().int().positive(),
+      automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      runId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      workstreamId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      workstreamGeneration: z.number().int().safe().positive(),
+      sourceVersion: z.number().int().safe().positive(),
       payloadHash: z.string().min(1),
       // A closed set, not an open string: this crosses WorkstreamDO →
       // WorkspaceDO → here, so an older or newer deployment sending an
@@ -2055,7 +2056,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       // forever with the same payload, so every automation's directory updates
       // queued up behind one unparseable state.
       state: z.enum([...RUN_PROJECTION_STATES]),
-      completedAt: z.number().int().nonnegative().nullable(),
+      completedAt: z.number().int().safe().nonnegative().nullable(),
     }).strict().parse(input);
     const identity = this.identity();
     if (identity.automation_id !== request.automationId || identity.workspace_id !== request.workspaceId) {
@@ -2245,10 +2246,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = z.object({
       schemaVersion: z.literal(1),
-      automationId: z.string().uuid(),
-      workspaceId: z.string().uuid(),
-      runId: z.string().uuid(),
-      workstreamId: z.string().uuid(),
+      automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      runId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+      workstreamId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
       targetKey: z.string().min(1).max(500),
       payloadHash: z.string().min(1),
       state: z.enum(["delivered", "skipped", "failed"]),
@@ -2356,11 +2357,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       schemaVersion: z.literal(1),
       automationId: z.string().min(1),
       workspaceId: z.string().min(1),
-      authorityGeneration: z.number().int().positive(),
+      authorityGeneration: z.number().int().safe().positive(),
       workspaceEventId: z.string().min(1),
-      eventSequence: z.number().int().positive(),
+      eventSequence: z.number().int().safe().positive(),
       eventType: z.string().min(1),
-      occurredAt: z.number().int().nonnegative(),
+      occurredAt: z.number().int().safe().nonnegative(),
       payloadHash: z.string().min(1),
     }).strict().parse(input);
     const identity = this.identity();

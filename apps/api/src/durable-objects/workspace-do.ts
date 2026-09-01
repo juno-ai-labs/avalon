@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AutomationAttentionReasonSchema,
@@ -56,7 +57,7 @@ import {
   type ProductFeatureFlagKey,
 } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { AuthContext, Env } from "../env";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
@@ -935,8 +936,8 @@ const SocketIdentitySchema = z.object({
   workspaceId: WorkspaceIdSchema,
   userId: UserIdSchema,
   sessionId: z.string().min(1).max(200),
-  ticketId: z.string().uuid(),
-  ticketExpiresAt: z.coerce.number().int().positive(),
+  ticketId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  ticketExpiresAt: z.coerce.number().int().safe().positive(),
 });
 
 type SocketIdentity = z.infer<typeof SocketIdentitySchema>;
@@ -2286,14 +2287,14 @@ function json(body: unknown, status = 200): Response {
 function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
   try {
     const parsed = SocketIdentitySchema.extend({
-      connectionId: z.string().uuid(),
+      connectionId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
       connectedAt: z.string().datetime({ offset: true }),
       subscribed: z.boolean(),
-      lastWaterline: z.number().int().nonnegative(),
+      lastWaterline: z.number().int().safe().nonnegative(),
       // Sockets accepted by the previous deployment carry none of these fields. They
       // resume safely as backgrounded and write the explicit shape on their
       // first presence event instead of being disconnected during rollout.
-      presenceRevision: z.number().int().nonnegative().default(0),
+      presenceRevision: z.number().int().safe().nonnegative().default(0),
       applicationState: z.enum(["foreground", "background"]).default("background"),
       foregroundWorkstreamId: WorkstreamIdSchema.nullable().default(null),
     }).safeParse(socket.deserializeAttachment());
@@ -3679,14 +3680,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       automationId: IdSchema,
       workspaceId: WorkspaceIdSchema,
       authorUserId: UserIdSchema,
-      authorityGeneration: z.number().int().positive(),
-      projectionVersion: z.number().int().positive(),
+      authorityGeneration: z.number().int().safe().positive(),
+      projectionVersion: z.number().int().safe().positive(),
       payloadHash: z.string().min(1),
       lifecycle: z.enum(["draft", "activating", "active", "paused", "deleted"]),
       scope: z.enum(["personal", "workspace"]),
       title: z.string(),
       description: z.string(),
-      nextRunAt: z.number().int().nonnegative().nullable(),
+      nextRunAt: z.number().int().safe().nonnegative().nullable(),
       // The contract's reasons rather than free text: the directory row is what
       // the sidebar reads, and a code nothing on the client can render is a
       // marker with no sentence behind it.
@@ -5166,7 +5167,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     this.assertWorkspace(IdSchema.parse(workspaceId));
     const ids = z.array(IdSchema).max(10_000).parse([...new Set(userIds)]);
-    const delay = z.number().int().min(0).max(24 * 60 * 60_000).parse(delayMs);
+    const delay = z.number().int().safe().min(0).max(24 * 60 * 60_000).parse(delayMs);
     const now = Date.now();
     for (const userId of ids) {
       this.productStorage().markRankingDue(userId, now + delay, now, clearFingerprint);

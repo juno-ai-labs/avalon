@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   AVALON_MULTIMODAL_GENERATION_PLUGIN_ID,
   type HarnessPlugin,
@@ -6,7 +7,8 @@ import {
   type HarnessToolResult,
 } from "@rally/agent-harness";
 import type { ToolDefinition } from "@rally/contracts";
-import { z } from "zod";
+import { providerJsonSchema } from "@rally/contracts/json-schema";
+import { z } from "zod/v3";
 
 export const MULTIMODAL_GENERATION_MODEL = "gpt-image-2";
 export const MULTIMODAL_GENERATION_PRICING_MODEL_ID = "openai/gpt-image-2";
@@ -29,11 +31,11 @@ export const GenerateImageArgumentsSchema = z.object({
 }).strict();
 
 export const EditImageArgumentsSchema = z.object({
-  resourceId: z.string().uuid(),
+  resourceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   prompt: z.string().trim().min(1).max(32_000),
   title: z.string().trim().min(1).max(300).optional(),
   size: ImageGenerationSizeSchema.optional(),
-  maskResourceId: z.string().uuid().optional(),
+  maskResourceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").optional(),
 }).strict();
 
 export const AudioVoiceSchema = z.enum([
@@ -78,7 +80,7 @@ const definitions = {
     mode: "write",
     idempotency: "record_before_execute",
     timeoutMs: MULTIMODAL_GENERATION_TIMEOUT_MS,
-    inputSchema: z.toJSONSchema(GenerateImageArgumentsSchema) as Record<string, unknown>,
+    inputSchema: providerJsonSchema(GenerateImageArgumentsSchema),
   },
   edit_image: {
     name: "edit_image",
@@ -87,7 +89,7 @@ const definitions = {
     mode: "write",
     idempotency: "record_before_execute",
     timeoutMs: MULTIMODAL_GENERATION_TIMEOUT_MS,
-    inputSchema: z.toJSONSchema(EditImageArgumentsSchema) as Record<string, unknown>,
+    inputSchema: providerJsonSchema(EditImageArgumentsSchema),
   },
   generate_audio: {
     name: "generate_audio",
@@ -96,7 +98,7 @@ const definitions = {
     mode: "write",
     idempotency: "record_before_execute",
     timeoutMs: MULTIMODAL_GENERATION_TIMEOUT_MS,
-    inputSchema: z.toJSONSchema(GenerateAudioArgumentsSchema) as Record<string, unknown>,
+    inputSchema: providerJsonSchema(GenerateAudioArgumentsSchema),
   },
 } as const satisfies Record<keyof MultimodalGenerationToolExecutors, ToolDefinition>;
 

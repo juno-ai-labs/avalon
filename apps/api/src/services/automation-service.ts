@@ -4,7 +4,7 @@ import type {
   AutomationDraft,
   Scope,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectorRegistryForEnv } from "../lib/connector-registry";

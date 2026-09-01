@@ -1,11 +1,12 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { newId } from '@rally/db';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { Env } from '../env';
 import type { TelemetryOperatorPrincipal } from './operator-auth';
 
-const QuerySchema = z.object({ limit: z.number().int().min(1).max(100).default(50) }).strict();
+const QuerySchema = z.object({ limit: z.number().int().safe().min(1).max(100).default(50) }).strict();
 const AccessSchema = z.object({
-  crashId: z.string().uuid().refine((value) => value[14] === '7'),
+  crashId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === '7'),
   reason: z.enum(['customer_support', 'incident_response']),
 }).strict();
 

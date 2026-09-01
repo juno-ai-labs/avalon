@@ -22,7 +22,7 @@ import {
   asWorkstreamId,
 } from "@rally/contracts";
 import { newId } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
@@ -53,7 +53,7 @@ export const WorkstreamWakeupRowSchema = z.object({
   prompt: z.string(),
   due_at: z.string(),
   status: z.enum(["pending", "fired", "cancelled"]),
-  version: z.number().int().nonnegative(),
+  version: z.number().int().safe().nonnegative(),
   created_at: z.string(),
 });
 

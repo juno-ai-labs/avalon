@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AnonymousTelemetryBatchSchema,
@@ -26,7 +27,7 @@ import { CrashIngestService } from "../telemetry/crash-ingest";
 import { purgeIneligibleCrashReports } from "../telemetry/crash-delivery";
 import { ProductAnalyticsPreferenceService } from "../telemetry/preference";
 import { linkAnonymousTelemetry } from "../telemetry/identity-link";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { consumeTelemetryRateLimit } from '../telemetry/operations';
 
 export const publicTelemetryRoutes = new Hono<HonoAppEnv>();
@@ -61,15 +62,15 @@ publicTelemetryRoutes.get("/route", async (c) => {
 });
 
 const CrashUploadMetadataSchema = z.object({
-  uploadId: z.string().uuid().refine((value) => value[14] === "7"),
-  installationId: z.string().uuid().refine((value) => value[14] === "7"),
+  uploadId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === "7"),
+  installationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === "7"),
   route: z.enum(["global", "eu"]),
   release: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
   buildId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
   platform: z.enum(["darwin", "win32", "linux"]),
   architecture: z.enum(["arm64", "x64"]),
   processRole: z.enum(["main", "renderer", "utility", "gpu", "unknown"]),
-  launchId: z.string().uuid().refine((value) => value[14] === "7"),
+  launchId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === "7"),
   channel: z.enum(["development", "alpha", "beta", "stable"]),
 }).strict();
 

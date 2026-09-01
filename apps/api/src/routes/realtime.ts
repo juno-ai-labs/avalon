@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { RealtimeTranscriptionService } from "../services/realtime-transcription-service";

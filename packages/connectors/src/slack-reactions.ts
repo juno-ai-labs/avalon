@@ -15,7 +15,7 @@
  * configured emoji it rejects degrades to the default for that state rather than
  * leaving the message with no reaction at all.
  */
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /** The terminal statuses a run reaches, and which a reaction has to name. */
 export const SlackReactionOutcomes = ["completed", "needs_input", "failed", "stopped"] as const;
@@ -66,7 +66,7 @@ export const SLACK_DEFAULT_REACTIONS: SlackReactionSet = {
 export const SlackReactionOverrideSchema = z.object({
   acknowledgement: SlackEmojiNameSchema.optional(),
   working: z.array(SlackEmojiNameSchema).min(1).max(12).optional(),
-  workingIntervalMs: z.number().int().min(3_000).max(60_000).optional(),
+  workingIntervalMs: z.number().int().safe().min(3_000).max(60_000).optional(),
   outcomes: z.object({
     completed: SlackEmojiNameSchema.optional(),
     needs_input: SlackEmojiNameSchema.optional(),

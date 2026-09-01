@@ -16,7 +16,7 @@ import {
   PreviewTerminalNetworkPolicyRequestSchema,
   ApplyTerminalNetworkPolicyRequestSchema,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { WorkspaceService } from "../services/workspace-service";

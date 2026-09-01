@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   BlockDashboardStreamCheckpointSchema,
@@ -18,7 +19,7 @@ import {
   type BlockDashboardStreamCheckpoint,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import {
   revocationClosesSocket,
@@ -102,8 +103,8 @@ type BlockDashboardBlockIdentityInput = z.infer<typeof BlockDashboardBlockIdenti
 const BlockDashboardSocketIdentitySchema = BlockDashboardBlockIdentityInputSchema.extend({
   userId: UserIdSchema,
   sessionId: z.string().min(1).max(200),
-  ticketId: z.string().uuid(),
-  ticketExpiresAt: z.coerce.number().int().positive(),
+  ticketId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  ticketExpiresAt: z.coerce.number().int().safe().positive(),
 }).strict();
 
 const BlockDashboardStreamEventSchema = z.discriminatedUnion("type", [
@@ -112,10 +113,10 @@ const BlockDashboardStreamEventSchema = z.discriminatedUnion("type", [
     streamId: z.string().min(1),
     harnessRunId: z.string().min(1),
     turnId: z.string().min(1),
-    epoch: z.number().int().nonnegative(),
-    streamSeq: z.number().int().nonnegative(),
+    epoch: z.number().int().safe().nonnegative(),
+    streamSeq: z.number().int().safe().nonnegative(),
     reset: z.literal(false),
-    sequence: z.number().int().positive(),
+    sequence: z.number().int().safe().positive(),
     occurredAt: z.string().datetime({ offset: true }),
   }).passthrough(),
   z.object({
@@ -123,11 +124,11 @@ const BlockDashboardStreamEventSchema = z.discriminatedUnion("type", [
     streamId: z.string().min(1),
     harnessRunId: z.string().min(1).optional(),
     turnId: z.string().min(1),
-    epoch: z.number().int().nonnegative(),
-    streamSeq: z.number().int().nonnegative(),
+    epoch: z.number().int().safe().nonnegative(),
+    streamSeq: z.number().int().safe().nonnegative(),
     delta: z.string(),
     reset: z.boolean(),
-    sequence: z.number().int().positive(),
+    sequence: z.number().int().safe().positive(),
     occurredAt: z.string().datetime({ offset: true }),
   }).passthrough(),
 ]);
@@ -190,7 +191,7 @@ function applyBlockDashboardStreamEvent(
 }
 type BlockDashboardSocketIdentity = z.infer<typeof BlockDashboardSocketIdentitySchema>;
 const BlockDashboardSocketAttachmentSchema = BlockDashboardSocketIdentitySchema.extend({
-  connectionId: z.string().uuid(),
+  connectionId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   connectedAt: z.string().datetime({ offset: true }),
   subscribed: z.boolean(),
   /**
@@ -201,7 +202,7 @@ const BlockDashboardSocketAttachmentSchema = BlockDashboardSocketIdentitySchema.
    * dropped on the first wake after release. Safe to remove once no hibernated
    * attachment predates this change.
    */
-  authorizedAt: z.number().int().nonnegative().default(0),
+  authorizedAt: z.number().int().safe().nonnegative().default(0),
 }).strict();
 type BlockDashboardSocketAttachment = z.infer<typeof BlockDashboardSocketAttachmentSchema>;
 

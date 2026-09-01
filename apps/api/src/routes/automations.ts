@@ -13,7 +13,7 @@ import {
   IdSchema,
   ModelPluginIdSchema,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { AutomationService } from "../services/automation-service";
@@ -68,14 +68,14 @@ const TemplatePageSchema = z.object({
     // pointed the other way across the same wire.
     author: z.string(),
     description: z.string(),
-    usedBy: z.number().int().nonnegative(),
+    usedBy: z.number().int().safe().nonnegative(),
     requiredCapabilities: z.array(z.string()),
-    latestVersion: z.number().int().positive(),
+    latestVersion: z.number().int().safe().positive(),
     activitySources: z.array(TemplateActivitySourceSchema),
   })),
 });
 const PublishedTemplateSchema = z.object({ templateId: IdSchema, latestVersionId: IdSchema });
-const TemplateVersionSchema = z.object({ id: IdSchema, versionNumber: z.number().int().positive() });
+const TemplateVersionSchema = z.object({ id: IdSchema, versionNumber: z.number().int().safe().positive() });
 
 export const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) =>

@@ -1,6 +1,6 @@
 import { asAutomationId, asWorkspaceId, type Region } from "@rally/contracts";
 import { newId } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";

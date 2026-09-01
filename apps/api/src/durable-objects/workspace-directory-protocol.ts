@@ -6,7 +6,7 @@ import {
   WorkstreamBatchFilterSchema,
   WorkstreamSchema,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";
 
@@ -23,7 +23,7 @@ export const WorkspaceAttentionResultSchema = WorkspaceAttentionSchema.strict();
 export const WorkspaceDirectoryListRequestSchema = z.object({
   workspaceId: IdSchema,
   userId: IdSchema,
-  limit: z.number().int().min(1).max(250),
+  limit: z.number().int().safe().min(1).max(250),
   before: WorkspaceWorkstreamCursorSchema.optional(),
   includeSystem: z.boolean(),
 }).strict();
@@ -37,7 +37,7 @@ export const WorkspaceDirectoryPageSchema = z.object({
   items: z.array(WorkstreamSchema),
   stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
-  directoryWaterline: z.number().int().nonnegative(),
+  directoryWaterline: z.number().int().safe().nonnegative(),
 }).strict().superRefine((page, context) => {
   const itemIds = new Set(page.items.map((item) => item.id));
   const versionIds = new Set(page.stateVersions.map((version) => version.workstreamId));
@@ -96,7 +96,7 @@ export const WorkspaceBatchDispatchBeginRequestSchema = z.object({
 
 export const WorkspaceBatchDispatchBeginResultSchema = z.object({
   items: z.array(IdSchema),
-  targetCount: z.number().int().nonnegative(),
+  targetCount: z.number().int().safe().nonnegative(),
 }).strict();
 
 /** Record one successfully published Queue chunk for a frozen generic batch. */
@@ -108,7 +108,7 @@ export const WorkspaceBatchDispatchAdvanceRequestSchema = z.object({
 }).strict();
 
 export const WorkspaceBatchDispatchAdvanceResultSchema = z.object({
-  remainingCount: z.number().int().nonnegative(),
+  remainingCount: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const WorkspaceDirectoryVisibleIdsRequestSchema = z.object({
@@ -117,7 +117,7 @@ export const WorkspaceDirectoryVisibleIdsRequestSchema = z.object({
   includeSystem: z.boolean(),
   participantsOnly: z.boolean(),
   after: IdSchema.optional(),
-  limit: z.number().int().min(1).max(250),
+  limit: z.number().int().safe().min(1).max(250),
 }).strict();
 
 export const WorkspaceDirectoryVisibleIdsPageSchema = z.object({
@@ -185,8 +185,8 @@ export const WorkspaceDirectoryNotificationRequestSchema = z.object({
 }).strict();
 
 export const WorkspaceDirectoryNotificationStateSchema = z.object({
-  authorityGeneration: z.number().int().positive(),
-  viewerVersion: z.number().int().positive(),
+  authorityGeneration: z.number().int().safe().positive(),
+  viewerVersion: z.number().int().safe().positive(),
   listable: z.boolean(),
   title: z.string().min(1).max(500),
   emailAddress: z.string().email().max(254).nullable(),
@@ -239,14 +239,14 @@ export const WorkspaceDirectoryRecentRequestSchema = z.object({
   audience: WorkspaceDirectoryAudienceSchema,
   includeSystem: z.boolean(),
   participantsOnly: z.boolean(),
-  limit: z.number().int().min(1).max(250),
+  limit: z.number().int().safe().min(1).max(250),
 }).strict();
 
 export const WorkspaceDirectoryDueRequestSchema = z.object({
   workspaceId: IdSchema,
   kind: z.enum(["terminal", "wakeup"]),
   through: TimestampSchema,
-  limit: z.number().int().min(1).max(250),
+  limit: z.number().int().safe().min(1).max(250),
 }).strict();
 
 export const WorkspaceDirectoryScheduleTargetsRequestSchema = z.object({

@@ -1,11 +1,12 @@
-import { z } from 'zod';
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
+import { z } from 'zod/v3';
 import type { MiddlewareHandler } from 'hono';
 import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { timingSafeEqualText } from '../lib/crypto';
 
 const OperatorPrincipalSchema = z.object({
-  operatorId: z.string().uuid(),
+  operatorId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   role: z.enum(['support', 'security']),
 }).strict();
 

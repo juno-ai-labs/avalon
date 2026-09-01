@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
@@ -39,7 +40,7 @@ import {
 } from "@rally/contracts";
 import type { AddressingContextMessage } from "@rally/agent-harness";
 import { truncateUtf16Safe } from "@rally/contracts/text";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -128,14 +129,14 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
   clientMessageId: z.string().min(1).max(120),
   mentions: z.array(MentionSchema).default([]),
-  confirmedParticipantUserIds: z.array(z.string().uuid()).default([]),
-  attachmentIds: z.array(z.string().uuid()).max(10).default([]),
+  confirmedParticipantUserIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).default([]),
+  attachmentIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).max(10).default([]),
   runMode: z.enum(["steer", "queue"]).optional(),
   telemetryOperationId: z.string().min(1).max(180).optional(),
   forcedHarnessOrigin: z.string().min(1).max(80).optional(),
-  parentHarnessRunId: z.string().uuid().optional(),
-  expectedLatestHarnessRunId: z.string().uuid().optional(),
-  expectedToolInvocationId: z.string().uuid().optional(),
+  parentHarnessRunId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").optional(),
+  expectedLatestHarnessRunId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").optional(),
+  expectedToolInvocationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").optional(),
   slackOrigin: z.unknown().optional(),
   slackSearchAuthorization: z.unknown().optional(),
 }).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
@@ -145,20 +146,20 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
 export const InitializeWorkstreamObjectInputSchema = z.object({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
-  generation: z.number().int().positive(),
+  generation: z.number().int().safe().positive(),
   title: z.string().min(1).max(180),
   objective: z.string().max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
   descriptionSource: z.enum(["authored", "derived"]),
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   emailAddress: z.string().email().max(254).nullable(),
-  creatorUserId: z.string().uuid(),
+  creatorUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
   mentions: z.array(MentionSchema).default([]),
   openingStructuredContent: z.unknown().nullable().default(null),
   clientMessageId: z.string().min(1).max(120),
-  participantUserIds: z.array(z.string().uuid()),
-  attachmentIds: z.array(z.string().uuid()).max(10),
-  originResourceIds: z.array(z.string().uuid()).default([]),
+  participantUserIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")),
+  attachmentIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).max(10),
+  originResourceIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).default([]),
   /**
    * Who may read it from birth. Defaulted to `personal`: a work stream nobody
    * has said anything about is the one somebody just started for themselves,
@@ -195,19 +196,19 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   notifyParticipants: z.boolean().default(false),
   modelOverride: z.string().max(200).nullable(),
   originType: z.enum(["ad_hoc", "automation"]).default("ad_hoc"),
-  automationSubscriptionId: z.string().uuid().nullable().default(null),
-  automationRunId: z.string().uuid().nullable().default(null),
+  automationSubscriptionId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable().default(null),
+  automationRunId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable().default(null),
   plannedFor: z.string().datetime({ offset: true }).nullable().default(null),
   systemKind: z.literal("digest").nullable().default(null),
-  createdFromOpportunityId: z.string().uuid().nullable().default(null),
-  opportunityVersion: z.number().int().positive().nullable().default(null),
+  createdFromOpportunityId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable().default(null),
+  opportunityVersion: z.number().int().safe().positive().nullable().default(null),
   opportunityDisplayPromptHash: z.string().max(200).nullable().default(null),
   opportunityExecutionPromptHash: z.string().max(200).nullable().default(null),
   executionPrincipal: z.unknown(),
   slackOrigin: z.unknown().optional(),
   slackSearchAuthorization: z.unknown().optional(),
-  telemetryOperationId: z.string().uuid().optional(),
-  telemetrySubjectUserId: z.string().uuid().optional(),
+  telemetryOperationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").optional(),
+  telemetrySubjectUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").optional(),
   reason: z.string().min(1).max(80),
 }).strict();
 

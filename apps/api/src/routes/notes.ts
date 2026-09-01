@@ -10,7 +10,7 @@ import {
   UpdateNoteRequestSchema,
 } from "@rally/contracts";
 import { Hono } from "hono";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -18,7 +18,7 @@ import { NoteService } from "../services/note-service";
 
 const idParam = z.object({ id: IdSchema });
 const listQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(250).default(250),
+  limit: z.coerce.number().int().safe().min(1).max(250).default(250),
 });
 const NotePageSchema = z.object({ items: z.array(NoteSummarySchema) });
 

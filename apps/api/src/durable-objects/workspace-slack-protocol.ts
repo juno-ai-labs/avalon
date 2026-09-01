@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * The Slack ingress spine — jobs, thread claims, and pending prompts — as
@@ -148,7 +148,7 @@ export const WorkspaceSlackIngressFailRequestSchema = z.object({
 export const WorkspaceSlackIngressFailResultSchema = z.discriminatedUnion("outcome", [
   z.object({
     outcome: z.literal("failed"),
-    attemptCount: z.number().int().nonnegative(),
+    attemptCount: z.number().int().safe().nonnegative(),
     exhausted: z.boolean(),
     /** True when no other job on this connection exhausted the same way inside the episode. */
     firstExhaustionReport: z.boolean(),
@@ -161,7 +161,7 @@ export const WorkspaceSlackIngressRecoverableRequestSchema = z.object({
   /** Queued or failed jobs untouched since this instant are worth re-announcing. */
   staleBefore: TimestampSchema,
   at: TimestampSchema,
-  limit: z.number().int().positive(),
+  limit: z.number().int().safe().positive(),
 }).strict();
 
 export const WorkspaceSlackIngressRecoverableResultSchema = z.object({
@@ -176,7 +176,7 @@ export const WorkspaceSlackIngressSweepRequestSchema = z.object({
   /** Link challenges spent or expired before this are removed. */
   spentBefore: TimestampSchema,
   /** How many exhausted jobs the standing report names. */
-  exhaustedReportLimit: z.number().int().positive(),
+  exhaustedReportLimit: z.number().int().safe().positive(),
 }).strict();
 
 export const WorkspaceSlackIngressSweepResultSchema = z.object({
@@ -298,7 +298,7 @@ export const WorkspaceSlackSessionSchema = z.object({
   reaction_message_ts: z.string().nullable(),
   /** Only what Rally placed itself, so a transition never takes a member's. */
   reaction_current: z.string().nullable(),
-  reaction_cursor: z.number().int().nonnegative(),
+  reaction_cursor: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const WorkspaceSlackSessionResultSchema = z.object({
@@ -424,7 +424,7 @@ export const WorkspaceSlackSessionReactionRequestSchema = z.object({
   sessionId: z.string().min(1),
   expected: z.string().nullable(),
   reaction: z.string().nullable(),
-  cursor: z.number().int().nonnegative().optional(),
+  cursor: z.number().int().safe().nonnegative().optional(),
   at: TimestampSchema,
 }).strict();
 

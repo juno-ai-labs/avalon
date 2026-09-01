@@ -1,5 +1,5 @@
 import { ConnectionSchema, type Connection } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const ConnectionRowSchema = z.object({
   id: z.string(),

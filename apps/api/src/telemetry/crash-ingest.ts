@@ -1,6 +1,7 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { newId } from '@rally/db';
 import { TelemetryBreadcrumbSidecarSchema, type TelemetryBreadcrumbSidecar } from '@rally/contracts/telemetry';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { Env } from '../env';
 import { sha256 } from '../lib/crypto';
 import { consumeTelemetryRateLimit, recordTelemetryRejection } from './operations';
@@ -8,15 +9,15 @@ import { consumeTelemetryRateLimit, recordTelemetryRejection } from './operation
 const MAX_DUMP_BYTES = 20 * 1024 * 1024;
 const MAX_NEW_CRASH_UPLOADS_PER_HOUR = 10;
 const CrashMetadataSchema = z.object({
-  uploadId: z.string().uuid().refine((value) => value[14] === '7'),
-  installationId: z.string().uuid().refine((value) => value[14] === '7'),
+  uploadId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === '7'),
+  installationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === '7'),
   route: z.enum(['global', 'eu']),
   release: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
   buildId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
   platform: z.enum(['darwin', 'win32', 'linux']),
   architecture: z.enum(['arm64', 'x64']),
   processRole: z.enum(['main', 'renderer', 'utility', 'gpu', 'unknown']),
-  launchId: z.string().uuid().refine((value) => value[14] === '7'),
+  launchId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === '7'),
   channel: z.enum(['development', 'alpha', 'beta', 'stable']),
 }).strict();
 

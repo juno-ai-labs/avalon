@@ -34,7 +34,7 @@ import type {
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { addWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { newId, nowIso } from "@rally/db";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from "../telemetry/api-emitter";
 import { linearNativeAgentEnabled, numericEnv } from "../env";

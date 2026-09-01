@@ -1,5 +1,6 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   base64,
   booleanValue,
@@ -233,26 +234,26 @@ export const LinearAgentPluginDescriptor = defineConnectorAgentPlugin({
  */
 const searchIssuesSchema = z.object({
   query: z.string().min(1).max(500),
-  first: z.number().int().min(1).max(25).default(20),
+  first: z.number().int().safe().min(1).max(25).default(20),
   after: z.string().max(500).nullable().optional(),
 }).strict();
 const idSchema = z.string().min(1).max(200);
 const pageSchema = (maximum: number) => z.object({
-  first: z.number().int().min(1).max(maximum).default(Math.min(maximum, 25)),
+  first: z.number().int().safe().min(1).max(maximum).default(Math.min(maximum, 25)),
   after: z.string().max(500).nullable().optional(),
 }).strict();
 const listWorkflowStatesSchema = z.object({
   teamId: idSchema.nullable().optional(),
   // 50, matching `list_teams` rather than inventing a third page ceiling for a
   // family a model generalizes across.
-  first: z.number().int().min(1).max(50).default(50),
+  first: z.number().int().safe().min(1).max(50).default(50),
   after: z.string().max(500).nullable().optional(),
 }).strict();
 const createIssueSchema = z.object({
   teamId: idSchema,
   title: z.string().min(1).max(500),
   description: z.string().max(40_000).nullable().optional(),
-  priority: z.number().int().min(0).max(4).nullable().optional(),
+  priority: z.number().int().safe().min(0).max(4).nullable().optional(),
   projectId: idSchema.nullable().optional(),
   assigneeId: idSchema.nullable().optional(),
   stateId: idSchema.nullable().optional(),
@@ -265,7 +266,7 @@ const updateIssueSchema = z.object({
   stateId: idSchema.nullable().optional(),
   assigneeId: idSchema.nullable().optional(),
   projectId: idSchema.nullable().optional(),
-  priority: z.number().int().min(0).max(4).nullable().optional(),
+  priority: z.number().int().safe().min(0).max(4).nullable().optional(),
   dueDate: z.string().date().nullable().optional(),
 }).strict().refine((value) => Object.keys(value).some((key) => key !== "issueId"), {
   message: "Choose at least one issue field to update",
@@ -991,7 +992,7 @@ export async function verifyLinearWebhook(input: VerifyLinearWebhookInput): Prom
     throw new ConnectorError("provider_error", "Linear sent malformed webhook JSON", error);
   }
   if (!isRecord(parsed)) throw new ConnectorError("provider_error", "Linear sent an invalid webhook payload");
-  const delivery = z.string().uuid().safeParse(input.deliveryHeader);
+  const delivery = z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").safeParse(input.deliveryHeader);
   if (!delivery.success) throw new ConnectorError("invalid_signature", "The Linear delivery ID is missing or malformed");
   const deliveryId = delivery.data;
   const webhookTimestamp = numberValue(parsed, "webhookTimestamp");

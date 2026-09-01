@@ -1,6 +1,6 @@
 import { IdSchema } from "@rally/contracts";
 import { httpUrlSchema } from "@rally/contracts/url-schemas";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const WorkspaceActivityAudienceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("workspace") }).strict(),
@@ -14,7 +14,7 @@ export const WorkspaceActivityEventInputSchema = z.object({
   eventType: z.string().min(1).max(200),
   subjectType: z.string().min(1).max(200),
   subjectId: z.string().max(200).nullable(),
-  subjectSequenceNumber: z.number().int().nonnegative().nullable().optional(),
+  subjectSequenceNumber: z.number().int().safe().nonnegative().nullable().optional(),
   actorType: z.enum(["user", "agent", "system", "external"]),
   actorUserId: IdSchema.nullable().optional(),
   actorLabel: z.string().max(500),
@@ -37,20 +37,20 @@ export const WorkspaceActivityEventInputSchema = z.object({
 export const WorkspaceActivityEventListRequestSchema = z.object({
   workspaceId: IdSchema,
   userId: IdSchema,
-  from: z.number().int().nonnegative().nullable().optional(),
-  through: z.number().int().nonnegative(),
+  from: z.number().int().safe().nonnegative().nullable().optional(),
+  through: z.number().int().safe().nonnegative(),
   notBefore: z.string().datetime().nullable().optional(),
   digestibleOnly: z.boolean(),
-  limit: z.number().int().min(1).max(1_000),
+  limit: z.number().int().safe().min(1).max(1_000),
 }).strict();
 
 export const WorkspaceActivityEventSchema = z.object({
-  sequence: z.number().int().positive(),
+  sequence: z.number().int().safe().positive(),
   id: IdSchema,
   eventType: z.string(),
   subjectType: z.string(),
   subjectId: z.string().nullable(),
-  subjectSequenceNumber: z.number().int().nonnegative().nullable(),
+  subjectSequenceNumber: z.number().int().safe().nonnegative().nullable(),
   actorType: z.string(),
   actorUserId: IdSchema.nullable(),
   actorLabel: z.string(),

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { hmacSha256, timingSafeEqualText } from "./crypto";
 
@@ -9,7 +9,7 @@ const decoder = new TextDecoder();
 const AttachmentCursorPayloadSchema = z.object({
   version: z.literal(1),
   purpose: z.string().min(1).max(64),
-  expiresAt: z.number().int().nonnegative(),
+  expiresAt: z.number().int().safe().nonnegative(),
   principal: z.string().min(1).max(200),
   scopeId: z.string().min(1).max(200),
   state: z.record(z.string(), z.unknown()),

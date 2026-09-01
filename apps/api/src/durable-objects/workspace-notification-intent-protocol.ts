@@ -1,5 +1,6 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { UserIdSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const NotificationIntentIdSchema = z.string().min(1).max(300);
 
@@ -27,8 +28,8 @@ const WorkspaceNotificationIntentSummarySchema = z.object({
 
 const WorkspaceNotificationIntentClaimedSchema = WorkspaceNotificationIntentSummarySchema.extend({
   workspaceId: WorkspaceIdSchema,
-  sourceGeneration: z.number().int().positive(),
-  requiredDirectoryVersion: z.number().int().positive(),
+  sourceGeneration: z.number().int().safe().positive(),
+  requiredDirectoryVersion: z.number().int().safe().positive(),
   payloadJson: z.string().min(1),
   state: z.literal("processing"),
 }).strict();
@@ -36,7 +37,7 @@ const WorkspaceNotificationIntentClaimedSchema = WorkspaceNotificationIntentSumm
 export const WorkspaceNotificationIntentClaimResultSchema = z.discriminatedUnion("outcome", [
   z.object({
     outcome: z.literal("claimed"),
-    leaseId: z.string().uuid(),
+    leaseId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
     intent: WorkspaceNotificationIntentClaimedSchema,
   }).strict(),
   z.object({
@@ -53,7 +54,7 @@ export const WorkspaceNotificationIntentClaimResultSchema = z.discriminatedUnion
 ]);
 
 const WorkspaceNotificationIntentTransitionBaseSchema = WorkspaceNotificationIntentRequestSchema.extend({
-  leaseId: z.string().uuid(),
+  leaseId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
 }).strict();
 
 export const WorkspaceNotificationIntentTransitionRequestSchema = z.discriminatedUnion(
@@ -93,7 +94,7 @@ export const WorkspaceNotificationIntentMaintenanceTargetSchema = z.object({
 
 export const WorkspaceNotificationIntentReapRequestSchema =
   WorkspaceNotificationIntentMaintenanceRequestSchema.extend({
-    limit: z.number().int().min(1).max(1_000).default(500),
+    limit: z.number().int().safe().min(1).max(1_000).default(500),
   }).strict();
 
 export const WorkspaceNotificationIntentReapResultSchema = z.object({
