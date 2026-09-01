@@ -11,8 +11,10 @@ part that decides the order of work — what each reference is coupled to. As
 each category is worked, its section records what moved, what deliberately did
 not, and what a consumer outside this repository still has to do.
 
-Sections 3, 5, 6, 7, and 9 are **done**; sections 1, 4, and 8 are outstanding;
-section 2 is closed as out of scope.
+Sections 3, 5, 6, and 9 are **done**; sections 1, 4, 7, and 8 are outstanding;
+section 2 is closed as out of scope. Section 7's public-site pass is complete —
+which is what its heading claims — but the copy the client renders is not, and
+the strings that remain are enumerated in that section.
 
 **The Cloudflare infrastructure does not get renamed.** Every `avalon-*` Worker,
 queue, R2 bucket, and lakehouse name in [section 2](#2-cloudflare-infrastructure--out-of-scope-not-renamed)
@@ -279,22 +281,41 @@ the provider registration. Its public directory contact is the same confirmed
 `help@rallywith.ai` catch-all used by the site; `support@with-avalon.com` and
 other role aliases are not published as parallel external contact paths.
 
-**API error strings are this section's open remainder.** An `ApiError` message
-is product copy: the desktop client renders `caught.message` verbatim, so every
-one of these is a sentence a person reads. The invitation-acceptance conflict in
-`workspace-service.ts` has moved, because it disagreed with the identically
-scoped message on the platform-onboarding path. The rest still say Avalon —
-enumerated here so the next pass does not have to re-derive them, and because
-this document's own rule is that only enumerating what remains proves anything:
-three `global_identity_required` messages in `auth-service.ts`, two in
-`digest-service.ts` (`delivery_target_unavailable`, `email_delivery_unavailable`),
-two Linear native-agent messages in `connection-service.ts`, the
-`resource_preview_failed` message in `resource-service.ts`, and
-`scope_change_unsupported` in `workstream-object-product.ts`. That list covers
-`ApiError` constructions under `apps/api/src` only; user-visible strings minted
-elsewhere — the work-stream wake-up notice and the `Expanded by Avalon from
-suggested work` label in `workstream-service.ts` are two — were not audited and
-are not claimed complete.
+**Client-surfaced API error strings are one slice of this section's remainder**,
+alongside the invitation, automation, and digest email templates that
+[section 9](#9-the-agent-loops-prompt-surface--renamed-to-rally) already names.
+An `ApiError` message is product copy: the desktop client renders
+`caught.message` verbatim, so every one of these is a sentence a person reads.
+They are enumerated here so the next pass does not have to re-derive them, and
+because this document's own rule is that only enumerating what remains proves
+anything:
+
+- three `global_identity_required` messages in `services/auth-service.ts`
+- `delivery_target_unavailable` and `email_delivery_unavailable` in
+  `services/digest-service.ts`
+- `linear_native_agent_protocol_only` and `linear_native_agent_unavailable` in
+  `services/connection-service.ts`
+- `resource_preview_failed` in `services/resource-service.ts`
+- `scope_change_unsupported` in `durable-objects/workstream-object-product.ts`
+
+Paths are relative to `apps/api/src`, and that list covers `ApiError`
+constructions under it only; user-visible strings minted elsewhere — the
+work-stream wake-up notice and the `Expanded by Avalon from suggested work`
+label in `services/workstream-service.ts` are two — were not audited and are not
+claimed complete.
+
+**One string in this class left the tree without being renamed.** The
+invitation-acceptance conflict in `workspace-service.ts` said "This Avalon
+account already belongs to another organization" while the platform-onboarding
+path said Rally for the same condition, so which product name a person saw
+depended on which path rejected them. Multiple workspaces per account (#464)
+then deleted the restriction itself: an account may now hold memberships in more
+than one organization, so neither service throws
+`workspace_membership_conflict` at all and the split is gone. Recorded because
+the inventory is organized around renaming, and this is the other way an entry
+leaves it — a product decision removing the surface the copy lived on. A count
+that drops for this reason is not a rename, and a future pass reconciling counts
+against this document should expect a few of them.
 
 ### 8. Internal prose — cheapest, and safe to move alone
 
@@ -445,42 +466,40 @@ with this repository. The two halves of that line have different owners.
 
 ## Changelog
 
-### 2026-09-01 — The invitation-acceptance conflict says Rally
+### 2026-09-01 — Section 7's client-surfaced error strings, enumerated
 
-**What changed:** the 409 `workspace_membership_conflict` thrown by
-`acceptInvitationForUser` in `workspace-service.ts` now reads "This Rally
-account already belongs to another organization", matching word for word the
-three throws of that sentence in `platform-onboarding-service.ts` — the regional
-`create`, and the platform-side `createWorkspace` and `acceptInvitation`. A
-fourth throw there, in `resolveWorkspaceBinding`, carries the same code with
-different wording — "This Rally account is linked to more than one
-organization" — and describes a different condition, so it is not a copy of this
-sentence to keep in step. Section 7 gains an enumeration of the client-surfaced
-`ApiError` strings that still say Avalon.
+**What changed:** section 7 now lists the nine client-surfaced `ApiError`
+messages that still say Avalon, by error code and path, and says explicitly that
+it covers `ApiError` constructions under `apps/api/src` and nothing else.
+Section 7 is no longer listed as done at the top of this document; its
+public-site pass is what completed, and the heading already said so while the
+status line did not.
 
-**Why:** not because it is one more Avalon string, but because the two paths
-disagreed. The same condition — an account already holding an active membership
-elsewhere — is rejected by the platform-onboarding path, which said Rally, and
-by the invitation path, which said Avalon; which name a person saw depended on
-which path happened to reject them. `InvitationOnboarding` in the desktop client
-renders the `ApiError` message verbatim into an `InlineError`, so this was the
-code name printed into product copy. That is the same reasoning the Resend
-sender entry below records: one name used consistently beats a split, and a
-split is the pressure that reorders the work.
+**Why:** this change set out to rename one of those messages — the 409
+`workspace_membership_conflict` in `acceptInvitationForUser`, which said "This
+Avalon account already belongs to another organization" while the
+platform-onboarding path said Rally for the same condition. Multiple workspaces
+per account (#464) removed the restriction while that work was open, so both
+services stopped throwing it and the string left the tree without being renamed.
+What was worth keeping was the audit done to justify the one-line change: nine
+sibling messages, none of them enumerated anywhere before. Section 7 named the
+API error strings as its remainder without saying which they were, which is the
+state this document elsewhere insists is worthless — only enumerating what
+remains proves anything.
 
-**Considered and rejected:** sweeping the other nine client-surfaced error
-strings in the same change. None of them has a Rally counterpart it contradicts,
-so none carries this one's pressure, and each has a copy question of its own —
-"This work stream belongs to Avalon itself" is describing the product's own work
-streams, not naming a vendor. They are one slice of section 7's remainder, and
-the enumeration added there is worth more to that slice than nine hurried edits.
+**Considered and rejected:** renaming the nine in this change. None contradicts
+a Rally counterpart the way the removed one did, so none carries that pressure,
+and several have a copy question of their own — "This work stream belongs to
+Avalon itself" is describing the product's own work streams, not naming a
+vendor. Deciding nine copy questions to avoid landing an empty change would be
+the tail wagging the dog.
 
-**What a future change has to respect:** the two literals are now the same
-sentence and have to move together. The test in
-`apps/api/test/workspace-and-invitations.test.ts` asserts the literal rather than
-importing the constant it guards — deliberately, per the lesson in the
-2026-08-25 telemetry-envelope entry: a test that compares a message to the
-constant that produces it passes no matter what that constant says.
+**What a future change has to respect:** the enumeration is a snapshot with a
+stated boundary, not a complete list of user-visible Avalon strings, and the
+paragraph says so — the work-stream wake-up notice and the `Expanded by Avalon
+from suggested work` label are named as two that were not audited. Re-derive it
+rather than trusting it; #464 is the reason to expect drift, since a count here
+can fall because a surface was deleted rather than renamed.
 
 ### 2026-08-25 — The person-notification emails and both Resend senders
 
