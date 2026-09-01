@@ -10,6 +10,8 @@ import {
   serializeRegionalRpcResult,
   type PlatformBindingRow,
   type PlatformBindingStore,
+  type PlatformOperationRow,
+  type PlatformOperationStore,
   type PlatformIdentity,
   type RegionalAcceptInput,
   type RegionalActivateInput,
@@ -154,17 +156,57 @@ class IdentityDatabase {
 }
 
 class MemoryBindingStore implements PlatformBindingStore {
-  row: PlatformBindingRow | null;
+  readonly rows: PlatformBindingRow[];
 
   constructor(
     row: PlatformBindingRow | null = null,
     private readonly now: () => Date = () => new Date(at),
   ) {
-    this.row = row;
+    this.rows = row ? [{ ...row }] : [];
   }
 
-  async get(platformId: string): Promise<PlatformBindingRow | null> {
-    return this.row?.platform_user_id === platformId ? { ...this.row } : null;
+  get row(): PlatformBindingRow | null {
+    return this.rows[0] ? { ...this.rows[0] } : null;
+  }
+
+  async list(platformId: string): Promise<PlatformBindingRow[]> {
+    return this.rows.filter((row) => row.platform_user_id === platformId).map((row) => ({ ...row }));
+  }
+
+  async reconcile(
+    platformId: string,
+    destinations: readonly {
+      region: Region;
+      workspaceId: string;
+      placementAffinity: "wnam" | "enam" | "weur" | "eeur";
+      operationId: string;
+    }[],
+  ): Promise<PlatformBindingRow[]> {
+    const keys = new Set(destinations.map((item) => `${item.region}:${item.workspaceId}`));
+    for (const destination of destinations) {
+      const existing = this.rows.find((row) => row.platform_user_id === platformId
+        && row.region === destination.region && row.workspace_id === destination.workspaceId);
+      if (existing) {
+        if (existing.placement_affinity !== destination.placementAffinity) throw new Error("binding conflict");
+        existing.status = "active";
+        existing.pending_expires_at = null;
+      } else {
+        this.rows.push({
+          platform_user_id: platformId,
+          region: destination.region,
+          workspace_id: destination.workspaceId,
+          placement_affinity: destination.placementAffinity,
+          status: "active",
+          operation_id: destination.operationId,
+          pending_expires_at: null,
+        });
+      }
+    }
+    for (const row of this.rows) {
+      if (row.platform_user_id !== platformId || row.status === "pending") continue;
+      if (!keys.has(`${row.region}:${row.workspace_id}`)) row.status = "inactive";
+    }
+    return this.list(platformId);
   }
 
   async reserve(
@@ -174,8 +216,19 @@ class MemoryBindingStore implements PlatformBindingStore {
     affinity: "wnam" | "enam" | "weur" | "eeur",
     nextOperationId: string,
   ): Promise<PlatformBindingRow> {
-    if (!this.row) {
-      this.row = {
+    const exact = this.rows.find((row) => row.platform_user_id === platformId
+      && row.region === region && row.workspace_id === workspaceId);
+    if (exact?.status === "inactive" && !this.rows.some((row) => (
+      row.platform_user_id === platformId && row.status === "pending"
+    ))) {
+      exact.status = "pending";
+      exact.operation_id = nextOperationId;
+      exact.pending_expires_at = new Date(this.now().getTime() + 2 * 60_000).toISOString();
+    }
+    if (exact) return { ...exact };
+    const pending = this.rows.find((row) => row.platform_user_id === platformId && row.status === "pending");
+    if (!pending) {
+      const row: PlatformBindingRow = {
         platform_user_id: platformId,
         region,
         workspace_id: workspaceId,
@@ -184,21 +237,47 @@ class MemoryBindingStore implements PlatformBindingStore {
         operation_id: nextOperationId,
         pending_expires_at: new Date(this.now().getTime() + 2 * 60_000).toISOString(),
       };
+      this.rows.push(row);
+      return { ...row };
     }
-    return { ...this.row };
+    return { ...pending };
   }
 
   async activate(platformId: string, nextOperationId: string): Promise<void> {
-    if (!this.row || this.row.platform_user_id !== platformId || this.row.operation_id !== nextOperationId) {
+    const row = this.rows.find((candidate) => candidate.platform_user_id === platformId
+      && candidate.operation_id === nextOperationId);
+    if (!row) {
       throw new Error("binding conflict");
     }
-    this.row = { ...this.row, status: "active", pending_expires_at: null };
+    row.status = "active";
+    row.pending_expires_at = null;
   }
 
   async release(platformId: string, nextOperationId: string): Promise<void> {
-    if (this.row?.platform_user_id === platformId && this.row.operation_id === nextOperationId && this.row.status === "pending") {
-      this.row = null;
-    }
+    const index = this.rows.findIndex((row) => row.platform_user_id === platformId
+      && row.operation_id === nextOperationId && row.status === "pending");
+    if (index >= 0) this.rows.splice(index, 1);
+  }
+}
+
+class MemoryOperationStore implements PlatformOperationStore {
+  readonly rows = new Map<string, PlatformOperationRow>();
+
+  async get(operationId: string): Promise<PlatformOperationRow | null> {
+    const row = this.rows.get(operationId);
+    return row ? { ...row } : null;
+  }
+
+  async begin(row: PlatformOperationRow): Promise<PlatformOperationRow> {
+    const existing = this.rows.get(row.operation_id);
+    if (!existing) this.rows.set(row.operation_id, { ...row });
+    return { ...(existing ?? row) };
+  }
+
+  async complete(platformId: string, operationId: string): Promise<void> {
+    const row = this.rows.get(operationId);
+    if (!row || row.platform_user_id !== platformId) throw new Error("operation conflict");
+    row.status = "complete";
   }
 }
 
@@ -264,21 +343,25 @@ function service(input: {
   global?: FakeRegionalGateway;
   eu?: FakeRegionalGateway;
   bindings?: MemoryBindingStore;
+  operations?: MemoryOperationStore;
   ids?: string[];
 } = {}) {
   const database = new IdentityDatabase();
   const global = input.global ?? new FakeRegionalGateway("global");
   const eu = input.eu ?? new FakeRegionalGateway("eu");
   const bindings = input.bindings ?? new MemoryBindingStore();
+  const operations = input.operations ?? new MemoryOperationStore();
   const ids = [...(input.ids ?? [operationId])];
   return {
     database,
     global,
     eu,
     bindings,
+    operations,
     value: new PlatformOnboardingService(environment(database), auth, {
       gateways: { global, eu },
       bindings,
+      operations,
       newId: () => ids.shift() ?? operationId,
     }),
   };
@@ -306,11 +389,12 @@ describe("single-platform regional onboarding", () => {
     const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
     await expect(service({ eu }).value.state()).resolves.toEqual({
       workspace: null,
+      workspaces: [],
       invitations: [invitation()],
     });
   });
 
-  it("accepts an EU invitation, activates the binding, and revokes the bootstrap", async () => {
+  it("accepts an EU invitation, activates the binding, and retains the account session", async () => {
     const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
     const subject = service({ eu, ids: [operationId] });
 
@@ -327,7 +411,7 @@ describe("single-platform regional onboarding", () => {
       },
     }));
     expect(subject.bindings.row).toMatchObject({ region: "eu", workspace_id: euWorkspaceId, status: "active" });
-    expect(subject.database.statements.some((item) => item.sql.startsWith("UPDATE sessions SET revoked_at"))).toBe(true);
+    expect(subject.database.statements.some((item) => item.sql.startsWith("UPDATE sessions SET revoked_at"))).toBe(false);
   });
 
   it("declines an EU invitation without creating a workspace binding or session", async () => {
@@ -383,6 +467,7 @@ describe("single-platform regional onboarding", () => {
 
     await expect(subject.value.state()).resolves.toEqual({
       workspace: workspace("eu", euWorkspaceId),
+      workspaces: [workspace("eu", euWorkspaceId)],
       invitations: [],
     });
     expect(subject.bindings.row).toMatchObject({ region: "eu", workspace_id: euWorkspaceId, status: "active" });
@@ -390,7 +475,7 @@ describe("single-platform regional onboarding", () => {
     expect(eu.activate).toHaveBeenCalled();
   });
 
-  it("rejects a regional membership that conflicts with the account's active binding", async () => {
+  it("reconciles a regional membership alongside the account's existing active binding", async () => {
     const eu = new FakeRegionalGateway("eu", { workspaces: [workspace("eu", euWorkspaceId)] });
     const bindings = new MemoryBindingStore({
       platform_user_id: platformUserId,
@@ -401,15 +486,25 @@ describe("single-platform regional onboarding", () => {
       operation_id: operationId,
       pending_expires_at: null,
     });
-    await expect(service({ eu, bindings }).value.state())
-      .rejects.toMatchObject({ status: 409, code: "workspace_binding_conflict" });
+    await expect(service({ eu, bindings }).value.state()).resolves.toEqual({
+      workspace: workspace("eu", euWorkspaceId),
+      workspaces: [workspace("eu", euWorkspaceId)],
+      invitations: [],
+    });
+    expect(bindings.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workspace_id: globalWorkspaceId, status: "inactive" }),
+      expect.objectContaining({ workspace_id: euWorkspaceId, status: "active" }),
+    ]));
   });
 
-  it("rejects simultaneous existing Global and EU memberships before choosing either", async () => {
+  it("returns simultaneous existing Global and EU memberships in stable discovery order", async () => {
     const global = new FakeRegionalGateway("global", { workspaces: [workspace("global", globalWorkspaceId)] });
     const eu = new FakeRegionalGateway("eu", { workspaces: [workspace("eu", euWorkspaceId)] });
-    await expect(service({ global, eu }).value.state())
-      .rejects.toMatchObject({ status: 409, code: "workspace_membership_conflict" });
+    await expect(service({ global, eu }).value.state()).resolves.toEqual({
+      workspace: workspace("global", globalWorkspaceId),
+      workspaces: [workspace("global", globalWorkspaceId), workspace("eu", euWorkspaceId)],
+      invitations: [],
+    });
   });
 
   it("does not overtake another in-flight reservation for the same account", async () => {
@@ -449,6 +544,7 @@ describe("single-platform regional onboarding", () => {
     const subject = new PlatformOnboardingService(environment(database, eu), auth, {
       gateways: { global },
       bindings,
+      operations: new MemoryOperationStore(),
       newId: () => ids.shift() ?? retryOperationId,
     });
 
@@ -476,6 +572,7 @@ describe("single-platform regional onboarding", () => {
     const subject = new PlatformOnboardingService(environment(database, eu), auth, {
       gateways: { global },
       bindings,
+      operations: new MemoryOperationStore(),
       newId: () => ids.shift() ?? retryOperationId,
     });
 
@@ -509,6 +606,7 @@ describe("single-platform regional onboarding", () => {
     const subject = new PlatformOnboardingService(environment(database, eu), auth, {
       gateways: { global },
       bindings,
+      operations: new MemoryOperationStore(),
       newId: () => ids.shift() ?? freshActivationId,
     });
 
@@ -522,13 +620,14 @@ describe("single-platform regional onboarding", () => {
     });
     await expect(subject.state()).resolves.toEqual({
       workspace: workspace("eu", euWorkspaceId),
+      workspaces: [workspace("eu", euWorkspaceId)],
       invitations: [],
     });
     expect(bindings.row).toMatchObject({ status: "active", operation_id: operationId });
 
     await expect(subject.activate("eu", euWorkspaceId)).resolves.toEqual(session("eu", euWorkspaceId));
     expect(eu.activate).toHaveBeenCalledWith(expect.objectContaining({
-      operationId: freshActivationId,
+      operationId: retryOperationId,
       workspaceId: euWorkspaceId,
     }));
   });
@@ -559,7 +658,7 @@ describe("single-platform regional onboarding", () => {
         operation_id: operationId,
         pending_expires_at: null,
       });
-      const subject = service({ eu, bindings, ids: [createdWorkspaceId, freshActivationId] });
+      const subject = service({ eu, bindings, ids: [freshActivationId] });
 
       await expect(subject.value.state()).resolves.toMatchObject({ workspace: { id: euWorkspaceId } });
       await expect(subject.value.activate("eu", euWorkspaceId)).resolves.toEqual(session("eu", euWorkspaceId));
@@ -567,9 +666,96 @@ describe("single-platform regional onboarding", () => {
         operationId: freshActivationId,
         workspaceId: euWorkspaceId,
       }));
-      expect(subject.database.statements.some((item) => item.sql.startsWith("UPDATE sessions SET revoked_at"))).toBe(true);
+      expect(subject.database.statements.some((item) => item.sql.startsWith("UPDATE sessions SET revoked_at"))).toBe(false);
     },
   );
+
+  it("replays a create request with the same client operation without duplicating the workspace", async () => {
+    const subject = service({ ids: [createdWorkspaceId, freshActivationId] });
+
+    await expect(subject.value.createWorkspace("Europe Lab", "eu", undefined, operationId))
+      .resolves.toEqual(session("eu", createdWorkspaceId));
+    await expect(subject.value.createWorkspace("Europe Lab", "eu", undefined, operationId))
+      .resolves.toEqual(session("eu", createdWorkspaceId));
+
+    expect(subject.eu.create).toHaveBeenCalledTimes(1);
+    expect(subject.eu.activate).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: createdWorkspaceId,
+    }));
+    expect(subject.bindings.rows.filter((row) => row.workspace_id === createdWorkspaceId)).toHaveLength(1);
+  });
+
+  it("rejects reusing a client operation for different create input", async () => {
+    const subject = service({ ids: [createdWorkspaceId] });
+
+    await subject.value.createWorkspace("Europe Lab", "eu", undefined, operationId);
+    await expect(subject.value.createWorkspace("Different Lab", "eu", undefined, operationId))
+      .rejects.toMatchObject({ status: 409, code: "onboarding_operation_conflict" });
+    expect(subject.eu.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates another workspace while an existing membership remains active", async () => {
+    const bindings = new MemoryBindingStore({
+      platform_user_id: platformUserId,
+      region: "global",
+      workspace_id: globalWorkspaceId,
+      placement_affinity: "wnam",
+      status: "active",
+      operation_id: retryOperationId,
+      pending_expires_at: null,
+    });
+    const subject = service({ bindings, ids: [createdWorkspaceId] });
+
+    await expect(subject.value.createWorkspace("Europe Lab", "eu", undefined, operationId))
+      .resolves.toEqual(session("eu", createdWorkspaceId));
+    expect(subject.bindings.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workspace_id: globalWorkspaceId, status: "active" }),
+      expect.objectContaining({ workspace_id: createdWorkspaceId, status: "active" }),
+    ]));
+  });
+
+  it("accepts another workspace invitation while an existing membership remains active", async () => {
+    const bindings = new MemoryBindingStore({
+      platform_user_id: platformUserId,
+      region: "global",
+      workspace_id: globalWorkspaceId,
+      placement_affinity: "wnam",
+      status: "active",
+      operation_id: retryOperationId,
+      pending_expires_at: null,
+    });
+    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
+    const subject = service({ bindings, eu });
+
+    await expect(subject.value.acceptInvitation(invitationId, "eu", operationId))
+      .resolves.toEqual(session("eu", euWorkspaceId));
+    expect(subject.bindings.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workspace_id: globalWorkspaceId, status: "active" }),
+      expect.objectContaining({ workspace_id: euWorkspaceId, status: "active" }),
+    ]));
+  });
+
+  it("reactivates an inactive route when membership is accepted again", async () => {
+    const bindings = new MemoryBindingStore({
+      platform_user_id: platformUserId,
+      region: "eu",
+      workspace_id: euWorkspaceId,
+      placement_affinity: "weur",
+      status: "inactive",
+      operation_id: retryOperationId,
+      pending_expires_at: null,
+    });
+    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
+    const subject = service({ bindings, eu });
+
+    await expect(subject.value.acceptInvitation(invitationId, "eu", operationId))
+      .resolves.toEqual(session("eu", euWorkspaceId));
+    expect(subject.bindings.row).toMatchObject({
+      workspace_id: euWorkspaceId,
+      status: "active",
+      operation_id: operationId,
+    });
+  });
 
   it("fails closed when the named EU bridge binding is unavailable", () => {
     const database = new IdentityDatabase();
