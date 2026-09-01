@@ -328,9 +328,10 @@ both.
   is on. It widens what is shown, never who may read it. A private work stream
   that is not machinery is protected exactly the same way.
 
-In the interface, `scope = 'personal'` renders the private marker — the lock a
-personal note already wears in the sidebar, plus a **Private** badge in the
-work-stream header.
+In the interface, a personal work stream's sidebar row paints the existing
+`AvatarStack` of the other people in it rather than the lock a personal note still wears.
+The work-stream header keeps its **Private** badge. A digest occurrence is
+almost always an empty trailing slot, because the pile omits the reader.
 
 Shown, they render one level down: dimmed, with a small gear, full opacity on
 hover and while active — hierarchy should not cost legibility once you are in it.
@@ -684,6 +685,122 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-30 — A bare `<br/>` becomes a line break in email prose
+
+**What changed:** `email-markdown.ts` rewrites a bare break tag to `<br>` in the
+HTML part (after escaping, after parking code spans) and to a newline in the
+plain-text part (outside code spans and preformatted pipe rows).
+
+**Why:** The desktop renderer now honours the same tag, and these two surfaces
+showing different bytes for the same briefing is the drift this module already
+paid for once. Tables stay preformatted here, so a break tag inside a pipe row
+is still characters — this renderer has no table model.
+
+**Considered and rejected:** Flattening email tables into real HTML tables just
+to honour the tag. That is a second table renderer, not a break-tag fix.
+
+### 2026-08-30 — Sidebar facepile omits the current viewer
+
+**What changed:** A personal sidebar row no longer paints the signed-in person's
+face. If they are the only participant, the trailing slot is empty rather than a
+one-person pile. Overflow subtracts them when they sat past the three painted
+ids. The public globe and each remaining face use the standard tooltip — "This
+is a public work stream", and the person's name.
+
+**Why:** a facepile of yourself is noise, not information: you already know you
+can see the row. The directory preview is still the same payload for every
+participant, so the omission is a render-time filter rather than a per-viewer
+wire field. Native `title` on the globe and on non-present faces was a second
+tooltip language next to the Radix chrome the rest of the row already uses.
+
+**Considered and rejected:** dropping the viewer from WorkspaceDO's preview so
+each recipient got a different id list. Membership is common state for everyone
+who can see the row; a per-viewer cap would split that. Also rejected: keeping
+native `title` beside the Radix tooltip, which would show both on a long hover.
+
+**What a future change has to respect:** the wire may still include the viewer.
+The desktop is what omits them. Do not add a second tooltip language for this
+slot.
+
+### 2026-08-30 — Facepile order is join time
+
+**What changed:** The three faces on a digest (and every other personal)
+sidebar row are the most recently added participants, not the most recently
+rewritten overlay rows. Overflow counts unresolved ids, and the pile is hidden
+from the row's accessible name.
+
+**Why:** overlay `projected_at` is not join recency, and the original entry's
+"newest" reading collapsed to UUID order after a message. Join time is the
+clock both directory and `summary()` already share.
+
+**Considered and rejected:** a digest-specific clock. Digests are personal work
+streams; they take the same preview as every other personal row.
+
+**What a future change has to respect:** do not sort this pile by overlay
+`projected_at`.
+
+### 2026-08-30 — Sidebar facepile is the existing AvatarStack, not a compact variant
+
+**What changed:** Digest (and every other personal) sidebar rows use `AvatarStack`
+at its existing 24px size. The compact size that had been added for the trailing
+slot is gone.
+
+**Why:** a second visual was a parallel facepile, not reuse of the one the header
+and participant chips already paint. The Air row is 31px; 24px faces already fit.
+
+**Considered and rejected:** CSS-shrinking the stack only in the sidebar. That
+would still be a second look. `extraCount` stays because the directory list is
+already truncated to three ids; inventing dummy members so the native overflow
+could fire would pollute the accessible name.
+
+**What a future change has to respect:** `AvatarStack` itself is the sidebar
+facepile. Do not add a size for this slot.
+
+### 2026-08-30 — Digest sidebar rows wear a facepile, not the note lock
+
+**What changed:** A personal work stream's sidebar trailing slot is a compact
+facepile of its participants (three newest, then `+x`), and a workspace-scoped
+row wears a globe. Digest occurrences are personal, so Debug-enabled digest
+rows pick up a one-person pile. The work-stream header **Private** badge is
+unchanged. Notes still wear the lock.
+
+**Why:** the lock on every personal work-stream row was read as "only you",
+which is true of a digest but not of a private work stream that several people
+are in. The pile is the people the row is closed to; the lock stays on notes
+because a note has no participant set to pile.
+
+**Considered and rejected:** keeping the lock on machinery rows so a digest
+still looked like a private note. That reintroduces a second marker for the
+same `scope = 'personal'` column, which is the thing the original private
+marker existed to avoid. Also rejected: a REST fetch of participants for the
+sidebar. The directory already holds viewer rows; the wire carries three ids
+and a count.
+
+**What a future change has to respect:** workspace-scoped rows must not carry
+participant ids. The directory paints a globe, not a pile, and must not send
+what it does not paint.
+
+### 2026-08-29 — Digest settlement receives only saved canonical result text
+
+**What changed:** Digest terminal settlement now receives the same normalized
+text rendered from a reloaded canonical turn as other external destinations. A
+run with no saved result, or only whitespace, passes `null`; the digest
+settlement authority marks that occurrence failed and does not advance its
+cursor or synthesize a replacement summary.
+
+**Why:** External delivery previously manufactured a generic completion or
+failure sentence when a run had no result text. That made a host-authored
+sentence look like the digest the model was required to save and could consume
+the window without delivering its contents.
+
+**Considered and rejected:** Keeping a digest-only fallback because email is not
+a chat stream. The authority problem is the same for every destination: content
+that is absent from the canonical transcript cannot become the external result.
+
+**What a future change has to respect:** Digest delivery may format saved text,
+but it must not replace missing saved content with status prose. A missing result
+fails the occurrence so its events remain eligible for the next digest.
 
 ### 2026-08-29 — The digest tables answer to typed WorkspaceDO methods, not routed SQL
 

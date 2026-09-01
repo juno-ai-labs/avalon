@@ -252,6 +252,59 @@ describe('raised popover interaction states', () => {
   });
 });
 
+describe('sidebar project rows', () => {
+  // Project rows wear `.sidebar-row` so they pick up the shared hover fill,
+  // radius, and padding. A private hover colour on `.project-sidebar-row`
+  // would win on specificity and split the two kinds again — which is how
+  // they looked before this guard.
+  it('does not give project rows a private hover fill', () => {
+    expect(rule('.project-sidebar-row:hover')).toBeNull();
+    expect(rule('.project-sidebar-workstream')).toBeNull();
+    expect(rule('.project-sidebar-workstream:hover')).toBeNull();
+  });
+
+  it('hides the project-row plus until the row is hovered or focused', () => {
+    expect(rule('.project-sidebar-row .project-sidebar-row-action')).toContain('opacity: 0;');
+    const reveal = rule(
+      '.project-sidebar-row:hover .project-sidebar-row-action,\n'
+      + '.project-sidebar-row:focus-within .project-sidebar-row-action',
+    );
+    expect(reveal).toContain('opacity: 1;');
+  });
+
+  it('starts nested work-stream rows where the accordion control ends', () => {
+    expect(rule('.sidebar-row.project-sidebar-row')).toContain('grid-template-columns: 18px minmax(0, 1fr) 28px;');
+    expect(rule('.project-accordion-control')).toContain('width: 18px;');
+    expect(rule('.project-sidebar-workstreams')).toContain('padding-left: 18px;');
+  });
+
+  it('paints the command-shortcut scrim from the same hover and selected fills as the row', () => {
+    expect(stylesheet).toContain(
+      '.sidebar-row:hover { --sidebar-row-background: var(--av-cmp-row-background-hover); }',
+    );
+    expect(stylesheet).toContain(
+      '.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }',
+    );
+  });
+});
+
+describe('sidebar automation rows', () => {
+  it('does not give automation rows a private hover fill', () => {
+    expect(rule('.automation-row:hover')).toBeNull();
+    expect(rule('.workstream-row,\n.automation-row')).toContain('min-height: var(--av-cmp-row-height-dense);');
+  });
+
+  it('drops the scope-badge fill while the row is hovered or current', () => {
+    const ghost = rule(
+      '.sidebar-row:hover .scope-badge,\n'
+      + '.sidebar-row.is-active .scope-badge,\n'
+      + '.sidebar-row:focus-within .scope-badge',
+    );
+    expect(ghost).toContain('background: transparent;');
+    expect(ghost).toContain('border-color: transparent;');
+  });
+});
+
 describe('work-stream participant presence', () => {
   it('finishes the arrival pop before pulsing every ten seconds and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');
@@ -474,7 +527,12 @@ describe('markdown list markers', () => {
     'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
   ];
 
-  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
+  it.each([
+    ['.note-detail-article'],
+    ['.meeting-notes-body'],
+    ['.inspector-detail-document'],
+    ['.citation-card-preview'],
+  ])(
     'leaves markdown element styling to the shared container in %s',
     (host) => {
       // Headings are absent from the list on purpose: a scale is a property of
@@ -495,7 +553,7 @@ describe('markdown list markers', () => {
   // silent visual regression as the missing markers, arriving the same way.
   // Naming `.markdown-body` in the selector settles it on specificity instead,
   // and this is what stops the class being tidied back out.
-  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
+  it.each([['.note-detail-article'], ['.meeting-notes-body'], ['.citation-card-preview']])(
     'wins its heading scale on specificity rather than source order in %s',
     (host) => {
       const headingRules = preludes()
@@ -508,6 +566,68 @@ describe('markdown list markers', () => {
       }
     },
   );
+
+  it('draws the embed card preview in the faintest text tone', () => {
+    const preview = rule('.citation-card-preview');
+    expect(preview).toContain('var(--av-sys-color-text-disabled)');
+    expect(preview).not.toContain('--av-ref-color-neutral-9');
+    expect(preview).toContain('font-weight: normal');
+    expect(preview).not.toContain('--av-sys-label-weight');
+  });
+
+  // The feed paints `.markdown-body` at (0,3,0). A host written as
+  // `.citation-card-preview .markdown-body` is (0,2,0) and loses, so inherit
+  // never lands and the glance keeps the turn's type. Naming the card and the
+  // wrapper's element is (0,3,1). `*` carries the tone into `strong` without
+  // naming a markdown element.
+  it('wins the embed-card preview tone on specificity rather than source order', () => {
+    const body = rule('.citation-card .citation-card-preview div.markdown-body');
+    const descendants = rule('.citation-card .citation-card-preview div.markdown-body *');
+    const headings = preludes()
+      .filter((prelude) => prelude.includes('.citation-card-preview'))
+      .filter((prelude) => elementsIn(prelude).some((element) => /^h[1-6]$/u.test(element)));
+
+    expect(body).not.toBeNull();
+    expect(body).toContain('color: inherit');
+    expect(body).toContain('font-size: inherit');
+    expect(descendants).not.toBeNull();
+    expect(descendants).toContain('color: inherit');
+    expect(descendants).toContain('margin: 0');
+    expect(rule('.citation-card .citation-card-preview div.markdown-body ::marker'))
+      .toContain('color: inherit');
+    expect(headings).toEqual([
+      '.citation-card .citation-card-preview div.markdown-body :is(h1, h2, h3, h4, h5, h6)',
+    ]);
+  });
+
+  // The preview's inherit is a nested-MarkdownBody fix. If it ever leaked onto
+  // the shared group, a note, a briefing, or a turn would recede with the
+  // glance — the failure this test exists to make red. Every `.markdown-body`
+  // rule that inherits has to name the card preview; the shared paints below
+  // are the ones the other hosts still need.
+  it('leaves shared markdown paint alone outside the embed-card preview', () => {
+    const markdownInherit = preludes().filter((prelude) => {
+      if (!prelude.includes('.markdown-body')) return false;
+      return /(^|;|\s)color\s*:\s*inherit/u.test(rule(prelude) ?? '');
+    });
+
+    expect(markdownInherit.length).toBeGreaterThan(0);
+    for (const prelude of markdownInherit) {
+      expect(prelude).toContain('.citation-card-preview');
+    }
+
+    expect(rule('.markdown-body strong')).toContain('var(--av-ref-color-neutral-14)');
+    expect(rule('.markdown-body a')).toContain('var(--av-sys-color-accent-soft)');
+    expect(rule('.markdown-body h1')).toContain('var(--av-cmp-markdown-heading-1)');
+    expect(rule('.note-detail-article .markdown-body h1')).toContain(
+      'var(--av-cmp-markdown-article-heading-1)',
+    );
+    expect(rule('.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6)')).toContain(
+      'font-size: 15px',
+    );
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body'))
+      .toContain('14.5px');
+  });
 });
 
 /**
@@ -550,5 +670,119 @@ describe('company mark sizing', () => {
     expect(base).toBeGreaterThan(-1);
     expect(source.indexOf('.provider-icon .connector-mark')).toBeLessThan(base);
     expect(source.indexOf('.settings-connection-name .connector-mark')).toBeLessThan(base);
+  });
+});
+
+/**
+ * Command-number hints share `.badge` + `.scope-badge` with an automation's
+ * You chip, so they stay the same size and colour. Overlay extras have to
+ * out-specify `.scope-badge` (both are one class, and `.scope-badge` sits
+ * later in the file) and must not restate chrome, or the two pills drift
+ * the next time either rule moves.
+ */
+describe('command shortcut overlay chrome', () => {
+  it('out-specifies .scope-badge so overlay extras cannot lose on source order', () => {
+    expect(rule('.scope-badge.command-shortcut-pill')).not.toBeNull();
+    // A one-class rule ties `.scope-badge` at (0,1,0) and loses because that
+    // rule is later in the file. Absence is the property; the extras live on
+    // the two-class selector above.
+    expect(rule('.command-shortcut-pill')).toBeNull();
+  });
+
+  it('states no badge chrome of its own', () => {
+    const declarations = rule('.scope-badge.command-shortcut-pill');
+    expect(declarations).not.toBeNull();
+    for (const property of [
+      'background',
+      'border',
+      'box-shadow',
+      'height',
+      'min-width',
+      'font-size',
+      'font-weight',
+      'line-height',
+      'padding',
+      'color',
+    ]) {
+      // Word-bounded so `height` does not fire on `line-height`.
+      expect(declarations, `overlay restated ${property}`)
+        .not.toMatch(new RegExp(`(?:^|;|\\s)${property}\\s*:`, 'u'));
+    }
+  });
+});
+
+/**
+ * A message header shows the author, the time, and — once a response settles —
+ * the total it took. The last two are the same kind of thing, and the design
+ * asks for them to be indistinguishable: same size, same weight, same colour.
+ * Two rules that happen to agree today would drift the first time either is
+ * touched, and the difference is a few tenths of a pixel on one line, which is
+ * exactly the sort of thing a visual check passes over.
+ */
+describe('message header meta typography', () => {
+  it('styles the settled total through the timestamp rule rather than beside it', () => {
+    const shared = rule('.message-block time,\n.message-block .message-work-summary');
+    expect(shared).not.toBeNull();
+    expect(shared).toContain('font-size: var(--av-sys-font-size-meta)');
+    expect(shared).toContain('color: var(--av-ref-color-neutral-8)');
+    // Neither may carry a size, weight, or colour of its own anywhere else, or
+    // the two stop matching without either rule looking wrong on its own.
+    const strays = preludes().filter((prelude) => prelude.includes('.message-work-summary')
+      && prelude !== '.message-block time,\n.message-block .message-work-summary');
+    expect(strays).toEqual([]);
+  });
+
+  it('centres the header on its children rather than on their line boxes', () => {
+    // The row mixes three type sizes whose line boxes exceed their glyphs by
+    // different amounts, so flex centring alone leaves the text looking high.
+    expect(rule('.message-block > header')).toContain('align-items: center');
+    expect(rule('.message-block > header > *')).toContain('line-height: 1');
+  });
+});
+
+describe('inspector resource document chrome', () => {
+  it('draws a hairline between last-updated and the document from the line tokens', () => {
+    const declarations = rule('.inspector-detail-rule');
+    expect(declarations).not.toBeNull();
+    expect(declarations).toContain('border-top: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle);');
+  });
+
+  it('paints the archive header control in the danger colour', () => {
+    const idle = rule('.icon-button-danger');
+    expect(idle).not.toBeNull();
+    expect(idle).toContain('color: var(--av-sys-color-danger-base);');
+  });
+
+  // The rail is a grid with a definite width, but an implicit `auto` column
+  // will not shrink below the markdown's max-content, and `.rail-scroll`'s
+  // `overflow-x: hidden` then clips the unwrapped lines. Naming the column
+  // `minmax(0, 1fr)` and giving the scroller and the document host `min-width:
+  // 0` is what makes the preview take the rail rather than the file. HyperSight
+  // already had the scroller-side half on `.block-dashboard-panel`; dropping
+  // either half here returns the clip.
+  it('gives the rail a column that can shrink below the document min-content', () => {
+    const surface = rule('.rail-surface');
+    expect(surface).not.toBeNull();
+    expect(surface).toContain('grid-template-columns: minmax(0, 1fr);');
+    const scroll = rule('.rail-scroll');
+    expect(scroll).not.toBeNull();
+    expect(scroll).toContain('min-width: 0;');
+  });
+
+  it('sizes the document host to the rail rather than the markdown max-content', () => {
+    const host = rule('.inspector-detail-document');
+    expect(host).not.toBeNull();
+    expect(host).toContain('max-width: 100%;');
+    expect(host).toContain('min-width: 0;');
+  });
+});
+
+describe('collapsed heading preview mask', () => {
+  it('fades from 60% on the first pixel to transparent on the last', () => {
+    const body = rule('.markdown-collapse.is-collapsed > .markdown-collapse-body');
+    expect(body).not.toBeNull();
+    expect(body).toContain('color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent)');
+    expect(body).toContain('transparent)');
+    expect(body).not.toContain('18%');
   });
 });

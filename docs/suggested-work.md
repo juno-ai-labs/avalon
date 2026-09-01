@@ -30,7 +30,7 @@ route them are in [`feature-flags.md`](feature-flags.md).
 
 ```
 connector activity / Rally mention
-  → WorkspaceDO event → connector-event Workflow: watches, automations, contextual routing
+  → WorkspaceDO event → Queue processing: watches and automations
   → nothing claimed it? enqueueActivityOpportunity()
   → WorkspaceDO.opportunity_batch_windows          (10-minute debounce, 60-minute cap)
   → WorkspaceDO alarm → fenced admission Workflow
@@ -42,20 +42,14 @@ connector activity / Rally mention
 
 ### Admission
 
-An activity only becomes a candidate if nothing else claimed it — no resource
-watch, matching automation, or contextual-routing card. The gate remains
-exclusive: work already routed to a home should not also be offered as new work.
+An activity only becomes a candidate if no resource watch or matching automation
+claimed it. The gate remains exclusive: work already handled by a deterministic
+route should not also be offered as new work.
 
-Admission retains the `route_existing` decision so activity that plainly belongs
-to current work does not become a duplicate home-screen opportunity. While
-the per-activity router judges one activity at a time, this branch judges the
-batched admission context and may create the same work-stream card. A personal
-batch may contain workspace-visible or restricted sources: a workspace-visible
-source can route into any target offered to that member, while a restricted
-source requires the target's complete active-participant audience to fit
-inside its source audience.
-The row is stamped `source = 'suggested_work'` so its feedback remains separate
-from the per-activity router.
+Admission may add a distinct opportunity, improve an existing opportunity, or
+ignore the evidence. Existing work streams are supplied only as context for
+recognizing duplicates; admission cannot route activity into one or create a
+card inside it.
 
 Admission context never performs an unrestricted directory read. Live connector
 activity is admitted through personal windows: each names one audience member
@@ -225,14 +219,12 @@ enter telemetry.
   re-claimed on every pass forever.
 - **An inference never widens access.** For a personal audience a link may explain
   a suggestion but can only ever target the audience member.
-- **Admission is exclusive with every other claim on an activity.** Work that
-  already has a home is not also offered as new work.
+- **Admission is exclusive with every deterministic claim on an activity.** A
+  watch or automation delivery is not also offered as new work.
 - **Measurement enrichment cannot fail a product action.** WorkspaceDO owns the
   suggestion and its visible provenance, returns optional telemetry context with
   each member mutation, and degrades a context-read failure to `null`. Regional D1
   is never a fallback product-state reader.
-- **Every feedback read of `activity_suggestions` filters on `source`**, or
-  contextual routing's confidence learning absorbs cards this module published.
 
 ## Boundary
 
@@ -241,14 +233,11 @@ the stored set the home screen reads. It does not own:
 
 | For | Read |
 | --- | --- |
-| The Suggested context card and its confidence learning | [`contextual-routing.md`](contextual-routing.md) |
+| The retired Suggested context feature | [`contextual-routing.md`](contextual-routing.md) |
 | What happens after a suggestion is started | [`workstream-creation.md`](workstream-creation.md) |
 | The model contracts and structured-output rules | [`agent-harness.md`](agent-harness.md) |
 | Which model each of these prompts runs on | [`feature-flags.md`](feature-flags.md) |
 | The activity ingestion that feeds it | [`connectors.md`](connectors.md) |
-
-Whether contextual routing suppressing an event type should also silence this
-module remains undecided; if it is ever decided yes, the gate belongs here.
 
 ## Failure modes and limits
 
@@ -368,6 +357,24 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-08-30 — Admission can no longer route into an existing work stream
+
+**What changed:** The `route_existing` decision and its card-writing branch were
+removed. Existing work streams remain in admission context only to help the
+model avoid duplicate home-screen opportunities.
+
+**Why:** Suggested context was removed as a product. Keeping a second producer
+inside Suggested Work would preserve the same work-stream interruption and its
+authorization, feedback, and rollout machinery under another name.
+
+**Considered and rejected:** Mapping `route_existing` to `ignore` after model
+output. Removing it from the model contract makes the boundary explicit and
+prevents a future caller from treating that classification as a hidden route.
+
+**Consequences:** Unclaimed activity has one speculative product surface: the
+four Suggested Work items on the home screen. Existing work streams can prevent
+a duplicate suggestion but cannot receive the evidence.
 
 ### 2026-08-24 — Workspace-visible activity enters every member's private context
 

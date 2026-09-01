@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatDuration,
+  formatSparseRelativeDate,
   groupWorkstreams,
   nextRecencyBoundary,
   recencyGroupBatchFilter,
@@ -31,6 +32,8 @@ function stream(
     firstUnreadSequenceNumber: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
   };
 }
 
@@ -180,5 +183,38 @@ describe('work-stream presentation rules', () => {
     expect(formatDuration(1_000)).toBe('1s');
     expect(formatDuration(8_000)).toBe('8s');
     expect(formatDuration(125_000)).toBe('2m 05s');
+  });
+
+  it('labels a timestamp with a sparse calendar bucket', () => {
+    // Sunday 30 Aug 2026, 15:00 local. Week starts Sunday here, same as the
+    // recency groups, so "this week" on a Sunday is only today — which already
+    // has a more specific label.
+    const now = new Date(2026, 7, 30, 15);
+
+    expect(formatSparseRelativeDate(localDate(2026, 7, 30, 9), now)).toBe('today');
+    expect(formatSparseRelativeDate(localDate(2026, 7, 29, 18), now)).toBe('yesterday');
+    expect(formatSparseRelativeDate(localDate(2026, 7, 23, 12), now)).toBe('last week');
+    expect(formatSparseRelativeDate(localDate(2026, 7, 22, 12), now)).toBe('this month');
+    expect(formatSparseRelativeDate(localDate(2026, 6, 15, 12), now)).toBe('last month');
+    expect(formatSparseRelativeDate(localDate(2025, 7, 1, 12), now)).toBe('Aug 2025');
+    expect(formatSparseRelativeDate('not-a-date', now)).toBe('Unknown time');
+    // A server stamp ahead of the desktop clock used to fall through an
+    // unbounded "this month" and group next year with August.
+    expect(formatSparseRelativeDate(localDate(2026, 7, 31, 9), now)).toBe('this month');
+    expect(formatSparseRelativeDate(localDate(2026, 8, 1, 9), now)).toBe('Sep 2026');
+    expect(formatSparseRelativeDate(localDate(2027, 0, 1, 9), now)).toBe('Jan 2027');
+  });
+
+  it('lets this week win over this month for a weekday that is neither today nor yesterday', () => {
+    // Wednesday 5 Aug 2026. Sunday 2 Aug is this week, not last week, and not
+    // merely this month.
+    const now = new Date(2026, 7, 5, 15);
+
+    expect(formatSparseRelativeDate(localDate(2026, 7, 5, 9), now)).toBe('today');
+    expect(formatSparseRelativeDate(localDate(2026, 7, 4, 9), now)).toBe('yesterday');
+    expect(formatSparseRelativeDate(localDate(2026, 7, 2, 9), now)).toBe('this week');
+    expect(formatSparseRelativeDate(localDate(2026, 6, 30, 9), now)).toBe('last week');
+    expect(formatSparseRelativeDate(localDate(2026, 7, 1, 9), now)).toBe('last week');
+    expect(formatSparseRelativeDate(localDate(2026, 6, 15, 9), now)).toBe('last month');
   });
 });

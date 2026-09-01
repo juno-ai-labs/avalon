@@ -271,6 +271,77 @@ export class SubstreamLoopStorage {
     ).toArray();
   }
 
+  /**
+   * Reassign promotion order among currently visible pending inputs.
+   *
+   * Named ids take the order the caller sent. Ids that have already been
+   * delivered are ignored rather than refused. Visible inputs the caller does
+   * not name keep their relative order behind the ones it did — the same
+   * rule as pin reorder, so a second window that admitted a message a moment
+   * ago loses its position, never the message. Hidden inputs (still behind a
+   * preparing mailbox head) keep the sequences they already hold.
+   *
+   * Sequence numbers of the visible set are permuted in place. Temporary
+   * values are taken from `next_input_sequence` so they cannot collide with
+   * hidden rows; `next_input_sequence` itself is not consumed. Loop revision
+   * is left alone: an in-flight execution's fence must not move because
+   * someone dragged the queue.
+   */
+  reorderPendingInputs(input: {
+    inputIds: readonly string[];
+    now: number;
+  }): PendingLoopInputRow[] {
+    return this.storage.transactionSync(() => {
+      const loop = this.loop();
+      if (!loop) throw new Error("substream_loop_not_found");
+      const current = this.pendingInputs();
+      const byId = new Map(current.map((pending) => [pending.input_id, pending]));
+      const named = input.inputIds.flatMap((inputId) => {
+        const pending = byId.get(inputId);
+        return pending ? [pending] : [];
+      });
+      const namedIds = new Set(named.map((pending) => pending.input_id));
+      const unnamed = current.filter((pending) => !namedIds.has(pending.input_id));
+      const ordered = [...named, ...unnamed];
+      if (ordered.length === 0
+        || ordered.every((pending, index) => pending.input_id === current[index]?.input_id)) {
+        return current;
+      }
+      const sequences = current.map((pending) => Number(pending.input_sequence));
+      const tempBase = loop.next_input_sequence;
+      for (const [index, pending] of ordered.entries()) {
+        this.sql.exec(
+          `UPDATE pending_loop_inputs
+              SET input_sequence = ?, updated_at = MAX(updated_at, ?)
+            WHERE input_id = ?`,
+          tempBase + index,
+          input.now,
+          pending.input_id,
+        );
+      }
+      for (const [index, pending] of ordered.entries()) {
+        const sequence = sequences[index];
+        if (sequence === undefined) throw new Error("pending_input_reorder_sequence_missing");
+        this.sql.exec(
+          `UPDATE pending_loop_inputs
+              SET input_sequence = ?, updated_at = MAX(updated_at, ?)
+            WHERE input_id = ?`,
+          sequence,
+          input.now,
+          pending.input_id,
+        );
+      }
+      for (const pending of ordered) {
+        enqueueSemanticRealtimeReference(
+          this.sql,
+          { kind: "loop_input_upserted", inputId: pending.input_id },
+          input.now,
+        );
+      }
+      return this.pendingInputs();
+    });
+  }
+
   reserveInputPreparation(input: {
     inputId: string;
     loopId: string;

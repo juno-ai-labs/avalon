@@ -94,8 +94,9 @@ describe("work-stream naming", () => {
     expect(request).toMatchObject({
       model: "google/gemini-2.5-flash-lite",
       // Not `{ effort: "low" }`: on a model that does no thinking by default,
-      // asking for the lowest effort turns thinking on.
-      reasoning: { enabled: false },
+      // asking for the lowest effort turns thinking on. `none` is the official
+      // OpenRouter SDK representation of the disabled state.
+      reasoning: { effort: "none" },
       response_format: { json_schema: { name: "workstream_name", strict: true } },
     });
     // The request is what is being named, and it is data: it reaches the model

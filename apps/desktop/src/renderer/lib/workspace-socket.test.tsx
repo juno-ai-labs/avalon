@@ -68,6 +68,8 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     scope: 'workspace',
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     ...overrides,
   };
 }
@@ -777,6 +779,8 @@ describe('WorkspaceSocketProvider', () => {
         systemKind: null,
         nextPendingWakeup: null,
         pinPosition: null,
+        participantUserIds: [],
+        participantExtraCount: 0,
       }],
     }));
     await expect(result).resolves.toMatchObject({
@@ -861,6 +865,8 @@ describe('WorkspaceSocketProvider', () => {
           systemKind: null,
           nextPendingWakeup: null,
           pinPosition: null,
+          participantUserIds: [],
+          participantExtraCount: 0,
         }],
       },
       automations: { waterline: 3, items: [{
@@ -1400,6 +1406,8 @@ describe('the workspace and work-stream sockets over one store', () => {
         systemKind: null,
         nextPendingWakeup: null,
         pinPosition: null,
+        participantUserIds: [],
+        participantExtraCount: 0,
       },
     };
   }

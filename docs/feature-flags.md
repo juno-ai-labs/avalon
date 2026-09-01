@@ -86,7 +86,6 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Activity classifier | `agent-model-activity-structured` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
@@ -94,9 +93,13 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 The first five names match the `AgentInferenceSource` values written to the
 inference ledger, so a ledger row and a flag key name the same agent. The rest
 are the standalone structured-output agents: message addressing uses the
-agent-harness classifier helper; work-stream naming, semantic activity
-triggering, the two halves of suggested work, and the
+agent-harness classifier helper; work-stream naming, the two halves of suggested work, and the
 work-stream description loop use the bounded structured-inference gateway.
+Durable-memory query and document embeddings use the same gateway's native
+OpenRouter embeddings path but deliberately have no Flagship role. Their fixed
+`qwen/qwen3-embedding-8b` model, empty fallback plan, and 1,024-dimensional
+space form one Vectorize projection contract; changing that contract requires a
+code change and active-memory rebuild.
 Admission and ranking get separate flags because admission turns connector
 activity into prompts while ranking orders them per user, and pinning one should
 not move the other.
@@ -1095,6 +1098,23 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
 
+### 2026-08-30 — The Suggested context model route was retired
+
+**What changed:** `activity_structured` and
+`agent-model-activity-structured` were removed from the shared role contract,
+ACE catalog, deployment defaults, and this registry.
+
+**Why:** The only consumer was the removed Suggested context classifier. A
+model flag without a runnable agent is configuration that falsely appears
+operable.
+
+**Considered and rejected:** Leaving the route reserved for a future classifier.
+A future feature can introduce a role whose name and default match its actual
+contract.
+
+**Consequences:** ACE exposes ten model routes, and no deployment creates the
+retired Flagship key.
+
 ### 2026-08-28 — One producer copies an automation's pin, from a frozen run context
 
 **What changed:** The three producers that copied `model_override` onto an
@@ -1129,9 +1149,27 @@ model to the provider with nothing in the logs naming the pin.
 Shipped in the pull request for this change. Design:
 [the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
 
+### 2026-08-27 — Memory embeddings are excluded from Flagship routing
+
+**What changed:** Durable-memory query and document embeddings use the fixed
+`qwen/qwen3-embedding-8b` OpenRouter model with no fallback models. There is
+no `agent-model-memory-embedding` flag, Worker model variable, or Ace editor row.
+
+**Why:** A successful live route change is unsafe here: document and query
+vectors produced by independently trained models do not share a semantic space,
+even when both outputs have 1,024 dimensions.
+
+**Considered and rejected:** A dedicated flag with an empty default fallback
+list. Rules, rollouts, and later operator edits could still change the primary
+or add a fallback without atomically rebuilding the corpus.
+
+**Consequences:** Diagnostics still identify the static `memory_embedding`
+feature category and intended model. Any future model change must ship with a
+durable active-memory requeue rather than through Flagship.
+
 ### 2026-08-26 — Ace owns the ordinary default-route edit
 
-**What changed:** Ace now catalogs all eleven model roles and edits the atomic
+**What changed:** Ace now catalogs all model roles and edits the atomic
 route plan in each flag's current default variation. Its inputs suggest every
 model id already reviewed or checked in, accept another OpenRouter id as free
 text after live exact-id and endpoint validation, and keep fallbacks ordered.

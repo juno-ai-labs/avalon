@@ -3,9 +3,9 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
+import { ProjectSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopApplicationSettings } from '../../common/desktop';
-import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { formatDateTime } from '../lib/format';
 import { useUiStore } from '../lib/ui-store';
 import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
@@ -123,6 +123,8 @@ function workstream(
     firstUnreadSequenceNumber: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     lastActivityAt,
     ...viewerState,
   };
@@ -256,6 +258,52 @@ describe('Sidebar work-stream markers', () => {
 
     expect(screen.getByText('Tracks competitor positioning and campaign changes.'))
       .toBeVisible();
+  });
+
+  it('given a project member, when the accordion opens, then the child is the same work-stream row as the recent list', () => {
+    const memberId = '00000000-0000-7000-8000-0000000000e1';
+    const member = {
+      ...workstream(memberId, 'Ship the launch', 'completed'),
+      preview: 'Draft the announcement',
+    };
+    const project = ProjectSummarySchema.parse({
+      id: '00000000-0000-7000-8000-0000000000f2',
+      name: 'Hiring',
+      iconKey: 'briefcase',
+      colorKey: 'blue',
+      scope: 'personal',
+      status: 'active',
+      presentationRevision: 1,
+      audienceGeneration: 1,
+      lifecycleGeneration: 1,
+      participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
+      createdAt: '2026-08-27T00:00:00.000Z',
+      updatedAt: '2026-08-27T00:00:00.000Z',
+      workstreamIds: [memberId],
+    });
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            projects={[project]}
+            workspace={workspace}
+            workstreams={[member]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    const rows = screen.getAllByRole('link', { name: /Ship the launch/u });
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const row of rows) {
+      expect(row).toHaveClass('sidebar-row', 'workstream-row');
+      expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
+      expect(row.querySelector('.sidebar-row-hint')).toHaveTextContent('Draft the announcement');
+    }
   });
 
   it('does not start navigation telemetry when the active work-stream row is clicked again', () => {
@@ -820,6 +868,26 @@ describe('Sidebar work-stream markers', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('gives automation rows the same sidebar-row chrome as work streams', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[automation]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = screen.getByRole('link', { name: /Daily product brief/u });
+    expect(row).toHaveClass('sidebar-row', 'automation-row');
+    expect(row.querySelector('.scope-badge')).toHaveTextContent('You');
   });
 
   it('marks an automation that cannot run instead of promising it a next run', async () => {
@@ -1607,6 +1675,20 @@ describe('Sidebar work-stream markers', () => {
 });
 
 describe('private work streams', () => {
+  const teammate = (id: string, name: string): WorkspaceMember => ({
+    id,
+    name,
+    email: `${id}@example.com`,
+    timezone: 'America/Los_Angeles',
+  });
+  const roster = [
+    teammate('user-1', 'Adam'),
+    teammate('user-2', 'Ari'),
+    teammate('user-3', 'Casey'),
+    teammate('user-4', 'Drew'),
+    teammate('user-5', 'Ellis'),
+  ];
+
   beforeEach(() => {
     window.localStorage.clear();
     markWorkstreamNavigation.mockReset();
@@ -1624,6 +1706,7 @@ describe('private work streams', () => {
   function renderWith(
     streams: WorkstreamSummary[],
     onChangeWorkstreamScope?: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>,
+    members: WorkspaceMember[] = roster,
   ): void {
     render(
       <MemoryRouter>
@@ -1631,6 +1714,7 @@ describe('private work streams', () => {
           <Sidebar
             {...defaultActions}
             automations={[]}
+            members={members}
             {...(onChangeWorkstreamScope ? { onChangeWorkstreamScope } : {})}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -1641,21 +1725,146 @@ describe('private work streams', () => {
     );
   }
 
-  it('wears the same marker a private note does', () => {
+  it('does not wear the lock a private note does', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000021', 'Digest · Adam', 'completed'),
       scope: 'personal',
       systemKind: 'digest',
+      participantUserIds: ['user-1'],
     }]);
 
-    // One badge for "only you can see this", whatever kind of thing it is on.
-    expect(screen.getByLabelText('Private work stream')).toBeInTheDocument();
+    const row = screen.getByRole('link', { name: /Digest/u });
+    expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
+    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
   });
 
-  it('leaves an ordinary work stream unmarked', () => {
-    renderWith([workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed')]);
+  it('hides the current user so a solo personal row has no facepile', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-00000000002c', 'Just me', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-1'],
+    }]);
 
+    const row = screen.getByRole('link', { name: /Just me/u });
+    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+    expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
+  });
+
+  it('paints everyone else in a personal row except the current user', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-00000000002d', 'Pairing', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-1', 'user-2'],
+    }]);
+
+    const row = screen.getByRole('link', { name: /Pairing/u });
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ari');
+    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(1);
+    expect(row.querySelector('.avatar-overflow')).toBeNull();
+  });
+
+  it('keeps overflow that is other people when the current user was already in the preview', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-000000000030', 'Staffing', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-1', 'user-5', 'user-4'],
+      participantExtraCount: 2,
+    }]);
+
+    const row = screen.getByRole('link', { name: /Staffing/u });
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 2 more');
+    expect(within(row).getByText('+2')).toBeInTheDocument();
+  });
+
+  it('names each remaining person on hover', async () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-00000000002e', 'Pairing', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-1', 'user-2'],
+    }]);
+
+    const row = screen.getByRole('link', { name: /Pairing/u });
+    const face = row.querySelector('.avatar-stack-item');
+    if (!face) throw new Error('the pairing row rendered no facepile avatar');
+    fireEvent.pointerMove(face, { pointerType: 'mouse' });
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Ari');
+  });
+
+  it('explains a public work stream on hover', async () => {
+    renderWith([workstream('00000000-4000-4000-8000-00000000002f', 'Launch', 'completed')]);
+
+    const globe = screen.getByRole('link', { name: /Launch/u }).querySelector('.sidebar-workstream-public');
+    if (!globe) throw new Error('the workspace-scoped row rendered no public marker');
+    fireEvent.pointerMove(globe, { pointerType: 'mouse' });
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This is a public work stream');
+  });
+
+  it('marks a workspace-scoped work stream as public', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed'),
+      // Leftover ids from when the row was personal must not paint a pile.
+      participantUserIds: ['user-1', 'user-2'],
+      participantExtraCount: 3,
+    }]);
+
+    const row = screen.getByRole('link', { name: /Launch/u });
+    expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
+    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+  });
+
+  it('paints the three newest faces and an overflow for everyone past that', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-000000000029', 'Comp review', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-5', 'user-4', 'user-3'],
+      participantExtraCount: 2,
+    }]);
+
+    const row = screen.getByRole('link', { name: /Comp review/u });
+    // Five participants, three preview ids (Ellis, Drew, Casey). The two
+    // extras include the viewer (user-1), who is not in that preview, so the
+    // row paints the three others and +1 rather than +2.
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; Casey; and 1 more');
+    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(3);
+    expect(within(row).getByText('+1')).toBeInTheDocument();
+    expect(within(row).queryByLabelText('Private work stream')).not.toBeInTheDocument();
+    expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
+    expect(row).toHaveAccessibleName(/Comp review/u);
+    expect(row).not.toHaveAccessibleName(/Ellis|Drew|Casey/u);
+  });
+
+  it('counts unresolved preview ids toward the overflow rather than dropping them', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-00000000002b', 'Staffing overflow', 'completed'),
+      scope: 'personal',
+      participantUserIds: ['user-5', 'user-4', 'user-missing'],
+      participantExtraCount: 2,
+    }]);
+
+    const row = screen.getByRole('link', { name: /Staffing overflow/u });
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ellis; Drew; and 2 more');
+    expect(within(row).getByText('+2')).toBeInTheDocument();
+    expect(row).not.toHaveAccessibleName(/Ellis|Drew/u);
+  });
+
+  it('skips participant ids the roster has not resolved', () => {
+    renderWith(
+      [{
+        ...workstream('00000000-4000-4000-8000-00000000002a', 'Staffing', 'completed'),
+        scope: 'personal',
+        participantUserIds: ['user-missing', 'user-2'],
+      }],
+      undefined,
+      [teammate('user-2', 'Ari')],
+    );
+
+    const row = screen.getByRole('link', { name: /Staffing/u });
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ari; and 1 more');
+    expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(1);
+    expect(within(row).getByText('+1')).toBeInTheDocument();
   });
 
   it('closes a work stream to the people in it from the right-click menu', async () => {
@@ -1884,8 +2093,14 @@ describe('pinned work streams', () => {
 
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
     fireEvent.keyDown(window, { key: 'Meta', metaKey: true, repeat: true });
-    expect([...document.querySelectorAll('.command-shortcut-pill')].map((pill) => pill.textContent))
-      .toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    const pills = [...document.querySelectorAll('.command-shortcut-pill')];
+    expect(pills.map((pill) => pill.textContent)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9']);
+    // The overlay reuses the automation You / Workspace badge so the two chips
+    // cannot pick up different size or colour. Dropping either class is the
+    // failure this asserts; `toHaveClass` names the missing one.
+    for (const pill of pills) {
+      expect(pill).toHaveClass('badge', 'scope-badge');
+    }
     expect(reportTelemetryProductIntent).toHaveBeenCalledTimes(1);
     expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
       kind: 'command_shortcuts_revealed',
@@ -2062,7 +2277,21 @@ describe('pinned work streams', () => {
     // Fired on the row itself, which is what holds focus: the handler sits on
     // the wrapper around it and only ever sees the event by bubbling.
     fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
-    await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-b', 'ws-a']));
+    await waitFor(
+      () => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-b', 'ws-a']),
+    );
+
+    // Observing the async save is not the same as observing its `finally`.
+    // This harness deliberately leaves the server-owned props unchanged, so
+    // wait until the optimistic order has cleared before testing the stored
+    // order's top boundary. Otherwise the second keydown races cleanup and can
+    // turn the still-optimistic ['ws-b', 'ws-a'] back into ['ws-a', 'ws-b'].
+    await waitFor(
+      () => expect(pinnedRowTitles()).toEqual([
+        expect.stringContaining('Alpha'),
+        expect.stringContaining('Bravo'),
+      ]),
+    );
 
     // The top row has nowhere further to go, and saying so costs a request.
     onReorderPinnedWorkstreams.mockClear();

@@ -13,9 +13,10 @@
  * the whole thing still "works" in a mock, then tells somebody about a work
  * stream their sidebar cannot show them.
  *
- * This drives the real SubstreamAgent product endpoint against real Durable
+ * This drives the real SubstreamAgent product boundary against real Durable
  * Object SQLite, so `projection_keys`, the payload hashes, and the outbox rows
- * are the production ones rather than a description of them.
+ * are the production ones rather than a description of them. Existing-room
+ * cases use its system-provision port; create-only cases stop before run activation.
  */
 
 import { env } from "cloudflare:workers";
@@ -26,6 +27,7 @@ import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import type { AuthContext } from "../src/env";
 import { substreamAgentName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import {
@@ -37,12 +39,34 @@ import { processWorkstreamNotificationIntent } from "../src/services/workstream-
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
 const SECOND_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a6");
+/**
+ * The "who a create is allowed to tell" cases. `initialize` on an already-
+ * authoritative root is a silent replay (200, no notifications), so these must
+ * not share an id with each other or with `WORKSTREAM_ID`. The replay test
+ * shares `CREATE_REPLAY_ID` between its two opens on purpose.
+ */
+const CREATE_WITHOUT_NOTIFY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b1");
+const CREATE_WITH_NOTIFY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b2");
+const CREATE_REPLAY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b3");
+const CREATE_NAMING_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b4");
+/**
+ * The existing-room mention cases still activate their own message run, so
+ * each keeps a distinct object identity while its promotion settles. The
+ * elicitation case keeps a dedicated identity for its seeded parent receipt.
+ * Their setup uses `provisionWorkstream`, not an opening model run; the older
+ * initialize-and-wait shape is the race recorded under 33290369991.
+ */
+const WORKSPACE_VISIBLE_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b5");
+const CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b6");
+const REJECTED_CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b7");
+const ELICITATION_ANSWER_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b8");
 const CREATOR_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
 const SECOND_INVITEE_ID = "00000000-0000-7000-8000-0000000006a7";
 const MISSING_RECIPIENT_ID = "00000000-0000-7000-8000-0000000006a8";
 const ATTACHMENT_ID = "00000000-0000-7000-8000-0000000006a9";
+const ELICITATION_PARENT_RUN_ID = "00000000-0000-7000-8000-0000000006ac";
 
 /**
  * A wall-clock budget: the probes spend Durable Object round trips out of it,
@@ -63,46 +87,50 @@ const AUTH: AuthContext = {
 
 beforeEach(async () => {
   await reset();
+  // Idempotent: `reset()` is supposed to drop D1's schema, but an incomplete
+  // wipe — a sibling file's interleave, or a hung poll that broke the input
+  // gate — leaves these tables standing. Plain `CREATE TABLE` then fails as
+  // `already exists` and hides the original timeout (33290369991).
   await env.DB.batch([
-    env.DB.prepare(`CREATE TABLE workstream_authority_control (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL,
       serving_contract_version INTEGER NOT NULL
     )`),
-    env.DB.prepare(`INSERT INTO workstream_authority_control
+    env.DB.prepare(`INSERT OR REPLACE INTO workstream_authority_control
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
-    env.DB.prepare(`CREATE TABLE workspaces (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT NOT NULL, analytics_workspace_id TEXT
     )`),
-    env.DB.prepare(`INSERT INTO workspaces(id, name, region) VALUES (?, 'Notification test', 'global')`).bind(WORKSPACE_ID),
-    env.DB.prepare(`CREATE TABLE workspace_members (
+    env.DB.prepare(`INSERT OR REPLACE INTO workspaces(id, name, region) VALUES (?, 'Notification test', 'global')`).bind(WORKSPACE_ID),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'owner', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, CREATOR_ID),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, INVITEE_ID),
-    env.DB.prepare(`CREATE TABLE sessions (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
       region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
     )`),
-    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
       .bind(SESSION_ID, CREATOR_ID, WORKSPACE_ID),
-    env.DB.prepare(`CREATE TABLE users (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
     )`),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'creator@example.com', 'Creator', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(CREATOR_ID),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'invitee@example.com', 'Invitee', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(INVITEE_ID),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, SECOND_INVITEE_ID),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'second@example.com', 'Second Invitee', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(SECOND_INVITEE_ID),
   ]);
@@ -117,7 +145,7 @@ beforeEach(async () => {
   // never a slow query.
 }, 30_000);
 
-function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub {
+function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub<SubstreamAgent> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     substreamAgentName("global", WORKSPACE_ID, workstreamId),
   ));
@@ -136,10 +164,13 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
 }
 
 async function openWorkstream(
-  stub: DurableObjectStub,
+  stub: DurableObjectStub<SubstreamAgent>,
   options: {
     workstreamId?: string;
     title?: string;
+    objective?: string;
+    descriptionSource?: "authored" | "derived";
+    titleStatus?: "naming" | "settled";
     participantUserIds?: readonly string[];
     openingMessage?: string;
     mentions?: readonly {
@@ -153,26 +184,30 @@ async function openWorkstream(
     /** What `POST /workstreams` sends; a connector ingress sends nothing. */
     notifyParticipants?: boolean;
   } = {},
-): Promise<{ status: number; body: Record<string, unknown> }> {
+): Promise<void> {
   const workstreamId = options.workstreamId ?? WORKSTREAM_ID;
-  const opened = await product(stub, {
-    operation: "initialize",
-    auth: AUTH,
-    input: {
+  // These cases assert creation's committed transcript and regional effects,
+  // all of which `initialize` owns. The SubstreamAgent endpoint's next step is
+  // only an execution-receipt wake. Calling the product service directly keeps
+  // that unrelated model run admitted and inert, so a later `reset()` never
+  // races an alarm that this file did not need to start.
+  await runInDurableObject(stub, async (instance) => {
+    const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+    return productService.initialize(AUTH, {
       workspaceId: WORKSPACE_ID,
       workstreamId,
       generation: 1,
       title: options.title ?? "Quarterly planning",
-      objective: "Draft the quarterly plan",
-      descriptionSource: "authored",
-      titleStatus: "settled",
+      objective: options.objective ?? "Draft the quarterly plan",
+      descriptionSource: options.descriptionSource ?? "authored",
+      titleStatus: options.titleStatus ?? "settled",
       scope: options.scope ?? "personal",
       emailAddress: null,
       creatorUserId: CREATOR_ID,
       openingMessage: options.openingMessage ?? "starting the plan",
-      ...(options.mentions ? { mentions: options.mentions } : {}),
+      ...(options.mentions ? { mentions: [...options.mentions] } : {}),
       clientMessageId: `participant-open-${workstreamId}`,
-      participantUserIds: options.participantUserIds ?? [],
+      participantUserIds: [...(options.participantUserIds ?? [])],
       ...(options.notifyParticipants === undefined
         ? {}
         : { notifyParticipants: options.notifyParticipants }),
@@ -180,10 +215,72 @@ async function openWorkstream(
       modelOverride: null,
       executionPrincipal: { type: "user", userId: CREATOR_ID },
       reason: "user_message",
-    },
+    });
   });
-  expect(opened.status).toBe(200);
-  return opened;
+}
+
+/** Establish the system-provisioned existing-room baseline without admitting a run. */
+async function provisionWorkstream(
+  stub: DurableObjectStub<SubstreamAgent>,
+  workstreamId = WORKSTREAM_ID,
+  options: { title?: string; scope?: "personal" | "workspace" } = {},
+): Promise<void> {
+  expect((await stub.bootstrapRuntime({
+    workspaceId: WORKSPACE_ID,
+    workstreamId,
+    generation: 1,
+  })).status).toBe(200);
+  expect((await stub.executeIdentityOperation({
+    workspaceId: WORKSPACE_ID,
+    workstreamId,
+    operation: "provision",
+    args: [{
+      title: options.title ?? "Quarterly planning",
+      objective: "Draft the quarterly plan",
+      scope: options.scope ?? "personal",
+      originType: "ad_hoc",
+      createdByUserId: CREATOR_ID,
+      participantUserIds: [CREATOR_ID],
+      harnessStatus: "idle",
+      emailAddress: null,
+      emailRouteStatus: null,
+      systemKind: null,
+      automationSubscriptionId: null,
+      automationRunId: null,
+      plannedFor: null,
+      modelOverride: null,
+      now: Date.now(),
+    }],
+  })).status).toBe(200);
+}
+
+/** A settled parent identity for an elicitation, with no execution to wake. */
+async function seedCompletedRun(
+  stub: DurableObjectStub<SubstreamAgent>,
+  runId: string,
+): Promise<void> {
+  await runInDurableObject(stub, (_instance, state) => {
+    const now = Date.now();
+    // Keep this minimal fixture aligned with the `runs` table in
+    // workstream-object-schema.ts. Successful production terminalization
+    // leaves `terminal_reason` null; that column describes exceptional exits.
+    state.storage.sql.exec(
+      `INSERT INTO runs (
+         run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
+         model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
+         active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+         tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+         terminal_reason, terminalized_at, completed_at, created_at, updated_at
+       ) VALUES (?, '0', NULL, 'completed', '{}', 0, 0, '', 0, 0, ?,
+                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, ?, ?, ?, ?)`,
+      runId,
+      now,
+      now,
+      now,
+      now,
+      now,
+    );
+  });
 }
 
 /**
@@ -225,40 +322,6 @@ async function waitForCanonicalTurn(stub: DurableObjectStub, turnId: string): Pr
       ).one().count),
     { timeout: POLL_BUDGET_MS, interval: 50 },
   ).toBe(1);
-}
-
-/**
- * Wait for the substream loop to have nothing left to run.
- *
- * `answerElicitation` returns an activation request only when the loop it
- * would activate is at rest (`workstream-object-product.ts`: `remaining === 0
- * && after.status === "idle" ? … : null`), and the run `openWorkstream`
- * starts drives that loop through `executing` and back. Nothing in these
- * tests made the precondition true — it just usually was by the time the
- * answer ran, and sometimes was not.
- *
- * Waiting on the loop's status alone is not enough, and finding that out is
- * what this shape is for: a status-only poll caught the loop still `idle`
- * *before* the opening run was admitted, and by the time the answer ran it
- * was `executing` — the instrumented reproduction reported exactly that
- * (`loopBefore.status = "executing"`, no pending elicitation left). So this
- * waits on both: no run still admitted or running, and a loop back at rest.
- * Together they are a state the loop cannot leave on its own. Read-only, so
- * the probe cannot advance what it is waiting on.
- */
-async function waitForQuietLoop(stub: DurableObjectStub): Promise<void> {
-  await expect.poll(
-    () => runInDurableObject(stub, (_instance, state) => {
-      const active = Number(state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM runs WHERE status IN ('admitted', 'running')`,
-      ).one().n);
-      const status = state.storage.sql.exec<{ status: string }>(
-        `SELECT status FROM substream_loops WHERE id = 1`,
-      ).toArray()[0]?.status ?? "idle";
-      return `${status}:${active}`;
-    }),
-    { timeout: POLL_BUDGET_MS, interval: 50 },
-  ).toBe("idle:0");
 }
 
 async function deliveredEffects(
@@ -400,7 +463,7 @@ describe("adding somebody to a work stream", () => {
 
   it("enqueues their directory row, an activity event, and a notification behind it", async () => {
     const stub = agentStub();
-    await openWorkstream(stub);
+    await provisionWorkstream(stub);
 
     const added = await product(stub, {
       operation: "add_participant",
@@ -455,7 +518,7 @@ describe("adding somebody to a work stream", () => {
 
   it("keeps a second add of the same person to one intent, and a re-add to a new one", async () => {
     const stub = agentStub();
-    await openWorkstream(stub);
+    await provisionWorkstream(stub);
 
     await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
     await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
@@ -483,8 +546,8 @@ describe("adding somebody to a work stream", () => {
   it("keeps one person's adds to two work streams apart", async () => {
     const first = agentStub();
     const second = agentStub(SECOND_WORKSTREAM_ID);
-    await openWorkstream(first);
-    await openWorkstream(second, { workstreamId: SECOND_WORKSTREAM_ID, title: "Hiring loop" });
+    await provisionWorkstream(first);
+    await provisionWorkstream(second, SECOND_WORKSTREAM_ID, { title: "Hiring loop" });
 
     await product(first, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
     await product(second, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
@@ -504,7 +567,7 @@ describe("adding somebody to a work stream", () => {
 
   it("says nothing when somebody adds themselves", async () => {
     const stub = agentStub();
-    await openWorkstream(stub);
+    await provisionWorkstream(stub);
 
     const added = await product(stub, {
       operation: "add_participant",
@@ -571,7 +634,7 @@ describe("naming somebody when the work stream is created", () => {
       }],
     });
 
-    const canonical = `[@Invitee](person:${INVITEE_ID})`;
+    const canonical = `[@Invitee](person://${INVITEE_ID})`;
     await runInDurableObject(stub, (_instance, state) => {
       const stored = state.storage.sql.exec<{
         content: string;
@@ -747,8 +810,8 @@ describe("naming somebody when the work stream is created", () => {
 
 describe("confirming a nonparticipant mention on an existing work stream", () => {
   it("persists a workspace-visible mention without seating or confirming the recipient", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub, { scope: "workspace" });
+    const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
+    await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope: "workspace" });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -779,7 +842,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         (sent.body.turn as { turnId: string }).turnId,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, WORKSPACE_VISIBLE_MENTION_ID);
     expect(envelopes.filter((envelope) => (
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
@@ -787,8 +850,8 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
   });
 
   it("seats the accepted target and emits only the specific mention notification", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub);
+    const stub = agentStub(CONFIRMED_MENTION_ID);
+    await provisionWorkstream(stub, CONFIRMED_MENTION_ID);
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -818,7 +881,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         (sent.body.turn as { turnId: string }).turnId,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, CONFIRMED_MENTION_ID);
     expect(envelopes.filter((envelope) => (
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
@@ -830,8 +893,8 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
   });
 
   it("does not let confirmation seat the raw target of a rejected mention", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub);
+    const stub = agentStub(REJECTED_CONFIRMED_MENTION_ID);
+    await provisionWorkstream(stub, REJECTED_CONFIRMED_MENTION_ID);
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -867,9 +930,14 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
 
 describe("answering an elicitation in the ordered transcript", () => {
   it("keeps the attributed response pending until the loop can promote it", async () => {
-    const stub = agentStub();
-    const opened = await openWorkstream(stub);
-    const runId = String(opened.body.harnessRunId);
+    const stub = agentStub(ELICITATION_ANSWER_ID);
+    await provisionWorkstream(stub, ELICITATION_ANSWER_ID);
+    // `openElicitation` stores the parent run as correlation identity; it does
+    // not require that run to be executing locally. This test is about the
+    // answer's pending input and activation request, so a settled row satisfies
+    // the foreign key without starting unrelated inference first.
+    const runId = ELICITATION_PARENT_RUN_ID;
+    await seedCompletedRun(stub, runId);
     const elicitationId = "00000000-0000-7000-8000-0000000006aa";
     const messageId = "00000000-0000-7000-8000-0000000006ab";
     const createdAt = "2026-08-26T12:00:00.000Z";
@@ -878,7 +946,7 @@ describe("answering an elicitation in the ordered transcript", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        workstreamId: ELICITATION_ANSWER_ID,
         operation: "openElicitation",
         args: [{
           elicitationId,
@@ -895,7 +963,7 @@ describe("answering an elicitation in the ordered transcript", () => {
             kind: "elicitation",
             elicitation: {
               id: elicitationId,
-              workstreamId: WORKSTREAM_ID,
+              workstreamId: ELICITATION_ANSWER_ID,
               harnessRunId: runId,
               prompt: "Which environment?",
               responseType: "text",
@@ -915,10 +983,6 @@ describe("answering an elicitation in the ordered transcript", () => {
       }),
     });
     expect(question.status).toBe(200);
-
-    // The activation request below exists only for a loop at rest with nothing
-    // left to run, and the run `openWorkstream` started may still be settling.
-    await waitForQuietLoop(stub);
 
     await runInDurableObject(stub, async (instance, state) => {
       const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
@@ -999,14 +1063,17 @@ describe("answering an elicitation in the ordered transcript", () => {
 
 describe("who a create is allowed to tell", () => {
   it("says nothing when the caller did not ask for it", async () => {
-    const stub = agentStub();
+    const stub = agentStub(CREATE_WITHOUT_NOTIFY_ID);
     // The shape a connector ingress sends. `slack-agent-service.ts` hands
     // `participantUserIds` a Slack channel's resolved roster — which
     // `CreateWorkstreamRequestSchema` says "can be hundreds" — and nobody in
     // that channel was added by anybody, so nobody is DMed about it.
-    await openWorkstream(stub, { participantUserIds: [INVITEE_ID, SECOND_INVITEE_ID] });
+    await openWorkstream(stub, {
+      workstreamId: CREATE_WITHOUT_NOTIFY_ID,
+      participantUserIds: [INVITEE_ID, SECOND_INVITEE_ID],
+    });
 
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, CREATE_WITHOUT_NOTIFY_ID);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification"))
       .toHaveLength(0);
     expect(envelopes.filter((envelope) => (
@@ -1021,13 +1088,14 @@ describe("who a create is allowed to tell", () => {
   });
 
   it("tells every person named, once each, gated on their own row", async () => {
-    const stub = agentStub();
+    const stub = agentStub(CREATE_WITH_NOTIFY_ID);
     await openWorkstream(stub, {
+      workstreamId: CREATE_WITH_NOTIFY_ID,
       participantUserIds: [INVITEE_ID, SECOND_INVITEE_ID],
       notifyParticipants: true,
     });
 
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, CREATE_WITH_NOTIFY_ID);
     const notifications = envelopes.flatMap((envelope) => (
       envelope.effect.kind === "participant_notification"
         ? [{ effect: envelope.effect, required: envelope.requiredProjectionVersion }]
@@ -1036,13 +1104,15 @@ describe("who a create is allowed to tell", () => {
     expect(notifications.map((entry) => entry.effect.recipientUserId).sort())
       .toEqual([INVITEE_ID, SECOND_INVITEE_ID].sort());
     expect(notifications.map((entry) => entry.effect.intentId).sort()).toEqual([
-      `participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`,
-      `participant_added:${WORKSTREAM_ID}:${SECOND_INVITEE_ID}:0`,
+      `participant_added:${CREATE_WITH_NOTIFY_ID}:${INVITEE_ID}:0`,
+      `participant_added:${CREATE_WITH_NOTIFY_ID}:${SECOND_INVITEE_ID}:0`,
     ].sort());
     // Each is gated on its *own* recipient's projection, not on whichever
     // viewer effect happened to be written last.
     for (const entry of notifications) {
-      expect(entry.required).toBe(await viewerProjectionVersion(entry.effect.recipientUserId));
+      expect(entry.required).toBe(
+        await viewerProjectionVersion(entry.effect.recipientUserId, CREATE_WITH_NOTIFY_ID),
+      );
     }
     expect(envelopes.flatMap((envelope) => (
       envelope.effect.kind === "activity_event"
@@ -1055,50 +1125,45 @@ describe("who a create is allowed to tell", () => {
   });
 
   it("replays the create without telling the person a second time", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
-    // The ambiguous-response retry, on the same `clientMessageId`. It must
-    // still answer 200: the whole reason the replay branch re-enqueues the
-    // directory snapshot and nothing else is that a notification re-emitted
+    const stub = agentStub(CREATE_REPLAY_ID);
+    await openWorkstream(stub, {
+      workstreamId: CREATE_REPLAY_ID,
+      participantUserIds: [INVITEE_ID],
+      notifyParticipants: true,
+    });
+    // The ambiguous-response retry, on this test's own workstream id and
+    // `clientMessageId`. Other cases must not share either — initialize on an
+    // already-authoritative root is a silent replay, not a second create. The
+    // direct product call must still complete: the replay branch re-enqueues
+    // the directory snapshot and nothing else because a notification re-emitted
     // against a moved root would be refused as a hash conflict and wedge the
-    // create. `openWorkstream` asserts the status.
-    await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
+    // create. The single receipt assertion below proves no notification replayed.
+    await openWorkstream(stub, {
+      workstreamId: CREATE_REPLAY_ID,
+      participantUserIds: [INVITEE_ID],
+      notifyParticipants: true,
+    });
 
-    expect(await notificationReceipts(stub))
-      .toEqual([`effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`]);
+    expect(await notificationReceipts(stub, CREATE_REPLAY_ID))
+      .toEqual([`effect:participant_added:${CREATE_REPLAY_ID}:${INVITEE_ID}:0`]);
   });
 
   it("does not name a work stream the naming agent has not named yet", async () => {
-    const stub = agentStub();
+    const stub = agentStub(CREATE_NAMING_ID);
     // What `POST /workstreams` actually sends: the desktop client supplies no
     // title, so creation writes the opening message's first line and leaves
     // `titleStatus` at `naming` until the naming pass lands.
-    const opened = await product(stub, {
-      operation: "initialize",
-      auth: AUTH,
-      input: {
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        generation: 1,
-        title: "Can someone dig into why the self-serve funnel dropped this week",
-        objective: "Can someone dig into why the self-serve funnel dropped this week",
-        descriptionSource: "derived",
-        titleStatus: "naming",
-        emailAddress: null,
-        creatorUserId: CREATOR_ID,
-        openingMessage: "Can someone dig into why the self-serve funnel dropped this week",
-        clientMessageId: "participant-open-naming",
-        participantUserIds: [INVITEE_ID],
-        notifyParticipants: true,
-        attachmentIds: [],
-        modelOverride: null,
-        executionPrincipal: { type: "user", userId: CREATOR_ID },
-        reason: "user_message",
-      },
+    await openWorkstream(stub, {
+      workstreamId: CREATE_NAMING_ID,
+      title: "Can someone dig into why the self-serve funnel dropped this week",
+      objective: "Can someone dig into why the self-serve funnel dropped this week",
+      descriptionSource: "derived",
+      titleStatus: "naming",
+      openingMessage: "Can someone dig into why the self-serve funnel dropped this week",
+      participantUserIds: [INVITEE_ID],
+      notifyParticipants: true,
     });
-    expect(opened.status).toBe(200);
-
-    const notification = (await deliveredEffects(stub))
+    const notification = (await deliveredEffects(stub, CREATE_NAMING_ID))
       .flatMap((envelope) => envelope.effect.kind === "participant_notification" ? [envelope.effect] : []);
     expect(notification).toHaveLength(1);
     // The delivery templates read this to pick copy that does not quote a

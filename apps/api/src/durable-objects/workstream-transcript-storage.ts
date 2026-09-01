@@ -5,6 +5,7 @@ import {
   type PendingTranscriptInput,
   type TranscriptActivity,
   type TranscriptBlock,
+  type TranscriptPluginRun,
   type TranscriptRange,
   type TranscriptRangeResult,
   type TranscriptTurn,
@@ -28,6 +29,7 @@ import {
   type HarnessActivationInput,
 } from "@rally/agent-harness";
 import { uuidV7 } from "../lib/uuid-v7";
+import { boundParameterChunks } from "./bound-parameters";
 import {
   SubstreamLoopStorage,
   type PendingLoopInputRow,
@@ -2228,6 +2230,7 @@ export class WorkstreamTranscriptStorage {
       const pendingInputs = this.pendingTranscriptInputs();
       const openingTurns = opening.ranges.flatMap((range) => range.turns);
       const activities = this.activitiesForTurns([...openingTurns, ...activeTurns], now, true);
+      const pluginRuns = this.pluginRunsForTurns([...openingTurns, ...activeTurns], now);
       return {
         snapshotId,
         snapshotThrough,
@@ -2238,6 +2241,7 @@ export class WorkstreamTranscriptStorage {
         ranges: opening.ranges,
         activities,
         activeActivities: activities.filter((activity) => activity.state === "active"),
+        pluginRuns,
         activeTurns,
         pendingInputs,
       };
@@ -2263,6 +2267,9 @@ export class WorkstreamTranscriptStorage {
       turns,
       activities: includeActivities
         ? this.activitiesForTurns(turns, snapshotAt)
+        : [],
+      pluginRuns: includeActivities
+        ? this.pluginRunsForTurns(turns, snapshotAt)
         : [],
     };
   }
@@ -2678,6 +2685,124 @@ export class WorkstreamTranscriptStorage {
       }
     }
     return this.activitiesForIds([...activityIds], snapshotAt, includeActive);
+  }
+
+  /**
+   * The plugin work inside a set of turns, resolved into the shape a client
+   * renders.
+   *
+   * This deliberately does not reuse `activitiesForTurns`. That walk seeds from
+   * `turn.activity_id` and `block.activity_id` — both nullable columns — and
+   * then recurses *upward* to parents, so a plugin activity reaches a snapshot
+   * only when one of its own tool blocks happened to carry an `activity_id`. A
+   * block written but never settled leaves the plugin's timing out of the
+   * snapshot entirely, and the client had no way to say so.
+   *
+   * Here the seed is the turn's own id, which is never null, and the walk goes
+   * *down*: an `assistant_turn` activity is found by `subject_id`, its plugin
+   * children by `parent_activity_id`, and their tool calls the same way. The
+   * result depends on no nullable join key.
+   */
+  private pluginRunsForTurns(
+    turns: TranscriptTurn[],
+    snapshotAt: number,
+  ): TranscriptPluginRun[] {
+    const turnIds = [...new Set(turns.map((turn) => turn.turnId))];
+    if (turnIds.length === 0) return [];
+    // Every `IN` list here is caller-sized — a wide opening window, or a turn
+    // that used many plugins — and the engine refuses a statement binding more
+    // than 100 parameters outright, failing the whole transcript open rather
+    // than returning less. `bound-parameters.ts` owns that ceiling.
+    const pluginRows = boundParameterChunks(turnIds).flatMap((ids) => this.sql.exec<{
+      activity_id: string;
+      subject_id: string;
+      label: string;
+      lifecycle_state: string;
+      turn_id: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT plugin.activity_id, plugin.subject_id, plugin.label,
+              plugin.lifecycle_state, turn_activity.subject_id AS turn_id
+         FROM transcript_activities plugin
+         JOIN transcript_activities turn_activity
+           ON plugin.parent_activity_id = turn_activity.activity_id
+        WHERE plugin.scope = 'plugin'
+          AND turn_activity.scope = 'assistant_turn'
+          AND turn_activity.subject_id IN (${ids.map(() => "?").join(", ")})
+        ORDER BY plugin.created_at, plugin.call_index, plugin.activity_id`,
+      ...ids,
+    ).toArray());
+    if (pluginRows.length === 0) return [];
+    const pluginIds = pluginRows.map((row) => row.activity_id);
+    const callRows = boundParameterChunks(pluginIds).flatMap((ids) => this.sql.exec<{
+      parent_activity_id: string;
+      subject_id: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT parent_activity_id, subject_id
+         FROM transcript_activities
+        WHERE scope = 'tool_call'
+          AND parent_activity_id IN (${ids.map(() => "?").join(", ")})
+        ORDER BY call_index, created_at`,
+      ...ids,
+    ).toArray());
+    const callsByPlugin = new Map<string, string[]>();
+    for (const row of callRows) {
+      const current = callsByPlugin.get(row.parent_activity_id) ?? [];
+      current.push(row.subject_id);
+      callsByPlugin.set(row.parent_activity_id, current);
+    }
+    const intervalRows = boundParameterChunks(pluginIds).flatMap((ids) => this.sql.exec<{
+      activity_id: string;
+      started_at: number;
+      stopped_at: number | null;
+      duration_ms: number | null;
+      timing_accuracy: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT activity_id, started_at, stopped_at, duration_ms, timing_accuracy
+         FROM transcript_activity_intervals
+        WHERE activity_id IN (${ids.map(() => "?").join(", ")})
+        ORDER BY activity_id, started_at`,
+      ...ids,
+    ).toArray());
+    const intervalsByPlugin = new Map<string, typeof intervalRows>();
+    for (const interval of intervalRows) {
+      const current = intervalsByPlugin.get(interval.activity_id) ?? [];
+      current.push(interval);
+      intervalsByPlugin.set(interval.activity_id, current);
+    }
+    return pluginRows.map((row) => {
+      const intervals = intervalsByPlugin.get(row.activity_id) ?? [];
+      let completedMs = 0;
+      let elapsedMs: number | null = null;
+      // A stopped interval that never recorded a duration makes the total
+      // unknowable rather than smaller: reporting the rest of the sum would
+      // understate the work by exactly the piece that is missing.
+      let durationKnown = intervals.length > 0;
+      let upperBound = false;
+      for (const interval of intervals) {
+        if (interval.timing_accuracy === "upper_bound") upperBound = true;
+        if (interval.stopped_at === null) {
+          elapsedMs = (elapsedMs ?? 0)
+            + Math.max(0, snapshotAt - Number(interval.started_at));
+          continue;
+        }
+        if (interval.duration_ms === null) {
+          durationKnown = false;
+          continue;
+        }
+        completedMs += Number(interval.duration_ms);
+      }
+      return {
+        pluginRunId: row.activity_id,
+        turnId: row.turn_id,
+        pluginId: row.subject_id,
+        displayName: row.label,
+        state: row.lifecycle_state as TranscriptPluginRun["state"],
+        durationMs: durationKnown ? completedMs : null,
+        elapsedMsAtSnapshot: elapsedMs,
+        timingAccuracy: upperBound ? "upper_bound" as const : "observed" as const,
+        toolCallIds: callsByPlugin.get(row.activity_id) ?? [],
+      };
+    });
   }
 
   private activitiesForIds(

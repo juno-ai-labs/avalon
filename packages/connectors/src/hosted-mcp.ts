@@ -22,6 +22,7 @@ export const HOSTED_MCP_PROTOCOL_VERSION = "2025-06-18";
 
 const HOSTED_MCP_CLIENT_NAME = "Rally";
 const HOSTED_MCP_CLIENT_VERSION = "1.0.0";
+const HOSTED_MCP_DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 const DEFAULT_RESPONSE_BYTES = 2_000_000;
 const MAX_TOOL_COUNT = 128;
 const MAX_TOOL_PAGES = 20;
@@ -136,6 +137,8 @@ export interface HostedMcpPassthroughConfig {
   ): Promise<T>;
   /** Enable the shared protected-resource discovery, DCR, and PKCE flow. */
   oauth?: Omit<HostedMcpOAuthConfig, "providerName" | "serverUrl" | "fetch" | "maxResponseBytes">;
+  /** Rally-authored deadlines keyed by the exact provider operation name. */
+  toolTimeoutMsByName?: Readonly<Record<string, number>>;
   fetch?: FetchLike;
   maxResponseBytes?: number;
 }
@@ -235,6 +238,7 @@ export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): 
           maxResponseBytes,
         }),
         capability,
+        config.toolTimeoutMsByName,
       ),
     );
   };
@@ -288,6 +292,7 @@ export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): 
 export function hostedMcpToolDefinitions(
   tools: readonly HostedMcpTool[],
   capability: string,
+  toolTimeoutMsByName: Readonly<Record<string, number>> = {},
 ): ToolDefinition[] {
   const parsedTools = z.array(McpToolSchema).parse(tools);
   const definitions: ToolDefinition[] = [];
@@ -313,6 +318,9 @@ export function hostedMcpToolDefinitions(
     remoteNames.add(tool.name);
     canonicalNames.add(canonicalName);
     wireNames.add(wireName);
+    const timeoutMs = Object.hasOwn(toolTimeoutMsByName, tool.name)
+      ? toolTimeoutMsByName[tool.name]!
+      : HOSTED_MCP_DEFAULT_TOOL_TIMEOUT_MS;
     definitions.push({
       name: canonicalName,
       providerOperationName: tool.name,
@@ -321,7 +329,7 @@ export function hostedMcpToolDefinitions(
       capability,
       mode: "write",
       idempotency: "record_before_execute",
-      timeoutMs: 30_000,
+      timeoutMs,
     });
   }
   if (!definitions.length) {

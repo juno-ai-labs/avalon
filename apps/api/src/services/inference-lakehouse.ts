@@ -1,6 +1,7 @@
 import type {
   InferenceAttemptEvent,
   InferenceRequestEvent,
+  OpenRouterProviderError,
   StructuredModelDiagnostic,
 } from "@rally/agent-harness";
 import { z } from "zod";
@@ -23,8 +24,10 @@ const InferenceLakehouseRecordSchema = z.object({
   build_sha: z.string().optional(),
   workspace_id: z.string().optional(),
   user_id: z.string().optional(),
+  context_user_id: z.string().optional(),
   workstream_id: z.string().optional(),
   substream_id: z.string().min(1).optional(),
+  trace_id: z.string().optional(),
   request_id: z.string().optional(),
   parent_request_id: z.string().optional(),
   draft_id: z.string().optional(),
@@ -74,6 +77,7 @@ export interface InferenceLakehouseContext {
   userId?: string;
   workstreamId?: string;
   substreamId?: string;
+  traceId?: string;
   requestId?: string;
   parentRequestId?: string;
   draftId?: string;
@@ -99,8 +103,10 @@ function commonRecord(
   | "build_sha"
   | "workspace_id"
   | "user_id"
+  | "context_user_id"
   | "workstream_id"
   | "substream_id"
+  | "trace_id"
   | "request_id"
   | "parent_request_id"
   | "draft_id"
@@ -116,14 +122,28 @@ function commonRecord(
     source: context.source,
     environment: env.APP_ENV,
     ...(env.BUILD_SHA ? { build_sha: env.BUILD_SHA } : {}),
-    ...(context.workspaceId ? { workspace_id: context.workspaceId } : {}),
-    ...(context.userId ? { user_id: context.userId } : {}),
+    ...(context.workspaceId
+      ? { workspace_id: context.workspaceId, user_id: context.workspaceId }
+      : {}),
+    ...(context.userId ? { context_user_id: context.userId } : {}),
     ...(context.workstreamId ? { workstream_id: context.workstreamId } : {}),
     ...(context.workstreamId ? { substream_id: context.substreamId ?? "0" } : {}),
+    ...(context.traceId ?? context.requestId
+      ? { trace_id: context.traceId ?? context.requestId }
+      : {}),
     ...(context.requestId ? { request_id: context.requestId } : {}),
     ...(context.parentRequestId ? { parent_request_id: context.parentRequestId } : {}),
     ...(context.draftId ? { draft_id: context.draftId } : {}),
     inference_request_id: inferenceRequestId,
+  };
+}
+
+function persistedProviderError(error: OpenRouterProviderError): Record<string, string | number> {
+  return {
+    ...(typeof error.code === "string" || typeof error.code === "number"
+      ? { code: error.code }
+      : {}),
+    ...(typeof error.providerName === "string" ? { providerName: error.providerName } : {}),
   };
 }
 
@@ -277,7 +297,7 @@ export function captureStreamingInferenceAttempt(
     ...(attempt.responseBytes !== undefined ? { response_bytes: attempt.responseBytes } : {}),
     ...(attempt.response ? { response: { ...attempt.response } } : {}),
     ...(attempt.providerError
-      ? { error: { providerError: attempt.providerError } }
+      ? { error: { providerError: persistedProviderError(attempt.providerError) } }
       : {}),
     metadata: { cursor: attempt.cursor },
   });
@@ -290,11 +310,14 @@ export function captureStructuredInferenceDiagnostic(
   diagnostic: StructuredModelDiagnostic,
 ): Promise<void> {
   if (!diagnostic.inferenceRequestId) return Promise.resolve();
+  const traceContext = diagnostic.traceId
+    ? { ...context, traceId: diagnostic.traceId }
+    : context;
   if (diagnostic.stage === "model_request" && diagnostic.requestPayload) {
     return captureBestEffort(env, {
       ...commonRecord(
         env,
-        context,
+        traceContext,
         `${diagnostic.inferenceRequestId}:request`,
         "request",
         "structured",
@@ -316,7 +339,7 @@ export function captureStructuredInferenceDiagnostic(
   return captureBestEffort(env, {
     ...commonRecord(
       env,
-      context,
+      traceContext,
       `${diagnostic.inferenceRequestId}:attempt`,
       "attempt",
       "structured",
@@ -338,7 +361,7 @@ export function captureStructuredInferenceDiagnostic(
     ...(diagnostic.responseBytes !== undefined ? { response_bytes: diagnostic.responseBytes } : {}),
     ...(diagnostic.responsePayload ? { response: diagnostic.responsePayload } : {}),
     ...(diagnostic.providerError
-      ? { error: { providerError: diagnostic.providerError } }
+      ? { error: { providerError: persistedProviderError(diagnostic.providerError) } }
       : {}),
     metadata: {
       attempt: diagnostic.attempt,

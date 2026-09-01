@@ -403,6 +403,7 @@
    * The `article-*` values are the note detail's own scale: a note is read as
    * a document rather than as a turn in a transcript, so its headings run
    * larger than the feed's. */
+  --av-cmp-markdown-diagram-line: var(--av-ref-color-line-6);
   --av-cmp-markdown-heading-1: 18px;
   --av-cmp-markdown-heading-2: 16px;
   --av-cmp-markdown-heading-3: 14.5px;
@@ -716,6 +717,7 @@
   --av-cmp-feed-author-font-size: 12px;
   --av-cmp-feed-author-font-weight: 470;
 
+  --av-cmp-markdown-diagram-line: var(--av-ref-color-line-6);
   --av-cmp-markdown-heading-1: 25px;
   --av-cmp-markdown-heading-2: 21px;
   --av-cmp-markdown-heading-3: 18.5px;
@@ -1022,6 +1024,7 @@
   --av-cmp-feed-author-font-size: 12px;
   --av-cmp-feed-author-font-weight: 470;
 
+  --av-cmp-markdown-diagram-line: var(--av-ref-color-line-6);
   --av-cmp-markdown-heading-1: 25px;
   --av-cmp-markdown-heading-2: 21px;
   --av-cmp-markdown-heading-3: 18.5px;
@@ -1294,7 +1297,7 @@
   --av-cmp-row-leading: 1.25;
   --av-cmp-row-hint-gap: 2px;
   --av-cmp-row-height-dense: 30px;
-  --av-cmp-row-background-hover: var(--av-sys-color-surface-subtle);
+  --av-cmp-row-background-hover: var(--av-sys-color-surface-raised-hover);
   --av-cmp-row-background-selected: var(--av-ref-color-neutral-4);
 
   --av-cmp-group-label-height: 26px;
@@ -1328,6 +1331,7 @@
   --av-cmp-feed-author-font-size: 10.5px;
   --av-cmp-feed-author-font-weight: 560;
 
+  --av-cmp-markdown-diagram-line: var(--av-ref-color-line-6);
   --av-cmp-markdown-heading-1: 18px;
   --av-cmp-markdown-heading-2: 16px;
   --av-cmp-markdown-heading-3: 14.5px;

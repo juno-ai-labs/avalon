@@ -27,7 +27,7 @@ retired WorkspaceDO subscription-row design and is not implementation guidance.
 | `apps/api/src/durable-objects/automation-cutover.ts` | The one-shot WorkspaceDO import: the legacy witness and its hash, the per-automation import, and `removeLegacyAutomationSchema`. |
 | `apps/api/src/durable-objects/ordered-transcript-sqlite/` | The shared ordered-transcript schema and canonical JSON the draft conversation is stored in — see [`ordered-transcript-sqlite.md`](ordered-transcript-sqlite.md). |
 | `apps/api/src/services/automation-agent-service.ts` | The single REST boundary. Claims an automation ID, addresses the named object, and wraps each RPC in `withAutomationErrors` so the object's thrown code becomes an HTTP answer. Each call site wraps itself deliberately: a `Proxy` over the stub is shorter and does not work — its `get` trap hands the stub's own method the proxy as `this`, which a brand-checking stub rejects with a `TypeError`, and an RPC returns a pipelining thenable rather than a native `Promise`, so an `instanceof Promise` branch never attaches the mapping. Both failures are invisible until a request reaches a real object. |
-| `apps/api/src/services/automation-agent-errors.ts` | The one table mapping an AutomationAgent error code to a status and a sentence a person reads. |
+| `apps/api/src/services/automation-agent-errors.ts` | The one table mapping an AutomationAgent error code to a status and a sentence a person reads, and the only place a refusal decided at the REST boundary is raised (`automationRefusal`, keyed on the table so a misspelled code is a type error). It also rebuilds an `ApiError` a collaborator threw inside the object, whose class does not survive the RPC hop. |
 | `apps/api/src/services/automation-service.ts` | What is left of the old service: the shared **template** catalog, publishing, and version validation. It starts no runs. |
 | `apps/api/src/services/external-event-evaluator.ts` | The pure DNF predicate evaluator WorkspaceDO matches registrations with. |
 | `packages/contracts/src/automation-agent.ts` | Lifecycle, admission, snapshot, and `AutomationRunContextV1` contracts. |
@@ -321,6 +321,16 @@ telemetry storage — not a product-state fallback.
 - **One automation is one object, for its whole life.** Acceptance changes a
   lifecycle column in place. Anything that mints a second ID at promotion breaks
   every run, receipt, memory row, and email claim keyed on the first.
+- **Every refusal an automation route answers goes through the error table.** A
+  refusal the object throws is mapped by `withAutomationErrors`; one the service
+  decides for itself is raised with `automationRefusal`; one a collaborator
+  raises as an `ApiError` inside the object is recognised by shape after the RPC
+  hop, because the class does not survive it. A bare `throw new Error(code)`
+  outside a wrapper, or an `ApiError` nobody re-reads on the other side of RPC,
+  is a `500 internal_error` and "An unexpected error occurred" — a permanent
+  refusal wearing the one status a client retries, logged beside real faults.
+  `withAutomationErrors` is for calls that can *refuse*; a call whose failures
+  are all faults keeps its 500 rather than being dressed as a conflict.
 - **A directory row locates; it never authorizes.** `automation_directory` holds
   no definition, no instructions, and no run content, and every content read goes
   through the agent, which re-checks the author or asks WorkspaceDO to authorize
@@ -360,12 +370,20 @@ lifecycle, schedules, occurrence admission, generated-run provisioning, run
 history, automation-owned memory, inbound-email admission, result-delivery
 receipts, and the workspace projection.
 
-It depends on WorkspaceDO for four things and no more: minting an automation ID
-against a creation key, holding the directory row, evaluating and fanning out
-connector events, and authorizing a non-author viewer. It depends on the Global
-`workstream_email_routes` registry for its address, on regional D1 for identity,
-membership, sessions, and connector connections, and on SubstreamAgent for the
-execution of a generated run.
+It depends on WorkspaceDO for four typed things: minting an automation ID against
+a creation key, holding the directory row, evaluating and fanning out connector
+events, and authorizing a non-author viewer — **and for every workspace-product
+table it reads**. That second half is not a list, because a list of it has now
+been wrong twice: `connector_connections`, `slack_user_links` and `resources` are
+each read through `withWorkspaceRuntimeDatabase`, and the whole compiler turn
+already runs on an env wrapped that way, whose reads reach `resources` joined to
+`connector_connections`. The invariant is what to remember: **any statement this
+object sends that names a `WORKSPACE_LOCAL_TABLES` table belongs to WorkspaceDO
+and goes through the port; regional D1 holds identity, membership and sessions,
+and nothing else.** Regional D1 has not had the product tables since migration
+0090. It depends on the Global `workstream_email_routes` registry for its
+address, on regional D1 for identity, membership, and sessions, and on
+SubstreamAgent for the execution of a generated run.
 
 It does not own: the shared template catalog (`automation-service.ts`, and the
 `automation_templates` rows survive the cutover); the connector manifests that
@@ -386,7 +404,16 @@ email is addressed and rendered
   zone, 503 while a workspace is mid-cutover. An unmapped code that still looks
   like one of ours answers 409 generically; anything else keeps its 500, because
   a fault nobody has reasoned about must not be answered as a retryable
-  conflict.
+  conflict. Two refusals are decided in `AutomationAgentService` before any RPC
+  is made — a create request with no draft id, and a submitted draft that no
+  longer matches the stored definition — and they read the same table through
+  `automationRefusal`. Raising either as a bare `Error` puts it outside the one
+  wrapper that consults the table, which is the whole difference between a
+  sentence and a 500. The table is a *refusal* table: its statuses are 403, 404,
+  409, 422 and 503, so a call whose failures are all faults — `WorkspaceDO`'s
+  `applyAutomationProjection`, whose worst case is two writers disagreeing about
+  a coordinate the directory already holds — is deliberately left unwrapped
+  rather than given a 409 a client will retry.
 - **The compiler fails or is interrupted.** The run settles as `failed` and stays
   the visible outcome until another turn is admitted — hiding it made a failure
   look like a successful idle reconnect. **Retry** re-arms the dispatch alarm for
@@ -433,7 +460,8 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, and an `ApiError` raised inside the object surviving the RPC hop with its own status. |
+| `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
@@ -446,9 +474,19 @@ email is addressed and rendered
 Traps worth knowing before writing one here. The `test-workers` D1 starts with no
 schema, so a test that exercises membership or sessions declares those tables
 itself; anything that depends on a checked-in migration belongs in the Node
-suite. And an automation alarm armed at `now + 1` can fire while a test is still
+suite. That freedom cuts both ways — see the general warning in
+[`testing.md`](testing.md#declaring-a-table-the-region-does-not-have): declaring
+a WorkspaceDO table in the D1 fixture makes a mis-routed statement pass. The
+delivery-target file's first test asserts the absence rather than trusting a
+comment. And an automation alarm armed at `now + 1` can fire while a test is still
 arranging state — park it in the same `runInDurableObject` invocation that admits
-the work, as [`durable-object-alarms.md`](durable-object-alarms.md) describes.
+the work, as [`durable-object-alarms.md`](durable-object-alarms.md) describes;
+settling the compiler run in that same invocation is what makes a drain after an
+eviction a no-op rather than a real provider call. A test that reaches acceptance
+addresses WorkspaceDO, and an object never addressed refuses every caller with
+`workspace_object_identity_mismatch` — call `initializeWorkspace` first rather
+than patching the agent's `workspace()`, which only works from inside
+`runInDurableObject`.
 
 ## Data model
 
@@ -525,6 +563,190 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-08-31 — The create boundary's own refusals stop answering 500
+
+**What changed:** `AutomationAgentService.accept` raised
+`automation_draft_id_required` and `automation_definition_revision_stale` as
+bare `Error`s. Both now go through `automationRefusal`, a new export of
+`automation-agent-errors.ts` that reads the same table `withAutomationErrors`
+does, so they answer 422 and 409 with the sentences already written for them.
+A third refusal joins them: a draft whose first compiler run has not settled has
+no definition row, and `AutomationDraftSchema.parse(null)` threw a `ZodError`
+from between the two. The table `satisfies` its shape now, and the codes
+`automationRefusal` accepts are its keys, so a misspelled one loses its specific
+sentence at compile time rather than at a call site nobody tested. The
+`listAutomationDirectory` call the service made outside a wrapper is wrapped as
+well, and its `automation_directory_access_denied` — with
+`automation_author_access_denied`, the matching refusal on the first authoring
+send — gains a table row at 403. `automationApiError` also rebuilds an `ApiError`
+a collaborator raised inside the object, whose class does not survive an RPC hop.
+On the client, the create screen gains its own sentence for the stale refusal,
+ranks a failed create ahead of the older compiler failure that used to render
+over it, and clears the notice when a new turn makes it untrue.
+
+**Why:** `errorHandler` maps anything that is not an `ApiError` to `500
+internal_error` / "An unexpected error occurred". The whole point of the error
+table is that a refusal is not a fault, and these two sat outside the only
+wrapper that reads it — so the create screen showed one unexplained sentence and
+no next step for the two cases the table has the clearest answers to. Both
+reproduce against a local stack: `POST /automations` with a draft that is not
+byte-identical to the stored definition, and one with no `draftId`, each
+answered `500 internal_error`. That status is also what any client backing off
+on 5xx retries, and every occurrence was logged at error severity beside genuine
+faults, which is why nothing in the logs distinguished them.
+
+`listAutomationDirectory` was the same defect one step earlier: it refuses a
+non-member with `automation_directory_access_denied`, object vocabulary that
+reached the member as the same 500. Both membership refusals sit at **403**
+rather than on the `SAFE_CODE` fallback's 409, because 409 is the status a
+client retries and retrying is the one thing that never turns a non-member into
+a member. They are reachable: the membership read in `requireAuth` and the one
+inside the object are two separate reads of `workspace_members`, so a revocation
+landing between them arrives here.
+
+The larger half of the same class is `acceptDraft` reaching
+`WorkstreamEmailRoutingService` to claim the automation's address. That service
+throws `ApiError`, and an EU region whose `GLOBAL_EMAIL_ROUTER` binding is
+unreachable raises a deliberate 503 there — which arrived as `500` because
+`instanceof` does not survive the hop and the human sentence matches neither the
+table nor `SAFE_CODE`. `automationApiError` now recognises it by shape, which
+does survive. This one is defence rather than a proven repair: the workers pool
+preserves the class, so the test that guards the outcome passes with the rebuild
+removed, and the boundary where it does not is one no suite here reproduces.
+
+`applyAutomationProjection` is deliberately **not** wrapped. Everything it can
+throw is a fault rather than a refusal — a `ZodError` on its own strict schema,
+`workspace_object_identity_mismatch`, or `automation_projection_hash_conflict` —
+and the table cannot express a fault. An earlier revision of this change did
+wrap it, which moved a real defect onto the generic 409 instead of the 500 that
+is true of it.
+
+**Considered and rejected:** Raising these through `automationApiError(new
+Error(code))`, which needs no new export. The claim that a typo would otherwise
+fall through to a 500 was checked and is false — every plausible misspelling
+keeps the `automation_` prefix and lands on `SAFE_CODE`'s generic 409 — so what
+the key union actually buys is narrower than it first looked: the specific
+status and sentence cannot be lost at a call site without a test. That was
+judged worth one exported function and a type alias, and the `as const` and the
+parallel `Map` an earlier revision carried were dropped once `satisfies` alone
+was shown to preserve both the key union and the literal statuses.
+
+Also rejected: wrapping every unwrapped object call on sight.
+`withAutomationErrors` is right only where the call can refuse; where it can
+only fault, its `SAFE_CODE` fallback converts a defect into a retryable-looking
+409 and hides it. Also rejected: wrapping the whole of `accept` in
+`withAutomationErrors`, which is shorter and makes every throw in the method
+look like the object's. The file's own note explains why the wrapping is per
+call site rather than blanket, and a refusal this boundary decides for itself is
+worth reading as such. Also rejected: loosening the byte-identical comparison so
+the stale case stops arising. The comparison is the acceptance contract — the
+caller is confirming the definition it showed a person — and a mismatch it did
+not refuse would create an automation nobody reviewed.
+
+**What a future change has to respect:** A refusal decided in the service, not
+the object, still belongs in `AUTOMATION_ERROR_RESPONSES` and must be raised
+with `automationRefusal`; `throw new Error(code)` outside a wrapper is a 500
+again, and the type only protects the codes, not the raising. Before wrapping a
+call, ask what it can throw: a fault is better left at 500 than dressed as a
+conflict. `automation_region_mismatch`, from `claimAutomationDraft`, is such a
+fault still riding the `SAFE_CODE` fallback at 409 — left alone here because
+narrowing that regex changes every code it covers, not just this one. The stale
+refusal
+now says "This draft changed while you were reviewing it. Reload and try again."
+That is the right sentence for the race it was written for — a compiler turn
+settling while somebody reviews — and the wrong one for a client whose bundled
+copy of `AutomationDraftSchema` differs from the server's, where reloading
+changes nothing. Distinguishing those needs the revision the caller reviewed to
+travel with the request, which this change does not add. The refusal now logs
+which top-level fields disagreed — names only, never values — so the two are at
+least distinguishable in the log.
+
+Three things this change deliberately did not take on, each named because the
+next person will meet them here. The sixteen per-call-site `withAutomationErrors`
+wraps could collapse into one middleware on the two routers that construct this
+service, which is where a missed site came from in the first place; that is a
+change to every automation route's error mapping at once and wants its own
+review. `automation_region_mismatch` still rides `SAFE_CODE` at 409 as a fault
+dressed as a conflict; narrowing that regex changes every code it covers.
+And a directory refusal now has a sentence the sidebar has no branch to show —
+it still renders a denial as "No active automations".
+
+Shipped in [#450](https://github.com/juno-ai-labs/avalon/pull/450). Design:
+[the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
+
+### 2026-08-31 — Connector reads leave regional D1 for the object that has the rows
+
+**What changed:** the three statements AutomationAgent sent to its own `env.DB`
+for `connector_connections` and `slack_user_links` — the plugin-binding read in
+`prepareAcceptance` and both reads in `resolveDeliveryTargets` — now go through
+`withWorkspaceRuntimeDatabase`. The `users` read beside them stays on the
+regional binding, which is the authority that has that table.
+
+**Why:** migration 0090 dropped both tables from regional D1 when the workspace
+authority opened; WorkspaceDO is their only live authority. The object kept
+asking D1 for them, so every one of those reads raised `D1_ERROR: no such
+table`. That is not one of this object's snake_case codes, so
+`withAutomationErrors` passed it through unmapped and `errorHandler` answered
+`500 internal_error`. What a person saw: ticking Slack DM under **Delivered to**
+on an automation put "An unexpected error occurred" under the list and left the
+box unticked, with no way to save a connector destination at all. Acceptance
+carried the same defect on the same table — choosing any connector plugin for a
+new automation failed the same way, and equally silently.
+
+The same read also gained `AND status <> 'disabled'`.
+`connector_connections_active_model_plugin_id_uq` is partial on
+`status != 'disabled'` and `allocateModelPluginId` hands a disabled row's name
+back out, so connect/disconnect/reconnect leaves two rows sharing one
+`model_plugin_id`; `new Map` kept whichever an `ORDER BY`-less scan returned
+last, and a disabled winner refused a plugin the create screen had just offered.
+The predicate is the one that screen's own catalog applies. Two delivery codes
+that were thrown but unmapped — `automation_email_delivery_unavailable` and
+`automation_workspace_connection_required` — were added to the error table, so
+both halves of the destination list answer with a sentence rather than one of
+them falling to the generic net. And `detailUnchecked` stopped projecting a
+Slack target's `displayName` as the raw provider id: that field is read only for
+a destination whose connection is gone, where `U0ABCDEF` was the sole label on
+the one row telling a person something was wrong.
+
+**Considered and rejected:** wrapping the object's whole `env` once in the
+constructor. Not for the reason that first suggests itself — an earlier draft of
+this entry said it would wrongly route identity and membership reads through the
+facade, which is false: the compiler turn already hands `compileAutomationDraft`
+an env wrapped exactly that way, and its `searchPeople` runs
+`workspace_members JOIN users` through it to regional D1 without incident. The
+real obstacle is that the port needs a workspace id and the constructor has
+none — identity is read from storage behind `await this.initialized`. A private
+`workspaceDatabase(workspaceId)` is what that leaves, and it is what the object
+now has; `workstream-object-product.ts` had already arrived at the same shape.
+
+**Considered and deferred:** converting these reads to typed WorkspaceDO methods,
+which is where the rest of the facade is going.
+[`connectors.md`](connectors.md) rejects converting `connector_connections`
+deliberately — it carries the AES-GCM credential envelope and interlocks with
+regional control-plane writes — and [`digests.md`](digests.md) rejects carving
+out one of its reads because it would leave that domain's boundary drawn in two
+places. Routed SQL is the correct interim here; these three reads convert when
+`connector_connections` does, and not before.
+
+**What a future change has to respect:** a Durable Object gets the raw
+environment. Unlike a service, nothing wraps its `DB` on the way in, so any
+statement it sends that names a `WORKSPACE_LOCAL_TABLES` table has to be routed
+explicitly. That is no longer only prose:
+`apps/api/test/durable-object-workspace-table-routing.test.ts` scans every object
+under `durable-objects/` and fails on one, importing the real
+`WORKSPACE_LOCAL_TABLES` rather than a copy of it — the list drifts precisely
+when a table is added, which is the moment the guard matters. An ESLint rule was
+the other candidate and was rejected for that reason: rules are `.mjs` and would
+have to restate the list.
+
+Worth knowing about the region that has not cut over: migration 0090's guard is
+a `CHECK` that aborts, so such a region keeps the D1 shells — but every *writer*
+of `connector_connections` already routes through the port, so those shells are
+empty. Before this change that region did not answer 500; it answered
+`automation_delivery_connection_unavailable` for a connection that plainly
+exists, which is the worse of the two, because it reads as a legitimate refusal
+rather than as a fault.
 
 ### 2026-08-29 — The template gallery becomes three typed WorkspaceDO methods
 

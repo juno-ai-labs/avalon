@@ -38,6 +38,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
+| `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document and Terminal service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
 | `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, per-block `BlockDashboardAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, and their SQL-only migration/storage layers. |
@@ -75,11 +76,14 @@ docs/                      Product, architecture, security, setup, runbooks
    over that bridge. A renderer combines them with its own window focus and
    active work-stream route before reporting ephemeral presence to WorkspaceDO;
    pooled work-stream sockets are never treated as attention.
-2. **`apps/api`** is a Hono application deployed as the same Cloudflare Worker
-   code in Global and EU environments. It owns authentication, authorization,
+2. **`apps/api`** is a Hono application deployed as three statically imported
+   Cloudflare Worker graphs in each of Global and EU: the regional API plus
+   private document-processing and Terminal-provider services reached through
+   typed Service Bindings. The API owns authentication, authorization,
    REST endpoints, WebSocket upgrades, D1 repositories, R2 objects, Queue
    production and consumption, Workflows, scheduling, connector execution, and
-   the OpenRouter harness.
+   the OpenRouter harness. The private services isolate heavyweight stateless
+   SDKs without request-time module loading or another product authority.
 3. **Shared packages** contain runtime-validated contracts, database schema and
    repositories, connector adapters, agent-loop code, UI primitives, and test
    fixtures. Business rules live here or in services, never in route handlers.
@@ -258,7 +262,7 @@ predecessor is a different ID and is not a serving fallback. All namespaces are
 SQLite-backed and use explicit SQL only. Before guarded maintenance cutover, D1
 serves work-stream product rows;
 afterward each child owns its ordered parts, runs/tools, compaction, timers,
-suggestions, and Terminal state, while its parent aggregates common/user
+retained-content audience fences, and Terminal state, while its parent aggregates common/user
 metadata and `WorkspaceDO` owns the authoritative workspace product database.
 D1 retains identity/membership, regional routing/migration, and operational
 records; it has no rebuildable workspace/work-stream serving projections. The normalized schemas, fleet import, and authority states are in
@@ -295,7 +299,7 @@ the aggregate, appends a common or per-viewer state row with a monotonic
 waterline and UUIDv7 identity, and owns the sole parent outbox. The direct
 WorkstreamDO socket can publish that committed row immediately. Its alarm sends
 an opaque Queue wake-up for every directory, viewer, resource-link,
-suggestion-feedback, activity-log, and mention-delivery effect. The regional
+activity-log, and mention-delivery effect. The regional
 consumer fetches the payload from WorkstreamDO and RPCs the named WorkspaceDO.
 WorkspaceDO rejects stale/duplicate per-key waterlines, persists the current
 row with the same UUIDv7 for the affected common or viewer field, and publishes
@@ -667,7 +671,9 @@ precede any LLM classification.
   schema fail the readers still running the old one.
 - **Global reaches EU only through named Worker RPC service bindings.** There is
   no public internal-bridge HTTP route, and adding one would put the region
-  boundary on the open internet.
+  boundary on the open internet. The engineering MCP is the explicit
+  Access-authorized operator exception that may return requested EU Durable
+  Object content through such a binding; product traffic has no equivalent.
 - **A run's authority can narrow but never widen.** Immutable run scopes plus live
   connection reauthorization mean progressive plugin activation cannot introduce a
   connection or grant the run did not start with.
@@ -703,6 +709,7 @@ document, and it does not absorb one when it grows:
 | The macOS status item | [`menu-bar.md`](menu-bar.md) |
 | Regional product telemetry and crash reporting | [`telemetry.md`](telemetry.md) |
 | Hosted resources, secrets, deployment, incidents | [`runbook.md`](runbook.md) |
+| Operator discovery and raw Durable Object SQLite inspection | [`engineering-mcp.md`](engineering-mcp.md) |
 
 A new module is added to this map in a sentence and documented in its own file per
 [`module-documents.md`](module-documents.md); the map does not grow a section for
@@ -749,8 +756,10 @@ it.
   [`agent-harness.md`](agent-harness.md).
 - **A missing or malformed Worker variable fails the isolate at its entrypoint**
   rather than inside the first request that happened to read it.
-- **Cross-region workspace-content access is not implemented.** A caller that
-  needs it does not have a degraded path; it has no path.
+- **Cross-region workspace-content access is not implemented for product
+  callers.** The only path is deliberate operator inspection through the
+  Access-protected engineering MCP; it has no product fallback and persists no
+  returned content.
 
 ## Testing
 
@@ -805,6 +814,74 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-30 — Add a dedicated operator path to Durable Object authority
+
+**What changed:** A stateless engineering MCP routes through private named
+regional API entrypoints to a shared inspection RPC inherited by scheduled
+Durable Objects.
+
+**Why:** Production SQLite inspection needs authority-aware discovery across
+both regions without moving product state into D1 or exposing regional HTTP
+bridges.
+
+**Considered and rejected:** D1 product mirrors and direct object routes would
+either create a second authority or widen the raw-SQL trust boundary.
+
+**Consequences:** Architecture's no-cross-region-content rule now explicitly
+excludes this Access-authorized operator console. Product paths remain regional
+and typed; operator SQL is destructive and separately documented.
+
+### 2026-08-30 — Public inference pricing gets one scheduled producer
+
+**What changed:** Global now deploys a fourth Worker whose hourly scheduled
+handler refreshes OpenRouter endpoint averages into the KV namespace both
+regional APIs read. The cache has one canonical model-ID key per record and
+stores decimal costs as strings. Deployment builds, profiles, uploads, and
+promotes seven total Worker artifacts.
+
+**Why:** Provider pricing is shared fleet metadata, not request or workspace
+state. Refreshing it inside an arbitrary inference request coupled member
+latency and Azure eligibility to an OpenRouter catalog write.
+
+**Considered and rejected:** A Workflow adds durable orchestration without a
+durable multi-step transaction to resume; one cron execution is fourteen reads
+followed by fourteen small writes. One cron per region would duplicate and race
+the same public metadata.
+
+**Consequences:** Inference is read-only against pricing KV, stale valid records
+remain available during catalog outages, and a missing record omits Azure. The
+Global-only cron is a deployment dependency but not a regional product
+authority; [`api-worker-deployment.md`](api-worker-deployment.md) owns its build
+and rollout contract.
+
+### 2026-08-30 — Heavy provider graphs move behind typed Worker services
+
+**What changed:** Each region now deploys three statically imported Workers:
+the regional API, a document processor for PDF/image codecs, and a Terminal
+provider for the Daytona SDK. The API reaches the latter two through explicit
+typed Service Binding RPC methods. Deployment builds and profiles all six
+regional artifacts, establishes services before callers, and retains the EU
+health barrier before Global.
+
+**Why:** Cloudflare evaluates a Worker's static module graph before serving it,
+and the monolithic graph crossed the platform startup CPU limit. The controllable
+unit is a Worker graph, so heavyweight stateless capabilities need independent
+graphs rather than conditional evaluation inside the API.
+
+**Considered and rejected:** Dynamic imports were rejected because Rally's
+dependency graph must remain visible to TypeScript and deployment tooling before
+execution; request-time loading merely transfers initialization to product
+traffic. Splitting Durable Objects was rejected because it would add authority
+and namespace migration without isolating the relevant provider libraries.
+Retry and minification were rejected because they preserve the timing race.
+
+**Consequences:** Product authority and object identities remain in the API,
+while two private compute services become regional deployment dependencies.
+Their RPC contracts must remain compatible through service-first rollout, all
+imports remain static, and every Worker graph has independent startup evidence.
+[`api-worker-deployment.md`](api-worker-deployment.md) owns the detailed build,
+test, failure, and rollout contract.
 
 ### 2026-08-28 — An automation becomes its own Durable Object
 

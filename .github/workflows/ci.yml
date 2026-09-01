@@ -30,6 +30,7 @@ jobs:
               pnpm typecheck &&
               pnpm --filter @rally/api build &&
               pnpm --filter @rally/api build:eu &&
+              pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
@@ -41,8 +42,10 @@ jobs:
             command: pnpm --filter @rally/api exec vitest run --shard=2/3
           - name: api-tests-3-of-n
             command: pnpm --filter @rally/api exec vitest run --shard=3/3
-          - name: api-tests-workers
-            command: pnpm --filter @rally/api test:workers
+          - name: api-tests-workers-1-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/2
+          - name: api-tests-workers-2-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=2/2
           - name: crash-symbolicator-container
             command: pnpm --filter @rally/api test:crash-symbolicator-container
           - name: remaining-tests
@@ -109,7 +112,14 @@ jobs:
           cache-from: type=gha,scope=crash-symbolicator
           cache-to: type=gha,mode=max,scope=crash-symbolicator
 
+      # A lane opts into a heap ceiling by carrying `env.NODE_OPTIONS` in its
+      # matrix entry above. A matrix key named `env` is only a variable — Actions
+      # gives it no meaning of its own — so it reaches the process only by being
+      # named here. Lanes that set nothing get an empty `NODE_OPTIONS`, which
+      # Node ignores.
       - name: Run ${{ matrix.name }}
+        env:
+          NODE_OPTIONS: ${{ matrix.env.NODE_OPTIONS }}
         run: ${{ matrix.command }}
 
   # Keep one stable required check while the expensive work fans out above.

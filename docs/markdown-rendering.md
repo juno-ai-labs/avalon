@@ -15,16 +15,21 @@ one of them silently missed the others; the changelog records what that cost.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, heading collapse, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. |
+| `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The asynchronous Mermaid SVG render, strict untrusted-input configuration, active-token configuration, and source fallback. Mermaid's module-wide configuration and render calls are serialized here so two diagrams cannot race one another's theme. |
+| `apps/desktop/src/renderer/components/markdown-mermaid-theme.ts` | Maps Mermaid's rendering roles onto the active computed Rally design tokens. It owns no palette and does not branch on an appearance id. |
+| `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
+| `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that keeps an expanded section open while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
-| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, and the plain-text rewrite that outbound email and Slack delivery send instead. |
+| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the image-syntax announcement scan, and the plain-text rewrite that outbound email and Slack delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
-| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the two host overrides, `.note-detail-article` and `.meeting-notes-body`, each of which states a heading scale and nothing else. |
+| `apps/desktop/src/renderer/lib/use-auto-open-embedded-resource.ts` | Auto-opening the inspector onto the latest embed card in the last two text turns of a work stream. |
+| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), `.citation-card-preview` (inherits tone and zeros block margins so the four-line clamp spends itself on text), and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
 
-Nine call sites, all passing a markdown string as `children`:
+Ten call sites, all passing a markdown string as `children`:
 
 | Surface | Call site |
 | --- | --- |
@@ -34,7 +39,8 @@ Nine call sites, all passing a markdown string as `children`:
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
-| A resource's readable content in the rail's detail | `inspector-rail.tsx` |
+| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document. Hosted as `.inspector-detail-document` in the rail's own scroll, not in a boxed inner pane, and sized to the rail's column so long prose wraps to the panel instead of clipping. |
+| The embed card's preview of that same derivative | `markdown-citations.tsx`, via `CitationPreviewBody` in `workstream-blocks.tsx` so the card does not import the renderer it lives inside |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
@@ -54,6 +60,33 @@ Inline code becomes `code.markdown-inline-code`; a block becomes
 unrecognised language falls back to `plain` after one pass through
 `markdownLanguageAliases`, so a fence labelled with something Prism has never
 heard of still renders as code.
+
+A completed `mermaid` fence instead renders as a diagram. It keeps the same
+header and copy button as a code block, so the exact source remains available
+without putting another control inside the SVG. Mermaid is configured with
+`securityLevel: strict`, HTML labels disabled and its security settings locked:
+the markdown is untrusted model or member input, so links, click handlers and
+raw HTML are not diagram features here. Its generated SVG is the renderer's one
+sanitised-markup insertion point. Render calls are serialized because Mermaid's
+configuration is module-global. Each render starts from Mermaid's configurable
+base theme and supplies concrete values resolved from Rally's active semantic
+tokens: surfaces, text, borders, state washes, chart series, typography, radius,
+and stroke width. Connections use `cmp.markdown.diagram-line`, which each theme
+aliases to its strongest line-ramp step; actor and cluster outlines remain on
+the quieter border roles. The SVG is regenerated when Rally's resolved
+appearance changes, so light and dark modes use the same role mapping with their
+own values.
+The SVG keeps the natural width in Mermaid's `viewBox` instead of obeying its
+generated `width="100%"`: wide diagrams scroll inside the code-block surface,
+while scaling a sequence diagram down to a narrow message would make its labels
+technically present and practically unreadable.
+While a turn streams, the fence stays highlighted source. Parsing an open fence
+on every reveal commit would start asynchronous work Mermaid cannot cancel and
+would discard almost all of it on the next token; the settled turn renders it
+once. A glance also keeps source because it lives inside a button, and a saved
+still keeps source because export serializes `MarkdownBody` synchronously. A
+parse failure says that the diagram could not be rendered and leaves that same
+source visible rather than replacing content with an error graphic.
 
 `MarkdownCodeBlock` renders a `.markdown-code-block-header` bar above the
 highlighted `pre`: the fence's language on the left as `.markdown-code-language`,
@@ -77,16 +110,93 @@ counts the header row's cells and publishes the count as
 `--markdown-table-columns`, which the stylesheet uses to give the table a minimum
 width proportional to how many columns it actually has.
 
+A GFM table cell cannot contain a real newline — that ends the row — so models
+write `<br/>` inside one. Ordinary paragraphs pick up the same habit. Because
+this renderer does not parse HTML, a remark pass after `remark-gfm` turns a
+bare break tag (`<br>`, `<br/>`, `<br />`) from its mdast `html` node into a
+`break`. Escaped and encoded examples remain text nodes and stay text. Code is
+skipped. Every other tag stays as it was. The pass runs on every body,
+including `verbatim`: this is a renderer affordance for one tag, not a repair
+of what a model meant, and a stored document's table uses the same workaround.
+
+### Heading collapse
+
+Heading collapse is opt-in and enabled only by the main work-stream message
+feed. There, every heading h2 and below is an accordion, one level deep. Every
+other Markdown surface — the inspector rail, notes, attachment lightbox,
+HyperSight, meeting briefing, and automation setup — renders headings fully
+expanded. This keeps compact feed navigation from becoming a surprising
+document-reader behavior. It also avoids borrowing `still`, whose citation
+behavior belongs to exported pictures rather than interactive screens.
+
+Where collapse is enabled, the section runs from that heading until the next
+heading of the same or higher rank (lower number). An h3 under an h2 is content
+of the h2, not a nested accordion — nested collapse is how a scan of the
+document becomes worse than the scroll it was meant to shorten. An h1 is never
+collapsible; it closes the open section and the title that follows waits as
+preamble until the next h2+. Lead text before that first h1 is preamble too —
+closing an h1 must flush it, or the bytes disappear from the reconstructed
+source.
+
+Headings inside code are ignored, through the same `markdownLineKinds`
+answer the streaming splitter already uses. Headings inside a list item or
+a blockquote stay in that container: `- Item 2\n---` is a list plus a
+thematic break, not a setext h2, and `  ## heading` under a list item is
+list content, not a section boundary.
+
+When enabled, a section starts collapsed. The heading stays fully visible; the body shows
+approximately the first three line-heights of whatever follows — a
+paragraph, the top of a table, the start of a fence — behind an opacity
+mask that starts at 60% on the first pixel and reaches transparent on the
+last, so the content fades into the next heading rather than cutting off
+as a hard clip. The chevron sits in a left gutter, coloured
+with `sys.color.text.muted` (the receding control tone, the same token the
+citation chip's icon uses), and carries a tooltip. Clicking the heading or
+the chevron toggles the section; a click that follows a text selection does
+not, so copying a heading does not collapse it.
+
+A glance is already a four-line clamp inside a button, and a still is a
+picture that cannot be toggled, so neither grows accordions. The exported
+card therefore prints the document in full, without chevrons.
+
+The **Speak** action likewise uses the complete stored Markdown source rather
+than reading this collapsed DOM. Its server-side plain-text reduction and PCM
+stream are owned by [`message-speech.md`](message-speech.md); collapse is only a
+view state and must never decide which words are audible.
+
+The collapse-all control lives in the agent-message header, immediately to
+the right of **Worked for**. It expands or collapses every section in that
+turn. New sections that stream in are collapsed regardless of that
+control's last action, because a heading that has only just arrived is the
+thing the reader has not chosen to open.
+
+Streaming keeps the existing settled-segment memo: complete sections
+render as memoised chunks, and only the last section's body goes through
+`splitStreamingMarkdown`. An expanded section stays expanded as its body
+grows. Because collapse keeps one `react-markdown` mount per section even
+after the stream settles, GFM footnote definitions and link-reference
+definitions that live under a later heading are appended onto fragments
+that do not already carry them, so a `[^1]` or `[text][ref]` in Claims
+still resolves. The parse that already owns the definition is left
+untouched — identity of the fragment string is the signal — and a
+borrowed definition does not emit a second `.footnotes` list, which
+would duplicate `fn-` ids with the section that actually wrote the
+definition.
+
 ### Mentions
 
-A person mention arrives as a link with a `person:<uuid>` href and a connector
-mention as `connector:<type>:<label>`. `urlTransform` lets exactly those two
-schemes through untouched — everything else goes through react-markdown's
-`defaultUrlTransform` — and the `a` override is where they are decided. A
-`person:` href resolves against the `mentions` prop and becomes a `MentionChip`;
-a `connector:` href minted by this render's own token becomes a connector chip.
-Neither is ever emitted as a navigable link. Every other link renders as an
-external one, with `target="_blank"` and `rel="noopener noreferrer"`.
+A person mention arrives as a link with a `person://<uuid>` href — bare
+`person:<uuid>` is still accepted so stored transcript text keeps resolving.
+A connector mention is minted at render time as
+`connector://<token>:<type>` (bare `connector:<token>:<type>` still accepted)
+and is *not* a citation scheme. `urlTransform` lets `resource:`, `person:`, and
+those connector mention hrefs through untouched — everything else goes through
+react-markdown's `defaultUrlTransform` — and the `a` override is where they are
+decided. A `person:` / `person://` href resolves against the `mentions` prop and
+becomes a `MentionChip`; a tokened connector href becomes a connector chip via
+the identity path before the citation matrix. Neither is ever emitted as a
+navigable link. Every other link renders as an external one, with
+`target="_blank"` and `rel="noopener noreferrer"`.
 
 The connector token is created once per mounted body, so a link keeps its
 identity across re-renders and a `connector:` string that merely appears in the
@@ -102,7 +212,64 @@ when it cannot. What it adds is a second syntax form and a second position.
 `[Title](resource://<id>)` renders as an inline chip.
 `![Title](resource://<id>)` renders as a block embed card — image syntax, because
 models place an image on its own line by training, so the card lands between
-sentences with no renderer heuristic guessing where a block belongs. A GFM
+sentences with no renderer heuristic guessing where a block belongs. A run of
+consecutive embeds — adjacent embed-only paragraphs, or several in one
+paragraph — is merged by `rehypeCitationEmbedRows` into a single
+`.citation-card-row` that scrolls sideways; a lone embed keeps its paragraph.
+**The pass groups only what this render will actually draw as a card**: it is
+given a predicate over the citation context's own resolver, so a surface with no
+context, or a target this work stream does not carry, keeps the paragraphs it
+already had rather than becoming a horizontal scroller full of sentences. It
+also rewrites the root's children alone, so embeds inside a blockquote or a list
+item stay a column — deliberately, because the placement bet is that models put
+an image on a line of its own, and a pass that walked the whole tree would start
+grouping across prose that happens to sit between them.
+While a message streams, embeds in different settled segments stay separate
+cards, and the whole-body re-render at completion merges them — the same
+healing every other cross-segment construct gets.
+
+An embed card also shows a **preview** of the resource's own text between its
+badge and its title, when the host offers one: `CitationContext.preview` reads
+the same `/resources/:id/preview` derivative the rail's detail panel shows — a
+Word file's markdown, a PDF's OCR — so the card and the panel it opens onto
+cannot disagree about a document. The preview is itself a `MarkdownBody`
+(glance, verbatim, no citations), so `**Author:**` bolds and a heading is a
+heading rather than printed markers, a fence or a link cannot nest a control
+inside the card's button, and an external image cannot fetch from a URL the
+document chose merely because the card painted. It is a glance, not a reader:
+the stylesheet clamps it to four lines, scales every heading to the kind
+label's size, zeros block margins so the clamp spends its lines on text rather
+than on paragraph seams, and it scrolls in neither axis, because the whole
+card is one button and a scrollable box inside it would swallow the click.
+The preview is `aria-hidden` and `inert` as a backstop; the glance renderer
+is what keeps the nested controls out of the DOM. The excerpt leaves blank
+lines intact — they are the block grammar — and only normalises `\r\n` and
+caps at 600 characters. While the derivative is still being converted the
+card shows a shimmering skeleton, and every terminal answer — unconvertible,
+gone, retries spent — leaves the card's empty room rather than an error
+inside a control. A still never asks at all. The preview draws in
+`sys.color.text.disabled`, the faintest typographic tone, so it recedes from
+the title beneath it.
+
+On a work stream, the latest embed card in the last two **text** turns also
+opens the inspector onto that document without a click. The window is those
+two turns on purpose: a follow-up that does not re-announce the file should
+still surface it, and a document three turns back should not steal the rail.
+A turn that flattened into several text blocks still counts as one turn, so
+its own first-block card cannot be pushed out by later blocks of the same
+answer. Only agent text is scanned: human and external turns render markdown
+verbatim, without the citation context, so image syntax there is label text
+rather than a card. The same path runs when the feed first belongs to the
+route (open, reconnect, a snapshot that first makes the turns available) and
+when a streamed turn grows an announcement that was not there. Closing the
+rail for that announcement does not reopen it — the visit key is the turn
+id, so replacing the live overlay with its canonical block is the same
+announcement. Leaving the work stream and coming back does, because that is
+a new visit. Chips, footnotes, unresolved ids, escaped bangs, and samples
+inside code never qualify — they are not cards. Automation drafts do not
+auto-open: resources and the inspector are work-stream product controls.
+
+A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
 inline numbered pill with a hover popover, and its entry is dropped from the
 trailing list; a definition that does not fit that grammar keeps classic
@@ -115,9 +282,12 @@ The dispatch is a **matrix, not an if-chain**: three
 protocol is a type error until somebody has decided what it looks like as a
 link, as an embed, and as a source. Two cells are worth knowing about:
 
-- **`image` × `https` is a real image**, deliberately. Markdown images render
-  today and the CSP permits them, so hijacking that syntax as a web-citation
-  card would collide with the model legitimately embedding an image.
+- **`image` × `https` is a real image**, deliberately — except in the embed
+  card's glance, which reduces it to alt text. Markdown images render today
+  and the CSP permits them, so hijacking that syntax as a web-citation card
+  would collide with the model legitimately embedding an image. The glance is
+  a four-line hint inside a button, and loading the URL would tell the host
+  the card painted.
 - **`link` × unknown keeps react-markdown's default.** That cell is where
   `mailto:`, `tel:` and relative targets live; rendering it as text would be a
   regression dressed as a degradation.
@@ -177,12 +347,19 @@ boundaries at all, settles nothing, and re-parses whole on every commit at
 the paced reveal's rate.
 
 Streaming rendering is therefore an approximation the settled re-render
-heals: each settled list item renders as its own single-item list while the
-message streams (ordered numbering survives via the `start` attribute; a
-loose item renders tight — without its paragraph wrapper — until the turn
-completes), and a reference link or a GFM footnote whose definition arrives
-in a later segment renders literally until then. The commit that ends the
-stream renders the source whole again.
+heals when heading collapse is off: each settled list item renders as its own
+single-item list while the message streams (ordered numbering survives via the
+`start` attribute; a loose item renders tight — without its paragraph wrapper
+— until the turn completes), and a reference link or a GFM footnote whose
+definition arrives in a later segment renders literally until then. The
+commit that ends the stream renders the source whole again.
+
+When collapse is on, that whole-document re-parse cannot happen — each
+section is still its own mount after settle — so definitions are copied
+onto fragments that do not already contain them. A reference whose
+definition has not arrived yet still renders literally, matching the
+streaming seam; once the definition exists anywhere in the document, every
+section parse can see it.
 
 This exists because the paced reveal
 ([`streaming-reveal.md`](streaming-reveal.md)) commits up to once per painted
@@ -215,17 +392,23 @@ in list ancestors of either kind so that an `ol` holding a `ul` is a second leve
 
 A surface hosting `MarkdownBody` may override typography — a heading scale, a
 measure — because that is a property of the surface. It may not restyle a
-markdown element. Two surfaces take the exemption: a note reads as a document
-page and steps its headings 22/17/14, and the meeting briefing sits in a narrow
-rail beside a transcript and holds every level at 15px.
+markdown element. Three surfaces take the exemption: a note reads as a document
+page and steps its headings 22/17/14, the meeting briefing sits in a narrow
+rail beside a transcript and holds every level at 15px, and the embed card's
+preview holds every level at the kind label's size so a glance does not spend
+its four lines on a title.
 
-Both write the exemption as `<host> .markdown-body :is(h1, …)`, naming the shared
-container even though the host alone would select the same elements. That is
-deliberate. `.note-detail-article h1` ties `.markdown-body h1` at (0,1,1) and
-wins only by sitting lower in the file, so the override would survive exactly as
-long as nobody split the stylesheet or moved a block. With `.markdown-body` in
-the selector it is (0,2,1) and the question does not arise. A host override that
-cannot be written this way is a sign it is not a typography override.
+Each writes the heading exemption as `<host> .markdown-body :is(h1, …)`, naming
+the shared container even though the host alone would select the same elements.
+That is deliberate. `.note-detail-article h1` ties `.markdown-body h1` at
+(0,1,1) and wins only by sitting lower in the file, so the override would
+survive exactly as long as nobody split the stylesheet or moved a block. With
+`.markdown-body` in the selector it is (0,2,1) and the question does not arise.
+The embed card goes one step further: the feed already paints `.markdown-body`
+at (0,3,0), so the preview names `.citation-card` and the wrapper's `div` to
+sit at (0,3,1). Block margins and list markers recede through `*` and
+`::marker` rather than by naming `p` or `li`. A host override that cannot be
+written this way is a sign it is not a typography override.
 
 ## Invariants
 
@@ -234,6 +417,12 @@ cannot be written this way is a sign it is not a typography override.
   is not hypothetical: it is what happened, and what the surfaces that had it
   looked like was *nothing* — no error, no visual break, just a list without
   markers that nobody connected to a CSS change made elsewhere.
+- **A bare break tag is the only HTML that becomes an element.** `<br>`,
+  `<br/>`, and `<br />` parsed as `html` become a `<br>` element; escaped or
+  encoded examples stay text, and a tagged `<br class="…">` and every other
+  element stay characters. Widening the pattern is how this becomes an HTML
+  parser. Code is not rewritten. The pass runs on `verbatim` bodies too — it is
+  not TeX repair.
 - **Markdown element styling lives in the `.markdown-body` group and nowhere
   else.** A rule like `.note-detail-article ul` ties `.markdown-body ul` on
   specificity, so which one applies is decided by which is further down a
@@ -248,10 +437,12 @@ cannot be written this way is a sign it is not a typography override.
   file is a regression waiting for the next person who splits a stylesheet, and
   it fails silently and visually, which is the combination this module has
   already been bitten by once.
-- **A mention link is never navigable.** `person:` and `connector:` survive
+- **A mention link is never navigable.** `person:` / `person://` and
+  render-minted `connector:` / `connector://` hrefs survive
   `urlTransform` only so the `a` override can turn them into chips or, failing
   that, into inert text. If one ever reached the DOM as an `href`, a model would
-  be choosing a destination.
+  be choosing a destination. Connector is not a citation scheme; chips go
+  through the identity path before the matrix.
 - **A connector chip requires this render's token.** Without it the link is text
   someone wrote rather than a mention Rally minted, and it renders as a
   fallback span.
@@ -259,10 +450,11 @@ cannot be written this way is a sign it is not a typography override.
   else.** A chip adds an affordance, never disclosure: the label is the model's
   own words, already in the message. This is also what an unauthorized target
   renders as, which is why it is indistinguishable from one that does not exist.
-- **`urlTransform` passes exactly three schemes, in two positions.** `resource:`,
-  `person:` and `connector:`, on `a[href]` and `img[src]`. Everything else goes
-  through `defaultUrlTransform`, which empties what it rejects. Widening this is
-  how a model-chosen destination reaches the DOM.
+- **`urlTransform` passes citation schemes plus connector mention hrefs, in two
+  positions.** `resource:`, `person:` / `person://`, and `connector:` /
+  `connector://`, on `a[href]` and `img[src]`. Everything else goes through
+  `defaultUrlTransform`, which empties what it rejects. Widening this is how a
+  model-chosen destination reaches the DOM.
 - **The matrix has no fallthrough.** Every cell is written, or the compiler
   refuses the table. An `else` branch here is a silent gap by another name.
 - **A citation's sources are reachable on whatever surface it renders on.** In
@@ -301,9 +493,13 @@ cannot be written this way is a sign it is not a typography override.
 
 This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an optional
-`mentions` array and an optional `citations` context — plus the citation matrix
-and `ResourceIcon`, which the inspector rail renders too so that one resource
-kind draws one glyph everywhere.
+`mentions` array, an optional `citations` context, and `glance` / `verbatim` /
+`still` / `streaming` / `collapseHeadings` flags — plus the citation matrix and
+`ResourceIcon`, which the inspector rail renders too so that one resource kind
+draws one glyph everywhere. Heading collapse is off unless a host explicitly
+sets `collapseHeadings`; the main work-stream feed is the intended opt-in host.
+Its collapse-all control is a sibling in the agent-message header and shares
+section ids with the body through `MarkdownCollapseController`.
 
 **It does not own where a citation goes.** The host supplies resolution and
 click routing as `CitationContext` (`lib/use-citations.ts` builds the
@@ -331,6 +527,12 @@ document has an opinion only about the part of it that is markdown.
 It renders untrusted text: everything it is given was written by a model, a
 meeting participant, or an inbound email. `react-markdown` does not evaluate HTML
 in its input and no `rehype-raw` is configured, so markup in the source is text.
+The first closed exception is a bare `<br>` / `<br/>` / `<br />`, rewritten to
+a real line break; that is not HTML parsing, and a tagged `<br class="…">` or
+any other element stays characters. Mermaid is the generated-markup exception:
+it receives only a `mermaid`
+fence, runs in strict mode with HTML labels and interaction disabled, and
+inserts the SVG Mermaid sanitised. Invalid input falls back to source.
 [`security.md`](security.md) owns the wider trust model.
 
 The *protocol* is shared; the *rendering* is not. `@rally/contracts/citations`
@@ -368,6 +570,8 @@ needs it should parse rather than widen the pattern again.
 
 - **A language Prism does not know** renders as `plain`. No error, no missing
   block.
+- **A Mermaid parse that rejects** renders a short failure line and the original
+  highlighted source. Mermaid does not write its own error SVG into the page.
 - **A failed copy** leaves the button in its idle state. `copyText` rejecting is
   swallowed deliberately; there is nothing useful to tell someone whose
   clipboard is unavailable, and the code is on screen either way.
@@ -417,6 +621,7 @@ subsumes the others.
 pnpm --filter @rally/desktop exec vitest run src/renderer/styles/app.css.node.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/markdown-renderer.node.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
+pnpm --filter @rally/desktop exec vitest run src/renderer/lib/markdown-collapse.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/attachments.test.tsx
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/citations.test.tsx
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-citations.test.tsx
@@ -444,6 +649,687 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — Heading collapse belongs only to the main message feed
+
+**What changed:** `MarkdownBody` and the shared `MessageBlock` make heading
+collapse opt-in. The main work-stream message feed enables it explicitly; the
+inspector rail, automation setup, launch conversation, and every other Markdown
+host inherit the fully expanded renderer. The rail still renders the file
+verbatim through the shared Markdown and citation renderer, without heading
+accordions, chevrons, or faded previews.
+
+**Why:** Heading collapse was introduced for long transcript replies, where it
+shortens the feed. Making it the shared renderer's default also collapsed
+documents and secondary surfaces whose readers never asked for compact message
+navigation.
+
+**What a future change has to respect:** A new Markdown host stays fully
+expanded unless it is part of the main message feed. Do not use `still` to
+suppress collapse on an interactive reader; `still` changes citation behavior
+for exported images.
+
+### 2026-08-30 — A bare `<br/>` becomes a line break, in tables and in prose
+
+**What changed:** `MarkdownBody` runs a remark pass after `remark-gfm` that
+turns a bare break tag's mdast `html` node into a `break`. Tables and ordinary
+paragraphs both get it; escaped and encoded examples stay text. Code is skipped.
+`verbatim` bodies get it too. The
+email renderer does the same rewrite on prose (after escaping, after parking
+code spans) and turns the tag into a newline in the plain-text part.
+
+**Why:** Models write `<br/>` for a line break inside a GFM table cell because a
+real newline ends the row, and they write the same tag in body copy. The
+renderer does not parse HTML, so those tags printed as characters — a
+deliverables column that was meant to be a list became one wrapped run with
+visible `<br/>` in it. Table-only would have left the identical glitch in
+paragraphs; converting to a real newline *before* parse would have broken the
+table the tag was holding together.
+
+**Considered and rejected:** Enabling `rehype-raw`. That is an HTML parser over
+untrusted model text, and the whole point of leaving it off is that markup is
+characters. Also rejected: replacing the tag with a Markdown hard break in
+`normalizeModelMarkdown`. A newline inside a table row is how GFM *ends* the
+row. Also rejected: skipping `verbatim`. The inspector and the lightbox are
+verbatim so TeX repair cannot rewrite a file; a break tag in that file is still
+a line break the file asked for.
+
+**What a future change has to respect:** this is a closed pattern — a bare
+`<br>` with optional whitespace and optional slash, nothing else. Widening it
+to other tags is how this becomes the HTML parser it is written not to be.
+Do not put the rewrite into `normalizeModelMarkdown`; the table grammar cannot
+survive a pre-parse newline. Email tables stay preformatted, so a break tag
+inside one still shows as characters there — that renderer has no table model.
+
+### 2026-08-30 — Mermaid diagrams use Rally's active tokens
+
+**What changed:** The Mermaid adapter now resolves the active theme's semantic
+tokens into Mermaid's base-theme roles instead of choosing Mermaid's generic
+`neutral` or `dark` palette. The mapping covers common nodes and connections,
+sequence actors and notes, states, tasks, requirements, chart series, font,
+radius, and stroke width. A dedicated `cmp.markdown.diagram-line` component
+token keeps arrows and message lines visible without promoting every diagram
+border to the same emphasis.
+
+**Why:** Brightness-aware was not design-system-aware. The generic Mermaid
+themes produced their own greys, borders, accent fills, typeface, and corner
+shape inside a Rally code block, so the diagram looked embedded rather than
+native in both modes.
+
+**Considered and rejected:** per-theme configuration objects would duplicate
+the theme JSON and require every future appearance to update component code.
+Broad CSS overrides would couple the application to generated selectors that
+vary by diagram kind. Resolving the already-active custom properties at the
+Mermaid boundary keeps theme ownership in the token files.
+
+**What a future change has to respect:** do not add literal colours or theme-id
+branches to the Mermaid adapter. Map a new Mermaid role to a design token, and
+inspect both lighting modes in Electron; token names do not by
+themselves prove readable contrast. Keep structural connections on the
+component line token and container outlines on the quieter border tokens.
+
+### 2026-08-30 — Mermaid fences render as diagrams
+
+**What changed:** A completed fenced block labelled `mermaid` renders Mermaid's
+sanitised SVG in every live `MarkdownBody` surface. It retains the code-block
+header and copy action, follows the current light or dark appearance, and falls
+back to highlighted source when parsing fails. Streaming turns, embed glances,
+and saved stills keep the source form. Mermaid runs with strict security, HTML
+labels disabled, post-render links removed, and serialized configure/render
+calls. Each queued job resolves the active tokens only when it starts; an
+unmounted job leaves the queue before it initializes Mermaid or after its
+resource preflight completes. Before parsing, the adapter applies Mermaid's
+initialized and secured text-size ceiling. `accTitle` and `accDescr` become the
+rendered image's accessible metadata; without them, the source remains available
+as its screen-reader description. A source preflight
+rejects external CSS resource functions in Mermaid style directives, and parsed
+flowchart image nodes and block styles are rejected before rendering, because
+Mermaid can load them while measuring or drawing. Labels remain ordinary text
+even when they contain CSS-looking words. SVG styling may use local
+`url(#fragment)` references for markers and gradients; parsed-style and output
+scans repeat the resource check as defense in depth.
+
+**Why:** Mermaid syntax was already arriving in agent answers, but the generic
+unknown-language fallback printed it as code — the failure shown in the product
+was a valid sequence diagram presented as implementation text. The renderer is
+the one markdown authority, so handling the fence there fixes work streams,
+notes, briefings, attachments and dashboard blocks together. Rendering only
+after a stream settles avoids launching an uncancellable asynchronous parse on
+every partial line; keeping source in a still preserves the export path's
+synchronous contract rather than saving a transient loading state.
+
+**Considered and rejected:** a second markdown renderer or a rehype Mermaid
+plug-in would split ownership or inject generated markup before the component
+could preserve copy/failure behavior. Loose Mermaid security was rejected
+because these diagrams are untrusted input and Rally does not need model-chosen
+HTML, links or click callbacks. Dynamic-importing Mermaid was rejected by the
+repository's static-import rule. Mermaid's published Tiny package was also
+rejected: its own package documentation says it is a CDN artifact that is not
+meant to be installed directly from npm, and using it through the bundler fails
+at runtime.
+
+**What a future change has to respect:** `mermaid.initialize` and `render` are a
+single serialized operation because configuration is global. Do not expose
+`bindFunctions`, loosen `securityLevel`, or let frontmatter re-enable HTML
+labels or replace Rally's theme inputs. Keep the post-render link removal and
+pre-render image-node and external-CSS-resource rejection, and keep the lifecycle
+check before token resolution so recycled transcript rows do not spend work on
+discarded diagrams.
+If saved diagrams become a requirement, make export await a completed render;
+do not serialize a live component's loading state.
+
+### 2026-08-30 — Connector chips and embeds show connection state
+
+**What changed:** Inline connector chips gain a brand mark and an aggregate
+connection status. Image-syntax `![Name](connector://<type>)` renders a
+horizontal card (citation-card tokens, provider-card content) with personal and
+workspace status. Connector chips and marks use neutral transcript surfaces;
+only connection status carries success or warning colour. The compact card uses
+one consistent inset and keeps its bare provider mark at the top left. The
+inline chip omits the composer's leading `@`; stored text and offsets retain it.
+The work-stream screen supplies live `/connections` data via
+`ConnectorConnectionsProvider`. A still-loading or failed query supplies no
+status, because an unresolved list is not evidence that a connection is
+missing. Once resolved, every matching credential in a scope contributes to a
+stable status and capability union. Google Mail/Calendar and Drive/Docs/Sheets
+remain the real shared `google` connector type; the visible label selects the
+capability family, so one bundle cannot claim that the other is connected.
+
+**Why:** Offset-backed connector mentions were label-only text chips, so a
+reader could not tell whether the named connector was usable. Resource embeds
+already set the transcript card vocabulary; connector announcements reuse that
+surface language rather than inventing a third card system.
+
+**What a future change has to respect:** Connector remains outside
+`CitationTarget`. Chip minting still requires the per-render token; embeds use
+the bare `connector://<type>` form. Status comes from the connections list, never
+from the message text. Treat the list as unresolved until query data exists,
+aggregate all same-scope credentials rather than choosing the first, and keep
+connector href parsing in `@rally/contracts/citations` so chip and embed syntax
+cannot drift.
+
+### 2026-08-30 — Connector is not a citation scheme
+
+**What changed:** `CitationTarget` / `citationScheme` no longer recognize
+`connector:`. Connector mention chips still mint `connector://` at render time
+and still pass `urlTransform`, but `CitationLink` routes them through the
+identity path before the matrix; the matrix has no connector cell.
+
+**Why:** Connector mentions are presentation minted from stored offsets, not
+something a model cites. Keeping them in the citation allowlist forced every
+new scheme position (link / embed / footnote) to invent a connector look, and
+conflated two different protocols.
+
+**What a future change has to respect:** Do not re-add `connector` to
+`CitationTarget`. Chip minting stays on `connectorMentionHref`; identity
+routing stays ahead of the matrix.
+
+### 2026-08-30 — Connector mention chips use the URL-style `connector://` house form
+
+**What changed:** The desktop renderer mints per-render connector chips as
+`[@Label](connector://<token>:<type>)`. The chip matcher accepts both that
+spelling and the legacy bare `connector:<token>:<type>`. Shared helpers live
+beside the person-mention ones in `packages/contracts/src/citations.ts`.
+
+**Why:** Person mentions and `resource://` citations already teach URL-style
+schemes. Connector chips were the last bare-form holdout in the same render
+path, and keeping two styles for adjacent identity schemes invites the same
+generalization miss person mentions already hit.
+
+**What a future change has to respect:** Emit through `connectorMentionHref`;
+read through `connectorTypeFromMentionHref`. Stored messages still carry plain
+`@Label` text plus offsets — only the render-time mint uses the scheme.
+
+### 2026-08-30 — Person mentions use the URL-style `person://` house form
+
+**What changed:** New person mentions are authored as
+`[@Name](person://<uuid>)`. The desktop chip matcher, email/Slack mention
+reducers, and `isCanonicalPersonMention` accept both that spelling and the
+legacy bare `person:<uuid>` so stored transcript text keeps resolving. Shared
+helpers live beside the citation scheme allowlist in
+`packages/contracts/src/citations.ts`.
+
+**Why:** Guidance and `resource://` citations already teach URL-style schemes.
+Keeping person mentions on the bare form meant every prompt that mentioned both
+had to teach two styles, and models that generalized to `person://` produced
+links the chip matcher and notification reducers silently failed to recognize.
+One house form with dual accept is the same pattern `resource:` / `resource://`
+already uses.
+
+**What a future change has to respect:** Emit through `personMentionHref`; read
+through `personIdFromMentionHref` / `personMentionMarkdownPattern`. A surface
+that matches only one spelling reintroduces the chip/reduction miss for the
+other.
+### 2026-08-30 — Collapsed heading preview fades from 60% to transparent
+
+**What changed:** The collapsed-section mask is a two-stop gradient from
+`color-mix(… text-default 60%, transparent)` at the first pixel to
+`transparent` at the last. The previous mask held full opacity through the
+first 18% of the clip.
+
+**Why:** The 18% hold made the first line read as full-strength body copy
+and then drop off; the preview is supposed to recede from the first pixel
+so the heading above it stays the thing the eye lands on. Starting at 60%
+is the requested strength of that recede. `#000` is still rejected in
+`app.css`; `color-mix` against `text-default` is the token-legal way to
+name 60% alpha.
+
+**What a future change has to respect:** the mask still uses `mask-mode:
+alpha` and a token, not a named or hex black. Do not restore a mid-gradient
+plateau unless the fade is meant to leave a fully-opaque band.
+
+### 2026-08-30 — Heading collapse keeps footnotes, list structure, and lead text
+
+**What changed:** The splitter flushes lead text when an h1 arrives with no
+section open, so preamble before the first title is not dropped. Setext
+underlines after a list item (or blockquote) are not headings, and ATX
+inside a list item is not a section boundary. Each section parse receives
+GFM footnote and link-reference definitions that live elsewhere in the
+document, without emitting a second footnotes list. Clicking a heading
+after selecting its text no longer toggles the accordion. The collapse
+controller keeps section-id identity with setState during render rather
+than a ref write.
+
+**Why:** Collapse splits the source into one `react-markdown` mount per
+section, including after the stream settles. That is the shape streaming
+cannot avoid — a rehype wrap cannot span segment boundaries — but it also
+broke GFM's document-scoped definitions, which the pre-collapse renderer
+healed by re-parsing the whole source. Independently, the h1 path moved
+`cursor` without flushing when no section was open, so `Lead.\n\n# Title\n\n## Next`
+lost `Lead.` and violated the reconstruct invariant. List-item setext and
+indented ATX are CommonMark constructs the classifier's `prose` kind cannot
+see, because it does not distinguish a list from a paragraph.
+
+**Considered and rejected:** wrapping with a rehype plugin after a single
+parse, which still cannot span streaming segments. Re-parsing the whole
+document once the stream ends would restore footnotes but would throw away
+the per-section memo the paced reveal is built on. Using `#000` for the
+preview mask is still rejected: `app.css` cannot name that colour, and
+`text-default` plus `mask-mode: alpha` is the token-legal equivalent.
+
+**What a future change has to respect:** do not treat a heading inside a
+list or a fence as a section. Appended definitions must not land on the
+heading-only parse (that slot is the title, not the body). A nested
+`MarkdownBody` reuses the parent collapse controller only when the section
+ids match — the embed glance is `glance` and has none.
+
+### 2026-08-30 — Headings h2 and below collapse, with a three-line preview
+
+**What changed:** The main message feed asks `MarkdownBody` to turn every h2–h6
+that is not nested under a higher-rank collapsible heading into an accordion.
+Within that feed, the default is collapsed. The
+heading stays in full; the body is clipped to about three line-heights with a
+strong opacity fade. A chevron in the left gutter, in `sys.color.text.muted`,
+carries a tooltip and toggles with a click on the heading. Nested headings
+(an h3 inside an h2) are not themselves collapsible. A glance and a still do
+not collapse. The agent-message header gained an expand/collapse-all control
+immediately to the right of **Worked for**. Streaming keeps the settled-segment
+memo: complete sections stay memoised, only the last section's body is the
+open tail, and an expanded section stays open as later headings arrive
+collapsed.
+
+**Why:** Long agent replies are structured as a sequence of topics. Reading
+one meant scrolling through every section in full, including the ones the
+reader had already decided were not the topic. Hiding the body entirely would
+make it impossible to tell a section from its title; a nested accordion under
+every h3 would recreate the scroll, one click deeper. The three-line preview
+is the compromise that lets a table or a paragraph identify itself without
+opening. Default-collapsed is the right first paint for a streaming reply,
+which would otherwise push the viewport by a full section on every heading
+that lands.
+
+**Considered and rejected:** wrapping with a rehype plugin inside a single
+`react-markdown` tree. That cannot span the streaming splitter's segment
+boundaries, so a heading in one settled chunk and its body in the next would
+not be one accordion. Splitting the source into sections first, then
+streaming only the last body, is what keeps the paced-reveal memo intact.
+`<details>` cannot show a faded preview of the first three lines.
+
+**What a future change has to respect:** do not nest accordions. The ids are
+`section-${index}` and must stay stable as the source grows, or an expanded
+section would snap shut when the next heading arrives. Do not put collapse
+on a glance or a still. The chevron colour is `text.muted`, not a hardcoded
+light-theme sample — that token is the receding control tone in every theme.
+The collapse-all control is a sibling of **Worked for**, not a prop on
+`MarkdownBody`, because the header is not inside the body.
+
+### 2026-08-30 — The rail's document wraps to the panel, not to its own max-content
+
+**What changed:** `.rail-surface` names a `minmax(0, 1fr)` column, `.rail-scroll`
+takes `min-width: 0`, and `.inspector-detail-document` is `max-width: 100%` with
+`min-width: 0`. Long markdown in the inspector wraps to the panel instead of
+laying out at max-content and being clipped by `overflow-x: hidden`.
+
+**Why:** Removing the boxed inner preview left the markdown in the rail's own
+scroll. `.rail-surface` is a grid that only named its row tracks, so the
+implicit column was `auto` and would not shrink below the document's
+max-content. The scroller then clipped the unwrapped lines. HyperSight already
+had `min-width: 0` on `.block-dashboard-panel`; the inspector document never got
+the equivalent. The changelog already said the host is sized to the rail; the
+host did not actually constrain its width.
+
+**What a future change has to respect:** do not drop the column track back to
+implicit `auto`. Sizing `.inspector-detail-document` to the rail remains the
+allowed exception; restyling markdown elements does not. A `max-width` other
+than `100%` would be a reading-measure, which this panel is not.
+
+### 2026-08-30 — The rail shows an image resource, and the document host joins the guard
+
+**What changed:** An image opened in the inspector renders as an `img` in
+`.inspector-detail-document`, sized to the rail, rather than last-updated over
+an empty panel. The host joined the stylesheet guard that forbids restyling
+markdown elements (not the heading-scale guard — this host has no heading
+override). Future `capturedAt` values no longer fall through an unbounded
+"this month".
+
+**Why:** Dropping the metadata card removed the only signal an image had. The
+rail is still not a lightbox; the image is the document analog of the markdown
+body. The guard was the rule the changelog already named and did not enforce.
+
+**What a future change has to respect:** do not style `img` (or any other
+markdown element) as a descendant of `.inspector-detail-document`. Size the
+image through `.inspector-detail-image` on the element itself.
+
+### 2026-08-30 — A hairline separates last-updated from the document
+
+**What changed:** The inspector detail draws `.inspector-detail-rule` between
+last-updated and `.inspector-detail-document`. It is host chrome — a hairline
+using `sys.size.border.hairline` and `sys.color.border.subtle` — not a restyle
+of `.markdown-body`.
+
+**Why:** Last-updated and the body share one scroll, and without a rule they
+read as one caption. Putting the line *inside* the markdown host would have
+been a second opinion about `hr`, which this renderer already owns.
+
+**What a future change has to respect:** the rule stays outside `.markdown-body`.
+Sizing the document host is still the allowed exception; restyling markdown
+elements is not.
+
+### 2026-08-30 — The rail renders a resource as a document, not a card of one
+
+**What changed:** `ResourceContentPreview` in `inspector-rail.tsx` dropped the
+boxed, independently scrolling `.inspector-detail-preview`. The markdown now
+lives in `.inspector-detail-document` under last-updated, and both move with
+`.rail-scroll`. The host sizes the body (`font-size: 13px`) and restyles no
+markdown element.
+
+**Why:** A citation that opened the rail landed on a metadata card with a
+preview window inside it. The box existed so **Remove** and **Refresh from
+source** stayed reachable under a long file; those actions left the body
+(archive is in the header, refresh stays above the document for sources), so
+the second scroller was trapping the timestamp above a document nobody could
+read as one.
+
+**What a future change has to respect:** do not put `max-height` or `overflow`
+back on the document host. A long file scrolls the rail. A heading-scale
+override here would have to name `.markdown-body` the way `.note-detail-article`
+does, and join that guard; sizing the container is the allowed exception.
+
+### 2026-08-30 — The embed card glance leaves the markdown intact and nests no controls
+
+**What changed:** `previewExcerpt` no longer collapses blank lines. The nested
+body is `MarkdownBody glance`, which renders links as their text, images as
+their alt, and fenced blocks without a copy button. Block margins zero through
+the existing descendant `*`, and `::marker` inherits the glance's tone.
+
+**Why:** collapsing blank lines was a plain-text trick. Once the string is
+parsed, those blanks *are* the block grammar — two paragraphs became one,
+a paragraph above `---` became a heading, and the sentence after a list was
+swallowed into its last item. The clamp's seams belong in CSS (`margin: 0`),
+not in the source. `inert` on an `aria-hidden` glance also made the "no nested
+control" tests unable to fail: `queryAllByRole` ignores hidden subtrees, while
+a fence still put a real `<button>` inside the card's `<button>`. Glance keeps
+those nodes out of the DOM. An external image in the derivative would fetch
+from a URL the document chose merely because the card painted; alt text does
+not.
+
+**Why not name `p` / `ul` / `ol` for the margin reset:** a host may override
+typography, not markdown elements, and the stylesheet guard exists to keep
+that from quietly coming back. `*` is a measure of the four-line box, the
+same way it already carries colour.
+
+**What a future change has to respect:** do not reintroduce the blank-line
+collapse to "spend the clamp on text"; the seams are CSS. Do not assert
+absence of nested controls with `queryAllByRole` on an `aria-hidden` node.
+A glance must not grow a copy control, an `<a href>`, or an `<img src>`
+for a URL the derivative named.
+
+### 2026-08-30 — The embed card kind is the file, and the preview type is normal weight
+
+**What changed:** a generated or uploaded file's kind label classifies from MIME
+and filename (`Document`, `Deck`, `Spreadsheet`, …) instead of printing
+`Generated file`. The preview's weight moved from `sys.label.weight` (560) to
+`normal` (400).
+
+**Why:** `generated_file` is provenance, not a kind a person can tell cards
+apart by — every published file is one. The attachment-kind vocabulary already
+answers "what is this file", and "Deck" is the word the rest of the product
+uses for a slide deck rather than "Presentation". The preview sat on
+`sys.label.weight`, which is the same 560 as the title's `sys.font.weight.strong`,
+so the glance competed with the line it is meant to recede from. The named
+weights only go up from `strong`; `normal` is the step down that exists without
+inventing a number. Headings inherit it, so `**Author:**` (markdown's own 660)
+actually reads as emphasis against the glance.
+
+**What a future change has to respect:** do not relabel a connector type
+(`github_pull_request`) from MIME — those identifiers are the kind. Do not put
+the preview back on `sys.label.weight` to "match the kind label"; the kind
+label is a caption, the preview is body type at caption size.
+
+### 2026-08-30 — The embed card preview wins its tone on specificity, not source order
+
+**What changed:** the preview's inherit and heading scale are now
+`.citation-card .citation-card-preview div.markdown-body`, and a descendant `*`
+carries `color: inherit` so `strong` (and `a`, `th`) recede with the glance.
+
+**Why:** the feed already paints `.markdown-body` at (0,3,0) —
+`:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`
+and the human-bubble twin. The host written as
+`.citation-card-preview .markdown-body` was (0,2,0) and lost, so inherit never
+landed: headings kept the shared scale, `**Author:**` stayed `text.default`, and
+the four-line clamp spent itself on the title. The card is a nested
+`MarkdownBody` inside a turn, so a wrapper that only beats the shared group is
+not enough.
+
+**Why not restyle `p` or `strong` on the host:** a host may override typography,
+not markdown elements, and the stylesheet guard exists to keep that from
+quietly coming back. `*` inherits the tone without naming those elements.
+Naming the card and the wrapper's element is the same move the heading-scale
+guard already requires: win on specificity, not on sitting lower in the file.
+
+**What a future change has to respect:** a selector that drops `.citation-card`
+or `div` falls back to losing against the feed. Do not "fix" the glance by
+painting `p` or `strong` on `.citation-card-preview`.
+
+### 2026-08-30 — The embed card preview renders markdown, in the faintest text tone
+
+**What changed:** the embed card's preview is a nested `MarkdownBody` — verbatim,
+no citations — rather than a plain-text slice that stripped heading hashes and
+left `**Author:**` as characters. The preview node is `inert` as well as
+`aria-hidden`. Its colour moved from `ref.color.neutral.9` to
+`sys.color.text.disabled`. The card's heading scale collapses every level to the
+kind label's size.
+
+**Why:** the derivative *is* markdown — a Word file's conversion, a PDF's OCR —
+and printing its markers made the glance noisier than the document it was
+hinting at. The rail one click away already renders the same bytes through
+`MarkdownBody`; a second parser inside the button would be the copy that
+drifts. The earlier excerpt's own changelog named this as the next step.
+
+**Why not import `MarkdownBody` from the citation module:** that module is
+already imported by the renderer for the matrix, so a reverse import is a cycle.
+`CitationRender.PreviewBody` is the body handing itself in, the same way the
+citation context already travels. No citations on that nested body: a document
+that cites another resource would otherwise draw a card inside this card.
+
+**Why `text.disabled`, having previously refused it:** `sys.color.text` is
+strongest to faintest, and the preview is the layer that should recede from the
+title. `text.muted` is already the kind label. The previous ramp step sat
+between those two because `text.disabled` was read as a claim about the button;
+the token names a contrast, not the control's state, and the button stays
+enabled. The number on the ramp was the team's, and this replaces it with the
+vocabulary that already means "this type is not the thing to read."
+
+**What a future change has to respect:** the preview is presentation — `inert`
+and `aria-hidden`, the button's accessible name stays the title, and nothing
+inside the card may become independently focusable or scrollable while the card
+is a button. Nested `MarkdownBody` must not receive the outer citation context.
+A still must never ask.
+
+### 2026-08-30 — An embed card in the last two turns opens the inspector
+
+**What changed:** `embeddedResourceCitations` in the citation protocol names
+the image-syntax announcements a message actually makes, and the work-stream
+screen auto-opens the inspector onto the latest resolvable one in the last
+two text turns — when the feed first belongs to the route, and when a
+streamed turn grows a card that was not there. Closing the rail for that
+announcement does not reopen it; leaving the work stream and coming back
+does.
+
+**Why:** a published document was reachable from the card and from the rail's
+list, but arriving at the work stream — or watching the announcement stream
+in — still left the reader on the transcript with the document itself one
+click away. The card is the announcement; opening the rail is what the click
+already did.
+
+**Why the last two text turns, and why only the card:** a follow-up that does
+not re-announce the file is still about that file, so looking only at the
+latest turn would miss it; looking past two would steal the rail for a
+document the conversation has moved on from. Plugin and thought rows sit
+between turns without announcing anything, so they are not counted. A chip
+is a passing reference inside prose, a footnote is grounding, and a sample
+inside code is syntax being shown — none of those are the announcement, and
+auto-opening any of them would fight the placement the protocol already
+chose.
+
+**What a future change has to respect:** the visit key is the **turn** and the
+canonical resource id together — `transcriptTurnId`, falling back to the
+row id — and it clears when the route's work stream changes even if the new
+feed has no embed. Keying on the flattened row id is how closing the rail
+during a live stream reopened the same card when the canonical block
+replaced the overlay. Skipping the visit-key clear is how coming back to a
+document stays closed. Only agent text is scanned: a human or external
+`![…](resource://…)` is not a card, because those turns render verbatim
+without the citation context. The lookback groups by turn, not by text
+row, because `orderedTranscriptMessages` emits one row per block.
+`open` is skipped when the rail is already showing that document, because
+`openRail` clears the inspector before selecting and would flash the list.
+The scan lives in the protocol module so the desktop cannot disagree with
+the rewrite about which image syntax is a citation. An escaped bang is
+not a card; CommonMark renders it as a chip.
+
+### 2026-08-30 — The preview reader leaves the rail, and the row's class joins the export guard
+
+**What changed:** `readResourcePreviewText`, its retry predicate, its `wait`,
+and `MAX_RESOURCE_PREVIEW_WAIT_MS` moved from `components/inspector-rail.tsx` to
+`lib/resource-preview.ts`, which both the rail and `useCitations` import. The
+export's class-coverage scanner also reads `className: ['citation-…']` arrays,
+not only JSX string literals. The excerpt strips a heading's own hashes, the row
+takes `scrollbar-width: thin` and `overscroll-behavior-x: contain`, and the
+preview carries a `max-height` beside its line clamp.
+
+**Why:** a hook in `lib/` was importing a screen-sized component module for four
+protocol-level exports — no cycle today, since the rail imports `ResourceIcon`
+from the citation module rather than the hook, but one import away from one, and
+it pulled the rail's chrome into every test that touched the reader.
+
+**Why the scanner mattered more than it looks:** it is the mechanism that makes
+"a class the renderer can emit has an answer in the export" true by
+construction, and it only saw JSX. `.citation-card-row` is built as hast by the
+rehype pass, so the one class added by this whole change was the one class
+outside the guard. The export's wrap rule could have been deleted with CI green.
+
+**Smaller things, each with a reason:** `## Revenue` printed its hashes at label
+size and spent one of four clamped lines on them; the row could chain a swipe
+outward into a back gesture and drew a full-size overlay scrollbar into the gap
+under the tiles; and `-webkit-line-clamp` beside `white-space: pre-wrap` is a
+known Chromium pairing, so the clamp now has a height that bounds it if it ever
+fails to apply.
+
+**What a future change has to respect:** the excerpt strips heading markers and
+nothing else. Emphasis, links and list markers stay, because the next step is a
+markdown renderer inside a button — and the rail, one click away, already
+renders the same bytes properly.
+
+### 2026-08-30 — The row groups only what becomes a card
+
+**What changed:** `rehypeCitationEmbedRows` takes a predicate saying which
+`resource://` targets this render will draw as cards, and groups nothing else.
+`MarkdownBody` builds it from the citation context's resolver, and passes a
+hoisted empty plugin list when there is no context at all. The transcript's
+wheel handler also ignores a predominantly horizontal gesture.
+
+**Why:** the pass grouped on the scheme alone, but five surfaces render
+`MarkdownBody` with no citations — the block dashboard, note detail, meeting
+notes, the automation draft — and there every `resource://` image is *label
+text*. A run of them was being laid side by side inside an `overflow-x` strip,
+turning a block of sentences into a horizontal scroller. The single-image case
+in the original reasoning was sound and the run case was not, which is the kind
+of gap a design note can hide.
+
+**Why the wheel handler moved with it:** the row is the first horizontal
+scroller inside the transcript, and `useTranscriptFollow` reads any upward
+`deltaY` as the reader leaving the end. A trackpad swipe across a row of cards
+carries enough vertical drift to look like that, which would drop a reader out
+of follow mid-stream. A horizontal-dominant wheel is now not read as vertical
+intent at all.
+
+**What a future change has to respect:** the row is a rendering decision that
+depends on what the *matrix* does, and the matrix's answer depends on the host's
+context — so anything that widens what renders as a card has to widen the
+predicate with it, or the two disagree in exactly one direction: prose in a
+scroll strip. Both were review findings; the grouping one had a test the same
+day, the wheel one is guarded by the handler's own comment.
+
+### 2026-08-29 — The embed card previews the document it names
+
+**What changed:** `CitationContext` gained `preview`, and the embed card draws
+the opening lines of the resource's markdown-converted text between its badge
+and its title, at the kind label's size and weight, clamped to four lines and
+scrollable in neither axis. While the derivative is still being prepared the
+card shows a shimmering three-bar skeleton on the preview's own grid, so the
+card does not resize when the text lands. `useCitations` supplies the reader,
+and every read is shared per resource and cached across mounts.
+
+**Why:** the tile said what a resource *is* and nothing about what it *says*,
+so a run of three cards was three identical grey boxes distinguishable only by
+title. A few lines of the document is what makes one card worth clicking over
+another — and it is free of a new route, because the rail's detail already
+reads exactly this derivative.
+
+**Why the read is shared and cached:** the preview route materializes the
+derivative *inside the request*, so each read causes the conversion. A per-card
+read would convert a Word file once per citation and again every time the reader
+scrolled it back into view. The promise is cached rather than the text, so a card
+mounting mid-flight joins the read already running.
+
+**What the key is, and which rejections survive it.** Reads are keyed by id
+*and* `currentVersion`: a watched source re-ingested in place keeps its id, so
+an id-only key served version N's excerpt on a card the work stream had already
+moved to N+1 — a citation substantiating a claim with the wrong revision, and
+the same defect the rail's own preview effect keys on `currentVersion` to avoid.
+Only a rejection that is a verdict about the document is cached — 4xx other than
+408 and 429, so gone, forbidden and unconvertible are remembered. A dropped
+connection or a 5xx evicts itself, because caching it meant a card that failed
+once never showed a preview again however long the reader stayed in the room.
+Both were review findings on the pull request, and neither had a test until they
+were fixed.
+
+**Why the reads are built lazily rather than in an effect:** React runs a
+child's effect before its parent's, so a card mounting in the same commit as
+the hook asked before an effect-initialized ref existed, was told there is no
+preview, and — its own effect depending on a stable callback — never asked
+again. Found in a real window: every card rendered its empty room and no
+request was ever made, with every test passing.
+
+**Why the preview's tone comes off the neutral ramp:** `ref.color.neutral.9`
+sits one step below `text.muted` and one above `text.disabled`, which is the
+tone this wants and neither of those is. The card is a button, and preview type
+dark enough to read comfortably competes with the title for the click;
+`text.disabled` would say something untrue about a control that is enabled.
+Because the ramp is ordered by contrast rather than lightness, one token dims
+correctly in a light theme and in a dark one — measured in all four.
+
+**What a future change has to respect:** the preview is presentation — it is
+`aria-hidden`, the button's accessible name stays the title, and nothing inside
+the card may become independently focusable or scrollable while the card is a
+button. A still (`render.still`) must never ask: a picture serialized
+mid-skeleton would keep that skeleton forever.
+
+### 2026-08-29 — The embed card becomes a file tile, and runs of them a row
+
+**What changed:** `ResourceEmbedCard` reshaped from a one-line row — icon,
+title, kind, trailing chevron — into a fixed-width tile: the kind badge (a
+bordered square holding the resource icon) at the head, the title and kind at
+the foot, empty room between. The chevron is gone. In `app.css` the card now
+draws from `surface-elevated`, `radius-lg` and the line ramp, and the kind
+label takes the theme's own label voice (`sys.label.*`) instead of a hardcoded
+size. `rehypeCitationEmbedRows` — a hast pass run by every `MarkdownBody`
+render — merges consecutive embed-only paragraphs into one `.citation-card-row`
+that scrolls horizontally, so a run of announced resources costs one card's
+height instead of a column.
+
+**Why:** The row form read as another line of the sentence; the announcement
+form exists to say "a thing was produced here", and the file-tile shape —
+the one attachment cards across chat products have converged on — says that at
+a glance. Styling stayed entirely in semantic tokens rather than per-theme
+rules, which is what lets one rule land as a white sheet with a hairline border
+on Terra Light, a raised dark panel on Terra, and a near-borderless warm card
+in Air's letterspaced label voice, with no component knowing which theme is
+running.
+
+**Considered and rejected:** a `cmp.citation-card.*` token group. Every value
+the card needs already has a semantic answer (`surface-elevated`, the line
+ramp, `sys.label.*`), and a component group would be twelve values restated in
+four themes to express decisions the vocabulary already makes.
+
+**What a future change has to respect:** the exported message card mirrors this
+markup with its own fixed-light rules in `message-export.ts` — a reshape here
+is a redraw there, in the same change. The kind label's transform belongs to
+the theme; hardcoding a `text-transform` here would overwrite Air's voice. The
+row pass groups only the `resource:` scheme and only runs of two or more: a
+lone embed keeps the paragraph every existing assertion and surface expects,
+and a real image or identity card beside an embed keeps the run ungrouped.
 
 ### 2026-08-28 — A preview still being prepared is not a preview that failed
 

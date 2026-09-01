@@ -269,14 +269,16 @@ On a prompt Rally:
 2. sets the Slack Agent thread status;
 3. creates or resumes the durable workstream;
 4. starts the reaction rotation for that session;
-5. starts a `chat.startStream` reply when the surface supports it;
-6. executes the ordinary authorized Rally harness;
-7. appends the complete persisted final message in Slack's required 12,000-character chunks and stops the stream;
-8. falls back to complete Slack message chunks if streaming is unavailable;
-9. stops the rotation and swaps the reaction for the one naming the outcome;
-10. links to the canonical Rally workstream and offers feedback.
+5. executes the ordinary authorized Rally harness;
+6. reloads the exact canonical final turn after terminal persistence;
+7. posts that complete saved turn in Slack's required 12,000-character chunks;
+8. stops the rotation and swaps the reaction for the one naming the outcome;
+9. links to the canonical Rally workstream and offers feedback.
 
 The persisted Rally run is canonical. A Slack delivery failure never rewrites a completed run as failed.
+Rally never streams model output to Slack. A fixed status or reaction may change
+while work is running, but if terminalization has no saved turn there is no
+Slack result message.
 
 #### The status reaction
 
@@ -326,29 +328,27 @@ that an emoji name exists before using it, so a name it rejects with
 #### Rendering agent output
 
 Slack has two text dialects. The `text` field of `chat.postMessage` is **mrkdwn**
-— `*bold*`, `_italic_`, no headings, no tables — while the `markdown` block and
-the streaming `markdown_text` field take ordinary markdown, which is what the
-agent emits. Every delivery path therefore renders through the `markdown` block
-and carries `text` only as the notification and screen-reader fallback. An
+— `*bold*`, `_italic_`, no headings, no tables — while the `markdown` block
+takes ordinary markdown, which is what the agent emits. Saved-turn delivery
+therefore renders through the `markdown` block and carries `text` only as the
+notification and screen-reader fallback. An
 automation result's title is a `header` block above it rather than a line of body
 text. Long output splits at Slack's 12,000-character limit, preferring a
 paragraph seam, then a line, and closing and reopening a fenced code block rather
 than severing one.
 
-**Citations are reduced before the split, on both paths.** An agent's answer may
+**Citations are reduced before the split.** An agent's answer may
 carry `resource://` link and image targets and GFM footnotes
 ([`markdown-rendering.md`](markdown-rendering.md)); Slack renders neither, so an
 unrewritten citation lands verbatim in front of a channel — a raw internal URL,
 a broken image where an announcement belonged, and literal `[^1]` markers.
 `slackDeliveryMarkdown` reduces them to label text and one trailing source list.
 
-It is a named step rather than something folded into the chunker because Slack
-has **two** delivery paths and only one of them builds message payloads:
-`slackMarkdownMessages` calls it for the batched path, and the streaming path in
-`slack-agent-service.ts` appends chunks straight to an open stream and calls it
-itself. Both call it *before* splitting — running the footnote pass over a chunk
+It is a named step rather than something folded into the chunker because the
+reduction must run *before* splitting — running the footnote pass over a chunk
 whose definitions landed in the next one would renumber against a body it could
-not see. It is idempotent, so a path that reduces twice does not double-number.
+not see. `slackMarkdownMessages` owns that ordering. It is idempotent, so a path
+that reduces twice does not double-number.
 The transcript copy of the same answer keeps its citations; only what leaves
 Rally is reduced.
 
@@ -540,9 +540,9 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
 - **Modal submissions are validated server-side**, and modals never request Rally
   or provider passwords.
 
-- **Every Slack delivery path reduces citations before splitting.** There are two
-  — the batched payload builder and the streaming appender — and a third would
-  have to call `slackDeliveryMarkdown` too. Folding it into the chunker instead
+- **Every Slack result delivery reduces citations before splitting.** The one
+  complete-message path calls `slackDeliveryMarkdown` before building its
+  `chat.postMessage` chunks. Folding it into the chunker instead
   looks tidier and is wrong: the footnote pass would renumber a chunk against
   definitions it could not see.
 - **The chunker's fence tracking is its own, and closes only on a bare run.**
@@ -666,10 +666,10 @@ not own:
 - **Existing workspace installations must reconnect after a scope expansion**
   before health checks and tool calls succeed. Until the identity scopes arrive,
   lookup-based mentions fall back to email.
-- **Streaming degrades rather than fails**: replies stream in Slack's required
-  12,000-character chunks, falling back to complete message chunks when streaming
-  is unavailable. Both paths render through the `markdown` block, so the same
-  output looks the same whichever carried it.
+- **Result content is never streamed to Slack.** After Rally reloads the saved
+  canonical turn, the reply is posted in complete 12,000-character
+  `chat.postMessage` chunks. A pending elicitation is rendered from its saved
+  canonical elicitation turn, not from the live model or the request row alone.
 - **A reaction failure never touches the run.** A missing `reactions:write`
   discovered mid-run leaves whatever is on the message; a rate-limited rotation
   step keeps the current emoji and tries again on the next tick; a configured
@@ -798,6 +798,137 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-08-29 — Slack result delivery becomes saved-turn-only
+
+**What changed:** Agent ingress no longer calls `chat.startStream`, and terminal
+delivery never calls `chat.appendStream`. It reloads the exact persisted final
+turn, or the canonical elicitation turn for `needs_input`, and posts it as
+complete `chat.postMessage` chunks. A session carrying a
+pre-deployment `slack_stream_ts` is closed without appending content, then the
+saved turn is posted normally. The typed session API can clear that legacy
+pointer but cannot set a new one, and current sessions do not incur a no-op
+clear write. A terminal run with no saved turn clears status and reactions but
+posts no result or controls.
+
+**Why:** Opening a stream created an empty Slack shell before Rally had a result.
+One completed run then failed terminal settlement because its structured
+assistant turn ID was rejected as a UUID, so delivery never filled the shell.
+The deeper fault is the authority split: partial provider writes can outlive or
+disagree with Rally's durable transcript.
+
+**Considered and rejected:** Appending only after persistence while retaining
+the already-open stream. The empty shell is itself an external write, and an
+ambiguous append still creates a partial second transcript. Also rejected:
+special-casing only this Slack surface; [`connectors.md`](connectors.md) makes
+saved-turn-only delivery the rule for every external conversation or comment
+adapter.
+
+**What a future change has to respect:** Working status may be live; response
+content may not. Keep `chat.stopStream` only while old session rows can carry a
+stream pointer, and do not restore start or append methods to the connector API.
+
+### 2026-08-29 — The agent-session lifecycle became typed WorkspaceDO methods
+
+**What changed:** Thirteen more typed methods on WorkspaceDO
+(`workspace-slack-protocol.ts` / `workspace-slack-storage.ts`): reading a
+session by id, by thread, or by work stream; the interaction preflight;
+creating one; seating a member across every workspace-scoped session a Slack
+user owns; the delivery key and the stream pointer; the status reaction's
+compare-and-set and its re-anchor; the App Home context; and interaction
+feedback. `SlackAgentService` calls them instead of sending nineteen statements
+through the workspace runtime facade, and `slack_agent_sessions`,
+`slack_agent_contexts`, and `slack_agent_feedback` join
+`WORKSPACE_TYPED_RPC_ONLY_TABLES`, so a generic statement naming one of them is
+now refused by name rather than executed. Still on the facade, deliberately:
+delivery preferences, agent policies, user links, the link-challenge mint and
+redeem flow, unfurls, and everything joining `connector_connections`.
+
+**Why:** The routing hazard part 1 describes is unchanged — a typed method
+cannot be routed to the wrong database — but two of this area's decisions were
+also being made from `meta.changes`, the physical-write counter
+[`docs/durable-object-sqlite.md`](durable-object-sqlite.md) forbids deciding a
+logical outcome from. Both statements were otherwise correct, and their
+predicates are carried forward unchanged; what moved is how each one's outcome
+is decided.
+
+Seating was the worse of the two. The service read the sessions an email match
+could claim and then updated them, as two statements over the same predicate,
+and took the count it reported from the update's `meta.changes`. A session
+seated between the two reads was reconciled against a snapshot that no longer
+described it, and one created between them was updated without being reconciled
+at all. `assignSlackSessions` runs both inside one `transactionSync` and answers
+with the previous holder and method each row actually moved *from* — which
+`reconcileSlackWorkstreamIdentity` needs, and which `RETURNING` cannot give,
+since it yields the new row.
+
+The status reaction is a compare-and-set that spans a Slack API call, so it
+cannot be one transaction; what it can be is honest about whether it won. The
+predicate was already right — `reaction_current IS ?`, with `IS` rather than `=`
+because NULL is a real state meaning Rally has placed nothing — and it is kept
+verbatim. What was wrong is that `slack_outcome_reaction_raced` was logged when
+`meta.changes` came back zero, and `meta.changes` is `rowsWritten`: index
+maintenance inflates it, so it cannot establish which transition won even when
+the predicate matches exactly the right row. `settleSlackSessionReaction`
+returns the updated row as a witness and reports `raced` as that witness's
+absence.
+
+Feedback is the milder case, and it is worth being precise about: the insert
+already carried `ON CONFLICT(ingress_job_id) DO NOTHING` and was right to. It
+simply discarded the result, so a redelivered submission and a first rating were
+indistinguishable to the caller. `recordSlackFeedback` returns which one
+happened, and the service logs `slack_feedback_replayed` on the replay — the
+only use that outcome has, and the reason for returning it rather than leaving
+another value nobody reads.
+
+**Considered and rejected:** Patching the Node fixtures row by row so that the
+converted assertions kept passing. The unit of coherence is the fixture, not
+the row: a test that seeds `slack_agent_sessions` in its regional fixture and
+seats them through the object is asserting on a database the write never
+reaches, and passes only while nothing reads the row back. The three tests that
+covered this area moved wholesale onto a real `createTestWorkspaceDO`, with the
+sessions — and the `connector_connections` row their foreign key requires — in
+the object's own store.
+
+**Consequences:** These three tables are refused by name now, so a new generic
+statement naming one fails loudly at the object rather than executing against
+storage nobody meant to reach generically; new session state belongs in the
+protocol and storage files. Four Slack tables are deliberately *not* on that
+list — `slack_ingress_jobs`, `slack_agent_thread_claims`,
+`slack_agent_pending_prompts`, and `slack_link_challenges` — because the
+schedule's alarm-target derivation in `workspace-schedule-execution.ts` still
+reads their due times generically through this object's local executor,
+alongside the other alarm sources.
+
+None of the three tables is an alarm source, so unlike the ingress spine's
+mutations these methods deliberately do not call `refreshScheduleAfterSlackWrite`
+— there is no target whose due time they could stale. That stops being true the
+moment a schedule target reads one of them.
+
+The feedback modal's `private_metadata` is checked against
+`z.string().uuid()` before it reaches a typed method
+(`slackModalWorkstreamId`). The generic statement this replaced simply matched
+no row for a malformed value and fell into the modal's "this task is no longer
+available" branch; `IdSchema` would instead fail the parse inside the object and
+surface as a 500 with no modal response. Rally writes that field itself, so this
+is a guard on a case that should not arise — but it is a strictly worse failure
+mode than the one it replaced, and the graceful branch is worth keeping
+reachable.
+
+`assignWorkspaceWorkstreamsForMember` seats each Slack connection inside its own
+`try`, separate from the one around the Slack email lookup. The two must stay
+separate in both directions. Sharing the lookup's `catch` reported a WorkspaceDO
+write failure as `slack_member_assignment_lookup_failed` and returned a success
+count for seating that never happened; sharing the loop's exit instead — letting
+the write throw — abandons every remaining connection in a workspace over one
+transient object error, where only the failing connection should be skipped. The
+seating `catch` logs `slack_member_assignment_seating_failed` and continues, so
+the diagnosis is separable and the blast radius is one connection. The count this
+returns is discarded by its only caller, which already logs at `warn`, so the
+value of the split is entirely in which event name fires and how much of the loop
+survives — not in what the count says.
+
+Shipped in the facade-to-RPC stack, 9/9 part 2.
 
 ### 2026-08-29 — The ingress spine became typed WorkspaceDO methods
 

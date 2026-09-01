@@ -54,6 +54,8 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
       scope: workstream.scope,
       systemKind: workstream.systemKind,
       nextPendingWakeup: workstream.nextPendingWakeup,
+      participantUserIds: workstream.participantUserIds,
+      participantExtraCount: workstream.participantExtraCount,
     },
     viewer: {
       readThroughSequenceNumber: workstream.readThroughSequenceNumber,
@@ -101,7 +103,17 @@ export function applyVersionedWorkstreamState(
     || input.stateVersion.commonWaterline > current.commonWaterline);
   const viewerApplied = !staleGeneration && (newerGeneration
     || input.stateVersion.viewerWaterline > current.viewerWaterline);
-  if (!commonApplied && !viewerApplied) return { commonApplied, viewerApplied };
+  const incomingIds = input.common.participantUserIds;
+  // A control seed can claim an empty pile at a waterline the later
+  // directory page shares. That page then looks like a duplicate and would
+  // otherwise be dropped, leaving the row blank for the session.
+  const canFillEmptyPile = input.visible
+    && input.common.scope !== 'workspace'
+    && incomingIds !== undefined
+    && incomingIds.length > 0;
+  if (!commonApplied && !viewerApplied && !canFillEmptyPile) {
+    return { commonApplied, viewerApplied };
+  }
 
   queryClient.setQueryData<Record<string, StoredWaterlines>>(
     WORKSTREAM_STATE_WATERLINES_KEY,
@@ -131,11 +143,34 @@ export function applyVersionedWorkstreamState(
     return { commonApplied, viewerApplied };
   }
 
-  const merge = <T extends WorkstreamSummary>(value: T): T => withDerivedUnread({
-    ...value,
-    ...(commonApplied ? input.common : {}),
-    ...(viewerApplied ? input.viewer : {}),
-  }) as T;
+  const merge = <T extends WorkstreamSummary>(value: T): T => {
+    const patched = {
+      ...value,
+      ...(commonApplied ? input.common : {}),
+      ...(viewerApplied ? input.viewer : {}),
+    };
+    // Control-socket seeds claim an empty pile at a waterline the later
+    // directory page often shares. Without this, that page is rejected and
+    // the row stays empty for the session. Workspace-scoped rows never carry
+    // a pile — empty incoming `[]` does not fill, and a public row strips
+    // leftover ids from when it was personal.
+    const incomingPileIds = input.common.participantUserIds;
+    if (
+      !commonApplied
+      && patched.scope !== 'workspace'
+      && (patched.participantUserIds?.length ?? 0) === 0
+      && incomingPileIds
+      && incomingPileIds.length > 0
+    ) {
+      patched.participantUserIds = incomingPileIds;
+      patched.participantExtraCount = input.common.participantExtraCount ?? 0;
+    }
+    if (patched.scope === 'workspace') {
+      patched.participantUserIds = [];
+      patched.participantExtraCount = 0;
+    }
+    return withDerivedUnread(patched) as T;
+  };
   setCachedWorkstreams(queryClient, (items) => {
     if (!items) return input.seed ? [merge(input.seed)] : items;
     const index = items.findIndex((item) => item.id === input.workstreamId);

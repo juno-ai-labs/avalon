@@ -42,6 +42,9 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000008a0");
 
 const OWNER = asUserId("00000000-0000-7000-8000-0000000008a1");
 const OUTSIDER = asUserId("00000000-0000-7000-8000-0000000008a2");
+const MEMBER_A = asUserId("00000000-0000-7000-8000-0000000008a3");
+const MEMBER_B = asUserId("00000000-0000-7000-8000-0000000008a4");
+const MEMBER_C = asUserId("00000000-0000-7000-8000-0000000008a5");
 const AUTOMATION = "00000000-0000-7000-8000-0000000008b1";
 const PLANNED_FOR = "2026-08-20T09:00:00.000Z";
 
@@ -93,6 +96,8 @@ interface SeedInput {
   participants?: UserId[];
   /** Participants who have been put in it and have not opened it. */
   unseenFor?: UserId[];
+  /** Join timestamps carried on each `directory_user` effect. */
+  joinedAt?: ReadonlyArray<readonly [UserId, string]>;
   createdByUserId?: UserId;
 }
 
@@ -120,10 +125,12 @@ async function seedWorkstream(input: SeedInput): Promise<WorkstreamId> {
     updatedAt: input.lastActivityAt,
     resourceLinks: [],
   };
+  const joinedAt = new Map(input.joinedAt ?? []);
   const viewers = (input.participants ?? [OWNER]).map((userId) => envelope({
     kind: "directory_user",
     userId,
     isParticipant: true,
+    ...(joinedAt.has(userId) ? { participantAddedAt: joinedAt.get(userId)! } : {}),
     unreadCount: 0,
     youAreMentioned: false,
     unseen: (input.unseenFor ?? []).includes(userId),
@@ -162,6 +169,18 @@ async function establishWorkspace(): Promise<void> {
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
+      id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
+      required_serving_contract_version INTEGER NOT NULL,
+      serving_contract_version INTEGER NOT NULL
+    )`),
+    env.DB.prepare(`INSERT OR REPLACE INTO workstream_authority_control
+      (id, phase, generation, required_serving_contract_version, serving_contract_version)
+      VALUES (1, 'durable_object_open', 1, 1, 1)`),
     env.DB.prepare(`INSERT OR REPLACE INTO workspaces(id, region) VALUES (?, 'global')`)
       .bind(WORKSPACE_ID),
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
@@ -176,14 +195,6 @@ async function establishWorkspace(): Promise<void> {
 
 beforeEach(async () => {
   await establishWorkspace();
-  // The directory tests scope their reads to the ids they seeded, so those rows
-  // can accumulate harmlessly. The feedback reads cannot — they ask "everything
-  // this producer resolved for this event type" — so their two tables are
-  // cleared rather than scoped.
-  await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`DELETE FROM workspace_workstream_suggestion_feedback`);
-    state.storage.sql.exec(`DELETE FROM workspace_connector_events`);
-  });
   // Directory rows can survive from an earlier test in this file, so every read
   // below is scoped to the ids its own test seeded rather than to "everything
   // this object holds".
@@ -193,76 +204,6 @@ beforeEach(async () => {
   // a full reset before it gets to run at all. The work itself takes
   // milliseconds — a failure here is a hang, never a slow query.
 }, 30_000);
-
-const CONNECTOR_CONNECTION = "00000000-0000-7000-8000-0000000008e0";
-let feedbackSeq = 0;
-
-/** Ingest one connector event, so a feedback row has a provider to join to. */
-async function seedConnectorEvent(input: {
-  eventId: string;
-  provider: string;
-  eventType: string;
-}): Promise<void> {
-  await expect(workspace().ingestConnectorEvent({
-    workspaceId: WORKSPACE_ID,
-    ingressEventId: input.eventId,
-    payloadHash: `sha256:${input.eventId.replaceAll("-", "").padEnd(64, "e")}`,
-    event: {
-      connectorType: input.provider,
-      activity: {
-        id: input.eventId,
-        workspaceId: WORKSPACE_ID,
-        region: "global",
-        connectionId: CONNECTOR_CONNECTION,
-        connectionScope: "workspace",
-        connectionOwnerUserId: null,
-        provider: input.provider,
-        providerEventId: input.eventId,
-        eventType: input.eventType,
-        resourceType: "pull_request",
-        providerResourceId: "juno-ai-labs/avalon#1",
-        actor: {},
-        subject: {},
-        occurredAt: "2026-08-19T09:00:00.000Z",
-        receivedAt: "2026-08-19T09:00:01.000Z",
-        title: "Something happened",
-        summary: "",
-        textSnippet: "",
-        payloadRef: null,
-        visibility: {},
-        targetUserIds: [],
-        entityKeys: [],
-        dedupeKey: input.eventId,
-        rawContentHash: null,
-        metadata: {},
-        externalPeople: [],
-      },
-    },
-  })).resolves.toMatchObject({ eventId: input.eventId });
-}
-
-/** Record how one suggestion was resolved, through the effect its object sends. */
-async function seedFeedback(input: {
-  workstreamId: WorkstreamId;
-  activityId: string;
-  source: "contextual_routing" | "suggested_work";
-  status: "accepted" | "dismissed";
-  resolvedAt: string;
-}): Promise<void> {
-  feedbackSeq += 1;
-  await expect(workspace().applyWorkstreamDirectoryEffects({
-    workspaceId: WORKSPACE_ID,
-    envelopes: [envelope({
-      kind: "suggestion_feedback",
-      actionId: `00000000-0000-7000-8000-${String(feedbackSeq).padStart(9, "0")}8e1`,
-      activityId: input.activityId,
-      source: input.source,
-      status: input.status,
-      resolvedAt: input.resolvedAt,
-      resolvedByUserId: OWNER,
-    }, input.workstreamId)],
-  })).resolves.toMatchObject({ accepted: [{ messageId: expect.any(String) }] });
-}
 
 describe("what the workspace object answers about its work streams", () => {
   describe("batchUpdateTargets — generic filtered Queue fan-out", () => {
@@ -554,6 +495,252 @@ describe("what the workspace object answers about its work streams", () => {
     });
   });
 
+  describe("listWorkstreams — sidebar participant preview", () => {
+    const extraMembers = [MEMBER_A, MEMBER_B, MEMBER_C];
+
+    async function admitExtraMembers(): Promise<void> {
+      await env.DB.batch(extraMembers.map((userId) => env.DB.prepare(
+        `INSERT OR REPLACE INTO workspace_members
+           (workspace_id, user_id, status, role) VALUES (?, ?, 'active', 'member')`,
+      ).bind(WORKSPACE_ID, userId)));
+    }
+
+    async function stampViewerProjectedAt(
+      workstreamId: WorkstreamId,
+      recency: ReadonlyArray<readonly [UserId, number]>,
+    ): Promise<void> {
+      await runInDurableObject(workspace(), (_instance, state) => {
+        for (const [userId, projectedAt] of recency) {
+          state.storage.sql.exec(
+            `UPDATE workspace_workstream_viewers
+                SET projected_at = ?
+              WHERE workstream_id = ? AND user_id = ?`,
+            projectedAt,
+            workstreamId,
+            userId,
+          );
+        }
+      });
+    }
+
+    function nextMessage(socket: WebSocket): Promise<MessageEvent> {
+      return new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
+    }
+
+    async function connect(userId: UserId, ticketSuffix: string): Promise<WebSocket> {
+      await env.DB.prepare(`INSERT OR REPLACE INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(`directory-session-${userId}`, userId, WORKSPACE_ID).run();
+      const response = await workspace().fetch("https://workspace.test/socket", {
+        headers: {
+          Upgrade: "websocket",
+          "x-rally-workspace-id": WORKSPACE_ID,
+          "x-rally-placement-affinity": "wnam",
+          "x-rally-user-id": userId,
+          "x-rally-session-id": `directory-session-${userId}`,
+          "x-rally-socket-ticket-id": `00000000-0000-7000-8000-${ticketSuffix}`,
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        },
+      });
+      if (response.status !== 101 || !response.webSocket) {
+        throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
+      }
+      response.webSocket.accept();
+      const initial = nextMessage(response.webSocket);
+      response.webSocket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      expect(JSON.parse(String((await initial).data))).toMatchObject({ type: "workspace_sync" });
+      return response.webSocket;
+    }
+
+    it("caps a personal row at three newest participant ids and an overflow", async () => {
+      await admitExtraMembers();
+      const workstreamId = await seedWorkstream({
+        title: "Staffing",
+        lastActivityAt: "2026-08-19T09:00:00.000Z",
+        scope: "personal",
+        participants: [OWNER, OUTSIDER, MEMBER_A, MEMBER_B, MEMBER_C],
+        joinedAt: [
+          [MEMBER_C, "2026-08-19T09:00:05.000Z"],
+          [MEMBER_B, "2026-08-19T09:00:04.000Z"],
+          [MEMBER_A, "2026-08-19T09:00:03.000Z"],
+          [OUTSIDER, "2026-08-19T09:00:02.000Z"],
+          [OWNER, "2026-08-19T09:00:01.000Z"],
+        ],
+      });
+
+      const page = await workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        includeSystem: false,
+        limit: 50,
+      });
+      const row = page.items.find((item) => item.id === workstreamId);
+
+      expect(row?.participantUserIds).toEqual([MEMBER_C, MEMBER_B, MEMBER_A]);
+      expect(row?.participantExtraCount).toBe(2);
+    });
+
+    it("does not reshuffle faces when overlay projected_at is rewritten", async () => {
+      await admitExtraMembers();
+      const workstreamId = await seedWorkstream({
+        title: "Staffing recency",
+        lastActivityAt: "2026-08-19T09:05:00.000Z",
+        scope: "personal",
+        participants: [OWNER, OUTSIDER, MEMBER_A, MEMBER_B, MEMBER_C],
+        joinedAt: [
+          [MEMBER_C, "2026-08-19T09:00:05.000Z"],
+          [MEMBER_B, "2026-08-19T09:00:04.000Z"],
+          [MEMBER_A, "2026-08-19T09:00:03.000Z"],
+          [OUTSIDER, "2026-08-19T09:00:02.000Z"],
+          [OWNER, "2026-08-19T09:00:01.000Z"],
+        ],
+      });
+      await stampViewerProjectedAt(workstreamId, [
+        [OWNER, 9_000],
+        [OUTSIDER, 8_000],
+        [MEMBER_A, 7_000],
+        [MEMBER_B, 6_000],
+        [MEMBER_C, 5_000],
+      ]);
+
+      const page = await workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        includeSystem: false,
+        limit: 50,
+      });
+      const row = page.items.find((item) => item.id === workstreamId);
+
+      expect(row?.participantUserIds).toEqual([MEMBER_C, MEMBER_B, MEMBER_A]);
+      expect(row?.participantExtraCount).toBe(2);
+    });
+
+    it("does not carry participant ids on a workspace-scoped row", async () => {
+      await admitExtraMembers();
+      const workstreamId = await seedWorkstream({
+        title: "Shared planning",
+        lastActivityAt: "2026-08-19T10:00:00.000Z",
+        scope: "workspace",
+        participants: [OWNER, OUTSIDER, MEMBER_A, MEMBER_B, MEMBER_C],
+      });
+
+      const page = await workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        includeSystem: false,
+        limit: 50,
+      });
+      const row = page.items.find((item) => item.id === workstreamId);
+
+      expect(row?.participantUserIds).toEqual([]);
+      expect(row?.participantExtraCount).toBe(0);
+    });
+
+    it("lists more than 100 personal work streams without exceeding the SQLite bind limit", async () => {
+      const started = Date.parse("2026-08-19T11:00:00.000Z");
+      for (let index = 0; index < 101; index += 1) {
+        await seedWorkstream({
+          title: `Bind room ${index}`,
+          lastActivityAt: new Date(started + index * 1_000).toISOString(),
+          scope: "personal",
+          participants: [OWNER],
+        });
+      }
+
+      const page = await workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        includeSystem: false,
+        limit: 250,
+      });
+
+      expect(page.items.filter((item) => item.title.startsWith("Bind room "))).toHaveLength(101);
+    });
+
+    it("pushes the recomputed facepile to every connected participant after a join", async () => {
+      await admitExtraMembers();
+      const workstreamId = await seedWorkstream({
+        title: "Live pile",
+        lastActivityAt: "2026-08-19T12:00:00.000Z",
+        scope: "personal",
+        participants: [OWNER, MEMBER_A],
+        joinedAt: [
+          [OWNER, "2026-08-19T12:00:01.000Z"],
+          [MEMBER_A, "2026-08-19T12:00:02.000Z"],
+        ],
+      });
+      const ownerSocket = await connect(OWNER, "0000000008f1");
+      const memberSocket = await connect(MEMBER_A, "0000000008f2");
+      const ownerPush = nextMessage(ownerSocket);
+      const memberPush = nextMessage(memberSocket);
+
+      await expect(workspace().applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [envelope({
+          kind: "directory_user",
+          userId: MEMBER_B,
+          isParticipant: true,
+          participantAddedAt: "2026-08-19T12:00:03.000Z",
+          unreadCount: 0,
+          youAreMentioned: false,
+          unseen: true,
+          listable: true,
+          seenAttentionOrdinal: 0,
+          manualUnreadFromOrdinal: null,
+          manualUnreadGeneration: 0,
+          latestMentionAttentionOrdinal: 0,
+        }, workstreamId)],
+      })).resolves.toMatchObject({ directoryChanged: true });
+
+      const ownerEvent = JSON.parse(String((await ownerPush).data)) as {
+        type: string;
+        workstreamId: string;
+        workstream: { participantUserIds: string[] } | null;
+      };
+      const memberEvent = JSON.parse(String((await memberPush).data)) as {
+        type: string;
+        workstreamId: string;
+        workstream: { participantUserIds: string[] } | null;
+      };
+      expect(ownerEvent).toMatchObject({ type: "workspace_workstream_state", workstreamId });
+      expect(memberEvent).toMatchObject({ type: "workspace_workstream_state", workstreamId });
+      expect(ownerEvent.workstream?.participantUserIds).toEqual([MEMBER_B, MEMBER_A, OWNER]);
+      expect(memberEvent.workstream?.participantUserIds).toEqual([MEMBER_B, MEMBER_A, OWNER]);
+
+      const ownerRemoved = nextMessage(ownerSocket);
+      const memberRemoved = nextMessage(memberSocket);
+      await expect(workspace().applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [envelope({
+          kind: "directory_user",
+          userId: MEMBER_B,
+          isParticipant: false,
+          participantAddedAt: null,
+          unreadCount: 0,
+          youAreMentioned: false,
+          unseen: false,
+          listable: false,
+          seenAttentionOrdinal: 0,
+          manualUnreadFromOrdinal: null,
+          manualUnreadGeneration: 0,
+          latestMentionAttentionOrdinal: 0,
+        }, workstreamId, 2)],
+      })).resolves.toMatchObject({ directoryChanged: true });
+
+      expect(JSON.parse(String((await ownerRemoved).data))).toMatchObject({
+        type: "workspace_workstream_state",
+        workstreamId,
+        workstream: { participantUserIds: [MEMBER_A, OWNER] },
+      });
+      expect(JSON.parse(String((await memberRemoved).data))).toMatchObject({
+        type: "workspace_workstream_state",
+        workstreamId,
+        workstream: { participantUserIds: [MEMBER_A, OWNER] },
+      });
+    });
+  });
+
   describe("plannedWorkstream — the run an automation has queued", () => {
     it("finds the work stream planned for that subscription at that instant", async () => {
       const planned = await seedWorkstream({
@@ -735,128 +922,4 @@ describe("what the workspace object answers about its work streams", () => {
       })).resolves.toBe(false);
     });
   });
-  describe("suggestionFeedback — the evidence contextual routing scores a bar from", () => {
-    const SINCE = "2026-08-01T00:00:00.000Z";
-    const PROVIDER = "github";
-    const EVENT_TYPE = "pull_request.review_requested";
-
-    it("returns only this producer's resolutions for this event type", async () => {
-      const workstreamId = await seedWorkstream({
-        title: "Scored",
-        lastActivityAt: "2026-08-19T09:00:00.000Z",
-      });
-      const mine = "00000000-0000-7000-8000-0000000008f1";
-      const otherType = "00000000-0000-7000-8000-0000000008f2";
-      await seedConnectorEvent({ eventId: mine, provider: PROVIDER, eventType: EVENT_TYPE });
-      await seedConnectorEvent({
-        eventId: otherType,
-        provider: PROVIDER,
-        eventType: "pull_request.closed",
-      });
-      await seedFeedback({
-        workstreamId,
-        activityId: mine,
-        source: "contextual_routing",
-        status: "dismissed",
-        resolvedAt: "2026-08-19T10:00:00.000Z",
-      });
-      // Suggested work writes the same-looking row. Counting it here would
-      // answer "was this card useful" when the question asked was "was *this
-      // producer* right", and one agent's misses would raise another's bar.
-      await seedFeedback({
-        workstreamId,
-        activityId: mine,
-        source: "suggested_work",
-        status: "dismissed",
-        resolvedAt: "2026-08-19T10:01:00.000Z",
-      });
-      await seedFeedback({
-        workstreamId,
-        activityId: otherType,
-        source: "contextual_routing",
-        status: "dismissed",
-        resolvedAt: "2026-08-19T10:02:00.000Z",
-      });
-
-      const feedback = await workspace().suggestionFeedback({
-        workspaceId: WORKSPACE_ID,
-        source: "contextual_routing",
-        since: SINCE,
-        provider: PROVIDER,
-        eventType: EVENT_TYPE,
-      });
-
-      expect(feedback.items).toHaveLength(1);
-      expect(feedback.items[0]).toMatchObject({
-        workstreamId,
-        activityId: mine,
-        status: "dismissed",
-      });
-    });
-
-    it("forgets a resolution older than the window it was asked about", async () => {
-      const workstreamId = await seedWorkstream({
-        title: "Aged out",
-        lastActivityAt: "2026-08-19T09:00:00.000Z",
-      });
-      const activityId = "00000000-0000-7000-8000-0000000008f3";
-      await seedConnectorEvent({ eventId: activityId, provider: PROVIDER, eventType: EVENT_TYPE });
-      await seedFeedback({
-        workstreamId,
-        activityId,
-        source: "contextual_routing",
-        status: "dismissed",
-        resolvedAt: "2026-07-01T10:00:00.000Z",
-      });
-
-      // A suppression that never decays is a one-way door: the evidence that
-      // would clear it can only come from suggestions the suppression prevents.
-      const feedback = await workspace().suggestionFeedback({
-        workspaceId: WORKSPACE_ID,
-        source: "contextual_routing",
-        since: SINCE,
-        provider: PROVIDER,
-        eventType: EVENT_TYPE,
-      });
-
-      expect(feedback.items).toEqual([]);
-    });
-
-    it("returns resolutions oldest first, so a run of them reads in order", async () => {
-      const workstreamId = await seedWorkstream({
-        title: "Ordered",
-        lastActivityAt: "2026-08-19T09:00:00.000Z",
-      });
-      const first = "00000000-0000-7000-8000-0000000008f4";
-      const second = "00000000-0000-7000-8000-0000000008f5";
-      await seedConnectorEvent({ eventId: first, provider: PROVIDER, eventType: EVENT_TYPE });
-      await seedConnectorEvent({ eventId: second, provider: PROVIDER, eventType: EVENT_TYPE });
-      await seedFeedback({
-        workstreamId,
-        activityId: second,
-        source: "contextual_routing",
-        status: "accepted",
-        resolvedAt: "2026-08-19T12:00:00.000Z",
-      });
-      await seedFeedback({
-        workstreamId,
-        activityId: first,
-        source: "contextual_routing",
-        status: "dismissed",
-        resolvedAt: "2026-08-19T11:00:00.000Z",
-      });
-
-      const feedback = await workspace().suggestionFeedback({
-        workspaceId: WORKSPACE_ID,
-        source: "contextual_routing",
-        since: SINCE,
-        provider: PROVIDER,
-        eventType: EVENT_TYPE,
-      });
-
-      // The caller reads a *run* of dismissals ending at the last acceptance,
-      // so the order is part of the answer rather than a presentation choice.
-      expect(feedback.items.map((item) => item.activityId)).toEqual([first, second]);
-    });
-  });
-});
+ });

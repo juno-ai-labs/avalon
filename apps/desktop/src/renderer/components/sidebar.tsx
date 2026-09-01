@@ -33,6 +33,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import { WORKSTREAM_SIDEBAR_FACEPILE_LIMIT } from '@rally/contracts';
 import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import {
   formatDateTime,
@@ -54,15 +55,16 @@ import {
   reportTelemetryProductIntent,
   telemetryVisibility,
 } from '../lib/telemetry';
-import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
-import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
+import { Avatar, AvatarStack, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { ContextNestedMenu } from './nested-menu';
 
 interface SidebarProps {
   workspace: Workspace;
+  members?: WorkspaceMember[];
   automations: AutomationSummary[];
   notes?: NoteSummary[];
   projects?: ProjectSummary[];
@@ -350,7 +352,7 @@ function AutomationRow({
           {/* AutomationScreen dispatches the same durable route to either the
               draft conversation or accepted home from lifecycle state. */}
           <NavLink
-            className={({ isActive }) => clsx('sidebar-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
+            className={({ isActive }) => clsx('sidebar-row automation-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={`/automations/${automation.id}`}
           >
@@ -440,10 +442,12 @@ function CommandShortcutHint({
   if (!visible || shortcut === undefined) return null;
   return (
     <span aria-hidden="true" className="command-shortcut-scrim">
-      <span className="command-shortcut-pill">
-        <Command size={12} strokeWidth={1.8} />
+      {/* Same Badge + scope-badge chrome as an automation's You / Workspace
+          pill, so holding Command does not introduce a second, chunkier chip. */}
+      <Badge className="scope-badge command-shortcut-pill">
+        <Command size={9} />
         <span>{shortcut}</span>
-      </span>
+      </Badge>
     </span>
   );
 }
@@ -451,8 +455,10 @@ function CommandShortcutHint({
 function WorkstreamRow({
   commandShortcut,
   commandShortcutsVisible,
+  currentUserId,
   debugEnabled,
   drag,
+  members,
   workstream,
   pinPending,
   scopePending,
@@ -466,8 +472,10 @@ function WorkstreamRow({
 }: {
   commandShortcut?: number;
   commandShortcutsVisible?: boolean;
+  currentUserId: string;
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
+  members: WorkspaceMember[];
   workstream: WorkstreamSummary;
   pinPending: boolean;
   scopePending: boolean;
@@ -638,7 +646,16 @@ function WorkstreamRow({
                 </Tooltip.Portal>
               </Tooltip.Root>
             )}
-            {workstream.scope === 'personal' && <PrivacyMarker label="Private work stream" />}
+            {workstream.scope === 'workspace'
+              ? <PublicMarker />
+              : (
+                <SidebarWorkstreamFacepile
+                  currentUserId={currentUserId}
+                  extraCount={workstream.participantExtraCount}
+                  memberIds={workstream.participantUserIds}
+                  roster={members}
+                />
+              )}
             <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
           </NavLink>
         </div>
@@ -711,14 +728,92 @@ function WorkstreamRow({
 
 /**
  * The one "only you can see this" marker in the sidebar. Notes wear it when
- * their scope is personal; a system work stream wears it because nobody but its
- * participant can open it. Same badge either way — a reader should not have to
- * learn two ways of being told the same thing.
+ * their scope is personal. Work streams use a facepile or a globe instead.
  */
 function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
   return (
     <span aria-label={label} className="sidebar-note-privacy" role="img">
       <IconLock aria-hidden="true" size={15} stroke={1.8} />
+    </span>
+  );
+}
+
+function PublicMarker(): React.JSX.Element {
+  return (
+    <Tooltip.Root delayDuration={300}>
+      <Tooltip.Trigger asChild>
+        <span aria-hidden="true" className="sidebar-note-privacy sidebar-workstream-public">
+          <Globe2 size={15} />
+        </span>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content
+          align="center"
+          className="tooltip"
+          side="right"
+          sideOffset={8}
+        >
+          This is a public work stream
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
+}
+
+function resolveSidebarFacepileMembers(
+  userIds: readonly string[],
+  members: readonly WorkspaceMember[],
+): WorkspaceMember[] {
+  const byId = new Map(members.map((member) => [member.id, member]));
+  return userIds.flatMap((id) => {
+    const member = byId.get(id);
+    return member ? [member] : [];
+  });
+}
+
+/**
+ * The sidebar pile is "who else is in this", not a roster of everyone including
+ * the reader. The directory preview still carries the viewer's id (it is the
+ * same payload for every participant), so drop them here and, when they sat
+ * past the three painted ids, take them out of the overflow too.
+ */
+function sidebarFacepileForViewer(
+  memberIds: readonly string[],
+  extraCount: number,
+  currentUserId: string,
+): { extraCount: number; memberIds: string[] } {
+  const viewerWasInPreview = memberIds.includes(currentUserId);
+  return {
+    // The wire extraCount still includes the viewer when they sat past the
+    // painted ids. Decrement once to drop them; do not decrement when they
+    // were already in the preview, or overflow of other people would vanish.
+    extraCount: viewerWasInPreview ? extraCount : Math.max(0, extraCount - 1),
+    memberIds: memberIds.filter((id) => id !== currentUserId),
+  };
+}
+
+function SidebarWorkstreamFacepile({
+  currentUserId,
+  extraCount,
+  memberIds,
+  roster,
+}: {
+  currentUserId: string;
+  extraCount: number;
+  memberIds: readonly string[];
+  roster: readonly WorkspaceMember[];
+}): React.JSX.Element | null {
+  const forViewer = sidebarFacepileForViewer(memberIds, extraCount, currentUserId);
+  const members = resolveSidebarFacepileMembers(forViewer.memberIds, roster);
+  if (members.length === 0) return null;
+  return (
+    <span aria-hidden="true" className="sidebar-workstream-facepile">
+      <AvatarStack
+        extraCount={forViewer.extraCount + (forViewer.memberIds.length - members.length)}
+        limit={WORKSTREAM_SIDEBAR_FACEPILE_LIMIT}
+        members={members}
+      />
     </span>
   );
 }
@@ -840,6 +935,7 @@ function moveWithin(ids: string[], id: string, index: number): string[] {
 
 export function Sidebar({
   workspace,
+  members = [],
   automations,
   notes = [],
   projects = [],
@@ -879,6 +975,11 @@ export function Sidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const roster = useMemo(() => {
+    const byId = new Map(members.map((member) => [member.id, member]));
+    byId.set(workspace.currentUser.id, workspace.currentUser);
+    return [...byId.values()];
+  }, [members, workspace.currentUser]);
   const [resizing, setResizing] = useState(false);
   // The handle stands in the strip beside the sidebar rather than on its edge,
   // so the pointer's own position is not the sidebar's width. Holding the
@@ -1407,6 +1508,24 @@ export function Sidebar({
     },
   });
 
+  const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
+    <WorkstreamRow
+      currentUserId={workspace.currentUser.id}
+      debugEnabled={debugEnabled}
+      members={roster}
+      onArchive={setArchiveWorkstreamTarget}
+      onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
+      onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
+      onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
+      onRename={openRename}
+      onTogglePin={(target, pin) => void togglePin(target, pin)}
+      pinPending={pinPendingWorkstreamId === workstream.id}
+      projects={projects}
+      scopePending={scopePendingWorkstreamId === workstream.id}
+      workstream={workstream}
+    />
+  );
+
   const closeRename = (): void => {
     if (renaming) return;
     setRenameTarget(null);
@@ -1580,6 +1699,7 @@ export function Sidebar({
             onReorder={onReorderProjects}
             onRestore={onRestoreProject}
             projects={projects}
+            renderWorkstream={renderWorkstream}
             workstreams={workstreams}
           />
 
@@ -1644,6 +1764,7 @@ export function Sidebar({
                   <WorkstreamRow
                     commandShortcut={commandShortcutById.get(`workstream:${pinned.id}`)}
                     commandShortcutsVisible={commandShortcutsVisible}
+                    currentUserId={workspace.currentUser.id}
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
@@ -1655,6 +1776,7 @@ export function Sidebar({
                     onTogglePin={(target, pin) => void togglePin(target, pin)}
                     pinPending={pinPendingWorkstreamId === pinned.id}
                     projects={projects}
+                    members={roster}
                     scopePending={scopePendingWorkstreamId === pinned.id}
                     workstream={pinned}
                   />
@@ -1741,6 +1863,7 @@ export function Sidebar({
                       <WorkstreamRow
                         commandShortcut={commandShortcutById.get(item.id)}
                         commandShortcutsVisible={commandShortcutsVisible}
+                        currentUserId={workspace.currentUser.id}
                         debugEnabled={debugEnabled}
                         key={item.id}
                         onArchive={setArchiveWorkstreamTarget}
@@ -1751,6 +1874,7 @@ export function Sidebar({
                         onTogglePin={(target, pin) => void togglePin(target, pin)}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
                         projects={projects}
+                        members={roster}
                         scopePending={scopePendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}
                       />

@@ -518,6 +518,170 @@ describe("canonical ordered work-stream transcript", () => {
       ]);
   });
 
+  it("lets pending input_sequence change while prepared content stays immutable", async () => {
+    const { sql, storage } = open();
+    seedPendingInputRoot(sql);
+    const { inputId } = await admitPendingInput({ storage, withAttachment: false });
+    sql.exec(
+      `UPDATE pending_loop_inputs SET input_sequence = 4, updated_at = ? WHERE input_id = ?`,
+      NOW + 9,
+      inputId,
+    );
+    expect(sql.exec(
+      `SELECT input_sequence, mode FROM pending_loop_inputs WHERE input_id = ?`,
+      inputId,
+    ).one()).toEqual({ input_sequence: 4, mode: "steer" });
+    expect(() => sql.exec(
+      `UPDATE pending_loop_inputs SET mode = 'queue' WHERE input_id = ?`,
+      inputId,
+    )).toThrow(/pending_loop_input_prepared_fields_are_immutable/u);
+  });
+
+  it("reorders visible pending inputs without consuming next_input_sequence or bumping revision", async () => {
+    const { sql, storage } = open();
+    seedPendingInputRoot(sql);
+    const firstId = "00000000-0000-7000-8000-000000000111";
+    const secondId = "00000000-0000-7000-8000-000000000112";
+    const thirdId = "00000000-0000-7000-8000-000000000113";
+    const first = await admitPendingInput({
+      storage,
+      withAttachment: false,
+      inputId: firstId,
+      clientMessageId: "client-reorder-1",
+      text: "First @Ada",
+    });
+    await admitPendingInput({
+      storage,
+      withAttachment: false,
+      inputId: secondId,
+      clientMessageId: "client-reorder-2",
+      text: "Second @Ada",
+    });
+    await admitPendingInput({
+      storage,
+      withAttachment: false,
+      inputId: thirdId,
+      clientMessageId: "client-reorder-3",
+      text: "Third @Ada",
+    });
+    const loop = first.loop;
+    const before = loop.loop()!;
+    expect(loop.pendingInputs().map((pending) => pending.input_id))
+      .toEqual([firstId, secondId, thirdId]);
+    const beforeRefs = dueSemanticRealtimeReferences(sql, NOW + 20).length;
+
+    expect(loop.reorderPendingInputs({
+      inputIds: [thirdId, firstId, secondId],
+      now: NOW + 21,
+    }).map((pending) => ({
+      inputId: pending.input_id,
+      inputSequence: Number(pending.input_sequence),
+    }))).toEqual([
+      { inputId: thirdId, inputSequence: 1 },
+      { inputId: firstId, inputSequence: 2 },
+      { inputId: secondId, inputSequence: 3 },
+    ]);
+    const after = loop.loop()!;
+    expect(after.revision).toBe(before.revision);
+    expect(after.next_input_sequence).toBe(before.next_input_sequence);
+    const afterRefs = dueSemanticRealtimeReferences(sql, NOW + 21);
+    expect(afterRefs.length).toBe(beforeRefs + 3);
+    expect(afterRefs.slice(-3).map((pending) => pending.reference)).toEqual([
+      { kind: "loop_input_upserted", inputId: thirdId },
+      { kind: "loop_input_upserted", inputId: firstId },
+      { kind: "loop_input_upserted", inputId: secondId },
+    ]);
+
+    expect(loop.reorderPendingInputs({
+      inputIds: [thirdId, firstId, secondId],
+      now: NOW + 22,
+    }).map((pending) => pending.input_id)).toEqual([thirdId, firstId, secondId]);
+    expect(dueSemanticRealtimeReferences(sql, NOW + 22).length).toBe(afterRefs.length);
+    expect(loop.loop()!.revision).toBe(before.revision);
+  });
+
+  it("keeps unnamed visible pending inputs behind the named ones and leaves hidden rows alone", async () => {
+    const { sql, storage } = open();
+    seedPendingInputRoot(sql);
+    const firstId = "00000000-0000-7000-8000-000000000121";
+    const secondId = "00000000-0000-7000-8000-000000000122";
+    const thirdId = "00000000-0000-7000-8000-000000000123";
+    const hiddenId = "00000000-0000-7000-8000-000000000124";
+    const first = await admitPendingInput({
+      storage,
+      withAttachment: false,
+      inputId: firstId,
+      clientMessageId: "client-unnamed-1",
+      text: "Alpha @Ada",
+    });
+    await admitPendingInput({
+      storage,
+      withAttachment: false,
+      inputId: secondId,
+      clientMessageId: "client-unnamed-2",
+      text: "Bravo @Ada",
+    });
+    await admitPendingInput({
+      storage,
+      withAttachment: false,
+      inputId: thirdId,
+      clientMessageId: "client-unnamed-3",
+      text: "Charlie @Ada",
+    });
+    const loop = first.loop;
+    expect(loop.reorderPendingInputs({
+      inputIds: [thirdId],
+      now: NOW + 30,
+    }).map((pending) => pending.input_id)).toEqual([thirdId, firstId, secondId]);
+
+    loop.reserveInputPreparation({
+      inputId: hiddenId,
+      loopId: "persistent-loop",
+      clientMessageId: "client-hidden-preparing",
+      preparationKind: "external_message",
+      envelopeJson: JSON.stringify({ input: { text: "hidden" } }),
+      now: NOW + 31,
+    });
+    const laterId = "00000000-0000-7000-8000-000000000125";
+    loop.reserveInputPreparation({
+      inputId: laterId,
+      loopId: "persistent-loop",
+      clientMessageId: "client-hidden-later",
+      preparationKind: "external_message",
+      envelopeJson: JSON.stringify({ input: { text: "later" } }),
+      now: NOW + 32,
+    });
+    await completeMailboxInput({
+      loop,
+      inputId: laterId,
+      clientMessageId: "client-hidden-later",
+      now: NOW + 33,
+    });
+    expect(loop.pendingInputs().map((pending) => pending.input_id))
+      .toEqual([thirdId, firstId, secondId]);
+    const hiddenSequence = Number(sql.exec<{ input_sequence: number }>(
+      `SELECT input_sequence FROM pending_loop_inputs WHERE input_id = ?`,
+      laterId,
+    ).one().input_sequence);
+    const preparingSequence = Number(sql.exec<{ input_sequence: number }>(
+      `SELECT input_sequence FROM pending_loop_input_mailbox WHERE input_id = ?`,
+      hiddenId,
+    ).one().input_sequence);
+
+    expect(loop.reorderPendingInputs({
+      inputIds: [secondId, thirdId, firstId],
+      now: NOW + 34,
+    }).map((pending) => pending.input_id)).toEqual([secondId, thirdId, firstId]);
+    expect(Number(sql.exec<{ input_sequence: number }>(
+      `SELECT input_sequence FROM pending_loop_inputs WHERE input_id = ?`,
+      laterId,
+    ).one().input_sequence)).toBe(hiddenSequence);
+    expect(Number(sql.exec<{ input_sequence: number }>(
+      `SELECT input_sequence FROM pending_loop_input_mailbox WHERE input_id = ?`,
+      hiddenId,
+    ).one().input_sequence)).toBe(preparingSequence);
+  });
+
   it("terminalizes failed preparation explicitly and unblocks later ready input", async () => {
     const { sql, storage } = open();
     seedPendingInputRoot(sql);

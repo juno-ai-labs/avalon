@@ -563,7 +563,14 @@ async function convertPdf(input: BuildAttachmentDerivativeInput): Promise<Conver
   // PDF.js may transfer and detach the supplied ArrayBuffer. OCR needs the
   // original bytes after text-layer detection, so extraction receives its own
   // bounded copy rather than consuming the only source buffer.
-  const extracted = await (input.pdfExtractor ?? defaultPdfExtractor)(input.bytes.slice());
+  if (!input.pdfExtractor) throw new ConversionFailure("pdf_processor_unavailable");
+  let extracted: AttachmentPdfText;
+  try {
+    extracted = await input.pdfExtractor(input.bytes.slice());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    throw new ConversionFailure(message === "pdf_encrypted" ? "pdf_encrypted" : "invalid_pdf");
+  }
   assertPageCount(extracted.pageCount);
   if (extracted.pages.length !== extracted.pageCount) throw new ConversionFailure("pdf_page_count_mismatch");
   const visibleCharacters = extracted.pages.reduce((sum, page) => sum + page.replace(/\s/gu, "").length, 0);
@@ -592,25 +599,10 @@ async function convertPdf(input: BuildAttachmentDerivativeInput): Promise<Conver
   };
 }
 
-async function defaultPdfExtractor(bytes: Uint8Array): Promise<AttachmentPdfText> {
-  try {
-    const { extractText, getDocumentProxy } = await import("unpdf");
-    const pdf = await getDocumentProxy(bytes);
-    try {
-      assertPageCount(pdf.numPages);
-      const result = await extractText(pdf, { mergePages: false });
-      return { pageCount: result.totalPages, pages: result.text };
-    } finally {
-      await pdf.cleanup();
-    }
-  } catch (error) {
-    if (error instanceof ConversionFailure) throw error;
-    const message = error instanceof Error ? error.message.toLowerCase() : "";
-    throw new ConversionFailure(message.includes("password") ? "pdf_encrypted" : "invalid_pdf");
-  }
-}
-
-function readOfficeArchive(bytes: Uint8Array, accept: (name: string) => boolean): Record<string, Uint8Array> {
+function readOfficeArchive(
+  bytes: Uint8Array,
+  accept: (name: string) => boolean,
+): Record<string, Uint8Array> {
   if (
     bytes.byteLength >= 8
     && bytes[0] === 0xd0

@@ -26,6 +26,8 @@ import {
 const DEFAULT_API_BASE_URL = "https://public-api.granola.ai";
 const DEFAULT_MCP_URL = "https://mcp.granola.ai/mcp";
 const GRANOLA_RESPONSE_BYTES = 2_000_000;
+/** Set by the team on 2026-08-29 for Granola's asynchronous meeting query. */
+const GRANOLA_QUERY_MEETINGS_TIMEOUT_MS = 5 * 60_000;
 const GRANOLA_TEXT_CHARS = 80_000;
 const GRANOLA_ARRAY_ITEMS = 500;
 
@@ -375,6 +377,9 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       redirectUri,
       allowedAuthorizationOrigins: [new URL(mcpUrl).origin, "https://mcp-auth.granola.ai"],
       additionalScopes: ["offline_access"],
+    },
+    toolTimeoutMsByName: {
+      query_granola_meetings: GRANOLA_QUERY_MEETINGS_TIMEOUT_MS,
     },
     fetch: fetcher,
     maxResponseBytes: GRANOLA_RESPONSE_BYTES,

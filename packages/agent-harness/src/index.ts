@@ -11,14 +11,32 @@ import type {
   ToolDefinition
 } from "@rally/contracts";
 import {
+  AGENT_MODEL_FLAG_KEYS,
   AddressingClassificationSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
   AutomationDraftSchema,
   asUserId
 } from "@rally/contracts";
+import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { createStreamWatchdog } from "@juno-ai/bind/completion";
+import { chatRequestToJSON } from "@openrouter/sdk/models/chatrequest.js";
+import { chatResultFromJSON } from "@openrouter/sdk/models/chatresult.js";
+import { chatStreamChunkFromJSON } from "@openrouter/sdk/models/chatstreamchunk.js";
+import {
+  createEmbeddingsRequestBodyToJSON,
+  createEmbeddingsResponseFromJSON,
+} from "@openrouter/sdk/models/operations/createembeddings.js";
+import type { ChatMessages } from "@openrouter/sdk/models/chatmessages.js";
+import type { ChatRequest as OpenRouterChatRequest } from "@openrouter/sdk/models/chatrequest.js";
+import type { ChatResult } from "@openrouter/sdk/models/chatresult.js";
+import type { ChatStreamChunk } from "@openrouter/sdk/models/chatstreamchunk.js";
+import type { ChatUsage } from "@openrouter/sdk/models/chatusage.js";
+import type { OpenRouterMetadata } from "@openrouter/sdk/models/openroutermetadata.js";
 import { z } from "zod";
+// Cycle: `bind-runtime` imports back from this module. Sound because every
+// value it takes is read inside a function body — see `runHarness` below.
+import { runHarnessWithBind } from "./bind-runtime";
 import {
   renderAddressingMessages,
   renderAutomationCompilerMessages,
@@ -99,6 +117,156 @@ export interface OpenRouterConfig {
   ttftTimeoutMs?: number;
   /** Maximum silence between streamed answer/tool bytes. */
   streamIdleTimeoutMs?: number;
+  /** Opaque request ownership and deployment data forwarded to OpenRouter Broadcast. */
+  traceContext?: OpenRouterTraceContext;
+  /** Optional Azure OpenAI-compatible transport used by Bind's provider router. */
+  azure?: AzureOpenAIConfig;
+}
+
+export interface AzureOpenAIConfig {
+  /** Azure AI resource endpoint; the harness appends `/openai/v1/chat/completions`. */
+  endpoint: string;
+  apiKey: string;
+}
+
+/** Shared freshness horizon for OpenRouter catalog-derived metadata. */
+export const OPENROUTER_CATALOG_CACHE_TTL_MS = 60 * 60 * 1_000;
+
+/** One host-resolved token-rate tier Bind can use to bill an Azure attempt. */
+export interface AzureModelTokenRates {
+  inputUsdPerM: number;
+  cachedInputUsdPerM: number;
+  outputUsdPerM: number;
+}
+
+export interface AzureModelPricingOverride extends AzureModelTokenRates {
+  /** OpenRouter applies this tier when total prompt tokens reach this value. */
+  minPromptTokens: number;
+}
+
+/** Host-resolved base and long-context token rates for an Azure route candidate. */
+export interface AzureModelPricing extends AzureModelTokenRates {
+  overrides: readonly AzureModelPricingOverride[];
+  /** Stable, secret-free identity of the source endpoint inventory and rates. */
+  sourceFingerprint: string;
+}
+
+export interface OpenRouterTraceContext {
+  source: string;
+  /** Flagship model-routing key for this inference category. */
+  feature: string;
+  workspaceId?: string;
+  workstreamId?: string;
+  substreamId?: string;
+  /** Person relevant to this inference, kept separate from the workspace-level Broadcast identity. */
+  contextUserId?: string;
+  requestId?: string;
+  parentRequestId?: string;
+  harnessRunId?: string;
+  draftId?: string;
+  region?: string;
+  environment?: string;
+  buildSha?: string;
+  executionPrincipalType?: "user" | "workspace";
+  executionPrincipalId?: string;
+}
+
+export interface OpenRouterTracePayload {
+  user?: string;
+  session_id?: string;
+  trace: {
+    trace_id: string;
+    trace_name: string;
+    span_name: string;
+    generation_name: string;
+    [key: string]: string | number;
+  };
+}
+
+export function buildOpenRouterTracePayload(
+  context: OpenRouterTraceContext,
+  request: {
+    inferenceRequestId: string;
+    generationName: string;
+    turnId?: string;
+    cursor?: InferenceRequestEvent["cursor"];
+    provider?: string;
+    /** Primary model selected by Rally before retry or fallback traversal. */
+    intendedModel?: string;
+    model?: string;
+    providerInvocationModel?: string;
+  },
+): OpenRouterTracePayload {
+  const substreamId = context.substreamId ?? (context.workstreamId ? "0" : undefined);
+  const traceId = context.requestId ?? context.harnessRunId ?? request.inferenceRequestId;
+  const sessionId = context.workstreamId
+    ? `${context.workstreamId}-${substreamId ?? "0"}`
+    : undefined;
+  // A replay of the same durable turn must re-send the same provider body so
+  // OpenRouter can retain the cached prefix. The cursor distinguishes retry
+  // and fallback positions inside that durable request; the random diagnostic
+  // id remains available in Rally's regional telemetry for each HTTP attempt.
+  const providerRequestId = context.requestId && request.turnId
+    ? [
+        context.requestId,
+        request.turnId,
+        request.cursor?.structuredOutputAttempt ?? 0,
+        request.cursor?.stageIndex ?? 0,
+        request.cursor?.candidateIndex ?? 0,
+        request.cursor?.endpointAttempt ?? 0,
+      ].join(":")
+    : request.inferenceRequestId;
+  const additional: Record<string, string | number> = {
+    inference_request_id: providerRequestId,
+    source: context.source,
+    feature: context.feature,
+    product: "rally",
+    invocation_type: request.turnId ? "streaming" : "structured",
+    ...(request.provider ? { provider: request.provider } : {}),
+    ...(request.intendedModel ? { intended_model: request.intendedModel } : {}),
+    ...(request.model ? { model: request.model } : {}),
+    ...(request.providerInvocationModel
+      ? { provider_invocation_model: request.providerInvocationModel }
+      : {}),
+    ...(context.workspaceId ? { workspace_id: context.workspaceId } : {}),
+    ...(context.workstreamId ? { workstream_id: context.workstreamId } : {}),
+    ...(substreamId ? { substream_id: substreamId } : {}),
+    ...(context.workspaceId ? { user_id: context.workspaceId } : {}),
+    ...(context.contextUserId ? { context_user_id: context.contextUserId } : {}),
+    ...(context.requestId ? { request_id: context.requestId } : {}),
+    ...(context.parentRequestId ? { parent_request_id: context.parentRequestId } : {}),
+    ...(context.harnessRunId ? { harness_run_id: context.harnessRunId } : {}),
+    ...(context.draftId ? { draft_id: context.draftId } : {}),
+    ...(context.region ? { region: context.region } : {}),
+    ...(context.environment ? { environment: context.environment } : {}),
+    ...(context.buildSha ? { build_sha: context.buildSha } : {}),
+    ...(context.executionPrincipalType
+      ? { execution_principal_type: context.executionPrincipalType }
+      : {}),
+    ...(context.executionPrincipalId
+      ? { execution_principal_id: context.executionPrincipalId }
+      : {}),
+    ...(request.turnId ? { turn_id: request.turnId } : {}),
+    ...(request.cursor ? {
+      structured_output_attempt: request.cursor.structuredOutputAttempt,
+      route_stage_index: request.cursor.stageIndex,
+      route_candidate_index: request.cursor.candidateIndex,
+      endpoint_attempt: request.cursor.endpointAttempt,
+    } : {}),
+  };
+  return {
+    ...(context.workspaceId ? { user: context.workspaceId } : {}),
+    ...(sessionId ? { session_id: sessionId } : {}),
+    trace: {
+      trace_id: traceId,
+      trace_name: `rally.${context.source}`,
+      span_name: request.turnId
+        ? `rally.turn.${request.turnId}`
+        : `rally.structured.${request.generationName}`,
+      generation_name: request.generationName,
+      ...additional,
+    },
+  };
 }
 
 export interface ModelMessage {
@@ -169,7 +337,12 @@ export interface OpenRouterInferencePayload {
   tools?: ModelRequestTool[];
   tool_choice?: "auto";
   plugins?: Array<Record<string, unknown>>;
-  reasoning?: { effort: "low" | "medium" | "high" };
+  reasoning?: { effort: "none" | "low" | "medium" | "high" };
+  /** Azure's OpenAI-compatible Chat Completions reasoning control. */
+  reasoning_effort?: "low" | "medium" | "high";
+  user?: string;
+  session_id?: string;
+  trace?: OpenRouterTracePayload["trace"];
 }
 
 export interface InferenceRequestEvent {
@@ -220,6 +393,7 @@ export interface InferenceAttemptEvent {
     usage: Record<string, number> | null;
     finishReason: string | null;
     generationId: string | null;
+    openRouterMetadata?: Record<string, unknown>;
   };
   failureKind?: string;
   /** The provider's own classification of a rejected request, when it gave one. */
@@ -264,6 +438,8 @@ export type StructuredModelDiagnostic = {
   repairAttempt: number;
   /** Stable for one provider request, including its validation outcome. */
   inferenceRequestId?: string;
+  /** Stable across retries, repairs, and fallback models for one structured call. */
+  traceId?: string;
   latencyMs?: number;
   responseBytes?: number;
   inputTokens?: number;
@@ -287,24 +463,7 @@ export interface ModelToolCall {
   function: { name: string; arguments: string };
 }
 
-interface StreamChunk {
-  choices?: Array<{
-    delta?: {
-      content?: string | null;
-      tool_calls?: Array<{
-        index: number;
-        id?: string;
-        type?: "function";
-        function?: { name?: string; arguments?: string };
-      }>;
-    };
-    finish_reason?: string | null;
-  }>;
-  usage?: Record<string, number>;
-  error?: { code?: string | number; message?: string };
-}
-
-interface ChatRequest {
+export interface ChatRequest {
   messages: ModelMessage[];
   tools?: ModelRequestTool[];
   toolChoice?: "auto" | "none";
@@ -312,6 +471,7 @@ interface ChatRequest {
   maxWebResults?: number | undefined;
   plugins?: Array<Record<string, unknown>> | undefined;
   reasoningEffort?: "low" | "medium" | "high" | undefined;
+  trace?: OpenRouterTracePayload | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -324,6 +484,29 @@ export interface StreamResult {
   generationId: string | null;
   ttftMs: number | null;
   responseBytes: number;
+  openRouterMetadata: Record<string, unknown> | null;
+}
+
+export interface EmbeddingDiagnostic {
+  intendedModel: string;
+  requestedModel: string;
+  resolvedModel?: string;
+  attempt: number;
+  fallbackAttempt: number;
+  inferenceRequestId: string;
+  latencyMs: number;
+  success: boolean;
+  failureKind?: string;
+}
+
+export interface EmbeddingResult {
+  embeddings: number[][];
+  intendedModel: string;
+  requestedModel: string;
+  resolvedModel: string;
+  fallbackAttempt: number;
+  inferenceRequestId: string;
+  usage: Record<string, number> | null;
 }
 
 export class OpenRouterError extends Error {
@@ -337,6 +520,33 @@ export class OpenRouterError extends Error {
   }
 }
 
+/** A locally invalid request must never be retried or sent to a fallback model. */
+export class OpenRouterRequestError extends OpenRouterError {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenRouterRequestError";
+  }
+}
+
+export class AzureOpenAIError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = "AzureOpenAIError";
+  }
+}
+
+/** A locally invalid Azure request must never traverse to another model. */
+export class AzureOpenAIRequestError extends AzureOpenAIError {
+  constructor(message: string) {
+    super(message);
+    this.name = "AzureOpenAIRequestError";
+  }
+}
+
 export class OpenRouterClient {
   private readonly fetcher: typeof globalThis.fetch;
 
@@ -346,6 +556,144 @@ export class OpenRouterClient {
     // before storing it on the client so `this.fetcher(...)` cannot invoke the
     // native function with the OpenRouterClient instance as `this`.
     this.fetcher = (config.fetch ?? globalThis.fetch).bind(globalThis);
+  }
+
+  /**
+   * Generate embeddings through OpenRouter's native endpoint.
+   *
+   * The embeddings request contract currently accepts Broadcast's workspace
+   * identity (`user`) but not the chat endpoint's custom `trace` object. The
+   * session is therefore carried in `X-Session-ID`, and the content-free
+   * diagnostic reports intended versus requested/resolved models locally.
+   */
+  async embed(input: {
+    input: string | string[];
+    inputType?: "search_query" | "search_document";
+    dimensions?: number;
+    generationName: string;
+    signal?: AbortSignal;
+    onDiagnostic?: (event: EmbeddingDiagnostic) => void | Promise<void>;
+  }): Promise<EmbeddingResult> {
+    const intendedModel = this.config.primaryModel;
+    const models = uniqueModels([intendedModel, ...(this.config.fallbackModels ?? [])]);
+    const expectedCount = typeof input.input === "string" ? 1 : input.input.length;
+    let lastError: unknown;
+    for (const [fallbackAttempt, requestedModel] of models.entries()) {
+      for (let attempt = 0; attempt <= this.sameModelRetries(); attempt += 1) {
+        const startedAt = Date.now();
+        const inferenceRequestId = crypto.randomUUID();
+        try {
+          const tracePayload = this.config.traceContext
+            ? buildOpenRouterTracePayload(this.config.traceContext, {
+                inferenceRequestId,
+                generationName: input.generationName,
+                provider: "openrouter",
+                intendedModel,
+                model: requestedModel,
+                providerInvocationModel: requestedModel,
+              })
+            : undefined;
+          let requestPayload: Record<string, unknown>;
+          try {
+            requestPayload = JSON.parse(createEmbeddingsRequestBodyToJSON({
+              model: requestedModel,
+              input: input.input,
+              ...(input.dimensions === undefined ? {} : { dimensions: input.dimensions }),
+              encodingFormat: "float",
+              ...(input.inputType ? { inputType: input.inputType } : {}),
+              ...(tracePayload?.user ? { user: tracePayload.user } : {}),
+            })) as Record<string, unknown>;
+          } catch {
+            throw new OpenRouterRequestError("Invalid OpenRouter embeddings request");
+          }
+          const response = await this.fetcher("https://openrouter.ai/api/v1/embeddings", {
+            method: "POST",
+            headers: this.headers(tracePayload?.session_id),
+            body: JSON.stringify(requestPayload),
+            ...(input.signal ? { signal: input.signal } : {}),
+          });
+          const payload = await readJsonResponse<Record<string, unknown>>(response);
+          if (!response.ok) {
+            const providerError = openRouterProviderError(payload);
+            throw new OpenRouterError(
+              `OpenRouter embeddings request failed (${response.status})`,
+              response.status,
+              { providerError },
+            );
+          }
+          if (!payload) throw new OpenRouterError("OpenRouter returned no embeddings response");
+          const parsed = createEmbeddingsResponseFromJSON(JSON.stringify(payload));
+          if (!parsed.ok || typeof parsed.value === "string") {
+            throw new OpenRouterError("OpenRouter returned an invalid embeddings response");
+          }
+          const orderedEntries = [...parsed.value.data].sort(
+            (left, right) => (left.index ?? -1) - (right.index ?? -1),
+          );
+          const indicesAreComplete = orderedEntries.every(
+            (entry, index) => entry.index === index,
+          );
+          const embeddings = orderedEntries.map((entry) => entry.embedding);
+          if (
+            embeddings.length !== expectedCount
+            || !indicesAreComplete
+            || embeddings.some((embedding) => !Array.isArray(embedding) || embedding.length === 0)
+            || (input.dimensions !== undefined
+              && embeddings.some((embedding) => embedding.length !== input.dimensions))
+          ) {
+            throw new OpenRouterError("OpenRouter returned embeddings with an unexpected shape");
+          }
+          const normalized = embeddings as number[][];
+          const resolvedModel = parsed.value.model;
+          await input.onDiagnostic?.({
+            intendedModel,
+            requestedModel,
+            resolvedModel,
+            attempt,
+            fallbackAttempt,
+            inferenceRequestId,
+            latencyMs: Date.now() - startedAt,
+            success: true,
+          });
+          return {
+            embeddings: normalized,
+            intendedModel,
+            requestedModel,
+            resolvedModel,
+            fallbackAttempt,
+            inferenceRequestId,
+            usage: parsed.value.usage
+              ? {
+                  prompt_tokens: parsed.value.usage.promptTokens,
+                  total_tokens: parsed.value.usage.totalTokens,
+                  ...(typeof parsed.value.usage.cost === "number"
+                    ? { cost: parsed.value.usage.cost }
+                    : {}),
+                }
+              : null,
+          };
+        } catch (error) {
+          await input.onDiagnostic?.({
+            intendedModel,
+            requestedModel,
+            attempt,
+            fallbackAttempt,
+            inferenceRequestId,
+            latencyMs: Date.now() - startedAt,
+            success: false,
+            failureKind: structuredFailureKind(error, input.signal),
+          });
+          if (input.signal?.aborted) throw error;
+          const disposition = openRouterFailureDisposition(error);
+          if (disposition === "terminal") throw error;
+          lastError = error;
+          if (disposition === "retry" && attempt < this.sameModelRetries()) continue;
+          break;
+        }
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new OpenRouterError("All configured OpenRouter embedding models failed", undefined, lastError);
   }
 
   async structured<T>(input: {
@@ -374,6 +722,12 @@ export class OpenRouterClient {
     );
     let lastError: unknown;
     let repaired = false;
+    const traceId = this.config.traceContext?.requestId
+      ?? this.config.traceContext?.harnessRunId
+      ?? crypto.randomUUID();
+    const emitDiagnostic = async (event: StructuredModelDiagnostic): Promise<void> => {
+      await input.onDiagnostic?.({ ...event, traceId });
+    };
     for (const [fallbackAttempt, model] of models.entries()) {
       let repairMessages: ModelMessage[] | null = null;
       let repairAttempt = 0;
@@ -391,22 +745,45 @@ export class OpenRouterClient {
           | "cachedInputTokens"
         >> | undefined;
         try {
-          const requestPayload = {
+          const builtTracePayload = this.config.traceContext
+            ? buildOpenRouterTracePayload(this.config.traceContext, {
+                inferenceRequestId,
+                generationName: input.schemaName,
+                provider: "openrouter",
+                intendedModel: input.model ?? this.config.primaryModel,
+                model,
+                providerInvocationModel: model,
+              })
+            : undefined;
+          const tracePayload = builtTracePayload
+            ? {
+                ...builtTracePayload,
+                trace: { ...builtTracePayload.trace, trace_id: traceId },
+              }
+            : undefined;
+          const requestPayload = serializeOpenRouterChatRequest({
             model,
             messages: repairMessages ?? schemaMessages,
             stream: false,
-            response_format: {
+            responseFormat: {
               type: "json_schema",
-              json_schema: {
+              jsonSchema: {
                 name: input.schemaName,
                 strict: true,
                 schema: input.jsonSchema
               }
             },
             plugins: [{ id: "response-healing" }],
-            reasoning: structuredReasoning(input.reasoningEffort),
-          };
-          await input.onDiagnostic?.({
+            ...(structuredReasoning(input.reasoningEffort)
+              ? { reasoning: structuredReasoning(input.reasoningEffort)! }
+              : {}),
+            ...(tracePayload ? {
+              ...(tracePayload.user ? { user: tracePayload.user } : {}),
+              ...(tracePayload.session_id ? { sessionId: tracePayload.session_id } : {}),
+              trace: toSdkTrace(tracePayload.trace),
+            } : {}),
+          });
+          await emitDiagnostic({
             stage: "model_request",
             schemaName: input.schemaName,
             model,
@@ -431,20 +808,27 @@ export class OpenRouterClient {
           }>(response);
           if (!response.ok) {
             throw new OpenRouterError(
-              payload?.error?.message ?? `OpenRouter request failed (${response.status})`,
+              `OpenRouter request failed (${response.status})`,
               response.status,
               // The envelope's classification, not the body: `payload` can carry
               // the provider's echo of the request that was rejected.
               { providerError: openRouterProviderError(payload) }
             );
           }
-          const content = payload?.choices?.[0]?.message?.content;
+          const sdkPayload = parseOpenRouterChatResult(payload);
+          const sdkContent = sdkPayload?.choices[0]?.message.content;
+          const content = typeof sdkContent === "string"
+            ? sdkContent
+            : payload?.choices?.[0]?.message?.content;
           if (!content) throw new OpenRouterError("OpenRouter returned no structured content");
           responsePayload = payload as Record<string, unknown>;
-          const inputTokens = providerUsageNumber(payload?.usage ?? null, "prompt_tokens");
-          const outputTokens = providerUsageNumber(payload?.usage ?? null, "completion_tokens");
-          const reasoningTokens = providerUsageNumber(payload?.usage ?? null, "reasoning_tokens");
-          const cachedInputTokens = providerCachedTokens(payload?.usage ?? null);
+          const normalizedUsage = sdkPayload?.usage
+            ? sdkUsageRecord(sdkPayload.usage)
+            : payload?.usage ?? null;
+          const inputTokens = providerUsageNumber(normalizedUsage, "prompt_tokens");
+          const outputTokens = providerUsageNumber(normalizedUsage, "completion_tokens");
+          const reasoningTokens = providerUsageNumber(normalizedUsage, "reasoning_tokens");
+          const cachedInputTokens = providerCachedTokens(normalizedUsage);
           responseMetrics = {
             latencyMs: Date.now() - startedAt,
             responseBytes: new TextEncoder().encode(content).byteLength,
@@ -453,7 +837,7 @@ export class OpenRouterClient {
             ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
             ...(cachedInputTokens === null ? {} : { cachedInputTokens }),
           };
-          await input.onDiagnostic?.({
+          await emitDiagnostic({
             stage: "model_response",
             schemaName: input.schemaName,
             model,
@@ -479,7 +863,7 @@ export class OpenRouterClient {
                   content: `Return a corrected response matching the JSON schema. Validation issues: ${JSON.stringify(validationIssues)}`,
                 },
               ];
-              await input.onDiagnostic?.({
+              await emitDiagnostic({
                 stage: "repair",
                 schemaName: input.schemaName,
                 model,
@@ -494,11 +878,11 @@ export class OpenRouterClient {
             }
             throw new OpenRouterError("OpenRouter returned invalid structured JSON");
           }
-          await input.onDiagnostic?.({ stage: "normalize", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
+          await emitDiagnostic({ stage: "normalize", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
           try {
             const parsed = input.parse(parsedJson);
-            await input.onDiagnostic?.({ stage: "validate", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
-            await input.onDiagnostic?.({
+            await emitDiagnostic({ stage: "validate", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
+            await emitDiagnostic({
               stage: "complete",
               schemaName: input.schemaName,
               model,
@@ -526,7 +910,7 @@ export class OpenRouterClient {
                   content: `Return a corrected response matching the JSON schema. Validation issues: ${JSON.stringify(validationIssues)}`,
                 },
               ];
-              await input.onDiagnostic?.({
+              await emitDiagnostic({
                 stage: "repair",
                 schemaName: input.schemaName,
                 model,
@@ -540,7 +924,7 @@ export class OpenRouterClient {
               continue;
             }
             if (error instanceof z.ZodError) {
-              await input.onDiagnostic?.({
+              await emitDiagnostic({
                 stage: "validate",
                 schemaName: input.schemaName,
                 model,
@@ -560,7 +944,7 @@ export class OpenRouterClient {
           const providerError = error instanceof OpenRouterError
             ? (error.details as { providerError?: OpenRouterProviderError } | undefined)?.providerError
             : undefined;
-          await input.onDiagnostic?.({
+          await emitDiagnostic({
             stage: "complete",
             schemaName: input.schemaName,
             model,
@@ -659,19 +1043,27 @@ export class OpenRouterClient {
       });
     }
     try {
+      const requestPayload = serializeOpenRouterChatRequest({
+        model,
+        messages: input.messages,
+        stream: true,
+        streamOptions: { includeUsage: true },
+        ...(tools.length > 0 ? {
+          tools,
+          toolChoice: input.toolChoice ?? "auto",
+        } : {}),
+        ...(input.plugins?.length ? { plugins: input.plugins } : {}),
+        ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
+        ...(input.trace ? {
+          ...(input.trace.user ? { user: input.trace.user } : {}),
+          ...(input.trace.session_id ? { sessionId: input.trace.session_id } : {}),
+          trace: toSdkTrace(input.trace.trace),
+        } : {}),
+      });
       const response = await this.fetcher("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: this.headers(),
-        body: JSON.stringify({
-          model,
-          messages: input.messages,
-          stream: true,
-          stream_options: { include_usage: true },
-          tools: tools.length > 0 ? tools : undefined,
-          tool_choice: tools.length > 0 ? (input.toolChoice ?? "auto") : undefined,
-          plugins: input.plugins?.length ? input.plugins : undefined,
-          reasoning: input.reasoningEffort ? { effort: input.reasoningEffort } : undefined,
-        }),
+        body: JSON.stringify(requestPayload),
         signal: AbortSignal.any([watchdog.signal, establishment.signal]),
       });
       clearTimeout(establishmentTimer);
@@ -698,24 +1090,27 @@ export class OpenRouterClient {
     let content = "";
     let usage: Record<string, number> | null = null;
     let finishReason: string | null = null;
+    let generationId: string | null = response.headers.get("x-generation-id");
+    let openRouterMetadata: Record<string, unknown> | null = null;
     const pendingCalls = new Map<number, ModelToolCall>();
     let deltaChain = Promise.resolve();
     const parser = createParser({
       onEvent: (event: EventSourceMessage) => {
         if (event.data === "[DONE]") return;
-        let chunk: StreamChunk;
-        try {
-          chunk = JSON.parse(event.data) as StreamChunk;
-        } catch {
-          return;
+        const chunk = parseOpenRouterStreamChunk(event.data);
+        if (chunk.error) {
+          throw new OpenRouterError("OpenRouter stream error", undefined, {
+            providerError: openRouterProviderError({ error: chunk.error }),
+          });
         }
-        if (chunk.error) throw new OpenRouterError(chunk.error.message ?? "OpenRouter stream error", undefined, chunk.error);
-        if (chunk.usage) usage = chunk.usage;
+        generationId ??= chunk.id || null;
+        if (chunk.openrouterMetadata) openRouterMetadata = openRouterMetadataRecord(chunk.openrouterMetadata);
+        if (chunk.usage) usage = sdkUsageRecord(chunk.usage);
         const choice = chunk.choices?.[0];
         if (!choice) return;
-        if (choice.finish_reason) finishReason = choice.finish_reason;
+        if (choice.finishReason) finishReason = choice.finishReason;
         const text = choice.delta?.content;
-        const toolCallDeltas = choice.delta?.tool_calls ?? [];
+        const toolCallDeltas = choice.delta?.toolCalls ?? [];
         watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
         if (text || toolCallDeltas.length > 0) {
           firstOutputAt ??= Date.now();
@@ -757,9 +1152,10 @@ export class OpenRouterClient {
         .map(([, call]) => call),
       usage,
       finishReason,
-      generationId: response.headers.get("x-generation-id"),
+      generationId,
       ttftMs: firstOutputAt === null ? null : Math.max(0, firstOutputAt - requestStartedAt),
       responseBytes,
+      openRouterMetadata,
       };
     } catch (error) {
       const stall = watchdog.stall();
@@ -778,20 +1174,496 @@ export class OpenRouterClient {
     }
   }
 
-  private headers(): HeadersInit {
+  private headers(sessionId?: string): HeadersInit {
     return {
       Authorization: `Bearer ${this.config.apiKey}`,
       "Content-Type": "application/json",
+      "X-OpenRouter-Metadata": "enabled",
+      ...(sessionId ? { "X-Session-ID": sessionId } : {}),
       ...(this.config.appUrl ? { "HTTP-Referer": this.config.appUrl } : {}),
       ...(this.config.appName ? { "X-Title": this.config.appName } : {})
     };
   }
 }
 
+/**
+ * Streaming Chat Completions client for Azure AI Foundry's OpenAI-compatible
+ * v1 endpoint. Routing and retries stay in Bind; this adapter owns only the
+ * provider-specific URL, headers, body, and response normalization.
+ */
+export class AzureOpenAIClient {
+  private readonly fetcher: typeof globalThis.fetch;
+  private readonly chatCompletionsUrl: string;
+
+  constructor(
+    private readonly config: AzureOpenAIConfig & Pick<
+      OpenRouterConfig,
+      | "fetch"
+      | "requestEstablishmentTimeoutMs"
+      | "ttftTimeoutMs"
+      | "streamIdleTimeoutMs"
+    >,
+  ) {
+    if (!config.apiKey.trim()) throw new AzureOpenAIError("AZURE_OPENAI_API_KEY is not configured");
+    this.chatCompletionsUrl = azureChatCompletionsUrl(config.endpoint);
+    this.fetcher = (config.fetch ?? globalThis.fetch).bind(globalThis);
+  }
+
+  async stream(
+    input: ChatRequest & { model: string },
+    onDelta: (delta: string) => void | Promise<void>,
+  ): Promise<StreamResult> {
+    if (input.plugins?.length || input.includeWebSearch) {
+      throw new AzureOpenAIRequestError("Azure does not support OpenRouter plugins");
+    }
+    assertAzureMessages(input.messages);
+    const requestStartedAt = Date.now();
+    let firstOutputAt: number | null = null;
+    const watchdog = createStreamWatchdog({
+      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? 120_000,
+      interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
+      maxCallDurationMs: Math.max(
+        this.config.ttftTimeoutMs ?? 120_000,
+        (this.config.ttftTimeoutMs ?? 120_000) + (this.config.streamIdleTimeoutMs ?? 15_000),
+      ),
+      external: input.signal ?? null,
+    });
+    const establishment = new AbortController();
+    let establishmentTimedOut = false;
+    const establishmentTimer = setTimeout(() => {
+      establishmentTimedOut = true;
+      establishment.abort(new DOMException("Azure request establishment timed out", "TimeoutError"));
+    }, this.config.requestEstablishmentTimeoutMs ?? 30_000);
+    try {
+      const payload = {
+        model: input.model,
+        messages: input.messages,
+        stream: true as const,
+        stream_options: { include_usage: true as const },
+        ...(input.tools?.length ? {
+          tools: input.tools,
+          tool_choice: input.toolChoice ?? "auto",
+        } : {}),
+        ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
+      };
+      const response = await this.fetcher(this.chatCompletionsUrl, {
+        method: "POST",
+        headers: {
+          "api-key": this.config.apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.any([watchdog.signal, establishment.signal]),
+      });
+      clearTimeout(establishmentTimer);
+      watchdog.open();
+      if (!response.ok || !response.body) {
+        let details: unknown;
+        try {
+          details = await response.json();
+        } catch {
+          details = await response.text();
+        }
+        throw new AzureOpenAIError(`Azure stream failed (${response.status})`, response.status, {
+          headers: { "retry-after": response.headers.get("retry-after") ?? undefined },
+          providerErrorKind: typeof details === "object" && details !== null ? "structured" : "text",
+          providerError: openRouterProviderError(details),
+        });
+      }
+
+      let content = "";
+      let usage: Record<string, number> | null = null;
+      let finishReason: string | null = null;
+      let generationId: string | null = response.headers.get("x-request-id");
+      const pendingCalls = new Map<number, ModelToolCall>();
+      let deltaChain = Promise.resolve();
+      const parser = createParser({
+        onEvent: (event: EventSourceMessage) => {
+          if (event.data === "[DONE]") return;
+          const chunk = parseOpenRouterStreamChunk(event.data);
+          if (chunk.error) {
+            throw new AzureOpenAIError("Azure stream error", undefined, {
+              providerError: openRouterProviderError({ error: chunk.error }),
+            });
+          }
+          generationId ??= chunk.id || null;
+          if (chunk.usage) usage = sdkUsageRecord(chunk.usage);
+          const choice = chunk.choices?.[0];
+          if (!choice) return;
+          if (choice.finishReason) finishReason = choice.finishReason;
+          const text = choice.delta?.content;
+          const toolCallDeltas = choice.delta?.toolCalls ?? [];
+          watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+          if (text || toolCallDeltas.length > 0) firstOutputAt ??= Date.now();
+          if (text) {
+            content += text;
+            deltaChain = deltaChain.then(() => onDelta(text));
+          }
+          for (const deltaCall of toolCallDeltas) {
+            const current = pendingCalls.get(deltaCall.index) ?? {
+              id: deltaCall.id ?? `tool-${deltaCall.index}`,
+              type: "function" as const,
+              function: { name: "", arguments: "" },
+            };
+            if (deltaCall.id) current.id = deltaCall.id;
+            if (deltaCall.function?.name) current.function.name += deltaCall.function.name;
+            if (deltaCall.function?.arguments) current.function.arguments += deltaCall.function.arguments;
+            pendingCalls.set(deltaCall.index, current);
+          }
+        },
+      });
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let responseBytes = 0;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        responseBytes += value.byteLength;
+        parser.feed(decoder.decode(value, { stream: true }));
+      }
+      parser.feed(decoder.decode());
+      await deltaChain;
+      return {
+        model: input.model,
+        content,
+        toolCalls: [...pendingCalls.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([, call]) => call),
+        usage,
+        finishReason,
+        generationId,
+        ttftMs: firstOutputAt === null ? null : Math.max(0, firstOutputAt - requestStartedAt),
+        responseBytes,
+        openRouterMetadata: null,
+      };
+    } catch (error) {
+      const stall = watchdog.stall();
+      if (stall) throw new AzureOpenAIError(`Azure stream stalled (${stall.kind})`, 408, { stall });
+      if (establishmentTimedOut && !input.signal?.aborted) {
+        throw new AzureOpenAIError("Azure request establishment timed out", 408, {
+          timeoutMs: this.config.requestEstablishmentTimeoutMs ?? 30_000,
+        });
+      }
+      throw error;
+    } finally {
+      clearTimeout(establishmentTimer);
+      watchdog.dispose();
+    }
+  }
+}
+
+function azureChatCompletionsUrl(endpoint: string): string {
+  const parsed = AzureInferenceEndpointSchema.safeParse(endpoint.trim());
+  if (!parsed.success) {
+    throw new AzureOpenAIRequestError(
+      "AZURE_OPENAI_ENDPOINT must be an HTTPS resource root or /openai/v1 base",
+    );
+  }
+  const url = new URL(parsed.data);
+  const path = url.pathname.replace(/\/+$/u, "");
+  url.pathname = `${path || "/openai/v1"}/chat/completions`;
+  return url.toString();
+}
+
+function assertAzureMessages(messages: ModelMessage[]): void {
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === "file" || part.type === "input_audio") {
+        throw new AzureOpenAIRequestError(`Azure does not support ${part.type} message parts`);
+      }
+      if (part.type === "image_url") assertSupportedOpenRouterImageUrl(part.image_url.url);
+    }
+  }
+}
+
+function serializeOpenRouterChatRequest(input: {
+  model: string;
+  messages: ModelMessage[];
+  stream: boolean;
+  streamOptions?: { includeUsage: boolean };
+  tools?: ModelRequestTool[];
+  toolChoice?: "auto" | "none";
+  plugins?: Array<Record<string, unknown>>;
+  reasoning?: { effort: "none" | "low" | "medium" | "high" };
+  responseFormat?: OpenRouterChatRequest["responseFormat"];
+  user?: string;
+  sessionId?: string;
+  trace?: ReturnType<typeof toSdkTrace>;
+}): Record<string, unknown> {
+  try {
+    const sdkRequest: OpenRouterChatRequest = {
+      model: input.model,
+      messages: toSdkMessages(input.messages),
+      stream: input.stream,
+      ...(input.streamOptions ? { streamOptions: input.streamOptions } : {}),
+      ...(input.tools ? { tools: toSdkTools(input.tools) } : {}),
+      ...(input.toolChoice ? { toolChoice: input.toolChoice } : {}),
+      ...(input.plugins ? { plugins: toSdkPlugins(input.plugins) } : {}),
+      ...(input.reasoning ? { reasoning: input.reasoning } : {}),
+      ...(input.responseFormat ? { responseFormat: input.responseFormat } : {}),
+      ...(input.user ? { user: input.user } : {}),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      ...(input.trace ? { trace: input.trace } : {}),
+    };
+    return JSON.parse(chatRequestToJSON(sdkRequest)) as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof OpenRouterRequestError) throw error;
+    throw new OpenRouterRequestError("Invalid OpenRouter chat request");
+  }
+}
+
+function toSdkTools(tools: ModelRequestTool[]): NonNullable<OpenRouterChatRequest["tools"]> {
+  return tools.map((tool) => tool.type === "function"
+    ? tool
+    : {
+        type: "openrouter:web_search" as const,
+        parameters: {
+          searchContextSize: tool.search_context_size,
+          maxTotalResults: tool.max_total_results,
+        },
+      });
+}
+
+function toSdkPlugins(
+  plugins: Array<Record<string, unknown>>,
+): NonNullable<OpenRouterChatRequest["plugins"]> {
+  return plugins.map((plugin) => {
+    if (plugin.id === "response-healing") {
+      return {
+        id: "response-healing" as const,
+        ...(typeof plugin.enabled === "boolean" ? { enabled: plugin.enabled } : {}),
+      };
+    }
+    if (plugin.id === "file-parser") {
+      const pdf = plugin.pdf && typeof plugin.pdf === "object"
+        ? plugin.pdf as Record<string, unknown>
+        : null;
+      const engine = pdf?.engine;
+      if (engine !== undefined
+        && engine !== "native"
+        && engine !== "mistral-ocr"
+        && engine !== "cloudflare-ai"
+        && engine !== "pdf-text") {
+        throw new OpenRouterRequestError(`Unsupported OpenRouter PDF parser engine: ${String(engine)}`);
+      }
+      return {
+        id: "file-parser" as const,
+        ...(typeof plugin.enabled === "boolean" ? { enabled: plugin.enabled } : {}),
+        ...(engine ? { pdf: { engine } } : {}),
+      };
+    }
+    throw new OpenRouterRequestError(`Unsupported OpenRouter plugin: ${String(plugin.id)}`);
+  });
+}
+
+function toSdkMessages(messages: ModelMessage[]): ChatMessages[] {
+  return messages.map((message) => {
+    if (message.role === "tool") {
+      return {
+        role: "tool",
+        content: toSdkContent(message.content) ?? "",
+        toolCallId: message.tool_call_id ?? "",
+      } as ChatMessages;
+    }
+    if (message.role === "assistant") {
+      return {
+        role: "assistant",
+        content: toSdkContent(message.content),
+        ...(message.name ? { name: message.name } : {}),
+        ...(message.tool_calls ? {
+          toolCalls: message.tool_calls.map((call) => ({
+            id: call.id,
+            type: call.type,
+            function: call.function,
+          })),
+        } : {}),
+      } as ChatMessages;
+    }
+    return {
+      role: message.role,
+      content: toSdkContent(message.content) ?? "",
+      ...(message.name ? { name: message.name } : {}),
+    } as ChatMessages;
+  });
+}
+
+function toSdkContent(content: ModelMessageContent): unknown {
+  if (!Array.isArray(content)) return content;
+  return content.map((part) => {
+    if (part.type === "image_url") {
+      assertSupportedOpenRouterImageUrl(part.image_url.url);
+      return { type: part.type, imageUrl: part.image_url };
+    }
+    if (part.type === "file") {
+      return {
+        type: part.type,
+        file: { filename: part.file.filename, fileData: part.file.file_data },
+      };
+    }
+    if (part.type === "input_audio") {
+      return { type: part.type, inputAudio: part.input_audio };
+    }
+    return part;
+  });
+}
+
+const OPENROUTER_IMAGE_DATA_URL = /^data:(image\/(?:png|jpeg|webp|gif));base64,/iu;
+
+/**
+ * Rally-owned attachments are private and therefore reach OpenRouter as data
+ * URLs. Keep the provider boundary fail-closed if another producer attempts to
+ * label a PDF, SVG, TIFF, HEIF, or arbitrary data payload as an image part.
+ * OpenRouter supports public HTTP(S) image URLs, but Rally does not send them:
+ * their response content type cannot be verified from the request body.
+ */
+function assertSupportedOpenRouterImageUrl(url: string): void {
+  if (OPENROUTER_IMAGE_DATA_URL.test(url)) return;
+  throw new OpenRouterRequestError("Unsupported OpenRouter image content type");
+}
+
+function toSdkTrace(trace: OpenRouterTracePayload["trace"]): {
+  traceId: string;
+  traceName: string;
+  spanName: string;
+  generationName: string;
+  additionalProperties: Record<string, string | number>;
+} {
+  const {
+    trace_id: traceId,
+    trace_name: traceName,
+    span_name: spanName,
+    generation_name: generationName,
+    ...additionalProperties
+  } = trace;
+  return { traceId, traceName, spanName, generationName, additionalProperties };
+}
+
+function parseOpenRouterChatResult(payload: unknown): ChatResult | null {
+  const parsed = chatResultFromJSON(JSON.stringify(payload));
+  return parsed.ok ? parsed.value : null;
+}
+
+function parseOpenRouterStreamChunk(serialized: string): ChatStreamChunk {
+  const parsed = chatStreamChunkFromJSON(serialized);
+  if (parsed.ok) return parsed.value;
+  let raw: Record<string, unknown> = {};
+  try {
+    const payload = JSON.parse(serialized) as unknown;
+    if (payload && typeof payload === "object") raw = payload as Record<string, unknown>;
+  } catch {
+    // An unparseable event has no answer or tool-call bytes and is ignored.
+  }
+  const rawChoices = Array.isArray(raw.choices) ? raw.choices : [];
+  return {
+    id: typeof raw.id === "string" ? raw.id : "",
+    model: typeof raw.model === "string" ? raw.model : "",
+    object: "chat.completion.chunk",
+    created: typeof raw.created === "number" ? raw.created : 0,
+    choices: rawChoices.map((value, index) => {
+      const choice = value && typeof value === "object" ? value as Record<string, unknown> : {};
+      const delta = choice.delta && typeof choice.delta === "object"
+        ? choice.delta as Record<string, unknown>
+        : {};
+      const rawToolCalls = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
+      return {
+        index: typeof choice.index === "number" ? choice.index : index,
+        finishReason: typeof choice.finish_reason === "string" ? choice.finish_reason : null,
+        delta: {
+          ...(typeof delta.content === "string" || delta.content === null ? { content: delta.content } : {}),
+          ...(rawToolCalls.length > 0 ? {
+            toolCalls: rawToolCalls.map((toolCall, toolIndex) => {
+              const record = toolCall && typeof toolCall === "object"
+                ? toolCall as Record<string, unknown>
+                : {};
+              const fn = record.function && typeof record.function === "object"
+                ? record.function as Record<string, unknown>
+                : {};
+              return {
+                index: typeof record.index === "number" ? record.index : toolIndex,
+                ...(typeof record.id === "string" ? { id: record.id } : {}),
+                type: "function" as const,
+                function: {
+                  ...(typeof fn.name === "string" ? { name: fn.name } : {}),
+                  ...(typeof fn.arguments === "string" ? { arguments: fn.arguments } : {}),
+                },
+              };
+            }),
+          } : {}),
+        },
+      };
+    }) as ChatStreamChunk["choices"],
+    ...(raw.usage && typeof raw.usage === "object"
+      ? { usage: rawUsageToSdk(raw.usage as Record<string, unknown>) }
+      : {}),
+    ...(raw.error && typeof raw.error === "object"
+      ? { error: raw.error as ChatStreamChunk["error"] }
+      : {}),
+    ...(raw.openrouter_metadata && typeof raw.openrouter_metadata === "object"
+      ? { openrouterMetadata: raw.openrouter_metadata as OpenRouterMetadata }
+      : {}),
+  };
+}
+
+function rawUsageToSdk(usage: Record<string, unknown>): ChatUsage {
+  const promptDetails = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === "object"
+    ? usage.prompt_tokens_details as Record<string, unknown>
+    : null;
+  const completionDetails = usage.completion_tokens_details
+    && typeof usage.completion_tokens_details === "object"
+    ? usage.completion_tokens_details as Record<string, unknown>
+    : null;
+  const reasoningTokens = typeof usage.reasoning_tokens === "number"
+    ? usage.reasoning_tokens
+    : typeof completionDetails?.reasoning_tokens === "number"
+      ? completionDetails.reasoning_tokens
+      : undefined;
+  const cachedInputTokens = typeof usage.cached_tokens === "number"
+    ? usage.cached_tokens
+    : typeof promptDetails?.cached_tokens === "number"
+      ? promptDetails.cached_tokens
+      : undefined;
+  return {
+    promptTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0,
+    completionTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
+    totalTokens: typeof usage.total_tokens === "number"
+      ? usage.total_tokens
+      : (typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0)
+        + (typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0),
+    ...(typeof usage.cost === "number" ? { cost: usage.cost } : {}),
+    ...(reasoningTokens === undefined ? {} : {
+      completionTokensDetails: { reasoningTokens },
+    }),
+    ...(cachedInputTokens === undefined ? {} : {
+      promptTokensDetails: { cachedTokens: cachedInputTokens },
+    }),
+  };
+}
+
+function sdkUsageRecord(usage: ChatUsage): Record<string, number> {
+  return {
+    prompt_tokens: usage.promptTokens,
+    completion_tokens: usage.completionTokens,
+    total_tokens: usage.totalTokens,
+    ...(typeof usage.cost === "number" ? { cost: usage.cost } : {}),
+    ...(typeof usage.completionTokensDetails?.reasoningTokens === "number"
+      ? { reasoning_tokens: usage.completionTokensDetails.reasoningTokens }
+      : {}),
+    ...(typeof usage.promptTokensDetails?.cachedTokens === "number"
+      ? { cached_tokens: usage.promptTokensDetails.cachedTokens }
+      : {}),
+  };
+}
+
+function openRouterMetadataRecord(metadata: OpenRouterMetadata): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(metadata)) as Record<string, unknown>;
+}
+
 type OpenRouterFailureDisposition = "retry" | "fallback" | "terminal";
 
 function openRouterFailureDisposition(error: unknown): OpenRouterFailureDisposition {
   if (isAbortError(error)) return "terminal";
+  if (error instanceof OpenRouterRequestError) return "terminal";
   if (error instanceof OpenRouterError) {
     const status = error.status;
     if (status === 401 || status === 402 || status === 403) return "terminal";
@@ -812,6 +1684,7 @@ function structuredFailureKind(error: unknown, signal?: AbortSignal): string {
       : "aborted";
   }
   if (error instanceof z.ZodError) return "validation_error";
+  if (error instanceof OpenRouterRequestError) return "request_error";
   if (error instanceof OpenRouterError) {
     if (error.status === 408) return "timeout";
     if (error.status === 429) return "rate_limit";
@@ -849,15 +1722,15 @@ function renderExpectedJsonSchema(
  * The `reasoning` field for one structured request, or nothing at all.
  *
  * Omitting the field and disabling reasoning are different requests: omitting
- * it accepts whatever the selected model does by default, while `enabled:
- * false` is the provider's own switch for turning thinking off on a model that
- * would otherwise do it.
+ * it accepts whatever the selected model does by default, while `effort:
+ * "none"` is the OpenRouter SDK's switch for turning thinking off on a model
+ * that would otherwise do it.
  */
 function structuredReasoning(
   effort: "none" | "low" | "medium" | "high" | undefined,
-): Record<string, unknown> | undefined {
+): { effort: "none" | "low" | "medium" | "high" } | undefined {
   if (effort === undefined) return undefined;
-  return effort === "none" ? { enabled: false } : { effort };
+  return { effort };
 }
 
 /**
@@ -903,18 +1776,11 @@ function withExpectedJsonSchema(
  * indistinguishable from any other failure: the status code alone cannot tell a
  * bad model id from an over-long context from a provider outage.
  *
- * **`message` is in-memory only and must never be logged.** It is the provider's
- * free text, which for some upstreams quotes the request back — bounding it to
- * 300 characters limits its size, not what it can disclose, and the host's
- * key-based redactor has no way to recognise it. It exists for a debugger and
- * for the thrown `OpenRouterError`; the two fields above are what the host
- * records. Anything that wants the message belongs behind the same opt-in as
- * the payload ledger.
+ * Provider free text is deliberately excluded because some upstreams quote the
+ * request back and the host's key-based redactor cannot recognize those echoes.
  */
 export interface OpenRouterProviderError {
   code?: string | number;
-  /** In-memory only. See the note above before recording this anywhere. */
-  message?: string;
   providerName?: string;
 }
 
@@ -922,15 +1788,13 @@ export function openRouterProviderError(payload: unknown): OpenRouterProviderErr
   if (typeof payload !== "object" || payload === null) return undefined;
   const error = (payload as { error?: unknown }).error;
   if (typeof error !== "object" || error === null) return undefined;
-  const { code, message, metadata } = error as {
+  const { code, metadata } = error as {
     code?: unknown;
-    message?: unknown;
     metadata?: { provider_name?: unknown };
   };
   const providerName = metadata?.provider_name;
   const captured: OpenRouterProviderError = {
     ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
-    ...(typeof message === "string" ? { message: message.slice(0, 300) } : {}),
     ...(typeof providerName === "string" ? { providerName } : {}),
   };
   return Object.keys(captured).length > 0 ? captured : undefined;
@@ -1004,6 +1868,7 @@ export function classifyAddressingHeuristically(input: {
   message: string;
   activeTask: boolean;
   connectorMentions?: string[];
+  humanMentions?: string[];
   addressesRally?: boolean;
 }): AddressingClassification {
   const text = input.message.trim();
@@ -1013,7 +1878,13 @@ export function classifyAddressingHeuristically(input: {
   if (input.addressesRally || UNAMBIGUOUS_PRODUCT_REFERENCE.test(text)) {
     return { classification: "agent_action", confidence: 0.96, rationaleCode: "rally_reference" };
   }
-  if (/^(please\s+)?(find|check|create|draft|send|review|summarize|investigate|update|compare|prepare)\b/i.test(text)) {
+  // An opening imperative is aimed at the agent only when the message names
+  // nobody: "Please review the deck @Alex" hands the work to Alex, so a
+  // mentioned person sends the message to the model instead of deciding here.
+  if (
+    (input.humanMentions?.length ?? 0) === 0
+    && /^(please\s+)?(find|check|create|draft|send|review|summarize|investigate|update|compare|prepare)\b/i.test(text)
+  ) {
     return { classification: "agent_action", confidence: 0.9, rationaleCode: "imperative" };
   }
   if (/\?$/.test(text)) {
@@ -1034,11 +1905,13 @@ export async function classifyAddressing(input: {
   message: string;
   activeTask: boolean;
   connectorMentions?: string[];
+  humanMentions?: string[];
   addressesRally?: boolean;
   recentMessages?: AddressingContextMessage[];
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
+  traceContext?: OpenRouterTraceContext;
 }): Promise<AddressingClassification> {
   const deterministic = classifyAddressingHeuristically(input);
   if (deterministic.confidence >= 0.9) return deterministic;
@@ -1046,13 +1919,15 @@ export async function classifyAddressing(input: {
     apiKey: input.apiKey,
     primaryModel: input.model,
     ...(input.fallbackModels ? { fallbackModels: input.fallbackModels } : {}),
-    ...(input.fetch ? { fetch: input.fetch } : {})
+    ...(input.fetch ? { fetch: input.fetch } : {}),
+    ...(input.traceContext ? { traceContext: input.traceContext } : {}),
   });
   return client.structured({
     messages: renderAddressingMessages({
       message: input.message,
       activeTask: input.activeTask,
       connectorMentions: input.connectorMentions ?? [],
+      humanMentions: input.humanMentions ?? [],
       addressesRally: input.addressesRally ?? PRODUCT_REFERENCE.test(input.message),
       recentMessages: input.recentMessages ?? [],
     }),
@@ -1221,6 +2096,7 @@ export interface AutomationCreatorPluginCatalogEntry {
     capability: string;
     mode: "read" | "write";
     idempotency?: "safe" | "provider_key" | "record_before_execute";
+    timeoutMs?: number;
     inputSchema: Record<string, unknown>;
     execute?: HarnessTool["execute"];
   }>;
@@ -1566,6 +2442,7 @@ export async function compileAutomation(input: {
   fetch?: typeof globalThis.fetch;
   /** Deterministic catalog snapshot for tests or hosts with a cached catalog. */
   contextWindowTokensByModel?: Readonly<Record<string, number | null | undefined>>;
+  traceContext?: OpenRouterTraceContext;
 }): Promise<AutomationDraft> {
   const rendered = renderAutomationCompilerMessages({
     messages: input.messages,
@@ -1611,6 +2488,7 @@ export async function compileAutomation(input: {
             capability: tool.capability,
             mode: tool.mode,
             idempotency: tool.idempotency ?? "safe",
+            ...(tool.timeoutMs === undefined ? {} : { timeoutMs: tool.timeoutMs }),
             inputSchema: tool.inputSchema,
           },
           execute: tool.execute,
@@ -2036,6 +2914,12 @@ export async function compileAutomation(input: {
     executionPrincipal: {
       type: "user",
       userId: asUserId(input.userId ?? "00000000-0000-7000-8000-000000000003"),
+    },
+    traceContext: input.traceContext ?? {
+      source: "automation_compiler",
+      feature: AGENT_MODEL_FLAG_KEYS.automation_compiler,
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+      ...(input.userId ? { contextUserId: input.userId } : {}),
     },
     systemPrompt: String(rendered[0]?.content ?? ""),
     messages: [
@@ -2657,6 +3541,7 @@ export const AVALON_MEMORY_PLUGIN_ID = "rally:memory";
 export const AVALON_TABLES_PLUGIN_ID = "rally:tables";
 export const AVALON_WEB_PLUGIN_ID = "rally:web";
 export const AVALON_WORKSTREAM_PLUGIN_ID = "rally:workstream";
+export const AVALON_MULTIMODAL_GENERATION_PLUGIN_ID = "rally:multimodal-generation";
 export const AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID = "rally:automation_architect";
 
 export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
@@ -3112,6 +3997,16 @@ export interface RunHarnessInput {
   /** Subordinate execution receipt; never used as loop or turn identity. */
   harnessRunId: string;
   executionPrincipal: ExecutionPrincipal;
+  /** Provider-side Broadcast correlation. Hosts should supply the real surface identity. */
+  traceContext?: OpenRouterTraceContext;
+  /**
+   * Resolves Azure billing rates before Bind builds a route. Production reads
+   * per-model OpenRouter endpoint-average records from a shared Cloudflare KV.
+   */
+  resolveAzureModelPricing?: (
+    canonicalModelIds: readonly string[],
+    signal: AbortSignal,
+  ) => Promise<ReadonlyMap<string, AzureModelPricing>>;
   systemPrompt: string;
   messages: ModelMessage[];
   /** Exact durable head to resume. Absent only when this loop has never started. */
@@ -3417,8 +4312,27 @@ export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): strin
   return MEMBER_SAFE_HARNESS_FAILURE_MESSAGES[code];
 }
 
+/**
+ * Statically imported, not `await import("./bind-runtime")`.
+ *
+ * The dynamic form never settled under `@cloudflare/vitest-pool-workers`: the
+ * promise stayed pending past 36 seconds while a 2-second timer kept firing in
+ * the same isolate, so the isolate was live and the module load simply never
+ * completed. Every workers test that let a run reach inference therefore hung
+ * in `runHarness` and failed as a timeout somewhere unrelated, which is what
+ * `docs/testing.md` means by a run that has to be kept away from the model.
+ *
+ * `bind-runtime` imports seven runtime values back from this module, so this is
+ * a cycle. It is a sound one: all seven are read inside function bodies rather
+ * than at module top level, so neither module observes the other's bindings
+ * before they initialize.
+ *
+ * Why the import was dynamic in the first place is not recorded — the line
+ * arrives with the repository's initial import and carries no rationale — so a
+ * change that needs the lazy form back should establish its reason afresh
+ * rather than restore it on the strength of this note.
+ */
 export async function runHarness(input: RunHarnessInput): Promise<HarnessOutcome> {
-  const { runHarnessWithBind } = await import("./bind-runtime");
   return runHarnessWithBind(input);
 }
 
