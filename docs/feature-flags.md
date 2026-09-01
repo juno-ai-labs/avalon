@@ -1098,6 +1098,35 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
 
+### 2026-09-01 — Grok 4.6 and Gemini 3.7 Flash join the pinnable set
+
+**What changed:** `x-ai/grok-4.6` and `google/gemini-3.7-flash` were added to
+`AGENT_MODEL_OVERRIDES`, next to the sibling each vendor group already orders
+them against: 4.6 after 4.5, and 3.7 ahead of 3.6. `x-ai/grok-4.3` stays first,
+so the selector's leading entry still matches what `agent-model-workstream`
+serves by default. The desktop selector gained the two short names the menu
+shows in place of the raw ids.
+
+**Why:** Both models were already reachable by this repository — 4.6 through the
+checked-in Monad Azure binding, and both through a flag variation naming them —
+but neither could be *pinned*, which is the only way a developer selects a model
+per work stream. The gap was in the closed list alone, not in routing.
+
+**Considered and rejected:** Adding the two ids to Ace's `MODEL_CHOICES` and the
+pricing worker's `OPENROUTER_PRICING_MODEL_IDS` as well. Both derive from
+`AGENT_MODEL_OVERRIDES` and picked the models up from this one edit; writing them
+out again would create three lists that can disagree, which is what the derived
+shape exists to prevent. `x-ai/grok-4.6` is now named by both the developer list
+and `AZURE_DEPLOYED_OPENROUTER_MODEL_IDS`, and the pricing worker's `Set` union
+still prices it once.
+
+**Consequences:** The pricing cron now warms two more KV keys per run, one of
+them (`google/gemini-3.7-flash`) for a model with no Azure deployment — the
+cache covers every developer-selectable id whether or not Azure can serve it, so
+that is the list working as intended rather than a stray entry. A pin naming
+`x-ai/grok-4.6` inherits its Azure-first route from `agent-harness.md`'s
+checked-in binding, so a pinned run there is not OpenRouter-only.
+
 ### 2026-08-30 — The Suggested context model route was retired
 
 **What changed:** `activity_structured` and

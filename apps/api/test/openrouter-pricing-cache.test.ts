@@ -15,6 +15,8 @@ const NOW = Date.UTC(2026, 7, 30, 12);
 const EXPECTED_MODEL_IDS = [
   "x-ai/grok-4.3",
   "x-ai/grok-4.5",
+  "x-ai/grok-4.6",
+  "google/gemini-3.7-flash",
   "google/gemini-3.6-flash",
   "google/gemini-3.5-flash",
   "google/gemini-3-flash-preview",
@@ -22,7 +24,6 @@ const EXPECTED_MODEL_IDS = [
   "openai/gpt-5.6-luna",
   "deepseek/deepseek-v4-pro",
   "deepseek/deepseek-v4-flash-0731",
-  "x-ai/grok-4.6",
   "openai/gpt-5.6-sol",
   "openai/text-embedding-3-large",
   "openai/gpt-image-2",
