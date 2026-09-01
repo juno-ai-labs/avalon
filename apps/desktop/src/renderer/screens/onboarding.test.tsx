@@ -100,11 +100,11 @@ describe('identity-first onboarding screens', () => {
 
   it('collects organization name and data region only after authentication', async () => {
     render(<RegionOnboarding />);
-    fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Workspace name' }), {
       target: { value: 'Acme Research' },
     });
     fireEvent.click(screen.getByRole('radio', { name: /European Union/u }));
-    fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
 
     await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith(
       'Acme Research', 'eu', telemetry.operationId,
@@ -113,7 +113,7 @@ describe('identity-first onboarding screens', () => {
 
   it('does not create the organization when Enter only commits an IME composition', async () => {
     render(<RegionOnboarding />);
-    const nameField = screen.getByRole('textbox', { name: 'Organization name' });
+    const nameField = screen.getByRole('textbox', { name: 'Workspace name' });
     fireEvent.change(nameField, { target: { value: 'Acme Research' } });
 
     fireEvent.keyDown(nameField, { key: 'Enter', isComposing: true });
@@ -141,7 +141,7 @@ describe('identity-first onboarding screens', () => {
       finishSetup = resolve;
     }));
     render(<RegionOnboarding />);
-    const nameField = screen.getByRole('textbox', { name: 'Organization name' });
+    const nameField = screen.getByRole('textbox', { name: 'Workspace name' });
     fireEvent.change(nameField, { target: { value: 'Acme Research' } });
 
     // Auto-repeat: holding Enter down while the first create is in flight. Each

@@ -1,7 +1,8 @@
 # Work-stream links
 
 Every surface that points at a work stream from outside the desktop app emits one
-shape: `https://rallywith.ai/app/workstreams/<uuid>`. The `rallywithai://` deep link
+shape: `https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>`.
+The `rallywithai://` deep link
 is still what actually opens a work stream, but it is now the last hop of that
 HTTPS page rather than the thing Rally hands out — because a custom scheme cannot
 be unfurled by Slack, is not linkified by mail clients, and is dead for anyone
@@ -15,7 +16,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Concern | Location |
 | --- | --- |
 | Mint, parse, and validate both forms | `packages/contracts/src/workstream-links.ts` |
-| Serve `/app/workstreams/<uuid>` | `apps/site/app/workstreams/index.html`, `apps/site/src/workstream-link.ts` |
+| Serve current and legacy work-stream paths | `apps/site/app/workstreams/index.html`, `apps/site/src/workstream-link.ts` |
 | Make the dynamic path resolve | `apps/site/public/_redirects` |
 | Slack unfurl | `unfurlRallyLinks` in `apps/api/src/services/slack-agent-service.ts` |
 | The card's blocks and its one status table | `slack-workstream-card.ts` |
@@ -32,8 +33,9 @@ changing the Slack unfurl card or the sweep that keeps it current.
 
 | Form | Shape | Who mints it |
 | --- | --- | --- |
-| **Canonical link** | `https://rallywith.ai/app/workstreams/<uuid>` | Every surface that emits a work-stream link |
-| **Deep link** | `rallywithai://workstreams/<uuid>` | The canonical page, in the browser, as the last hop |
+| **Canonical link** | `https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>` | Every current surface that emits a work-stream link |
+| **Deep link** | `rallywithai://workspace/<region>/<workspace-uuid>/workstreams/<workstream-uuid>` | The canonical page, in the browser, as the last hop |
+| **Legacy reader** | `/app/workstreams/<workstream-uuid>` or an ID-only deep link | Compatibility only; interpreted relative to the active workspace and never newly emitted |
 
 `rallywithai://workstreams/<uuid>` is still the protocol the desktop client registers,
 and it is still what actually opens a work stream. It stopped being what Rally
@@ -58,9 +60,16 @@ sent to a server, which is exactly right for the OAuth ticket handoffs in
 recognize. Slack's unfurl handler has to read the id off the shared URL, so the id
 has to be somewhere a reader can see it.
 
-A work-stream id is not a secret and is not a capability: opening the canonical
-link grants nothing on its own. The desktop app applies the viewer's own workspace
-permissions after the handoff.
+A work-stream id, region, and workspace id are not secrets and are not a
+capability: opening the canonical link grants nothing on its own. The pair is
+routing context. The distinct `workspace` host is a version boundary: desktop
+builds that predate addressed links reject it instead of silently discarding a
+query target and opening the resource in the active workspace. The desktop asks
+its native session layer to revalidate and activate that exact workspace through
+the platform service, verifies the returned session matches, and only then navigates. The
+regional API still applies membership and work-stream authorization on the read.
+If activation is refused, the active workspace stays unchanged and no resource
+route opens.
 
 No asset can exist per work-stream id, so the site — a pure static-assets Worker —
 serves every id under the prefix from one page through a 200 rewrite in
@@ -186,13 +195,13 @@ with no version constant for a future change to remember to bump.
 
 ## Invariants
 
-- **The canonical HTTPS link is the only form Rally hands out.** Never emit
+- **The workspace-addressed canonical HTTPS link is the only form Rally hands out.** Never emit
   `rallywithai://` into anything a human can copy; it cannot be unfurled, linkified, or
   opened without the app.
 - **The work-stream id lives in the path, never in a fragment.** A server has to be
   able to read it, which is the exact opposite of what the OAuth handoffs need.
 - **Every link is minted by `workstreamCanonicalUrl` and read by
-  `parseWorkstreamLink`.** A URL built by hand is a URL that drifts from the site's
+  `parseWorkstreamLinkTarget`.** A URL built by hand is a URL that drifts from the site's
   rewrite rule.
 - **`workstreamCanonicalUrl` throws on anything that is not a work-stream UUID.**
   Deliberate — a link surface should fail loudly rather than emit a URL that 404s
@@ -225,19 +234,20 @@ The row it stores is described in [`data-model.md`](data-model.md).
 
 ### Adding a surface that links to a work stream
 
-1. Call `workstreamCanonicalUrl(webBaseUrl, workstreamId)`. Do not build either URL
-   by hand.
-2. If the surface *reads* links rather than writing them, use `parseWorkstreamLink`.
+1. Call `workstreamCanonicalUrl(webBaseUrl, { region, workspaceId, workstreamId })`.
+   Do not build either URL by hand.
+2. If the surface *reads* links rather than writing them, use `parseWorkstreamLinkTarget`.
    It accepts the canonical link, the raw deep link, and the legacy `/open#target=`
    handoff still sitting in Slack and mail history, and it rejects look-alike
    origins.
 
 ### Deep links that have no canonical form
 
-`rallywithai://settings/workspace`, `rallywithai://settings/connections`, and
-`rallywithai://automations/new` still go through the `/open#target=` handoff, whose
-allowlist lives in `apps/site/src/desktop-open.ts`. They address no shareable
-object, so they need neither a stable URL nor an unfurl. Give a new deep link a
+Settings and automation deep links still go through the `/open#target=` handoff, whose
+allowlist lives in the shared `desktop-deep-link-intent` contract. They address no shareable
+object, so they need neither a stable URL nor an unfurl, but every newly emitted
+one uses the same `workspace/<region>/<workspace-uuid>/<destination>` wrapper so a notification cannot
+open the same section in whichever workspace happens to be active. Give a new deep link a
 canonical HTTPS form only when someone would reasonably paste it somewhere else.
 
 Every browser handoff reports only its closed type, `presented`/`automatic`/
@@ -307,6 +317,50 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 [`data-model.md`](data-model.md) is authoritative for the columns.
 
 ## Changelog
+
+### 2026-09-01 — The addressed native hop has an old-client rejection boundary
+
+**What changed:** The browser now opens
+`rallywithai://workspace/<region>/<workspace>/workstreams/<workstream>` and all
+native surfaces share one intent parser. Explicit targets always revalidate
+membership before navigation.
+
+**Why:** A query-addressed work-stream URL was accepted by the previous parser,
+which ignored its target and navigated relative to the active workspace. A cached
+matching credential could also conceal revoked membership.
+
+**Considered and rejected:** Adding another query version field. The old parser
+would ignore that field too; a distinct unknown host is the only fail-closed shape.
+
+**Consequences:** Existing ID-only links still open relative to the active
+workspace. New addressed links require a compatible desktop and connectivity.
+
+Shipped in #464.
+
+### 2026-09-01 — External links address a workspace before a resource
+
+**What changed:** Every new canonical work-stream URL and desktop last hop carries
+`(region, workspace_id)`. The desktop activates and verifies that target before
+navigating; Slack unfurls refuse a current link addressed to another Rally
+workspace. ID-only HTTPS, deep-link, and historical handoff forms remain readers
+relative to the active workspace and are no longer writers.
+
+**Why:** With several workspaces on one account, an ID-only link could open the
+same route under whichever workspace happened to be active. That produced a
+misleading not-found at best and made each writer invent its own answer to
+workspace selection.
+
+**Considered and rejected:** Making work-stream UUIDs globally discoverable, or
+looking for the ID across every stored credential. Both turn an opaque routing
+coordinate into a cross-workspace directory and make link opening itself an
+authority decision. The target pair is cheaper to reverse and the regional API
+remains the only membership authority.
+
+**Consequences:** New writers need all three coordinates. A target grants no
+access; failed activation leaves the current workspace and route unchanged.
+Compatibility readers must never be reused to mint a current link.
+
+Shipped in #464.
 
 ### 2026-08-25 — The deep link is minted as rallywithai://, and avalon:// is still read
 

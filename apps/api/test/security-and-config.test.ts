@@ -667,6 +667,10 @@ describe("environment guardrails", () => {
       status: 404,
       code: "not_found",
     });
+    await expect(new AuthService(env).createDevelopmentIdentitySession()).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
   });
 
   it.each([

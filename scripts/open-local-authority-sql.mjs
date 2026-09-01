@@ -1,3 +1,14 @@
+export const localAuthorityRegions = ["global", "eu"];
+
+export function localAuthorityTarget(region) {
+  if (!localAuthorityRegions.includes(region)) throw new TypeError("region must be global or eu");
+  return {
+    baseUrl: region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788",
+    config: `wrangler.${region}.jsonc`,
+    state: `.wrangler/state/${region}`,
+  };
+}
+
 export function workspaceProductAuthorityRouteUpsertSql(generation) {
   if (!Number.isSafeInteger(generation) || generation < 0) {
     throw new TypeError("generation must be a non-negative safe integer");

@@ -2050,7 +2050,7 @@ export class RallyApi {
       capabilityCount: telemetryCountBucket(capabilities.length),
       operationId,
     });
-    return this.request(`/connections/${provider}/start?telemetryVersion=2`, {
+    return this.request(`/connections/${provider}/start?telemetryVersion=2&desktopHandoffVersion=2`, {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
@@ -2149,11 +2149,14 @@ export class RallyApi {
         operationId,
       });
     }
-    return this.request(`/connections/${encodeURIComponent(id)}/reconnect?telemetryVersion=2`, {
-      method: 'POST',
-      ...(operationId ? { headers: { [RALLY_HEADERS.OPERATION_ID]: operationId } } : {}),
-      schema: WireConnectorOAuthStartSchema,
-    });
+    return this.request(
+      `/connections/${encodeURIComponent(id)}/reconnect?telemetryVersion=2&desktopHandoffVersion=2`,
+      {
+        method: 'POST',
+        ...(operationId ? { headers: { [RALLY_HEADERS.OPERATION_ID]: operationId } } : {}),
+        schema: WireConnectorOAuthStartSchema,
+      },
+    );
   }
 
   async getConnectorOAuthAttempt(attemptId: string, signal?: AbortSignal): Promise<ConnectorOAuthAttempt> {

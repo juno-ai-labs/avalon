@@ -32,6 +32,12 @@ function automationStub() {
 
 beforeEach(async () => {
   await reset();
+  await env.DB.prepare(`CREATE TABLE workspaces (
+    id TEXT PRIMARY KEY, region TEXT NOT NULL, abandoned_at TEXT
+  )`).run();
+  await env.DB.prepare(
+    `INSERT INTO workspaces (id, region, abandoned_at) VALUES (?, 'global', NULL)`,
+  ).bind(WORKSPACE_ID).run();
   await env.DB.prepare(`CREATE TABLE workstream_email_routes (
     local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
     workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
@@ -132,6 +138,63 @@ async function pinWorkspaceIdentity(): Promise<void> {
 }
 
 describe("AutomationAgent", () => {
+  it("retires scheduled and claimed work after its workspace is abandoned", async () => {
+    const now = 1_800_000_000_000;
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_identity
+           (id, automation_id, workspace_id, author_user_id, region, authority_generation,
+            created_at, updated_at)
+         VALUES (1, ?, ?, ?, 'global', 1, ?, ?)`,
+        AUTOMATION_ID, WORKSPACE_ID, AUTHOR_ID, now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_state
+           (id, lifecycle, title, definition_revision, accepted_definition_revision,
+            event_sequence, created_at, updated_at)
+         VALUES (1, 'active', 'Abandoned helper', 1, 1, 0, ?, ?)`,
+        now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_schedules
+           (schedule_id, schedule_kind, definition_json, next_due_at, paused, updated_at)
+         VALUES ('schedule-abandoned', 'interval', ?, ?, 0, ?)`,
+        JSON.stringify({ acceptedAt: now, intervalSeconds: 60 }), now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_runs
+           (run_id, occurrence_key, trigger_type, admission_state, execution_state,
+            delivery_state, context_json, source_version, created_at, updated_at)
+         VALUES ('00000000-0000-7000-8000-0000000000c1', 'manual:abandoned', 'manual',
+                 'claimed', 'pending', 'pending', '{}', 1, ?, ?)`,
+        now, now,
+      );
+      await env.DB.prepare(`UPDATE workspaces SET abandoned_at = ? WHERE id = ?`)
+        .bind('2026-09-01T00:00:00.000Z', WORKSPACE_ID).run();
+
+      await (instance as unknown as { executeSchedule(id: string): Promise<void> })
+        .executeSchedule('schedule-abandoned');
+      await (instance as unknown as { provisionNextRun(): Promise<void> }).provisionNextRun();
+
+      expect(state.storage.sql.exec<{ paused: number; next_due_at: number | null }>(
+        `SELECT paused, next_due_at FROM automation_schedules WHERE schedule_id = 'schedule-abandoned'`,
+      ).one()).toEqual({ paused: 1, next_due_at: null });
+      expect(state.storage.sql.exec<{
+        admission_state: string;
+        execution_state: string;
+        delivery_state: string;
+      }>(`SELECT admission_state, execution_state, delivery_state FROM automation_runs
+           WHERE occurrence_key = 'manual:abandoned'`).one()).toEqual({
+        admission_state: 'refused',
+        execution_state: 'stopped',
+        delivery_state: 'not_requested',
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM automation_runs WHERE occurrence_key LIKE 'schedule:%'`,
+      ).one().count).toBe(0);
+    });
+  });
+
   it("persists identity, the first human turn, and one compiler admission before dispatch", async () => {
     const stub = automationStub();
     await runInDurableObject(stub, async (instance: AutomationAgent, state) => {

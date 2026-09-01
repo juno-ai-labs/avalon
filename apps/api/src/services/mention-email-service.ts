@@ -18,6 +18,7 @@ export interface WorkstreamMentionEmail {
   recipientName: string;
   authorName: string;
   workspaceName: string;
+  workspaceId: string;
   workstreamId: string;
   workstreamTitle: string;
   workstreamEmailAddress: string | null;
@@ -40,7 +41,11 @@ export async function sendWorkstreamMentionEmail(
   // A mail client will not linkify `rallywithai://`, and a recipient reading on a
   // phone has no desktop app to hand it to. The canonical HTTPS link is a real
   // link in every client and still ends at the same work stream.
-  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
+  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
+    region: input.region,
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+  });
   const replyTo = input.workstreamEmailAddress?.trim() || null;
   const subject = `${authorName} mentioned you in ${workstreamTitle}`;
   const text = [

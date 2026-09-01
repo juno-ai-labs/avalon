@@ -1,5 +1,6 @@
 import {
   IdSchema,
+  WorkspaceAttentionSchema,
   WorkspaceWorkstreamCursorSchema,
   WorkspaceWorkstreamStateVersionSchema,
   WorkstreamBatchFilterSchema,
@@ -11,6 +12,13 @@ import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-ef
 
 const TimestampSchema = z.string().datetime({ offset: true });
 const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
+
+export const WorkspaceAttentionRequestSchema = z.object({
+  workspaceId: IdSchema,
+  userId: IdSchema,
+}).strict();
+
+export const WorkspaceAttentionResultSchema = WorkspaceAttentionSchema.strict();
 
 export const WorkspaceDirectoryListRequestSchema = z.object({
   workspaceId: IdSchema,
@@ -346,6 +354,8 @@ export const WorkspaceRegionalEffectApplyResultSchema = z.object({
 }).strict();
 
 export type WorkspaceDirectoryListRequest = z.infer<typeof WorkspaceDirectoryListRequestSchema>;
+export type WorkspaceAttentionRequest = z.infer<typeof WorkspaceAttentionRequestSchema>;
+export type WorkspaceAttentionResult = z.infer<typeof WorkspaceAttentionResultSchema>;
 export type WorkspaceDirectoryPage = z.infer<typeof WorkspaceDirectoryPageSchema>;
 export type WorkspaceDirectoryVisibilityRequest = z.infer<typeof WorkspaceDirectoryVisibilityRequestSchema>;
 export type WorkspaceDirectoryReadableIdsRequest = z.infer<typeof WorkspaceDirectoryReadableIdsRequestSchema>;

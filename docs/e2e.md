@@ -89,19 +89,124 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 
 ## Desktop signup, invitations, and settings
 
-1. Start from an empty desktop profile. Enter an organization name and verify the region choices use the descriptions **US-Jurisdiction storage** and **EU-jurisdiction storage**, with no routing or sign-in copy, and that both selectors change the target API. Select European Union and confirm there is no secondary notice listing unavailable capabilities — Terminal is enabled in both regions. Select Global again and confirm the same. Type the organization name through an IME and confirm the `Enter` that commits the composition does not create the workspace, while a second `Enter` does. Create a development workspace or complete Google sign-in in a provider test account.
+1. Start from an empty desktop profile. Enter a workspace name and verify the region choices use the descriptions **US-Jurisdiction storage** and **EU-jurisdiction storage**, with no routing or sign-in copy, and that both selectors change the target API. Select European Union and confirm there is no secondary notice listing unavailable capabilities — Terminal is enabled in both regions. Select Global again and confirm the same. Type the workspace name through an IME and confirm the `Enter` that commits the composition does not create the workspace, while a second `Enter` does. Create a development workspace or complete Google sign-in in a provider test account.
 2. During Google sign-in, confirm the system browser visits `/auth/desktop/`, its address bar is stripped of the fragment, and the **Open Rally** fallback returns the app to the correct regional session. Confirm the renderer never receives a Google code, token, or native PKCE verifier; relaunching the app before ticket redemption must require starting sign-in again.
-3. Open an invitation while signed out and confirm its organization, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
-4. While signed into a Global organization, open an EU invitation. Confirm the current session is not retargeted, the preview still uses the EU API, and the app requires sign-out before continuing with the invited account. Closing the invitation must restore the Global session route.
+3. Open an invitation while signed out and confirm its workspace, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
+4. While signed into a Global workspace, open an EU invitation. Confirm the current session is not retargeted, the preview still uses the EU API, and the app requires sign-out before continuing with the invited account. Closing the invitation must restore the Global session route.
 5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, version/platform/API/realtime diagnostics, immutable region, members, and role-appropriate invitation controls.
-6. The Developer section is served by the `developer-settings` flag, whose targeting rule matches on the account's **email domain**. Start signed in as a **non-staff** account and open **Application**: confirm the section is absent entirely — no heading, no toggle, and no result for a "debug" search of the settings navigation. That is the only thing scoping it, so it is the case to check first. Now sign in as a staff account, open **Application**, and confirm **Developer → Debug enabled** has appeared below Appearance and is off. Turn it on, then turn the flag off in Flagship with the window still open: within a poll interval (one minute) confirm the section disappears and the debugging affordances below are stripped without a restart, and that `application-settings.json` still records the preference as on. Turn the flag back on and confirm the section returns with the toggle still checked, then continue. With a digest that has run at least once, confirm its `Digest · <date> · <time>` work stream is absent from the sidebar while the preference is off, appears dimmed, gear-marked, and with an empty trailing slot once it is on, reaches full opacity on hover and while active, and disappears again when the preference is turned off. Open it and confirm the header carries a **Private** badge. With two occurrences on the same day, confirm both rows are legible and distinguishable rather than ellipsized to the same text — the time is the only thing telling them apart, and it is at the end of the title. Confirm a second member never sees it in either state, and that opening its URL directly as that member is refused. Right-click a work stream, an automation, and a note in the sidebar and confirm no menu offers a copy action. Open a work stream's right rail and confirm **Details** lists only the work stream's address (if it has one), Created by, Created, and Last activity, with the address on one line. Turn the preference on and confirm all three menus gain **Copy work stream link** / **Copy automation id** / **Copy note id** without reopening the main window, that the automation and note actions copy the resource's identifier while the work-stream one copies its canonical `https://…/app/workstreams/<uuid>` link, that **Details** gains the origin, automation, harness, and identifier rows in the same window, and that the choice survives a restart. Turn it off and confirm all three actions and the extra rows disappear again.
+6. The Developer section is served by the `developer-settings` flag, whose
+targeting rule matches on the account's **email domain**. Start signed in as a
+**non-staff** account and open **Application**: confirm the section is absent
+entirely — no heading, no toggle, and no result for a "debug" search of the
+settings navigation. That is the only thing scoping it, so it is the case to
+check first. Now sign in as a staff account, open **Application**, and confirm
+**Developer → Debug enabled** has appeared below Appearance and is off. Turn it
+on, then turn the flag off in Flagship with the window still open: within a poll
+interval (one minute) confirm the section disappears and the debugging
+affordances below are stripped without a restart, and that
+`application-settings.json` still records the preference as on. Turn the flag
+back on and confirm the section returns with the toggle still checked, then
+continue. With a digest that has run at least once, confirm its
+`Digest · <date> · <time>` work stream is absent from the sidebar while the
+preference is off, appears dimmed, gear-marked, and with an empty trailing slot
+once it is on, reaches full opacity on hover and while active, and disappears
+again when the preference is turned off. Open it and confirm the header carries
+a **Private** badge. With two occurrences on the same day, confirm both rows are
+legible and distinguishable rather than ellipsized to the same text — the time
+is the only thing telling them apart, and it is at the end of the title. Confirm
+a second member never sees it in either state, and that opening its URL directly
+as that member is refused. Right-click a work stream, an automation, and a note
+in the sidebar and confirm no menu offers a copy action. Open a work stream's
+right rail and confirm **Details** lists only the work stream's address (if it has
+one), Created by, Created, and Last activity, with the address on one line. Turn
+the preference on and confirm all three menus gain **Copy work stream link** /
+**Copy automation id** / **Copy note id** without reopening the main window,
+that the automation and note actions copy the resource's identifier while the
+work-stream one copies its canonical
+`https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>`
+link, that **Details** gains the origin, automation, harness, and identifier rows
+in the same window, and that the choice survives a restart. Turn it off and
+confirm all three actions and the extra rows disappear again.
 7. Open **Application → Appearance** and confirm the control is two rows: **Appearance** offering System, Light, and Dark, above **Theme** offering Terra and Air. Confirm each swatch is drawn in the theme it offers rather than the running one, that under System every swatch is split on a diagonal showing both of that design's appearances, and that pinning Light or Dark collapses each swatch to the single appearance in force. Confirm the status line beneath names the design and either the appearance the Mac is currently set to or the pinned one. Choose Light and confirm the change is immediate in this window and in the main window, that the Rally mark beside **Welcome back** stays legible against the page, that a switch reads as off rather than as a gap, and that a dropdown menu and a tooltip both invert correctly. Choose Air and confirm the section headings become letterspaced capitals, the rows and the reading column gain space, the sidebar marks the selected row with a line rather than a filled background, and a field of slowly moving light appears behind the main window. The standalone Settings and meeting windows deliberately stay flat — confirm they do, rather than treating it as a defect. Restart Rally and confirm the chosen theme is applied before the first frame — no flash of the previous appearance — and that a newly opened Settings or meeting window opens on the right background. **The two axes are independent, and that is the thing to check:** with **Air** and **System** selected, change the Mac between Light and Dark and confirm Rally crosses between Air's light and dark appearances *without leaving Air*; then pin Dark and confirm changing the Mac does nothing at all. Finally, with the Mac already dark, switch from System to Dark and confirm the main window's Settings picker updates too — the appearance does not change, so a build that compares appearances rather than choices leaves the other window still showing System.
 8. Open **Digest**. Confirm it opens off with weekdays selected at 9:00 AM and no timezone picker — the row states your account timezone and links to Account. Press **Weekends**, confirm only Saturday and Sunday stay lit and the preset reads as pressed, then add 12:00 and 16:30 and confirm the chips sort ascending and read as `Noon` and `4:30 PM`. Confirm **Save digest** is inert until something changes, and that an enabled digest with no time or no destination cannot be saved. Turn on **Send me a digest** and **Email**, save, and confirm the next-run line is stated in your account timezone rather than the machine's. Reopen Settings and confirm the schedule came back from the service unchanged. Change your timezone in **Account** and confirm the digest's next run moves to the same wall-clock time in the new zone. With a workspace Slack installation linked to your own Slack identity, confirm a **Slack DM** destination appears in **Deliver to**; with no such link, confirm only Email and the "connect a tool" row are offered.
-9. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Resend accepts the request. Verify the message is from `Rally <invites@rallywith.ai>`, contains the correct organization, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
+9. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Resend accepts the request. Verify the message is from `Rally <invites@rallywith.ai>`, contains the correct workspace, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
 10. Install a workspace Google Drive connection, open a fresh work stream as another active member, and confirm Drive search plus every granted Docs/Sheets read and write tool is offered without attaching a resource. Confirm another member’s personal Google connection remains unavailable and a workspace automation still receives only its explicitly bound capabilities.
 11. Open **Connections** with both personal and workspace credentials installed. Confirm they appear in separate **Personal connections** and **Workspace connections** tables, and that either empty table invites you to connect a connector below. Confirm there are no **Test** actions; an owner or administrator sees a refresh icon with an explanatory tooltip while a member does not, and a member cannot delete a workspace credential. Confirm refresh and delete each require **Continue** in a dialog before making a request, while **Cancel** leaves the connection untouched; while webhook creation or secret replacement is pending, confirm the dialog cannot close before the one-time secret appears. Force deletion to fail and confirm its error is visible inside the dialog. Hover or focus every available **Connect for me** and **Connect workspace** action, including disabled actions, and confirm the focus target has a name, disabled semantics, and a tooltip explaining that button's personal or workspace scope. Confirm the catalog filter order is **Not connected**, **Connected**, **All**, and that a dual-scope provider remains under **Not connected** when only one installable scope is connected.
 12. For each OAuth connector, confirm the provider returns to `/auth/desktop/`, the page reports success or cancellation and offers **Open Rally**, and Settings reaches the same terminal result when automatic app opening is blocked. Close Rally before a successful callback, reopen it, and confirm the persisted connection appears without repeating authorization.
 13. Accept the emailed invitation with the matching Google identity, confirm it cannot be reused, then create another invitation and revoke it before opening the email. Confirm the revoked link fails and a non-admin cannot create or revoke invitations. Sign out from Settings and confirm both application surfaces return to onboarding.
+
+### Multiple workspaces
+
+Use two disposable accounts and at least one Global and one EU workspace. Enable
+`multiple-workspaces-enabled` except where a step says otherwise.
+
+1. Have account A invite B. While B is already signed in to another workspace,
+   open the emailed link, confirm the modal names the workspace, inviter, and
+   role, choose **Join**, and confirm B lands in it with both workspaces retained.
+2. From B's account menu, create a third workspace in the other region. Switch
+   Global → European Union → Global and confirm sidebar, transcript, Settings,
+   meeting window, menu bar, and the singleton workspace socket follow the active
+   workspace. Background traffic to the region left must be attention reads only.
+3. Leave unsent text and attachments in composers in two workspaces, switch both
+   directions, and confirm each restores only its own draft. Leave one workspace
+   and confirm only that workspace's draft rows disappear.
+4. In same-region workspace A, start each OAuth connector in turn, switch to
+   same-region workspace B before accepting provider consent, and complete it.
+   Confirm Rally returns to A, the connection appears only in A, and B never
+   shows a completion or attempt-confirmation error. Repeat once from EU to
+   Global to cover the cross-region session change.
+5. Copy a current work-stream link from A, switch to B, and open it. Confirm Rally
+   activates A before navigating and the URL names A's region and workspace UUID.
+   Repeat with a random workspace UUID and with a workspace the account has left:
+   Rally must remain in B, must not navigate, and must show an access failure
+   without exposing the target's name or contents.
+6. From a linked Slack installation for A, follow **Create automation**,
+   **Manage connections**, a result work-stream link, and a freshly minted
+   **Connect Rally** challenge while B is active. Each must return to A before
+   acting. An ID-only link already in history remains active-workspace-relative
+   for compatibility and is never emitted by a current surface.
+7. Mention B in a background workspace. Confirm the account trigger gains a dot,
+   its row shows a reason-coloured count, the active row shows no duplicate, and
+   opening the workspace clears both. With unread activity but nothing addressed,
+   confirm the row shows only the ordinary unread dot.
+8. Take the device offline after counts have loaded. Confirm the last values stay
+   visible with **Counts last updated <relative time>**; selecting a background
+   row reads **Connect to open this workspace**, keeps the active surface, and
+   discards no credential. Restore connectivity and confirm focus/menu-open
+   refreshes recover. The periodic cadence remains unset.
+9. Remove B from a background workspace as A. Confirm B's next attention or
+   refresh refusal removes that row without a dialog, discovery marks the route
+   inactive, and activation cannot reopen it. Repeat while B is active there and
+   confirm socket revocation selects the most recent remaining workspace.
+10. As the sole owner with other active members, try to leave and confirm Rally
+   says another owner must exist. As the only active member of a different
+   workspace, choose **Leave and close**, confirm another device's sockets close,
+   invitations cannot race acceptance, and signing in again never surfaces it.
+11. Start a meeting recording, then try switching, creating, joining, and leaving.
+   Each must read **Finish or stop the recording before switching workspaces** and
+   leave capture plus the active workspace untouched. End capture and repeat one
+   switch successfully. Delay a workspace transition after it starts and try to
+   begin recording from the meeting window; confirm recording is refused and the
+   transition remains the only pending operation.
+12. Sign out online with the account credential and three workspace credentials.
+   Confirm every server logout is attempted and the credential, profile, and
+   draft stores are empty. Repeat with one regional Worker unreachable: local
+   stores still empty, while cleanup reports the failed server revocation.
+13. Enable Lockdown with several credentials, restart, and confirm Global and EU
+    switching still works from the encrypted set. Disable Lockdown or clear
+    credentials and confirm no sibling credential/profile copy remains.
+14. Turn `multiple-workspaces-enabled` off with two memberships. Confirm the menu
+    has the legacy one-workspace anatomy and the device-local active workspace
+    remains usable. Open the account with an older desktop build and confirm the
+    singular compatibility workspace opens instead of onboarding failing.
+15. Open an invitation addressed to another email while signed in. Confirm the
+    modal names the exact required address, signing in with the current account
+    cannot consume it, and changing to the matching account can accept it.
+16. Seed a version-1 workspace-only credential envelope, launch Rally, and complete
+    one Google exchange. Confirm the same regional workspace reconnects in place
+    rather than sending the account through setup. With enough workspace and
+    invitation rows to exceed the account-menu viewport, confirm its body scrolls
+    while create, sign-out, and the active account identity remain reachable.
 
 ## Regional telemetry acceptance
 
@@ -458,7 +563,31 @@ checked-in expected list. Exercise one tool with `readOnlyHint` and one without;
 confirm both receive write confirmation and a record-before-execute receipt,
 because provider annotations never downgrade Rally policy. Confirm another
 Rally member cannot load or use the connection.
-12. Copy a work-stream link from the desktop header and confirm it is the canonical `https://rallywith.ai/app/workstreams/<uuid>`. Paste it into Slack and confirm the unfurl names the work stream — title, last activity, and automation origin where it has one — and reveals no work-stream contents. Confirm a running, needs-input, or failed work stream leads its title with the matching emoji and repeats the word below it, and that a completed one shows no badge at all. Paste a link to a work stream in another Rally workspace and confirm the anonymous card. Repeat in a Slack Connect channel and confirm the anonymous card there too; confirm both still unfurl rather than being dropped. Then move the work stream from needs-input to completed, wait for the five-minute maintenance sweep, and confirm the posted card rewrites itself in place — losing its badge — without adding a second attachment. Confirm a card whose status has not moved is left alone, and that a move between two unbadged states (completed to idle) also leaves the posted card untouched. Then rename the work stream inline from its header without changing its status, and confirm the posted card picks the new title up on the next five-minute sweep. Change only the objective, which the card never shows, and confirm no second attachment appears and the card is not rewritten. Open the link in a browser and confirm it hands off to the desktop app; open one with a malformed id and confirm the page says so instead of offering a dead button. Paste a legacy `/open#target=avalon://workstreams/<uuid>` link and confirm it still unfurls; paste a bare `rallywithai://workstreams/<uuid>` and confirm no unfurl is expected, since Slack delivers no event for it.
+12. Copy a work-stream link from the desktop header and confirm it is the
+canonical
+`https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>`.
+Paste it into Slack and confirm the unfurl names the work stream — title, last
+activity, and automation origin where it has one — and reveals no work-stream
+contents. Confirm a running, needs-input, or failed work stream leads its title
+with the matching emoji and repeats the word below it, and that a completed one
+shows no badge at all. Paste a current link addressed to another Rally workspace
+and confirm this installation refuses to unfurl it rather than resolving the ID
+against its own workspace. Repeat in a Slack Connect channel and confirm the
+same refusal. Then move the work stream from needs-input to completed, wait for
+the five-minute maintenance sweep, and confirm the posted card rewrites itself
+in place — losing its badge — without adding a second attachment. Confirm a card
+whose status has not moved is left alone, and that a move between two unbadged
+states (completed to idle) also leaves the posted card untouched. Then rename
+the work stream inline from its header without changing its status, and confirm
+the posted card picks the new title up on the next five-minute sweep. Change
+only the objective, which the card never shows, and confirm no second attachment
+appears and the card is not rewritten. Open the link in a browser and confirm it
+hands off to the desktop app; open one with a malformed id and confirm the page
+says so instead of offering a dead button. Paste a legacy
+`/open#target=avalon://workstreams/<uuid>` link and confirm it still unfurls only
+within the Slack installation's own workspace; paste a bare
+`rallywithai://workstreams/<uuid>` and confirm no unfurl is expected, since Slack
+delivers no event for it.
 13. Create “Check my Gmail every morning and send me the stack-ranked top 3 emails in Slack,” select one Slack Agent DM destination, and inspect the stored frozen target. Run it with three, one, and zero qualifying emails. Confirm the complete ranked Slack output and controls, fewer-than-three behavior, and default empty suppression.
 14. Revoke Gmail, then Slack. Confirm each run/destination moves to `needs_input`; no alternate account or Slack installation is selected.
 14. Repeat an Agent DM and automation delivery for an EU Rally workspace. Confirm Global stores only the opaque team route, the EU WorkspaceDO owns links/session/delivery state, and the EU work-stream objects own the task and result.

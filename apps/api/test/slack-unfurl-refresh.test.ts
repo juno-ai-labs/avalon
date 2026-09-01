@@ -15,7 +15,7 @@ const workspaceId = "00000000-0000-7000-8000-000000000042";
 const userId = "00000000-0000-7000-8000-000000000043";
 const workstreamId = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
 const credentialsKey = "slack-unfurl-refresh-test-key";
-const url = `https://with-avalon.com/app/workstreams/${workstreamId}`;
+const url = `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`;
 const databases: DatabaseSync[] = [];
 
 afterEach(() => {

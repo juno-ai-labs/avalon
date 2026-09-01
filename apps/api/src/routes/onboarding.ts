@@ -86,7 +86,7 @@ onboardingRoutes.post("/workspace", zValidator("json", CreateWorkspaceRequestSch
   const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
   try {
     const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
-      .createWorkspace(body.name, body.region, c.req.raw.cf));
+      .createWorkspace(body.name, body.region, c.req.raw.cf, operationId ?? undefined));
     deferOnboardingOutcome(c, auth, session, 'workspace_create_completed', body.region, operationId, 'success');
     return c.json(SessionSchema.parse(session), 201);
   } catch (error) {
@@ -128,7 +128,7 @@ onboardingRoutes.post(
     const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
     try {
       const session = SessionSchema.parse(await new PlatformOnboardingService(c.env, auth)
-        .acceptInvitation(c.req.valid("param").id, region));
+        .acceptInvitation(c.req.valid("param").id, region, operationId ?? undefined));
       deferOnboardingOutcome(c, auth, session, 'workspace_activation_completed', region, operationId, 'success');
       return c.json(SessionSchema.parse(session));
     } catch (error) {

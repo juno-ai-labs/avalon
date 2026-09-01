@@ -17,6 +17,7 @@ export interface WorkstreamParticipantAddedEmail {
   recipientName: string;
   actorName: string;
   workspaceName: string;
+  workspaceId: string;
   workstreamId: string;
   workstreamTitle: string;
   workstreamObjective: string;
@@ -50,7 +51,11 @@ export async function sendWorkstreamParticipantAddedEmail(
   // The `rallywithai://` deep link is not linkified by mail clients, and a
   // recipient reading on a phone has no desktop app to hand it to. The
   // canonical HTTPS link is a real link everywhere and ends in the same place.
-  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
+  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
+    region: input.region,
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+  });
   const replyTo = input.workstreamEmailAddress?.trim() || null;
   // A work stream created from the composer has no name yet — its title is the
   // opening message's first line, cut at 180 characters, and the naming pass

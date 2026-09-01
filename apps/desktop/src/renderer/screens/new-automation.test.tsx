@@ -885,12 +885,12 @@ describe('New automation composer', () => {
     // Re-keying empties the composer synchronously and refills it when the read
     // lands, so a value assertion alone is satisfied by that gap.
     await waitFor(async () => {
-      expect(await readDraftText(newAutomationDraftKey('workspace-1'))).toBeNull();
+      expect(await readDraftText(newAutomationDraftKey('global', 'workspace-1'))).toBeNull();
     });
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue(''));
     // Moved, not dropped: the sentence is under the draft it was typed for.
     await waitFor(async () => {
-      expect((await readDraftText(newAutomationDraftKey('workspace-1', draftOne)))?.text)
+      expect((await readDraftText(newAutomationDraftKey('global', 'workspace-1', draftOne)))?.text)
         .toBe('Only weekdays');
     });
   });

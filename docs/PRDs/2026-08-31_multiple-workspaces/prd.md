@@ -6,6 +6,7 @@
 > signing out, and can tell which of the ones it is not looking at has something
 > waiting. Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> Build plan: [`plan.md`](plan.md).
 > Folder conventions: [`../../prds.md`](../../prds.md).
 
 ## Summary
@@ -119,9 +120,10 @@ and a working second membership is the guard and a place to put the result.
    `workspaces_region_immutable` trigger. An account may hold workspaces in both
    regions; a workspace still belongs to one.
 7. **Notifications outside the app** — a Dock badge, an OS notification, or a
-   menu-bar count for a background workspace. Deferred. The poll cadence in
-   design decision 4 makes background counts minutes old, which is fine for a
-   number sitting in a menu and wrong for something that interrupts somebody.
+   menu-bar count for a background workspace. Deferred. Background attention is
+   refreshed on focus and menu-open while its periodic cadence remains unset;
+   that is appropriate for a menu hint and wrong for something that interrupts
+   somebody.
 8. **Joining by email domain, SSO, or one person holding two identity
    providers.** Deferred. Membership still grows only by explicit invitation to
    one address.
@@ -246,7 +248,8 @@ only its own drafts.
 The menu bar item, the Settings window, and any open meeting window follow the
 active workspace. A meeting window recording against the workspace being left
 blocks the switch with *Finish or stop the recording before switching
-workspaces* — a recording is a live capture bound to one workspace's storage, and
+workspaces*, and recording cannot start while a workspace transition is already
+pending — a recording is a live capture bound to one workspace's storage, and
 moving it is not a thing that can be made to mean anything.
 
 ### What the attention count counts
@@ -269,9 +272,10 @@ because its sidebar is already on screen saying the same thing in more detail.
 The account button itself carries a dot whenever any *other* workspace has a
 count, so somebody can tell the menu is worth opening without opening it.
 
-Counts are refreshed for background workspaces on a fixed interval, when the
-window regains focus, and when the menu opens. They are never derived from a
-socket to a workspace nobody is looking at.
+Counts are refreshed for background workspaces when the window regains focus and
+when the menu opens. A fixed interval is deliberately not implemented while its
+cadence remains `LIMIT UNSET`. Counts are never derived from a socket to a
+workspace nobody is looking at.
 
 ### The states of the count
 
@@ -378,6 +382,10 @@ revocation, closing sockets on every device, and all authorization and refresh
 queries require both an active membership and `abandoned_at IS NULL`. The local
 credential and profile are dropped.
 
+The delete request carries the outcome that confirmation described (`leave` or
+`abandon`). If membership changed between preview and confirmation, the API
+answers `409` instead of silently applying a newly destructive outcome.
+
 The workspace then leaves every switcher, no existing or new session can use it,
 and its retained data is unreachable. Reversal is an operator action that clears
 `abandoned_at` and reactivates the suspended final membership together. This is
@@ -397,14 +405,15 @@ noise.
 
 ### Signing out
 
-Sign-out ends local access to every workspace, not only the active one. It attempts
-one revocation per stored workspace credential plus the account session, to each
-credential's own region, and then deletes the complete local credential and
-profile sets even if one or more requests failed. Immediate server-side revocation
-is therefore best effort, as it is today: an offline request cannot be retried
-after its only local refresh token is deliberately erased, and the server session
-expires on its ordinary deadline. The hard guarantee is that sign-out leaves no
-usable local credential or draft behind.
+Sign-out ends local access to every workspace, not only the active one. It
+snapshots the stored account and workspace credentials, deletes the complete
+local credential/profile sets and drafts, closes authenticated windows, and only
+then attempts one remote revocation per captured session at its own endpoint.
+Immediate server-side revocation is therefore best effort, as it is today: an
+offline request cannot be retried after its only local refresh token is
+deliberately erased, and the server session expires on its ordinary deadline.
+The hard guarantee is that sign-out leaves no usable local credential or draft
+behind before network cleanup starts.
 
 ## Impact on the product contract
 
@@ -431,7 +440,24 @@ deferred". The switcher is the thing all three said was not being built.
 
 ## Decision log
 
-None yet.
+- **2026-09-01 — Regional user UUIDs are not account identity.** Discovery and
+  invitation routing link the same Google account by verified email; Global and
+  EU may mint different user UUIDs.
+- **2026-09-01 — One setup intent keeps one operation ID.** Identity refresh and
+  transport retries reuse the original UUIDv7 so the durable journal, rather
+  than a new request, decides replay.
+- **2026-09-01 — Departure confirms one named outcome.** The desktop sends
+  `leave` or `abandon`; a changed membership shape returns `409` and requires a
+  new confirmation.
+- **2026-09-01 — Recording and workspace transitions exclude each other in both
+  directions.** Main owns the pending transition as well as live capture so the
+  losing operation is refused before either authority changes.
+- **2026-09-01 — Sign-out is local-first.** Local authority and drafts are erased
+  before best-effort remote revocation, so a slow or unreachable region cannot
+  prolong access on the device.
+- **2026-09-01 — Abandonment is an AutomationAgent operational fence.** Every
+  compiler/provider, schedule, provisioning, and outbox lane checks regional D1
+  before external work; an already-addressed object cannot outlive the workspace.
 
 ## Key design decisions
 
@@ -545,11 +571,12 @@ Desktop, changed:
 - **The stored credential file** goes from one `storedAuth` record to a versioned
   set: the account credential plus one workspace credential per membership. The
   disposable profile-cache file likewise becomes one profile per credential, and
-  device preferences keep a recency value per workspace plus the active id. A
-  version-1 credential and profile migrate to sets of one. A credential file that
-  cannot be parsed signs the person out, which is what it already does; a missing
-  or invalid profile drops only that cache entry and is rebuilt by refreshing its
-  credential.
+  device preferences keep a recency value per regional workspace binding plus the
+  active binding. A version-1 credential and profile migrate to sets of one; if
+  that legacy workspace-only envelope lacks the retained Global identity, one
+  Google exchange reconnects it in place. A credential file that cannot be parsed
+  signs the person out, which is what it already does; a missing or invalid
+  profile drops only that cache entry and is rebuilt by refreshing its credential.
 
 No product-data backfill is needed: every existing account has zero or one
 membership and stays exactly as valid. The binding migration marks every existing
@@ -599,10 +626,11 @@ throwing away. What is new is only that the answer may hold more than one entry.
   `workspace_access_denied` are terminal for only that credential; an HTTP status
   alone is not. The existing access-revocation queue closes any socket it holds.
 - **Sign-out guarantees local deletion and attempts remote revocation.**
-  `AuthService.logout` revokes one session per call, so the desktop calls each
-  credential's own region before erasing the set. A failed network call is not
-  described as a revoked server session: local deletion wins, and the unreachable
-  server session expires normally.
+  `AuthService.logout` revokes one session per call, so the desktop snapshots the
+  set, erases local credentials and drafts, then calls each captured credential's
+  own endpoint. A failed network call is not described as a revoked server
+  session: local deletion has already won, and the unreachable server session
+  expires normally.
 - **Nothing gains cross-workspace authority.** No route accepts two workspace ids,
   no object is addressed from another workspace's session, and the workspace
   membership route keeps its existing check that the path's workspace is the one
@@ -704,9 +732,10 @@ placement trigger keyed only to `platform_user_id`, respectively.
   workspaces should one device poll at all?** Both are limits and neither number is
   the author's to pick, per
   [`../../adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md).
-  The behavior is written so the guard exists with the number left open: a fixed
-  interval, plus focus, plus menu-open. Blocks the attention-count phase, not the
-  switcher.
+  Focus and menu-open refreshes ship. The periodic guard and its cadence remain
+  `LIMIT UNSET`, so no interval is scheduled until the team chooses the number;
+  the same is true of a device polling cap. This no longer blocks the
+  attention-count phase.
 - **What does the sole owner of a populated workspace do?** They cannot leave
   (non-goal 2) and cannot promote anyone. Either ownership transfer comes into
   scope, or the refusal ships and the answer is "ask another member to be made an
