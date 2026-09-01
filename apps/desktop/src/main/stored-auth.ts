@@ -29,33 +29,44 @@ const storedProfileSchema = z.object({
   workspace: WorkspaceSchema.nullable(),
 });
 
+const storedWorkspaceReferenceSchema = z.object({
+  workspaceId: IdSchema,
+  region: RegionSchema,
+});
+
 const storedAuthSetSchema = z.object({
   version: z.literal(2),
   account: storedAuthSchema.nullable(),
   workspaces: z.array(storedAuthSchema),
-  activeWorkspaceId: IdSchema.nullable(),
+  activeWorkspace: storedWorkspaceReferenceSchema.nullable(),
   /** Newest first; entries absent from this list retain discovery order. */
-  workspaceRecency: z.array(IdSchema),
+  workspaceRecency: z.array(storedWorkspaceReferenceSchema),
 }).superRefine((value, context) => {
-  const workspaceIds = value.workspaces.map((auth) => auth.binding.workspaceId);
+  const workspaceReferences = value.workspaces.map((auth) => ({
+    workspaceId: auth.binding.workspaceId,
+    region: auth.binding.region,
+  }));
   if (value.account?.binding.workspaceId !== null && value.account !== null) {
     context.addIssue({ code: 'custom', path: ['account'], message: 'must be identity-scoped' });
   }
   if (value.account?.binding.region === 'eu') {
     context.addIssue({ code: 'custom', path: ['account'], message: 'must use the Global identity route' });
   }
-  if (workspaceIds.some((workspaceId) => workspaceId === null)) {
+  if (workspaceReferences.some(({ workspaceId }) => workspaceId === null)) {
     context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be workspace-scoped' });
   }
-  const ids = workspaceIds.filter((workspaceId): workspaceId is string => workspaceId !== null);
-  if (new Set(ids).size !== ids.length) {
-    context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be unique by workspace' });
+  const keys = workspaceReferences
+    .filter((reference): reference is { workspaceId: string; region: Region } => reference.workspaceId !== null)
+    .map((reference) => workspaceReferenceKey(reference));
+  if (new Set(keys).size !== keys.length) {
+    context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be unique by region and workspace' });
   }
-  if (value.activeWorkspaceId !== null && !ids.includes(value.activeWorkspaceId)) {
-    context.addIssue({ code: 'custom', path: ['activeWorkspaceId'], message: 'must name a stored workspace' });
+  if (value.activeWorkspace !== null && !keys.includes(workspaceReferenceKey(value.activeWorkspace))) {
+    context.addIssue({ code: 'custom', path: ['activeWorkspace'], message: 'must name a stored workspace' });
   }
-  if (new Set(value.workspaceRecency).size !== value.workspaceRecency.length
-    || value.workspaceRecency.some((workspaceId) => !ids.includes(workspaceId))) {
+  const recencyKeys = value.workspaceRecency.map((reference) => workspaceReferenceKey(reference));
+  if (new Set(recencyKeys).size !== value.workspaceRecency.length
+    || recencyKeys.some((key) => !keys.includes(key))) {
     context.addIssue({ code: 'custom', path: ['workspaceRecency'], message: 'must contain unique stored workspaces' });
   }
   const userIds = [
@@ -75,20 +86,35 @@ const storedProfileSetSchema = z.object({
   if (value.account?.workspace !== null && value.account !== null) {
     context.addIssue({ code: 'custom', path: ['account'], message: 'must be identity-scoped' });
   }
-  const ids = value.workspaces.map((profile) => profile.workspace?.id ?? null);
-  if (ids.some((workspaceId) => workspaceId === null) || new Set(ids).size !== ids.length) {
+  const keys = value.workspaces.map((profile) => profile.workspace
+    ? workspaceReferenceKey({ workspaceId: profile.workspace.id, region: profile.workspace.region })
+    : null);
+  if (keys.some((key) => key === null) || new Set(keys).size !== keys.length) {
     context.addIssue({ code: 'custom', path: ['workspaces'], message: 'must be unique workspace profiles' });
   }
 });
 
 export type StoredAuth = z.infer<typeof storedAuthSchema>;
 export type StoredProfile = z.infer<typeof storedProfileSchema>;
+export type StoredWorkspaceReference = z.infer<typeof storedWorkspaceReferenceSchema>;
 export type StoredAuthSet = z.infer<typeof storedAuthSetSchema>;
 export type StoredProfileSet = z.infer<typeof storedProfileSetSchema>;
 
 export function parseStoredAuth(value: unknown): StoredAuth | null {
   const parsed = storedAuthSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+export function workspaceReferenceKey(reference: StoredWorkspaceReference): string {
+  return `${reference.region}:${reference.workspaceId}`;
+}
+
+function workspaceReferenceMatches(
+  reference: StoredWorkspaceReference | null,
+  workspaceId: string,
+  region: Region,
+): boolean {
+  return reference?.workspaceId === workspaceId && reference.region === region;
 }
 
 export function parseStoredProfile(value: unknown): StoredProfile | null {
@@ -107,8 +133,8 @@ export function parseStoredAuthSet(value: unknown): StoredAuthSet | null {
     version: 2,
     account: workspaceId === null ? legacy.data : null,
     workspaces: workspaceId === null ? [] : [legacy.data],
-    activeWorkspaceId: workspaceId,
-    workspaceRecency: workspaceId === null ? [] : [workspaceId],
+    activeWorkspace: workspaceId === null ? null : { workspaceId, region: legacy.data.binding.region },
+    workspaceRecency: workspaceId === null ? [] : [{ workspaceId, region: legacy.data.binding.region }],
   };
 }
 
@@ -182,9 +208,10 @@ export function sessionsShareBinding(session: Session, auth: StoredAuth): boolea
 }
 
 export function activeStoredCredential(auth: StoredAuthSet): StoredAuth | null {
-  if (auth.activeWorkspaceId !== null) {
+  if (auth.activeWorkspace !== null) {
     return auth.workspaces.find((candidate) => (
-      candidate.binding.workspaceId === auth.activeWorkspaceId
+      candidate.binding.workspaceId === auth.activeWorkspace?.workspaceId
+      && candidate.binding.region === auth.activeWorkspace.region
     )) ?? null;
   }
   return auth.account ?? auth.workspaces[0] ?? null;
@@ -193,8 +220,11 @@ export function activeStoredCredential(auth: StoredAuthSet): StoredAuth | null {
 export function storedWorkspaceCredential(
   auth: StoredAuthSet,
   workspaceId: string,
+  region: Region,
 ): StoredAuth | null {
-  return auth.workspaces.find((candidate) => candidate.binding.workspaceId === workspaceId) ?? null;
+  return auth.workspaces.find((candidate) => (
+    candidate.binding.workspaceId === workspaceId && candidate.binding.region === region
+  )) ?? null;
 }
 
 export function storedProfileForCredential(
@@ -204,19 +234,21 @@ export function storedProfileForCredential(
   if (auth.binding.workspaceId === null) return profiles.account;
   return profiles.workspaces.find((candidate) => (
     candidate.workspace?.id === auth.binding.workspaceId
+    && candidate.workspace.region === auth.binding.region
   )) ?? null;
 }
 
-export function selectStoredWorkspace(auth: StoredAuthSet, workspaceId: string): StoredAuthSet {
-  if (!auth.workspaces.some((candidate) => candidate.binding.workspaceId === workspaceId)) {
+export function selectStoredWorkspace(auth: StoredAuthSet, workspaceId: string, region: Region): StoredAuthSet {
+  if (!storedWorkspaceCredential(auth, workspaceId, region)) {
     throw new Error('The selected workspace credential is not stored');
   }
+  const selected = { workspaceId, region };
   return {
     ...auth,
-    activeWorkspaceId: workspaceId,
+    activeWorkspace: selected,
     workspaceRecency: [
-      workspaceId,
-      ...auth.workspaceRecency.filter((candidate) => candidate !== workspaceId),
+      selected,
+      ...auth.workspaceRecency.filter((candidate) => !workspaceReferenceMatches(candidate, workspaceId, region)),
     ],
   };
 }
@@ -236,7 +268,7 @@ export function mergeStoredSession(
     version: 2,
     account: null,
     workspaces: [],
-    activeWorkspaceId: null,
+    activeWorkspace: null,
     workspaceRecency: [],
   };
   const profiles: StoredProfileSet = currentProfiles ?? {
@@ -251,21 +283,28 @@ export function mergeStoredSession(
     };
   }
   const workspaces = [
-    ...auth.workspaces.filter((candidate) => candidate.binding.workspaceId !== workspaceId),
+    ...auth.workspaces.filter((candidate) => (
+      candidate.binding.workspaceId !== workspaceId || candidate.binding.region !== region
+    )),
     credential,
   ];
   const workspaceProfiles = [
-    ...profiles.workspaces.filter((candidate) => candidate.workspace?.id !== workspaceId),
+    ...profiles.workspaces.filter((candidate) => (
+      candidate.workspace?.id !== workspaceId || candidate.workspace.region !== region
+    )),
     profile,
   ];
   const activate = options.activate ?? true;
+  const reference = { workspaceId, region };
   return {
     auth: {
       ...auth,
       workspaces,
-      activeWorkspaceId: activate ? workspaceId : auth.activeWorkspaceId,
+      activeWorkspace: activate ? reference : auth.activeWorkspace,
       workspaceRecency: activate
-        ? [workspaceId, ...auth.workspaceRecency.filter((candidate) => candidate !== workspaceId)]
+        ? [reference, ...auth.workspaceRecency.filter((candidate) => (
+          !workspaceReferenceMatches(candidate, workspaceId, region)
+        ))]
         : auth.workspaceRecency,
     },
     profiles: { ...profiles, workspaces: workspaceProfiles },
@@ -277,18 +316,28 @@ export function removeStoredWorkspace(
   auth: StoredAuthSet,
   profiles: StoredProfileSet,
   workspaceId: string,
+  region: Region,
 ): { auth: StoredAuthSet; profiles: StoredProfileSet } {
-  const workspaces = auth.workspaces.filter((candidate) => candidate.binding.workspaceId !== workspaceId);
-  const workspaceIds = new Set(workspaces.map((candidate) => candidate.binding.workspaceId));
-  const workspaceRecency = auth.workspaceRecency.filter((candidate) => workspaceIds.has(candidate));
-  const activeWorkspaceId = auth.activeWorkspaceId === workspaceId
-    ? workspaceRecency[0] ?? workspaces[0]?.binding.workspaceId ?? null
-    : auth.activeWorkspaceId;
+  const workspaces = auth.workspaces.filter((candidate) => (
+    candidate.binding.workspaceId !== workspaceId || candidate.binding.region !== region
+  ));
+  const workspaceKeys = new Set(workspaces.map((candidate) => workspaceReferenceKey({
+    workspaceId: candidate.binding.workspaceId!,
+    region: candidate.binding.region,
+  })));
+  const workspaceRecency = auth.workspaceRecency.filter((candidate) => workspaceKeys.has(workspaceReferenceKey(candidate)));
+  const activeWorkspace = workspaceReferenceMatches(auth.activeWorkspace, workspaceId, region)
+    ? workspaceRecency[0] ?? (workspaces[0]?.binding.workspaceId
+      ? { workspaceId: workspaces[0].binding.workspaceId, region: workspaces[0].binding.region }
+      : null)
+    : auth.activeWorkspace;
   return {
-    auth: { ...auth, workspaces, activeWorkspaceId, workspaceRecency },
+    auth: { ...auth, workspaces, activeWorkspace, workspaceRecency },
     profiles: {
       ...profiles,
-      workspaces: profiles.workspaces.filter((candidate) => candidate.workspace?.id !== workspaceId),
+      workspaces: profiles.workspaces.filter((candidate) => (
+        candidate.workspace?.id !== workspaceId || candidate.workspace.region !== region
+      )),
     },
   };
 }

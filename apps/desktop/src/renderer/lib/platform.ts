@@ -354,8 +354,12 @@ const browserBridge: RallyDesktopBridge = {
   async getOnboardingState() {
     return browserOnboardingRequest<DesktopWorkspaceOnboardingState>('/onboarding');
   },
-  async getWorkspaceAttention({ workspaceId }) {
-    if (!browserSession?.workspace || browserSession.workspace.id !== workspaceId) {
+  async getWorkspaceAttention({ region, workspaceId }) {
+    if (
+      !browserSession?.workspace
+      || browserSession.workspace.id !== workspaceId
+      || browserSession.workspace.region !== region
+    ) {
       throw new Error('The browser keeps only its active workspace session.');
     }
     const response = await fetch(`${browserSession.apiBaseUrl}/workspace/attention`, {
@@ -364,8 +368,12 @@ const browserBridge: RallyDesktopBridge = {
     if (!response.ok) throw new Error(`Workspace attention failed (${response.status})`);
     return response.json();
   },
-  async leaveWorkspace({ workspaceId }) {
-    if (!browserSession?.workspace || browserSession.workspace.id !== workspaceId) {
+  async leaveWorkspace({ region, workspaceId }) {
+    if (
+      !browserSession?.workspace
+      || browserSession.workspace.id !== workspaceId
+      || browserSession.workspace.region !== region
+    ) {
       throw new Error('The browser keeps only its active workspace session.');
     }
     const response = await fetch(

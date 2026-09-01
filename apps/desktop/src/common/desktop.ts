@@ -17,6 +17,12 @@ import type {
 
 export type RallyRegion = 'global' | 'eu';
 
+/** Stable UI/cache identity for a workspace. Workspace UUIDs are only unique
+ * within a region, so desktop state must never key one without its region. */
+export function desktopWorkspaceIdentityKey(region: RallyRegion, workspaceId: string): string {
+  return `${region}:${workspaceId}`;
+}
+
 export type DesktopDeepLinkEntrypoint = 'deep_link' | 'menu_bar' | 'notification' | 'in_app_link';
 
 export interface DesktopDeepLinkNavigation {
@@ -395,8 +401,8 @@ export interface RallyDesktopBridge {
   }) => Promise<DesktopSession>;
   createDevelopmentSession: (apiBaseUrl: string, workspaceName: string) => Promise<DesktopSession>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
-  getWorkspaceAttention: (input: { workspaceId: string }) => Promise<WorkspaceAttention>;
-  leaveWorkspace: (input: { workspaceId: string }) => Promise<WorkspaceDeparture>;
+  getWorkspaceAttention: (input: { region: RallyRegion; workspaceId: string }) => Promise<WorkspaceAttention>;
+  leaveWorkspace: (input: { region: RallyRegion; workspaceId: string }) => Promise<WorkspaceDeparture>;
   activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
   createWorkspace: (input: { region: RallyRegion; name: string; operationId?: string }) => Promise<DesktopSession>;
   acceptInvitation: (input: { region: RallyRegion; invitationId: string; operationId?: string }) => Promise<DesktopSession>;
@@ -423,7 +429,11 @@ export interface RallyDesktopBridge {
    * the thing the person is left with.
    */
   closeMeetingNotes: (noteId?: string) => Promise<void>;
-  setMeetingRecordingState: (input: { workspaceId: string; recording: boolean }) => Promise<void>;
+  setMeetingRecordingState: (input: {
+    region: RallyRegion;
+    workspaceId: string;
+    recording: boolean;
+  }) => Promise<void>;
   getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   startMeetingSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;

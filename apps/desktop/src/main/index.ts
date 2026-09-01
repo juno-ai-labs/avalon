@@ -6,6 +6,7 @@ import {
   IdSchema,
   OnboardingRegionRequestSchema,
   ProductAnalyticsPreferenceSchema,
+  RegionSchema,
   SessionSchema,
   WorkspaceOnboardingStateSchema,
   WorkspaceAttentionSchema,
@@ -48,6 +49,7 @@ import {
   Tray,
 } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
+import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import type {
   RallyRegion,
   DesktopApplicationSettings,
@@ -208,6 +210,7 @@ import {
   storedAuthFromSession,
   storedProfileForCredential,
   storedWorkspaceCredential,
+  workspaceReferenceKey,
   type StoredAuth,
   type StoredAuthSet,
   type StoredProfileSet,
@@ -640,10 +643,13 @@ function forceCloseMeetingWindow(window: BrowserWindow): void {
   window.close();
 }
 
-function assertWorkspaceChangeAllowed(targetWorkspaceId?: string): void {
+function assertWorkspaceChangeAllowed(target?: { region: RallyRegion; workspaceId: string }): void {
+  const currentWorkspace = inMemorySession?.workspace;
   if (workspaceChangeGuard.blocksChangeFrom(
-    inMemorySession?.workspace?.id ?? null,
-    targetWorkspaceId,
+    currentWorkspace
+      ? desktopWorkspaceIdentityKey(currentWorkspace.region, currentWorkspace.id)
+      : null,
+    target ? desktopWorkspaceIdentityKey(target.region, target.workspaceId) : undefined,
   )) throw new Error('Finish or stop the recording before switching workspaces');
 }
 
@@ -1450,10 +1456,6 @@ async function persistSessionUnlocked(value: WireSession): Promise<void> {
   broadcastSessionChanged(value);
 }
 
-async function persistSession(value: WireSession): Promise<void> {
-  await withSessionMutation(() => persistSessionUnlocked(value));
-}
-
 async function migrateLegacySessionToSplitStorage(): Promise<StoredAuthSet | null> {
   try {
     const encrypted = await readStoredSessionFile(userDataDirectory());
@@ -1607,12 +1609,13 @@ async function removeStoredCredentialUnlocked(rejected: StoredAuth): Promise<voi
     nextAuth = { ...auth, account: null };
     nextProfiles = { ...profiles, account: null };
   } else {
-    const current = storedWorkspaceCredential(auth, rejected.binding.workspaceId);
+    const current = storedWorkspaceCredential(auth, rejected.binding.workspaceId, rejected.binding.region);
     if (!current || !storedAuthMatches(current, rejected)) return;
     ({ auth: nextAuth, profiles: nextProfiles } = removeStoredWorkspace(
       auth,
       profiles,
       rejected.binding.workspaceId,
+      rejected.binding.region,
     ));
   }
   if (!nextAuth.account && nextAuth.workspaces.length === 0) {
@@ -1999,15 +2002,26 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
     throw new Error('Invalid workspace name');
   }
   const session = await requestSession(apiBaseUrl, '/auth/dev/session', { workspaceName: candidate.workspaceName.trim() });
+  const identity = await requestSession(runtimeConfig().api.global, '/auth/dev/identity', {});
   if (
     !session.workspace
     || session.apiBaseUrl !== apiBaseUrl
     || runtimeConfig().api[session.workspace.region] !== apiBaseUrl
+    || identity.workspace
+    || identity.apiBaseUrl !== runtimeConfig().api.global
+    || identity.user.id !== session.user.id
+    || identity.user.email.toLocaleLowerCase('en-US') !== session.user.email.toLocaleLowerCase('en-US')
   ) {
     throw new Error('The development session returned a mismatched regional endpoint');
   }
-  await persistSession(session);
-  return publicSession(session);
+  return withSessionMutation(async () => {
+    inMemoryAuthSet = await writeSplitSessionFiles(identity);
+    inMemorySession = identity;
+    inMemoryAuthSet = await writeSplitSessionFiles(session);
+    inMemorySession = session;
+    broadcastSessionChanged(session);
+    return publicSession(session);
+  });
 }
 
 async function requireOnboardingIdentitySession(): Promise<WireSession> {
@@ -2036,10 +2050,12 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
     throw new Error('Rally returned an invitation for another account');
   }
   const auth = await loadStoredAuthSet();
-  const recency = new Map((auth?.workspaceRecency ?? []).map((workspaceId, index) => [workspaceId, index]));
+  const recency = new Map((auth?.workspaceRecency ?? []).map((reference, index) => (
+    [workspaceReferenceKey(reference), index]
+  )));
   const workspaces = [...parsed.data.workspaces].sort((left, right) => {
-    const leftIndex = recency.get(left.id);
-    const rightIndex = recency.get(right.id);
+    const leftIndex = recency.get(desktopWorkspaceIdentityKey(left.region, left.id));
+    const rightIndex = recency.get(desktopWorkspaceIdentityKey(right.region, right.id));
     if (leftIndex === undefined && rightIndex === undefined) return 0;
     if (leftIndex === undefined) return 1;
     if (rightIndex === undefined) return -1;
@@ -2072,11 +2088,14 @@ async function refreshStoredCredential(previous: StoredAuth): Promise<WireSessio
     if (!auth) throw new Error('Rally was signed out while the session was refreshing');
     const current = previous.binding.workspaceId === null
       ? auth.account
-      : storedWorkspaceCredential(auth, previous.binding.workspaceId);
+      : storedWorkspaceCredential(auth, previous.binding.workspaceId, previous.binding.region);
     if (!current || !storedAuthMatches(current, previous)) {
       throw new Error('A newer Rally credential replaced this refresh request');
     }
-    const activate = previous.binding.workspaceId === auth.activeWorkspaceId;
+    const activate = previous.binding.workspaceId === null
+      ? auth.activeWorkspace === null
+      : auth.activeWorkspace?.workspaceId === previous.binding.workspaceId
+        && auth.activeWorkspace.region === previous.binding.region;
     inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
     if (activate) {
       inMemorySession = session;
@@ -2089,11 +2108,16 @@ async function refreshStoredCredential(previous: StoredAuth): Promise<WireSessio
 async function getWorkspaceAttention(input: unknown): Promise<WorkspaceAttention> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
-  if (!workspaceId.success || Object.keys(candidate).some((key) => key !== 'workspaceId')) {
+  const region = RegionSchema.safeParse(candidate['region']);
+  if (
+    !workspaceId.success
+    || !region.success
+    || Object.keys(candidate).some((key) => key !== 'workspaceId' && key !== 'region')
+  ) {
     throw new Error('Invalid workspace attention request');
   }
   const authSet = await loadStoredAuthSet();
-  const auth = authSet ? storedWorkspaceCredential(authSet, workspaceId.data) : null;
+  const auth = authSet ? storedWorkspaceCredential(authSet, workspaceId.data, region.data) : null;
   if (!auth) throw new Error('No credential is stored for this workspace');
   const ask = (credential: StoredAuth) => net.fetch(`${apiBaseForAuth(credential)}/workspace/attention`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${credential.accessToken}` },
@@ -2110,12 +2134,17 @@ async function getWorkspaceAttention(input: unknown): Promise<WorkspaceAttention
 async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
-  if (!workspaceId.success || Object.keys(candidate).some((key) => key !== 'workspaceId')) {
+  const region = RegionSchema.safeParse(candidate['region']);
+  if (
+    !workspaceId.success
+    || !region.success
+    || Object.keys(candidate).some((key) => key !== 'workspaceId' && key !== 'region')
+  ) {
     throw new Error('Invalid workspace departure request');
   }
   assertWorkspaceChangeAllowed();
   const authSet = await loadStoredAuthSet();
-  let credential = authSet ? storedWorkspaceCredential(authSet, workspaceId.data) : null;
+  let credential = authSet ? storedWorkspaceCredential(authSet, workspaceId.data, region.data) : null;
   if (!credential) throw new Error('No credential is stored for this workspace');
   const ask = (stored: StoredAuth) => net.fetch(
     `${apiBaseForAuth(stored)}/workspaces/${encodeURIComponent(workspaceId.data)}/membership`,
@@ -2206,7 +2235,7 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
     region: candidate['region'], workspaceId: candidate['workspaceId'],
   });
   if (!parsed.success) throw new Error('Invalid workspace activation request');
-  assertWorkspaceChangeAllowed(parsed.data.workspaceId);
+  assertWorkspaceChangeAllowed(parsed.data);
   const operationId = candidate['operationId'];
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
     throw new Error('Invalid workspace activation operation ID');
@@ -2215,11 +2244,11 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
   const cached = await withSessionMutation(async () => {
     const auth = await loadStoredAuthSet();
     if (!auth) return null;
-    const credential = storedWorkspaceCredential(auth, parsed.data.workspaceId);
-    if (!credential || credential.binding.region !== parsed.data.region) return null;
+    const credential = storedWorkspaceCredential(auth, parsed.data.workspaceId, parsed.data.region);
+    if (!credential) return null;
     const session = await storedSessionForCredential(credential);
     if (!session || selectionIntent !== workspaceSelectionIntent) return null;
-    const selected = selectStoredWorkspace(auth, parsed.data.workspaceId);
+    const selected = selectStoredWorkspace(auth, parsed.data.workspaceId, parsed.data.region);
     await writeStoredAuthFile(
       userDataDirectory(),
       encryptStoredSessionValue(JSON.stringify(selected)),
@@ -2984,15 +3013,24 @@ function registerIpc(): void {
     if (!input || typeof input !== 'object') throw new Error('Invalid meeting recording state');
     const candidate = input as Record<string, unknown>;
     const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
+    const region = RegionSchema.safeParse(candidate['region']);
     if (
       !workspaceId.success
+      || !region.success
       || typeof candidate['recording'] !== 'boolean'
-      || Object.keys(candidate).some((key) => key !== 'workspaceId' && key !== 'recording')
+      || Object.keys(candidate).some((key) => !['workspaceId', 'region', 'recording'].includes(key))
     ) throw new Error('Invalid meeting recording state');
-    if (candidate['recording'] && inMemorySession?.workspace?.id !== workspaceId.data) {
+    if (candidate['recording'] && (
+      inMemorySession?.workspace?.id !== workspaceId.data
+      || inMemorySession.workspace.region !== region.data
+    )) {
       throw new Error('The meeting no longer belongs to the active workspace');
     }
-    workspaceChangeGuard.recordingChanged(event.sender.id, workspaceId.data, candidate['recording']);
+    workspaceChangeGuard.recordingChanged(
+      event.sender.id,
+      desktopWorkspaceIdentityKey(region.data, workspaceId.data),
+      candidate['recording'],
+    );
   });
   ipcMain.handle('meeting-audio:prepare-permissions', (event) => {
     assertMeetingIpcSender(event);

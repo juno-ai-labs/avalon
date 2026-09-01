@@ -229,6 +229,22 @@ export class AuthService {
     return this.createSession(await this.loadIdentity(DEVELOPMENT_USER_ID, DEVELOPMENT_WORKSPACE_ID));
   }
 
+  async createDevelopmentIdentitySession(): Promise<Session> {
+    if (this.env.APP_ENV !== "development" || this.env.RALLY_DEV_AUTH !== "true") {
+      throw new ApiError(404, "not_found", "Development authentication is unavailable");
+    }
+    if (this.env.AVALON_REGION !== "global") {
+      throw new ApiError(409, "global_identity_required", "Development identity belongs to the Global control plane");
+    }
+    const at = nowIso();
+    await this.env.DB.prepare(
+      `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
+       VALUES (?, 'development-user', 'dev@avalon.local', 'Adam', NULL, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`,
+    ).bind(DEVELOPMENT_USER_ID, at, at).run();
+    return this.createSession(await this.loadIdentity(DEVELOPMENT_USER_ID, null));
+  }
+
   async consumeIdentityCallback(code: string, state: string): Promise<string> {
     if (this.env.AVALON_REGION !== "global") {
       throw new ApiError(409, "global_identity_required", "Sign in through the Avalon platform identity endpoint");

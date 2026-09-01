@@ -2,7 +2,25 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { workspaceProductAuthorityRouteUpsertSql } from "./open-local-authority-sql.mjs";
+import {
+  localAuthorityRegions,
+  localAuthorityTarget,
+  workspaceProductAuthorityRouteUpsertSql,
+} from "./open-local-authority-sql.mjs";
+
+test("local authority bootstrap covers both regional Workers", () => {
+  assert.deepEqual(localAuthorityRegions, ["global", "eu"]);
+  assert.deepEqual(localAuthorityTarget("global"), {
+    baseUrl: "http://127.0.0.1:8787",
+    config: "wrangler.global.jsonc",
+    state: ".wrangler/state/global",
+  });
+  assert.deepEqual(localAuthorityTarget("eu"), {
+    baseUrl: "http://127.0.0.1:8788",
+    config: "wrangler.eu.jsonc",
+    state: ".wrangler/state/eu",
+  });
+});
 
 test("workspace authority upsert executes through SQLite and updates an existing route", () => {
   const database = new DatabaseSync(":memory:");

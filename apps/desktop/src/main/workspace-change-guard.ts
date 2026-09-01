@@ -2,8 +2,8 @@
 export class WorkspaceChangeGuard {
   readonly #recordingWorkspaces = new Map<number, string>();
 
-  recordingChanged(windowId: number, workspaceId: string, recording: boolean): void {
-    if (recording) this.#recordingWorkspaces.set(windowId, workspaceId);
+  recordingChanged(windowId: number, workspaceKey: string, recording: boolean): void {
+    if (recording) this.#recordingWorkspaces.set(windowId, workspaceKey);
     else this.#recordingWorkspaces.delete(windowId);
   }
 
@@ -11,8 +11,8 @@ export class WorkspaceChangeGuard {
     this.#recordingWorkspaces.delete(windowId);
   }
 
-  blocksChangeFrom(currentWorkspaceId: string | null, targetWorkspaceId?: string): boolean {
-    if (!currentWorkspaceId || targetWorkspaceId === currentWorkspaceId) return false;
-    return [...this.#recordingWorkspaces.values()].some((workspaceId) => workspaceId === currentWorkspaceId);
+  blocksChangeFrom(currentWorkspaceKey: string | null, targetWorkspaceKey?: string): boolean {
+    if (!currentWorkspaceKey || targetWorkspaceKey === currentWorkspaceKey) return false;
+    return [...this.#recordingWorkspaces.values()].some((workspaceKey) => workspaceKey === currentWorkspaceKey);
   }
 }
