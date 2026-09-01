@@ -4,6 +4,7 @@ import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
 import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { logError } from '../common/logger';
+import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
@@ -165,14 +166,25 @@ function TelemetryRouteObserver(): null {
  * recovers from it. */
 function endSessionFor(
   error: unknown,
-  { signOut, signOutIfCredentialCleared }: Pick<AppSessionValue, 'signOut' | 'signOutIfCredentialCleared'>,
+  {
+    signOut,
+    signOutIfCredentialCleared,
+    surrenderActiveWorkspace,
+  }: Pick<AppSessionValue, 'signOut' | 'signOutIfCredentialCleared' | 'surrenderActiveWorkspace'>,
 ): void {
-  if (!(error instanceof ApiError) || error.status !== 401) return;
-  void (isSessionRejection(error) ? signOutIfCredentialCleared() : signOut());
+  if (!(error instanceof ApiError)) return;
+  if (
+    error.status === 403
+    && (error.code === 'workspace_access_denied' || error.code === 'workspace_access_revoked')
+  ) {
+    void surrenderActiveWorkspace();
+  } else if (error.status === 401) {
+    void (isSessionRejection(error) ? signOutIfCredentialCleared() : signOut());
+  }
 }
 
 function WorkspaceApp(): React.JSX.Element {
-  const { api, session, signOut, signOutIfCredentialCleared } = useAppSession();
+  const { api, session, signOut, signOutIfCredentialCleared, surrenderActiveWorkspace } = useAppSession();
   const workspace = useQuery({
     queryKey: ['workspace', session?.workspace?.id, session?.user.id],
     queryFn: ({ signal }) => api!.getWorkspace(signal),
@@ -188,8 +200,8 @@ function WorkspaceApp(): React.JSX.Element {
 
   useEffect(() => {
     if (workspace.error) abandonPendingWorkstreamFeedOpen();
-    endSessionFor(workspace.error, { signOut, signOutIfCredentialCleared });
-  }, [signOut, signOutIfCredentialCleared, workspace.error]);
+    endSessionFor(workspace.error, { signOut, signOutIfCredentialCleared, surrenderActiveWorkspace });
+  }, [signOut, signOutIfCredentialCleared, surrenderActiveWorkspace, workspace.error]);
 
   if (workspace.isLoading || !workspace.error && !workspace.data) return <LoadingState label="Opening workspace…" />;
   if (workspace.error) return <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />;
@@ -198,7 +210,7 @@ function WorkspaceApp(): React.JSX.Element {
   const settingsSurface = new URLSearchParams(window.location.search).get('surface') === 'settings';
   if (settingsSurface) {
     return (
-      <WorkspaceSocketProvider api={api!} workspaceId={workspace.data.id}>
+      <WorkspaceSocketProvider api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={workspace.data.id}>
         <HashRouter>
           <TelemetryRouteObserver />
           <Routes>
@@ -213,7 +225,7 @@ function WorkspaceApp(): React.JSX.Element {
   const meetingSurface = new URLSearchParams(window.location.search).get('surface') === 'meeting';
   if (meetingSurface) {
     return (
-      <WorkspaceSocketProvider api={api!} workspaceId={workspace.data.id}>
+      <WorkspaceSocketProvider api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={workspace.data.id}>
         <HashRouter>
           <TelemetryRouteObserver />
           <Routes>
@@ -226,7 +238,7 @@ function WorkspaceApp(): React.JSX.Element {
   }
 
   return (
-    <WorkspaceSocketProvider api={api!} workspaceId={workspace.data.id}>
+    <WorkspaceSocketProvider api={api!} onAccessRevoked={surrenderActiveWorkspace} workspaceId={workspace.data.id}>
       <SpeechPlaybackProvider api={api!}>
         {/*
           A declarative router otherwise wraps its history listener in
@@ -238,7 +250,9 @@ function WorkspaceApp(): React.JSX.Element {
         */}
         <HashRouter useTransitions={false}>
           <TelemetryRouteObserver />
-          <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
+          <WorkstreamSocketResumeProvider
+            scope={`${session?.user.email ?? 'unknown'}:${desktopWorkspaceIdentityKey(workspace.data.region, workspace.data.id)}`}
+          >
             <AppShell workspace={workspace.data}>
               <Routes>
                 <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
@@ -262,6 +276,7 @@ function WorkspaceApp(): React.JSX.Element {
 function WorkspaceOnboardingGate(): React.JSX.Element {
   const {
     activateWorkspace, getOnboardingState, runtime, session, signOut, signOutIfCredentialCleared,
+    surrenderActiveWorkspace,
   } = useAppSession();
   const [activatingWorkspaceId, setActivatingWorkspaceId] = useState<string | null>(null);
   const [activationError, setActivationError] = useState<Error | null>(null);
@@ -285,13 +300,13 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
     setActivatingWorkspaceId(workspace.id);
     setActivationError(null);
     void activateWorkspace(workspace.region, workspace.id, operationId).catch((error: unknown) => {
-      setActivationError(error instanceof Error ? error : new Error('Rally could not open this organization.'));
+      setActivationError(error instanceof Error ? error : new Error('Rally could not open this workspace.'));
     });
   }, [activateWorkspace, activatingWorkspaceId, onboarding.data?.workspace]);
 
   useEffect(() => {
-    endSessionFor(onboarding.error, { signOut, signOutIfCredentialCleared });
-  }, [onboarding.error, signOut, signOutIfCredentialCleared]);
+    endSessionFor(onboarding.error, { signOut, signOutIfCredentialCleared, surrenderActiveWorkspace });
+  }, [onboarding.error, signOut, signOutIfCredentialCleared, surrenderActiveWorkspace]);
 
   useEffect(() => {
     if (!onboarding.data) return;
@@ -301,7 +316,7 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   }, [onboarding.data]);
 
   if (onboarding.isLoading || (!onboarding.error && !onboarding.data)) {
-    return <LoadingState label="Checking your organizations…" />;
+    return <LoadingState label="Checking your workspaces…" />;
   }
   if (onboarding.error) {
     return <ServiceSetupState error={onboarding.error} onRetry={() => void onboarding.refetch()} />;

@@ -19,6 +19,7 @@ import type { AttachmentPreview } from './attachments';
 import { ComposerQueue, type ComposerQueueItem } from './composer-queue';
 import { ComposerInput } from './composer-input';
 import { Avatar, Badge, Button, Modal } from './primitives';
+import type { RallyRegion } from '../../common/desktop';
 
 /**
  * Someone an `@` can name here. Only people for now: the work stream's
@@ -37,6 +38,8 @@ interface MentionCandidate {
 interface WorkstreamComposerProps {
   api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
   workstream: WorkstreamDetail;
+  workspaceId?: string;
+  workspaceRegion?: RallyRegion;
   members: WorkspaceMember[];
   fileInputRef: RefObject<HTMLInputElement | null>;
   sending: boolean;
@@ -80,6 +83,8 @@ const BASE_COMMANDS: ComposerCommand[] = [
 export function WorkstreamComposer({
   api,
   workstream,
+  workspaceId = 'test-workspace',
+  workspaceRegion = 'global',
   members,
   fileInputRef,
   sending,
@@ -102,7 +107,7 @@ export function WorkstreamComposer({
     setText,
     mentions: selectedMentions,
     setMentions: setSelectedMentions,
-  } = useDraftText(workstreamDraftKey(workstream.id));
+  } = useDraftText(workstreamDraftKey(workspaceRegion, workspaceId, workstream.id));
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);

@@ -34,6 +34,18 @@ describe('authoritative onboarding outcome telemetry', () => {
       INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
       VALUES (?, ?, 'owner', 'active', ?)
     `).run(existingWorkspaceId, userId, '2026-08-12T20:00:00.000Z');
+    database.prepare(`
+      INSERT INTO platform_workspace_operations
+        (operation_id, platform_user_id, action, request_fingerprint, region,
+         workspace_id, placement_affinity, invitation_id, status, created_at, updated_at)
+      VALUES (?, ?, 'create', 'another-request', 'global', ?, 'wnam', NULL, 'pending', ?, ?)
+    `).run(
+      operationId,
+      userId,
+      existingWorkspaceId,
+      '2026-08-12T20:00:00.000Z',
+      '2026-08-12T20:00:00.000Z',
+    );
     const app = new Hono<HonoAppEnv>();
     app.use('*', async (c, next) => { c.set('auth', auth); await next(); });
     app.route('/', onboardingRoutes);

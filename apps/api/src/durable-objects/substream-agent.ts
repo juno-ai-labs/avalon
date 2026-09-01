@@ -4214,7 +4214,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
          FROM workspace_members member
          JOIN workspaces workspace ON workspace.id = member.workspace_id
         WHERE member.workspace_id = ? AND member.user_id = ?
-          AND member.status = 'active' AND workspace.region = ?`,
+          AND member.status = 'active' AND workspace.region = ?
+          AND workspace.abandoned_at IS NULL`,
     ).bind(workspaceId, userId, this.env.AVALON_REGION).first<AuthRoleRow>();
   }
 
@@ -4239,7 +4240,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
            JOIN workspaces workspace ON workspace.id = session.workspace_id
           WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
             AND session.region = ? AND session.revoked_at IS NULL
-            AND session.expires_at > ? AND workspace.region = ?`,
+            AND session.expires_at > ? AND workspace.region = ?
+            AND workspace.abandoned_at IS NULL`,
       ).bind(
         attachment.sessionId,
         attachment.userId,

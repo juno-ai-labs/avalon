@@ -210,7 +210,8 @@ export class AuthService {
       this.env.DB.prepare(
         `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
          VALUES (?, ?, 'avalon-development', ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name, updated_at = excluded.updated_at, abandoned_at = NULL`,
       ).bind(
         DEVELOPMENT_WORKSPACE_ID,
         workspaceName.trim(),
@@ -227,6 +228,22 @@ export class AuthService {
       ).bind(DEVELOPMENT_WORKSPACE_ID, DEVELOPMENT_USER_ID, at),
     ]);
     return this.createSession(await this.loadIdentity(DEVELOPMENT_USER_ID, DEVELOPMENT_WORKSPACE_ID));
+  }
+
+  async createDevelopmentIdentitySession(): Promise<Session> {
+    if (this.env.APP_ENV !== "development" || this.env.RALLY_DEV_AUTH !== "true") {
+      throw new ApiError(404, "not_found", "Development authentication is unavailable");
+    }
+    if (this.env.AVALON_REGION !== "global") {
+      throw new ApiError(409, "global_identity_required", "Development identity belongs to the Global control plane");
+    }
+    const at = nowIso();
+    await this.env.DB.prepare(
+      `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
+       VALUES (?, 'development-user', 'dev@avalon.local', 'Adam', NULL, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`,
+    ).bind(DEVELOPMENT_USER_ID, at, at).run();
+    return this.createSession(await this.loadIdentity(DEVELOPMENT_USER_ID, null));
   }
 
   async consumeIdentityCallback(code: string, state: string): Promise<string> {
@@ -532,7 +549,8 @@ export class AuthService {
          w.created_at AS workspace_created_at, m.role
        FROM users u JOIN workspace_members m ON m.user_id = u.id
        JOIN workspaces w ON w.id = m.workspace_id
-       WHERE u.id = ? AND w.id = ? AND m.status = 'active'`,
+       WHERE u.id = ? AND w.id = ? AND m.status = 'active'
+         AND w.abandoned_at IS NULL`,
     )
       .bind(userId, workspaceId)
       .first<IdentityRow>();

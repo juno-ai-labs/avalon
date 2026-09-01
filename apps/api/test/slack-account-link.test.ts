@@ -71,7 +71,10 @@ describe("Slack account linking", () => {
 
     const handoff = new URL(button.url);
     expect(handoff.origin + handoff.pathname).toBe("https://with-avalon.com/slack/link");
-    const token = new URLSearchParams(handoff.hash.slice(1)).get("token") ?? "";
+    const handoffParameters = new URLSearchParams(handoff.hash.slice(1));
+    expect(handoffParameters.get("region")).toBe("global");
+    expect(handoffParameters.get("workspace")).toBe(workspaceId);
+    const token = handoffParameters.get("token") ?? "";
     await expect(new SlackAgentService(environment(database)).previewLink(auth(), token))
       .resolves.toMatchObject({ teamId: "T123", slackUserId: "U456" });
   });

@@ -13,6 +13,25 @@ success commits the connection row and attempt's `connection_id` in one
 WorkspaceDO transaction; only the opaque D1 ingress-route synchronization is a
 recoverable post-commit edge.
 
+The callback target also carries the attempt's owning `(region, workspace_id)`.
+OAuth state remains the server authority: changing the active desktop workspace
+while consent is open cannot rebind the attempt or connection. The desktop treats
+the callback as an explicit destination, activates that exact workspace through
+the ordinary membership and meeting-change guard, and only then refreshes its
+connector caches. If the state cannot be resolved, the server emits an
+unaddressed failure because inventing a workspace would be less safe than asking
+the member to restart. This path is shared by Google, GitHub, Granola, Linear,
+Notion, and Slack; a provider-specific callback must not mint its own link shape.
+
+Connector start advertises `desktopHandoffVersion=2` as an additive query
+capability. The regional service persists the matching return URI with the OAuth
+state: version 2 uses the fail-closed `workspace/<region>/<workspace>/auth/complete`
+shape, while an omitted capability retains the legacy unaddressed callback for
+the older initiating desktop. An older API safely ignores the query marker and
+returns the legacy shape to a newer desktop. The pending attempt itself lives in
+the application session rather than a Settings component, so changing workspace
+or remounting Settings does not orphan reconciliation.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -885,6 +904,54 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-01 — OAuth persists the initiating desktop's handoff grammar
+
+**What changed:** Connector start advertises handoff version 2 in an additive
+query field. The regional OAuth state stores either a versioned addressed return
+or the legacy unaddressed return and every provider completion uses that stored
+value. Pending reconciliation moved from Settings-local state to app-session
+state.
+
+**Why:** Returning the new addressed shape to an older initiating desktop could
+be rejected or, with the earlier query grammar, silently applied to the active
+workspace. Switching workspaces could also unmount and forget the pending poll.
+
+**Considered and rejected:** A custom capability header. A new desktop reaching
+an older API would fail that API's CORS preflight before it could return the safe
+legacy callback; an unknown query field is ignored safely.
+
+**Consequences:** New/new pairs return to the originating workspace; either side
+being old uses the legacy callback. Unknown OAuth state remains explicitly
+unaddressed and asks the member to restart from Connections.
+
+Shipped in #464.
+
+### 2026-09-01 — Connector completion stays with the workspace that started it
+
+**What changed:** Every resolvable connector success, denial, and failure target
+includes the OAuth state's regional workspace. Desktop completion activates that
+workspace before cache refresh or messaging, and Settings polls a pending attempt
+only while that workspace is active. Electron's provider-result classifier now
+derives from the shared provider list, including Granola.
+
+**Why:** OAuth state and connection writes were already correctly bound to
+workspace A, but the native callback carried only a region. After a switch to B,
+the renderer could refresh or poll B for A's result and cross-region callbacks
+were rejected outright. Granola separately fell out of a hand-maintained desktop
+provider list.
+
+**Considered and rejected:** Rebinding to the active workspace, prompting for a
+workspace after consent, and provider-specific callback fixes. OAuth already
+records the unambiguous origin, and all three alternatives create either a second
+authority or another list that can drift.
+
+**Consequences:** Following a connector callback may switch the foreground
+workspace. Unknown-state failures remain unaddressed and never guess. A connector
+added to `ConnectorOAuthProviders` automatically participates in main-process
+completion delivery, but its API flow must still use `connectorAttemptTarget`.
+
+Shipped in #464.
 
 ### 2026-08-30 — Connector activity no longer produces Suggested context
 

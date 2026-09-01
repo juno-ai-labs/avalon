@@ -68,7 +68,7 @@ vi.mock('../lib/workstream-socket-pool', () => ({
 }));
 
 const workspace: Workspace = {
-  id: 'workspace-1',
+  id: '00000000-0000-7000-8000-000000000001',
   name: 'Rally Studio',
   region: 'global',
   timezone: 'America/Los_Angeles',
@@ -1480,7 +1480,7 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work stream link' }));
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(
-      'https://rallywith.ai/app/workstreams/00000000-0000-4000-8000-000000000042',
+      'https://rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000001/workstreams/00000000-0000-4000-8000-000000000042',
     ));
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });

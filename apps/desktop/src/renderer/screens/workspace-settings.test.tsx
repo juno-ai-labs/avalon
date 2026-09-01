@@ -3,6 +3,8 @@ import { ClientFeatureFlagsSchema } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { useState } from 'react';
+import type { PendingConnectorOAuth } from '../lib/app-session';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { ApiError } from '../lib/api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from '../lib/use-client-feature-flags';
@@ -46,24 +48,31 @@ const setLaunchAtLogin = vi.hoisted(() => vi.fn());
 const setProductAnalyticsEnabled = vi.hoisted(() => vi.fn());
 const getTelemetryInspector = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
+const leaveWorkspace = vi.hoisted(() => vi.fn());
 const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
 const settingsSectionRequest = vi.hoisted(() => ({
   listener: null as ((section: string) => void) | null,
 }));
 
 vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({
-    api,
-    runtime: {
-      appVersion: '0.1.0',
-      isPackaged: false,
-      platform: 'darwin',
-      api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
-      devAuthEnabled: true,
-    },
-    session: { apiBaseUrl: 'https://eu.api.rallywith.ai' },
-    signOut,
-  }),
+  useAppSession: () => {
+    const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
+    return {
+      api,
+      runtime: {
+        appVersion: '0.1.0',
+        isPackaged: false,
+        platform: 'darwin',
+        api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
+        devAuthEnabled: true,
+      },
+      session: { apiBaseUrl: 'https://eu.api.rallywith.ai' },
+      leaveWorkspace,
+      signOut,
+      pendingConnectorOAuth,
+      setPendingConnectorOAuth,
+    };
+  },
 }));
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
@@ -263,6 +272,7 @@ describe('Workspace settings', () => {
     });
     api.createWorkspaceInvitation.mockResolvedValue({ invitation, inviteUrl, emailDelivery: 'sent' });
     api.revokeWorkspaceInvitation.mockResolvedValue(undefined);
+    leaveWorkspace.mockResolvedValue({ outcome: 'left' });
     api.getTerminalWorkspaceSettings.mockResolvedValue({
       availability: 'supported', mode: 'trusted_only', revision: 1, verificationState: 'verified',
       customDomains: [], remainingCustomSlots: 7, failureCode: null,
@@ -1490,6 +1500,38 @@ describe('Workspace settings', () => {
     expect(await screen.findByText('Adam')).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Invitations' })).not.toBeInTheDocument();
     expect(api.getWorkspaceInvitations).not.toHaveBeenCalled();
+  });
+
+  it('confirms leaving a workspace without describing it as deleted', async () => {
+    renderSettings();
+    openSettingsSection('Workspace');
+
+    const leave = await screen.findByRole('button', { name: 'Leave this workspace' });
+    fireEvent.click(leave);
+
+    const dialog = screen.getByRole('dialog', { name: 'Leave Rally Studio?' });
+    expect(within(dialog).getByText('Rally Studio stays available to its other members.')).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Leave workspace' }));
+
+    await waitFor(() => expect(leaveWorkspace).toHaveBeenCalledWith(workspace.id, 'left'));
+  });
+
+  it('warns that the last member will close the workspace', async () => {
+    api.getWorkspaceMembers.mockResolvedValue([owner]);
+    leaveWorkspace.mockResolvedValue({ outcome: 'abandoned' });
+    renderSettings();
+    openSettingsSection('Workspace');
+
+    const leave = await screen.findByRole('button', { name: 'Leave and close workspace' });
+    fireEvent.click(leave);
+
+    const dialog = screen.getByRole('dialog', { name: 'Leave and close Rally Studio?' });
+    expect(within(dialog).getByText(
+      'You are the last member. Rally Studio will close, and nobody will be able to open it again.',
+    )).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Leave and close' }));
+
+    await waitFor(() => expect(leaveWorkspace).toHaveBeenCalledWith(workspace.id, 'abandoned'));
   });
 
   it('uses searchable section navigation and keeps one active settings pane', async () => {

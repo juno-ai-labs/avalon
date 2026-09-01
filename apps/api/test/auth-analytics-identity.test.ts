@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { HonoAppEnv } from "../src/env";
 import { getAuth, requireAuth } from "../src/middleware/auth";
+import { errorHandler } from "../src/middleware/errors";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -38,16 +39,21 @@ async function bearer(): Promise<string> {
     .sign(new TextEncoder().encode(signingKey));
 }
 
-/** The authenticated context the middleware resolved, as JSON. */
-async function authenticatedContext(): Promise<Record<string, unknown>> {
+async function authenticatedResponse(): Promise<Response> {
   const app = new Hono<HonoAppEnv>();
+  app.onError(errorHandler);
   app.use("*", requireAuth);
   app.get("/probe", (c) => c.json(getAuth(c)));
-  const response = await app.request(
+  return app.request(
     "/probe",
     { headers: { authorization: `Bearer ${await bearer()}` } },
     env(),
   );
+}
+
+/** The authenticated context the middleware resolved, as JSON. */
+async function authenticatedContext(): Promise<Record<string, unknown>> {
+  const response = await authenticatedResponse();
   expect(response.status).toBe(200);
   return await response.json() as Record<string, unknown>;
 }
@@ -126,5 +132,14 @@ describe("analytics surrogates on the authenticated context", () => {
       role: "owner",
       analyticsPersonId: null,
     });
+  });
+
+  it("refuses an otherwise live session after its workspace is abandoned", async () => {
+    database.prepare("UPDATE workspaces SET abandoned_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), workspaceId);
+
+    const response = await authenticatedResponse();
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "session_revoked" } });
   });
 });
