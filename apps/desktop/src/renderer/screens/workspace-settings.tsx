@@ -64,13 +64,6 @@ import type {
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
 
-interface PendingConnectorOAuth {
-  attemptId: string;
-  provider: ConnectorOAuthProvider;
-  region: 'global' | 'eu';
-  workspaceId: string;
-}
-
 const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
   google: 'Google',
   github: 'GitHub',
@@ -499,7 +492,15 @@ export function WorkspaceSettingsScreen({
   standaloneWindow = false,
   workspace,
 }: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
-  const { api, runtime, session, leaveWorkspace, signOut } = useAppSession();
+  const {
+    api,
+    runtime,
+    session,
+    leaveWorkspace,
+    signOut,
+    pendingConnectorOAuth,
+    setPendingConnectorOAuth,
+  } = useAppSession();
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   // Fails open: `digestsEnabled` defaults `true` and only an explicit `false`
@@ -535,7 +536,6 @@ export function WorkspaceSettingsScreen({
   const [telemetryInspectorError, setTelemetryInspectorError] = useState<string | null>(null);
   const telemetryInspectorRequest = useRef(0);
   const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
-  const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [connectorOAuthMessage, setConnectorOAuthMessage] = useState<string | null>(null);

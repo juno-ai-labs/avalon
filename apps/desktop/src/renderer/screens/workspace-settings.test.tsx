@@ -3,6 +3,8 @@ import { ClientFeatureFlagsSchema } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { useState } from 'react';
+import type { PendingConnectorOAuth } from '../lib/app-session';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { ApiError } from '../lib/api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from '../lib/use-client-feature-flags';
@@ -53,19 +55,24 @@ const settingsSectionRequest = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/app-session', () => ({
-  useAppSession: () => ({
-    api,
-    runtime: {
-      appVersion: '0.1.0',
-      isPackaged: false,
-      platform: 'darwin',
-      api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
-      devAuthEnabled: true,
-    },
-    session: { apiBaseUrl: 'https://eu.api.rallywith.ai' },
-    leaveWorkspace,
-    signOut,
-  }),
+  useAppSession: () => {
+    const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
+    return {
+      api,
+      runtime: {
+        appVersion: '0.1.0',
+        isPackaged: false,
+        platform: 'darwin',
+        api: { global: 'https://api.rallywith.ai', eu: 'https://eu.api.rallywith.ai' },
+        devAuthEnabled: true,
+      },
+      session: { apiBaseUrl: 'https://eu.api.rallywith.ai' },
+      leaveWorkspace,
+      signOut,
+      pendingConnectorOAuth,
+      setPendingConnectorOAuth,
+    };
+  },
 }));
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({

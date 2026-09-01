@@ -45,13 +45,18 @@ export function DeepLinkErrorScreen(): React.JSX.Element {
   }, [bridge]);
 
   return (
-    <main className="deep-link-error-window" role="alertdialog" aria-labelledby="deep-link-error-title">
+    <main
+      aria-describedby="deep-link-error-message"
+      aria-labelledby="deep-link-error-title"
+      className="deep-link-error-window"
+      role="alertdialog"
+    >
       <div className="deep-link-error-card">
         <h1 className="deep-link-error-title" id="deep-link-error-title">Rally could not open that link</h1>
         {/* Empty only in the instant between mount and the read returning. The
             window is already on screen by then, so a title with nothing under it
             is better than a spinner that flashes and is gone. */}
-        <p className="deep-link-error-copy">{notice?.message}</p>
+        <p className="deep-link-error-copy" id="deep-link-error-message">{notice?.message}</p>
       </div>
       <div className="deep-link-error-actions">
         <Button
