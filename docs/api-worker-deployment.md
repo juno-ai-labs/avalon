@@ -2,7 +2,7 @@
 
 Rally's API is deployed as three statically imported Workers in each region:
 the public API and two private capability services. Global also has one private
-PostHog-delivery Worker and one scheduled inference-pricing Worker. The split
+telemetry-delivery Worker and one scheduled inference-pricing Worker. The split
 controls the module graph Cloudflare evaluates at startup and keeps
 provider-catalog refreshes out of inference requests without moving product
 authority or loading code during a request.
@@ -27,16 +27,16 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 | Regional API | `src/index.ts`, `wrangler.{eu,global}.jsonc` | HTTP, events, Durable Objects, Workflows, routing bridges, and product authority. |
 | Document processor | `src/document-processing-worker.ts`, `wrangler.documents.{eu,global}.jsonc` | PDF.js text extraction, animated-GIF storyboards, and TIFF decoding. |
 | Terminal provider | `src/terminal-provider-worker.ts`, `wrangler.terminal.{eu,global}.jsonc` | Daytona SDK calls behind the `TerminalSandboxProvider` contract. |
-| PostHog delivery | `src/posthog-delivery-worker.ts`, `wrangler.posthog.global.jsonc` | Global-only PostHog SDK calls for already approved telemetry, crash, and profile rows. |
+| Telemetry delivery | `src/telemetry-delivery-worker.ts`, `wrangler.telemetry.global.jsonc` | Global-only destination adapters for already approved telemetry, crash, and profile rows; PostHog is the first adapter. |
 | Inference pricing | `src/inference-pricing-worker.ts`, `wrangler.pricing.global.jsonc` | Hourly OpenRouter endpoint-price averages written to the shared regional KV namespace. |
-| Contracts | `src/services/document-processing-contract.ts`, `src/services/terminal/provider-rpc-contract.ts`, `src/telemetry/posthog-delivery-contract.ts` | Typed RPC inputs and outputs imported by caller and callee. |
+| Contracts | `src/services/document-processing-contract.ts`, `src/services/terminal/provider-rpc-contract.ts`, `src/telemetry/telemetry-delivery-contract.ts` | Typed RPC inputs and outputs imported by caller and callee. |
 | Rollout | `.github/workflows/deploy-api.yml` | Profiles, version upload, migration ordering, promotion, health, and retained evidence. |
 
 ## How it works
 
 Every Worker has one complete static dependency graph. Both regional APIs bind
 to `DOCUMENT_PROCESSOR` and `TERMINAL_PROVIDER`; Global also binds to
-`POSTHOG_DELIVERY`. There is no public route to any capability Worker.
+`TELEMETRY_DELIVERY`. There is no public route to any capability Worker.
 Cloudflare runs a bound service on the same thread and machine by default, with
 no added service cost; each call still counts as one Worker invocation and one
 subrequest.
@@ -62,11 +62,14 @@ provider Worker creates its own `AbortController`, observes the caller's signal,
 and closes the callback before returning. A pre-aborted input is carried
 explicitly so the provider-side signal is aborted before Daytona I/O begins.
 
-PostHog RPC transfers only telemetry, crash, and profile rows that the Global
-API has already admitted and sanitized. D1 outboxes, policy, circuit state,
-delivery receipts, and retries remain API authority. The API passes its existing
-PostHog token and host through the private call; the provider Worker stores no
-secret or row. EU has neither the binding nor a PostHog secret.
+Telemetry-delivery RPC transfers only telemetry, crash, and profile rows that
+the Global API has already admitted and sanitized. D1 outboxes, policy, circuit
+state, delivery receipts, and retries remain API authority. The API passes its
+existing PostHog token and host through the private call during the first
+service bootstrap; the delivery Worker stores no secret or row. Each method
+returns an outcome keyed by destination, so a future fan-out can persist one
+sink's success while retrying another. EU has neither the binding nor a PostHog
+secret.
 
 RPC exceptions are not a product protocol: Cloudflare preserves standard error
 names and messages but not custom own properties. Every Terminal method
@@ -91,7 +94,10 @@ locally through Wrangler's scheduled-event test route.
   schedules, claims, and product state remain in the regional API.
 - Service methods are explicit and typed. Do not replace them with an untyped
   operation string or generic JSON endpoint.
-- The document, Terminal, and Global PostHog services must deploy before the API
+- New Global telemetry destination adapters extend `TELEMETRY_DELIVERY` and
+  return their own outcome. Do not create one private Worker per vendor; that
+  would recreate deployment and startup fragmentation at the destination layer.
+- The document, Terminal, and Global telemetry-delivery services must deploy before the API
   version that binds to or calls them. A service change remains compatible with
   the previous API until the regional API promotion is healthy.
 - EU services are separate from Global services. Payloads and provider calls do
@@ -111,10 +117,15 @@ locally through Wrangler's scheduled-event test route.
 
 ## Boundaries and non-goals
 
-The split follows heavyweight, stateless provider libraries. It does not split
-Hono routes by fashion, create a second product authority, duplicate secrets at
-rest, or move Durable Object namespaces. A future Durable Object service split
-is a separate data migration using Cloudflare's staged transfer protocol.
+The split follows heavyweight, stateless provider libraries. The shared
+telemetry-delivery service is the convergence point for Global destination
+adapters, while the regional API remains the durable acceptance and retry
+authority. The analytics lakehouse still uses its existing independent
+Queue/Pipeline consumer; moving that lifecycle is deferred until it can preserve
+independent acknowledgement, replay, and EU non-export. This change does not
+split Hono routes by fashion, duplicate secrets at rest, or move Durable Object
+namespaces. A future Durable Object service split is a separate data migration
+using Cloudflare's staged transfer protocol.
 
 The public API remains one logical service per region. Capability Workers are
 internal implementation boundaries, not user-facing APIs and not independently
@@ -147,9 +158,9 @@ selected product regions.
 
 - `pnpm --filter @rally/api build`, `build:eu`, `build:documents`,
   `build:documents:eu`, `build:terminal`, `build:terminal:eu`,
-  `build:posthog`, and `build:pricing` dry-run and profile all eight static
+  `build:telemetry`, and `build:pricing` dry-run and profile all eight static
   artifacts.
-- `pnpm --filter @rally/api check:posthog-startup-boundary` reads Wrangler's
+- `pnpm --filter @rally/api check:telemetry-startup-boundary` reads Wrangler's
   emitted bundles and requires the PostHog SDK, core, and adapter modules to be
   absent from both regional APIs. The provider build and production-entrypoint
   tests prove the private Worker independently without freezing its SDK internals.
@@ -159,21 +170,21 @@ selected product regions.
   client tests prove session reuse, callback, cancellation, and argument
   delegation. A real-workerd auxiliary Service Binding proves `RpcTarget`
   state and retained callbacks survive the entrypoint call that created them.
-- A real-workerd PostHog Service Binding test proves typed telemetry and nested
+- A real-workerd telemetry-delivery Service Binding test proves typed telemetry and nested
   crash rows cross the RPC boundary by value; adapter tests still inspect the
   exact destination payloads without a provider network call.
 - `node --test scripts/deploy-api-workflow.test.mjs` proves service-first
   upload, the hourly Global cron and shared KV binding, EU-before-Global health,
   and migration placement.
-- PR CI retains the new PostHog Worker profile for seven days; deployment
+- PR CI retains the new telemetry-delivery Worker profile for seven days; deployment
   retains all eight exact-artifact profiles on success or failure.
 
 ## Regional impact
 
 Each region has two private Workers and two Service Bindings. Global additionally
-has one private PostHog Worker and binding, plus one route-less scheduled Worker
-bound to the same pricing KV both APIs read. The PostHog service adds no stored
-secret; its caller passes the existing Global token over RPC. These Workers add
+has one private telemetry-delivery Worker and binding, plus one route-less scheduled Worker
+bound to the same pricing KV both APIs read. The delivery service adds no stored
+secret; its caller passes the existing Global PostHog token over RPC. These Workers add
 no routes, databases, buckets, queues, or Durable Object namespaces.
 Service calls execute at the caller's Cloudflare location. EU remains first
 because Global also carries named bindings to EU API entrypoints, and EU data
@@ -185,7 +196,7 @@ Normal production rollout is `deploy-api.yml`. It builds and profiles all
 selected service graphs, materializes Global lakehouse bindings, discovers the
 active source tags, and selects one mode:
 
-- **Versioned:** upload every selected document, Terminal, PostHog, pricing, and
+- **Versioned:** upload every selected document, Terminal, telemetry-delivery, pricing, and
   API version with no traffic and capture its immutable version ID; apply
   migration-first D1 changes; promote those exact EU IDs service-first; prove
   EU health; promote the exact Global IDs; apply Worker-first retirements; prove
@@ -210,13 +221,13 @@ margin. With Wrangler 4.126.0, the static service split makes the API graph
 about 7.3 MiB, the document graph about 2.8 MiB, and the Terminal graph about
 2.3 MiB. A later 7.4 MiB API graph again failed production upload with error
 10021; moving its Global-only PostHog graph reduced both API artifacts to about
-7.16 MiB and produced a 248 KiB PostHog Worker with a 6 ms local active-startup
+7.16 MiB and produced a 248 KiB telemetry-delivery Worker with a 6 ms local active-startup
 sample. Repeated local active-startup samples varied from 93–290 ms for the
 API, 7–14 ms for documents, and 18–28 ms for Terminal; these values diagnose
 graph shape and are not predictions of Cloudflare CPU time.
 
 Service Bindings add no monetary charge or network hop by default. A document,
-Terminal, or Global PostHog operation adds a Worker invocation and subrequest,
+Terminal, or Global telemetry-destination operation adds a Worker invocation and subrequest,
 while ordinary API requests no longer initialize those provider libraries. That
 cost is bounded to the capability that uses it and is visible as a platform
 invocation.
@@ -226,14 +237,16 @@ for Azure-bound models in its route plan.
 
 ## Changelog
 
-### 2026-09-01 — Global PostHog delivery gets its own startup graph
+### 2026-09-01 — Global telemetry delivery gets one shared startup graph
 
 **What changed:** The Global API now sends already approved telemetry, crash,
-JavaScript-exception, and profile batches through an explicit typed private
-Service Binding. The PostHog SDK and destination mapping are statically imported
-only by a new Global-only Worker. Deployment builds, profiles, uploads, and
-promotes that service before the Global API, bringing the release to eight
-static artifacts.
+JavaScript-exception, and profile batches through the explicit typed
+`TELEMETRY_DELIVERY` binding. The PostHog SDK and destination mapping are
+statically imported only by a new Global-only Worker whose identity is shared
+across telemetry destinations. RPC results are keyed by destination so future
+fan-out can keep acknowledgement and retry independent. Deployment builds,
+profiles, uploads, and promotes that service before the Global API, bringing the
+release to eight static artifacts.
 
 **Why:** The API artifact from the workspace-handoff release passed every local
 gate but Cloudflare rejected its production upload with error 10021. The same
@@ -244,15 +257,22 @@ structural startup margin and makes the residency boundary visible in Wrangler.
 **Considered and rejected:** Retrying the unchanged upload leaves the one-second
 platform race intact. Request-time imports violate Rally's static-import rule
 and move initialization into customer traffic. Shaving individual adapter
-imports would leave the provider SDK in both API graphs. Giving the new Worker
-its own token was rejected because the existing secret can cross the private
-call without creating another stored secret.
+imports would leave the provider SDK in both API graphs. Naming the service for
+PostHog was rejected because each later destination would invite another Worker
+and rollout edge. Moving the token on first creation was rejected because the
+deploy workflow cannot provision a secret onto a Worker that does not exist yet;
+the existing secret can cross the private call without creating another stored
+secret.
 
-**Consequences:** Global PostHog delivery now adds one private invocation and
-subrequest per attempted batch. Policy, D1 outboxes, retries, circuits, and
-receipts remain in the API; the provider Worker is stateless. Its RPC contract
-must stay backward-compatible through service-first rollout. EU has no PostHog
-binding, SDK graph, or secret, and this change requires no data migration.
+**Consequences:** Global destination delivery now adds one private invocation
+and subrequest per attempted batch. Policy, D1 outboxes, retries, circuits, and
+receipts remain in the API; the delivery Worker is stateless. New Global
+destination adapters extend this Worker and add an independent result instead
+of creating a destination-specific service. The analytics lakehouse retains its
+current Queue/Pipeline lifecycle until that move can preserve failure
+independence. The RPC contract must stay backward-compatible through
+service-first rollout. EU has no delivery binding, PostHog SDK graph, or secret,
+and this change requires no data migration.
 
 Shipped in #471.
 

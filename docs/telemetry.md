@@ -28,8 +28,8 @@ terminates in Rally's EU-isolated Cloudflare resources.
 | `apps/desktop/src/renderer/lib/socket-telemetry.ts` | The one `realtime_socket_state` producer, instantiated per live socket loop by the workspace, WorkstreamDO-control, SubstreamAgent-feed, and per-block HyperSight hooks; it also reports every WorkstreamDO-control and SubstreamAgent-feed connection start. |
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/routes/telemetry-operations.ts`, `apps/api/src/telemetry/operator-auth.ts` | Bearer-authenticated, role-restricted regional status, replay, raw-crash access, and EU analysis HTTP surface. |
-| `apps/api/src/telemetry/` | Regional collector, identity/preference logic, typed PostHog delivery contract and adapter, EU sink, replay, crash processing, operations, and lifecycle jobs. |
-| `apps/api/src/posthog-delivery-worker.ts` | Global-only private Worker that statically owns the PostHog SDK graph and implements the delivery RPC contract. |
+| `apps/api/src/telemetry/` | Regional collector, identity/preference logic, typed telemetry-delivery contract, PostHog adapter, EU sink, replay, crash processing, operations, and lifecycle jobs. |
+| `apps/api/src/telemetry-delivery-worker.ts` | Global-only private Worker that owns telemetry destination adapters; PostHog is the first adapter. |
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
 | `apps/api/src/telemetry/tool-usage.ts` | Content-free, durably admitted agent-tool usage for user-owned and personless workspace-owned runs. |
 | `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent work-stream creation state and connector attribution across user, Slack, suggestion, and automation paths. |
@@ -390,8 +390,12 @@ exceptions, so a failed flush retries without status-specific classification.
 Five consecutive transient failures open a per-stream five-minute circuit. EU
 has no PostHog token, host, binding, SDK graph, or telemetry Analytics Engine dataset.
 Global policy and outbox code passes already approved rows plus its existing
-destination settings to the stateless PostHog Worker over private typed RPC;
-delivery receipts, retries, and circuits remain in the regional API.
+destination settings to the stateless telemetry-delivery Worker over private
+typed RPC. Each call returns a result keyed by destination so a successful sink
+can be committed independently of a failing sibling; delivery receipts, retries,
+and circuits remain in the regional API. The Global analytics lakehouse keeps
+its existing independent Queue/Pipeline path until moving it into this boundary
+can preserve that same failure independence and replay behavior.
 For identified Global settings events, the adapter also uses PostHog's event
 `$set` shape to maintain current `rally_launch_at_login_*`,
 `rally_lockdown_mode_*`, `rally_application_icon_*`, and
@@ -554,8 +558,8 @@ Run focused suites from their package directories:
 pnpm --filter @rally/contracts test
 pnpm --filter @rally/db test
 pnpm --filter @rally/api exec vitest run test/telemetry-collector.test.ts test/telemetry-delivery.test.ts test/posthog-adapter.test.ts test/tool-usage-telemetry.test.ts test/crash-processing.test.ts test/crash-operations.test.ts
-pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/posthog-delivery-rpc-boundary.test.ts
-pnpm --filter @rally/api build:posthog
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/telemetry-delivery-rpc-boundary.test.ts
+pnpm --filter @rally/api build:telemetry
 pnpm --filter @rally/api test:crash-symbolicator-container
 pnpm --filter @rally/desktop exec vitest run src/renderer/lib/api.test.ts src/renderer/lib/telemetry.test.ts src/main/javascript-error-candidate.test.ts src/main/telemetry-reporter.test.ts src/main/product-analytics-settings.test.ts src/main/native-crash-generation.test.ts src/main/native-crash-uploader.test.ts
 pnpm --filter @rally/desktop test:release
@@ -566,9 +570,9 @@ pnpm --filter @rally/site build
 
 Contract tests enforce registry exhaustiveness and prohibited negative space.
 SQLite fixtures apply every migration and advance fake clocks across absolute
-deadlines. API tests use fake PostHog Service Bindings and R2 bindings and inspect
+deadlines. API tests use fake telemetry-delivery Service Bindings and R2 bindings and inspect
 exact destination payloads. A real-workerd test proves typed nested rows cross
-the private PostHog RPC boundary by value. Desktop storage tests use real temporary directories. The Crashpad
+the private telemetry-delivery RPC boundary by value. Desktop storage tests use real temporary directories. The Crashpad
 fixture packages the pinned Electron version and creates two real renderer dumps;
 it is macOS-arm64-only because that is the only released target. Both Wrangler
 dry-run builds are required to validate regional bindings and the Container image.
@@ -602,7 +606,7 @@ source maps, and native symbols live only in the region's dedicated
 ## Regional impact
 
 Global owns identity sign-in, coarse onboarding routing, canonical preference,
-and the private US PostHog-delivery service. It can send a validated EU onboarding projection over
+and the private Global telemetry-delivery service. It can send a validated EU onboarding projection over
 `EU_TELEMETRY_BRIDGE`. EU can send only opaque preference commands and
 route-bound capability verification/closure commands over
 `GLOBAL_TELEMETRY_CONTROL`; Global returns no destination identity, key, or event
@@ -674,13 +678,14 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
-### 2026-09-01 — PostHog provider I/O becomes a Global-only service boundary
+### 2026-09-01 — Telemetry destinations gain one Global service boundary
 
 **What changed:** Telemetry, JavaScript-exception, native-crash, and profile
-delivery now call four explicit methods on a private Global PostHog Worker. The
-regional API still admits and sanitizes rows, owns every D1 outbox and circuit,
-and records destination outcomes. The provider Worker statically owns the SDK
-and adapter and stores nothing.
+delivery now call four explicit methods on the private Global
+`TELEMETRY_DELIVERY` Worker. The regional API still admits and sanitizes rows,
+owns every D1 outbox and circuit, and records destination outcomes. The Worker
+statically owns the PostHog SDK and adapter, stores nothing, and returns an
+outcome keyed by destination so later fan-out can remain independently durable.
 
 **Why:** Cloudflare rejected the shared API graph at production upload with
 startup CPU error 10021. That graph also forced EU to initialize a provider it
@@ -688,15 +693,20 @@ is forbidden to call. A provider-I/O boundary removes the SDK from both API
 artifacts while preserving the existing policy and residency authorities.
 
 **Considered and rejected:** Sending raw envelopes to a generic operation
-endpoint would weaken the typed contract. Moving outboxes or retry policy would
-split regional authority. A second stored PostHog token was unnecessary because
-the existing Global secret can cross the private binding for one call.
+endpoint would weaken the typed contract. A PostHog-named Worker would encourage
+one service per later vendor rather than one reviewed destination boundary.
+Moving outboxes or retry policy would split regional authority. A second stored
+PostHog token was unnecessary because the existing Global secret can cross the
+private binding for one call during the first deployment.
 
 **Consequences:** Global destination attempts add a private Worker invocation
-and require the service to deploy before its caller. Exact provider payload
-tests remain at the adapter; real workerd proves RPC serialization separately.
-EU has no PostHog binding or provider graph. No telemetry schema, retention rule,
-or migration changes.
+and require the service to deploy before its caller. New Global destination
+adapters extend this Worker and add an independent result instead of creating a
+destination-specific service. The analytics lakehouse remains on its independent
+Queue/Pipeline lifecycle until a focused change can move it without coupling
+failures. Exact provider payload tests remain at the adapter; real workerd proves
+RPC serialization separately. EU has no delivery binding or provider graph. No
+telemetry schema, retention rule, or migration changes.
 
 Shipped in #471.
 

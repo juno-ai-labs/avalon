@@ -23,7 +23,7 @@ bridges, or any code that selects a Durable Object namespace.
 | `apps/api/src/workstream-email-routing-bridge.ts` | The one Global reservation registry for friendly work-stream addresses. |
 | `apps/api/src/inbound-email-regional-bridge.ts` | One verified Resend event handed to the owning data plane. |
 | `apps/api/src/telemetry-regional-bridge.ts`, `telemetry-control-bridge.ts` | Validated Global-to-EU onboarding/outcome projections and narrow EU-to-Global capability/preference control commands. They are not general event-forwarding bridges. |
-| `apps/api/src/routes/telemetry.ts`, `apps/api/src/telemetry/` | Immediate route bootstrap, regional acceptance, EU internal sink, and Global PostHog delivery. |
+| `apps/api/src/routes/telemetry.ts`, `apps/api/src/telemetry/` | Immediate route bootstrap, regional acceptance, EU internal sink, and the Global telemetry-delivery boundary. |
 | `apps/site/src/telemetry.ts` | Uses the content-free Cloudflare route before choosing a persistent Global or page-scoped EU anonymous identity. |
 | `apps/api/src/lib/rpc-contracts.ts` | The schema every bridge argument is parsed against at the hop. |
 | `apps/api/src/lib/durable-object-namespace.ts` | The sole product-object resolver: US/EU namespace restriction, persisted workspace affinity, explicit non-workspace fallback, and in-object jurisdiction assertion. |
