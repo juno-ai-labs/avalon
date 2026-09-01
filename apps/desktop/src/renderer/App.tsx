@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
 import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
@@ -10,7 +10,6 @@ import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
-import type { AutomationSummary } from './lib/types';
 import {
   abandonPendingWorkstreamFeedOpen,
   abandonWorkstreamFeedOpenOutsideRoute,
@@ -128,19 +127,15 @@ function NotFoundScreen(): React.JSX.Element {
 
 function TelemetryRouteObserver(): null {
   const location = useLocation();
-  const queryClient = useQueryClient();
   const lastScreen = useRef<ReturnType<typeof telemetryScreenForPath>>(null);
   const lastSurfacePath = useRef<string | null>(null);
   useEffect(() => {
     const screen = telemetryScreenForPath(location.pathname);
-    // The same list `AutomationScreen` dispatches on, so the
-    // reported surface is the screen the reader is actually
-    // looking at rather than one derived from the shared route.
-    const automations = queryClient.getQueryData<AutomationSummary[]>(['automations']);
-    const surface = telemetrySurfaceForPath(location.pathname, {
-      automationIsDraft: automations?.some((automation) =>
-        location.pathname === `/automations/${automation.id}` && automation.status === 'draft'),
-    });
+    // The automation route has one screen behind it now that the builder is
+    // gone, so the path is the whole answer and the draft lookup this used to
+    // do — reading the automations list to tell two screens apart — is a query
+    // for a distinction that no longer exists.
+    const surface = telemetrySurfaceForPath(location.pathname);
     abandonWorkstreamFeedOpenOutsideRoute(
       surface?.resourceType === 'workstream' ? surface.resourceId ?? null : null,
     );
@@ -156,7 +151,7 @@ function TelemetryRouteObserver(): null {
         entrypoint: consumeSurfaceEntrypoint(),
       });
     }
-  }, [location.pathname, queryClient]);
+  }, [location.pathname]);
   return null;
 }
 

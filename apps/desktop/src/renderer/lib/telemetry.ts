@@ -96,17 +96,17 @@ export function telemetryJourneyDuration(milliseconds: number):
   return 'gte_10m';
 }
 
+/**
+ * The surface a path is showing.
+ *
+ * This used to take whether the automation was still a draft, because a draft
+ * and an accepted automation shared one durable route with two screens behind
+ * it. Only one screen is behind it now — the builder is gone — so the path says
+ * everything, and a parameter that cannot change the answer is one every caller
+ * has to work out how to supply for nothing.
+ */
 export function telemetrySurfaceForPath(
   pathname: string,
-  /**
-   * Whether the automation this path names is still a draft. A draft
-   * and an accepted automation share one durable route — the builder
-   * and the overview are two screens behind it — so the path alone
-   * cannot say which is on screen. Without this, every draft after
-   * its first turn reported as `automation_detail`, and drafting an
-   * automation became indistinguishable from reading one.
-   */
-  context: { automationIsDraft?: boolean } = {},
 ): {
   surface: 'workspace_home' | 'workstream' | 'note_detail' | 'meeting_capture' | 'automation_builder'
     | 'automation_detail' | 'settings_application';
