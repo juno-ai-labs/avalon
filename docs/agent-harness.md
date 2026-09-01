@@ -1149,12 +1149,15 @@ silently return every test to the shared key while each still passes alone.
 
 **What changed:** `isLoadableBuiltinHarnessPlugin` now reads a
 `builtinPluginIds` set derived where the built-ins are registered, replacing a
-hand-maintained literal of three plugin IDs. `builtinPluginAuthorization`,
-`beforeToolCall` scope enforcement, activation persistence, and receipt-identity
-resolution all read that one derivation, in the root run and in the inline child
-surface. A test asserts the invariant over the registered surface rather than a
-repeated list: every registered non-connector plugin authorizes for activation,
-while an unregistered built-in id and an invented one are denied.
+hand-maintained literal of three plugin IDs. `builtinPluginAuthorization` and the
+`beforeToolCall` scope check read that one derivation in both the root run and
+the inline child surface; the root's activation persistence and
+`resolveHarnessToolReceiptPolicy` read it too. The child's activation
+persistence is not a consumer: it guards on its own `childPluginSurfaceHashes`
+entry instead, and is unchanged. Two tests assert the invariant over the
+registered surface rather than a repeated list: every registered non-connector
+plugin authorizes for activation while an unregistered built-in id and an
+invented one are denied, and the child's set stays narrower than the parent's.
 
 **Why:** The literal list was a second, unlinked statement of which built-ins
 exist. `rally:multimodal-generation` shipped absent from it, so image, image-edit
