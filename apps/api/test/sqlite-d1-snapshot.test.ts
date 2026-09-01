@@ -1,7 +1,12 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import type { DatabaseSync } from "node:sqlite";
-import { describeDatabase, type SqliteTemplateVariant } from "./helpers/migrated-schema";
+import {
+  databaseThroughMigration,
+  describeDatabase,
+  type SqliteTemplateVariant,
+} from "./helpers/migrated-schema";
 import { migratedSchemaDescription } from "./helpers/migrated-schema-snapshots";
 import {
   legacyProductSqliteDatabase,
@@ -84,6 +89,47 @@ describe("migrated SQLite fixtures", () => {
                 VALUES ('u1', 'a@b.c', 'g1', 'A', 'x', 'y')`);
     expect((first.prepare("SELECT count(*) AS count FROM users").get() as { count: number }).count).toBe(1);
     expect((second.prepare("SELECT count(*) AS count FROM users").get() as { count: number }).count).toBe(0);
+  });
+
+  it("preserves the existing platform route while applying the multiple-workspaces migration", () => {
+    const database = databaseThroughMigration("0097_email_routes_use_full_address.sql");
+    database.prepare(
+      `INSERT INTO platform_workspace_bindings
+         (platform_user_id, region, workspace_id, status, operation_id,
+          pending_expires_at, created_at, updated_at, placement_affinity)
+       VALUES (?, 'eu', ?, 'active', ?, NULL, ?, ?, 'weur')`,
+    ).run(
+      "00000000-0000-7000-8000-0000000000a1",
+      "00000000-0000-7000-8000-0000000000a2",
+      "00000000-0000-7000-8000-0000000000a3",
+      "2026-08-01T00:00:00.000Z",
+      "2026-08-01T00:00:00.000Z",
+    );
+
+    database.exec(readFileSync(
+      new URL("../../../packages/db/migrations/0098_multiple_workspaces.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      `SELECT platform_user_id, region, workspace_id, status, operation_id,
+              pending_expires_at, created_at, updated_at, placement_affinity
+         FROM platform_workspace_bindings`,
+    ).get()).toEqual({
+      platform_user_id: "00000000-0000-7000-8000-0000000000a1",
+      region: "eu",
+      workspace_id: "00000000-0000-7000-8000-0000000000a2",
+      status: "active",
+      operation_id: "00000000-0000-7000-8000-0000000000a3",
+      pending_expires_at: null,
+      created_at: "2026-08-01T00:00:00.000Z",
+      updated_at: "2026-08-01T00:00:00.000Z",
+      placement_affinity: "weur",
+    });
+    expect(database.prepare(
+      `SELECT COUNT(*) AS count FROM platform_workspace_operations`,
+    ).get()).toEqual({ count: 0 });
+    database.close();
   });
 
   it("enforces foreign keys, which a rebuilt schema loads with disabled", () => {
