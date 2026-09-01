@@ -541,16 +541,13 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     const runInDeepLinkWorkspace = async (
       target: WorkspaceTarget,
       action: (targetApi: RallyApi) => void | Promise<void>,
-      resetBackgroundRoute = false,
     ): Promise<void> => {
       try {
         const activated = await activateDeepLinkWorkspace(target);
-        // Settings is a separate window. When its addressed handoff changed
-        // workspaces, the main window behind it must not keep a resource route
-        // from the workspace that just went away. A same-workspace handoff
-        // preserves the person's place, while a changed one has a safe landing
-        // ready when Settings closes.
-        if (resetBackgroundRoute && activated.workspaceChanged) {
+        // A changed workspace must never leave a resource route from the old
+        // workspace behind it. Resource actions below immediately replace this
+        // safe landing; separate-window actions leave it ready when they close.
+        if (activated.workspaceChanged) {
           window.location.hash = '/workstreams/new';
         }
         await action(activated.api);
@@ -632,7 +629,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           setDeepLinkError(null);
           await bridge.openSettings(intent.section);
         };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openSettings, true);
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openSettings);
         else await openSettings();
         return;
       }
@@ -680,7 +677,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
             reportDeepLinkFailure(error instanceof Error ? error.message : 'Your Slack account could not be linked.');
           }
         };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, linkSlack, true);
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, linkSlack);
         else {
           const activeSession = requireActiveWorkspace(
             'Sign in to the matching Rally workspace before connecting your Slack account.',
@@ -718,7 +715,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           }
         };
         if (intent.target) {
-          await runInDeepLinkWorkspace(intent.target, applyConnectorResult, true);
+          await runInDeepLinkWorkspace(intent.target, applyConnectorResult);
           return;
         }
         const activeSession = requireActiveWorkspace('Rally received an invalid connector completion link.');
