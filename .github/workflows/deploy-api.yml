@@ -50,6 +50,7 @@ on:
       - "scripts/wrangler-config.mjs"
       - "scripts/entry-point.mjs"
       - "scripts/check-regional-health.mjs"
+      - "scripts/check-workspace-handoff-site.mjs"
       - "scripts/select-api-deploy-mode.mjs"
   workflow_dispatch:
     inputs:
@@ -287,6 +288,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+
+      # The public site and API deploy from independent workflows. A writer
+      # release must not emit /app/workspaces links until Pages serves that
+      # rewrite; if the site run is still pending or failed, this API run stops
+      # before migrations or Worker upload and can be re-run after the site is
+      # healthy.
+      - name: Require the workspace-addressed public handoff
+        run: node scripts/check-workspace-handoff-site.mjs
 
       # All preflights run on the pinned Node but before any third-party code
       # is installed: they import nothing outside this repository, and they are
