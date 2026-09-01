@@ -20,7 +20,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asUserId, asWorkspaceId, type WorkstreamBatchFilter } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
-import { SIDEBAR_LIST_LIMIT } from "../src/services/sidebar-reads";
 import { WorkspaceBatchNoteArchiveResultSchema } from "../src/durable-objects/workspace-directory-protocol";
 import {
   WorkspaceNoteArchiveResultSchema,
@@ -438,6 +437,82 @@ describe("workspace notes", () => {
       expect(await visible(null, [ARCHIVED_RESOURCE])).toEqual([]);
     });
   });
+  describe("paging the sidebar list", () => {
+    /** Seed `count` notes, newest first, one minute apart. */
+    async function seedPage(count: number): Promise<string[]> {
+      const titles: string[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const title = `Note ${String(index).padStart(3, "0")}`;
+        titles.push(title);
+        await seedNote({
+          noteId: nextId(),
+          resourceId: nextId(),
+          title,
+          lastActivityAt: new Date(Date.parse(AT) - index * 60_000).toISOString(),
+        });
+      }
+      return titles;
+    }
+
+    async function page(limit: number, before?: string) {
+      return WorkspaceNoteSidebarListSchema.parse(await workspace().listNoteSidebar({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        limit,
+        ...(before ? { before } : {}),
+      }));
+    }
+
+    it("walks the whole list one page at a time without repeating or skipping", async () => {
+      // The property that matters for infinite scroll: concatenating the pages
+      // reproduces the list exactly. A boundary that repeated a row would show
+      // it twice in the sidebar; one that skipped would hide a note with no way
+      // to reach it — which is what made the cap dangerous to archive over.
+      const titles = await seedPage(7);
+
+      const walked: string[] = [];
+      let cursor: string | undefined;
+      for (let request = 0; request < 10; request += 1) {
+        const result = await page(3, cursor);
+        walked.push(...result.items.map((note) => note.title));
+        if (result.nextCursor === null) break;
+        cursor = result.nextCursor;
+      }
+
+      expect(walked).toEqual(titles);
+    });
+
+    it("ends the list rather than offering a cursor past it", async () => {
+      await seedPage(2);
+      const result = await page(250);
+      expect(result.items).toHaveLength(2);
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it("pages exactly when notes share an instant, on the id tiebreak", async () => {
+      // One write can stamp two notes in the same millisecond, so the ordering
+      // is `(last_activity_at, id)` and the cursor carries both. On the
+      // timestamp alone a page boundary landing between two equal instants
+      // would repeat one of them or drop the other.
+      const shared = "2033-02-02T02:02:02.020Z";
+      for (let index = 0; index < 4; index += 1) {
+        await seedNote({
+          noteId: nextId(),
+          resourceId: nextId(),
+          title: `Same instant ${index}`,
+          lastActivityAt: shared,
+        });
+      }
+
+      const first = await page(2);
+      const second = await page(2, first.nextCursor ?? undefined);
+      const ids = [...first.items, ...second.items].map((note) => note.id);
+
+      expect(new Set(ids).size).toBe(4);
+      expect(second.nextCursor).toBeNull();
+    });
+  });
+
   describe("archiving a whole sidebar grouping", () => {
     // A recency heading holds work streams and notes together, so **Archive
     // all** under it has to reach both. The work-stream half leaves as one
@@ -603,56 +678,6 @@ describe("workspace notes", () => {
       await expect(archive({ operationId, requestHash, userId: OTHER_MEMBER }))
         .rejects.toThrow(/workstream_batch_dispatch_conflict/u);
       expect(await archivedTitles()).toEqual([]);
-    });
-
-    it("cannot reach a note the sidebar has no way to show", async () => {
-      // The list is capped at SIDEBAR_LIST_LIMIT and notes have no cursor
-      // anywhere in the product, so a note past the cap is unreachable rather
-      // than one scroll away — and archiving cannot be undone. A heading exists
-      // whenever any row falls under it, so without this fence **Archive all**
-      // on an old heading would retire hundreds of notes nobody has seen.
-      //
-      // Seeded newest-first so the cap falls in a known place: the reader can
-      // see the SIDEBAR_LIST_LIMIT most recent, and `beyond` is the next one.
-      const visible: string[] = [];
-      for (let index = 0; index < SIDEBAR_LIST_LIMIT; index += 1) {
-        const noteId = nextId();
-        visible.push(noteId);
-        await seedNote({
-          noteId,
-          resourceId: nextId(),
-          title: `On screen ${index}`,
-          // Descending, all inside the group.
-          lastActivityAt: new Date(Date.parse(GROUP.before) - (index + 1) * 60_000).toISOString(),
-        });
-      }
-      const beyond = nextId();
-      await seedNote({
-        noteId: beyond,
-        resourceId: nextId(),
-        title: "Past the end of the list",
-        lastActivityAt: IN_RANGE,
-      });
-
-      const targets = await workspace().batchUpdateTargets({
-        workspaceId: WORKSPACE_ID,
-        userId: OWNER,
-        filter,
-      });
-      expect(targets.noteIds).toHaveLength(SIDEBAR_LIST_LIMIT);
-      expect(targets.noteIds).not.toContain(beyond);
-
-      const operationId = "00000000-0000-7000-8000-000000000e06";
-      const requestHash = "fnv1a64:0123456789abcdef";
-      await freeze(operationId, requestHash);
-      await expect(archive({ operationId, requestHash }))
-        .resolves.toEqual({ archivedNoteCount: SIDEBAR_LIST_LIMIT, replayed: false });
-
-      const survivors = await runInDurableObject(workspace(), (_instance, state) =>
-        state.storage.sql.exec<{ id: string }>(
-          `SELECT id FROM notes WHERE archived_at IS NULL`,
-        ).toArray().map((row) => row.id));
-      expect(survivors).toEqual([beyond]);
     });
 
     it("has nothing to archive for a filter that asks only for pinned rows", async () => {

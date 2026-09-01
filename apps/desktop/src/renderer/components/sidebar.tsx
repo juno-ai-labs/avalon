@@ -72,10 +72,13 @@ interface SidebarProps {
   workstreams: WorkstreamSummary[];
   /** Whether a page of work streams remains beyond the ones listed. */
   hasMoreWorkstreams?: boolean;
+  hasMoreNotes?: boolean;
   /** A further page is in flight, so the end of the list is not the end. */
   loadingMoreWorkstreams?: boolean;
+  loadingMoreNotes?: boolean;
   /** Ask for the next page. Called when the scroll approaches the bottom. */
   onLoadMoreWorkstreams?: () => void;
+  onLoadMoreNotes?: () => void;
   loading?: boolean;
   meetingRecordingAvailable?: boolean;
   accountMenu?: ReactNode;
@@ -1037,8 +1040,11 @@ export function Sidebar({
   onRestoreProject = async () => undefined,
   onSignOut,
   hasMoreWorkstreams = false,
+  hasMoreNotes = false,
   loadingMoreWorkstreams = false,
+  loadingMoreNotes = false,
   onLoadMoreWorkstreams,
+  onLoadMoreNotes,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
   const openDraftId = useOpenDraftId();
@@ -1088,11 +1094,26 @@ export function Sidebar({
    * without a cursor, so this is the cheap half of the same guard.
    */
   const loadMoreWhenNearBottom = useCallback((event: React.UIEvent<HTMLElement>): void => {
-    if (!hasMoreWorkstreams || loadingMoreWorkstreams || !onLoadMoreWorkstreams) return;
+    const wantsWorkstreams = hasMoreWorkstreams && !loadingMoreWorkstreams && onLoadMoreWorkstreams;
+    const wantsNotes = hasMoreNotes && !loadingMoreNotes && onLoadMoreNotes;
+    if (!wantsWorkstreams && !wantsNotes) return;
     const { clientHeight, scrollHeight, scrollTop } = event.currentTarget;
     if (scrollHeight - scrollTop - clientHeight > LOAD_MORE_DISTANCE) return;
-    onLoadMoreWorkstreams();
-  }, [hasMoreWorkstreams, loadingMoreWorkstreams, onLoadMoreWorkstreams]);
+    // Both, not whichever is nearer the bottom. The two lists are interleaved
+    // by recency under one set of headings, so the row at the end belongs to
+    // one of them and the *other* is what the next heading down needs. Asking
+    // only for the kind at the bottom would stall the list at the point where
+    // one of them runs out.
+    if (wantsWorkstreams) onLoadMoreWorkstreams();
+    if (wantsNotes) onLoadMoreNotes();
+  }, [
+    hasMoreNotes,
+    hasMoreWorkstreams,
+    loadingMoreNotes,
+    loadingMoreWorkstreams,
+    onLoadMoreNotes,
+    onLoadMoreWorkstreams,
+  ]);
   // The arrangement being dragged, held only for as long as the drag lasts.
   // The list renders from it while it exists, so rows move under the pointer
   // before anything is sent; the server's answer replaces it when the drag
@@ -1964,7 +1985,7 @@ export function Sidebar({
             {/* Only while a page is actually in flight. A permanent "scroll for
                 more" would claim the list is incomplete every time it happens
                 to end exactly on a page boundary. */}
-            {loadingMoreWorkstreams && (
+            {(loadingMoreWorkstreams || loadingMoreNotes) && (
               <p aria-live="polite" className="sidebar-empty">Loading more…</p>
             )}
           </section>

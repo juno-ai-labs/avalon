@@ -2007,6 +2007,19 @@ export const WORKSPACE_SYNC_TOPICS = [
 ] as const;
 export const WorkspaceSyncTopicSchema = z.enum(WORKSPACE_SYNC_TOPICS);
 
+/**
+ * Opaque stable ordering cursor for the note list's `(recency, id)` order.
+ *
+ * It carries the stored `last_activity_at` verbatim rather than an epoch, the
+ * way the work-stream cursor beside it does: `notes.last_activity_at` is an ISO
+ * string and the list orders by it as text, so a cursor in any other spelling
+ * would have to be converted on every comparison to page correctly. The id is
+ * a UUID and has no colon of its own, so the last colon is the separator.
+ */
+export const NoteCursorSchema = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu)
+  .max(61);
+
 /** Opaque stable ordering cursor for WorkspaceDO's `(recency, id)` directory. */
 export const WorkspaceWorkstreamCursorSchema = z.string()
   .regex(/^\d{1,16}:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu)
@@ -2157,6 +2170,12 @@ export const WorkspaceSidebarSchema = z.strictObject({
   notes: z.strictObject({
     waterline: z.number().int().nonnegative(),
     items: z.array(NoteSummarySchema).max(250),
+    /**
+     * The next page, or `null` when this one is the whole list. Optional only
+     * for the rolling deployment: a client that gets no cursor from an older
+     * server reads the list as complete, which is what it did before paging.
+     */
+    nextCursor: NoteCursorSchema.nullable().optional(),
   }),
   /** Optional during the rolling deployment; current servers always send it. */
   projects: ProjectSnapshotSchema.optional(),
@@ -2269,6 +2288,15 @@ export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
     list: z.literal("notes"),
     waterline: z.number().int().positive(),
     items: z.array(NoteSummarySchema).max(250),
+    /**
+     * The newest page only ever carries the newest page, so a reader who has
+     * scrolled further needs to know whether this push is the whole list — in
+     * which case it replaces what they hold — or just its head, in which case
+     * it merges. `null` means the list ends here. Optional for the rolling
+     * deployment; an older server sending none reads as the whole list, which
+     * is what it was.
+     */
+    nextCursor: NoteCursorSchema.nullable().optional(),
   }),
 ]);
 

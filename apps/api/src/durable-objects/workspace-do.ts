@@ -6323,14 +6323,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceNoteSidebarRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return {
-      items: workspaceNoteSidebar(
-        this.state.storage,
-        request.workspaceId,
-        request.userId,
-        Math.min(request.limit, SIDEBAR_LIST_LIMIT),
-      ),
-    };
+    return workspaceNoteSidebar(
+      this.state.storage,
+      request.workspaceId,
+      request.userId,
+      Math.min(request.limit, SIDEBAR_LIST_LIMIT),
+      request.before,
+    );
   }
 
   /**
@@ -8672,7 +8671,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  private listSidebarNotes(workspaceId: string, userId: string): NoteSummary[] {
+  private listSidebarNotes(
+    workspaceId: string,
+    userId: string,
+  ): { items: NoteSummary[]; nextCursor: string | null } {
     return workspaceNoteSidebar(this.state.storage, workspaceId, userId, SIDEBAR_LIST_LIMIT);
   }
 
@@ -8826,7 +8828,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       },
       notes: {
         waterline: this.sidebarListWaterline("notes"),
-        items: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
+        ...this.listSidebarNotes(attachment.workspaceId, attachment.userId),
       },
       projects: this.projectSnapshot(attachment.userId),
     });
@@ -8864,8 +8866,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
-      const items = list === "automations"
-        ? this.listSidebarAutomations(attachment.workspaceId, attachment.userId)
+      // The note push carries its cursor so a reader who has paged past the
+      // first screen can tell a complete list from its head and merge rather
+      // than truncate back to one page.
+      const page = list === "automations"
+        ? { items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId) }
         : this.listSidebarNotes(attachment.workspaceId, attachment.userId);
       try {
         socket.send(JSON.stringify(WorkspaceSidebarListEventSchema.parse({
@@ -8873,7 +8878,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           occurredAt,
           list,
           waterline,
-          items,
+          ...page,
         })));
       } catch {
         // Hibernation owns close cleanup, and a reconnect asks for the whole

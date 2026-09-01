@@ -88,6 +88,49 @@ export function applyVersionedSidebarList<K extends SidebarList>(
   return true;
 }
 
+/**
+ * Apply one pushed page of notes, keeping whatever the reader has scrolled to.
+ *
+ * A push carries the newest page, not the list. Replacing on every push was
+ * right while the list was capped and unpaged; now a reader can be holding four
+ * pages, and replacing would snap them back to one with no way to tell why.
+ *
+ * So a page that ends the list (`nextCursor === null`) replaces, and a page
+ * that is only the head merges — with the rows it *covers* rebuilt from it, not
+ * merely added to. That second part is what removes an archived note: within
+ * the range this page spans, the page is authoritative, so a held row inside
+ * that range and absent from it is gone. Below the range nothing can be
+ * concluded from this push, and those rows are corrected by the refetch that
+ * walks every loaded page.
+ *
+ * Rows are ordered `(lastActivityAt, id)` descending, so "covered" is "sorts at
+ * or above the page's last row".
+ */
+export function applyVersionedNotePage(
+  queryClient: QueryClient,
+  waterline: number,
+  items: NoteSummary[],
+  nextCursor: string | null | undefined,
+): boolean {
+  if (nextCursor == null) {
+    return applyVersionedSidebarList(queryClient, 'notes', waterline, items);
+  }
+  const held = queryClient.getQueryData<NoteSummary[]>(SIDEBAR_LIST_QUERY_KEYS.notes) ?? [];
+  const last = items.at(-1);
+  if (!last) return applyVersionedSidebarList(queryClient, 'notes', waterline, items);
+  const covered = new Set(items.map((note) => note.id));
+  const below = held.filter((note) => !covered.has(note.id) && sortsBelow(note, last));
+  return applyVersionedSidebarList(queryClient, 'notes', waterline, [...items, ...below]);
+}
+
+/** Strictly older than `boundary` in the list's `(lastActivityAt, id)` order. */
+function sortsBelow(note: NoteSummary, boundary: NoteSummary): boolean {
+  if (note.lastActivityAt !== boundary.lastActivityAt) {
+    return note.lastActivityAt < boundary.lastActivityAt;
+  }
+  return note.id < boundary.id;
+}
+
 /** Apply the project directory only when its WorkspaceDO waterline is newer. */
 export function applyVersionedProjectSnapshot(
   queryClient: QueryClient,
