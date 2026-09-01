@@ -4,6 +4,7 @@ import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
   AutomationActivationV1Schema,
+  AutomationPrincipalUnavailableV1Schema,
   type AutomationRunContextV1,
   ExecutionPrincipalSchema,
   ClientSocketEventSchema,
@@ -1291,6 +1292,88 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return {
         outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
         code: appended.outcome === "replayed" ? "resource_update_replayed" : "resource_update_appended",
+      };
+    }, true);
+  }
+
+  /**
+   * Tell this room that the person one of its automations runs as has lost
+   * access, once.
+   *
+   * A `system` row: Rally noting something that happened *to* this work stream,
+   * which is the opposite call from an activation — that one is a message with
+   * an author, and the contrast is deliberate.
+   *
+   * Idempotent on the automation and the outgoing principal, which is the
+   * property that matters: an automation firing hourly finds the same dead
+   * binding every hour and must not write an hourly card.
+   *
+   * **It is not edited in place.** The design also asks for the card to be
+   * updated as providers are repaired, naming only what is still missing, and
+   * the transcript has no update path — it is append-only canonical facts, and
+   * inventing mutation for one row would be a change to what a transcript is.
+   * So a partial repair leaves the original card standing rather than
+   * narrowing it, and the card names what was unreachable when it was written.
+   */
+  async appendPrincipalUnavailableCard(input: unknown): Promise<{
+    outcome: "appended" | "replayed" | "refused";
+    code: string;
+  }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      workspaceId: z.string().min(1),
+      workstreamId: z.string().min(1),
+      authorityGeneration: z.number().int().positive(),
+      occurredAt: z.number().int().nonnegative(),
+      card: AutomationPrincipalUnavailableV1Schema,
+    }).strict().parse(input);
+    const card = request.card;
+    const clientMessageId =
+      `automation:${card.automationId}:principal:${card.outgoingUserId}`;
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return { outcome: "refused", code: "workstream_destination_mismatch" };
+    }
+    if (this.messages.messageByClientId({ clientMessageId })) {
+      return { outcome: "replayed", code: "automation_principal_card_replayed" };
+    }
+    const who = card.outgoingUserName ?? "The person it ran as";
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(request.occurredAt),
+      clientMessageId,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      // The text stands alone for every reader that has no card: a Slack
+      // mirror, a notification, a client that does not know this kind yet.
+      text: `${card.automationName} cannot reach ${card.unreachableProviders.join(", ")}.`
+        + ` ${who} no longer has access.`,
+      structuredContentJson: JSON.stringify(card),
+      producedByRunId: null,
+      now: request.occurredAt,
+    });
+    return this.product.commitRuntimeMutation(() => {
+      const authority = this.ctx.storage.sql.exec<{
+        authority_generation: number;
+        archived_at: number | null;
+      }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
+      if (!authority || authority.authority_generation !== request.authorityGeneration) {
+        return { outcome: "refused" as const, code: "workstream_authority_generation_stale" };
+      }
+      if (authority.archived_at !== null) {
+        return { outcome: "refused" as const, code: "workstream_archived" };
+      }
+      const appended = this.messages.appendPreparedMessage(prepared);
+      return {
+        outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
+        code: appended.outcome === "replayed"
+          ? "automation_principal_card_replayed"
+          : "automation_principal_card_appended",
       };
     }, true);
   }

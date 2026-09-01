@@ -6510,6 +6510,101 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  describe("the card for an automation that lost its principal", () => {
+    const card = {
+      type: "automation_principal_unavailable" as const,
+      schemaVersion: 1 as const,
+      automationId: "00000000-0000-7000-800d-000000000001",
+      automationName: "Candidate intake",
+      outgoingUserId: "00000000-0000-7000-800d-000000000002",
+      outgoingUserName: "Dana Reeve",
+      unreachableProviders: ["Gmail"],
+    };
+
+    async function openRuntime(): Promise<DurableObjectStub<SubstreamAgent>> {
+      await seedOpenAuthority();
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      expect((await stub.bootstrapRuntime({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        generation: 1,
+      })).status).toBe(200);
+      return stub;
+    }
+
+    it("writes one card however often the automation runs", async () => {
+      const stub = await openRuntime();
+      const request = {
+        schemaVersion: 1 as const,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        authorityGeneration: 1,
+        occurredAt: Date.parse("2026-09-01T09:00:00.000Z"),
+        card,
+      };
+
+      expect(await stub.appendPrincipalUnavailableCard(request))
+        .toEqual({ outcome: "appended", code: "automation_principal_card_appended" });
+      // An hourly automation finds the same dead binding every hour. One card.
+      expect(await stub.appendPrincipalUnavailableCard({
+        ...request,
+        occurredAt: Date.parse("2026-09-01T10:00:00.000Z"),
+      })).toEqual({ outcome: "replayed", code: "automation_principal_card_replayed" });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        const rows = state.storage.sql.exec<{
+          message_type: string; content: string; structured_content_json: string;
+        }>(
+          `SELECT message_type, content, structured_content_json
+             FROM canonical_conversation_turn_details
+            WHERE client_message_id LIKE 'automation:%:principal:%'`,
+        ).toArray();
+        expect(rows).toHaveLength(1);
+        // A system row: Rally noting something that happened to this room, not
+        // somebody speaking in it.
+        expect(rows[0]!.message_type).toBe("system");
+        // The text stands alone for a reader with no card — a Slack mirror, a
+        // notification, a client that does not know this kind.
+        expect(rows[0]!.content).toContain("Candidate intake cannot reach Gmail");
+        expect(rows[0]!.content).toContain("Dana Reeve");
+        expect(JSON.parse(rows[0]!.structured_content_json).type)
+          .toBe("automation_principal_unavailable");
+      });
+    });
+
+    it("keeps a second automation's card apart from the first", async () => {
+      const stub = await openRuntime();
+      const base = {
+        schemaVersion: 1 as const,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        authorityGeneration: 1,
+        occurredAt: Date.parse("2026-09-01T09:00:00.000Z"),
+      };
+
+      await stub.appendPrincipalUnavailableCard({ ...base, card });
+      // Idempotency is per automation and per outgoing principal: a room with
+      // two broken automations has two things to fix and needs two cards.
+      expect(await stub.appendPrincipalUnavailableCard({
+        ...base,
+        card: {
+          ...card,
+          automationId: "00000000-0000-7000-800d-000000000003",
+          automationName: "Weekly changelog",
+        },
+      })).toEqual({ outcome: "appended", code: "automation_principal_card_appended" });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        expect(state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details
+            WHERE client_message_id LIKE 'automation:%:principal:%'`,
+        ).one()).toEqual({ count: 2 });
+      });
+    });
+  });
+
   describe("automation activation", () => {
     const activation = {
       type: "automation_activation" as const,
