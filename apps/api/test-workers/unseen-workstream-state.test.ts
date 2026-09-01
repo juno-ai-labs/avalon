@@ -70,7 +70,7 @@ beforeEach(async () => {
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
     env.DB.prepare(`CREATE TABLE workspaces (
-      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT
+      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT
     )`),
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE workspace_members (

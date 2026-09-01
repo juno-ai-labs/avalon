@@ -1138,7 +1138,8 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
         `SELECT member.role FROM workspace_members member
           JOIN workspaces workspace ON workspace.id = member.workspace_id
          WHERE member.workspace_id = ? AND member.user_id = ?
-           AND member.status = 'active' AND workspace.region = ?`,
+           AND member.status = 'active' AND workspace.region = ?
+           AND workspace.abandoned_at IS NULL`,
       ).bind(identity.workspaceId, identity.userId, this.env.AVALON_REGION)
         .first<{ role: AuthContext["role"] }>()
       : await this.env.DB.prepare(
@@ -1149,7 +1150,8 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
           JOIN workspaces workspace ON workspace.id = session.workspace_id
          WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
            AND session.region = ? AND session.revoked_at IS NULL
-           AND session.expires_at > ? AND workspace.region = ?`,
+           AND session.expires_at > ? AND workspace.region = ?
+           AND workspace.abandoned_at IS NULL`,
       ).bind(
         identity.sessionId,
         identity.userId,

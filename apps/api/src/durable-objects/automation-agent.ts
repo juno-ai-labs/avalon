@@ -754,7 +754,8 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         `SELECT member.user_id FROM workspace_members member
           JOIN workspaces workspace ON workspace.id = member.workspace_id
          WHERE member.workspace_id = ? AND member.user_id = ?
-           AND member.status = 'active' AND workspace.region = ?`,
+           AND member.status = 'active' AND workspace.region = ?
+           AND workspace.abandoned_at IS NULL`,
       ).bind(identity.workspaceId, identity.userId, this.env.AVALON_REGION).first<{ user_id: string }>();
       return row !== null;
     }
@@ -766,7 +767,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         JOIN workspaces workspace ON workspace.id = session.workspace_id
        WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
          AND session.revoked_at IS NULL AND session.expires_at > ?
-         AND workspace.region = ?`,
+         AND workspace.region = ? AND workspace.abandoned_at IS NULL`,
     ).bind(
       identity.sessionId,
       identity.userId,
