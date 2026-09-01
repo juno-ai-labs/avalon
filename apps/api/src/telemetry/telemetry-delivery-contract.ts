@@ -38,45 +38,59 @@ export interface GlobalProfileDeliveryRow {
   createdAt: string;
 }
 
-export type PostHogDeliveryResult = {
+export type TelemetryDestinationResult = {
   result: "delivered" | "retry" | "terminal";
   /** Provider diagnostic only; callers never use it for delivery decisions. */
   requestId: string | null;
   retryAfterMs: number | null;
 };
 
-/** Treats private-binding transport/runtime rejection like a retryable provider failure. */
-export async function postHogDeliveryRpcCall(
-  call: () => Promise<PostHogDeliveryResult>,
-): Promise<PostHogDeliveryResult> {
+/**
+ * One independent outcome per destination attempted by the delivery Worker.
+ * Adding a destination widens this object instead of creating another Worker
+ * or collapsing unrelated retry lifecycles into one aggregate status.
+ */
+export interface TelemetryDeliveryRpcResult {
+  postHog: TelemetryDestinationResult;
+}
+
+/** Treats private-binding transport/runtime rejection like retryable failure of every attempted destination. */
+export async function telemetryDeliveryRpcCall(
+  call: () => Promise<TelemetryDeliveryRpcResult>,
+): Promise<TelemetryDeliveryRpcResult> {
   try {
     return await call();
   } catch {
-    return { result: "retry", requestId: null, retryAfterMs: null };
+    return {
+      postHog: { result: "retry", requestId: null, retryAfterMs: null },
+    };
   }
 }
 
-/** Global-only, non-HTTP Service Binding contract for PostHog delivery. */
-export interface PostHogDeliveryRpcBinding {
-  sendTelemetryBatch(input: {
+/**
+ * Global-only, non-HTTP telemetry destination contract. Operations stay
+ * explicit and typed; this is not an arbitrary event or provider-command API.
+ */
+export interface TelemetryDeliveryRpcBinding {
+  deliverTelemetryBatch(input: {
     host: string;
     projectToken: string;
     webBaseUrl: string;
     rows: GlobalTelemetryDeliveryRow[];
-  }): Promise<PostHogDeliveryResult>;
-  sendJavascriptExceptionBatch(input: {
+  }): Promise<TelemetryDeliveryRpcResult>;
+  deliverJavascriptExceptionBatch(input: {
     host: string;
     projectToken: string;
     rows: GlobalTelemetryDeliveryRow[];
-  }): Promise<PostHogDeliveryResult>;
-  sendCrashBatch(input: {
+  }): Promise<TelemetryDeliveryRpcResult>;
+  deliverCrashBatch(input: {
     host: string;
     projectToken: string;
     rows: GlobalCrashDeliveryRow[];
-  }): Promise<PostHogDeliveryResult>;
-  sendProfileBatch(input: {
+  }): Promise<TelemetryDeliveryRpcResult>;
+  deliverProfileBatch(input: {
     host: string;
     projectToken: string;
     rows: GlobalProfileDeliveryRow[];
-  }): Promise<PostHogDeliveryResult>;
+  }): Promise<TelemetryDeliveryRpcResult>;
 }

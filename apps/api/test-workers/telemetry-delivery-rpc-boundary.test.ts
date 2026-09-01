@@ -1,12 +1,12 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-describe("PostHog delivery Service Binding RPC protocol", () => {
-  const binding = env.POSTHOG_RPC_TEST;
-  if (!binding) throw new Error("POSTHOG_RPC_TEST binding is unavailable");
+describe("telemetry delivery Service Binding RPC protocol", () => {
+  const binding = env.TELEMETRY_RPC_TEST;
+  if (!binding) throw new Error("TELEMETRY_RPC_TEST binding is unavailable");
 
   it("carries a typed telemetry envelope to the private Worker", async () => {
-    await expect(binding.sendTelemetryBatch({
+    await expect(binding.deliverTelemetryBatch({
       host: "https://us.i.posthog.com",
       projectToken: "phc_test",
       webBaseUrl: "https://rallywith.ai",
@@ -35,14 +35,16 @@ describe("PostHog delivery Service Binding RPC protocol", () => {
         normalizedTimestamp: "2026-09-01T12:00:00.000Z",
       }],
     })).resolves.toEqual({
-      result: "delivered",
-      requestId: "00000000-0000-7000-8000-000000000001:onboarding_region_selected:https://rallywith.ai",
-      retryAfterMs: null,
+      postHog: {
+        result: "delivered",
+        requestId: "00000000-0000-7000-8000-000000000001:onboarding_region_selected:https://rallywith.ai",
+        retryAfterMs: null,
+      },
     });
   });
 
   it("carries the sanitized nested crash report by value", async () => {
-    await expect(binding.sendCrashBatch({
+    await expect(binding.deliverCrashBatch({
       host: "https://us.i.posthog.com",
       projectToken: "phc_test",
       rows: [{
@@ -64,9 +66,11 @@ describe("PostHog delivery Service Binding RPC protocol", () => {
         report: { status: "symbolicated", threads: [{ frames: [{ function: "main" }] }] },
       }],
     })).resolves.toEqual({
-      result: "delivered",
-      requestId: "symbolicated",
-      retryAfterMs: null,
+      postHog: {
+        result: "delivered",
+        requestId: "symbolicated",
+        retryAfterMs: null,
+      },
     });
   });
 
@@ -103,12 +107,12 @@ describe("PostHog delivery Service Binding RPC protocol", () => {
     };
 
     const [exception, profile] = await Promise.all([
-      binding.sendJavascriptExceptionBatch({
+      binding.deliverJavascriptExceptionBatch({
         host: "https://us.i.posthog.com",
         projectToken: "phc_test",
         rows: [telemetryRow],
       }),
-      binding.sendProfileBatch({
+      binding.deliverProfileBatch({
         host: "https://us.i.posthog.com",
         projectToken: "phc_test",
         rows: [{
@@ -122,7 +126,7 @@ describe("PostHog delivery Service Binding RPC protocol", () => {
       }),
     ]);
 
-    expect(exception.requestId).toBe("src/main.ts:10:2");
-    expect(profile.requestId).toBe("person_profile");
+    expect(exception.postHog.requestId).toBe("src/main.ts:10:2");
+    expect(profile.postHog.requestId).toBe("person_profile");
   });
 });

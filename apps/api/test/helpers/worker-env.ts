@@ -19,7 +19,7 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     INFERENCE_PRICING_CACHE: binding(),
     IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
     RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(),
-    DOCUMENT_PROCESSOR: binding(), TERMINAL_PROVIDER: binding(), POSTHOG_DELIVERY: binding(),
+    DOCUMENT_PROCESSOR: binding(), TERMINAL_PROVIDER: binding(), TELEMETRY_DELIVERY: binding(),
     CRASH_SYMBOLICATOR: binding(),
     SUBSTREAM_AGENTS: binding(), AUTOMATION_AGENTS: binding(), BLOCK_DASHBOARD_AGENTS: binding(),
     WORKSTREAM_DOS: binding(), WORKSPACE_DOS: binding(),

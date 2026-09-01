@@ -88,10 +88,12 @@ describe("Global telemetry delivery", () => {
 
   it("batches pending rows and records successful acknowledgement", async () => {
     const database = migratedSqliteDatabase();
-    const sendTelemetryBatch = vi.fn(async () => ({
-      result: "delivered" as const,
-      requestId: "posthog-request-1",
-      retryAfterMs: null,
+    const deliverTelemetryBatch = vi.fn(async () => ({
+      postHog: {
+        result: "delivered" as const,
+        requestId: "posthog-request-1",
+        retryAfterMs: null,
+      },
     }));
     const env = createTestEnv({
       DB: sqliteD1(database),
@@ -99,7 +101,7 @@ describe("Global telemetry delivery", () => {
       POSTHOG_HOST: "https://us.i.posthog.com",
       POSTHOG_PROJECT_TOKEN: "phc_test",
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
-      POSTHOG_DELIVERY: { sendTelemetryBatch },
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch },
     });
     await new TelemetryCollector(env).accept(
       envelope("018f22f2-4c22-7abc-8def-0123456789ab"),
@@ -126,7 +128,7 @@ describe("Global telemetry delivery", () => {
     expect(database.prepare(
       "SELECT delivery_state, delivered_at, attempt_count FROM telemetry_accepted_events",
     ).get()).toEqual({ delivery_state: "delivered", delivered_at: now, attempt_count: 1 });
-    expect(sendTelemetryBatch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deliverTelemetryBatch).toHaveBeenCalledWith(expect.objectContaining({
       host: "https://us.i.posthog.com",
       projectToken: "phc_test",
       webBaseUrl: "https://with-avalon.com",
@@ -142,11 +144,13 @@ describe("Global telemetry delivery", () => {
     const database = migratedSqliteDatabase();
     const delivery = exceptionEnvelope("018f22f2-4c22-7abc-8def-0123456789af");
     insertAcceptedException(database, delivery);
-    const sendTelemetryBatch = vi.fn();
-    const sendJavascriptExceptionBatch = vi.fn(async () => ({
-      result: "delivered" as const,
-      requestId: "posthog-exception-request-1",
-      retryAfterMs: null,
+    const deliverTelemetryBatch = vi.fn();
+    const deliverJavascriptExceptionBatch = vi.fn(async () => ({
+      postHog: {
+        result: "delivered" as const,
+        requestId: "posthog-exception-request-1",
+        retryAfterMs: null,
+      },
     }));
     const env = createTestEnv({
       DB: sqliteD1(database),
@@ -154,7 +158,7 @@ describe("Global telemetry delivery", () => {
       AVALON_REGION: "global",
       POSTHOG_HOST: "https://us.i.posthog.com",
       POSTHOG_PROJECT_TOKEN: "phc_test",
-      POSTHOG_DELIVERY: { sendTelemetryBatch, sendJavascriptExceptionBatch },
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch, deliverJavascriptExceptionBatch },
     });
     vi.stubGlobal("fetch", vi.fn(async () => {
       throw new Error("the regional API must not call PostHog directly");
@@ -164,8 +168,8 @@ describe("Global telemetry delivery", () => {
       selected: 1,
       delivered: 1,
     });
-    expect(sendTelemetryBatch).not.toHaveBeenCalled();
-    expect(sendJavascriptExceptionBatch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deliverTelemetryBatch).not.toHaveBeenCalled();
+    expect(deliverJavascriptExceptionBatch).toHaveBeenCalledWith(expect.objectContaining({
       rows: [expect.objectContaining({
         eventId: delivery.eventId,
         symbolicatedFrames: ["main.js:1:2"],
@@ -184,13 +188,15 @@ describe("Global telemetry delivery", () => {
       AVALON_REGION: "global",
       POSTHOG_HOST: "https://us.i.posthog.com",
       POSTHOG_PROJECT_TOKEN: "phc_test",
-      POSTHOG_DELIVERY: {
-        sendTelemetryBatch: vi.fn(async () => ({
-          result: "delivered" as const,
-          requestId: "posthog-request-mixed",
-          retryAfterMs: null,
+      TELEMETRY_DELIVERY: {
+        deliverTelemetryBatch: vi.fn(async () => ({
+          postHog: {
+            result: "delivered" as const,
+            requestId: "posthog-request-mixed",
+            retryAfterMs: null,
+          },
         })),
-        sendJavascriptExceptionBatch: vi.fn(async () => {
+        deliverJavascriptExceptionBatch: vi.fn(async () => {
           throw new Error("posthog_rpc_unavailable");
         }),
       },
@@ -236,8 +242,8 @@ describe("Global telemetry delivery", () => {
       AVALON_REGION: "global",
       POSTHOG_HOST: "https://us.i.posthog.com",
       POSTHOG_PROJECT_TOKEN: "phc_test",
-      POSTHOG_DELIVERY: {
-        sendTelemetryBatch: vi.fn(async () => {
+      TELEMETRY_DELIVERY: {
+        deliverTelemetryBatch: vi.fn(async () => {
           throw new Error("posthog_rpc_unavailable");
         }),
       },
@@ -267,17 +273,19 @@ describe("Global telemetry delivery", () => {
 
   it("retries transient failures without renewing the absolute deadline", async () => {
     const database = migratedSqliteDatabase();
-    const sendTelemetryBatch = vi.fn(async () => ({
-      result: "retry" as const,
-      requestId: "posthog-request-2",
-      retryAfterMs: 30_000,
+    const deliverTelemetryBatch = vi.fn(async () => ({
+      postHog: {
+        result: "retry" as const,
+        requestId: "posthog-request-2",
+        retryAfterMs: 30_000,
+      },
     }));
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       POSTHOG_HOST: "https://us.i.posthog.com",
       POSTHOG_PROJECT_TOKEN: "phc_test",
-      POSTHOG_DELIVERY: { sendTelemetryBatch },
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch },
     });
     await new TelemetryCollector(env).accept(
       envelope("018f22f2-4c22-7abc-8def-0123456789ab"),
@@ -299,23 +307,25 @@ describe("Global telemetry delivery", () => {
       next_attempt_at: "2026-08-12T20:00:30.000Z",
       ...deadline,
     });
-    expect(sendTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(deliverTelemetryBatch).toHaveBeenCalledTimes(1);
     database.close();
   });
 
   it("leaves accepted rows untouched while the destination circuit is open", async () => {
     const database = migratedSqliteDatabase();
-    const sendTelemetryBatch = vi.fn(async () => ({
-      result: "delivered" as const,
-      requestId: "posthog-request-3",
-      retryAfterMs: null,
+    const deliverTelemetryBatch = vi.fn(async () => ({
+      postHog: {
+        result: "delivered" as const,
+        requestId: "posthog-request-3",
+        retryAfterMs: null,
+      },
     }));
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
       POSTHOG_HOST: "https://us.i.posthog.com",
       POSTHOG_PROJECT_TOKEN: "phc_test",
-      POSTHOG_DELIVERY: { sendTelemetryBatch },
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch },
     });
     await new TelemetryCollector(env).accept(
       envelope("018f22f2-4c22-7abc-8def-0123456789ab"),
@@ -331,14 +341,14 @@ describe("Global telemetry delivery", () => {
       await recordDestinationOutcome(env, "posthog_capture", "retryable", new Date(now));
     }
     await expect(processTelemetryOutbox(env)).resolves.toMatchObject({ selected: 0, delivered: 0 });
-    expect(sendTelemetryBatch).not.toHaveBeenCalled();
+    expect(deliverTelemetryBatch).not.toHaveBeenCalled();
     expect(database.prepare(
       "SELECT delivery_state, attempt_count FROM telemetry_accepted_events",
     ).get()).toEqual({ delivery_state: "pending", attempt_count: 0 });
 
     vi.setSystemTime(new Date("2026-08-12T20:05:00.001Z"));
     await expect(processTelemetryOutbox(env)).resolves.toMatchObject({ selected: 1, delivered: 1 });
-    expect(sendTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(deliverTelemetryBatch).toHaveBeenCalledTimes(1);
     database.close();
   });
 
@@ -359,20 +369,20 @@ describe("Global telemetry delivery", () => {
                 NULL, NULL, ?, ?, '2026-11-10T20:00:00.000Z', 'pending')
     `).run(misrouted.eventId, JSON.stringify(misrouted), now, now);
     const fetchMock = vi.fn();
-    const sendTelemetryBatch = vi.fn();
-    const sendJavascriptExceptionBatch = vi.fn();
+    const deliverTelemetryBatch = vi.fn();
+    const deliverJavascriptExceptionBatch = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const result = await processTelemetryOutbox(createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "eu",
       POSTHOG_HOST: "https://eu.i.posthog.com",
       POSTHOG_PROJECT_TOKEN: "phc_test",
-      POSTHOG_DELIVERY: { sendTelemetryBatch, sendJavascriptExceptionBatch },
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch, deliverJavascriptExceptionBatch },
     }));
     expect(result).toMatchObject({ selected: 0, expired: 1 });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(sendTelemetryBatch).not.toHaveBeenCalled();
-    expect(sendJavascriptExceptionBatch).not.toHaveBeenCalled();
+    expect(deliverTelemetryBatch).not.toHaveBeenCalled();
+    expect(deliverJavascriptExceptionBatch).not.toHaveBeenCalled();
     expect(database.prepare(
       "SELECT delivery_state FROM telemetry_accepted_events WHERE event_id = ?",
     ).get(misrouted.eventId)).toEqual({ delivery_state: "pending" });

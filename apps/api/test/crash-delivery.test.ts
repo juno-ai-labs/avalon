@@ -41,15 +41,17 @@ describe('Global native crash delivery', () => {
       delete: vi.fn(async (key: string) => { objects.delete(key); }),
     });
     const report = { status: 'ok', crash_info: { type: 'EXC_BAD_ACCESS' }, threads: [{ frames: [{ function: 'main' }] }] };
-    const sendCrashBatch = vi.fn(async () => ({
-      result: 'delivered' as const,
-      requestId: 'posthog-crash-request-1',
-      retryAfterMs: null,
+    const deliverCrashBatch = vi.fn(async () => ({
+      postHog: {
+        result: 'delivered' as const,
+        requestId: 'posthog-crash-request-1',
+        retryAfterMs: null,
+      },
     }));
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global', TELEMETRY_PAYLOADS: bucket,
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      POSTHOG_DELIVERY: { sendCrashBatch },
+      TELEMETRY_DELIVERY: { deliverCrashBatch },
       CRASH_SYMBOLICATOR: createCloudflareTestBinding<DurableObjectNamespace<CrashSymbolicatorContainer>>({
         idFromName: () => createTestDurableObjectId('crash-symbolicator'),
         get: () => ({
@@ -73,7 +75,7 @@ describe('Global native crash delivery', () => {
     await processPendingCrashReports(env);
 
     await expect(processCrashOutbox(env)).resolves.toEqual({ selected: 1, delivered: 1, retried: 0, terminal: 0, suppressed: 0 });
-    expect(sendCrashBatch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deliverCrashBatch).toHaveBeenCalledWith(expect.objectContaining({
       host: 'https://us.i.posthog.com',
       projectToken: 'phc_test',
       rows: [expect.objectContaining({
@@ -107,13 +109,13 @@ describe('Global native crash delivery', () => {
               'symbolicated', '{"status":"symbolicated"}', 'fingerprint-1',
               'pending', ?, ?)`)
       .run('2026-08-12T19:00:00.000Z', '2026-11-10T20:00:00.000Z');
-    const sendCrashBatch = vi.fn();
+    const deliverCrashBatch = vi.fn();
     await expect(processCrashOutbox(createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'eu',
       POSTHOG_HOST: 'https://eu.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      POSTHOG_DELIVERY: { sendCrashBatch },
+      TELEMETRY_DELIVERY: { deliverCrashBatch },
     }))).resolves.toEqual({ selected: 0, delivered: 0, retried: 0, terminal: 0, suppressed: 0 });
-    expect(sendCrashBatch).not.toHaveBeenCalled();
+    expect(deliverCrashBatch).not.toHaveBeenCalled();
     expect(database.prepare('SELECT destination_state FROM telemetry_crash_reports').get())
       .toEqual({ destination_state: 'pending' });
     database.close();
@@ -135,8 +137,8 @@ describe('Global native crash delivery', () => {
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global',
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      POSTHOG_DELIVERY: {
-        sendCrashBatch: vi.fn(async () => { throw new Error('posthog_rpc_unavailable'); }),
+      TELEMETRY_DELIVERY: {
+        deliverCrashBatch: vi.fn(async () => { throw new Error('posthog_rpc_unavailable'); }),
       },
     });
 

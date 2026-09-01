@@ -111,8 +111,8 @@
       "service": "avalon-api-terminal-global"
     },
     {
-      "binding": "POSTHOG_DELIVERY",
-      "service": "avalon-api-posthog-global"
+      "binding": "TELEMETRY_DELIVERY",
+      "service": "avalon-api-telemetry-delivery-global"
     },
     {
       "binding": "EU_IDENTITY_BRIDGE",
