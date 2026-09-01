@@ -8,6 +8,7 @@ import type {
   DesktopSession,
   RuntimeConfig,
 } from '../../common/desktop';
+import { workspaceActivationFailure } from '../../common/workspace-activation-error';
 import {
   AppSessionProvider,
   useAppSession,
@@ -836,7 +837,7 @@ describe('single-platform desktop identity routing', () => {
     const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000025';
     bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
-    bridge.activateWorkspace.mockRejectedValueOnce(new Error('workspace_access_denied'));
+    bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
@@ -853,9 +854,7 @@ describe('single-platform desktop identity routing', () => {
   it('does not navigate when a workspace-addressed work-stream link cannot be activated', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000020';
     bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
-    bridge.activateWorkspace.mockRejectedValueOnce(new Error(
-      "Error invoking remote method 'onboarding:activate-workspace': Error: Workspace access is unavailable",
-    ));
+    bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
     const before = window.location.hash;

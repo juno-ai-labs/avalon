@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
+import { workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { uuidV7 } from '../lib/telemetry';
@@ -456,15 +457,16 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               } catch (error) {
                 const code = error instanceof Error && 'code' in error ? String(error.code) : undefined;
                 const message = error instanceof Error ? error.message : '';
+                const activationFailure = workspaceActivationFailureCode(error);
                 setWorkspaceErrors((current) => ({
                   ...current,
                   [targetKey]: message === 'Finish or stop the recording before switching workspaces'
                     ? message
-                    : code === 'workspace_access_denied' || message === 'Workspace access is unavailable'
+                    : code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied'
                     ? 'You are no longer a member of this workspace'
                     : 'Rally could not open this workspace',
                 }));
-                if (code === 'workspace_access_denied' || message === 'Workspace access is unavailable') {
+                if (code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied') {
                   await workspaceDirectory.refetch();
                 }
               } finally {

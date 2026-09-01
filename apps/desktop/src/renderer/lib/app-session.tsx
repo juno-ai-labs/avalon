@@ -22,6 +22,7 @@ import type {
   DesktopSession,
   RuntimeConfig,
 } from '../../common/desktop';
+import { workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
@@ -555,13 +556,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         await action(activated.api);
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : '';
-        const workspaceAccessDenied = /workspace[_ ]access(?:[_ ]is)?[_ ](?:denied|unavailable)/iu.test(message);
+        const activationFailure = workspaceActivationFailureCode(error);
         reportDeepLinkFailure(
           /sign in/iu.test(message)
             ? message
-            : workspaceAccessDenied
+            : activationFailure === 'workspace_access_denied'
               ? 'Rally could not access the workspace this link belongs to.'
-            : /reach|network|offline|timeout|unavailable/iu.test(message)
+            : activationFailure === 'workspace_activation_unavailable'
+              || /reach|network|offline|timeout|unavailable/iu.test(message)
               ? 'Rally could not reach that workspace. Check your connection, then reopen this link.'
               : 'Rally could not access the workspace this link belongs to.',
         );

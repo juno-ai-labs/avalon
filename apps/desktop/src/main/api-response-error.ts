@@ -1,3 +1,5 @@
+import { workspaceActivationFailure } from '../common/workspace-activation-error';
+
 export class RallyApiResponseError extends Error {
   override readonly name = 'RallyApiResponseError';
 
@@ -8,6 +10,15 @@ export class RallyApiResponseError extends Error {
   ) {
     super(message);
   }
+}
+
+export function workspaceActivationBridgeError(error: unknown): Error {
+  return workspaceActivationFailure(
+    error instanceof RallyApiResponseError
+      && (error.code === 'workspace_access_denied' || error.code === 'workspace_access_revoked')
+      ? 'workspace_access_denied'
+      : 'workspace_activation_unavailable',
+  );
 }
 
 export async function responseError(response: Response): Promise<RallyApiResponseError> {
