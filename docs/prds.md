@@ -135,7 +135,7 @@ contract, and it is edited whenever the contract itself changes.
 | --- | --- |
 | `prd.md` | **Required.** The PRD itself: the problem, the goals and non-goals, the proposed product behavior, and the decisions. This is the file other documents link to. |
 | `state.md` | **Required.** The three-line state checklist above, plus a supersession or standing-contract note where one applies. Nothing else. |
-| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Write it only after the PRD is approved, and only when the work is large enough that sequencing matters. |
+| `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Write it only after the PRD is approved, and only when the work is large enough that sequencing matters. A flagged feature registers its flag in Ace in the phase that introduces it, per **Rollout** below. |
 | `design.md` | Architecture and rationale too detailed for the PRD body — schemas, protocols, migration strategy. |
 | `research.md` | Prior art, competitor behavior, or investigation that informed the PRD but is not itself a proposal. |
 | `README.md` | Only for a folder that has grown into a bundle: a short map saying which file is actionable and which are supporting provenance. |
@@ -316,8 +316,32 @@ provenance rather than guidance.
   Resend, or Cloudflare setting that must change outside the repository, in
   which region, and what breaks if it is not applied before the change ships.
 - **Rollout** — Flags, phases, migration or backfill order, and how the change
-  is turned off if it goes wrong. Name the flag, per
-  [`feature-flags.md`](feature-flags.md).
+  is turned off if it goes wrong. **Required in spirit for any feature a user
+  can see.** Before writing it, *ask whoever owns the product whether the
+  feature ships behind a flag*, and record the answer here either way — a "no"
+  with its reason is a decision, and it is the question going unasked that gets
+  it answered by accident on merge day. If the answer is yes, three things
+  follow and all three belong in this section:
+
+  1. **Name the flag**, with a key ending `-enabled`, per
+     [`feature-flags.md`](feature-flags.md). The suffix is what marks it as a
+     flag an operator manages rather than one driven by hand.
+  2. **It defaults off for everyone.** Not off for customers and on for staff,
+     not on in one region — off, with every audience that gets it reached by a
+     targeting rule instead. A default that is on for anybody makes a flag that
+     was never created indistinguishable from one deliberately granted, which
+     is the state that hides a botched rollout.
+  3. **It is registered in Ace**, which is the thing that creates it in
+     Flagship and the only surface an operator can turn it on from. Serving the
+     key from a Worker does neither;
+     [`feature-flags.md`](feature-flags.md#adding-a-flag) lists the edits. A PRD
+     that names a flag and stops at the Worker has specified a feature nobody
+     can enable, and it will read as finished while being permanently off.
+
+  Where the PRD has a `plan.md`, the phase that introduces the flag carries its
+  Ace registration — not a later phase and not an unwritten follow-up. A phase
+  whose acceptance gate is "the client reads the flag" passes with the flag
+  uncreatable.
 - **Acceptance** — How anyone can tell the PRD is done: the flows to walk and
   what each must show. Where these become durable checks, they land in
   [`e2e.md`](e2e.md).
@@ -467,7 +491,10 @@ document per [`module-documents.md`](module-documents.md) and register it in
 4. Write the body against [the sections above](#the-sections-of-a-prd) — the
    seven required ones in order, then whichever optional ones apply. Start with
    **Non-goals** if the scope is contested; the rest gets easier once the edges
-   are fixed. **Decision log** starts as `None yet.`
+   are fixed. **Decision log** starts as `None yet.` If the PRD proposes a
+   feature a user can see, **Rollout** applies: ask whether it ships behind a
+   flag before writing that section, and record the answer whichever way it
+   goes.
 5. If the PRD adds or changes an agent tool or plugin, complete the
    [tool-and-plugin documentation](#required-documentation-for-agent-tools-and-plugins)
    and verify each tool against [`agent-tools.md`](agent-tools.md).

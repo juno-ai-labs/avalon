@@ -449,6 +449,7 @@ export const ProductFeatureFlagKeySchema = z.enum([
   "meeting-recording-enabled",
   "suggested-work-enabled",
   "automation-workspace-templates-enabled",
+  "multiple-workspaces-enabled",
   "digests-enabled",
 ]);
 export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
