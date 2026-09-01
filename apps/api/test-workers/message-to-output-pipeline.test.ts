@@ -38,6 +38,7 @@ import {
 
 import type { AuthContext, Env } from "../src/env";
 import {
+  createCloudflareTestBinding,
   createTestD1Database,
   createTestD1PreparedStatement,
   createTestEnv,
@@ -47,7 +48,10 @@ import {
   substreamLoopId,
   workspaceDOName,
 } from "../src/durable-objects/names";
-import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
+import {
+  LOOP_EXECUTION_LEASE_MS,
+  SubstreamLoopStorage,
+} from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
@@ -672,13 +676,15 @@ async function capturedProviderRequests(stub: DurableObjectStub): Promise<Captur
 }
 
 /**
- * Hold this object's D1 reads until released.
+ * Park the *first* D1 read this object makes, and let every later one through.
  *
- * `createMessage` reserves its mailbox row synchronously and then awaits
- * `authorize`, which is a D1 read — so holding D1 parks the admission in
- * exactly the state a cancelled invocation leaves behind, with the reservation
- * durable and nothing having settled it. Only the external system is replaced:
- * the product runs its real admission against real storage.
+ * `createMessage` commits its mailbox reservation and then awaits `authorize`,
+ * which is a D1 read — so holding that read leaves the admission in exactly the
+ * state a cancelled invocation leaves behind: the reservation durable, nothing
+ * having settled it, and the invocation never returning. Only the first read is
+ * held, because the recovery attempt the test is about has to be able to run.
+ * Only the external system is replaced; the product runs its real admission
+ * against real storage.
  */
 type AdmissionGateGlobal = typeof globalThis & {
   __rallyPipelineAdmissionGate?: { open: boolean };
@@ -688,7 +694,10 @@ function installHeldWorkspaceReads(product: { env: Env }): { open: boolean } {
   const scope = globalThis as AdmissionGateGlobal;
   const gate = { open: false };
   scope.__rallyPipelineAdmissionGate = gate;
+  let parked = false;
   const hold = async (): Promise<void> => {
+    if (parked) return;
+    parked = true;
     while (!gate.open) await scheduler.wait(10);
   };
   const holdStatement = (statement: D1PreparedStatement): D1PreparedStatement =>
@@ -705,6 +714,37 @@ function installHeldWorkspaceReads(product: { env: Env }): { open: boolean } {
     DB: createTestD1Database({ prepare: (query: string) => holdStatement(database.prepare(query)) }),
   });
   return gate;
+}
+
+/**
+ * Record what the mailbox held the first time this object armed its alarm.
+ *
+ * The claim under test is an ordering *inside* one invocation — the wake-up is
+ * armed before the reservation it covers is committed — and the only observer
+ * of that order is the invocation itself. So the storage the product writes
+ * through reports the mailbox depth at the moment `setAlarm` is called; zero
+ * means the reservation was not yet durable, which is the invariant.
+ */
+function recordFirstAlarmArm(product: { storage: DurableObjectStorage }): {
+  mailboxRowsAtFirstArm: number | null;
+} {
+  const order: { mailboxRowsAtFirstArm: number | null } = { mailboxRowsAtFirstArm: null };
+  const storage = product.storage;
+  product.storage = createCloudflareTestBinding<DurableObjectStorage>(new Proxy(storage, {
+    get: (current, property) => {
+      const value = Reflect.get(current, property) as unknown;
+      if (property !== "setAlarm") {
+        return typeof value === "function" ? value.bind(current) : value;
+      }
+      return (scheduledTime: number | Date) => {
+        order.mailboxRowsAtFirstArm ??= Number(storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox`,
+        ).one().count);
+        return storage.setAlarm(scheduledTime);
+      };
+    },
+  }));
+  return order;
 }
 
 /** Release the held first provider call installed by `gateFirstCall`. */
@@ -1876,7 +1916,7 @@ describe("a member's message travels the whole pipeline", () => {
       // admitted with no activation request of its own, so the loop that just
       // finished is the only thing that can carry it to the model. Forcing an
       // alarm here would supply the wake-up whose absence is the bug.
-      const queuedRun = await expect.poll(async () => runInDurableObject(stub, (_instance, state) => {
+      await expect.poll(async () => runInDurableObject(stub, (_instance, state) => {
         const rows = state.storage.sql.exec<{
           run_id: string;
           status: string;
@@ -1903,7 +1943,6 @@ describe("a member's message travels the whole pipeline", () => {
         timeout: RUN_SETTLE_TIMEOUT_MS,
         interval: 50,
       }).toMatchObject({ outcome: "settled" });
-      void queuedRun;
 
       expect(await runInDurableObject(stub, (_instance, state) =>
         state.storage.sql.exec<{ count: number }>(
@@ -1920,7 +1959,7 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
-  it("leaves a wake-up behind for an admitted message whose preparation is interrupted", async () => {
+  it("recovers an admitted message whose preparation is interrupted", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
     await externallySettledRun(stub, opened.body.harnessRunId as string);
@@ -1932,59 +1971,101 @@ describe("a member's message travels the whole pipeline", () => {
       { timeout: LOOP_RELEASE_TIMEOUT_MS, interval: 50, message: "the object never quiesced" },
     ).toBeNull();
 
-    const admission = await runInDurableObject(stub, (instance, state) => {
+    let armOrder: { mailboxRowsAtFirstArm: number | null } = { mailboxRowsAtFirstArm: null };
+    const gate = await runInDurableObject(stub, (instance) => {
       const product = (instance as unknown as {
         product: WorkstreamObjectProductService;
       }).product;
       // `env` is a constructor parameter property: private to the compiler,
       // an ordinary writable field to the runtime this test replaces it in.
-      const gate = installHeldWorkspaceReads(product as unknown as { env: Env });
-      // Not awaited: the invocation that never returns is the case under test.
-      const held = product.createMessage(AUTH, {
+      const held = installHeldWorkspaceReads(product as unknown as { env: Env });
+      armOrder = recordFirstAlarmArm(product as unknown as { storage: DurableObjectStorage });
+      // Not awaited, and never released below: the invocation that commits the
+      // reservation and then never returns is the case under test.
+      void product.createMessage(AUTH, {
         text: "answer this once the run is over",
         clientMessageId: "pipeline-interrupted-1",
         mentions: [],
         confirmedParticipantUserIds: [],
         attachmentIds: [],
       }).catch(() => undefined);
-      void state;
-      return { gate, held };
+      return held;
     });
 
-    await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
-      state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox WHERE state = 'preparing'`,
-      ).one().count), {
+    const reservedInputId = (): Promise<string | null> =>
+      runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ input_id: string }>(
+          `SELECT input_id FROM pending_loop_input_mailbox WHERE state = 'preparing'`,
+        ).toArray()[0]?.input_id ?? null);
+    await expect.poll(reservedInputId, {
       timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS,
       interval: 25,
       message: "the admission never reserved its mailbox row",
-    }).toBe(1);
+    }).not.toBeNull();
+    const inputId = (await reservedInputId())!;
+
+    // Armed before the row it covers, not after: a wake-up written second
+    // leaves a window in which the reservation is durable and nothing is left
+    // to rediscover it, which is the whole failure this guards.
+    expect(armOrder.mailboxRowsAtFirstArm).toBe(0);
 
     // The reservation is durable; nothing else in this object knows about it,
     // because the head-of-line gate keeps it out of `pendingInputs` until it
-    // settles. Without a wake-up armed here the message — and everything
-    // queued behind it — is stranded until something unrelated touches the
-    // object, which for a work stream nobody reopens is never.
+    // settles. Without a wake-up the message — and everything queued behind
+    // it — is stranded until something unrelated touches the object, which for
+    // a work stream nobody reopens is never.
     expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()))
       .not.toBeNull();
-
-    // And it has to survive the wake it just bought. The alarm that fires while
-    // the preparation is still in flight re-arms from durable state on its way
-    // out; if the unresolved reservation contributes nothing there, that re-arm
-    // deletes the wake-up and the message is stranded one heartbeat later
-    // instead of immediately.
+    // And it has to survive the wake it just bought: the alarm re-derives from
+    // durable state on its way out, and an unresolved reservation that
+    // contributes nothing there loses the wake-up again one heartbeat later.
     await runDurableObjectAlarm(stub);
     expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()))
       .not.toBeNull();
 
-    admission.gate.open = true;
-    await admission.held;
-    const turnId = await runInDurableObject(stub, (_instance, state) =>
-      state.storage.sql.exec<{ prepared_turn_id: string }>(
-        `SELECT prepared_turn_id FROM pending_loop_inputs WHERE client_message_id = ?`,
+    // Age the claim past the recovery horizon. The suite cannot wait five real
+    // minutes, and this claim is in memory rather than a row, so the instant it
+    // was taken is rewound in place — the same move a durable-lease test makes
+    // against `lease_expires_at`. Nothing else about the parked invocation
+    // changes: it is still holding the first D1 read and will never return.
+    await runInDurableObject(stub, (instance) => {
+      const claims = (instance as unknown as {
+        product: { activeInputPreparations: Map<string, { depth: number; claimedAt: number }> };
+      }).product.activeInputPreparations;
+      const claim = claims.get(inputId);
+      expect(claim).toBeDefined();
+      claims.set(inputId, { ...claim!, claimedAt: claim!.claimedAt - LOOP_EXECUTION_LEASE_MS - 1 });
+    });
+
+    // Recovery has to settle the mailbox row and carry the message to a run,
+    // driven by the alarm rather than by the invocation that vanished — the
+    // gate is never opened above, so the original `createMessage` is still
+    // parked and cannot be what does this.
+    await runDurableObjectAlarm(stub);
+    await expect.poll(() => runInDurableObject(stub, (_instance, state) => {
+      const settled = state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox
+          WHERE input_id = ? AND state = 'preparing'`,
+        inputId,
+      ).one().count === 0;
+      if (!settled) return "the interrupted preparation was never resumed";
+      const minted = state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM runs
+          WHERE json_extract(execution_context_json, '$.triggerMessageId') = ?`,
+        inputId,
+      ).one().count > 0;
+      return minted ? "runnable" : "the resumed message never became runnable";
+    }), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe("runnable");
+
+    // The vanished invocation is fenced, not raced: releasing it now makes it
+    // finish against a client message id the takeover already made canonical,
+    // and it must not admit a second copy of the same message.
+    gate.open = true;
+    await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE client_message_id = ?`,
         "pipeline-interrupted-1",
-      ).toArray()[0]?.prepared_turn_id ?? null);
-    expect(turnId).not.toBeNull();
+      ).one().count), { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS, interval: 25 }).toBe(1);
   });
 
   it("message writes are idempotent across the whole path", async () => {
