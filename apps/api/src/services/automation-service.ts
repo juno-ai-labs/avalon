@@ -2,7 +2,7 @@ import { newId, nowIso } from "@rally/db";
 import { TriggerDefinitionSchema } from "@rally/contracts";
 import type {
   AutomationDraft,
-  Scope,
+  AutomationScope,
 } from "@rally/contracts";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
@@ -181,7 +181,7 @@ export class AutomationService {
   }
 
   private async validateConnectorSelections(
-    scope: Scope,
+    scope: AutomationScope,
     defaultPluginIds: string[],
     activitySourcePluginIds: Record<string, string>,
   ): Promise<ValidatedConnectorBindings> {
@@ -205,8 +205,13 @@ export class AutomationService {
       if (!row || row.status === "disabled") {
         throw new ApiError(422, "plugin_unavailable", `Connector plugin ${pluginId} is unavailable`);
       }
-      if (scope === "personal" && row.scope === "personal" && row.owner_user_id !== this.auth.userId) {
-        throw new ApiError(403, "personal_connection_access_denied", "A personal automation cannot use another member's personal connection");
+      // `workstream` is held to the same rule as `personal`, and has to be:
+      // lending your own credentials to a standing automation is something you
+      // agree to, and a room's automation is managed by everyone in the room.
+      // Without this, one participant could bind a colleague's personal Gmail
+      // to an automation that then outlives them both.
+      if (scope !== "workspace" && row.scope === "personal" && row.owner_user_id !== this.auth.userId) {
+        throw new ApiError(403, "personal_connection_access_denied", "An automation cannot use another member's personal connection");
       }
       if (scope === "workspace" && row.scope !== "workspace") {
         throw new ApiError(422, "workspace_connection_required", "Workspace automations may only use workspace connections");
@@ -352,17 +357,6 @@ export class AutomationService {
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
-}
-/** What the compiler says back after a turn. The service owns it rather than
- * the route because the saved transcript and the streamed reply have to be the
- * same sentence — a resumed draft that ends on a different question than the
- * one on screen reads as a different conversation. */
-export function assistantMessageForDraft(draft: AutomationDraft): string {
-  return draft.elicitation?.prompt
-    ?? draft.followUpQuestion
-    ?? (draft.ready
-      ? "The automation is ready to create."
-      : "I need one more detail before I can create this automation.");
 }
 function activityFilterValueMatches(valueType: string, value: unknown): boolean {
   if (valueType === "string") return typeof value === "string";

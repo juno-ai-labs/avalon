@@ -27,6 +27,7 @@ type StructuredInferenceRole = Extract<
   | "work_opportunity_ranking"
   | "workstream_description"
   | "workstream_naming"
+  | "automation_result_disposition"
 >;
 
 export async function runEmbeddingInference(

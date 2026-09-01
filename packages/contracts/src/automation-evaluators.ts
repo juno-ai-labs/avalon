@@ -314,13 +314,23 @@ export const ConnectorActivityFilterValueTypeV2Schema = z.enum([
   "person_id_array",
 ]);
 
+/**
+ * How an activity's event relates to the resource it names.
+ *
+ * `file` and `thread` name the watched entity itself rather than a container it
+ * sits in — Notion's `page` is the precedent. A Drive file and a mail thread are
+ * each the thing somebody attached and turned watching on for, and neither is a
+ * `folder` or a `parent`.
+ */
 export const ConnectorResourceRelationshipSchema = z.enum([
   "channel",
+  "file",
   "folder",
   "parent",
   "project",
   "repository",
   "page",
+  "thread",
   "application",
 ]);
 

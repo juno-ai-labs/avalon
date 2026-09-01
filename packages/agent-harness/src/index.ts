@@ -2,8 +2,6 @@ import type {
   AddressingClassification,
   AutomationPluginActivity,
   AutomationPluginIcon,
-  AutomationDraft,
-  AutomationSetEvaluatorRulesInputV1,
   ConnectorActivityTriggerDescriptor,
   ExecutionPrincipal,
   HarnessFailureCode,
@@ -11,11 +9,10 @@ import type {
   ToolDefinition
 } from "@rally/contracts";
 import {
-  AGENT_MODEL_FLAG_KEYS,
   AddressingClassificationSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
   AutomationDraftSchema,
-  asUserId
+  type AutomationDraft,
 } from "@rally/contracts";
 import { AzureInferenceEndpointSchema } from "@rally/contracts/url-schemas";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
@@ -39,10 +36,8 @@ import { z } from "zod";
 import { runHarnessWithBind } from "./bind-runtime";
 import {
   renderAddressingMessages,
-  renderAutomationCompilerMessages,
   type AddressingContextMessage,
 } from "./prompts";
-import { toolActivityName } from "./tool-activity";
 import type {
   BindLoopProjectionState,
   BindLoopTransition,
@@ -93,6 +88,12 @@ export {
   type SkillRuntime,
 } from "./skills";
 export { parseSkillMarkdown, type SkillSummary } from "@juno-ai/bind/skills";
+export {
+  AUTOMATIONS_PLUGIN_ID,
+  AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
+  createAutomationsPlugin,
+  type AutomationCreatorToolHost,
+} from "./automation-creator-tools";
 export {
   admitChildRun,
   descendChain,
@@ -2006,8 +2007,8 @@ const automationDraftSubmissionJsonSchema = {
     expectedOutputs: { type: "array", items: { type: "string" } },
     requestedDelivery: {
       type: "array",
-      description: "The destinations the owner asked to receive the result themselves: \"email\" for their own email address, \"slack_agent_dm\" for their Rally Slack Agent DM. Use [] when they asked for neither, or when they asked for it to be sent to somebody else. Rally does the sending; this only records what was asked for.",
-      items: { type: "string", enum: ["email", "slack_agent_dm"] }
+      description: "The destinations the owner asked to receive the result themselves: \"email\" for their own email address, \"slack_agent_dm\" for their Rally Slack Agent DM, \"channel\" when they asked for it to go to a channel rather than to them. Name no channel: which one is decided from where this was written. Use [] when they asked for none, and always when suggestedScope is \"workstream\" — that automation's results land in this work stream, which is what its scope means. Rally does the sending; this only records what was asked for.",
+      items: { type: "string", enum: ["email", "slack_agent_dm", "channel"] }
     },
     defaultBehavior: {
       type: "string",
@@ -2057,7 +2058,11 @@ const automationDraftSubmissionJsonSchema = {
         required: ["name", "description", "usageInstructions", "columns", "keyColumns"]
       }
     },
-    suggestedScope: { type: "string", enum: ["personal", "workspace"] },
+    suggestedScope: {
+      type: "string",
+      enum: ["personal", "workspace", "workstream"],
+      description: "Who can see and change this automation, which cannot be changed after it is accepted: \"personal\" belongs to the person who asked and delivers to them, \"workspace\" belongs to the admins and acts with the workspace's own connections, \"workstream\" belongs to this work stream — everyone in the room can manage it, its results land here, and it outlives whoever asked for it. Ask which one before submitting. There is no work stream to name: an automation can only ever belong to the one it was written in."
+    },
     ready: {
       type: "boolean",
       description: "True only when no blocking human input remains; false means request_elicitation must be called after this draft is submitted."
@@ -2100,25 +2105,6 @@ export interface AutomationCreatorPluginCatalogEntry {
     inputSchema: Record<string, unknown>;
     execute?: HarnessTool["execute"];
   }>;
-}
-
-function renderAutomationActivityTriggerGuidance(
-  triggers: ConnectorActivityTriggerDescriptor[],
-): string {
-  if (!triggers.length) return "";
-  const lines = triggers.map((trigger) => {
-    const filterFields = trigger.filterFields ?? [];
-    const filters = filterFields.length
-      ? ` Filters: ${filterFields.map((field) =>
-          `${field.key} (${field.valueType}; ${field.label}): ${field.description}`).join("; ")}`
-      : "";
-    return `- ${trigger.eventType}: ${trigger.label}. ${trigger.description}${filters}`;
-  });
-  return [
-    "# Automation activity triggers",
-    "Use only these exact normalized event types and declared deterministic filter fields.",
-    ...lines,
-  ].join("\n");
 }
 
 export type AutomationCompilerFailureCode =
@@ -2280,854 +2266,7 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
   },
 };
 
-/**
- * `pluginIds` is required: a row names the plugins it is actually about, and an
- * optional filter here is how the whole catalog used to leak onto every row.
- */
-function automationPluginActivities(
-  catalog: AutomationCreatorPluginCatalogEntry[],
-  pluginIds: ReadonlySet<string>,
-): AutomationPluginActivity[] {
-  return catalog
-    .filter((plugin) => pluginIds.has(plugin.pluginId))
-    .map((plugin) => ({
-      pluginId: plugin.pluginId,
-      displayName: plugin.displayName,
-      icon: plugin.icon,
-    }));
-}
-
-/**
- * The plugin whose icon belongs on a research row: the one that owns the tool
- * being called, and nothing else. Tools owned by an Avalon core plugin — web
- * research and plugin discovery — have no connector behind them, so their rows
- * carry no plugin icon rather than standing in for the whole catalog.
- */
-function automationOwningPlugin(
-  pluginId: string,
-  catalog: AutomationCreatorPluginCatalogEntry[],
-): AutomationPluginActivity | null {
-  if (!pluginId.startsWith("automation:")) return null;
-  const owner = automationPluginActivities(catalog, new Set([pluginId.slice("automation:".length)]));
-  return owner[0] ?? null;
-}
-
-/**
- * Plugins a discovery row is *about*, used only to phrase its label. Naming the
- * plugin a row loaded or inspected does not claim that plugin ran the tool, so
- * these never become icons.
- */
-function automationSubjectPlugins(
-  toolName: string,
-  input: unknown,
-  catalog: AutomationCreatorPluginCatalogEntry[],
-): AutomationPluginActivity[] {
-  if (toolName !== "automation_plugin_inspect" && toolName !== "load_plugin") return [];
-  const pluginId = String(asRecord(input).pluginId ?? "");
-  return automationPluginActivities(catalog, new Set([pluginId]));
-}
-
-function automationSubjectPluginsFromResult(
-  toolName: string,
-  output: unknown,
-  catalog: AutomationCreatorPluginCatalogEntry[],
-  fallback: AutomationPluginActivity[],
-): AutomationPluginActivity[] {
-  const record = asRecord(output);
-  if (toolName === "load_plugin") {
-    const pluginId = String(record.loaded ?? "");
-    return pluginId ? automationPluginActivities(catalog, new Set([pluginId])) : fallback;
-  }
-  const hasPluginResult = toolName === "automation_plugin_inspect"
-    ? Boolean(record.plugin && typeof record.plugin === "object")
-    : Array.isArray(record.plugins);
-  if (!hasPluginResult) return fallback;
-  const pluginRecords = toolName === "automation_plugin_inspect"
-    ? [asRecord(record.plugin)]
-    : (record.plugins as unknown[]).map(asRecord);
-  const pluginIds = new Set(pluginRecords
-    .map((plugin) => String(plugin.pluginId ?? ""))
-    .filter(Boolean));
-  return automationPluginActivities(catalog, pluginIds);
-}
-
-function automationPluginNames(plugins: AutomationPluginActivity[]): string {
-  if (!plugins.length) return "connected plugins";
-  const names = plugins.map((plugin) => plugin.displayName);
-  if (names.length === 1) return names[0]!;
-  if (names.length === 2) return `${names[0]} and ${names[1]}`;
-  return `${names[0]}, ${names[1]}, and ${names.length - 2} more`;
-}
-
-/**
- * Discovery rows can legitimately name several plugins at once, which the
- * shared row prose deliberately cannot express. Everything else — web research
- * and connector tools — defers to `toolActivityName` so the automation composer
- * and a work stream never word the same row differently.
- */
-function automationDiscoveryActivityName(
-  toolName: string,
-  status: "started" | "completed" | "failed",
-  plugins: AutomationPluginActivity[],
-): string {
-  if (toolName === "web_search" || toolName === "web_fetch") {
-    return toolActivityName({ toolName, status });
-  }
-  const names = automationPluginNames(plugins);
-  if (toolName === "automation_plugins_search" || toolName === "search_plugins") {
-    if (status === "completed") return plugins.length ? `Found ${names}` : "Searched connected plugins";
-    return `Searching ${names}`;
-  }
-  if (toolName === "load_plugin") {
-    return status === "completed" ? `Loaded ${names}` : `Loading ${names}`;
-  }
-  if (toolName === "automation_plugin_inspect") return `Reading ${names}`;
-  if (toolName === "automation_plugins_list" || toolName === "list_plugins") {
-    return status === "completed" ? `Reviewed ${names}` : `Reviewing ${names}`;
-  }
-  return toolActivityName({ toolName, status, plugin: plugins[0] ?? null });
-}
-
-export async function compileAutomation(input: {
-  apiKey: string;
-  model: string;
-  /** Stable automation-draft loop identity supplied by production hosts. */
-  loopId?: string;
-  workspaceId?: string;
-  userId?: string;
-  fallbackModels?: string[];
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
-  latestUserAttachmentParts?: ModelMessageContentPart[];
-  currentDraft?: AutomationDraft | null;
-  defaultTimezones?: { personal: string; workspace: string };
-  pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
-  /** Avalon-owned plugins available through the same progressive-disclosure catalog. */
-  additionalPlugins?: HarnessPlugin[];
-  /** Request-scoped tools owned by the preloaded automation architect. */
-  architectTools?: HarnessTool[];
-  /** Durable host mutations owned by the AutomationAgent compiler run. */
-  draftMutationPort?: {
-    setEvaluatorRules(
-      rules: AutomationSetEvaluatorRulesInputV1,
-      context: HarnessToolContext,
-    ): Promise<{ accepted: true }>;
-    submitDraft(
-      draft: AutomationDraft,
-      context: HarnessToolContext,
-    ): Promise<{ accepted: true }>;
-    requestElicitation(
-      elicitation: z.infer<typeof RequestElicitationInputSchema>,
-      context: HarnessToolContext,
-    ): Promise<{ accepted: true }>;
-  };
-  draftResearchPort?: {
-    searchPeople(query: string): Promise<unknown>;
-    searchResources(query: string): Promise<unknown>;
-  };
-  maxResearchIterations?: number;
-  /**
-   * The host's transport-retry budget. Threaded in rather than defaulted here
-   * because every caller shares one module-scoped circuit breaker keyed by
-   * workspace: a compiler that kept retrying while an operator had set the
-   * deployment budget to 0 would go on charging failures against the breaker
-   * of the very work streams that switch was thrown to protect.
-   */
-  transportRetries?: number;
-  maxWebResults?: number;
-  onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
-  onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
-  onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
-  onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
-  signal?: AbortSignal;
-  fetch?: typeof globalThis.fetch;
-  /** Deterministic catalog snapshot for tests or hosts with a cached catalog. */
-  contextWindowTokensByModel?: Readonly<Record<string, number | null | undefined>>;
-  traceContext?: OpenRouterTraceContext;
-}): Promise<AutomationDraft> {
-  const rendered = renderAutomationCompilerMessages({
-    messages: input.messages,
-    currentDraft: input.currentDraft ?? null,
-    ...(input.defaultTimezones ? { defaultTimezones: input.defaultTimezones } : {}),
-  });
-  const conversationMessages: ModelMessage[] = rendered.slice(1);
-  if (input.latestUserAttachmentParts?.length) {
-    let latestUserIndex = -1;
-    for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
-      if (conversationMessages[index]?.role === "user") {
-        latestUserIndex = index;
-        break;
-      }
-    }
-    if (latestUserIndex >= 0) {
-      const latestUserMessage = conversationMessages[latestUserIndex]!;
-      conversationMessages[latestUserIndex] = {
-        ...latestUserMessage,
-        content: [
-          ...(latestUserMessage.content ? [{ type: "text" as const, text: String(latestUserMessage.content) }] : []),
-          ...input.latestUserAttachmentParts,
-        ],
-      };
-    }
-  }
-  const catalog = input.pluginCatalog ?? [];
-  const executablePlugins: HarnessPlugin[] = catalog.map((plugin) => ({
-    canonicalId: `automation:${plugin.pluginId}`,
-    modelId: plugin.pluginId,
-    shortWireName: plugin.pluginId.replace(/^plugin_/u, "").slice(0, 48),
-    displayName: plugin.displayName,
-    searchAliases: plugin.searchAliases,
-    description: plugin.description,
-    systemMessage: [plugin.systemMessage, renderAutomationActivityTriggerGuidance(plugin.activityTriggers)]
-      .filter(Boolean)
-      .join("\n\n"),
-    tools: plugin.tools.flatMap((tool) => tool.execute
-      ? [{
-          definition: {
-            name: tool.canonicalName ?? tool.name,
-            description: tool.description,
-            capability: tool.capability,
-            mode: tool.mode,
-            idempotency: tool.idempotency ?? "safe",
-            ...(tool.timeoutMs === undefined ? {} : { timeoutMs: tool.timeoutMs }),
-            inputSchema: tool.inputSchema,
-          },
-          execute: tool.execute,
-        }]
-      : []),
-    preload: false,
-    explicit: false,
-  }));
-  const draftState: { submitted: AutomationDraft | null } = { submitted: null };
-  const loadedAutomationPluginIds = new Set<string>();
-  const inspectedAutomationPluginIds = new Set<string>();
-  const resolvedAutomationPersonIds = new Set<string>();
-  const resolvedAutomationResources = new Map<string, {
-    pluginId: string;
-    resourceType: string;
-    sourceBindingKeys: readonly string[];
-  }>();
-  let submissionReminderSent = false;
-  let elicitationReminderSent = false;
-  let modelTimeMs = 0;
-  /**
-   * The composer shows one narration bubble for the whole compile, but Bind's
-   * stream resets are scoped to a turn: a route restart replays only the turn
-   * it abandoned. Remembering what earlier turns settled lets a reset restore
-   * them instead of erasing the plan the person has already read, and lets the
-   * `started` frame — which clears the bubble — be sent once rather than once
-   * per turn.
-   */
-  const narration = { started: false, turnId: "", settled: "", current: "" };
-  const narrationBatch = createTextDeltaBatcher(async (delta) => {
-    await input.onStreamEvent?.({ type: "delta", delta, reset: false });
-  });
-  /**
-   * Every frame that is not batched narration settles the batch first, so a
-   * tool row, a thinking row, or the completion can never overtake the text
-   * that was written before it.
-   */
-  const emitStreamEvent = async (event: AutomationCompilerStreamEvent): Promise<void> => {
-    await narrationBatch.flush();
-    await input.onStreamEvent?.(event);
-  };
-  const toolStartedAt = new Map<string, number>();
-  const toolLabelPlugins = new Map<string, AutomationPluginActivity[]>();
-  const creatorDefinition = (name: string): HarnessTool["definition"] => {
-    const definition = AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS.find((candidate) => candidate.name === name);
-    if (!definition) throw new Error(`automation_creator_definition_missing:${name}`);
-    return definition;
-  };
-  const creatorTools: HarnessTool[] = [
-    {
-      definition: creatorDefinition("plugins_list"),
-      execute: async () => ({
-        output: executeAutomationCreatorDiscoveryTool("plugins_list", {}, catalog),
-        summary: "Listed authorized automation plugins",
-      }),
-    },
-    {
-      definition: creatorDefinition("plugins_search"),
-      execute: async (raw) => ({
-        output: executeAutomationCreatorDiscoveryTool("plugins_search", asRecord(raw), catalog),
-        summary: "Searched authorized automation plugins",
-      }),
-    },
-    {
-      definition: creatorDefinition("plugin_inspect"),
-      execute: async (raw) => {
-        const output = executeAutomationCreatorDiscoveryTool("plugin_inspect", asRecord(raw), catalog);
-        const pluginId = String(asRecord(raw).pluginId ?? "");
-        if (pluginId) inspectedAutomationPluginIds.add(pluginId);
-        return { output, summary: "Inspected an authorized automation plugin" };
-      },
-    },
-    {
-      definition: creatorDefinition("people_search"),
-      validateInput: (raw) => {
-        const parsed = z.strictObject({ query: z.string().min(1) }).safeParse(raw);
-        return parsed.success ? null : parsed.error;
-      },
-      execute: async (raw) => {
-        if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
-        const { query } = z.strictObject({ query: z.string().min(1) }).parse(raw);
-        const output = await input.draftResearchPort.searchPeople(query);
-        const people = asRecord(output).people;
-        if (Array.isArray(people)) {
-          for (const person of people) {
-            const id = asRecord(person).id;
-            if (typeof id === "string") resolvedAutomationPersonIds.add(id);
-          }
-        }
-        return {
-          output,
-          summary: "Searched workspace people",
-        };
-      },
-    },
-    {
-      definition: creatorDefinition("resources_search"),
-      validateInput: (raw) => {
-        const parsed = z.strictObject({ query: z.string().min(1) }).safeParse(raw);
-        return parsed.success ? null : parsed.error;
-      },
-      execute: async (raw) => {
-        if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
-        const { query } = z.strictObject({ query: z.string().min(1) }).parse(raw);
-        const output = await input.draftResearchPort.searchResources(query);
-        const resources = asRecord(output).resources;
-        if (Array.isArray(resources)) {
-          for (const resource of resources) {
-            const row = asRecord(resource);
-            if (
-              typeof row.id === "string"
-              && typeof row.pluginId === "string"
-              && typeof row.resourceType === "string"
-            ) {
-              resolvedAutomationResources.set(row.id, {
-                pluginId: row.pluginId,
-                resourceType: row.resourceType,
-                sourceBindingKeys: Array.isArray(row.sourceBindingKeys)
-                  ? row.sourceBindingKeys.filter((value): value is string => typeof value === "string")
-                  : [],
-              });
-            }
-          }
-        }
-        return {
-          output,
-          summary: "Searched authorized resources",
-        };
-      },
-    },
-    {
-      definition: creatorDefinition("submit_draft"),
-      serial: true,
-      /**
-       * The draft's real contract is `AutomationDraftSchema`, and the parts of
-       * it that decide whether a submission is accepted — a ready activity
-       * trigger's binding key, its inspected plugin, its declared prefilter
-       * event type, unique memory-table names — are cross-field refinements no
-       * JSON Schema can state, so the declared `inputSchema` accepts arguments
-       * the executor then rejects.
-       *
-       * Without this hook the runtime sees arguments that match everything it
-       * was shown, files the executor's `ZodError` as downstream data
-       * validation, and hands the model "the tool could not validate its data;
-       * retry without changing the arguments". The model obeys: it resubmits
-       * the same draft, is refused identically, and the compile ends with no
-       * draft at all. That is request 8592b3f1 — four identical rejections of
-       * one missing `deterministicPrefilter.eventType`, then
-       * `automation_draft_not_submitted` and a 502 the person could only read
-       * as "try again". Re-running the same parse here is what turns that dead
-       * end into the named field, because it is the one signal that separates a
-       * correctable argument from an external fault.
-       */
-      validateInput: (raw) => {
-        const parsed = parseAutomationSubmission(raw);
-        return parsed.success ? null : parsed.error;
-      },
-      execute: async (raw, context) => {
-        await input.onDiagnostic?.({
-          stage: "normalize",
-          schemaName: "automation_draft",
-          model: input.model,
-          attempt: 1,
-          fallbackAttempt: 0,
-          repairAttempt: 0,
-        });
-        const parsed = parseAutomationSubmission(raw);
-        await input.onDiagnostic?.({
-          stage: "validate",
-          schemaName: "automation_draft",
-          model: input.model,
-          attempt: 1,
-          fallbackAttempt: 0,
-          repairAttempt: 0,
-          ...(!parsed.success
-            ? {
-                validationIssues: parsed.error.issues.map((issue) => ({
-                  path: issue.path.join("."),
-                  code: issue.code,
-                })),
-              }
-            : {}),
-        });
-        if (!parsed.success) throw parsed.error;
-        if (parsed.data.ready) {
-          const sourcePluginIds = parsed.data.triggers.flatMap((trigger) =>
-            trigger.type === "connector_activity" || trigger.type === "semantic_activity" || trigger.type === "webhook"
-              ? trigger.suggestedSourcePluginId ? [trigger.suggestedSourcePluginId] : []
-              : []);
-          const unloadedPluginId = [...sourcePluginIds, ...parsed.data.recommendedPlugins.map((plugin) => plugin.pluginId)]
-            .find((pluginId) => (
-              !loadedAutomationPluginIds.has(pluginId) || !inspectedAutomationPluginIds.has(pluginId)
-            ));
-          if (unloadedPluginId) {
-            throw new Error(`Load and inspect ${unloadedPluginId} before submitting it in a ready automation draft`);
-          }
-        }
-        await input.draftMutationPort?.submitDraft(parsed.data, context);
-        draftState.submitted = parsed.data;
-        await input.onDiagnostic?.({
-          stage: "complete",
-          schemaName: "automation_draft",
-          model: input.model,
-          attempt: 1,
-          fallbackAttempt: 0,
-          repairAttempt: 0,
-        });
-        return {
-          output: { accepted: true },
-          summary: draftState.submitted.ready ? "Submitted ready automation draft" : "Submitted partial automation draft",
-          ...(draftState.submitted.ready ? { halt: "completed" as const } : {}),
-        };
-      },
-    },
-    {
-      definition: creatorDefinition("set_evaluator_rules"),
-      serial: true,
-      validateInput: (raw) => evaluatorRuleIssues(raw),
-      execute: async (raw, context) => {
-        if (!input.draftMutationPort) throw new Error("automation_draft_mutation_host_unavailable");
-        // The harness consults `validateInput` only after the executor has
-        // already thrown a ZodError, so a semantic check that lives there
-        // alone never runs — the rule reaches durable storage unchecked. The
-        // executor enforces the same function, and `validateInput` keeps
-        // pointing at it so the two can never drift.
-        const issues = evaluatorRuleIssues(raw);
-        if (issues) throw issues;
-        const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(raw);
-        const result = await input.draftMutationPort.setEvaluatorRules(rules, context);
-        return {
-          output: result,
-          summary: rules.evaluators.length === 0
-            ? "Cleared external event evaluator rules"
-            : `Set ${rules.evaluators.length} external event evaluator rule${rules.evaluators.length === 1 ? "" : "s"}`,
-        };
-      },
-    },
-  ];
-  function evaluatorRuleIssues(raw: unknown): z.ZodError | null {
-        const parsed = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
-        if (!parsed.success) return parsed.error;
-        const issues: z.core.$ZodIssue[] = [];
-        for (const [index, evaluator] of parsed.data.evaluators.entries()) {
-          const plugin = catalog.find((candidate) => candidate.pluginId === evaluator.source.suggestedSourcePluginId);
-          if (!plugin || !inspectedAutomationPluginIds.has(plugin.pluginId)) {
-            issues.push({
-              code: "custom",
-              path: ["evaluators", index, "source", "suggestedSourcePluginId"],
-              message: "This plugin has not been inspected. Call automation_plugin_inspect with this plugin ID, then set the rules again using only the event types and filter fields it declares.",
-              input: evaluator.source.suggestedSourcePluginId,
-            });
-            continue;
-          }
-          const event = evaluator.source.event;
-          const eventTypes = event.kind === "event_type"
-            ? [event.eventType]
-            : plugin.activityTriggers
-                .filter((descriptor) => (descriptor.eventFamilies ?? []).includes(event.eventFamily))
-                .map((descriptor) => descriptor.eventType);
-          if (eventTypes.length === 0) {
-            issues.push({
-              code: "custom",
-              path: ["evaluators", index, "source", "event"],
-              message: "This plugin declares no event of that name or family. Use one of the event types listed by automation_plugin_inspect for this plugin.",
-              input: evaluator.source.event,
-            });
-            continue;
-          }
-          const resolvedResource = evaluator.source.resourceId
-            ? resolvedAutomationResources.get(evaluator.source.resourceId)
-            : undefined;
-          if (
-            evaluator.source.resourceId
-            && (
-              !resolvedResource
-              || resolvedResource.pluginId !== plugin.pluginId
-              || !resolvedResource.sourceBindingKeys.includes(evaluator.source.sourceBindingKey)
-            )
-          ) {
-            issues.push({
-              code: "custom",
-              path: ["evaluators", index, "source", "resourceId"],
-              message: "This resource is not one this plugin can watch. Find it with resources_search and use an ID it returns for this source binding.",
-              input: evaluator.source.resourceId,
-            });
-          }
-          for (const eventType of eventTypes) {
-            const descriptor = plugin.activityTriggers.find((candidate) => candidate.eventType === eventType);
-            if (
-              resolvedResource
-              && !(descriptor?.resourceRelationships ?? []).some(
-                (relationship) => relationship.resourceType === resolvedResource.resourceType,
-              )
-            ) {
-              issues.push({
-                code: "custom",
-                path: ["evaluators", index, "source", "resourceId"],
-                message: "This event cannot be filtered by that resource type. Use a resource whose type appears in the relationships automation_plugin_inspect lists for this event.",
-                input: evaluator.source.resourceId,
-              });
-            }
-            if (!descriptor || evaluator.when.kind !== "dnf") continue;
-            for (const [groupIndex, group] of evaluator.when.anyOf.entries()) {
-              for (const [leafIndex, leaf] of group.allOf.entries()) {
-                const field = (descriptor.filterFields ?? []).find((candidate) => candidate.key === leaf.attribute);
-                if (
-                  !field
-                  || !(field.operators ?? []).includes(leaf.operator)
-                  || (leaf.kind !== "presence" && leaf.kind !== field.valueType)
-                ) {
-                  issues.push({
-                    code: "custom",
-                    path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex],
-                    message: "This filter field, operator, or value type is not one the plugin declares. Use a field from automation_plugin_inspect with one of the operators it lists and a value of the type it names.",
-                    input: leaf,
-                  });
-                }
-                if (
-                  (leaf.kind === "person_id" || leaf.kind === "person_id_array")
-                  && (Array.isArray(leaf.value) ? leaf.value : [leaf.value])
-                    .some((personId) => !resolvedAutomationPersonIds.has(personId))
-                ) {
-                  issues.push({
-                    code: "custom",
-                    path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex, "value"],
-                    message: "This person ID was never resolved. Find the person with people_search and use an ID it returned.",
-                    input: leaf.value,
-                  });
-                }
-              }
-            }
-          }
-        }
-    return issues.length > 0 ? new z.ZodError(issues) : null;
-  }
-  const timeTool = automationCurrentTimeTool(input.defaultTimezones);
-  const requestElicitationTool: HarnessTool = {
-    definition: AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
-    serial: true,
-    validateInput: (raw) => {
-      const result = RequestElicitationInputSchema.safeParse(raw);
-      return result.success ? null : result.error;
-    },
-    execute: async (raw, context) => {
-      const args = RequestElicitationInputSchema.parse(raw);
-      if (!draftState.submitted) {
-        throw new Error("Submit the best current draft with automation_submit_draft before requesting input");
-      }
-      await input.draftMutationPort?.requestElicitation(args, context);
-      draftState.submitted = {
-        ...draftState.submitted,
-        followUpQuestion: args.prompt,
-        elicitation: {
-          responseType: args.responseType === "text" ? "free_text" : args.responseType === "multi_select" ? "multi_select" : "single_select",
-          prompt: args.prompt,
-          placeholder: null,
-          options: args.options,
-          minimumSelections: args.minimumSelections,
-          maximumSelections: args.maximumSelections,
-          allowOther: args.responseType !== "text",
-        },
-        ready: false,
-      };
-      return {
-        output: { accepted: true },
-        summary: "Requested automation input",
-        halt: "needs_input",
-      };
-    },
-  };
-  const corePlugins: HarnessPlugin[] = [
-    {
-      canonicalId: AVALON_CORE_PLUGIN_ID,
-      modelId: "rally_core",
-      shortWireName: "core",
-      description: "Read the exact current time and applicable timezones.",
-      systemMessage: "Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use core_request_elicitation only after saving the best current draft when a blocking human choice remains.",
-      tools: [timeTool, requestElicitationTool],
-      preload: true,
-      explicit: true,
-    },
-    {
-      canonicalId: AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID,
-      modelId: "rally_automation_architect",
-      shortWireName: "automation",
-      description: "Research authorized plugins, inspect frozen draft attachments, and submit automation drafts.",
-      tools: [...creatorTools, ...(input.architectTools ?? [])],
-      preload: true,
-      explicit: true,
-    },
-  ];
-  await input.onDiagnostic?.({
-    stage: "model_request",
-    schemaName: "automation_draft",
-    model: input.model,
-    attempt: 1,
-    fallbackAttempt: 0,
-    repairAttempt: 0,
-  });
-  const compilerExecutionId = crypto.randomUUID();
-  const outcome = await runHarness({
-    config: {
-      apiKey: input.apiKey,
-      primaryModel: input.model,
-      fallbackModels: input.fallbackModels ?? [],
-      ...(input.fetch ? { fetch: input.fetch } : {}),
-      sameModelRetries: 1,
-      maxIterations: Math.max(12, Math.min(32, input.maxResearchIterations ?? 20)),
-      maxToolCalls: 80,
-      maxWallClockMs: 180_000,
-      toolTimeoutMs: 10_000,
-      ...(input.transportRetries === undefined ? {} : { transportRetries: input.transportRetries }),
-      maxWebResults: Math.max(1, Math.min(20, input.maxWebResults ?? 8)),
-      maxCostCents: 1_000,
-      maxCatalogTokens: 2_500,
-      reasoningEffort: "high",
-    },
-    workspaceId: input.workspaceId ?? "00000000-0000-7000-8000-000000000001",
-    workstreamId: "00000000-0000-7000-8000-000000000002",
-    loopId: input.loopId
-      ?? `automation-compiler:${input.workspaceId ?? "default"}:${input.userId ?? "default"}:loop`,
-    harnessRunId: compilerExecutionId,
-    executionPrincipal: {
-      type: "user",
-      userId: asUserId(input.userId ?? "00000000-0000-7000-8000-000000000003"),
-    },
-    traceContext: input.traceContext ?? {
-      source: "automation_compiler",
-      feature: AGENT_MODEL_FLAG_KEYS.automation_compiler,
-      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
-      ...(input.userId ? { contextUserId: input.userId } : {}),
-    },
-    systemPrompt: String(rendered[0]?.content ?? ""),
-    messages: [
-      ...conversationMessages,
-      {
-        role: "user",
-        content: [
-          "The arguments to automation_submit_draft are the expected structured output and must match this rendered schema exactly:",
-          renderExpectedJsonSchema("automation_draft", automationDraftSubmissionJsonSchema),
-        ].join("\n\n"),
-      },
-    ],
-    plugins: [...(input.additionalPlugins ?? []), ...executablePlugins],
-    compaction: {
-      ...(input.contextWindowTokensByModel
-        ? { contextWindowTokensByModel: input.contextWindowTokensByModel }
-        : input.fetch
-          ? { contextWindowTokensByModel: Object.fromEntries([
-              input.model,
-              ...(input.fallbackModels ?? []),
-            ].map((modelId) => [modelId, 200_000])) }
-          : {}),
-    },
-    corePlugins,
-    // The compiler is intentionally ephemeral and has no participant
-    // transcript. Bind still reserves its stable model-turn identity before
-    // provider I/O; there is simply no participant sequence to attach.
-    onEvent: async (event) => {
-      if (event.type === "stream_started") {
-        if (narration.started) return;
-        narration.started = true;
-        await emitStreamEvent({ type: "started" });
-      } else if (event.type === "stream_delta") {
-        if (event.turnId !== narration.turnId) {
-          narration.settled = [narration.settled, narration.current].filter(Boolean).join("\n\n");
-          narration.turnId = event.turnId;
-          narration.current = "";
-        }
-        if (event.reset) {
-          narration.current = "";
-          // The retraction goes out alone: anything still pending belongs to
-          // the attempt being abandoned, and coalescing it behind this frame
-          // would restore the text the reset exists to remove.
-          narrationBatch.discard();
-          await emitStreamEvent({ type: "delta", delta: narration.settled, reset: true });
-          return;
-        }
-        if (!event.delta) return;
-        // A new turn continues the same bubble, so its first fragment carries
-        // the paragraph break that separates it from the previous update.
-        const separator = narration.settled && !narration.current ? "\n\n" : "";
-        narration.current += event.delta;
-        await narrationBatch.push(`${separator}${event.delta}`);
-      } else if (event.type === "tool_started") {
-        const plugin = automationOwningPlugin(event.pluginId, catalog);
-        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
-          ?? (plugin ? {
-              started: "Using an authorized connector…",
-              completed: "Connector operation completed",
-            } : undefined);
-        if (!presentation) return;
-        const labelPlugins = plugin
-          ? [plugin]
-          : automationSubjectPlugins(event.toolName, event.input, catalog);
-        toolStartedAt.set(event.toolCallId, Date.now());
-        toolLabelPlugins.set(event.toolCallId, labelPlugins);
-        await emitStreamEvent({
-          type: "tool",
-          toolCallId: event.toolCallId,
-          name: automationDiscoveryActivityName(event.toolName, "started", labelPlugins),
-          summary: presentation.started,
-          status: "started",
-          plugin,
-        });
-      } else if (event.type === "tool_completed") {
-        if (event.toolName === "load_plugin") {
-          const loaded = String(asRecord(event.result.output).loaded ?? "");
-          if (loaded) loadedAutomationPluginIds.add(loaded);
-        }
-        const plugin = automationOwningPlugin(event.pluginId, catalog);
-        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
-          ?? (plugin ? {
-              started: "Using an authorized connector…",
-              completed: event.result.summary,
-            } : undefined);
-        if (!presentation) return;
-        const startedAt = toolStartedAt.get(event.toolCallId);
-        const labelPlugins = plugin
-          ? [plugin]
-          : automationSubjectPluginsFromResult(
-              event.toolName,
-              event.result.output,
-              catalog,
-              toolLabelPlugins.get(event.toolCallId) ?? [],
-            );
-        toolStartedAt.delete(event.toolCallId);
-        toolLabelPlugins.delete(event.toolCallId);
-        await emitStreamEvent({
-          type: "tool",
-          toolCallId: event.toolCallId,
-          name: automationDiscoveryActivityName(event.toolName, "completed", labelPlugins),
-          summary: presentation.completed,
-          status: "completed",
-          plugin,
-          ...(startedAt === undefined ? {} : { durationMs: Math.max(0, Date.now() - startedAt) }),
-        });
-      } else if (event.type === "tool_failed") {
-        const plugin = automationOwningPlugin(event.pluginId, catalog);
-        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
-          ?? (plugin ? {
-              started: "Using an authorized connector…",
-              completed: "Connector operation failed",
-            } : undefined);
-        if (!presentation) return;
-        const startedAt = toolStartedAt.get(event.toolCallId);
-        const labelPlugins = plugin ? [plugin] : toolLabelPlugins.get(event.toolCallId) ?? [];
-        toolStartedAt.delete(event.toolCallId);
-        toolLabelPlugins.delete(event.toolCallId);
-        await emitStreamEvent({
-          type: "tool",
-          toolCallId: event.toolCallId,
-          name: automationDiscoveryActivityName(event.toolName, "failed", labelPlugins),
-          summary: "This research step failed; Rally will adjust the plan.",
-          status: "failed",
-          plugin,
-          ...(startedAt === undefined ? {} : { durationMs: Math.max(0, Date.now() - startedAt) }),
-        });
-      }
-    },
-    onInferenceRequest: async (request) => {
-      await input.onInferenceRequest?.(request);
-      await emitStreamEvent({
-        type: "thinking",
-        inferenceRequestId: request.inferenceRequestId,
-        status: "started",
-        durationMs: modelTimeMs,
-      });
-    },
-    onInferenceAttempt: async (attempt) => {
-      await input.onInferenceAttempt?.(attempt);
-      modelTimeMs += attempt.latencyMs;
-      await emitStreamEvent({
-        type: "thinking",
-        inferenceRequestId: attempt.inferenceRequestId,
-        status: "completed",
-        durationMs: modelTimeMs,
-      });
-      await input.onDiagnostic?.({
-        stage: "model_response",
-        schemaName: "automation_draft",
-        model: attempt.model,
-        attempt: attempt.cursor.endpointAttempt + 1,
-        fallbackAttempt: attempt.cursor.candidateIndex,
-        repairAttempt: attempt.cursor.structuredOutputAttempt,
-        latencyMs: attempt.latencyMs,
-        success: attempt.success,
-        ...(attempt.inputTokens === undefined ? {} : { inputTokens: attempt.inputTokens }),
-        ...(attempt.outputTokens === undefined ? {} : { outputTokens: attempt.outputTokens }),
-        ...(attempt.reasoningTokens === undefined ? {} : { reasoningTokens: attempt.reasoningTokens }),
-        ...(attempt.cachedInputTokens === undefined ? {} : { cachedInputTokens: attempt.cachedInputTokens }),
-        ...(attempt.responseBytes === undefined ? {} : { responseBytes: attempt.responseBytes }),
-        ...(attempt.failureKind === undefined ? {} : { failureKind: attempt.failureKind }),
-      });
-    },
-    acceptEmptyCompletion: true,
-    onTurnWouldEnd: () => {
-      if (!draftState.submitted && !submissionReminderSent) {
-        submissionReminderSent = true;
-        return [
-          "You ended the previous turn without successfully calling automation_submit_draft, so no automation draft has been submitted.",
-          "Call automation_submit_draft now with the best current draft and set ready=false only when an essential blocking detail remains.",
-          "The tool arguments must match this rendered JSON Schema exactly:",
-          renderExpectedJsonSchema("automation_draft", automationDraftSubmissionJsonSchema),
-          "Call automation_submit_draft without assistant text in the same turn. Do not print the JSON as Markdown.",
-        ].join("\n\n");
-      }
-      if (draftState.submitted && !draftState.submitted.ready && !draftState.submitted.elicitation && !elicitationReminderSent) {
-        elicitationReminderSent = true;
-        return [
-          "The saved automation draft still needs blocking input.",
-          "Call core_request_elicitation now with exactly one focused structured question. Do not ask the question in assistant text.",
-        ].join("\n\n");
-      }
-      return null;
-    },
-    ...(input.signal ? { signal: input.signal } : {}),
-  });
-  if (draftState.submitted && (draftState.submitted.ready || draftState.submitted.elicitation)) {
-    await emitStreamEvent({ type: "completed" });
-    return draftState.submitted;
-  }
-  if (outcome.failure) {
-    throw new AutomationCompilerError(
-      outcome.failure.code,
-      outcome.failure.kind,
-      outcome.failure.kind !== "authorization" && outcome.failure.kind !== "ambiguous_external_write",
-      memberSafeHarnessFailureMessage(outcome.failure.code),
-    );
-  }
-  throw new AutomationCompilerError(
-    "automation_draft_not_submitted",
-    "completion",
-    true,
-    "The automation creator ended without submitting a draft",
-  );
-}
-
-function executeAutomationCreatorDiscoveryTool(
+export function executeAutomationCreatorDiscoveryTool(
   toolName: string,
   args: Record<string, unknown>,
   catalog: AutomationCreatorPluginCatalogEntry[],
@@ -3209,60 +2348,10 @@ function executeAutomationCreatorDiscoveryTool(
   return { error: "unknown_discovery_tool" };
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
-}
-
-function automationCurrentTimeTool(
-  defaultTimezones?: { personal: string; workspace: string },
-): HarnessTool {
-  return {
-    definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
-    execute: async (raw) => {
-      const args = z.object({ timezone: z.string().min(1).max(100).optional() }).parse(raw);
-      const workspaceTimezone = canonicalIanaTimezone(defaultTimezones?.workspace ?? "UTC");
-      const timezone = canonicalIanaTimezone(
-        args.timezone ?? defaultTimezones?.personal ?? workspaceTimezone,
-      );
-      const text = easyEnglishCurrentTime(new Date(), timezone, workspaceTimezone);
-      return { output: text, summary: text };
-    },
-  };
-}
-
-function canonicalIanaTimezone(timezone: string): string {
-  try {
-    return new Intl.DateTimeFormat("en-US", { timeZone: timezone }).resolvedOptions().timeZone;
-  } catch {
-    throw new Error(`Invalid IANA timezone: ${timezone}`);
-  }
-}
-
-function easyEnglishCurrentTime(
-  instant: Date,
-  timezone: string,
-  workspaceTimezone: string,
-): string {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    }).formatToParts(instant).map((part) => [part.type, part.value]),
-  );
-  return [
-    `current local time: ${parts.hour}:${parts.minute} ${parts.dayPeriod}`,
-    `local timezone: ${timezone}`,
-    `workspace timezone: ${workspaceTimezone}`,
-    `local date: ${parts.month} ${parts.day} ${parts.year}`,
-    `iso8601 timestamp: ${instant.toISOString()}`,
-  ].join("\n");
 }
 
 /**
@@ -3275,7 +2364,7 @@ function easyEnglishCurrentTime(
  * naming a field the executor is fine with is the same unwinnable loop with a
  * different field's name on it.
  */
-function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<AutomationDraft> {
+export function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<AutomationDraft> {
   return AutomationDraftSchema.safeParse(normalizeAutomationDraft(raw));
 }
 
@@ -3300,7 +2389,7 @@ function normalizeAutomationDraft(value: unknown): unknown {
     // order decide those bytes costs a prompt-cache hit per turn for nothing.
     requestedDelivery: Array.isArray(draft.requestedDelivery)
       ? [...new Set(draft.requestedDelivery.filter((entry) =>
-        entry === "email" || entry === "slack_agent_dm"))].sort()
+        entry === "email" || entry === "slack_agent_dm" || entry === "channel"))].sort()
       : [],
     ready,
     followUpQuestion: null,
@@ -3542,7 +2631,6 @@ export const AVALON_TABLES_PLUGIN_ID = "rally:tables";
 export const AVALON_WEB_PLUGIN_ID = "rally:web";
 export const AVALON_WORKSTREAM_PLUGIN_ID = "rally:workstream";
 export const AVALON_MULTIMODAL_GENERATION_PLUGIN_ID = "rally:multimodal-generation";
-export const AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID = "rally:automation_architect";
 
 export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
   name: "current_time",

@@ -3,6 +3,11 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
+  AutomationActivationV1Schema,
+  AutomationDraftProposedV1Schema,
+  AutomationPrincipalUnavailableV1Schema,
+  type AutomationRunContextV1,
+  ExecutionPrincipalSchema,
   ClientSocketEventSchema,
   IdSchema,
   PersonalSocketEventSchema,
@@ -130,7 +135,7 @@ import {
   WorkstreamRegionalEffectAckSchema,
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
-import { automationAgentName, substreamAgentName, substreamLoopId, workstreamDOName } from "./names";
+import { automationAgentName, substreamAgentName, substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
 import {
   BlockDashboardSourceRefreshRequestSchema,
   type BlockDashboardContextFence,
@@ -702,6 +707,30 @@ export function planSocketReplay(
  * authoritative for its own transcript and loop state; REST is a recovery
  * surface, never a second writer.
  */
+/**
+ * The automation object's answer, re-parsed at this boundary.
+ *
+ * A Durable Object RPC return crosses a serialization boundary like any other
+ * network call, and this one decides whether people are interrupted.
+ */
+const AutomationRunDispositionSchema = z.strictObject({
+  disposition: z.enum(["done", "deliver", "expose_workstream"]),
+  reason: z.string(),
+  source: z.enum(["classified", "default"]),
+});
+
+/**
+ * `automation_delivery_receipts.outcome_code` is 160 characters and is read by
+ * people, so the reason is carried whole where it fits and cut where it does
+ * not — a truncated sentence still says more than the bare code it replaces.
+ */
+function withheldOutcomeCode(reason: string): string {
+  const trimmed = reason.trim();
+  if (!trimmed) return "delivery_withheld";
+  const carried = `delivery_withheld: ${trimmed}`;
+  return carried.length <= 160 ? carried : `${carried.slice(0, 157)}...`;
+}
+
 export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly recentEvents: ServerSocketEvent[] = [];
@@ -1161,6 +1190,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
     try {
       const outcome = await this.product.applyQueuedBatchUpdate(auth, request);
+      // Bulk archive reaches the room through this path and never through
+      // `update`, so hanging the fan-out on `update` alone left every
+      // bulk-archived room's automations active — still firing schedules and
+      // still executing connector writes under a frozen principal, while
+      // delivery into the room was refused as archived. The effects continued
+      // and nothing but a log line said so.
+      if (request.update.kind === "archive" && outcome === "applied") {
+        const identity = this.objectStore.identity();
+        if (identity) await this.applyArchiveToOwnedAutomations(identity, true);
+      }
       return { outcome, reason: null };
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
@@ -1266,6 +1305,241 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         code: appended.outcome === "replayed" ? "resource_update_replayed" : "resource_update_appended",
       };
     }, true);
+  }
+
+  /**
+   * Propose an automation an agent drafted here, as a card the room can accept.
+   *
+   * Idempotent on the automation and its revision: refining a draft writes a
+   * new card rather than a duplicate of the old one, so the feed reads as the
+   * conversation it was — proposal, question, better proposal — and the card
+   * somebody accepts is the one they were looking at.
+   */
+  async appendDraftProposedCard(input: unknown): Promise<{
+    outcome: "appended" | "replayed" | "refused";
+    code: string;
+  }> {
+    await this.initialized;
+    const request = z.strictObject({
+      schemaVersion: z.literal(1),
+      workspaceId: z.string().min(1),
+      workstreamId: z.string().min(1),
+      definitionRevision: z.number().int().positive(),
+      occurredAt: z.number().int().nonnegative(),
+      card: AutomationDraftProposedV1Schema,
+    }).parse(input);
+    const card = request.card;
+    const clientMessageId =
+      `automation:${card.automationId}:draft:${request.definitionRevision}`;
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return { outcome: "refused", code: "workstream_destination_mismatch" };
+    }
+    if (this.messages.messageByClientId({ clientMessageId })) {
+      return { outcome: "replayed", code: "automation_draft_card_replayed" };
+    }
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(request.occurredAt),
+      clientMessageId,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      // Stands alone for a reader with no card: a Slack mirror, a
+      // notification, a client that does not know this kind.
+      text: card.ready
+        ? `Proposed an automation: ${card.automationName}. ${card.description}`
+        : `Drafting an automation: ${card.automationName}. Still needs an answer before it can be created.`,
+      structuredContentJson: JSON.stringify(card),
+      producedByRunId: null,
+      now: request.occurredAt,
+    });
+    return this.product.commitRuntimeMutation(() => {
+      const authority = this.ctx.storage.sql.exec<{ archived_at: number | null }>(
+        `SELECT archived_at FROM workstream WHERE id = 1`,
+      ).toArray()[0];
+      if (!authority) return { outcome: "refused" as const, code: "workstream_not_found" };
+      if (authority.archived_at !== null) {
+        return { outcome: "refused" as const, code: "workstream_archived" };
+      }
+      const appended = this.messages.appendPreparedMessage(prepared);
+      return {
+        outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
+        code: appended.outcome === "replayed"
+          ? "automation_draft_card_replayed"
+          : "automation_draft_card_appended",
+      };
+    }, true);
+  }
+
+  /**
+   * Tell this room that the person one of its automations runs as has lost
+   * access, once.
+   *
+   * A `system` row: Rally noting something that happened *to* this work stream,
+   * which is the opposite call from an activation — that one is a message with
+   * an author, and the contrast is deliberate.
+   *
+   * Idempotent on the automation and the outgoing principal, which is the
+   * property that matters: an automation firing hourly finds the same dead
+   * binding every hour and must not write an hourly card.
+   *
+   * **It is not edited in place.** The design also asks for the card to be
+   * updated as providers are repaired, naming only what is still missing, and
+   * the transcript has no update path — it is append-only canonical facts, and
+   * inventing mutation for one row would be a change to what a transcript is.
+   * So a partial repair leaves the original card standing rather than
+   * narrowing it, and the card names what was unreachable when it was written.
+   */
+  async appendPrincipalUnavailableCard(input: unknown): Promise<{
+    outcome: "appended" | "replayed" | "refused";
+    code: string;
+  }> {
+    await this.initialized;
+    const request = z.strictObject({
+      schemaVersion: z.literal(1),
+      workspaceId: z.string().min(1),
+      workstreamId: z.string().min(1),
+      authorityGeneration: z.number().int().positive(),
+      occurredAt: z.number().int().nonnegative(),
+      card: AutomationPrincipalUnavailableV1Schema,
+    }).parse(input);
+    const card = request.card;
+    const clientMessageId =
+      `automation:${card.automationId}:principal:${card.outgoingUserId}`;
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return { outcome: "refused", code: "workstream_destination_mismatch" };
+    }
+    if (this.messages.messageByClientId({ clientMessageId })) {
+      return { outcome: "replayed", code: "automation_principal_card_replayed" };
+    }
+    const who = card.outgoingUserName ?? "The person it ran as";
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(request.occurredAt),
+      clientMessageId,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      // The text stands alone for every reader that has no card: a Slack
+      // mirror, a notification, a client that does not know this kind yet.
+      text: `${card.automationName} cannot reach ${card.unreachableProviders.join(", ")}.`
+        + ` ${who} no longer has access.`,
+      structuredContentJson: JSON.stringify(card),
+      producedByRunId: null,
+      now: request.occurredAt,
+    });
+    return this.product.commitRuntimeMutation(() => {
+      const authority = this.ctx.storage.sql.exec<{
+        authority_generation: number;
+        archived_at: number | null;
+      }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
+      if (!authority || authority.authority_generation !== request.authorityGeneration) {
+        return { outcome: "refused" as const, code: "workstream_authority_generation_stale" };
+      }
+      if (authority.archived_at !== null) {
+        return { outcome: "refused" as const, code: "workstream_archived" };
+      }
+      const appended = this.messages.appendPreparedMessage(prepared);
+      return {
+        outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
+        code: appended.outcome === "replayed"
+          ? "automation_principal_card_replayed"
+          : "automation_principal_card_appended",
+      };
+    }, true);
+  }
+
+  /**
+   * An automation's result, delivered into the work stream that owns it.
+   *
+   * Delivery here means a run, not a row. The result is admitted as loop input
+   * exactly as an external message is — the mailbox is what turns an arrival
+   * into an `activate_substream_loop` request — because a room that receives
+   * something nobody acts on has received nothing. A canonical append would
+   * have landed text that sits unread until something unrelated happens to
+   * start a run, which for a room nobody is watching is never.
+   *
+   * The idempotent client message ID derived from the delivery, the
+   * authority-generation fence every provider write respects, and the archive
+   * check are unchanged from `appendWatchedResourceEvent`: a retry after a
+   * crash wakes the room once, and a run that outlived its automation's pause
+   * or its room's archive wakes it not at all.
+   */
+  async appendAutomationActivation(input: unknown): Promise<{
+    outcome: "appended" | "replayed" | "refused";
+    code: string;
+  }> {
+    await this.initialized;
+    const request = z.strictObject({
+      schemaVersion: z.literal(1),
+      workspaceId: z.string().min(1),
+      workstreamId: z.string().min(1),
+      authorityGeneration: z.number().int().positive(),
+      deliveryId: z.string().min(1),
+      text: z.string().min(1),
+      executionPrincipal: ExecutionPrincipalSchema,
+      activation: AutomationActivationV1Schema,
+    }).parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return { outcome: "refused", code: "workstream_destination_mismatch" };
+    }
+    // Checked here rather than inside the admission: an automation whose room
+    // was archived or re-authorized between the decision to deliver and the
+    // delivery itself must not wake it, and the mailbox has no opinion about
+    // either fact.
+    const authority = this.ctx.storage.sql.exec<{
+      authority_generation: number;
+      archived_at: number | null;
+    }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
+    if (!authority || authority.authority_generation !== request.authorityGeneration) {
+      return { outcome: "refused", code: "workstream_authority_generation_stale" };
+    }
+    if (authority.archived_at !== null) {
+      return { outcome: "refused", code: "workstream_archived" };
+    }
+    try {
+      const result = await this.product.admitAutomationActivation({
+        workspaceId: asWorkspaceId(request.workspaceId),
+        workstreamId: asWorkstreamId(request.workstreamId),
+        messageId: uuidV7(request.activation.occurredAt),
+        clientMessageId: `automation-activation:${request.deliveryId}`,
+        text: request.text,
+        activation: request.activation,
+        executionPrincipal: request.executionPrincipal,
+        origin: "automation_activation",
+        now: request.activation.occurredAt,
+      });
+      // The activation request is the wake: without it the row sits in the
+      // mailbox until something else happens to start a run, which for a room
+      // nobody is looking at is never.
+      if (result.activationRequest) {
+        await this.requestPersistentLoopActivation(result.activationRequest);
+      }
+      if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
+      return {
+        outcome: result.inserted ? "appended" : "replayed",
+        code: result.inserted
+          ? "automation_activation_appended"
+          : "automation_activation_replayed",
+      };
+    } catch (error) {
+      return {
+        outcome: "refused",
+        code: error instanceof Error ? error.message : "automation_activation_failed",
+      };
+    }
   }
 
   /** Authoritative current readers for privacy decisions made outside this object. */
@@ -2207,6 +2481,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (request.operation === "update") {
         const result = await this.product.update(current, request.input);
         for (const event of result.events) await this.publishLocalProductEvent(identity, event);
+        // Archiving a room is a decision about the room, and the automations it
+        // owns follow it. After the commit rather than inside it: each one is
+        // its own object, and the work stream's own state must be settled
+        // before anything reads it back.
+        if (typeof request.input?.archived === "boolean") {
+          await this.applyArchiveToOwnedAutomations(identity, request.input.archived);
+        }
         return jsonResponse(result.workstream);
       }
       if (request.operation === "acknowledge_read") {
@@ -3485,6 +3766,202 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return settlementDiagnosticCode;
   }
 
+  /**
+   * Pause or resume the automations this work stream owns.
+   *
+   * Best effort per automation, and deliberately so: one object refusing —
+   * already paused, paused by a person before the archive, no longer owned —
+   * must not stop the rest, and none of those refusals is a failure. An
+   * automation the archive did not pause is not one unarchiving may start.
+   */
+  private async applyArchiveToOwnedAutomations(
+    identity: { workspaceId: string; workstreamId: string },
+    archived: boolean,
+  ): Promise<void> {
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(identity.workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)),
+    );
+    const owned = await workspace.automationsOwnedByWorkstream({
+      workspaceId: identity.workspaceId,
+      workstreamId: identity.workstreamId,
+    });
+    for (const entry of owned.automations) {
+      try {
+        const automation = await durableObjectStubForWorkspace(
+          this.env,
+          this.env.AUTOMATION_AGENTS,
+          asWorkspaceId(identity.workspaceId),
+          automationAgentName(
+            this.env.AVALON_REGION,
+            asWorkspaceId(identity.workspaceId),
+            asAutomationId(entry.automationId),
+          ),
+        );
+        const request = {
+          schemaVersion: 1 as const,
+          automationId: entry.automationId,
+          workspaceId: identity.workspaceId,
+          workstreamId: identity.workstreamId,
+        };
+        if (archived) await automation.pauseForArchivedWorkstream(request);
+        else await automation.resumeForUnarchivedWorkstream(request);
+      } catch (error) {
+        logWarn(this.env, "automation_archive_effect_failed", {
+          workspace_id: identity.workspaceId,
+          workstream_id: identity.workstreamId,
+          automation_id: entry.automationId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
+  }
+
+  /**
+   * Tell the owning room when this occurrence's personal bindings are gone.
+   *
+   * The offboarding case the takeover card exists for: somebody leaves, their
+   * personal connections go with them, and an automation the room owns keeps
+   * running on whatever still works. Without this the room learns only from the
+   * shape of the output — a digest that quietly stopped including one source —
+   * which is the failure this whole scope was meant to end.
+   *
+   * Workspace-scoped bindings are never reported: they belong to the workspace
+   * rather than to whoever authorized them, so they did not break.
+   */
+  private async reportUnreachablePrincipal(input: {
+    region: Region;
+    workspaceId: string;
+    owningWorkstreamId: string;
+    frozen: AutomationRunContextV1;
+  }): Promise<void> {
+    const bindings = Object.values(input.frozen.connectorBindings)
+      .filter((value): value is string => typeof value === "string");
+    if (bindings.length === 0) return;
+    const principal = input.frozen.executionPrincipal.userId;
+    // Asked of WorkspaceDO, which owns `connector_connections`. Reading it on
+    // the regional binding raises `no such table`: migration 0090 dropped it
+    // from D1, and the workspace-table routing guard catches exactly that.
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(input.workspaceId),
+      workspaceDOName(input.region, asWorkspaceId(input.workspaceId)),
+    );
+    const { providers } = await workspace.unreachablePersonalBindings({
+      workspaceId: input.workspaceId,
+      principalUserId: principal,
+      connectionIds: bindings,
+    });
+    if (providers.length === 0) return;
+    // The same fence the activation writes behind, and for the same reason: a
+    // room re-authorized or archived since this run started must not be
+    // written to. It is also required by the card's schema, so omitting it made
+    // every one of these calls throw a ZodError into the caller's catch — the
+    // card was never written at all, and the log line said only that reporting
+    // failed. Reuses the workspace stub the binding check already resolved.
+    const authority = await workspace.workstreamDeliveryAuthority({
+      workspaceId: input.workspaceId,
+      workstreamId: input.owningWorkstreamId,
+    });
+    if (!authority || authority.archived) return;
+    const substream = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.SUBSTREAM_AGENTS,
+      asWorkspaceId(input.workspaceId),
+      substreamAgentName(
+        input.region,
+        asWorkspaceId(input.workspaceId),
+        asWorkstreamId(input.owningWorkstreamId),
+        asSubstreamId("0"),
+      ),
+    );
+    await substream.appendPrincipalUnavailableCard({
+      schemaVersion: 1,
+      workspaceId: input.workspaceId,
+      workstreamId: input.owningWorkstreamId,
+      authorityGeneration: authority.authorityGeneration,
+      occurredAt: Date.now(),
+      card: {
+        type: "automation_principal_unavailable",
+        schemaVersion: 1,
+        automationId: input.frozen.automationId,
+        automationName: input.frozen.definition.name,
+        outgoingUserId: principal,
+        outgoingUserName: null,
+        unreachableProviders: providers,
+      },
+    });
+  }
+
+  /**
+   * Post the result into the owning work stream and start a run on it.
+   *
+   * The fence comes from the workspace directory rather than from the room,
+   * because a re-authorization bumps the directory first; reading the room
+   * would mean learning about the change only after writing into it. A room the
+   * directory does not have, or one it has archived, is not written to at all —
+   * an automation outliving its owner is the case this exists for, and silence
+   * there is the correct outcome.
+   */
+  private async wakeOwningWorkstream(input: {
+    region: Region;
+    workspaceId: string;
+    owningWorkstreamId: string;
+    /** The run's own work stream, which an "open the run" affordance needs. */
+    runWorkstreamId: string;
+    frozen: AutomationRunContextV1;
+    text: string;
+  }): Promise<"delivered" | "authority_unavailable" | "workstream_archived"> {
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(input.workspaceId),
+      workspaceDOName(input.region, asWorkspaceId(input.workspaceId)),
+    );
+    const authority = await workspace.workstreamDeliveryAuthority({
+      workspaceId: input.workspaceId,
+      workstreamId: input.owningWorkstreamId,
+    });
+    if (!authority) return "authority_unavailable";
+    if (authority.archived) return "workstream_archived";
+    const substream = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.SUBSTREAM_AGENTS,
+      asWorkspaceId(input.workspaceId),
+      substreamAgentName(
+        input.region,
+        asWorkspaceId(input.workspaceId),
+        asWorkstreamId(input.owningWorkstreamId),
+        asSubstreamId("0"),
+      ),
+    );
+    const result = await substream.appendAutomationActivation({
+      schemaVersion: 1,
+      workspaceId: input.workspaceId,
+      workstreamId: input.owningWorkstreamId,
+      authorityGeneration: authority.authorityGeneration,
+      deliveryId: `${input.frozen.runId}:${input.owningWorkstreamId}`,
+      text: input.text,
+      executionPrincipal: input.frozen.executionPrincipal,
+      activation: {
+        type: "automation_activation",
+        schemaVersion: 1,
+        automationId: input.frozen.automationId,
+        automationName: input.frozen.definition.name,
+        runId: input.frozen.runId,
+        runWorkstreamId: input.runWorkstreamId,
+        deliveryId: `${input.frozen.runId}:${input.owningWorkstreamId}`,
+        trigger: { kind: input.frozen.trigger.kind },
+        occurredAt: Date.now(),
+      },
+    });
+    if (result.outcome === "refused") throw new Error(result.code);
+    return "delivered";
+  }
+
   private async deliverAgentRunResult(
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
@@ -3555,13 +4032,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         asAutomationId(frozen.automationId),
       ),
     );
+    // What this result was worth, decided once for the whole occurrence and
+    // before any destination is written. The automation object owns the
+    // decision — it holds the definition, the trigger and what the last few
+    // occurrences were judged to be — and keeps it, so a delivery retry after a
+    // crash reads the same answer rather than judging the run twice.
+    const disposition = text === null
+      // No saved turn, so there is nothing to judge and nothing to send. The
+      // canonical read already decided this; asking a model about an absent
+      // result would be spending an inference to agree with it.
+      ? { disposition: "done" as const, reason: "The run finished without a saved result.", source: "default" as const }
+      : AutomationRunDispositionSchema.parse(await automation.resolveRunDisposition({
+        schemaVersion: 1,
+        automationId: frozen.automationId,
+        workspaceId: input.workspaceId,
+        runId: frozen.runId,
+        result: text,
+      }));
     const failures: unknown[] = [];
     for (const target of frozen.deliveryTargets) {
       const targetKey = target.type === "email"
         ? `email:${target.emailAddress.toLocaleLowerCase()}`
         : `slack_agent_dm:${target.connectionId}:${target.slackTeamId}:${target.slackUserId}`;
       try {
-        const state = await deliverCanonicalExternalResult(text, (savedText) => target.type === "email"
+        const state = disposition.disposition === "done"
+          ? "skipped" as const
+          : await deliverCanonicalExternalResult(text, (savedText) => target.type === "email"
           ? deliverFrozenAutomationResultEmail(workspaceEnv, {
               workspaceId: input.workspaceId,
               automationSubscriptionId: frozen.automationId,
@@ -3595,7 +4091,113 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           targetKey,
           payloadHash,
           state: state === "skipped" ? "skipped" : "delivered",
-          outcomeCode: state === "skipped" ? "delivery_suppressed" : "delivery_completed",
+          // The reason rides on the receipt so the run history says *why* a
+          // destination got nothing, in the classifier's own words, rather than
+          // leaving a bare `skipped` to be interpreted.
+          outcomeCode: state !== "skipped"
+            ? "delivery_completed"
+            : disposition.disposition === "done"
+              ? withheldOutcomeCode(disposition.reason)
+              : "delivery_suppressed",
+        });
+      } catch (failure) {
+        failures.push(failure);
+        await automation.recordDeliveryReceipt({
+          schemaVersion: 1,
+          automationId: frozen.automationId,
+          workspaceId: input.workspaceId,
+          runId: frozen.runId,
+          workstreamId: input.workstreamId,
+          targetKey,
+          payloadHash,
+          state: "failed",
+          outcomeCode: "delivery_failed",
+        }).catch(() => undefined);
+      }
+    }
+    // Before anything is decided about the result: if this occurrence ran
+    // without the personal connections it was built on, the room needs to know
+    // that and to be offered the takeover, whatever the result turned out to
+    // be. Only for an automation a room owns — a personal one has nobody but
+    // its owner to tell, and they are the person who left.
+    if (frozen.owningWorkstreamId !== null) {
+      await this.reportUnreachablePrincipal({
+        region: input.region,
+        workspaceId: input.workspaceId,
+        owningWorkstreamId: frozen.owningWorkstreamId,
+        frozen,
+      }).catch((error: unknown) => {
+        // Never at the cost of the delivery. A room that does not learn its
+        // automation is degraded is worse off than one that does; a room that
+        // loses the result as well is worse off still.
+        logWarn(this.env, "automation_principal_report_failed", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      });
+    }
+    // An occurrence worth reading in full. Nothing is created: the run already
+    // finished in its own work stream, and this stops that one row being
+    // hidden from the sidebar. It reaches nobody the automation could not
+    // already reach, so it is not a delivery and gets no receipt.
+    if (disposition.disposition === "expose_workstream") {
+      // Null stays null: a context frozen before the scope was recorded reveals
+      // the run without widening who can see it.
+      const scope = frozen.scope === "workstream" ? null : frozen.scope;
+      const workspace = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.WORKSPACE_DOS,
+        asWorkspaceId(input.workspaceId),
+        workspaceDOName(input.region, asWorkspaceId(input.workspaceId)),
+      );
+      const exposed = await workspace.exposeAutomationRunWorkstream({
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        scope,
+      });
+      if (!exposed.exposed) {
+        // Not a failure to retry. Every refusal it can give — the run's work
+        // stream is gone, or somebody archived it — is a decision that stands.
+        logWarn(this.env, "automation_run_not_exposed", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          reason: exposed.outcomeCode,
+        });
+      }
+    }
+    // The room that owns this automation, woken with the result as a message.
+    // Not one of `deliveryTargets`: those are destinations somebody chose, and
+    // this one follows from ownership. It is also the only "delivery" that
+    // starts a run rather than writing to somewhere outside Rally.
+    if (frozen.owningWorkstreamId !== null && text !== null) {
+      const owningWorkstreamId = frozen.owningWorkstreamId;
+      const targetKey = `workstream:${owningWorkstreamId}`;
+      try {
+        const state = disposition.disposition === "deliver"
+          ? await this.wakeOwningWorkstream({
+              region: input.region,
+              workspaceId: input.workspaceId,
+              owningWorkstreamId,
+              runWorkstreamId: input.workstreamId,
+              frozen,
+              text,
+            })
+          : "skipped" as const;
+        await automation.recordDeliveryReceipt({
+          schemaVersion: 1,
+          automationId: frozen.automationId,
+          workspaceId: input.workspaceId,
+          runId: frozen.runId,
+          workstreamId: input.workstreamId,
+          targetKey,
+          payloadHash,
+          state: state === "delivered" ? "delivered" : "skipped",
+          outcomeCode: state === "delivered"
+            ? "delivery_completed"
+            : disposition.disposition === "done"
+              ? withheldOutcomeCode(disposition.reason)
+              : state,
         });
       } catch (failure) {
         failures.push(failure);

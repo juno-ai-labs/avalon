@@ -37,7 +37,7 @@ import {
   type WorkspaceId,
   type WorkstreamId,
 } from "@rally/contracts";
-import type { AddressingContextMessage } from "@rally/agent-harness";
+import { renderUntrustedAutomationResultMessage, type AddressingContextMessage } from "@rally/agent-harness";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
@@ -99,6 +99,8 @@ import {
 import {
   AdmitExternalMessageInputSchema,
   AnswerExternalElicitationInputSchema,
+  type AdmitAutomationActivationInput,
+  AdmitAutomationActivationInputSchema,
   type AdmitExternalMessageInput,
   type AnswerExternalElicitationInput,
   type ExternalMessageAdmissionResult,
@@ -751,6 +753,8 @@ export class WorkstreamObjectProductService {
         await this.createMessage(envelope.auth as AuthContext, envelope.input as WorkstreamObjectCreateMessageInput);
       } else if (preparation.preparation_kind === "external_message") {
         await this.admitExternalMessage(envelope.input as AdmitExternalMessageInput);
+      } else if (preparation.preparation_kind === "automation_activation") {
+        await this.admitAutomationActivation(envelope.input as AdmitAutomationActivationInput);
       } else if (preparation.preparation_kind === "external_elicitation") {
         await this.answerExternalElicitation(envelope.input as AnswerExternalElicitationInput);
       } else {
@@ -3150,6 +3154,166 @@ export class WorkstreamObjectProductService {
         ...(input.messageType === "elicitation" ? { elicitationId: input.elicitationId } : {}),
         slackOrigin: input.slackOrigin ?? null,
         slackSearchAuthorization: input.slackSearchAuthorization ?? null,
+      }),
+      attachmentsJson: "[]",
+      mentionsJson: "[]",
+      now: input.now,
+    });
+  }
+
+  /**
+   * Admit an automation activation as loop input, so the room wakes on it.
+   *
+   * The whole reason this goes through the mailbox rather than straight into the
+   * transcript: a canonical append lands a row nobody acts on, and an automation
+   * whose result reaches a work stream that never runs on it has delivered
+   * nothing anybody asked for. This is the same admission an external message
+   * gets — reserved, prepared, completed, then activated by the caller — with
+   * the author being the automation rather than a provider account.
+   */
+  async admitAutomationActivation(
+    rawInput: AdmitAutomationActivationInput,
+  ): Promise<WorkstreamObjectExternalMessageResult> {
+    const input = AdmitAutomationActivationInputSchema.parse(rawInput);
+    const root = this.assertExternalMessageIdentity(input);
+    const existing = first(this.storage.sql.exec<{ id: string; created_at: number }>(
+      `SELECT id, created_at FROM canonical_conversation_turn_details
+        WHERE client_message_id = ?`,
+      input.clientMessageId,
+    ));
+    if (existing) {
+      return this.externalMessageReplay(existing.id, input.clientMessageId, existing.created_at);
+    }
+    const existingPending = this.loops.inputByClientMessageId(input.clientMessageId);
+    if (existingPending) return this.externalPendingMessageResult(existingPending, false);
+    const preparation = await this.reserveInputPreparation({
+      root,
+      inputId: input.messageId,
+      clientMessageId: input.clientMessageId,
+      preparationKind: "automation_activation",
+      envelope: { input },
+      now: input.now,
+    });
+    return this.runInputPreparation(preparation, async () => {
+      const prepared = await this.prepareAutomationActivation({
+        ...input,
+        messageId: preparation.input_id,
+        now: preparation.created_at,
+      });
+      const admitted = this.storage.transactionSync(() => {
+        const concurrentCanonical = first(this.storage.sql.exec<{ id: string; created_at: number }>(
+          `SELECT id, created_at FROM canonical_conversation_turn_details
+            WHERE client_message_id = ?`,
+          input.clientMessageId,
+        ));
+        if (concurrentCanonical) {
+          this.loops.discardInputPreparation({ inputId: preparation.input_id, now: input.now });
+          return { kind: "canonical" as const, existing: concurrentCanonical };
+        }
+        const concurrentPending = this.loops.inputByClientMessageId(input.clientMessageId);
+        if (concurrentPending) {
+          return { kind: "pending" as const, input: concurrentPending, inserted: false };
+        }
+        const completed = this.completePreparedAutomationActivation(
+          { ...input, messageId: preparation.input_id, now: preparation.created_at },
+          prepared,
+          preparation.loop_id,
+        );
+        return {
+          kind: "pending" as const,
+          input: completed.input,
+          inserted: completed.outcome === "admitted",
+        };
+      });
+      if (admitted.kind === "canonical") {
+        return this.externalMessageReplay(
+          admitted.existing.id,
+          input.clientMessageId,
+          admitted.existing.created_at,
+        );
+      }
+      return this.externalPendingMessageResult(admitted.input, admitted.inserted);
+    });
+  }
+
+  private async prepareAutomationActivation(input: AdmitAutomationActivationInput) {
+    const structuredContentJson = JSON.stringify(input.activation);
+    const participant = await this.transcript.prepareParticipantMessage({
+      turnId: input.messageId,
+      actor: "system",
+      authorUserId: null,
+      authorSnapshot: null,
+      clientMessageId: input.clientMessageId,
+      messageType: "automation_activation",
+      text: input.text,
+      structuredContentJson,
+      externalActorJson: null,
+      producedByRunId: null,
+      messageSequenceNumber: this.root().next_sequence_number,
+      createdAtUtc: new Date(input.now).toISOString(),
+      attentionOrdinal: null,
+    });
+    // Not projectParticipantModelMessage: that renders a person's message, and
+    // this text is a result an automation produced from connector content. The
+    // untrusted wrapper is the whole difference, and it is the same one the
+    // classifier reads the result behind.
+    const bindMessage = renderUntrustedAutomationResultMessage({
+      automationName: input.activation.automationName,
+      deliveredAt: new Date(input.activation.occurredAt).toISOString(),
+      text: input.text,
+    });
+    return { participant, bindPayloadJson: canonicalModelMessageJson(bindMessage) };
+  }
+
+  private completePreparedAutomationActivation(
+    input: AdmitAutomationActivationInput,
+    prepared: { participant: PreparedParticipantMessage; bindPayloadJson: string },
+    expectedLoopId: string,
+  ) {
+    const currentLoop = this.loops.loop();
+    if (!currentLoop || currentLoop.loop_id !== expectedLoopId) {
+      throw new Error("substream_loop_identity_mismatch");
+    }
+    return this.loops.completeInputPreparation({
+      inputId: input.messageId,
+      preparedTurnId: input.messageId,
+      // An activation never interrupts: a room mid-run is doing something a
+      // person is watching, and a scheduled result is not more urgent than that.
+      mode: "queue",
+      actor: "system",
+      authorUserId: null,
+      authorNameSnapshot: null,
+      authorAvatarUrlSnapshot: null,
+      clientMessageId: input.clientMessageId,
+      externalActorJson: null,
+      messageType: "automation_activation",
+      preparedPayloadId: prepared.participant.fact.payloadId,
+      preparedFactId: prepared.participant.fact.factId,
+      preparedPayloadAudience: prepared.participant.fact.audience,
+      preparedPayloadMediaType: "application/json",
+      preparedPayloadJson: prepared.participant.fact.canonical,
+      preparedPayloadSha256: prepared.participant.fact.hash,
+      preparedPayloadByteLength:
+        new TextEncoder().encode(prepared.participant.fact.canonical).byteLength,
+      bindPayloadJson: prepared.bindPayloadJson,
+      provenanceJson: JSON.stringify({
+        factKind: prepared.participant.fact.factKind,
+        originKind: prepared.participant.fact.origin.originKind,
+        sourceKind: prepared.participant.fact.origin.sourceKind,
+        sourceId: prepared.participant.fact.origin.sourceId,
+        sourceRevision: prepared.participant.fact.origin.sourceRevision,
+        runId: prepared.participant.fact.runId,
+        toolCallId: prepared.participant.fact.toolCallId,
+      }),
+      authorizationJson: JSON.stringify({
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        executionPrincipal: input.executionPrincipal,
+        confirmedParticipantUserIds: [],
+        reason: input.origin,
+        parentHarnessRunId: null,
+        slackOrigin: null,
+        slackSearchAuthorization: null,
       }),
       attachmentsJson: "[]",
       mentionsJson: "[]",

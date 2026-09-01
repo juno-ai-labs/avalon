@@ -4,10 +4,10 @@ import {
   AutomationDeliveryTargetSetSchema,
   AutomationDetailSchema,
   AutomationDraftSchema,
-  AutomationAgentSnapshotSchema,
-  AutomationDraftTurnAdmissionResultSchema,
   AutomationRunSchema,
+  AutomationExecutionPrincipalClaimSchema,
   AutomationSummarySchema,
+  WorkstreamAutomationSummarySchema,
   ActivitySourceBindingKeySchema,
   CreateAutomationRequestSchema,
   IdSchema,
@@ -19,17 +19,18 @@ import { getAuth } from "../middleware/auth";
 import { AutomationService } from "../services/automation-service";
 import {
   AutomationAgentService,
-  AutomationDraftTurnRequestSchema,
 } from "../services/automation-agent-service";
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
 const updateBody = z.strictObject({ deliveryTargets: AutomationDeliveryTargetSetSchema });
-const AutomationSocketTicketSchema = z.strictObject({ url: z.string().min(1), ticket: z.string().min(1) });
 const SharedTemplateSchema = z.strictObject({ templateId: IdSchema });
 
 /** Envelopes this route composes; the entities inside come from the contracts. */
 const AutomationPageSchema = z.object({ items: z.array(AutomationSummarySchema) });
+const WorkstreamAutomationPageSchema = z.object({
+  items: z.array(WorkstreamAutomationSummarySchema),
+});
 const AutomationRunPageSchema = z.object({ items: z.array(AutomationRunSchema) });
 const StartedRunSchema = z.object({
   runId: IdSchema,
@@ -80,44 +81,15 @@ const TemplateVersionSchema = z.object({ id: IdSchema, versionNumber: z.number()
 export const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) =>
   c.json(AutomationPageSchema.parse(await new AutomationAgentService(c.env, getAuth(c)).list())));
-automationRoutes.post("/agent/draft/turn", zValidator("json", AutomationDraftTurnRequestSchema.extend({
-  clientCreationKey: IdSchema,
-})), async (c) => c.json(AutomationDraftTurnAdmissionResultSchema.parse(
-  await new AutomationAgentService(c.env, getAuth(c)).admitFirstTurn(c.req.valid("json")),
-), 202));
-automationRoutes.post("/:id/agent/draft/turn", zValidator("param", idParam),
-  zValidator("json", AutomationDraftTurnRequestSchema), async (c) => c.json(
-    AutomationDraftTurnAdmissionResultSchema.parse(await new AutomationAgentService(c.env, getAuth(c)).admitTurn(
-      c.req.valid("param").id,
-      c.req.valid("json"),
-    )),
-    202,
-  ));
-automationRoutes.get("/:id/agent/draft", zValidator("param", idParam), async (c) => c.json(
-  AutomationAgentSnapshotSchema.parse(
-    await new AutomationAgentService(c.env, getAuth(c)).snapshot(c.req.valid("param").id),
-  ),
-));
-automationRoutes.post("/:id/agent/draft/:runId/stop", zValidator("param", z.strictObject({
-  id: IdSchema,
-  runId: IdSchema,
-})), async (c) => {
-  const params = c.req.valid("param");
-  await new AutomationAgentService(c.env, getAuth(c)).cancel(params.id, params.runId);
-  return c.body(null, 204);
-});
-automationRoutes.post("/:id/agent/draft/:runId/retry", zValidator("param", z.strictObject({
-  id: IdSchema,
-  runId: IdSchema,
-})), async (c) => {
-  const params = c.req.valid("param");
-  await new AutomationAgentService(c.env, getAuth(c)).retry(params.id, params.runId);
-  return c.body(null, 204);
-});
-automationRoutes.get("/:id/agent/socket", zValidator("param", idParam), async (c) =>
-  c.json(AutomationSocketTicketSchema.parse(
-    await new AutomationAgentService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id),
-  )));
+// A room's automations, for its rail. Under /automations rather than under the
+// work stream: the resource is the automation, and the work stream is which
+// ones — the same relationship the workspace list has to the workspace.
+automationRoutes.get("/workstream/:workstreamId", zValidator("param", z.object({
+  workstreamId: IdSchema,
+})), async (c) => c.json(WorkstreamAutomationPageSchema.parse(
+  await new AutomationAgentService(c.env, getAuth(c))
+    .listForWorkstream(c.req.valid("param").workstreamId),
+)));
 automationRoutes.post("/", zValidator("json", CreateAutomationRequestSchema), async (c) => {
   const input = c.req.valid("json");
   const detail = await new AutomationAgentService(c.env, getAuth(c)).accept(input);
@@ -140,6 +112,21 @@ automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("head
   )),
   202,
 ));
+// The claimant is always the caller, so this body is empty by design: a field
+// naming somebody else would let one person lend a colleague's credentials to a
+// standing automation.
+// The feed card's accept. Takes no body: the draft is on the object, and the
+// card carries only what it shows.
+automationRoutes.post("/:id/accept", zValidator("param", idParam), async (c) =>
+  c.json(AutomationDetailSchema.parse(
+    await new AutomationAgentService(c.env, getAuth(c))
+      .acceptAuthoredDraft(c.req.valid("param").id),
+  )));
+automationRoutes.post("/:id/execution-principal", zValidator("param", idParam), async (c) =>
+  c.json(AutomationExecutionPrincipalClaimSchema.parse(
+    await new AutomationAgentService(c.env, getAuth(c))
+      .claimExecutionPrincipal(c.req.valid("param").id),
+  )));
 automationRoutes.post("/:id/pause", zValidator("param", idParam), async (c) => { await new AutomationAgentService(c.env, getAuth(c)).pause(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.post("/:id/resume", zValidator("param", idParam), async (c) => { await new AutomationAgentService(c.env, getAuth(c)).resume(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.delete("/:id", zValidator("param", idParam), async (c) => { await new AutomationAgentService(c.env, getAuth(c)).delete(c.req.valid("param").id); return c.body(null, 204); });

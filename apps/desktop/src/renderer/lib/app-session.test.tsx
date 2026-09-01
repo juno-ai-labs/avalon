@@ -757,7 +757,11 @@ describe('single-platform desktop identity routing', () => {
     {
       name: 'automation',
       url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/automations/new',
-      assertDestination: async () => expect(window.location.hash).toBe('#/automations/new'),
+      // Lands where drafting happens now that the builder is gone. What this
+      // case is really about is the workspace activation before the hop, which
+      // is unchanged: the link still addresses a workspace, and that workspace
+      // is still activated before anything navigates.
+      assertDestination: async () => expect(window.location.hash).toBe('#/workstreams/new'),
     },
     {
       name: 'connector result',
@@ -1117,8 +1121,11 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink('rallywithai://settings/connections');
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
 
+    // The builder this link used to open is gone: an automation is drafted by
+    // asking for one in a work stream, so the link lands where that happens.
+    // The link itself keeps working — somebody's bookmark should not 404.
     await dispatchDeepLink('rallywithai://automations/new');
-    await waitFor(() => expect(window.location.hash).toBe('#/automations/new'));
+    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/new'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 

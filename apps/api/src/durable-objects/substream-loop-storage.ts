@@ -22,7 +22,8 @@ export type PendingInputPreparationKind =
   | "human_message"
   | "human_elicitation"
   | "external_message"
-  | "external_elicitation";
+  | "external_elicitation"
+  | "automation_activation";
 export type PendingInputPreparationState =
   | "preparing"
   | "ready"
@@ -424,8 +425,13 @@ export class SubstreamLoopStorage {
       if (!preparation || preparation.loop_id !== loop.loop_id) {
         throw new Error("pending_input_preparation_not_found");
       }
-      const expectedActor = preparation.preparation_kind.startsWith("human_")
-        ? "human" : "external";
+      // An activation is authored by nobody: not a person in this room, and not
+      // a provider account either. Mapping it onto "external" would put an
+      // automation's own text where a connector identity is expected, and every
+      // reader of that column would have to know the difference by name.
+      const expectedActor = preparation.preparation_kind === "automation_activation"
+        ? "system"
+        : preparation.preparation_kind.startsWith("human_") ? "human" : "external";
       if (input.preparedTurnId !== preparation.input_id
         || input.clientMessageId !== preparation.client_message_id
         || input.actor !== expectedActor) {
