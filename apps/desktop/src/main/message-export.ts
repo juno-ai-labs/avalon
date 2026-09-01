@@ -428,11 +428,11 @@ ${syntax}
   .citation-card-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
   .citation-card-row .citation-card { margin: 0; }
   /* A still renders with MarkdownBody's still flag, which never asks for a
-     preview at all — so neither of these can appear in a saved card. They are
+     preview at all — so none of these can appear in a saved card. They are
      declared because a class the renderer can emit must have an answer here,
      and the honest answer for a live-loading affordance in a picture is that
      it is not drawn. */
-  .citation-card-preview, .citation-card-preview-skeleton { display: none; }
+  .citation-card-image-preview, .citation-card-preview, .citation-card-preview-skeleton { display: none; }
   .citation-card-text { display: flex; flex-direction: column; gap: 3px; margin-top: auto; }
   .citation-card-title { font-size: 0.97em; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* No text-transform: the renderer already turns the system identifier into
