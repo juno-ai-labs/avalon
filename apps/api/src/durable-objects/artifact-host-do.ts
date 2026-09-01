@@ -201,7 +201,6 @@ interface ArtifactFacetHost extends Rpc.DurableObjectBranded {
   rallyPage(quotedTable: string, offset: number, limit: number): Promise<{
     rows: ArtifactRow[];
   }>;
-  rallySize(): Promise<{ bytes: number }>;
 }
 
 /**

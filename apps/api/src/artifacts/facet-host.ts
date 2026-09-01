@@ -173,11 +173,6 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
       .toArray();
     return { rows };
   }
-
-  /** How much this artifact has stored, for the quota threshold. */
-  rallySize() {
-    return { bytes: Number(this.ctx.storage.sql.databaseSize ?? 0) };
-  }
 }
 
 /** Thrown to force the rollback; never surfaced to a caller. */
