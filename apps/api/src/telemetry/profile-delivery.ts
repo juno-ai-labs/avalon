@@ -1,5 +1,8 @@
 import type { Env } from '../env';
-import type { GlobalProfileDeliveryRow } from './posthog-delivery-contract';
+import {
+  postHogDeliveryRpcCall,
+  type GlobalProfileDeliveryRow,
+} from './posthog-delivery-contract';
 import { destinationCircuitAllows, recordDestinationOutcome } from './operations';
 
 interface ProfileJobRow {
@@ -25,10 +28,13 @@ export interface ProfileDeliverySummary {
 
 export async function processProfileOutbox(env: Env): Promise<ProfileDeliverySummary> {
   const summary: ProfileDeliverySummary = { selected: 0, delivered: 0, retried: 0, terminal: 0, suppressed: 0 };
+  const postHogDelivery = env.POSTHOG_DELIVERY;
+  const postHogHost = env.POSTHOG_HOST;
+  const postHogProjectToken = env.POSTHOG_PROJECT_TOKEN;
   if (env.AVALON_REGION !== 'global'
-    || !env.POSTHOG_HOST
-    || !env.POSTHOG_PROJECT_TOKEN
-    || !env.POSTHOG_DELIVERY) return summary;
+    || !postHogHost
+    || !postHogProjectToken
+    || !postHogDelivery) return summary;
   const now = new Date();
   if (!await destinationCircuitAllows(env, 'posthog_profile', now)) return summary;
   const pending = await env.DB.prepare(
@@ -78,11 +84,11 @@ export async function processProfileOutbox(env: Env): Promise<ProfileDeliverySum
       properties,
       createdAt: row.created_at,
     };
-    const result = await env.POSTHOG_DELIVERY.sendProfileBatch({
-      host: env.POSTHOG_HOST,
-      projectToken: env.POSTHOG_PROJECT_TOKEN,
+    const result = await postHogDeliveryRpcCall(() => postHogDelivery.sendProfileBatch({
+      host: postHogHost,
+      projectToken: postHogProjectToken,
       rows: [delivery],
-    });
+    }));
     await recordDestinationOutcome(
       env,
       'posthog_profile',

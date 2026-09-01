@@ -149,6 +149,10 @@ selected product regions.
   `build:documents:eu`, `build:terminal`, `build:terminal:eu`,
   `build:posthog`, and `build:pricing` dry-run and profile all eight static
   artifacts.
+- `pnpm --filter @rally/api check:posthog-startup-boundary` reads Wrangler's
+  emitted bundles and requires the PostHog SDK, core, and adapter modules to be
+  absent from both regional APIs. The provider build and production-entrypoint
+  tests prove the private Worker independently without freezing its SDK internals.
 - Attachment tests run the same statically imported codec implementation behind
   an injected document-processing contract.
 - Terminal provider tests continue to prove Daytona behavior directly; RPC
@@ -161,7 +165,8 @@ selected product regions.
 - `node --test scripts/deploy-api-workflow.test.mjs` proves service-first
   upload, the hourly Global cron and shared KV binding, EU-before-Global health,
   and migration placement.
-- CI retains every startup profile on success or failure.
+- PR CI retains the new PostHog Worker profile for seven days; deployment
+  retains all eight exact-artifact profiles on success or failure.
 
 ## Regional impact
 
@@ -248,6 +253,8 @@ subrequest per attempted batch. Policy, D1 outboxes, retries, circuits, and
 receipts remain in the API; the provider Worker is stateless. Its RPC contract
 must stay backward-compatible through service-first rollout. EU has no PostHog
 binding, SDK graph, or secret, and this change requires no data migration.
+
+Shipped in #471.
 
 ### 2026-08-30 — Disambiguate the engineering MCP deployment script
 

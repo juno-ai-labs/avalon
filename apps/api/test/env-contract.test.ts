@@ -93,10 +93,22 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(withoutTerminal)).toThrow(/TERMINAL_PROVIDER is missing/u);
   });
 
-  it("requires PostHog delivery only in Global production", () => {
+  it("requires PostHog delivery only in Global production and staging", () => {
     const global = contractCompleteEnv() as Env & { POSTHOG_DELIVERY?: object };
     delete global.POSTHOG_DELIVERY;
     expect(() => assertEnvContract(global)).toThrow(/POSTHOG_DELIVERY is missing/u);
+
+    const staging = contractCompleteEnv({ APP_ENV: "staging" }) as Env & {
+      POSTHOG_DELIVERY?: object;
+    };
+    delete staging.POSTHOG_DELIVERY;
+    expect(() => assertEnvContract(staging)).toThrow(/POSTHOG_DELIVERY is missing/u);
+
+    const development = contractCompleteEnv({ APP_ENV: "development" }) as Env & {
+      POSTHOG_DELIVERY?: object;
+    };
+    delete development.POSTHOG_DELIVERY;
+    expect(() => assertEnvContract(development)).not.toThrow();
 
     const eu = contractCompleteEnv({
       AVALON_REGION: "eu",

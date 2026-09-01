@@ -1,4 +1,6 @@
 {
+  // Stateless by design: adding storage, Queue, Durable Object, or Workflow
+  // bindings would create a second telemetry authority and requires a new design.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "avalon-api-posthog-global",
   "main": "src/posthog-delivery-worker.ts",

@@ -49,6 +49,7 @@ test('CI distributes the expensive verification work across independent lanes', 
     matrixCommand(workflow, 'typecheck-and-build-invariants'),
     'pnpm typecheck && pnpm --filter @rally/api build && '
       + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/api build:posthog && '
+      + 'pnpm --filter @rally/api check:posthog-startup-boundary && '
       + 'pnpm --filter @rally/api build:pricing && '
       + 'pnpm --filter @rally/desktop test:release',
   );
@@ -140,6 +141,7 @@ test('CI still runs every repository quality gate', async () => {
     'pnpm --filter @rally/api build',
     'pnpm --filter @rally/api build:eu',
     'pnpm --filter @rally/api build:posthog',
+    'pnpm --filter @rally/api check:posthog-startup-boundary',
     'pnpm --filter @rally/api build:pricing',
     'pnpm --filter @rally/desktop test:release',
     'pnpm test:scripts',
@@ -152,6 +154,16 @@ test('CI still runs every repository quality gate', async () => {
     2,
     'CI must retain the workers suite across two shards',
   );
+});
+
+test('CI retains the new PostHog Worker startup profile', async () => {
+  const workflow = await readWorkflow();
+
+  assert.match(workflow, /- name: Preserve Worker startup evidence/u);
+  assert.match(workflow, /if: \$\{\{ always\(\) && matrix\.name == 'typecheck-and-build-invariants' \}\}/u);
+  assert.match(workflow, /^ {10}name: posthog-worker-startup-\$\{\{ github\.sha \}\}$/mu);
+  assert.match(workflow, /^ {10}retention-days: 7$/mu);
+  assert.match(workflow, /^ {10}path: apps\/api\/dist-posthog\/startup\.cpuprofile$/mu);
 });
 
 // A lane's `env:` is inert until the run step names it. Actions gives a matrix

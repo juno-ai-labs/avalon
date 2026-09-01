@@ -16,6 +16,7 @@
     "build:terminal": "wrangler deploy --dry-run --config wrangler.terminal.global.jsonc --outfile dist-terminal/worker.bundle && wrangler check startup --worker dist-terminal/worker.bundle --outfile dist-terminal/startup.cpuprofile",
     "build:terminal:eu": "wrangler deploy --dry-run --config wrangler.terminal.eu.jsonc --outfile dist-terminal-eu/worker.bundle && wrangler check startup --worker dist-terminal-eu/worker.bundle --outfile dist-terminal-eu/startup.cpuprofile",
     "build:posthog": "wrangler deploy --dry-run --config wrangler.posthog.global.jsonc --outfile dist-posthog/worker.bundle && wrangler check startup --worker dist-posthog/worker.bundle --outfile dist-posthog/startup.cpuprofile",
+    "check:posthog-startup-boundary": "node ../../scripts/check-posthog-startup-boundary.mjs",
     "build:pricing": "wrangler deploy --dry-run --config wrangler.pricing.global.jsonc --outfile dist-pricing/worker.bundle && wrangler check startup --worker dist-pricing/worker.bundle --outfile dist-pricing/startup.cpuprofile",
     "build:deployed": "wrangler deploy --dry-run --containers-rollout none --config .wrangler.lakehouses.global.json --outfile dist/worker.bundle && wrangler check startup --worker dist/worker.bundle --outfile dist/startup.cpuprofile",
     "build:deployed:eu": "wrangler deploy --dry-run --containers-rollout none --config .wrangler.lakehouses.eu.json --outfile dist-eu/worker.bundle && wrangler check startup --worker dist-eu/worker.bundle --outfile dist-eu/startup.cpuprofile",
