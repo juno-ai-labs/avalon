@@ -1215,7 +1215,7 @@ already have committed across the object boundary.
 | `workspace_workstream_pins` | User-ordered pins referencing the directory row; all pin writes and reorder operations execute in this object. |
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
-| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. The Worker publishes 50 messages per Queue call, below Cloudflare's 100-message platform maximum. WorkspaceDO records the whole chunk atomically through one JSON binding, independent of object SQLite's 100-parameter ceiling. |
+| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. The Worker publishes 50 messages per Queue call, below Cloudflare's 100-message platform maximum. WorkspaceDO records the whole chunk atomically through one JSON binding, independent of object SQLite's 100-parameter ceiling. `archived_note_count` is the same operation's note half: notes are rows in this object rather than separate authorities, so `archive` applies them here in one statement and stores the count as its own receipt. `NULL` means no note archive has run for the operation, which is both the pre-migration-26 reading and the permanent state of a `mark_read` operation. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
 | `workspace_activity_event_targets` | Involvement edges such as mentioned/assigned; these never grant visibility and cascade with the event. |
 | `opportunity_batch_windows`, `opportunity_batch_events` | Debounced connector/message evidence, bounded attempts, Workflow leases, and terminal admission status; both share one not-yet-started token (`pending`), and the import maps legacy `queued` window rows onto it. Repeated mutation or settlement after `completed` is a no-op; a nonterminal lease mismatch remains fenced. |
@@ -1440,6 +1440,51 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-01 — A grouping's archive takes its notes too, in the object that holds them
+
+**What changed:** `Archive all` on a sidebar recency heading now archives the
+notes under that heading as well as the work streams. The same filter selects
+both: WorkspaceDO returns the note IDs beside the work-stream IDs from one
+`batchUpdateTargets` call, so the confirmation counts each half at the same
+instant, and `archiveNotesForBatch` applies the note half in one statement
+before the Queue chunks go out. Notes take three fences the range does not —
+the viewer must own the note, it must not be recording, and it must not already
+be archived — which are the same three refusals the single-note archive makes,
+so the preview's count and the archive agree. The dispatch row gained
+`archived_note_count` (migration 26) as that half's receipt; `NULL` is "no note
+archive has run", which is what every pre-existing row and every `mark_read`
+operation means. `mark_read` does not reach notes at all, because a note has no
+read state to clear. The apply response and the preview both report the note
+half separately, and the client's confirmation names both.
+
+**Why:** The heading is one group to the person reading it. Archiving it and
+watching the notes stay was reported as the group coming back half full, and
+no other surface clears them in bulk. Nothing about the original design
+excluded notes on purpose — the batch was built over the work-stream directory
+and notes were simply not part of that index.
+
+**Considered and rejected:** Giving notes their own Queue events, for symmetry
+with work streams. Work streams need events because each one is a separate
+authority that only its own object may mutate; a note is a row in the workspace
+object the request has already reached, so an event would buy nothing but a
+second, slower way for the two halves of one grouping to disagree about whether
+they happened. Also rejected: freezing note IDs into
+`workspace_batch_dispatch_targets` the way work-stream IDs are frozen. Those
+rows exist to resume a *partial* Queue publication, which a single statement
+cannot have; the only thing a retry can get wrong here is widening the
+selection, and one count closes that.
+
+**Consequences, and what a future change has to respect:** A new update kind
+must decide explicitly whether it reaches notes, and say so in both the preview
+and the confirmation rather than letting one count stand for two authorities.
+The note archive must stay ahead of the Queue sends: it is the half that is
+finished when the response returns, so a transport failure has to leave a retry
+with only work streams outstanding. Its receipt is a count and not a set, so
+nothing may come to depend on knowing *which* notes an operation took. The
+range is compared against `notes.last_activity_at`, an ISO string, so any
+timestamp reaching that comparison has to be re-spelled as canonical UTC first
+— an offset that sorts differently would silently select the wrong group.
 
 ### 2026-08-31 — Batch receipts fit inside the object SQLite bind ceiling
 
