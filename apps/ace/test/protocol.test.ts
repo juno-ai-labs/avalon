@@ -1,3 +1,5 @@
+import { readdir, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import {
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_ROLES,
@@ -12,13 +14,55 @@ import {
   ManagedModelUpdateSchema,
 } from '../src/protocol';
 
+const repositoryDirectory = fileURLToPath(new URL('../../..', import.meta.url));
+
+/**
+ * Every product-Boolean key the API resolves, read out of the Worker rather
+ * than restated here. The four flag modules follow one naming convention —
+ * `<NAME>_FLAG_KEY = "<key>"` in a `*flags.ts` beside the resolver — so the
+ * directory is scanned instead of a file list: `docs/feature-flags.md` says a
+ * value with no safe off gets a module of its own beside the others, and a
+ * hardcoded list would stop seeing exactly the flag that module adds.
+ *
+ * Filtering on the `-enabled` suffix is Ace's own invariant, not a convenience
+ * (`docs/ace.md`): a product Boolean's key ends in `-enabled` so `true` means
+ * one thing everywhere. `developer-settings` and `control-tower-refresh-seconds`
+ * fall outside it by that rule rather than by being skipped — the first is a
+ * per-device staff toggle driven through Wrangler, the second a cadence with no
+ * off. Either one renamed to `-enabled` becomes Ace's to manage, which is the
+ * right answer.
+ */
+async function servedProductBooleanKeys(): Promise<string[]> {
+  const services = `${repositoryDirectory}/apps/api/src/services`;
+  const modules = (await readdir(services)).filter((file) => file.endsWith('flags.ts'));
+  const sources = await Promise.all(modules.map(async (file) => readFile(`${services}/${file}`, 'utf8')));
+  const keys = sources.flatMap((source) => Array.from(
+    source.matchAll(/_FLAG_KEY = "([^"]+)"/gu),
+    (match) => match[1]!,
+  ));
+  return [...new Set(keys.filter((key) => key.endsWith('-enabled')))].sort();
+}
+
 describe('Ace managed flag protocol', () => {
+  it('manages every client-visible product Boolean the API serves, and nothing it does not', async () => {
+    // The gap this closes runs API → Ace, and it is the only direction nothing
+    // else checks. `deployment-contract.test.ts` walks outward from this
+    // catalog to `deploy.mjs`, and the test below pins the catalog to the
+    // contracts enum — both start here, so a flag added to the Worker alone
+    // passes every one of them while being uncreatable in Flagship, invisible
+    // in Ace's list, and rejected by its save route. That is exactly how
+    // `multiple-workspaces-enabled` shipped in #464 resolving off for everyone
+    // with no way for an operator to turn it on.
+    expect(await servedProductBooleanKeys()).toEqual([...MANAGED_FLAGS.map((flag) => flag.key)].sort());
+  });
+
   it('keeps every application boolean explicit about its enabled state', () => {
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual([
       'hypersight-enabled',
       'meeting-recording-enabled',
       'suggested-work-enabled',
       'automation-workspace-templates-enabled',
+      'multiple-workspaces-enabled',
       'digests-enabled',
     ]);
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual(ProductFeatureFlagKeySchema.options);
