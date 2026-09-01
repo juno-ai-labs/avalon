@@ -1478,6 +1478,38 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-01 — Exposing an automation run unhides a row; it creates nothing
+
+**What changed:** WorkspaceDO answers `exposeAutomationRunWorkstream`, which
+sets `automation_exposed = 1` on the directory row of the work stream an
+occurrence already ran in, and promotes that row's `scope` to the automation's.
+It refuses a row that is not `origin_type = 'automation'` and one a person has
+archived. The settlement path calls it on an `expose_workstream` disposition,
+and the classifier is offered that arm only for an automation no work stream
+owns.
+
+**Why:** The occurrence's transcript, tool calls and result are already in a
+work stream — every listing query hides it because it is an automation run.
+"Expose" is that boolean, and naming it after what the person sees is what makes
+a reader look for the creation path it deliberately does not have. Being a
+boolean is also what makes a delivery retry after a crash free: there is nothing
+to duplicate, which is the problem an earlier create-a-room design answered with
+receipts and idempotency keys.
+
+**Considered and rejected:** Letting it unhide any work stream. A room whose
+visibility somebody chose deliberately must not be reachable from a
+classifier's decision, so the RPC refuses anything but a run's own work stream.
+Also rejected: defaulting a run frozen before `scope` travelled with the context
+to `workspace`. Revealing such a run narrowly is recoverable; guessing the other
+way hands somebody's run to everyone, so a null scope leaves the work stream's
+own scope alone.
+
+**Consequences:** Un-archiving is not part of it: an archived occurrence stays
+archived, and a later occurrence classifying `expose_workstream` cannot undo
+that. A refusal is a decision that stands rather than a failure to retry, so the
+path logs and moves on rather than recording a delivery receipt — exposing
+reaches nobody the automation could not already reach, so it is not a delivery.
+
 ### 2026-09-01 — A delivery reads its fence from the directory, not from the room
 
 **What changed:** WorkspaceDO answers `workstreamDeliveryAuthority`, returning a

@@ -6288,6 +6288,118 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  describe("exposing an automation run", () => {
+    const RUN_ID = "00000000-0000-7000-8008-000000000001";
+    const ARCHIVED_RUN_ID = "00000000-0000-7000-8008-000000000002";
+    const AD_HOC_ID = "00000000-0000-7000-8008-000000000003";
+
+    async function seededWorkspace(): Promise<DurableObjectStub<WorkspaceDO>> {
+      const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+        workspaceDOName("global", WORKSPACE_ID),
+      ));
+      await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+      await runInDurableObject(stub, (_instance, state) => {
+        const insert = (id: string, originType: string, archivedAt: number | null): void => {
+          state.storage.sql.exec(
+            `INSERT INTO workspace_workstream_directory
+               (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+                title, description, preview, scope, exact_state, system_kind, last_activity_at,
+                completed_at, archived_at, email_address, origin_type, origin_label,
+                created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+                title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+                next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+                source_created_at, source_updated_at, projected_at)
+             VALUES (?, 1, 1, ?, 'test', 'An occurrence', '', '', 'personal', 'completed', NULL, 1,
+                     1, ?, NULL, ?, NULL, ?, NULL, NULL, NULL,
+                     'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+            id,
+            `00000000-0000-7000-8009-${id.slice(-12)}`,
+            archivedAt,
+            originType,
+            USER_ID,
+          );
+        };
+        insert(RUN_ID, "automation", null);
+        insert(ARCHIVED_RUN_ID, "automation", 1);
+        insert(AD_HOC_ID, "ad_hoc", null);
+      });
+      return stub;
+    }
+
+    function exposedScope(
+      stub: DurableObjectStub<WorkspaceDO>,
+      workstreamId: string,
+    ): Promise<{ automation_exposed: number; scope: string }> {
+      return runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ automation_exposed: number; scope: string }>(
+          `SELECT automation_exposed, scope FROM workspace_workstream_directory
+            WHERE workstream_id = ?`,
+          workstreamId,
+        ).one());
+    }
+
+    it("reveals a shared automation's run to the workspace, and stays idempotent", async () => {
+      const stub = await seededWorkspace();
+
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: RUN_ID,
+        scope: "workspace",
+      })).toEqual({ exposed: true, outcomeCode: "workstream_exposed" });
+      // Shared automation, shared output: the run is promoted, not merely
+      // unhidden for the one person the child work stream was created under.
+      expect(await exposedScope(stub, RUN_ID))
+        .toEqual({ automation_exposed: 1, scope: "workspace" });
+
+      // A delivery retry after a crash has nothing to duplicate.
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: RUN_ID,
+        scope: "workspace",
+      })).toEqual({ exposed: true, outcomeCode: "workstream_exposed" });
+      expect(await exposedScope(stub, RUN_ID))
+        .toEqual({ automation_exposed: 1, scope: "workspace" });
+    });
+
+    it("reveals a run whose scope was never recorded without widening it", async () => {
+      const stub = await seededWorkspace();
+
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: RUN_ID,
+        scope: null,
+      })).toEqual({ exposed: true, outcomeCode: "workstream_exposed" });
+      // Revealed narrowly. Guessing "workspace" for a context frozen before the
+      // scope travelled with it would hand somebody's run to everyone.
+      expect(await exposedScope(stub, RUN_ID))
+        .toEqual({ automation_exposed: 1, scope: "personal" });
+    });
+
+    it("leaves an archived run archived and refuses a work stream a person made", async () => {
+      const stub = await seededWorkspace();
+
+      // Somebody archived this occurrence. A later occurrence classifying
+      // expose_workstream must not undo that decision.
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: ARCHIVED_RUN_ID,
+        scope: "workspace",
+      })).toEqual({ exposed: false, outcomeCode: "workstream_archived" });
+      expect(await exposedScope(stub, ARCHIVED_RUN_ID))
+        .toEqual({ automation_exposed: 0, scope: "personal" });
+
+      // Only a run's own work stream. Otherwise this RPC could unhide a room
+      // whose visibility somebody chose deliberately.
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: AD_HOC_ID,
+        scope: "workspace",
+      })).toEqual({ exposed: false, outcomeCode: "workstream_not_an_automation_run" });
+      expect(await exposedScope(stub, AD_HOC_ID))
+        .toEqual({ automation_exposed: 0, scope: "personal" });
+    });
+  });
+
   describe("automation activation", () => {
     const activation = {
       type: "automation_activation" as const,

@@ -259,6 +259,7 @@ function input(activityId: string | null = null): WorkstreamWorkflowInput {
       connectorBindings: {},
       deliveryTargets: [],
       owningWorkstreamId: null,
+  scope: "personal" as const,
       modelOverride: null,
       executionPrincipal: { type: "user", userId: USER_ID },
       trigger: activityId

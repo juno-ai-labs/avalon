@@ -2426,12 +2426,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       result: request.result,
       recentDispositions: recent,
       reach: {
-        canDeliver: context.deliveryTargets.length > 0,
-        // Exposing a run's work stream is not built yet, so it is not offered:
-        // an arm the delivery path cannot act on would be a decision that
-        // silently does nothing. It becomes available with the directory
-        // column that makes a run visible.
-        canExpose: false,
+        // A room's automation always has somewhere to deliver — the room it
+        // belongs to — whether or not anybody added a destination beside it.
+        canDeliver: context.deliveryTargets.length > 0 || context.owningWorkstreamId !== null,
+        // A room's automation has nothing to expose: its results already arrive
+        // in a work stream people can see, so revealing the occurrence's own
+        // child work stream would add a second row for the same news.
+        canExpose: context.owningWorkstreamId === null,
       },
     });
     this.state.storage.sql.exec(
@@ -3773,6 +3774,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       connectorBindings: JSON.parse(acceptance.connector_bindings_json),
       deliveryTargets: JSON.parse(acceptance.delivery_targets_json),
       owningWorkstreamId: acceptance.owning_workstream_id,
+      scope: acceptance.scope as "personal" | "workspace" | "workstream",
       modelOverride: acceptance.model_override,
       executionPrincipal: { type: "user", userId: identity.author_user_id },
       trigger,
