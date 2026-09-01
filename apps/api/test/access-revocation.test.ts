@@ -289,7 +289,7 @@ describe("leaving a workspace", () => {
     );
     const { env } = environment(database);
 
-    await Promise.allSettled([
+    const [departure, acceptance] = await Promise.allSettled([
       new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace("abandoned"),
       acceptInvitationForUser(env, "00000000-0000-7000-8000-000000000098", {
         id: MEMBER,
@@ -303,7 +303,19 @@ describe("leaving a workspace", () => {
                WHERE m.workspace_id = w.id AND m.status = 'active') AS active_members
        FROM workspaces w WHERE w.id = ?`,
     ).get(WORKSPACE) as { abandoned_at: string | null; active_members: number };
-    expect(lifecycle.abandoned_at === null || lifecycle.active_members === 0).toBe(true);
+    expect([departure, acceptance].filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    if (lifecycle.abandoned_at === null) {
+      expect(departure).toMatchObject({
+        status: "rejected",
+        reason: { status: 409, code: "membership_changed" },
+      });
+      expect(acceptance.status).toBe("fulfilled");
+      expect(lifecycle.active_members).toBe(2);
+    } else {
+      expect(departure).toEqual({ status: "fulfilled", value: { outcome: "abandoned" } });
+      expect(acceptance.status).toBe("rejected");
+      expect(lifecycle.active_members).toBe(0);
+    }
   });
 
   it("does not close a workspace after an ordinary-leave confirmation becomes stale", async () => {
