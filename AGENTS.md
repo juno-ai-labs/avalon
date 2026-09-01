@@ -114,13 +114,14 @@ read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
   rather than stubbing a database. A double stands in for something that
   *cannot* run here — Workers AI, Vectorize, Flagship, a provider's API — never
   for setup that was inconvenient.
-- **Prove every integration test can fail.** For a `test-workers/` test, or a
-  Node test exercising a query, schema, route, service, or object against the
-  real migrations, break the behavior it covers with one edit in the production
-  code, watch that test fail for the reason its name claims, then revert. Break
-  it the way production would break — a dropped write, a skipped check, a stale
-  read — not by flipping the literal the assertion mirrors, which proves nothing.
-  Unit-level tests are exempt. Prove each behavior once rather than each case,
+- **Prove every integration test can fail.** For a `test-workers/` test, a Node
+  test exercising a query, schema, route, service, or object against the real
+  migrations, or a local smoke or e2e lane, break the behavior it covers with one
+  edit in the production code, watch that test fail for the reason its name
+  claims, then revert. Break it the way production would break — a dropped write,
+  a skipped check, a stale read — not by flipping the literal the assertion
+  mirrors, which proves nothing. Unit-level tests, where the only break available
+  is the literal the assertion mirrors, are exempt. Prove each behavior once rather than each case,
   and re-run only that one file: never the package, never `pnpm test`. An
   assertion that survives the break is asserting on a fixture, a mock's own
   configuration, or a value the subject computed — none of which is coverage.
