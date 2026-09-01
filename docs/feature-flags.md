@@ -559,7 +559,7 @@ statement about which rules are worth writing, not a guarantee that a given
 attribute was sent: the usual omissions still apply below, so a rule on
 `userEmailDomain` is a rule the client flags can express, not one that always
 matches. `workstreamId` is never known here, so no `workstream*` attribute ever
-appears. `workspaceId` is present only once an organization has been chosen.
+appears. `workspaceId` is present only once a workspace has been chosen.
 
 Everything that is not an explicit `true` resolves to off: no binding, a binding
 that throws, a flag that does not resolve, a non-boolean value.
@@ -1175,6 +1175,8 @@ and could strand a credential whose workspace still exists.
 **Consequences:** Older clients keep using the singular compatibility workspace,
 and newer clients with the flag off open their device-local active workspace.
 Server routes must never treat this flag as entitlement.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-30 — The Suggested context model route was retired
 

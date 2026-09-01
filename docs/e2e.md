@@ -138,7 +138,9 @@ Use two disposable accounts and at least one Global and one EU workspace. Enable
 8. Start a meeting recording, then try switching, creating, joining, and leaving.
    Each must read **Finish or stop the recording before switching workspaces** and
    leave capture plus the active workspace untouched. End capture and repeat one
-   switch successfully.
+   switch successfully. Delay a workspace transition after it starts and try to
+   begin recording from the meeting window; confirm recording is refused and the
+   transition remains the only pending operation.
 9. Sign out online with the account credential and three workspace credentials.
    Confirm every server logout is attempted and the credential, profile, and
    draft stores are empty. Repeat with one regional Worker unreachable: local
@@ -150,6 +152,14 @@ Use two disposable accounts and at least one Global and one EU workspace. Enable
     has the legacy one-workspace anatomy and the device-local active workspace
     remains usable. Open the account with an older desktop build and confirm the
     singular compatibility workspace opens instead of onboarding failing.
+12. Open an invitation addressed to another email while signed in. Confirm the
+    modal names the exact required address, signing in with the current account
+    cannot consume it, and changing to the matching account can accept it.
+13. Seed a version-1 workspace-only credential envelope, launch Rally, and complete
+    one Google exchange. Confirm the same regional workspace reconnects in place
+    rather than sending the account through setup. With enough workspace and
+    invitation rows to exceed the account-menu viewport, confirm its body scrolls
+    while create, sign-out, and the active account identity remain reachable.
 
 ## Regional telemetry acceptance
 

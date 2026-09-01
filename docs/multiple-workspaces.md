@@ -21,7 +21,9 @@ switching, background attention, leaving, or abandonment.
 | `apps/desktop/src/renderer/components/workspace-account-menu.tsx`, `app-shell.tsx` | Flagged switcher, invitations, creation, attention states, and switching presentation. |
 | `apps/desktop/src/renderer/lib/draft-keys.ts`, `draft-cache.ts`, `app-session.tsx` | Workspace-scoped composer drafts and exact cleanup when one membership ends. |
 
-## Authority and data flow
+## How it works
+
+### Authority and data flow
 
 Google sign-in produces an identity-only session at the Global endpoint. Global
 discovery asks each regional Worker for memberships and pending invitations,
@@ -41,31 +43,49 @@ activation may finish after another selection; its credential and profile are
 retained, but an intent generation prevents the late response from taking over
 the window.
 
+Regional user IDs are regional identifiers, not account identifiers: the same
+Google account may have different user UUIDs in Global and EU. The verified
+email in the Global identity session links discovery to the regional account.
+An older version-1 workspace-only envelope can be reconnected in place after one
+Google exchange, preserving its selected workspace rather than forcing setup.
+
 The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
 credential may call `GET /workspace/attention`, which returns only an addressed
 count, its highest-priority reason, and an unread-activity boolean. Focus and
 account-menu opening refresh the projection. The fixed periodic cadence and any
-device workspace cap remain `LIMIT UNSET`; do not invent either number.
+device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
+currently no periodic refresh: focus and menu opening are the only refresh
+triggers until the team chooses a cadence.
 
-## Membership lifecycle
+### Membership lifecycle
 
 `DELETE /workspaces/:workspaceId/membership` acts only on the caller. A sole
 owner cannot leave other active members without an owner. When the caller is the
 last active member, one regional transaction sets `abandoned_at`, suspends that
 membership, and revokes pending invitations, conditional on the workspace still
-being empty apart from the caller. All admission and refresh paths join
-`abandoned_at IS NULL`, and the ordinary access-revocation producer closes every
-socket the membership held.
+being empty apart from the caller. The confirmation carries the outcome the
+desktop presented (`leave` or `abandon`); if membership changed before the
+delete, the API returns `409` instead of applying a newly destructive outcome.
+All admission and refresh paths join `abandoned_at IS NULL`, and the ordinary
+access-revocation producer closes every socket the membership held.
+
+AutomationAgent also reads the regional workspace lifecycle before compiler or
+provider work, scheduling, run provisioning, and delivery. An abandoned
+workspace terminalizes its local pending work instead of letting an already
+addressed object continue after admission closed.
 
 After a successful leave, Electron removes only that workspace's credential,
 profile, and drafts, then selects the most recent surviving workspace. With none
 left, the retained identity session returns the renderer to workspace setup.
-Sign-out is different: it attempts server logout for the identity and every
-workspace credential, then removes the complete local sets and all drafts even
-when one regional cleanup request fails.
+When the active credential is revoked, the desktop removes exactly that
+regional credential/profile and its drafts, then makes the same surviving
+selection. Sign-out is different: it deletes the complete local set and drafts
+first, closes the authenticated windows, then attempts server logout for the
+identity and every captured workspace credential. A failed regional request is
+reported but cannot restore local authority.
 
-## Desktop behavior
+### Desktop behavior
 
 `multiple-workspaces-enabled` controls presentation only. When off, the account
 menu keeps its previous one-workspace anatomy; plural membership, credential
@@ -76,9 +96,10 @@ before the current workspace is disturbed.
 
 A meeting window registers live capture with Electron main before recording
 starts. Switching, creating, accepting, or leaving the active workspace is
-refused until that capture stops. This guard is main-owned because Settings,
-meeting, and the main window are separate renderers following one active
-workspace.
+refused until that capture stops, and recording cannot start while any of those
+workspace transitions is pending. This bidirectional guard is main-owned because
+Settings, meeting, and the main window are separate renderers following one
+active workspace.
 
 ## Invariants
 
@@ -96,7 +117,16 @@ workspace.
 - Defensive polling cadence and device-count limits stay open until the team
   chooses their values.
 
-## Failure modes
+## Boundary
+
+Global owns Google identity, discovery, invitation routing, and setup replay.
+Each regional Worker owns its workspace sessions, membership lifecycle, product
+objects, and attention projection. Electron owns only encrypted credentials,
+cached profiles, drafts, the active selection, and recency for one device. It
+never turns aggregate attention into a content cache, and background workspaces
+never acquire a product WebSocket.
+
+## Failure modes and limits
 
 - A regional activation or attention request that proves the credential unusable
   removes that exact workspace entry; ordinary transport failures retain it.
@@ -106,10 +136,11 @@ workspace.
   that connectivity is required.
 - Setup requests use UUIDv7 operation IDs. Reusing one with identical input
   returns the journaled result; changing action or payload under it is refused.
+  The desktop keeps that ID across identity refresh and transport retries.
 - Queue publication after membership transition is best effort, as documented in
   `access-revocation.md`; authorization fences still refuse every reconnect.
 
-## Verification
+## Testing
 
 Node tests cover plural schema, setup replay, departure races, stored-set
 migration, activation intent ordering, draft scoping, and component states. The
@@ -120,7 +151,64 @@ regional fixture can prove an actual Global → EU → Global desktop switch.
 The complete manual Global/EU, offline, invitation, removal, sign-out, Lockdown,
 and flag-off matrix lives in `e2e.md`.
 
+## Data model
+
+Global `platform_workspace_bindings` is keyed by `(platform_user_id, region,
+workspace_id)`. Regional membership and product state retain their existing
+workspace IDs and gain only the nullable `workspaces.abandoned_at` lifecycle
+column. `platform_workspace_operations` journals UUIDv7 create/accept operations;
+the desktop retains one operation ID until its request reaches a terminal
+answer, so a transport retry reaches the same journal row.
+
+The desktop's encrypted version-2 envelope stores one identity credential and a
+map of regional workspace credentials. Its presentation file stores only the
+active regional binding and ordered recency. Composer draft keys include region
+and workspace ID so even same-ID regional fixtures cannot collide.
+
+## Regional impact
+
+Create and accept are coordinated through Global but committed in the selected
+region. The operation journal records the regional result so a retry cannot
+create a second workspace or consume an invitation twice. Discovery reconciles
+opaque regional routes by verified account email; it does not require regional
+user UUIDs to match. EU credentials call only EU product routes, while the
+retained Global identity credential remains the only discovery authority.
+
+## Security and trust model
+
+Refresh material stays in Electron main and is never exposed through preload.
+Each workspace credential is bearer authority for exactly one regional
+workspace; selecting a workspace does not broaden it. The feature flag changes
+presentation only. On revocation or departure, main removes exactly the affected
+credential/profile/drafts before another workspace becomes active. Lockdown
+encrypts the complete account set, while sign-out erases it locally before
+best-effort remote revocation.
+
 ## Changelog
+
+### 2026-09-01 — Review closes regional and lifecycle races
+
+**What changed:** Regional user identities and draft keys are isolated, legacy
+workspace-only sessions reconnect in place, setup retries retain their operation
+IDs, departure confirmation carries its expected outcome, recording exclusion
+is bidirectional, active revocation selects a surviving workspace, and abandoned
+AutomationAgents retire their pending work.
+
+**Why:** Adversarial review found that same-account regional UUIDs, delayed
+responses, and already-addressed Durable Objects could otherwise cross a
+boundary or apply an outcome the person had not confirmed.
+
+**Considered and rejected:** Treating one user UUID as account-wide, minting a
+new operation ID after refresh, letting the server silently escalate a leave to
+abandonment, and relying only on route admission. Each made an asynchronous
+retry or background object a second authority.
+
+**Consequences:** Account identity is linked by verified email, destructive
+membership outcomes are optimistic-concurrency checked, and background runtime
+work fails closed once its regional workspace is abandoned. Polling cadence and
+device cap remain `LIMIT UNSET`.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-31 — Regional binding is the desktop identity
 
@@ -143,6 +231,8 @@ desktop behavior unverifiable.
 region too. Local bootstrap takes the same authority transition in Global and
 EU and imports the product fixtures into both object namespaces.
 
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
+
 ### 2026-08-31 — One account retains several region-bound workspaces
 
 **What changed:** Plural control-plane routes and idempotent setup coordination,
@@ -163,3 +253,5 @@ walk.
 Workers retain all workspace authority, and the desktop becomes the owner of one
 device's active selection and recency. Poll cadence and a device workspace cap
 remain explicit open decisions.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).

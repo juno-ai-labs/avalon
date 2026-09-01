@@ -332,6 +332,8 @@ publish in the request that writes the transition. Operator reversal of an
 abandoned workspace is a separate, paired membership reactivation and does not
 reopen old sockets.
 
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
+
 ### 2026-08-28 — AutomationAgent joins the walk as a sibling of the work streams
 
 **What changed:** The revocation target union gains an `automation` scope.
