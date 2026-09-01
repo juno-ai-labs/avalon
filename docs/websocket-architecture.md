@@ -429,6 +429,27 @@ explicit product states rather than speculative guesses.
 
 ## Changelog
 
+### 2026-08-31 — The singleton workspace socket follows the active workspace
+
+**What changed:** An account may retain credentials for several workspaces, but
+Chromium still owns exactly one WorkspaceDO socket: the active workspace's.
+Switching replaces that socket and its directory; background workspaces expose
+only the attention read and never join the socket pool.
+
+**Why:** A socket per retained credential would turn the account menu into a
+second realtime product and multiply workspace snapshots and object wakes for
+content that is not on screen. The switcher needs a count, not a hidden live
+directory.
+
+**Considered and rejected:** Keeping all known WorkspaceDO sockets warm so a
+switch can reuse one. A saved credential and profile already make activation
+immediate, while hidden sockets would obscure which workspace owns commands.
+
+**Consequences:** Session changes must tear down the old workspace provider
+before mounting the new one. Background attention remains a regional request
+using that workspace's credential; adding background sockets is an architecture
+change, not a polling optimization.
+
 ### 2026-08-28 — The broker carries a third socket kind, on demand rather than proactively
 
 **What changed:** `automation_agent` joins `workstream_control` and

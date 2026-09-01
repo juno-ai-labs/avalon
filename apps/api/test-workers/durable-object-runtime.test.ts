@@ -111,7 +111,8 @@ async function seedOpenAuthority(): Promise<void> {
       -- Read by the socket authorization query so a socket-rooted trace can be
       -- matched to the workspace's product analytics; see
       -- docs/performance-tracing.md.
-      analytics_workspace_id TEXT
+      analytics_workspace_id TEXT,
+      abandoned_at TEXT
     )`),
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE workspace_members (

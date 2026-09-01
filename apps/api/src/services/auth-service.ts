@@ -532,7 +532,8 @@ export class AuthService {
          w.created_at AS workspace_created_at, m.role
        FROM users u JOIN workspace_members m ON m.user_id = u.id
        JOIN workspaces w ON w.id = m.workspace_id
-       WHERE u.id = ? AND w.id = ? AND m.status = 'active'`,
+       WHERE u.id = ? AND w.id = ? AND m.status = 'active'
+         AND w.abandoned_at IS NULL`,
     )
       .bind(userId, workspaceId)
       .first<IdentityRow>();
