@@ -28,15 +28,12 @@ import {
   type AutomationRunContextV1,
 } from "@rally/contracts";
 import {
-  RequestElicitationInputSchema,
-  type AutomationCompilerStreamEvent,
 } from "@rally/agent-harness";
 import { z } from "zod";
 import { sha256 } from "../lib/crypto";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
-import { assistantMessageForDraft } from "../services/automation-service";
 import { classifyAutomationResult } from "../services/automation-result-disposition";
 import { activateWorkstreamLoop } from "../services/integrations";
 import {
@@ -2891,179 +2888,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return false;
   }
 
-  private async recordCompilerStreamEvent(runId: string, event: AutomationCompilerStreamEvent): Promise<void> {
-    const row = this.state.storage.sql.exec<{ state: string }>(
-      `SELECT state FROM automation_compiler_runs WHERE run_id = ?`, runId,
-    ).toArray()[0];
-    if (!row || row.state !== "running") return;
-    this.state.storage.transactionSync(() => this.appendRealtimeEvent("compiler_stream", { runId, event }, Date.now()));
-    this.broadcastLatestEvents();
-  }
-
-  private async settleCompilerSuccess(runId: string, draft: AutomationDraft): Promise<void> {
-    const now = Date.now();
-    const stagedSubmission = this.state.storage.sql.exec<{ draft_json: string }>(
-      `SELECT draft_json FROM automation_staged_submissions WHERE compiler_run_id = ?`,
-      runId,
-    ).toArray()[0];
-    if (!stagedSubmission) throw new Error("automation_draft_submission_not_durable");
-    let durableDraft = AutomationDraftSchema.parse(JSON.parse(stagedSubmission.draft_json));
-    const stagedElicitation = this.state.storage.sql.exec<{ elicitation_json: string }>(
-      `SELECT elicitation_json FROM automation_staged_elicitations WHERE compiler_run_id = ?`,
-      runId,
-    ).toArray()[0];
-    if (stagedElicitation) {
-      const elicitation = RequestElicitationInputSchema.parse(JSON.parse(stagedElicitation.elicitation_json));
-      durableDraft = AutomationDraftSchema.parse({
-        ...durableDraft,
-        followUpQuestion: elicitation.prompt,
-        elicitation: {
-          responseType: elicitation.responseType === "text"
-            ? "free_text"
-            : elicitation.responseType === "multi_select" ? "multi_select" : "single_select",
-          prompt: elicitation.prompt,
-          placeholder: null,
-          options: elicitation.options,
-          minimumSelections: elicitation.minimumSelections,
-          maximumSelections: elicitation.maximumSelections,
-          allowOther: elicitation.responseType !== "text",
-        },
-        ready: false,
-      });
-    }
-    const definitionJson = JSON.stringify(durableDraft);
-    if (definitionJson !== JSON.stringify(AutomationDraftSchema.parse(draft))) {
-      throw new Error("automation_draft_submission_mismatch");
-    }
-    const definitionHash = await sha256(definitionJson);
-    const assistantMessage = assistantMessageForDraft(durableDraft);
-    const assistantTurnId = uuidV7(now);
-    const preparedMessage = await this.transcript().prepareMessage({
-      turnId: assistantTurnId,
-      actor: "assistant",
-      authorUserId: null,
-      text: assistantMessage,
-      producedByRunId: runId,
-      createdAt: now,
-    });
-    this.state.storage.transactionSync(() => {
-      const run = this.state.storage.sql.exec<{ state: string }>(
-        `SELECT state FROM automation_compiler_runs WHERE run_id = ?`, runId,
-      ).toArray()[0];
-      if (!run || run.state !== "running") return;
-      const current = this.state.storage.sql.exec<{ definition_revision: number }>(
-        `SELECT definition_revision FROM automation_state WHERE id = 1`,
-      ).toArray()[0];
-      const prior = this.currentDefinition();
-      const priorJson = prior ? JSON.stringify(prior) : null;
-      const revision = priorJson === definitionJson ? current!.definition_revision : current!.definition_revision + 1;
-      if (revision > current!.definition_revision) {
-        this.state.storage.sql.exec(
-          `INSERT INTO automation_definition_revisions
-             (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          revision,
-          runId,
-          definitionJson,
-          definitionHash,
-          durableDraft.ready ? 1 : 0,
-          now,
-        );
-      }
-      const sequence = this.transcript().appendPreparedMessage(preparedMessage);
-      this.state.storage.sql.exec(
-        `INSERT INTO automation_draft_message_metadata
-           (turn_id, client_message_id, attachment_ids_json, compiler_run_id, input_mode)
-         VALUES (?, NULL, '[]', ?, NULL)`,
-        assistantTurnId,
-        runId,
-      );
-      this.state.storage.sql.exec(
-        `UPDATE automation_state
-            SET title = ?, definition_revision = ?, updated_at = ? WHERE id = 1`,
-        durableDraft.name,
-        revision,
-        now,
-      );
-      this.state.storage.sql.exec(
-        `UPDATE automation_compiler_runs
-            SET state = ?, settled_at = ?, updated_at = ? WHERE run_id = ?`,
-        durableDraft.ready ? "completed" : "needs_input",
-        now,
-        now,
-        runId,
-      );
-      if (!durableDraft.ready && durableDraft.elicitation && revision > 0) {
-        const elicitationId = uuidV7(now + 1);
-        // Supersede rather than collide. Admitting the answering turn already
-        // resolves the outstanding question, so this normally updates nothing;
-        // it exists because the alternative — one run asking twice with no turn
-        // between — trips the one-pending unique index from inside this
-        // transaction and rolls back the entire settle, and the person sees a
-        // generic compile failure instead of the question they were asked.
-        this.state.storage.sql.exec(
-          `UPDATE automation_pending_elicitations
-              SET state = 'cancelled', settled_at = ?
-            WHERE state = 'pending'`,
-          now,
-        );
-        this.state.storage.sql.exec(
-          `INSERT INTO automation_pending_elicitations
-             (elicitation_id, definition_revision, payload_json, state, created_at)
-           VALUES (?, ?, ?, 'pending', ?)`,
-          elicitationId,
-          revision,
-          JSON.stringify(durableDraft.elicitation),
-          now,
-        );
-      }
-      this.appendRealtimeEvent("compiler_settled", {
-        runId,
-        assistantTurnId,
-        transcriptSequence: sequence,
-        definitionRevision: revision,
-        ready: durableDraft.ready,
-      }, now);
-      this.retireCompilerStreamEvents(runId);
-      const identity = this.identity();
-      this.state.storage.sql.exec(
-        `INSERT INTO automation_outbox
-           (effect_id, effect_kind, payload_json, state, attempt, not_before,
-            created_at, updated_at)
-         VALUES (?, 'workspace_projection', ?, 'pending', 0, ?, ?, ?)`,
-        `projection:${identity.authority_generation}:${revision}:${runId}`,
-        JSON.stringify({
-          schemaVersion: 1,
-          automationId: identity.automation_id,
-          workspaceId: identity.workspace_id,
-          authorUserId: identity.author_user_id,
-          authorityGeneration: identity.authority_generation,
-          // The projection counter, never the realtime event sequence. They
-          // are different numbers on purpose: the event sequence advances on
-          // every appended realtime event — each compiler stream chunk, each
-          // transcript turn — and acceptance resets it so the draft
-          // conversation's cursor starts clean. Publishing it as a projection
-          // coordinate sets a high-water mark the real counter then has to
-          // climb past, so WorkspaceDO discards the activation projection that
-          // follows as stale and the directory describes a draft forever.
-          projectionVersion: this.nextProjectionVersion(),
-          payloadHash: definitionHash,
-          lifecycle: "draft",
-          scope: "personal",
-          title: durableDraft.name,
-          description: durableDraft.description,
-          nextRunAt: null,
-          attentionCode: null,
-        }),
-        now,
-        now,
-        now,
-      );
-    });
-    await this.armNextAlarm();
-    this.broadcastLatestEvents();
-  }
-
   private async deliverNextOutboxEffect(): Promise<void> {
     if (!await this.workspaceOperationalOrFence()) return;
     const now = Date.now();
@@ -3945,29 +3769,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         receipt.workspace_event_id,
       );
     }
-  }
-
-  private async settleCompilerFailure(runId: string, error: unknown): Promise<void> {
-    const now = Date.now();
-    // `error.name` is "Error" for every `new Error(code)` the harness throws,
-    // so it carried no information; the message often does — including raw
-    // provider text, which must not reach a person through the snapshot.
-    const raw = error instanceof Error ? error.message : "";
-    const code = /^[a-z][a-z0-9_]*$/u.test(raw) ? raw : "automation_compile_failed";
-    this.state.storage.transactionSync(() => {
-      this.state.storage.sql.exec(
-        `UPDATE automation_compiler_runs
-            SET state = 'failed', error_code = ?, error_message = ?, settled_at = ?, updated_at = ?
-          WHERE run_id = ? AND state = 'running'`,
-        code,
-        null,
-        now,
-        now,
-        runId,
-      );
-      this.appendRealtimeEvent("compiler_failed", { runId, code }, now);
-    });
-    this.broadcastLatestEvents();
   }
 
   /**
