@@ -444,7 +444,51 @@ typed, authorized, receipted tool write.
 
 ## Decision log
 
-None yet.
+### 2026-09-01 — The 100 MB storage threshold is dropped, not set
+
+**Decided:** There is no per-artifact storage ceiling in V1. Design decision 12's
+threshold is not implemented, and no size is read at serve time.
+
+**Why:** It could not be enforced from where the design puts it. The model's
+class holds the native `ctx.storage` handle and may write during *any* method,
+a GET included, so a host that composes it can neither intercept a write nor
+reserve against one. The PRD already conceded this was "a threshold, not a hard
+cap" with an unbounded single-request overshoot — but the part that does not
+survive contact is the remedy: refusing *further writes* after the fact means
+refusing the request that carries them, which blocks reads too and still does
+not restore the bound. A ceiling that cannot be enforced and whose breach
+degrades reading is worse than none, because it reads as a guarantee.
+
+**Changes:** Design decision 12's quota paragraph is superseded. No goal or
+non-goal moves — nothing promised a bound to a user. Picking it back up needs a
+platform-supported per-facet limit, or storage mediated through Rally rather
+than handed to the model directly, which is the alternative decision 11 already
+rejected on other grounds and would have to be re-argued on these. Carried in
+this pull request.
+
+### 2026-09-01 — A prior version renders frozen assets only; its module never runs
+
+**Decided:** Under the `/__rally/v<n>` mount, a prior version serves its stored
+assets and Rally does not load its server module. This applies to stateless
+active versions, which design decision 11 expected to run live.
+
+**Why:** The mount cannot be made a boundary. Decision 11's two rules — strip
+the prefix inbound, inject a `<base>` outbound — fix a *well-behaved* page, and
+both shipped; neither constrains old code that leaves the mount. A root-absolute
+`fetch("/api/…")` from a historical render arrives as an ordinary same-origin
+request to the canonical path, and `Referrer-Policy: no-referrer` — which this
+same design adds, so the page's own URL does not leak — removes the last signal
+that could tell it from a request the current page made. Not loading the module
+removes the class of problem instead of guarding it. What remains is a page
+whose client script may read the current version's data: a wrong reading rather
+than an unauthorized one, since the viewer is admitted to the current version
+anyway.
+
+**Changes:** Design decision 11 is narrowed — its prefixed mount, strip, and
+`<base>` all stand; its live execution of prior stateless-active versions does
+not. Non-goal 13 already carved stateful artifacts out of live prior rendering;
+this extends that carve-out to every version, so the non-goal is now broader
+than written. Carried in this pull request.
 
 ## Key design decisions
 
