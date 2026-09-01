@@ -1,5 +1,12 @@
 import type { MentionIdentity } from './api';
 import type { WorkstreamResource } from './types';
+import type { RallyRegion } from '../../common/desktop';
+import {
+  newAutomationDraftKey,
+  newWorkstreamDraftKey,
+  workspaceDraftPrefix,
+  workstreamDraftKey,
+} from './draft-keys';
 
 /**
  * Composer drafts survive navigation, a window close, and an application
@@ -332,9 +339,9 @@ export async function clearAllDrafts(): Promise<void> {
 }
 
 /** Leaving one workspace removes only keys that belong to that workspace. */
-export async function clearWorkspaceDrafts(workspaceId: string): Promise<void> {
+export async function clearWorkspaceDrafts(region: RallyRegion, workspaceId: string): Promise<void> {
   epoch += 1;
-  const prefix = `workspace:${workspaceId}:`;
+  const prefix = workspaceDraftPrefix(region, workspaceId);
   const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
   await withStores([TEXT_STORE, ATTACHMENT_STORE], 'readwrite', async (transaction) => {
     transaction.objectStore(TEXT_STORE).delete(range);
@@ -343,6 +350,56 @@ export async function clearWorkspaceDrafts(workspaceId: string): Promise<void> {
       attachmentStore.index(DRAFT_KEY_INDEX).getAllKeys(range),
     );
     for (const key of keys) attachmentStore.delete(key);
+  }, undefined);
+}
+
+function regionalDraftKey(
+  legacyKey: string,
+  region: RallyRegion,
+  workspaceId: string,
+): string | null {
+  const workstream = /^workstream:(.+)$/u.exec(legacyKey);
+  if (workstream?.[1]) return workstreamDraftKey(region, workspaceId, workstream[1]);
+  const newWorkstreamPrefix = `new-workstream:${workspaceId}`;
+  if (legacyKey === newWorkstreamPrefix || legacyKey.startsWith(`${newWorkstreamPrefix}:`)) {
+    return `${newWorkstreamDraftKey(region, workspaceId)}${legacyKey.slice(newWorkstreamPrefix.length)}`;
+  }
+  const newAutomationPrefix = `new-automation:${workspaceId}`;
+  if (legacyKey === newAutomationPrefix) return newAutomationDraftKey(region, workspaceId);
+  if (legacyKey.startsWith(`${newAutomationPrefix}:`)) {
+    return newAutomationDraftKey(region, workspaceId, legacyKey.slice(newAutomationPrefix.length + 1));
+  }
+  return null;
+}
+
+/** Move released single-workspace keys after the first regional workspace
+ * session identifies their authority. Only legacy prefixes are considered, so
+ * retries are idempotent; a newer regional row wins an interrupted rewrite. */
+export async function migrateLegacyDrafts(region: RallyRegion, workspaceId: string): Promise<void> {
+  await withStores([TEXT_STORE, ATTACHMENT_STORE], 'readwrite', async (transaction) => {
+    const textStore = transaction.objectStore(TEXT_STORE);
+    for (const record of await awaitRequest(textStore.getAll())) {
+      const legacy = parseCachedText(record);
+      if (!legacy) continue;
+      const draftKey = regionalDraftKey(legacy.draftKey, region, workspaceId);
+      if (!draftKey || draftKey === legacy.draftKey) continue;
+      const current = parseCachedText(await awaitRequest(textStore.get(draftKey)));
+      if (!current || current.updatedAt <= legacy.updatedAt) textStore.put({ ...legacy, draftKey });
+      textStore.delete(legacy.draftKey);
+    }
+
+    const attachmentStore = transaction.objectStore(ATTACHMENT_STORE);
+    for (const record of await awaitRequest(attachmentStore.getAll())) {
+      const legacy = parseCachedAttachment(record);
+      if (!legacy) continue;
+      const draftKey = regionalDraftKey(legacy.draftKey, region, workspaceId);
+      if (!draftKey || draftKey === legacy.draftKey) continue;
+      const current = parseCachedAttachment(await awaitRequest(
+        attachmentStore.get([draftKey, legacy.localId]),
+      ));
+      if (!current || current.updatedAt <= legacy.updatedAt) attachmentStore.put({ ...legacy, draftKey });
+      attachmentStore.delete([legacy.draftKey, legacy.localId]);
+    }
   }, undefined);
 }
 

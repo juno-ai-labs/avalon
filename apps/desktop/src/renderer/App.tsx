@@ -4,6 +4,7 @@ import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
 import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { logError } from '../common/logger';
+import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
@@ -238,7 +239,9 @@ function WorkspaceApp(): React.JSX.Element {
         */}
         <HashRouter useTransitions={false}>
           <TelemetryRouteObserver />
-          <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
+          <WorkstreamSocketResumeProvider
+            scope={`${session?.user.email ?? 'unknown'}:${desktopWorkspaceIdentityKey(workspace.data.region, workspace.data.id)}`}
+          >
             <AppShell workspace={workspace.data}>
               <Routes>
                 <Route element={<Navigate replace to="/workstreams/new" />} path="/" />

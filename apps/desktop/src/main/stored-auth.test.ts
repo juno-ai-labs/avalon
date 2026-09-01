@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   activeStoredCredential,
+  activeStoredWorkspaceCredential,
   mergeStoredSession,
   parseStoredAuthSet,
   parseStoredProfileSet,
@@ -142,6 +143,18 @@ describe('plural desktop authentication storage', () => {
     });
   });
 
+  it('restores one platform account whose regional sessions use different local user ids', () => {
+    const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
+    const regionalEuSession = {
+      ...euSession,
+      user: { ...euSession.user, id: '00000000-0000-7000-8000-000000000099' },
+    };
+    const account = mergeStoredSession(null, null, accountSession, 'global');
+    const eu = mergeStoredSession(account.auth, account.profiles, regionalEuSession, 'eu');
+
+    expect(parseStoredAuthSet(JSON.parse(JSON.stringify(eu.auth)))).toEqual(eu.auth);
+  });
+
   it('keeps same-id workspaces distinct when they belong to different regions', () => {
     const regionalCollision = {
       ...euSession,
@@ -193,5 +206,19 @@ describe('plural desktop authentication storage', () => {
       { workspaceId: euSession.workspace.id, region: 'eu' },
     ]);
     expect(selected.workspaces).toEqual(eu.auth.workspaces);
+  });
+
+  it('never resolves a background credential for a destructive active-workspace action', () => {
+    const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
+    const account = mergeStoredSession(null, null, accountSession, 'global');
+    const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
+    const eu = mergeStoredSession(global.auth, global.profiles, euSession, 'eu');
+
+    expect(activeStoredWorkspaceCredential(
+      eu.auth, euSession.workspace.id, 'eu',
+    )).toMatchObject({ binding: { workspaceId: euSession.workspace.id, region: 'eu' } });
+    expect(activeStoredWorkspaceCredential(
+      eu.auth, session.workspace.id, 'global',
+    )).toBeNull();
   });
 });

@@ -20,7 +20,7 @@ import type {
 } from '../../common/desktop';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
-import { clearAllDrafts, clearWorkspaceDrafts } from './draft-cache';
+import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
 import {
   readDevicePreferences,
   setDeviceSelectedRegion,
@@ -125,7 +125,7 @@ function sessionsShareDraftScope(
 ): boolean {
   if (!previousSession || !nextSession) return previousSession === nextSession;
   return previousSession.apiBaseUrl === nextSession.apiBaseUrl
-    && previousSession.user.id === nextSession.user.id
+    && previousSession.user.email.toLocaleLowerCase('en-US') === nextSession.user.email.toLocaleLowerCase('en-US')
     && (previousSession.workspace?.id ?? null) === (nextSession.workspace?.id ?? null);
 }
 
@@ -289,7 +289,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       throw new Error('The workspace is no longer active');
     }
     const departure = await bridge.leaveWorkspace({ region: session.workspace.region, workspaceId });
-    await clearWorkspaceDrafts(workspaceId);
+    await clearWorkspaceDrafts(session.workspace.region, workspaceId);
     queryClient.removeQueries();
     return departure;
   }, [bridge, queryClient, session?.workspace]);
@@ -329,6 +329,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
    * and nothing types its way back onto a signed-out device.
    */
   const draftScopeRef = useRef<DesktopSession | null>(null);
+  const legacyDraftMigrationStarted = useRef(false);
   useEffect(() => {
     const previousSession = draftScopeRef.current;
     draftScopeRef.current = session;
@@ -336,8 +337,13 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // discard the draft the last run left behind.
     if (previousSession && !sessionsShareDraftScope(previousSession, session)) {
       abandonPendingWorkstreamFeedOpen();
-      const sameAccount = session?.user.id === previousSession.user.id;
+      const sameAccount = session?.user.email.toLocaleLowerCase('en-US')
+        === previousSession.user.email.toLocaleLowerCase('en-US');
       if (!sameAccount) void clearAllDrafts();
+    }
+    if (!legacyDraftMigrationStarted.current && session?.workspace) {
+      legacyDraftMigrationStarted.current = true;
+      void migrateLegacyDrafts(session.workspace.region, session.workspace.id);
     }
   }, [session]);
 
