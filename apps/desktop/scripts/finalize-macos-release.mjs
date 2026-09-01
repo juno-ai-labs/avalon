@@ -108,6 +108,7 @@ export function macFeedYaml({ version, files, date }) {
   const [primary] = files;
   if (!primary.url.endsWith('.zip')) throw new Error('latest-mac.yml must be ZIP-primary');
   return [
+    '# rally-workspace-handoff-version: 2',
     `version: ${JSON.stringify(version)}`,
     'files:',
     ...files.flatMap((file) => [
