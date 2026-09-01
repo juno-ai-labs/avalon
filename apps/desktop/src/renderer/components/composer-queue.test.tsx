@@ -5,6 +5,7 @@ import {
   ComposerQueue,
   moveWithin,
   queueAuthorMember,
+  queuePreviewLabel,
   type ComposerQueueItem,
 } from './composer-queue';
 
@@ -53,12 +54,20 @@ describe('composer queue helpers', () => {
       avatarUrl: 'https://example.test/stale.png',
     });
   });
+
+  it('unwrites link and image syntax for the accessible name, keeping the label', () => {
+    expect(queuePreviewLabel('Ask [@Ada Lovelace](person:00000000-0000-7000-8000-000000000042) first'))
+      .toBe('Ask @Ada Lovelace first');
+    expect(queuePreviewLabel('See ![the chart](resource:abc) here')).toBe('See the chart here');
+    expect(queuePreviewLabel('Read [the notes](https://example.test/x "Title")')).toBe('Read the notes');
+    expect(queuePreviewLabel('  spaced  ')).toBe('spaced');
+  });
 });
 
 describe('ComposerQueue', () => {
   const items: ComposerQueueItem[] = [
-    { key: 'a', inputId: 'input-a', text: 'Open a PR after', member: ada, sending: false },
-    { key: 'b', inputId: 'input-b', text: 'and check for comments', member: bob, sending: false },
+    { key: 'a', inputId: 'input-a', text: 'Open a PR after', mentions: [], member: ada, sending: false },
+    { key: 'b', inputId: 'input-b', text: 'and check for comments', mentions: [], member: bob, sending: false },
   ];
 
   it('shows each queued message with its author avatar', () => {
@@ -69,6 +78,101 @@ describe('ComposerQueue', () => {
     expect(document.querySelectorAll('.composer-queue-avatar .avatar')).toHaveLength(2);
     expect(screen.getByTitle('Ada Lovelace')).toBeInTheDocument();
     expect(screen.getByTitle('Bob Builder')).toBeInTheDocument();
+  });
+
+  it('renders the queued message as Markdown rather than as its source', () => {
+    render(
+      <ComposerQueue
+        items={[{
+          key: 'c',
+          inputId: 'input-c',
+          text: 'Ship **today** and add `--force`\n\n# Not a heading here',
+          mentions: [],
+          member: ada,
+          sending: false,
+        }]}
+        onReorder={vi.fn(async () => undefined)}
+      />,
+    );
+    const row = screen.getByRole('list', { name: 'Queued messages' });
+    // The transcript's renderer, so the row carries its markup and its class.
+    expect(row.querySelector('.composer-queue-text .markdown-body')).toBeInTheDocument();
+    expect(row.querySelector('.composer-queue-text strong')).toHaveTextContent('today');
+    expect(row.querySelector('.composer-queue-text code')).toHaveTextContent('--force');
+    expect(row.textContent).toContain('Not a heading here');
+    expect(row.textContent).not.toContain('**today**');
+    expect(row.textContent).not.toContain('# Not a heading');
+  });
+
+  it('draws a person mention as the chip the transcript draws', () => {
+    const personId = '00000000-0000-7000-8000-000000000042';
+    render(
+      <ComposerQueue
+        items={[{
+          key: 'd',
+          inputId: 'input-d',
+          text: `Ask [@Spoofed label](person:${personId}) to review`,
+          mentions: [{
+            type: 'person',
+            personId,
+            displayName: 'Ada Lovelace',
+            avatarUrl: 'https://example.test/ada.png',
+            startOffset: 4,
+            endOffset: 65,
+          }],
+          member: bob,
+          sending: false,
+        }]}
+        onReorder={vi.fn(async () => undefined)}
+      />,
+    );
+    const chip = screen.getByText('@Ada Lovelace').closest('.mention-chip');
+    expect(chip).toHaveAttribute('data-person-id', personId);
+    expect(screen.queryByText('@Spoofed label')).not.toBeInTheDocument();
+    // A queued row is a preview of something not yet said: nothing in it opens.
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reorder queued message: Ask @Spoofed label to review' }))
+      .toBeInTheDocument();
+  });
+
+  it('draws a connection mention from its stored offsets', () => {
+    const text = 'Check @Google Drive for it';
+    render(
+      <ComposerQueue
+        items={[{
+          key: 'e',
+          inputId: 'input-e',
+          text,
+          mentions: [{
+            type: 'connector',
+            connectorType: 'google_drive',
+            startOffset: text.indexOf('@Google Drive'),
+            endOffset: text.indexOf('@Google Drive') + '@Google Drive'.length,
+          }],
+          member: ada,
+          sending: false,
+        }]}
+        onReorder={vi.fn(async () => undefined)}
+      />,
+    );
+    const chip = document.querySelector('.composer-queue-text .mention-chip-connector');
+    expect(chip).toBeInTheDocument();
+    expect(chip).toHaveTextContent('Google Drive');
+    expect(document.querySelector('.composer-queue-text')?.textContent).not.toContain('](connector');
+  });
+
+  it('keeps a placeholder for a message with no text of its own', () => {
+    render(
+      <ComposerQueue
+        items={[
+          { key: 'f', inputId: 'input-f', text: '   ', mentions: [], member: ada, sending: false },
+          { key: 'g', inputId: null, text: '', mentions: [], member: bob, sending: true },
+        ]}
+        onReorder={vi.fn(async () => undefined)}
+      />,
+    );
+    expect(screen.getByText('Queued message')).toBeInTheDocument();
+    expect(screen.getByText('Sending…')).toBeInTheDocument();
   });
 
   it('commits the live drag order once on drop', async () => {
