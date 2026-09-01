@@ -319,8 +319,13 @@ export const PendingWorkspaceInvitationSchema = WorkspaceInvitationPreviewSchema
 });
 export const WorkspaceOnboardingStateSchema = z.object({
   workspace: WorkspaceSchema.nullable().default(null),
+  workspaces: z.array(WorkspaceSchema).optional(),
   invitations: z.array(PendingWorkspaceInvitationSchema)
-});
+}).transform((value) => ({
+  workspace: value.workspace,
+  workspaces: value.workspaces ?? (value.workspace ? [value.workspace] : []),
+  invitations: value.invitations,
+}));
 export const CreateWorkspaceRequestSchema = z.object({
   name: z.string().trim().min(2).max(120),
   region: RegionSchema
