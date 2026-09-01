@@ -46,6 +46,7 @@ import {
   compatibleDesktopDeepLink,
   connectorAttemptTarget,
   normalizeConnectorOAuthErrorCode,
+  type ConnectorAttemptTargetInput,
   unknownConnectorAttemptFailureTarget,
 } from "../lib/desktop-handoff";
 import { createGitHubInstallState } from "../lib/github-install-state";
@@ -2690,15 +2691,7 @@ export class ConnectionService {
     ));
   }
 
-  private connectorAttemptTarget(input: {
-    provider: ConnectorOAuthProvider;
-    status: "succeeded" | "denied" | "failed";
-    attemptId?: string;
-    connectionId?: string;
-    errorCode?: string;
-    workspaceId: string;
-    returnUri: string;
-  }): string {
+  private connectorAttemptTarget(input: ConnectorAttemptTargetInput): string {
     return connectorAttemptTarget(this.env, input);
   }
 
