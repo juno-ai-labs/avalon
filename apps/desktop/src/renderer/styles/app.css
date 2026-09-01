@@ -3224,6 +3224,48 @@ pre {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A queued row is one clipped line of the transcript's own Markdown renderer.
+   Flattening it here rather than in a second renderer is deliberate: the row
+   then draws the same chips, the same emphasis, and the same code spans the
+   turn will draw once it lands, and there is no parallel implementation to keep
+   in step with this one. Every block becomes inline so `nowrap` and the
+   ellipsis on the row apply to the whole message, and the prose type scale
+   gives way to the row's. */
+.composer-queue-text .markdown-body {
+  /* Restated rather than inherited: `.markdown-body` paints its own prose ink,
+     and a queued row is deliberately quieter than a turn that has landed. */
+  color: var(--av-sys-color-text-subtle);
+  display: inline;
+  font-size: inherit;
+  line-height: inherit;
+}
+.composer-queue-text .markdown-body :is(
+  p, h1, h2, h3, h4, h5, h6, ul, ol, li, pre, blockquote, table, thead, tbody, tr, th, td, hr
+) {
+  border: 0;
+  display: inline;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  margin: 0;
+  padding: 0;
+}
+/* A block's neighbours would otherwise run together into one word. */
+.composer-queue-text .markdown-body :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, tr)::after {
+  content: ' ';
+  white-space: pre;
+}
+.composer-queue-text .markdown-body :is(li, ul, ol) { list-style: none; }
+/* The transcript's mention chip, in a line a little over half its usual size. */
+.composer-queue-text .mention-chip {
+  height: 1.45em;
+  padding: 1px 5px 1px 2px;
+}
+.composer-queue-text .mention-chip-avatar {
+  font-size: 5.5px;
+  height: 13px;
+  width: 13px;
+}
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }
 .elicitation-panel { padding: 14px 14px 13px; }
