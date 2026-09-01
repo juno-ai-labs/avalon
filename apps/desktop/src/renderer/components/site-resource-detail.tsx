@@ -44,7 +44,11 @@ export interface SiteArtifactError {
 export interface SiteResourceDetailProps {
   resourceId: string;
   title: string;
-  /** Mints access. Called once per artifact, because each code is single-use. */
+  /**
+   * Mints access. Called once per *navigation*, not once per artifact:
+   * the code it returns is single-use, so every surface that navigates —
+   * the preview, the pop-out window, the system browser — needs its own.
+   */
   openArtifact: (resourceId: string) => Promise<SiteArtifactAccess>;
   describeData: (resourceId: string) => Promise<{ tables: SiteArtifactTable[] }>;
   loadTable: (resourceId: string, table: string) => Promise<{
@@ -93,8 +97,22 @@ export function SiteResourceDetail({
   const [panel, setPanel] = React.useState<Panel>('preview');
   const [copied, setCopied] = React.useState(false);
 
-  // One open per artifact: each access code is single-use, so re-minting on
-  // every render would spend a code per paint.
+  /**
+   * A fresh open code, for one navigation.
+   *
+   * Minted per use because redemption clears the code in the same statement
+   * that reads it: a second surface handed the same URL redeems nothing and
+   * lands on Rally's neutral page instead of the site. The code also lives 60
+   * seconds, so one held from mount is stale by the time somebody clicks.
+   */
+  const mintOpenUrl = React.useCallback(
+    async (): Promise<string> => (await openArtifact(resourceId)).openUrl,
+    [openArtifact, resourceId],
+  );
+
+  // Once per artifact, for what the detail renders from — the canonical URL,
+  // the mode, and whether it keeps data. The code this also mints is not the
+  // one any navigation uses; `mintOpenUrl` gets a fresh one at the click.
   React.useEffect(() => {
     let cancelled = false;
     setAccess(null);
@@ -129,13 +147,18 @@ export function SiteResourceDetail({
     const bounds = measure();
     if (!bounds) return undefined;
     let cancelled = false;
-    void surface.present({ artifactId: access.artifactId, url: access.openUrl, bounds })
-      .then((shown) => { if (!cancelled) setPreviewShown(shown); });
+    void mintOpenUrl()
+      .then(async (url) => await surface.present({ artifactId: access.artifactId, url, bounds }))
+      .then((shown) => { if (!cancelled) setPreviewShown(shown); })
+      // A refused mint or a main process that cannot composite both land here.
+      // Without this the pane keeps its `null` state and renders an empty box
+      // with no message and no way out.
+      .catch(() => { if (!cancelled) setPreviewShown(false); });
     return () => {
       cancelled = true;
       void surface.close();
     };
-  }, [access, measure, panel, surface]);
+  }, [access, measure, mintOpenUrl, panel, surface]);
 
   // Layout changes only. A composited view that chases a scrolling rectangle
   // jitters, so the pane is a fixed region of the detail rather than content
@@ -209,7 +232,9 @@ export function SiteResourceDetail({
           disabled={!access}
           onClick={() => {
             if (!access) return;
-            void surface.popOut({ artifactId: access.artifactId, url: access.openUrl, title });
+            void mintOpenUrl().then(
+              async (url) => await surface.popOut({ artifactId: access.artifactId, url, title }),
+            );
           }}
         >
           <Maximize2 size={14} /> Pop out
@@ -228,7 +253,10 @@ export function SiteResourceDetail({
         >
           <Copy size={14} /> {copied ? 'Copied' : 'Copy link'}
         </Button>
-        <Button disabled={!access} onClick={() => access && void surface.openExternal(access.openUrl)}>
+        <Button
+          disabled={!access}
+          onClick={() => void mintOpenUrl().then(async (url) => await surface.openExternal(url))}
+        >
           <ExternalLink size={14} /> Open in browser
         </Button>
       </div>
