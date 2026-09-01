@@ -24,6 +24,7 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     SUBSTREAM_AGENTS: binding(), AUTOMATION_AGENTS: binding(), BLOCK_DASHBOARD_AGENTS: binding(),
     WORKSTREAM_DOS: binding(), WORKSPACE_DOS: binding(),
     SLACK_REACTION_TICKERS: binding(),
+    ARTIFACT_HOSTS: binding(),
     ACTIVITY_QUEUE: binding(),
     INFERENCE_LAKEHOUSE_QUEUE: binding(),
     INFERENCE_LAKEHOUSE: binding(),

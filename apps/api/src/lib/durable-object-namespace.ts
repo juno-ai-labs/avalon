@@ -293,6 +293,54 @@ export function durableObjectStubForRegionalSingleton<
 }
 
 /**
+ * Resolve a live web artifact's supervisor, which is region-scoped but not
+ * workspace-addressed.
+ *
+ * The third supported resolver, and it exists because the artifact host is the
+ * one object whose *name carries no workspace segment*. It cannot: the artifact
+ * serving Worker holds no D1 and sees only `Host`, so every part of the name
+ * has to be derivable from the hostname alone — and the hostname is the
+ * artifact id. That rules out {@link durableObjectStubForWorkspace}, which
+ * reads the workspace's placement affinity from D1, and there is no singleton
+ * here for {@link durableObjectStubForRegionalSingleton}: one object per
+ * artifact.
+ *
+ * **The fallback hint is correct rather than merely tolerable, and that is
+ * worth stating because it looks like a compromise.** Cloudflare honours a
+ * location hint only on an object's *first* lookup, and an artifact object's
+ * first lookup is at publish, from the API Worker, which resolves it through
+ * this same function while holding the workspace's real affinity — passed as
+ * `preferredAffinity`. Every later call, including every one the serving Worker
+ * makes, reaches an object that is already placed, so the hint it passes is
+ * ignored by the platform. Get this backwards and artifact objects are minted a
+ * continent away from the work streams they check visibility against.
+ *
+ * Jurisdiction is not relaxed: this goes through the same region-restricted
+ * namespace as everything else, which is the property the region-routing lint
+ * rule exists to protect.
+ */
+export function durableObjectStubForArtifact<T extends RpcDurableObject | undefined = undefined>(
+  env: Pick<Env, "APP_ENV" | "AVALON_REGION"> & SelfAddressReportEnv,
+  namespace: DurableObjectNamespace<T>,
+  name: string,
+  preferredAffinity?: WorkspacePlacementAffinity,
+): DurableObjectStub<T> {
+  const self = durableObjectSelfForId(
+    env,
+    namespace,
+    durableObjectIdForRegion(namespace, env.AVALON_REGION, name, env.APP_ENV),
+  );
+  if (self) return self;
+  return durableObjectStubForRegion(
+    env,
+    namespace,
+    env.AVALON_REGION,
+    name,
+    preferredAffinity ?? fallbackWorkspacePlacementAffinity(env.AVALON_REGION),
+  );
+}
+
+/**
  * Resolve a workspace-scoped object with the affinity selected when its parent
  * workspace was created. The regional D1 row is an immutable routing
  * projection; a per-isolate cache removes repeated reads without introducing a

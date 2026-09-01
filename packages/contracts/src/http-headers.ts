@@ -55,6 +55,18 @@ export const RALLY_HEADERS = Object.freeze({
   TELEMETRY_CAPABILITY: "x-rally-telemetry-capability",
   TELEMETRY_VERSION: "x-rally-telemetry-version",
   USER_ID: "x-rally-user-id",
+  /**
+   * The viewer identity the artifact serving path injects into every request
+   * it forwards to model-authored code.
+   *
+   * They are listed here for the reason everything else is: this table is the
+   * one place a product header name exists, and the anti-spoof strip that
+   * guards these two reads `rallyHeaderAliases` to cover the superseded
+   * spelling as well. A header family whose readers widen and whose stripper
+   * does not is a family with a forgeable back door.
+   */
+  VIEWER_ID: "x-rally-viewer-id",
+  VIEWER_NAME: "x-rally-viewer-name",
   WORKSPACE_ID: "x-rally-workspace-id",
   WORKSTREAM_ID: "x-rally-workstream-id",
 } as const);
