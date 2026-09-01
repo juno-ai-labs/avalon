@@ -1441,6 +1441,39 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-01 — A grouping's action reaches only what that grouping showed
+
+**What changed:** `batchTargetIds` now carries
+`directory.origin_type <> 'automation'`, the clause the four sidebar-facing
+directory readers — the paged recent list, the pinned rows, the running rows
+and the per-row socket push — have always carried. The client's mirror of the
+predicate refuses an automation-origin row for the same reason.
+
+**Why:** This was the fifth reader of `workspace_workstream_directory` and the
+only one without that clause, so a recency heading's **Archive all** selected
+an automation's run work streams — including a *planned* run's, which the
+scheduler then cannot find behind its own `archived_at IS NULL` lookup. Those
+rows are deliberately kept out of the sidebar and reached from the automation's
+own screen, so nobody choosing **Archive all** under a date heading was shown
+them, could see them go, or could get them back: the confirmation counted them
+among the "work streams in **This month**" and the archive is irreversible. It
+was not a decision that notes and automations should be treated differently —
+the clause was simply not restated when this fifth reader was written.
+
+**Considered and rejected:** Leaving the selection wider than the list and
+fixing the sentence in the dialog instead. There is no sentence that makes an
+irreversible archive of rows the reader cannot see acceptable, and the rows are
+not merely unloaded — no scroll reaches them.
+
+**Consequences, and what a future change has to respect:** A rule about what
+the sidebar shows now lives in five statements, and a sixth reader will have to
+restate it. The regression test asserts the batch's targets against
+`listWorkstreams`' own answer over the same range rather than restating the
+expected set, so the two cannot drift apart again without failing. What stays
+deliberately wider is pagination: the confirmation names the complete
+server-side total precisely because the client may hold only a page, so
+"hidden" and "not yet loaded" must keep being decided differently.
+
 ### 2026-09-01 — A grouping's archive takes its notes too, in the object that holds them
 
 **What changed:** `Archive all` on a sidebar recency heading now archives the
