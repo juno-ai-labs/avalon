@@ -846,6 +846,8 @@ Worker invocation; provider code is absent from both API artifacts. The new
 contract is a service-first compatibility boundary, and there is no schema or
 data migration.
 
+Shipped in #471.
+
 ### 2026-09-01 — Desktop identity remains plural across regions
 
 **What changed:** Successful workspace activation retains the narrow Global

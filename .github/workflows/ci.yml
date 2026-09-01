@@ -31,6 +31,7 @@ jobs:
               pnpm --filter @rally/api build &&
               pnpm --filter @rally/api build:eu &&
               pnpm --filter @rally/api build:posthog &&
+              pnpm --filter @rally/api check:posthog-startup-boundary &&
               pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-n
@@ -122,6 +123,15 @@ jobs:
         env:
           NODE_OPTIONS: ${{ matrix.env.NODE_OPTIONS }}
         run: ${{ matrix.command }}
+
+      - name: Preserve Worker startup evidence
+        if: ${{ always() && matrix.name == 'typecheck-and-build-invariants' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: posthog-worker-startup-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: apps/api/dist-posthog/startup.cpuprofile
 
   # Keep one stable required check while the expensive work fans out above.
   # `always()` makes this job report a failure instead of being skipped when a

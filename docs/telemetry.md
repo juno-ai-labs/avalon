@@ -698,6 +698,8 @@ tests remain at the adapter; real workerd proves RPC serialization separately.
 EU has no PostHog binding or provider graph. No telemetry schema, retention rule,
 or migration changes.
 
+Shipped in #471.
+
 ### 2026-08-28 — Automation telemetry follows the parent run envelope
 
 **What changed:** Compiler and generated-run signals carry content-free

@@ -40,9 +40,21 @@ export interface GlobalProfileDeliveryRow {
 
 export type PostHogDeliveryResult = {
   result: "delivered" | "retry" | "terminal";
+  /** Provider diagnostic only; callers never use it for delivery decisions. */
   requestId: string | null;
   retryAfterMs: number | null;
 };
+
+/** Treats private-binding transport/runtime rejection like a retryable provider failure. */
+export async function postHogDeliveryRpcCall(
+  call: () => Promise<PostHogDeliveryResult>,
+): Promise<PostHogDeliveryResult> {
+  try {
+    return await call();
+  } catch {
+    return { result: "retry", requestId: null, retryAfterMs: null };
+  }
+}
 
 /** Global-only, non-HTTP Service Binding contract for PostHog delivery. */
 export interface PostHogDeliveryRpcBinding {
