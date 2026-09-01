@@ -294,7 +294,15 @@ export function orderedTranscriptMessages(
             : 'assistant_turn_interrupted';
           const messageType: Message['messageType'] = statusKind
             ? 'system'
-            : block.messageType === 'elicitation' || block.messageType === 'system'
+            // `automation_activation` is carried through rather than folded
+            // into 'text'. Folding it made every automation result render as
+            // the clamped system note — the outcome conversation-surfaces.md
+            // records as considered and rejected — while the block tests
+            // passed, because they build the Message this mapping produces
+            // rather than going through it.
+            : block.messageType === 'elicitation'
+              || block.messageType === 'system'
+              || block.messageType === 'automation_activation'
               ? block.messageType
               : 'text';
           const messageId = elicitation.success ? elicitationMessageId(elicitation.data.id) : block.blockId;

@@ -3846,6 +3846,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       connectionIds: bindings,
     });
     if (providers.length === 0) return;
+    // The same fence the activation writes behind, and for the same reason: a
+    // room re-authorized or archived since this run started must not be
+    // written to. It is also required by the card's schema, so omitting it made
+    // every one of these calls throw a ZodError into the caller's catch — the
+    // card was never written at all, and the log line said only that reporting
+    // failed. Reuses the workspace stub the binding check already resolved.
+    const authority = await workspace.workstreamDeliveryAuthority({
+      workspaceId: input.workspaceId,
+      workstreamId: input.owningWorkstreamId,
+    });
+    if (!authority || authority.archived) return;
     const substream = await durableObjectStubForWorkspace(
       this.env,
       this.env.SUBSTREAM_AGENTS,
@@ -3861,6 +3872,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       schemaVersion: 1,
       workspaceId: input.workspaceId,
       workstreamId: input.owningWorkstreamId,
+      authorityGeneration: authority.authorityGeneration,
       occurredAt: Date.now(),
       card: {
         type: "automation_principal_unavailable",

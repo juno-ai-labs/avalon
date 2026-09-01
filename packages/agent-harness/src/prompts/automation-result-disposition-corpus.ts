@@ -86,6 +86,18 @@ export const AUTOMATION_DISPOSITION_CORPUS: readonly AutomationDispositionCase[]
     why: "The other side of the same automation: a run of quiet weeks must not train the answer, because the week something happens is the week the automation earns its keep.",
   },
   {
+    id: "manual-rerun-of-a-repetitive-digest",
+    automationName: "Weekly changelog",
+    automationObjective: "Summarize what shipped each week.",
+    triggerKind: "manual",
+    triggerSummary: null,
+    result: "Three dependency bumps and a lint fix shipped this week. No user-facing changes.",
+    recentDispositions: ["done", "done", "done"],
+    reach: { canDeliver: true, canExpose: true },
+    expected: "deliver",
+    why: "Byte-for-byte the result the scheduled case calls done, and the opposite answer: somebody pressed Run and is waiting. Repetition is evidence about a schedule, not about a person who just asked, and a swallowed manual run is the one failure they will notice immediately and be unable to explain.",
+  },
+  {
     id: "restates-its-own-purpose",
     automationName: "Meeting prep",
     automationObjective: "Prepare the Monday agenda.",

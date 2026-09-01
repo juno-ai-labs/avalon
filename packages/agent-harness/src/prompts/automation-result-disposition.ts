@@ -43,6 +43,10 @@ deliver — somebody who is waiting on this automation would want to read it now
 
 expose_workstream — the occurrence is worth opening and reading in full, beyond what the result says: the work it did matters more than its summary, or somebody will want the steps and not just the answer. Use it sparingly. An automation whose recent occurrences were exposed and are not obviously more significant this time is done or deliver instead.
 
+A manual occurrence was requested by a person who is waiting on it right now: deliver it, whatever the recent dispositions say. Repetition is evidence about a schedule, not about somebody who just asked.
+
+When you cannot tell whether anybody needs this, choose deliver. An unwanted message is visible and somebody can say so; a withheld one is silence nobody knows to look for.
+
 Judge against the recent dispositions you are given. Repetition is the strongest evidence of done: if the result is the same kind of thing as the last occurrences and no more important, it is not worth another interruption whatever those occurrences were judged to be.
 
 Only the arms named in the schema are available to you. When the schema offers no deliver, the question is only whether this occurrence is worth anybody opening.

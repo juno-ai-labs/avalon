@@ -68,6 +68,20 @@ describe("the disposition corpus", () => {
     }
   });
 
+  it("names the manual case and the tie-break the failure direction depends on", () => {
+    const [system] = renderAutomationResultDispositionMessages(
+      AUTOMATION_DISPOSITION_CORPUS[0]!,
+    );
+
+    // The corpus only scores against a live model, so these two rules would
+    // otherwise be unguarded in CI. Both exist because the arms are not
+    // symmetric: `done` is the invisible answer, so a manual run — where
+    // somebody is waiting — and an undecidable one both have to fall the other
+    // way, and the prompt has to say so rather than leave it to the prior.
+    expect(system?.content).toContain("A manual occurrence was requested by a person");
+    expect(system?.content).toContain("When you cannot tell whether anybody needs this, choose deliver");
+  });
+
   it("records why every case decides the way it does", () => {
     // When a case starts failing, the question is whether the model drifted or
     // the case was wrong. Only a recorded reason lets somebody answer that

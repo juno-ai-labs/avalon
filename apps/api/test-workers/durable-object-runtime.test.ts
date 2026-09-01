@@ -6551,6 +6551,67 @@ describe("Durable Objects in the Workers runtime", () => {
       return stub;
     }
 
+    it("is written by the settlement path, not only by its own RPC", async () => {
+      // The caller, not the writer. Every existing case here calls
+      // `appendPrincipalUnavailableCard` directly with a payload it composed,
+      // so all of them passed while the one production caller omitted a
+      // required `authorityGeneration` and threw a ZodError into its own catch
+      // — the card was never written and the log said only that reporting
+      // failed. This drives the settlement path so the payload is the one
+      // production builds.
+      const stub = await openRuntime();
+      const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+        workspaceDOName("global", WORKSPACE_ID),
+      ));
+      await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+      await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec(
+          `INSERT INTO workspace_workstream_directory
+             (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+              title, description, preview, scope, exact_state, system_kind, last_activity_at,
+              completed_at, archived_at, email_address, origin_type, origin_label,
+              created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+              title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+              next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+              source_created_at, source_updated_at, projected_at)
+           VALUES (?, 1, 1, ?, 'test', 'Owning room', '', '', 'workspace', 'idle', NULL, 1,
+                   NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+                   'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+          WORKSTREAM_ID,
+          "00000000-0000-7000-800e-000000000001",
+          USER_ID,
+        );
+      });
+
+      await runInDurableObject(stub, async (instance) => {
+        await (instance as unknown as {
+          reportUnreachablePrincipal(input: unknown): Promise<void>;
+        }).reportUnreachablePrincipal({
+          region: "global",
+          workspaceId: WORKSPACE_ID,
+          owningWorkstreamId: WORKSTREAM_ID,
+          frozen: {
+            automationId: card.automationId,
+            definition: { name: card.automationName },
+            executionPrincipal: { type: "user", userId: card.outgoingUserId },
+            // A binding whose connection row is gone: the offboarding shape.
+            connectorBindings: { plugin_gmail: "00000000-0000-7000-800e-000000000002" },
+          },
+        });
+      });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        const rows = state.storage.sql.exec<{ structured_content_json: string }>(
+          `SELECT structured_content_json FROM canonical_conversation_turn_details
+            WHERE message_type = 'system'
+              AND structured_content_json LIKE '%automation_principal_unavailable%'`,
+        ).toArray();
+        expect(rows).toHaveLength(1);
+        expect(JSON.parse(rows[0]!.structured_content_json).automationId)
+          .toBe(card.automationId);
+      });
+    });
+
     it("writes one card however often the automation runs", async () => {
       const stub = await openRuntime();
       const request = {
