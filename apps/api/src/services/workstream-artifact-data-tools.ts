@@ -37,15 +37,15 @@ export class ArtifactDataToolError extends Error {
   }
 }
 
-const DescribeArgumentsSchema = z.object({
+const DescribeArgumentsSchema = z.strictObject({
   resource: z.string().min(1).max(200),
-}).strict();
+});
 
-const QueryArgumentsSchema = z.object({
+const QueryArgumentsSchema = z.strictObject({
   resource: z.string().min(1).max(200),
   sql: z.string().min(1).max(4_000),
   params: z.array(z.union([z.string(), z.number(), z.null()])).max(50).optional(),
-}).strict();
+});
 
 /**
  * The part of an artifact supervisor these tools use — and nothing else.
