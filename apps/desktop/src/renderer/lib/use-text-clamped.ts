@@ -1,6 +1,19 @@
 import { useEffect, useState } from 'react';
 
 /**
+ * Overflow at or below this is rounding rather than a hidden line.
+ *
+ * Both measurements are integers taken from a box whose line height is
+ * fractional, so a block whose text fills its clamp exactly can report a scroll
+ * height a pixel or two over the client height with nothing behind it. Hidden
+ * text, by contrast, is always at least one whole line box — around 16px at the
+ * system row's 10.5px type and 1.55 line height. The two are an order of
+ * magnitude apart, and this sits low in the gap between them so that a denser
+ * type scale later cannot quietly push a real hidden line under the threshold.
+ */
+export const CLAMP_ROUNDING_TOLERANCE_PX = 4;
+
+/**
  * Whether `node` is hiding lines that a line clamp cut off.
  *
  * The vertical counterpart to `useTextClipped`: a block capped at a few lines
@@ -20,19 +33,6 @@ import { useEffect, useState } from 'react';
  * `text` is a dependency because longer text can overflow a box that never
  * changed size, and nothing else here would fire for that.
  */
-/**
- * Overflow at or below this is rounding rather than a hidden line.
- *
- * Both measurements are integers taken from a box whose line height is
- * fractional, so a block whose text fills its clamp exactly can report a scroll
- * height a pixel or two over the client height with nothing behind it. Hidden
- * text, by contrast, is always at least one whole line box — around 16px at the
- * system row's 10.5px type and 1.55 line height. The two are an order of
- * magnitude apart, and this sits low in the gap between them so that a denser
- * type scale later cannot quietly push a real hidden line under the threshold.
- */
-const roundingToleranceInPixels = 4;
-
 export function useTextClamped(node: HTMLElement | null, text: string, clampApplied: boolean): boolean {
   const [clamped, setClamped] = useState(false);
 
@@ -41,7 +41,7 @@ export function useTextClamped(node: HTMLElement | null, text: string, clampAppl
     // expanding block resizes itself, so an observer left alive across the
     // transition would measure the opened box and answer that it fits.
     if (!node || !clampApplied) return undefined;
-    const measure = (): void => setClamped(node.scrollHeight - node.clientHeight > roundingToleranceInPixels);
+    const measure = (): void => setClamped(node.scrollHeight - node.clientHeight > CLAMP_ROUNDING_TOLERANCE_PX);
     measure();
     // The element's own size rather than the window's: the transcript column is
     // resized by the right rail opening with the window perfectly still, and a

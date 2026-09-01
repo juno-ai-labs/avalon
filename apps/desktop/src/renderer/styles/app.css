@@ -2641,12 +2641,14 @@ pre {
 .markdown-body h5,
 .markdown-body h6 { font-size: var(--av-cmp-markdown-heading-4); font-weight: var(--av-sys-font-weight-heading); }
 
-/* Heading collapse. h2+ become a one-level accordion: the chevron lives in a
-   gutter to the left of the heading, and a collapsed section keeps ~3 lines of
-   whatever follows (a paragraph, the top of a table) behind a fade that starts
-   at 60% opacity on the first pixel and reaches transparent on the last, so the
-   next heading is what the eye lands on. Nested headings are content, not
-   nested accordions — an h3 under an h2 has no chevron. */
+/* Heading collapse. h2+ become a one-level accordion when the body continues
+   past the preview: the chevron lives in a gutter to the left of the heading,
+   and a collapsed section keeps ~3 lines of whatever follows (a paragraph, the
+   top of a table) behind a fade that starts at 60% opacity on the first pixel
+   and reaches transparent on the last, so the next heading is what the eye
+   lands on. A body that already fits those three lines is not an accordion.
+   Nested headings are content, not nested accordions — an h3 under an h2 has
+   no chevron. */
 .markdown-body:has(> .markdown-collapse) {
   padding-left: 20px;
 }
