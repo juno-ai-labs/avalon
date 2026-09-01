@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from './api';
 import type { WorkstreamResource } from './types';
 import { useUiStore } from './ui-store';
 import { useCitations } from './use-citations';
@@ -107,12 +108,84 @@ describe('useCitations', () => {
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
+  it('reads a preview once per resource, however many cards cite it', async () => {
+    const loadResourceContent = vi.fn(async () => new Blob(['# Q3\n\nUp 14%.']));
+    const { result } = renderHook(() => useCitations({ loadResourceContent, resources: [DECK] }));
+
+    const first = result.current.preview!('board-deck');
+    const second = result.current.preview!('board-deck');
+
+    // Each read *causes* the conversion — the preview route materializes the
+    // derivative inside the request — so a second card citing the same
+    // document must join the read in flight rather than start another.
+    expect(first).toBe(second);
+    expect(await first).toBe('# Q3\n\nUp 14%.');
+    expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('board-deck', expect.anything());
+  });
+
+  it('reads again when the resource advances a version', async () => {
+    const loadResourceContent = vi.fn(async () => new Blob(['version one']));
+    const { result, rerender } = renderHook(
+      ({ resources }) => useCitations({ loadResourceContent, resources }),
+      { initialProps: { resources: [DECK] } },
+    );
+    const first = result.current.preview!('board-deck');
+
+    // A watched source re-ingested in place keeps its id, so a cache keyed by
+    // id alone would hand version 2's card version 1's text — a citation
+    // substantiating a claim with the wrong revision.
+    rerender({ resources: [{ ...DECK, currentVersion: 2 }] });
+    const second = result.current.preview!('board-deck');
+
+    expect(second).not.toBe(first);
+    expect(loadResourceContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries after a transient failure but remembers a verdict about the document', async () => {
+    const loadResourceContent = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Blob(['the text']));
+    const { result } = renderHook(() => useCitations({ loadResourceContent, resources: [DECK] }));
+
+    await expect(result.current.preview!('board-deck')).rejects.toThrow('Failed to fetch');
+    // A dropped connection says nothing about the document, so the next ask —
+    // a scroll back, a re-render — asks again rather than replaying the failure
+    // for as long as the reader stays in the room.
+    expect(await result.current.preview!('board-deck')).toBe('the text');
+    expect(loadResourceContent).toHaveBeenCalledTimes(2);
+
+    const refusing = vi.fn(() => Promise.reject(new ApiError('Cannot convert', 422, 'unsupported_media_type')));
+    const { result: verdict } = renderHook(() => useCitations({ loadResourceContent: refusing, resources: [DECK] }));
+
+    await expect(verdict.current.preview!('board-deck')).rejects.toThrow('Cannot convert');
+    // 422 is the route's answer about this document and will not change, so
+    // re-asking would drive a conversion route to the same refusal every time.
+    await expect(verdict.current.preview!('board-deck')).rejects.toThrow('Cannot convert');
+    expect(refusing).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads a preview by the id an alias stands for, and offers none without a route', async () => {
+    const loadResourceContent = vi.fn(async () => new Blob(['text']));
+    const aliased = { ...DECK, slug: 'amber-crisp-lucid-lantern' };
+    const { result } = renderHook(() => useCitations({ loadResourceContent, resources: [aliased] }));
+
+    await result.current.preview!('amber-crisp-lucid-lantern');
+
+    // The route is keyed by the resource's own id, exactly as `open` is.
+    expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('board-deck', expect.anything());
+    expect(result.current.preview!('not-here')).toBeUndefined();
+
+    // A surface with no preview route offers no preview, and the card keeps
+    // its empty room rather than a skeleton nothing will ever settle.
+    const { result: routeless } = renderHook(() => useCitations({ resources: [DECK] }));
+    expect(routeless.current.preview!('board-deck')).toBeUndefined();
+  });
+
   it('opens nothing for a target that names an identity or nothing at all', () => {
     const { result } = renderHook(() => useCitations({ resources: [DECK] }));
 
     act(() => {
       result.current.open({ scheme: 'person' });
-      result.current.open({ scheme: 'connector' });
       result.current.open({ scheme: 'unknown' });
     });
 

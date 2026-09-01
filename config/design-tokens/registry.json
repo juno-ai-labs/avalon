@@ -698,6 +698,9 @@
     "cmp.feed.author.font-weight": {
       "$type": "fontWeight"
     },
+    "cmp.markdown.diagram-line": {
+      "$type": "color"
+    },
     "cmp.markdown.heading-1": {
       "$type": "dimension"
     },

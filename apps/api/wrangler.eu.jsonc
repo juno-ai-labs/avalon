@@ -20,7 +20,7 @@
     "DAYTONA_API_URL": "https://app.daytona.io/api",
     "DAYTONA_TARGET": "us",
     "DAYTONA_TERMINAL_SNAPSHOT": "daytona-small",
-    "TERMINAL_REGION_CAPABILITY": "unsupported",
+    "TERMINAL_REGION_CAPABILITY": "supported",
     "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://rallywithai,app://avalon",
@@ -85,6 +85,14 @@
   "triggers": { "crons": ["*/5 * * * *"] },
   "services": [
     {
+      "binding": "DOCUMENT_PROCESSOR",
+      "service": "avalon-api-documents-eu"
+    },
+    {
+      "binding": "TERMINAL_PROVIDER",
+      "service": "avalon-api-terminal-eu"
+    },
+    {
       "binding": "GLOBAL_GITHUB_ROUTER",
       "service": "avalon-api-global",
       "entrypoint": "GitHubRoutingBridge"
@@ -122,6 +130,11 @@
   "r2_buckets": [
     { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" },
     { "binding": "TELEMETRY_PAYLOADS", "bucket_name": "avalon-eu-telemetry", "jurisdiction": "eu" }
+  ],
+  // Deliberately the same globally replicated namespace as the Global Worker:
+  // model prices are public provider metadata, not EU workspace content.
+  "kv_namespaces": [
+    { "binding": "INFERENCE_PRICING_CACHE", "id": "ea2442c2ee744decbad3d1ca03fce728" }
   ],
   "analytics_engine_datasets": [
     { "binding": "RUN_ANALYTICS", "dataset": "avalon_agent_runs" },

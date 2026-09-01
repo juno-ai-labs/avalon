@@ -124,6 +124,12 @@ and provider-boundary verification are the deliberate full-history reads. The
 suffix chain is local to the object/harness call and is not exposed through the
 transcript RPC or JSON serialization.
 
+Terminal side effects use an exact internal turn lookup against
+`canonical_conversation_turn_details`. They do not page through recent messages
+or read the active streaming checkpoint. A connector reply is therefore a
+projection of a saved participant-visible turn; when terminal state names no
+turn, external status may settle but no reply body leaves Rally.
+
 Anything that can yield while constructing a transcript payload is prepared
 before `commitRuntimeMutation`. Its callback is synchronous: it inserts the
 prepared canonical fact, advances transcript and root state, and derives the
@@ -699,11 +705,15 @@ persistent loop next becomes idle; promotion wakes that same loop rather than
 creating another one. If failure or stop prevents a steer boundary, the input
 falls forward to the next idle activation and is never lost. Multiple inputs
 remain distinct; no later steer overwrites an earlier one.
-While the loop is executing, Electron exposes that choice beside Send and
-defaults each newly composed message to steer. The choice travels on the command
-and is painted back from the server-owned pending row as either **Will steer
-after this response** or **Queued for the next loop**; reconnect never infers it
-from local composer state.
+While the loop is executing, Electron always admits a newly composed message
+as `queue`. Slack and other external producers still send `steer` when they
+mean a safe-step interruption. The pending set is painted as a list attached
+to the top of the composer — slightly inset, overlapping the input — with the
+author's avatar and a hover drag handle. Reorder is a REST `PUT` of the full
+visible `inputIds` list; the object permutes existing `input_sequence` values
+and fans `loop_input_upserted` to every connected viewer. Prepared content
+stays immutable. Reconnect never infers delivery mode or order from local
+composer state.
 
 Promotion is one object-local transaction that validates the loop fence,
 creates the immutable canonical participant turn with its exact fact,
@@ -714,9 +724,11 @@ activity, mention, and non-duplicate participant effects in `durable_outbox`.
 A crash can therefore observe none of the canonical turn, delivery receipt,
 and effect intents, or all of them. The loop owner persists the corresponding
 Bind transition before crossing the next provider boundary.
-Rows in `pending_loop_inputs` are immutable and exist only while pending. A changed
-request is a new ordered input; it does not rewrite or silently cancel the
-earlier one. Canonical turns are immutable afterwards; `delivered_loop_inputs`
+Prepared fields on `pending_loop_inputs` are immutable and exist only while
+pending. `input_sequence` is the exception: it is the live promotion order a
+drag rewrites. A changed request is still a new ordered input; it does not
+rewrite or silently cancel the earlier one's content. Canonical turns are
+immutable afterwards; `delivered_loop_inputs`
 retains only the input-to-turn replay identity and allocated delivery ordinals.
 
 ### Compaction and concurrent messages
@@ -758,11 +770,11 @@ Terminal remains a Bind plugin backed by Daytona. The child stores the terminal
 workspace, command/task receipts, imports, repository selection, publication
 grants, and convergence state; actual coding execution remains in Daytona.
 
-### Sidebar, activity, suggestions, and notifications
+### Sidebar, activity, and notifications
 
 A product transaction that changes common metadata, a viewer overlay, activity,
-suggestion feedback, or a person notification — a mention, or somebody being
-added to the work stream — writes a versioned envelope to the child
+or a person notification — a mention, or somebody being added to the work
+stream — writes a versioned envelope to the child
 `durable_outbox` in the same SQLite transaction. The child sends those
 envelopes by RPC to its parent `WorkstreamDO`.
 
@@ -770,7 +782,14 @@ envelopes by RPC to its parent `WorkstreamDO`.
 per-user projection from each child, and computes one aggregate work-stream
 view. Common state uses a deterministic state priority; last activity is the
 maximum child timestamp. Viewer unread counts sum across children, while
-participation, listability, and “You Are Mentioned” are logical ORs. Every
+participation, listability, and “You Are Mentioned” are logical ORs. The
+directory `Workstream` that WorkspaceDO pushes for the sidebar carries a
+bounded participant preview on personal rows only: at most three user ids,
+most recently added first, plus `participantExtraCount` for everyone past that.
+Workspace-scoped rows send neither. Directory and `summary()` both sort by
+`participants.added_at` (copied onto the overlay as `participant_added_at`) so
+a REST merge of the child's summary cannot swap the three faces. Overlay
+`projected_at` is not that clock: it moves on every unread. Every
 changed aggregate partition gets its own monotonic waterline and UUIDv7 event
 ID in `workstream_state_changes`; pending transitions are not coalesced. The
 UUID is carried unchanged on the direct WorkstreamDO socket and delayed
@@ -802,8 +821,8 @@ Streams, In Progress, and Completed sections using title,
 description/preview, state, and last activity.
 `workspace_workstream_viewers` supplies unread count, participation,
 listability, “You Are Mentioned,” and the Home/sidebar list of work streams of
-interest. Pins, resource links, and resolved suggestion feedback live beside
-those rows so cross-work-stream queries are one local SQLite query rather than a
+interest. Pins and resource links live beside those rows so cross-work-stream
+queries are one local SQLite query rather than a
 fan-out to every child. Electron requests cursor-paged rows over its existing
 WorkspaceDO socket, and receives the sidebar itself on the answer to
 `subscribe` — the first page together with the viewer's
@@ -1086,7 +1105,13 @@ ticket replay, and the read-only child socket.
 `test-workers/participant-notification.test.ts` covers what seating somebody
 enqueues, on both the create and the add-afterwards paths, plus identity-bearing
 mentions and attachment descriptors in an opening message, and member-authored
-elicitation answers. `test-workers/unseen-workstream-state.test.ts` covers
+elicitation answers. Existing-room cases use runtime bootstrap plus the
+system-provision `provision` path;
+create-effect cases invoke `initialize` without activating its admitted run; and
+the elicitation case seeds a settled parent run. The distinct create ids still
+prevent accidental replay, while the replay case reuses `CREATE_REPLAY_ID`
+across its own two opens because replay is what it asserts.
+`test-workers/unseen-workstream-state.test.ts` covers
 self-removal, removal of another participant by a member, and the transactional
 final-participant refusal on real Durable Object SQLite. `test-workers/message-authority.test.ts` and
 `test-workers/scheduling-authority.test.ts` cover typed part plus participant-turn
@@ -1189,7 +1214,6 @@ already have committed across the object boundary.
 | `workspace_workstream_viewers` | One authoritative viewer overlay per work stream/user, independently fenced by generation, viewer `waterline`, UUIDv7 source event, and hash. It supplies participation, listability, unread/mention state, and read fences and cascades from the common row. |
 | `workspace_workstream_pins` | User-ordered pins referencing the directory row; all pin writes and reorder operations execute in this object. |
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
-| `workspace_workstream_suggestion_feedback` | Resolved work-stream action feedback indexed for workspace discovery and ranking. The action itself remains in its SubstreamAgent. |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
 | `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
@@ -1281,7 +1305,7 @@ join crosses an object boundary.
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
 | `transcript_compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints reference immutable model-only facts per principal/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
-| `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `suggested_activity`, `inbound_email`, or `context`), the authorization revision every relationship change advances, and operational suggestion overlays. `generated` derives artifact direction; every other value derives source direction. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
+| `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
 | `block_dashboard_configuration_versions`, `block_dashboard_block_runs`, `block_dashboard_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
@@ -1416,6 +1440,270 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-30 — Person mention Markdown uses `person://`
+
+**What changed:** Composer prepare and related writers emit
+`[@Name](person://<user-id>)`. Readers still accept bare `person:<user-id>`.
+
+**Why:** Aligns person mentions with the URL-style schemes the rest of the
+product teaches (`resource://`), so a model that generalizes does not produce a
+form the chip matcher and notification reducers miss.
+
+### 2026-08-30 — Suggested context state was retired from every object layer
+
+**What changed:** SubstreamAgent migration 35 drops `suggested_actions` and
+pending suggestion outbox rows; old `suggested_activity` links become ordinary
+attachments. Accepted source audiences are copied first into generic immutable
+`content_audience_fences`, so participant and scope widening stays fail-closed.
+WorkstreamDO migration 4 removes pending feedback rows and WorkspaceDO migration
+25 drops the feedback projection. Receivers retain a parse-only feedback
+tombstone so older isolates can drain their already-committed envelopes. The
+runtime exposes no suggestion RPCs.
+
+**Why:** Removing the Suggested context product requires removing its durable
+authority and delivery machinery, not merely hiding its desktop card.
+
+**Considered and rejected:** Retaining the tables for a possible re-enable.
+That would preserve unused authorization invariants, alarms, and cross-object
+effects as permanent maintenance surface.
+
+**Consequences:** Accepted resources remain attached without suggestion state,
+and their original reader boundary still constrains the work stream. Pending
+cards and feedback are intentionally discarded, mixed-version deliveries can
+settle, and released migration versions remain immutable.
+
+### 2026-08-30 — Sidebar facepile omits the current viewer
+
+**What changed:** The desktop no longer paints the signed-in person in a personal
+row's `AvatarStack`. A pile that would only be them is omitted. Overflow treats
+them as already shown when they were in the three preview ids, and drops them
+from `+x` when they were not. The public globe explains itself with the standard
+tooltip ("This is a public work stream"), and each remaining face names that
+person the same way.
+
+**Why:** seeing your own initials on every private row you are alone in is not
+a membership signal. The preview is still common state — the same three ids for
+every participant — so the filter stays in the renderer rather than becoming a
+per-recipient directory field.
+
+**Considered and rejected:** computing a viewer-specific preview in WorkspaceDO.
+A membership change is common state for everyone who can see the row; splitting
+the cap per recipient would make the pile a viewer overlay. Also rejected:
+leaving native `title` on the globe and on non-present faces, which is a second
+tooltip language the rest of the sidebar row does not use.
+
+**What a future change has to respect:** the wire still includes the viewer.
+Do not special-case a solo pile on the directory. Name tooltips live on
+`AvatarStack` itself, not a sidebar-only wrapper.
+
+### 2026-08-30 — Pending queue order is live, and in-flight Electron sends default to queue
+
+**What changed:** Schema v34 recreates `pending_loop_inputs_prepared_immutable`
+without `input_sequence` in `UPDATE OF`, so a drag can permute promotion order
+while prepared content stays frozen. `SubstreamLoopStorage.reorderPendingInputs`
+takes the full visible id list, ignores already-delivered ids, keeps unnamed
+visible rows behind the named ones, and does not bump loop revision or consume
+`next_input_sequence`. REST `PUT /workstreams/:id/pending-inputs` is the
+mutation; `loop_input_upserted` is the fan-out. Electron drops the steer/queue
+dropdown while a loop is running, always sends `queue`, and paints pending
+rows (plus an optimistic send) as an attached list on the composer with the
+author's avatar and a hover drag handle. Slack still defaults to `steer`.
+
+**Why:** The dropdown made "interrupt this response" the default of a control
+almost nobody needed, and the pending pills lived in the transcript — away
+from the composer a second person uses to add to the same queue. Order had
+to be live across viewers; that is a sequence rewrite, not a second input.
+
+**Considered and rejected:** Keeping steer as the Electron default and only
+changing the label. The request was to default to queue and remove the
+choice while a loop is in flight. Also rejected: bumping loop revision on
+reorder, which would trip in-flight execution fences. Also rejected:
+sorting the composer list by socket `eventSequence`, which is room order,
+not FIFO.
+
+**What a future change has to respect:** Hidden pending rows behind a
+preparing mailbox head keep the sequences they already hold. Temporary
+values during the two-phase unique swap come from `next_input_sequence`
+without consuming it. Prepared columns remain in the immutability trigger.
+Do not edit shipped v33.
+
+### 2026-08-30 — Facepile order is join time, not overlay recency
+
+**What changed:** WorkspaceDO stores `participants.added_at` on each viewer row
+as `participant_added_at` and sorts the sidebar preview by that column, matching
+WorkstreamDO `summary()`. `projected_at` is no longer the facepile clock. Adding
+or removing a participant publishes the recomputed row to every subscribed
+viewer, not only the person whose overlay changed. The preview query is loaded
+once per state push and chunked under the engine's 100-parameter bind limit.
+The desktop counts unresolved preview ids toward overflow, hides the pile from
+the row's accessible name, fills an empty control-socket seed from a later
+directory row at the same waterline, and strips leftover ids when a row is
+workspace-scoped so a public row cannot keep a personal pile.
+
+**Why:** `projected_at` is rewritten on every viewer projection (unread, mention,
+seen). A message fans out to every participant in one envelope batch applied in
+one synchronous loop, so workerd hands them the same `Date.now()` and the
+tie-break is `user_id` — three lowest UUIDs, not three newest people. The
+changelog's split-clocks rationale assumed `summary()` never wrote the field
+the sidebar reads; REST merge of the summary does, so the two clocks swapped
+faces on a read-ack. Membership was still a per-user overlay, so everyone
+else's pile stayed stale until reconnect.
+
+**Considered and rejected:** activity recency as the product meaning of "most
+recent". Join time is what both producers already have without a new clock, and
+it is stable across unread. Putting the preview on WorkstreamDO control
+metadata was rejected because `metadataForUser` cannot see
+`participants.added_at`. Clearing the pile from control `common` was already
+not happening; the remaining race is a seed that claims empty ids at a
+waterline the directory later cannot beat.
+
+**What a future change has to respect:** one clock for the field.
+`participant_added_at` is the overlay copy of `participants.added_at`; do not
+sort the preview by `projected_at`. A membership change is common state for
+everyone who can see the row. Fan-in `IN` lists must use `boundParameterChunks`.
+A control snapshot must not be the authority for ids it does not know,
+including by seeding empty ones that pin the waterline. A workspace-scoped
+row never carries a pile, including leftover ids from when it was personal.
+
+### 2026-08-30 — Sidebar facepile is the existing AvatarStack size
+
+**What changed:** The sidebar trailing slot uses `AvatarStack` at its existing
+24px size. The compact size variant added for that slot is gone. `extraCount`
+remains so a directory list truncated to three ids can still paint `+x`.
+
+**Why:** a second size was a parallel facepile, not reuse of the one the header
+already paints. The Air row is 31px; 24px faces already fit.
+
+**Considered and rejected:** CSS-shrinking only the sidebar stack. That would
+still be a second look. Padding dummy members so native overflow could fire
+would pollute the accessible name.
+
+**What a future change has to respect:** do not add an `Avatar` size for this
+slot. `AvatarStack` with `limit={3}` and `extraCount` is the facepile.
+
+### 2026-08-30 — Personal sidebar rows carry a bounded participant facepile
+
+**What changed:** Directory `Workstream` rows gained `participantUserIds` (max
+three) and `participantExtraCount`. WorkspaceDO fills them from active
+participant overlay rows ordered by `projected_at DESC, user_id`, and only for
+`scope = 'personal'`. WorkstreamDO `summary()` fills the same fields from
+`participants.added_at DESC, user_id` so a REST mutation that merges the
+summary does not drop the pile. The desktop reuses `AvatarStack` in compact
+size for the trailing slot; workspace-scoped rows paint a globe instead. Notes
+keep the lock.
+
+**Why:** a lock on every personal work-stream row said "only you", which is the
+wrong statement once more than one person is in it. The people in it are
+already on the directory overlay, so the sidebar can paint them without a
+fetch. Three faces plus `+x` is a product ceiling sized for the 30px Air row,
+not a number to guess later.
+
+**Considered and rejected:** a REST members fetch per row, or sending the full
+participant list on the directory page. Both grow with roster size; the
+sidebar only paints three faces. Also rejected: one sort key shared by the
+directory and WorkstreamDO. Overlay recency is the best signal the directory
+has; `added_at` is what the child has without a round trip, and mixing them
+would make a rename reshuffle faces for no product reason.
+
+**What a future change has to respect:** a workspace-scoped row must not carry
+ids. Raising `WORKSTREAM_SIDEBAR_FACEPILE_LIMIT` is a product decision because
+it is also the wire cap. Unresolved ids are skipped, not substituted.
+
+### 2026-08-30 — Pre-inference notification tests no longer start model loops
+
+**What changed:** `participant-notification.test.ts` provisions existing rooms
+through the real runtime-bootstrap and identity ports, invokes the real
+`initialize` product mutation without activating its admitted opening run for
+create-only assertions, and gives the elicitation-answer case a settled parent
+run row. The file no longer installs a provider double or waits for an unrelated
+opening run to settle.
+
+**Why:** Deploy API 33295492419 failed after the object-id isolation below had
+landed: one add-to-two-rooms assertion saw no parent receipt and the elicitation
+case remained `executing:1`. The shared cause was not object naming. The fixture
+started inference for every pre-inference storage assertion, leaving alarm work
+to cross `reset()` under shard contention. Different ids made stale roots less
+likely to collide; they did not make unnecessary asynchronous work complete.
+
+**Considered and rejected:** More unique ids, a longer poll, and another forced
+alarm. The first cut already showed that a draining object per case exhausts the
+shard, while the latter two only give unrelated inference more time to finish.
+The product paths under test have explicit non-running boundaries, so the test
+uses those boundaries instead.
+
+**Consequences:** A test of committed creation state may leave an admitted run
+in storage only when it never activates that run. A test of an existing room
+uses `provision`; a test of model execution uses the execution pipeline suite.
+Do not make a pre-inference assertion depend on alarm timing merely because the
+public create endpoint normally proceeds to inference.
+
+### 2026-08-30 — Mention-confirmation and elicitation tests get their own work-stream ids
+
+**What changed:** The three mention-confirmation cases and the elicitation
+answer case in `participant-notification.test.ts` each open a distinct
+work-stream id (`6b5`–`6b8`). The file's D1 seed is now `CREATE TABLE IF NOT
+EXISTS` / `INSERT OR REPLACE`, matching the documented workers-suite seed
+shape. Notify-create isolation and deploy worker sharding already landed in
+#428.
+
+**Why:** Release Rally for macOS 33290369991 (`pnpm test`, unsharded workers)
+failed two poll timeouts after #422 — `waitForCanonicalTurn` (0 vs 1) and
+`waitForQuietLoop` (`executing:1`). Those are silent-replay failures:
+`initialize` on an already-authoritative root returns 200 with no fresh loop,
+and these four still shared `WORKSTREAM_ID` with every add-afterwards
+neighbour. A third reported error, `CREATE TABLE workstream_authority_control
+already exists`, is a different layer: the next `beforeEach` after an
+incomplete `reset()` used plain `CREATE TABLE`. Unique ids do not govern D1,
+so isolation alone would leave that cascade standing. Product mention and
+elicitation code did not change.
+
+**Considered and rejected:** Minting a fresh id for every test in the file
+(`isolatedWorkstream()`). #428's first revision did that and CI shard 1/2 timed
+out the same promotion polls, then failed to wipe D1. Also rejected:
+`waitForQuietLoop` at the end of the three mention cases so isolation would
+not add draining objects. Those tests wait on the canonical turn row only; a
+quiet-loop poll would spend the 10s budget on a precondition they do not
+assert. Four extra live objects (on top of the six the file already named) is
+under the threshold that timed out shard 1/2 (a draining object per all 18
+`it`s).
+
+**Consequences:** A new wait-on-promotion case in this file that reuses
+`WORKSTREAM_ID` can fail the same poll timeouts on an unsharded workers run
+(release `pnpm test`, or a future deploy lane). Isolate that case; do not mint
+a unique id for the whole file. The isolation rule lives in
+[`testing.md`](testing.md#writing-a-workerd-test). The three
+mention-confirmation cases still return with their loops possibly executing —
+they poll the turn row only — so isolation costs three extra draining objects.
+That is under the 18-object threshold that timed out shard 1/2; do not add
+`waitForQuietLoop` there to recoup it. An incomplete `reset()` no longer
+fails the next `it` as `CREATE TABLE … already exists` in this file; other
+workers tests that still use plain `CREATE TABLE` can still cascade that way.
+
+### 2026-08-29 — Terminal projections read one canonical turn by identity
+
+**What changed:** `WorkstreamObjectProductService.messageForRuntime` hydrates
+one participant-visible canonical turn by its opaque transcript ID, while
+`openElicitationMessageForRuntime` resolves a pending question through the
+canonical turn it created. Agent-run settlement uses those reads before any
+external-platform delivery. A terminal outcome that names an unreadable turn
+retains `agent_final_turn_not_saved` as a diagnostic, settles provider status,
+and emits no result body instead of retrying forever.
+
+**Why:** The previous path loaded the newest 250 messages and parsed each through
+a UUID-only message schema before searching for `finalTurnId`. Structured
+assistant IDs were valid transcript identities, so the parse failed before the
+search and left terminal side effects retrying. Even with the schema corrected,
+a recent-page scan is the wrong authority query for an exact terminal key.
+
+**Considered and rejected:** Raising the page limit or looking at the live
+stream checkpoint. A limit only moves the transcript-length failure, while the
+checkpoint is transient output and cannot authorize an external write.
+
+**What a future change has to respect:** A hydrated canonical turn is the only
+source of participant-visible external content. External replies, comments,
+notifications, and automation result bodies must remain downstream of that
+saved-turn read.
 
 ### 2026-08-29 — The origin label is a question to WorkspaceDO, not SQL through the facade
 
@@ -2665,7 +2953,8 @@ mention identities as the in-work-stream composer and sends them through the
 same visible-text-to-span resolver. `POST /workstreams` accepts those spans,
 and `SubstreamAgent.initialize` resolves their people against active workspace
 membership, replaces accepted visible ranges with canonical
-`[@Name](person:<user-id>)` Markdown, writes `part_mentions` and mention
+`[@Name](person://<user-id>)` Markdown (bare `person:<user-id>` still accepted),
+writes `part_mentions` and mention
 attention in the opening-message transaction, and emits the normal durable
 mention activity and notification. A mentioned person is seated even if a
 direct API caller omitted them from `participantUserIds`. In an existing

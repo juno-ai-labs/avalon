@@ -104,6 +104,8 @@ function workstream(
     firstUnreadSequenceNumber: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     preview: `${title} preview`,
     ...overrides,
   };
@@ -115,7 +117,7 @@ function renderScreen(projects: ProjectDirectory = { waterline: 0, items: [] }):
   });
   queryClient.setQueryData(['projects'], projects);
   render(
-    <Tooltip.Provider>
+    <Tooltip.Provider delayDuration={0}>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={['/workstreams/new']}>
           <Routes>
@@ -137,7 +139,7 @@ function renderProjectScreen(
   });
   queryClient.setQueryData(['projects'], projects);
   render(
-    <Tooltip.Provider>
+    <Tooltip.Provider delayDuration={0}>
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[`/projects/${projectId}/workstreams/new`]}>
           <Routes>
@@ -275,7 +277,16 @@ describe('New work-stream home', () => {
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument());
-    expect(screen.getByTitle('Participants are managed by the project')).toBeVisible();
+    expect(screen.queryByTitle('Participants are managed by the project')).not.toBeInTheDocument();
+    const modifier = document.querySelector('.participant-modifier');
+    if (!(modifier instanceof HTMLElement)) throw new Error('participant modifier missing');
+    const face = modifier.querySelector('.avatar-stack-item');
+    if (!(face instanceof HTMLElement)) throw new Error('participant face missing');
+    fireEvent.pointerMove(face, { pointerType: 'mouse' });
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip).toHaveTextContent('Participants are managed by the project');
+    expect(tooltip).not.toHaveTextContent('Adam Juhasz');
+    expect(tooltip).not.toHaveTextContent('Samantha Lee');
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });

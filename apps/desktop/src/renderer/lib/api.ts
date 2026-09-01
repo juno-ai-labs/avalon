@@ -1,6 +1,5 @@
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
-  ActivitySuggestionSchema as WireActivitySuggestionSchema,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationAgentSnapshotSchema as WireAutomationAgentSnapshotSchema,
   AutomationDraftTurnAdmissionResultSchema as WireAutomationDraftTurnAdmissionResultSchema,
@@ -58,7 +57,9 @@ import {
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
   ProjectDirectorySchema as WireProjectDirectorySchema,
   ProjectSummarySchema as WireProjectSummarySchema,
+  ReorderPendingLoopInputsResultSchema,
   type CreateProjectRequest,
+  type PendingTranscriptInput,
   type ProjectDirectory,
   type ProjectSummary,
   type UpdateProjectPresentationRequest,
@@ -76,7 +77,6 @@ import { logDebug } from '../../common/logger';
 import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import type {
-  ActivitySuggestionData,
   AgentModelOverride,
   AutomationCreateOptions,
   AutomationDeliveryTargetType,
@@ -313,7 +313,9 @@ export function mapResource(resource: WireResource | WireWorkstreamResource): Wo
     contentAvailable: resource.contentAvailable,
     sizeBytes: resource.sizeBytes,
     currentVersion: resource.currentVersion,
-    relationshipType: 'relationshipType' in resource ? resource.relationshipType : 'attachment',
+    relationshipType: 'relationshipType' in resource && resource.relationshipType !== 'suggested_activity'
+      ? resource.relationshipType
+      : 'attachment',
     direction: 'direction' in resource ? resource.direction : 'source',
   };
 }
@@ -371,23 +373,14 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
       ? { ...workstream.nextPendingWakeup }
       : null,
     pinPosition: workstream.pinPosition,
+    participantUserIds: [...workstream.participantUserIds],
+    participantExtraCount: workstream.participantExtraCount,
     preview: workstream.objective,
   };
 }
 
 export function mapElicitation(elicitation: WireElicitation): ElicitationData {
   return normalizeElicitation(elicitation);
-}
-
-export function mapSuggestion(suggestion: z.infer<typeof WireActivitySuggestionSchema>): ActivitySuggestionData {
-  return {
-    id: suggestion.id,
-    title: suggestion.title,
-    source: 'Activity',
-    occurredAt: suggestion.createdAt,
-    reason: suggestion.reason,
-    status: suggestion.status,
-  };
 }
 
 export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationSchema>): ToolEventData {
@@ -445,7 +438,6 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
     connections: workstream.connections.map(mapConnection),
     backgroundTasks: (workstream.backgroundTasks ?? []).map(mapBackgroundTask),
     openElicitations: workstream.openElicitations.map(mapElicitation),
-    suggestions: workstream.suggestions.map(mapSuggestion),
     automationRuns: [],
     ...(workstream.modelOverride ? { modelOverride: workstream.modelOverride } : {}),
     ...(workstream.automationSubscriptionId ? { automationSubscriptionId: workstream.automationSubscriptionId } : {}),
@@ -757,6 +749,34 @@ export class RallyApi {
     if (!response.ok) return this.throwResponseError(response);
   }
 
+  /**
+   * Opens the authenticated raw-PCM response without buffering it. Credential
+   * renewal is complete before the body is handed to Web Audio, so a replay
+   * can never splice two provider streams into one audible response.
+   */
+  async streamMessageSpeech(markdown: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+    const path = '/speech';
+    const headers = new Headers({
+      Accept: 'application/octet-stream',
+      'Content-Type': 'application/json',
+    });
+    const response = await this.traced(path, 'POST', undefined, headers, () => this.execute(path, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ markdown }),
+      signal,
+    }));
+    if (!response.ok) return this.throwResponseError(response);
+    if (!response.body) {
+      throw new ApiError('The speech service returned no audio stream.', 502, 'unexpected_empty_response');
+    }
+    if (response.headers.get('content-type') !== 'audio/pcm;rate=24000;channels=1;bits=16;endian=little') {
+      void response.body.cancel().catch(() => undefined);
+      throw new ApiError('The speech service returned an unsupported audio format.', 502, 'invalid_response');
+    }
+    return response.body;
+  }
+
   async getWorkspace(signal?: AbortSignal): Promise<Workspace> {
     const raw = await this.request('/workspace', { schema: WireWorkspaceSchema, signal });
     let currentUser: WorkspaceMember | undefined = this.session?.user
@@ -984,6 +1004,8 @@ export class RallyApi {
       firstUnreadSequenceNumber: null,
       nextPendingWakeup: null,
       pinPosition: null,
+      participantUserIds: [],
+      participantExtraCount: 0,
     };
   }
 
@@ -1602,6 +1624,26 @@ export class RallyApi {
     await this.requestVoid(`/workstreams/${encodeURIComponent(id)}/stop`, { method: 'POST' });
   }
 
+  /**
+   * Send the visible pending-input queue's new order after a drag.
+   *
+   * The whole arrangement travels, not the row that moved: the object
+   * permutes existing `input_sequence` values. Ids that have already been
+   * delivered are ignored rather than refused, and visible pending inputs
+   * the caller does not name keep their relative order behind the ones it
+   * did.
+   */
+  async reorderPendingLoopInputs(
+    id: string,
+    inputIds: string[],
+  ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/pending-inputs`, {
+      method: 'PUT',
+      body: { inputIds },
+      schema: ReorderPendingLoopInputsResultSchema,
+    });
+  }
+
   async retryHarness(id: string): Promise<{ harnessRunId: string }> {
     return this.request(`/workstreams/${encodeURIComponent(id)}/retry`, {
       method: 'POST',
@@ -1637,13 +1679,6 @@ export class RallyApi {
         ? { skipped: true }
         : { answer, ...(customResponse ? { customResponse } : {}) },
       schema: z.object({ elicitation: WireElicitationSchema.optional() }).strict(),
-    });
-  }
-
-  async resolveActivitySuggestion(id: string, suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> {
-    await this.request(`/workstreams/${encodeURIComponent(id)}/activities/${encodeURIComponent(suggestionId)}/${action}`, {
-      method: 'POST',
-      schema: z.object({ suggestion: WireActivitySuggestionSchema.optional(), resourceId: z.string().nullable() }),
     });
   }
 

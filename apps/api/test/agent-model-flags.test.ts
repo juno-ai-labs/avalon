@@ -174,7 +174,6 @@ describe("agent model flags", () => {
     expect(defaultAgentModelRouting(baseEnv, "automation_compiler").model).toBe("x-ai/grok-4.5");
     expect(defaultAgentModelRouting(baseEnv, "addressing_classifier").model).toBe("google/gemini-2.5-flash-lite");
     expect(defaultAgentModelRouting(baseEnv, "workstream_naming").model).toBe("google/gemini-2.5-flash-lite");
-    expect(defaultAgentModelRouting(baseEnv, "activity_structured").model).toBe("google/gemini-2.5-flash-lite");
     expect(defaultAgentModelRouting(baseEnv, "block_dashboard")).toEqual({
       model: BLOCK_DASHBOARD_MODEL,
       fallbackModels: [],

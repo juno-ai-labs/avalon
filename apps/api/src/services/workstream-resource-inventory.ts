@@ -54,7 +54,7 @@ export function renderWorkstreamResourceInventoryAggregate(input: {
     ...groups,
     "",
     "Use workstream_list_resources with attachmentKind, limit, and cursor to list exact resources.",
-    "Allowed attachmentKind values: image, markdown, pdf, document, spreadsheet, presentation, text, other.",
+    `Allowed attachmentKind values: ${ATTACHMENT_KIND_ENTRIES.map(({ kind }) => kind).join(", ")}.`,
     "First page: { attachmentKind: \"<one allowed value>\", limit: 25 }. Continuation: { cursor: \"<nextCursor>\" }.",
     "Follow nextCursor until it is null when complete coverage is required.",
   ].join("\n");

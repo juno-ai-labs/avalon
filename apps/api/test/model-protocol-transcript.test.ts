@@ -515,7 +515,7 @@ describe("durable UI-to-model transcript projection", () => {
   });
 
   it("uses one provider projection for live external, mention, attachment, and elicitation inputs", async () => {
-    const external = await projectParticipantModelMessage({} as Pick<Env, "PAYLOADS" | "DB" | "IMAGES">, {
+    const external = await projectParticipantModelMessage({} as Pick<Env, "PAYLOADS" | "DB" | "IMAGES" | "DOCUMENT_PROCESSOR">, {
       author: {
         type: "external",
         actor: { provider: "slack", displayName: "Taylor", providerUserId: "U456" },
@@ -530,7 +530,7 @@ describe("durable UI-to-model transcript projection", () => {
     expect(external?.content).toContain("EXTERNALLY ATTRIBUTED SLACK WORKSPACE MEMBER REQUEST");
     expect(external?.content).toContain("Provider member ID: U456");
 
-    const human = await projectParticipantModelMessage({} as Pick<Env, "PAYLOADS" | "DB" | "IMAGES">, {
+    const human = await projectParticipantModelMessage({} as Pick<Env, "PAYLOADS" | "DB" | "IMAGES" | "DOCUMENT_PROCESSOR">, {
       author: { type: "human" },
       messageType: "text",
       text: "Review this with @Ada",
@@ -550,7 +550,7 @@ describe("durable UI-to-model transcript projection", () => {
       expect.objectContaining({ type: "text", text: expect.stringContaining("evidence.pdf") }),
     ]);
 
-    const elicitation = await projectParticipantModelMessage({} as Pick<Env, "PAYLOADS" | "DB" | "IMAGES">, {
+    const elicitation = await projectParticipantModelMessage({} as Pick<Env, "PAYLOADS" | "DB" | "IMAGES" | "DOCUMENT_PROCESSOR">, {
       author: { type: "human" },
       messageType: "elicitation",
       text: "",

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, FileText, FolderPlus, RotateCcw, Trash2, UserPlus } from 'lucide-react';
+import { Archive, FileText, FolderPlus, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -15,6 +15,7 @@ import {
   Button,
   DropdownSelect,
   EmptyState,
+  IconButton,
   InlineError,
   LoadingState,
   Modal,
@@ -239,33 +240,51 @@ export function ProjectSpaceScreen(): React.JSX.Element {
           <UserPlus aria-hidden="true" size={13} />
           <span className="sr-only">Add participant</span>
         </button>}
-        <Button onClick={() => {
-          if (!api) return;
-          if (project.status === 'active') {
-            setArchiveConfirmOpen(true);
-            return;
-          }
-          setError(null);
-          void api.restoreProject(project.id).then((restored) => {
-            queryClient.setQueryData<ProjectDirectory>(['projects-inactive'], (current) => current ? {
-              ...current,
-              items: current.items.filter((item) => item.id !== restored.id),
-            } : current);
-            queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
-              ...current,
-              items: current.items.some((item) => item.id === restored.id)
-                ? current.items.map((item) => item.id === restored.id ? restored : item)
-                : [...current.items, restored],
-            } : current);
-          }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'The project could not be updated.'));
-        }}>{project.status === 'active' ? <><Archive aria-hidden="true" size={15} /> Archive project</> : <><RotateCcw aria-hidden="true" size={15} /> Restore project</>}</Button>
+        {project.status === 'active' ? (
+          <IconButton
+            className="icon-button-danger"
+            label="Archive project"
+            onClick={() => {
+              if (!api) return;
+              setArchiveConfirmOpen(true);
+            }}
+          >
+            <Archive aria-hidden="true" size={15} />
+          </IconButton>
+        ) : (
+          <Button onClick={() => {
+            if (!api) return;
+            setError(null);
+            void api.restoreProject(project.id).then((restored) => {
+              queryClient.setQueryData<ProjectDirectory>(['projects-inactive'], (current) => current ? {
+                ...current,
+                items: current.items.filter((item) => item.id !== restored.id),
+              } : current);
+              queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
+                ...current,
+                items: current.items.some((item) => item.id === restored.id)
+                  ? current.items.map((item) => item.id === restored.id ? restored : item)
+                  : [...current.items, restored],
+              } : current);
+            }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'The project could not be updated.'));
+          }}><RotateCcw aria-hidden="true" size={15} /> Restore project</Button>
+        )}
         </div>
       </header>
       <section className="project-space-section" aria-labelledby="project-workstreams-heading">
-        <div className="project-space-section-heading"><h2 id="project-workstreams-heading">Work streams</h2></div>
+        <div className="project-space-section-heading">
+          <h2 id="project-workstreams-heading">Work streams</h2>
+          <IconButton
+            disabled={project.status !== 'active'}
+            label={`New work stream in ${project.name}`}
+            onClick={() => void navigate(`/projects/${project.id}/workstreams/new`)}
+          >
+            <Plus aria-hidden="true" size={15} />
+          </IconButton>
+        </div>
         {members.length === 0
           ? project.workstreamIds.length === 0
-            ? <EmptyState title="No work streams yet" description="Start one with the plus button beside this project in the sidebar." />
+            ? <EmptyState title="No work streams yet" description={project.status === 'active' ? 'Start one with the plus button in this section.' : 'This archived project has no work streams.'} />
             : <EmptyState title={`${project.workstreamIds.length} work stream${project.workstreamIds.length === 1 ? '' : 's'}`} description="Load more recent work streams in the sidebar to see every project member." />
           : <div className="waiting-workstream-list project-workstream-table">{members.map((workstream) => (
             <div className="project-workstream-table-row" key={workstream.id}>

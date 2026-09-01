@@ -105,8 +105,15 @@ run. The script is idempotent and re-runs repair partial imports.
 pnpm dev:api:local       # both regions, remote bindings disabled
 ```
 
+If that command exits without either Worker binding a port, read the
+container-flag note below before debugging anything else.
+
 `scripts/dev-regional-api.mjs` starts Global first and waits for Wrangler's
 ready signal before starting EU. The Workers then run concurrently as before.
+Each regional command supplies the API, document-processing, and Terminal
+provider configs to one Wrangler multi-Worker session, so local calls use the
+same typed Service Bindings as production without loading provider modules from
+a request handler.
 This short serialization is required because both regional configs build the
 same crash-symbolicator Container image; concurrent Wrangler image builds can
 remove one another's transient local tag and leave both Workers unable to start.
@@ -126,6 +133,30 @@ during ordinary local work, so disabling them costs nothing here; `pnpm dev:api`
 still builds the image and is the path to use when the symbolicator itself is
 what you are working on.
 
+**That flag does not survive a multi-config session in every wrangler, and
+`dev:api:local` is one.** The symptom is `Preparing container image(s)…`
+followed by the Docker error above, in spite of `--enable-containers=false`; the
+Workers never bind their ports, so the whole command fails rather than starting
+without containers. Each regional command passes three `--config` files — the
+API, document-processing and Terminal Workers — and it is the second and third
+that lose the flag: the same command with one `--config` is ready in about two
+seconds and builds no image. `"dev": { "enable_containers": false }` in the
+config is ignored the same way, in the main config and in all three. Observed on
+4.126.0, which the `wrangler: latest` in `apps/api/package.json` resolved to at
+the time of writing — check which version you have before assuming the note
+still applies, and delete it once a newer one honours the flag.
+
+Until then, the local workaround is to delete the `containers` array from
+`wrangler.global.jsonc` and `wrangler.eu.jsonc` for the session; the
+`CRASH_SYMBOLICATOR` Durable Object binding can stay, and both regions come up
+normally. **That edit must not be committed, and while it is in place
+`pnpm test` is red** — `apps/api/test/crash-symbolicator-config.test.ts` asserts
+the exact `containers` entry in both files, deliberately, so that an accidental
+commit fails the gate rather than silently shipping a deploy with no
+symbolicator. A red `crash symbolicator deployment` suite while this workaround
+is applied is that guard working; restore the configs rather than changing the
+test.
+
 `wrangler.global.jsonc` declares an `ai` binding, and Workers AI has no local
 implementation — wrangler reports it as `Mode: remote` and opens a remote proxy
 session to Cloudflare to serve it. Without Cloudflare credentials, or behind a
@@ -141,10 +172,11 @@ healthy region is torn down with the failed one, so the symptom is "no server at
 all" rather than "no AI binding". `wrangler dev --local` disables remote bindings
 and both regions start in about two seconds.
 
-What that costs: `env.AI` is unavailable, so the memory-embedding paths in
-`apps/api/src/services/memory-service.ts` cannot run. `env.MEMORY_INDEX`
+What that costs: `env.AI` is unavailable, so Cloudflare-backed PDF OCR cannot
+run. Memory embeddings use OpenRouter instead, but `env.MEMORY_INDEX`
 (Vectorize) is reported as `not supported` by `wrangler dev` in every local run,
-remote bindings or not, so nothing is lost there. `env.FLAGS` (Flagship) is also
+remote bindings or not, so end-to-end hybrid retrieval is still unavailable.
+`env.FLAGS` (Flagship) is also
 reported `not supported`, because Flagship bindings are always remote — but
 unlike the others the binding object is still present, and it is each *call*
 that rejects with `Binding FLAGS needs to be run remotely`. Every agent then
@@ -216,7 +248,7 @@ workspace with its work streams, automations, and onboarding checklist.
 
 ## What cannot be verified in a sandbox
 
-- **Workers AI** (`env.AI`), **Vectorize** (`env.MEMORY_INDEX`), and **Flagship**
+- **Workers AI PDF OCR** (`env.AI`), **Vectorize** (`env.MEMORY_INDEX`), and **Flagship**
   (`env.FLAGS`), per above. Served flag values cannot be exercised locally; the
   Worker-variable fallback they resolve to can.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local
@@ -263,7 +295,7 @@ an older worktree so the smoke test sees both fixtures.
 | Regenerate the D1 baseline | `pnpm db:baseline:create <through-migration.sql>` |
 | Check the baseline against the hosted databases | `pnpm db:baseline:verify` |
 | Seed both regions | `pnpm db:seed` |
-| Start both Workers (sandbox) | `pnpm dev:api:local` |
+| Start both Workers (sandbox) | `pnpm dev:api:local` (see the [container-flag note](#3-start-the-api-workers) if neither region binds a port) |
 | Start both Workers (workstation) | `pnpm dev:api` |
 | Global health | `curl -s http://127.0.0.1:8787/health` |
 | EU health | `curl -s http://127.0.0.1:8788/health` |
@@ -274,12 +306,12 @@ an older worktree so the smoke test sees both fixtures.
 ## Quality gate caches
 
 `pnpm lint` and `pnpm typecheck` both cache, which is the difference between a
-warm run of a few seconds and a cold one of about forty-five. Both caches are
+warm run of a few seconds and a cold one of about a minute. Both caches are
 gitignored, and CI checks out fresh, so neither changes what CI proves.
 
 | Gate | Cold | Warm | Cache |
 | --- | --- | --- | --- |
-| `pnpm lint` | ~45s | ~2s | `.eslintcache` |
+| `pnpm lint` | ~60s | ~2s | `.eslintcache` |
 | `pnpm typecheck` | ~45s | ~14s | `*.tsbuildinfo` beside each tsconfig |
 
 **The typecheck cache is sound.** TypeScript records the module graph it actually
@@ -295,10 +327,20 @@ contents and nothing else:
   of the key. Rewriting one to report on every file flagged 889 files cold and 1
   warm — the one being the rule file itself, which had changed. **Run
   `pnpm lint:fresh` after touching a rule.**
-- **A type-aware verdict that depends on another file is too**, more narrowly.
-  `consistent-type-imports` reads whether an imported symbol is a type, which
-  lives in the file it came from, so turning an export from a value into a type
-  does not re-lint its importers.
+- **A verdict that depends on another file is too**, and one rule reaches for
+  exactly that. `rally/durable-object-sync-transaction` asks the type checker
+  whether the callback handed to a synchronous boundary returns a Promise, which
+  an imported callee's own signature decides. Demonstrated: a helper exporting
+  `() => string`, passed as `transactionSync(() => prepare())`, lints clean;
+  flipping *only* the helper to `async` leaves the calling file byte-identical,
+  so a warm run reuses its cached pass while a cold run reports the violation.
+  **Run `pnpm lint:fresh` after changing the return type of anything passed into
+  `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`.**
+
+  `consistent-type-imports` used to be named here as a second such case, on the
+  belief that it asks the exporting file whether a symbol is a type. It does not:
+  it reads only how the import is used in the importing file, and flipping an
+  export from `const Thing` to `type Thing` leaves its verdict unchanged.
 
 Both were accepted deliberately: the p90 run changes neither, and CI runs cold.
 When a local green looks implausible, `pnpm lint:fresh` is the first thing to
@@ -315,6 +357,61 @@ typecheck that proves less than it says. CI runs cold, so the merge gate is
 unaffected; locally, give the second session
 [its own worktree](#working-in-a-second-checkout-or-worktree) rather than
 sharing the clone.
+
+## What `pnpm lint` costs in memory
+
+**A cold `pnpm lint` peaks at about 4 GB of resident memory, and almost none of
+that is work — it is TypeScript programs the run never releases and a heap
+ceiling nothing bounds.** Two things decide the number:
+
+- **Type-aware parsing is per tsconfig, and nothing frees it.**
+  `parserOptions.projectService` opens each linted file in a TypeScript language
+  service, which loads that file's whole tsconfig program and keeps it for the
+  life of the process. So the cost is the *sum* over every package the run
+  touches: linted alone, `apps/api` measured 2.7 GB, `apps/desktop` 1.9 GB, and
+  `packages/*` 1.1 GB; a repo-wide `projectService` over the whole tree cost
+  4.7 GB against 0.9 GB with no type information at all. `eslint.config.mjs`
+  therefore scopes it to `apps/api/src`, and puts it in the same config object
+  as the rule that needs it so the two cannot drift apart. **Every figure in
+  this section is peak resident memory summed across the run's Node processes**
+  — what the machine has to supply, which is what a runner runs out of.
+- **V8's default heap limit is half of physical memory, so RSS tracks the
+  machine rather than the workload.** The live set is far smaller than the peak:
+  the same run completes under `--max-old-space-size=1536` at 1.6 GB, and only
+  fails below about 1 GB. Everything above that is a garbage collector with no
+  reason to run yet.
+
+**`--concurrency` multiplies both.** ESLint's parallelism is worker threads, and
+each thread builds its own programs *and* gets its own copy of the heap ceiling —
+so on a four-core machine the repo-wide config peaked at 6.5 GB and bought 12
+seconds. `pnpm lint` runs single-threaded for that reason, and CI is the case
+that forced it: Node sets its default ceiling at roughly half of physical memory
+(8.2 GB of a 16 GB sandbox, measured), so on a 7 GB runner two worker threads at
+about 3.5 GB each are the whole machine before the first program is even built.
+That arithmetic is why the fix is structural rather than a larger runner.
+
+`pnpm lint` itself pins no heap ceiling, so a local run gets Node's default.
+CI sets one: the `lint` and `typecheck-and-build-invariants` lanes in
+`ci.yml` carry `NODE_OPTIONS: --max-old-space-size=8192`, as do the macOS
+release job's verification steps. **A matrix key named `env` is only a
+variable — Actions gives it no meaning of its own** — so `ci.yml` names it
+explicitly on the run step, and a lane that sets nothing gets an empty
+`NODE_OPTIONS`, which Node ignores. A ceiling that is never named there is a
+ceiling that never applies, and the step's own `env:` group in the job log is
+where to check.
+
+Lowering that ceiling is the remaining lever if a runner still runs out, and it
+cuts both ways: `--max-old-space-size=2048` brought the same run to 1.9 GB in
+53s, faster than the 4.0 GB it takes unbounded, because a smaller heap is less
+to mark and compact. Below about 1 GB the run dies; at 1024 MB it survives but
+takes 98s, thrashing the collector.
+
+**That number is not lint's alone.** The same 8192 is on
+`typecheck-and-build-invariants`, which runs `pnpm typecheck`, two Wrangler
+dry-run builds, and the desktop release invariants — four Node processes whose
+memory nobody here has measured. It caps how large any of that may grow, so it
+is the team's to move rather than a measurement's to set, and a lane that starts
+failing on it wants its own measurement first.
 
 ## How many test workers to run
 

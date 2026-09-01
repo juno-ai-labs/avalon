@@ -20,9 +20,9 @@ object normalization already recorded; a connector whose work streams start
 somewhere an activity cannot describe — a Slack thread, a provider-hosted agent
 session — implements `ConnectorOriginSource` and the same host path carries it.
 Read this alongside [`connectors.md`](connectors.md) for what a resource is, and
-[`contextual-routing.md`](contextual-routing.md) for the *other* way connector
-activity reaches a work stream — a card someone accepts, which is a decision
-rather than a fact about how the work stream began.
+[`contextual-routing.md`](contextual-routing.md) for the historical card path
+that was removed. Current connector activity reaches an existing work stream
+only through an explicit watch or deterministic automation.
 
 Origin resources are always references at the model boundary. The message
 attachment manifest cutover does not copy connector origin content into a
@@ -208,21 +208,22 @@ attaches it where it attaches the email.
   re-attach path that cannot tell them apart would drop the only record of where
   the work stream came from.
 
-  A person still can: `DELETE /workstreams/:id/resources/:resourceId` removes an
-  origin like any other attachment, and the rail's **Remove** button offers it,
-  because `WorkstreamDetail` does not carry `relationship_type`. That is
-  deliberate for now — somebody who does not want a private channel's name
-  visible in a shared work stream should be able to take it out, and protecting
-  the row would mean a contract field, a disabled control, and a refusal that
-  nobody has asked for. Revisit it together with those three, not on its own.
+  A person still can: `DELETE /workstreams/:id/resources/:resourceId` unlinks an
+  origin like any other attachment, and the rail's **Archive** control offers it
+  after a continue/cancel confirm. The client already has `relationshipType` on
+  each `WorkstreamResource`; the UI does not consult it, so Archive is available
+  on an origin the same as on any other row. Protecting the row would mean a
+  disabled control and a server refusal that nobody has asked for, not a new
+  contract field. Revisit it together with those two, not on its own.
 
-  The rail's resource detail carries two more controls. The version list is
-  offered for any resource with more than one version. **Refresh from source**
-  additionally requires the server's `refreshSupported` capability, which is
-  true only when the deployed connector adapter implements `hydrateResource`.
-  An origin can therefore be refreshed only when its connector can fulfill the
-  same `POST /resources/:id/hydrate` request; a Slack channel origin never shows
-  a button whose endpoint would answer `hydration_not_supported`.
+  The rail's resource detail carries two more controls in the header: **Versions**
+  and **Archive**. **Versions** opens the resource's history, labelled with sparse
+  relative dates. **Refresh from source** still sits on the document itself and
+  additionally requires the server's `refreshSupported` capability, which is true
+  only when the deployed connector adapter implements `hydrateResource`. An origin
+  can therefore be refreshed only when its connector can fulfill the same
+  `POST /resources/:id/hydrate` request; a Slack channel origin never shows a
+  button whose endpoint would answer `hydration_not_supported`.
 - **An origin carries no provider content.** It records where something is, not
   what it said. Slack Agent policy makes this explicit — durably storing provider
   content gathered for surrounding context is forbidden — and the rule is the
@@ -251,10 +252,10 @@ It deliberately does **not** cover:
   origin does not go through: an origin is a fact the server observed, not a
   request a caller may make. `originResource` is therefore absent from
   `CreateWorkstreamRequestSchema` and cannot be asserted over the wire.
-- **Contextual routing.** The paused **Suggested context** surface offered an
-  activity to an *existing* work stream; if re-enabled, accepting one produces
-  an `attachment`, not an `origin`. See
-  [`contextual-routing.md`](contextual-routing.md).
+- **Retired Suggested context.** Existing accepted relationships are retained as
+  ordinary `attachment` links by the retirement migration. Their original source
+  audience remains an immutable content fence; no new cards or links are created.
+  See [`contextual-routing.md`](contextual-routing.md).
 - **Inbound email.** An automation run created from an address attaches its email
   resource itself, from the opening input frozen in its run context; that is
   `AutomationAgent`'s and is not rewritten here.
@@ -373,6 +374,65 @@ entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
 ## Changelog
+
+### 2026-08-30 — Archive waits for the unlink; Versions distinguishes loading from none
+
+**What changed:** **Archive** stays open until `detachResource` succeeds, keeps
+an inline error on failure, and is absent when the rail has no unlink handler.
+The confirm copy is the dialog's accessible description. **Versions** treats a
+pending history fetch as loading rather than as an empty list, and the document
+host `.inspector-detail-document` joined the markdown-element stylesheet guard.
+
+**Why:** Continue used to fire `mutate` and clear the inspector in the same
+tick, so a refused DELETE left the resource attached while the reader was back
+on the list, and Radix returned focus to a button that had unmounted. The docs
+had also claimed `WorkstreamDetail` lacked `relationship_type`; the client
+already has `relationshipType` and simply does not gate Archive on it.
+
+**What a future change has to respect:** do not call `inspect(null)` until the
+unlink resolves. Pending disables Cancel and Continue the way the sidebar's
+note-archive dialog does.
+
+### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
+
+**What changed:** The inspector's **Versions** control opens the standard header
+dropdown (`DropdownMenu` from the header `IconButton`) rather than swapping the
+document pane for a versions region. Sparse-date groups and current-by-list-position
+are unchanged. **Archive** stays the continue/cancel modal, and the icon is painted
+in the danger colour. A hairline (`sys.size.border.hairline` on
+`sys.color.border.subtle`) sits between last-updated and the document.
+
+**Why:** A pane swap hid the file the person opened the rail to read. The header
+already has a dropdown pattern for overflow actions; versions belong in that
+shape. Replacing the archive modal with a one-click menu item would drop the
+confirm the unlink still needs — Rally has no restore.
+
+**What a future change has to respect:** do not put versions back in
+`.rail-scroll`. The document stays on screen while the menu is open.
+
+### 2026-08-30 — Resource detail is the document, with Versions and Archive in the header
+
+**What changed:** Opening a resource puts its title in the rail header in place
+of "Details", drops the icon and the type/direction/version card, and renders
+last-updated with the markdown in the rail's own scroll rather than in a boxed
+inner preview. **Versions** and **Archive** are header icon buttons. Versions
+opens the history grouped under sparse relative dates (today, yesterday, this
+week, last week, this month, last month, or "Aug 2025"). Archive asks with a
+continue/cancel modal, then unlinks the resource the way **Remove** used to.
+
+**Why:** The boxed preview made a cited document look like a card about a
+document. The metadata rows were wiring, not what a person opens the rail to
+read. Versions belonged behind a control once the body became the whole pane;
+an unconfirmed unlink was too easy next to a document someone had just opened.
+
+**Considered and rejected:** A real `archived_at` on the resource row. Detach
+already leaves the workspace object in place and only drops the work-stream
+link, which is the soft-delete the rail can offer without a schema and a restore
+path nobody has asked for.
+
+**Consequences:** An origin is still unlinkable. The version list is no longer
+inline on the document, including for a resource that has only ever had one
+revision — opening Versions is how you see that one row.
 
 ### 2026-08-28 — Scope cut: an activity-triggered automation run loses its origin
 

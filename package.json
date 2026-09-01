@@ -1,6 +1,6 @@
 {
   "name": "rally",
-  "version": "1.203.0",
+  "version": "1.231.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.13.0",
@@ -46,7 +46,7 @@
     "test:scripts": "node --test scripts/*.test.mjs",
     "test:watch": "vitest",
     "typecheck": "pnpm -r --no-sort --if-present typecheck",
-    "lint": "eslint . --max-warnings=0 --concurrency=auto --cache",
+    "lint": "eslint . --max-warnings=0 --cache",
     "lint:fresh": "rm -f .eslintcache && pnpm lint",
     "build": "pnpm -r --if-present build",
     "package:desktop": "pnpm --filter @rally/desktop package:local",

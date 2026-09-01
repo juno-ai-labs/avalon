@@ -160,7 +160,8 @@ derived output, revision, epoch, and sequence;
 `block_dashboard_socket_ticket_receipts` provides one-time admission for the block's
 direct socket. It stores neither a copy of the source transcript nor one row per
 token. Each `SubstreamAgent` instead owns one stable `substream_loops` row,
-not-yet-canonical `pending_loop_inputs`, minimal immutable
+not-yet-canonical `pending_loop_inputs` whose prepared content is immutable
+and whose `input_sequence` is the live promotion order, minimal immutable
 `delivered_loop_inputs` replay receipts, exact `assistant_turn_reservations`,
 subordinate execution receipts in `runs`, and a
 Bind head rebuilt from canonical participant history when no stable projection
@@ -203,7 +204,7 @@ SQL joins.
   admission without consulting D1.
 - **`personal` means “an active participant” at every serving
   boundary.** Detail authorization, sockets, workspace lists, pins, visibility
-  checks, resource reads, Suggested Work, and contextual routing all use that
+  checks, resource reads, and Suggested Work all use that
   same rule. Creation seats the creator, but `created_by_user_id` is attribution,
   not a permanent authorization grant: `removeParticipant` revokes a creator in
   exactly the same way it revokes anybody else. Any current reader may remove
@@ -397,23 +398,19 @@ SQL joins.
   relationship and resource-inventory fence; WorkspaceDO owns resource metadata,
   workspace watches, and the inverted workspace index. `relationship_type` is
   constrained to `attachment`, `message_attachment`, `origin`, `generated`,
-  `suggested_activity`, `inbound_email`, or `context`. The work-stream-facing
+  `inbound_email`, or `context`. The work-stream-facing
   `direction` is derived from that relationship: `generated` is an `artifact`;
   every other relationship is a `source`. Direction is not stored on the shared
   resource because the same resource may be an artifact here and a source elsewhere.
   The `origin` relationship records what a work stream was created from — see
   [work-stream origin attachments](workstream-origin-attachments.md).
 - `elicitation_requests` is operational human-input state tied to a run.
-  `suggested_actions` is an audience-scoped operational overlay and is never
-  model or shared transcript input merely because it exists. Acceptance may
-  explicitly author a new audience-safe `parts` row; that new part, not the
-  private card body, enters conversation history.
 
 D1 retains a `workstreams` identity/routing anchor because control tables have
 foreign keys to the stable ID. It contains only `id`, `workspace_id`, and
 `do_identity_anchor`; a post-cutover row has `do_identity_anchor = 1`. Common/per-user
-list queries, pins, resource discovery, and resolved work-stream
-suggestion feedback use `WorkspaceDO`'s `workspace_workstream_*` tables. D1 has
+list queries, pins, and resource discovery use `WorkspaceDO`'s
+`workspace_workstream_*` tables. D1 has
 no projection fallback when that object is unavailable.
 
 ### Automations and execution
@@ -539,7 +536,7 @@ that schema's map; what follows is only what WorkspaceDO still holds.
 ### Activity log and digests
 
 - `WorkspaceDO.workspace_workstream_effect_receipts` is the inbox for queued
-  WorkstreamDO directory, activity, suggestion-feedback, resource-link, and
+  WorkstreamDO directory, activity, resource-link, and
   mention-delivery effects. Message ID and payload hash detect replay or
   conflict; generation and per-key waterlines reject stale mutable state.
 - `WorkspaceDO.workspace_workstream_directory` and
@@ -633,7 +630,12 @@ that schema's map; what follows is only what WorkspaceDO still holds.
   region, even when regional RPC calls arrive out of order.
 - `slack_installation_routes` is the opaque Global team-to-region directory;
   `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs`
-  remain regional.
+  remain regional — meaning *per region rather than Global*, not *in regional
+  D1*. All three are WorkspaceDO tables, reached through
+  `withWorkspaceRuntimeDatabase`; regional D1 has not had them since migration
+  0090. Reading the distinction the other way is what produced the
+  `slackUserIsLinked` incident below, and again the automation delivery-target
+  500 of 2026-08-31.
 - `automation_delivery_targets` is gone from WorkspaceDO. The destinations a
   personal automation copies its results to are now the acceptance row's frozen
   `deliveryTargets` inside that automation's own object, re-resolved on every
@@ -879,6 +881,73 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-30 — Suggested context storage was removed
+
+**What changed:** Current WorkspaceDO and SubstreamAgent schemas no longer
+contain feedback or suggested-action tables, and `suggested_activity` is no
+longer a valid resource relationship. Forward migrations preserve an accepted
+resource as an ordinary `attachment`, preserve its source audience in the
+generic `content_audience_fences` table, and discard pending cards and feedback.
+
+**Why:** The Suggested context feature was removed end to end. Keeping its
+operational schema would leave a second, unused content-routing authority.
+
+**Considered and rejected:** Leaving empty tables in place for history. The
+append-only migration ledger and this changelog retain the history without
+making current code or schema continue to own it.
+
+**Consequences:** Historical migration SQL still names the retired tables and
+relationship so deployed hashes remain valid; the live schema does not. The
+generic fence stores no suggestion status or display state, but remains
+immutable for the attachment's lifetime and blocks audience widening.
+
+### 2026-08-30 — Pending loop `input_sequence` is the live queue order
+
+**What changed:** SubstreamAgent schema v34 recreates
+`pending_loop_inputs_prepared_immutable` so `input_sequence` can be updated
+while every prepared column stays frozen. Visible pending ids are permuted
+in place; `next_input_sequence` is not consumed and loop revision does not
+move.
+
+**Why:** Promotion order has to be a live, multi-viewer queue. Minting a new
+pending row to "move" one would duplicate an immutable prepared payload.
+Bumping loop revision would trip the in-flight execution fence.
+
+**Considered and rejected:** Editing shipped v33 to drop `input_sequence`
+from the original trigger. Existing objects have already hashed that
+migration. Also rejected: assigning fresh sequences from
+`next_input_sequence`, which would change the values promotion already
+reserved behind a preparing mailbox head.
+
+**Consequences:** A drag is a content-preserving sequence permute of the
+currently visible set. Hidden pending rows keep the sequences they already
+hold. Prepared-field updates still abort.
+
+### 2026-08-29 — Memory vectors move to a versioned OpenRouter embedding space
+
+**What changed:** WorkspaceDO migration 23 requeues each active memory item's
+current vector projection after durable-memory embeddings move from Workers AI
+to the fixed `qwen/qwen3-embedding-8b` OpenRouter model. The projection writes
+into a namespace derived from the model, dimension contract, and an explicit
+space version, so old vectors are never queried while the new corpus rebuilds.
+
+**Why:** Equal vector dimensions do not make embeddings from independently
+trained models comparable. Reusing the existing 1,024-dimensional Vectorize
+indexes avoids destructive index replacement, but it requires a hard boundary
+between the old and new coordinate spaces and a durable way to wake existing
+workspace objects for reconstruction.
+
+**Considered and rejected:** Mixing vectors because both providers return
+1,024 values, and exposing the embedding model through Flagship. The first
+silently corrupts retrieval; the second can change query embeddings without an
+atomic corpus rebuild. A future model change therefore requires another schema
+migration or an equivalent explicit rebuild and cutover.
+
+**Consequences:** The requeue preserves invalidated, expired, and historical
+revisions as retired. Until an active row is re-embedded, vector retrieval
+misses it and hybrid search degrades to FTS rather than matching it in the wrong
+space.
 
 ### 2026-08-29 — The runtime router answers for `automation_directory`, and every object table is now a decision
 

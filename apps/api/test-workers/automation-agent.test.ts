@@ -14,7 +14,7 @@ import {
   materializeAutomationMemoryDefinitions,
 } from "../src/durable-objects/automation-agent-memory";
 import { canonicalTranscriptJson } from "../src/durable-objects/ordered-transcript-sqlite/canonical-payload-store";
-import { automationAgentName } from "../src/durable-objects/names";
+import { automationAgentName, workspaceDOName } from "../src/durable-objects/names";
 import { sha256 } from "../src/lib/crypto";
 import type { Env } from "../src/env";
 import { AutomationAgentService } from "../src/services/automation-agent-service";
@@ -44,6 +44,92 @@ beforeEach(async () => {
      VALUES ('amber-cobalt-jade-river', 'global', ?, NULL, ?, '2026-08-28T00:00:00.000Z', '2026-08-28T00:00:00.000Z')`,
   ).bind(WORKSPACE_ID, AUTOMATION_ID).run();
 });
+
+/** The compiled definition a create test submits, in the shape the object stores. */
+function readyDefinition(name: string) {
+  return {
+    name,
+    description: "Summarize unread email every weekday morning.",
+    overview: "Each weekday at 9:00 AM, write a short digest.",
+    instructions: "Summarize the unread email, most important first.",
+    triggers: [{ type: "manual" as const }],
+    requiredCapabilities: [],
+    expectedOutputs: [],
+    requestedDelivery: [],
+    defaultBehavior: {},
+    recommendedPlugins: [],
+    memoryTables: [],
+    suggestedScope: "personal" as const,
+    followUpQuestion: null,
+    elicitation: null,
+    ready: true,
+  };
+}
+
+/**
+ * An automation whose first turn is admitted and whose compiler run settled on
+ * one ready definition — the state a person is in when they press Create.
+ *
+ * The compiler run is marked `completed` inside the same invocation that admits
+ * it. `admitDraftTurn` arms a dispatch alarm for `now`, and the tests below go
+ * on asserting from outside this callback: the patched `executeCompilerRun`
+ * covers the window before the update lands, and the settled row is what makes
+ * a drain on a fresh instance after eviction a no-op rather than a real
+ * compiler run against the placeholder provider key.
+ */
+async function seedReadyDraft(definition: ReturnType<typeof readyDefinition>): Promise<void> {
+  await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+    (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
+    const admission = await instance.admitDraftTurn({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      authorUserId: AUTHOR_ID,
+      region: "global",
+      clientMessageId: CLIENT_MESSAGE_ID,
+      content: "Summarize my unread email every weekday at 9am",
+      attachmentIds: [],
+      inputMode: "typed",
+    });
+    state.storage.sql.exec(
+      `UPDATE automation_compiler_runs SET state = 'completed', settled_at = 1 WHERE run_id = ?`,
+      admission.compilerRunId,
+    );
+    state.storage.sql.exec(
+      `INSERT INTO automation_definition_revisions
+         (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
+       VALUES (1, ?, ?, 'sha256:definition', 1, 1)`,
+      admission.compilerRunId,
+      JSON.stringify(definition),
+    );
+    state.storage.sql.exec(
+      `UPDATE automation_state SET definition_revision = 1, title = ? WHERE id = 1`,
+      definition.name,
+    );
+  });
+}
+
+/** The REST boundary, as the author of the seeded draft. */
+function authorService(): AutomationAgentService {
+  const testEnv: Env = env;
+  return new AutomationAgentService(testEnv, {
+    sessionId: "session-1",
+    userId: AUTHOR_ID,
+    workspaceId: WORKSPACE_ID,
+    region: "global",
+    role: "member",
+  });
+}
+
+/** Acceptance registers evaluators on WorkspaceDO, and an object that has never
+ * been addressed refuses every caller with `workspace_object_identity_mismatch`.
+ * Pinning the identity through the method that exists for it keeps an
+ * acceptance assertion a real round trip rather than a patched `workspace()`. */
+async function pinWorkspaceIdentity(): Promise<void> {
+  await env.WORKSPACE_DOS
+    .get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
+    .initializeWorkspace(WORKSPACE_ID, "wnam");
+}
 
 describe("AutomationAgent", () => {
   it("persists identity, the first human turn, and one compiler admission before dispatch", async () => {
@@ -341,6 +427,180 @@ describe("AutomationAgent", () => {
     await expect(service.detail(AUTOMATION_ID)).rejects.toMatchObject({
       status: 404,
       code: "automation_identity_missing",
+    });
+  });
+
+  it("refuses a submitted draft that is not the definition the object stored", async () => {
+    // Decided in `AutomationAgentService` before `acceptDraft` is called, so it
+    // never reached `withAutomationErrors` and answered `500 internal_error` /
+    // "An unexpected error occurred" — no next step for the person, at error
+    // severity, under the one status a client backing off on 5xx retries.
+    // A compiler turn settling while somebody reviews the summary is the
+    // ordinary way in.
+    const definition = readyDefinition("Weekday digest");
+    await seedReadyDraft(definition);
+
+    await expect(authorService().accept({
+      draftId: AUTOMATION_ID,
+      draft: { ...definition, description: "Summarize unread email every weekday, with links." },
+      scope: "personal",
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "automation_definition_revision_stale",
+      message: "This draft changed while you were reviewing it. Review the updated draft, then create it again.",
+    });
+  });
+
+  it("refuses a create that names no draft", async () => {
+    // The other refusal `accept` decides for itself, and the other bare throw.
+    // Its own test because the assertion above aborts this file's `it` on
+    // failure, so a single test would only ever prove whichever came first.
+    const definition = readyDefinition("Weekday digest");
+    await seedReadyDraft(definition);
+
+    await expect(authorService().accept({ draft: definition, scope: "personal" }))
+      .rejects.toMatchObject({
+        status: 422,
+        code: "automation_draft_id_required",
+        message: "This automation has no draft to create from.",
+      });
+  });
+
+  it("still accepts the draft the object actually holds", async () => {
+    // The refusals are the boundary's, not a blanket rejection. Without this,
+    // a comparison that refused everything would pass both tests above.
+    const definition = readyDefinition("Weekday digest");
+    await seedReadyDraft(definition);
+    await pinWorkspaceIdentity();
+
+    await expect(authorService().accept({
+      draftId: AUTOMATION_ID,
+      draft: definition,
+      scope: "personal",
+    })).resolves.toMatchObject({ id: AUTOMATION_ID, name: "Weekday digest", status: "active" });
+  });
+
+  it("answers a directory membership refusal as 403, not a 500 and not a conflict", async () => {
+    // `list` reached WorkspaceDO outside `withAutomationErrors` for the same
+    // reason `accept` did, so a member removed from the workspace between
+    // `requireAuth`'s membership read and this one got 500. 403 rather than the
+    // `SAFE_CODE` fallback's 409 is the point of the table row: 409 is the
+    // status a client retries, and retrying is the one thing that never turns a
+    // non-member into a member.
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
+      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, user_id))`).run();
+    // An active row for the author, so the refusal below is the membership
+    // predicate deciding rather than an empty table. Without it the test
+    // survives `if (true) throw new Error("automation_directory_access_denied")`.
+    await env.DB.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, status) VALUES (?, ?, 'active')`,
+    ).bind(WORKSPACE_ID, AUTHOR_ID).run();
+    await pinWorkspaceIdentity();
+
+    const testEnv: Env = env;
+    const member = {
+      sessionId: "session-2",
+      userId: AUTHOR_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global" as const,
+      role: "member" as const,
+    };
+
+    await expect(new AutomationAgentService(testEnv, member).list()).resolves.toEqual({ items: [] });
+    await expect(new AutomationAgentService(testEnv, {
+      ...member,
+      userId: asUserId("00000000-0000-7000-8000-0000000000b9"),
+    }).list()).rejects.toMatchObject({
+      status: 403,
+      code: "automation_directory_access_denied",
+      message: "You do not have access to this workspace's automations.",
+    });
+  });
+
+  it("answers an ApiError raised inside the object with its own status, not a 500", async () => {
+    // The premise `withAutomationErrors` was built on — "a failure inside the
+    // object is a bare `Error` whose message is a stable snake_case code" — is
+    // true of the object's own refusals and false of the collaborators it calls
+    // inside a request. `acceptDraft` reaches `WorkstreamEmailRoutingService`,
+    // which throws `ApiError`; the live case is the 503 an EU region raises when
+    // the Global address registry is unreachable, on every create.
+    //
+    // What this asserts is the outcome — the member gets the author's status and
+    // code, never `500 internal_error`. It does not discriminate the mechanism:
+    // this pool preserves the class across the hop, so it passes with
+    // `apiErrorAcrossRpc` removed. That rebuild is for the boundary where the
+    // class is lost, which nothing here can reproduce; the comment on it says
+    // so rather than letting this test imply a proof it does not carry.
+    const key = env.WORKSTREAM_EMAIL_ADDRESS_KEY;
+    const signing = env.SESSION_SIGNING_KEY;
+    // Short rather than absent: absent falls back to the signing key in a
+    // non-production environment, and this has to reach the throw.
+    (env as { WORKSTREAM_EMAIL_ADDRESS_KEY?: string }).WORKSTREAM_EMAIL_ADDRESS_KEY = "too-short";
+    (env as { SESSION_SIGNING_KEY?: string }).SESSION_SIGNING_KEY = "";
+    try {
+      const definition = readyDefinition("Address-less automation");
+      await seedReadyDraft(definition);
+      await pinWorkspaceIdentity();
+      // The seeded route row short-circuits the reservation before it reads the
+      // key, so this test needs the automation to have no address yet.
+      await env.DB.prepare(
+        `DELETE FROM workstream_email_routes WHERE automation_subscription_id = ?`,
+      ).bind(AUTOMATION_ID).run();
+
+      await expect(authorService().accept({
+        draftId: AUTOMATION_ID,
+        draft: definition,
+        scope: "personal",
+      })).rejects.toMatchObject({
+        status: 503,
+        code: "workstream_email_key_invalid",
+      });
+    } finally {
+      const restore = env as { WORKSTREAM_EMAIL_ADDRESS_KEY?: string | undefined; SESSION_SIGNING_KEY: string };
+      restore.WORKSTREAM_EMAIL_ADDRESS_KEY = key;
+      restore.SESSION_SIGNING_KEY = signing;
+    }
+  });
+
+  it("refuses a create against a draft the compiler has not compiled yet", async () => {
+    // `admitFirstTurn` answers with the automation's id as soon as the turn is
+    // durable, so a caller can reach `accept` before any definition revision
+    // exists. `AutomationDraftSchema.parse(null)` threw a `ZodError` from
+    // between the two refusals this change fixed, which is the same 500 by
+    // another route.
+    const stub = automationStub();
+    await runInDurableObject(stub, async (instance: AutomationAgent) => {
+      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
+      await instance.admitDraftTurn({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        clientMessageId: CLIENT_MESSAGE_ID,
+        content: "Watch the release channel",
+        attachmentIds: [],
+        inputMode: "typed",
+      });
+    });
+
+    await expect(authorService().accept({
+      draftId: AUTOMATION_ID,
+      draft: {
+        name: "Not compiled yet",
+        description: "Nothing has been compiled for this draft.",
+        overview: "Nothing has been compiled for this draft.",
+        instructions: "Nothing has been compiled for this draft.",
+        triggers: [{ type: "manual" as const }],
+        suggestedScope: "personal" as const,
+        followUpQuestion: null,
+        ready: true,
+      },
+      scope: "personal",
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "automation_definition_not_ready",
     });
   });
 

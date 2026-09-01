@@ -6,8 +6,7 @@ import type { AuthContext, Env } from "../src/env";
 import { encryptString, sha256 } from "../src/lib/crypto";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { SlackAgentService } from "../src/services/slack-agent-service";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
-import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
+import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   createTestWorkspaceDO,
   SLACK_WORKSPACE_OBJECT_METHODS,
@@ -294,25 +293,22 @@ describe("Slack account linking", () => {
 
   it("consumes the challenge exactly once", async () => {
     const database = await seededDatabase();
-    await seedChallenge(database, "fresh-token", { expiresAt: "2099-01-01T00:00:00.000Z" });
+    // Linking does three things that reach the workspace object: it consumes
+    // the challenge, it seats the member's Slack sessions through a typed
+    // method, and it republishes App Home from the member's task list. None of
+    // them is what this test is about, but all three have to work or the
+    // challenge is never consumed — so this runs against the real object, and
+    // the challenge is seeded where the routed read finds it rather than in the
+    // regional fixture the facade used to answer from.
+    const { instance, objectDatabase } = await seededWorkspaceObject(database);
+    await seedChallenge(objectDatabase, "fresh-token", { expiresAt: "2099-01-01T00:00:00.000Z" });
     stubSlack();
-    // Linking republishes App Home, which resolves the installation through the
-    // Global route table and reads the member's task list from the workspace
-    // object. Neither is what this test is about, so the route is seeded and
-    // the object reports an empty list — but both have to be there, or the
-    // republish fails before the challenge is consumed.
-    database.prepare(
-      `INSERT INTO slack_installation_routes
-         (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
-       VALUES ('T123', 'global', ?, ?, 'active', '2026-01-01', '2026-01-01')`,
-    ).run(workspaceId, connectionId);
     const service = new SlackAgentService(environment(database, {
-      WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>(testSubstreamAgentsBinding(database, {
-        extra: {
-          recentWorkstreamDirectory: async () => ({ items: [] }),
-          listAutomationDirectory: async () => ({ items: [] }),
-        },
-      })),
+      WORKSPACE_DOS: testWorkspaceObjectBinding(instance, [
+        ...SLACK_WORKSPACE_OBJECT_METHODS,
+        "recentWorkstreamDirectory",
+        "listAutomationDirectory",
+      ]),
     }));
 
     await expect(service.linkUser(auth(), "fresh-token")).resolves.toMatchObject({ linked: true, slackUserId: "U456" });

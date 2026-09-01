@@ -35,9 +35,13 @@ once and passes on a rerun.
 
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
-includes workerd. CI splits them: `api-tests-2-of-2` appends
-`pnpm --filter @rally/api test:workers`, and the container and release suites
-are their own matrix jobs.
+includes workerd. CI splits them: `api-tests-workers-1-of-n` and
+`api-tests-workers-2-of-n` each run the package-owned workers command with a
+Vitest shard, and the container and release suites are their own matrix jobs.
+`deploy-api.yml` must use those same two workers shards rather than appending
+unsharded `test:workers` onto a Node lane: that dumps the whole suite into one
+Miniflare, which is more `reset()` interleave than PR CI ever sees, and it is
+how a green pull request has already failed deploy verify on the same SHA.
 
 A test in any of these that fails once and passes on a rerun is a defect to fix
 in the change that met it —
@@ -90,6 +94,27 @@ The Node suite cannot stand in for any of it. `apps/api/vitest.config.ts` aliase
 whose `DurableObject` base class stores `ctx` and `env` and does nothing else —
 so a Durable Object under Node is an ordinary class, and everything the platform
 contributes is absent by construction.
+
+#### Declaring a table the region does not have
+
+This suite's D1 starts empty and each test declares what it needs, which makes it
+easy to declare something a real region does not have. Every table in
+`WORKSPACE_LOCAL_TABLES` — `connector_connections`, `slack_user_links`,
+`resources`, the memory and digest families, and the rest — lives in WorkspaceDO,
+and migration 0090 dropped them from regional D1. A fixture that creates one in
+D1 hands the code under test an authority production retired, and a statement
+sent to the wrong one then passes here and 500s in production. It has: a
+delivery destination could not be saved on any automation for as long as that
+statement went to `env.DB`, and eleven fixtures in
+`test-workers/durable-object-runtime.test.ts` still declare `connector_connections`
+in D1 today, where they prove nothing about the routed reads they sit beside.
+
+Seed those tables in the object that owns them — `initializeWorkspace`, then
+`runInDurableObject(workspaceStub(), …)`. Where the absence is the point,
+`test-workers/automation-delivery-targets.test.ts` asserts it in its first test
+rather than trusting a comment to survive.
+`apps/api/test/durable-object-workspace-table-routing.test.ts` is the matching
+guard on the production side.
 
 ### 2. Node against real SQL
 
@@ -272,6 +297,19 @@ beforeEach(async () => {
   budget in `vitest.workers.config.ts` is now that budget, 30 seconds for every
   test and hook in the directory, so a hook writes its own only to ask for
   *more* — with a comment saying the wait is the interleave and not the query.
+  The same interleave can also leave an object authoritative across tests in one
+  file. `initialize` on an already-authoritative root is the documented replay
+  path — 200, directory snapshot re-enqueued, notifications not re-emitted —
+  so a later create that reuses a workstream id / `clientMessageId` looks like
+  a silent product miss (`[]` where the named people should have been told).
+  Tests that are not *about* that replay must not share an `initialize` identity
+  with a neighbour that already opened that object. More importantly, a test
+  that asserts pre-inference state must not start a model loop merely to create
+  its fixture: `participant-notification.test.ts` provisions existing rooms and
+  calls the create mutation without the endpoint's activation step. Minting a
+  fresh id for every case does not fix unnecessary draining work; under a
+  sharded workers run it only leaves more live objects for promotion polls to
+  contend with.
 - **Set up in `beforeEach`. No `beforeAll` in this directory.** A `beforeAll`
   that opens an object while a sibling file is resetting waits until it times
   out, and a wipe landing mid-file is then inherited by every test after it
@@ -507,6 +545,98 @@ One thing the fixtures make explicit that the old copies left implicit: seven
 migrations set `PRAGMA foreign_keys = ON` themselves, so a replay ends with
 enforcement on however the connection was opened. Ten of the sixteen private
 copies never wrote that pragma and were relying on it anyway.
+
+## Letting a run reach the model
+
+**Decide deliberately whether your test lets a run get as far as inference, and
+say which you chose.** The workers suite has no provider double and
+`wrangler.test.jsonc` carries a placeholder `OPENROUTER_API_KEY`, so a run that
+reaches the model makes a real outbound request. That request cannot succeed
+here — and it does not fail quickly either. The harness spends an establishment
+timeout, then a transport retry, then each configured fallback model before it
+gives up, which is far longer than a test's budget. The run stays `executing`,
+and the test waiting on it times out on an assertion that has nothing to do with
+what broke.
+
+That failure is worse than it sounds, because the passing case is not
+necessarily better. `participant-notification.test.ts` used to start an opening
+model run in every fixture even though it asserted only committed product state
+and regional effects. Under shard contention those live alarms crossed the
+next test's `reset()`: one create silently replayed against the previous root,
+one parent receipt was absent, and an elicitation precondition stayed
+`executing:1`. Isolating selected object ids reduced the frequency but could not
+remove a run the tests had no reason to start.
+
+Once the endpoint *does* activate the run, it still does not drain it in the
+same request: product `initialize` commits the admitted run, then the endpoint
+writes the execution receipt and arms a +1ms alarm
+(`requestExecutionReceiptActivation`). A read-only `expect.poll` on loop SQL
+then depends on workerd auto-firing that alarm. Under a contended workers shard
+the poll's own `runInDurableObject` calls keep the input gate busy, the alarm
+never gets a slot, and the wait expires on `executing:1`. Force the wake with
+`runDurableObjectAlarm` before polling, the same way
+`message-to-output-pipeline.test.ts`'s `settledRunForTrigger` does. The
+helper returning false (no alarm, or auto-fire already in flight) is the race
+in [Writing a workerd test](#writing-a-workerd-test); keep the poll as the wait
+for that case.
+
+So: if what you are testing happens before inference, keep the run away from the
+model. Existing-room cases can use the real `bootstrapRuntime` plus the
+system-provision `provision` path when that is the state shape under test. A
+create-effects case can invoke the real product `initialize` mutation
+without the endpoint's later execution-receipt activation. An elicitation-answer
+case can use a settled parent-run row when run execution is not the subject. If
+the run really has to complete, install the double.
+
+```ts
+import { useOpenRouterDouble } from "./helpers/openrouter-double";
+
+// File scope: every test in the file gets it, and the assertions below hold.
+const provider = useOpenRouterDouble((call) => {
+  expect(call.toolNames).toContain("memory_search");
+  return { say: "Noted." };
+});
+
+it("...", async () => {
+  // ... drive the run ...
+  expect(provider.calls).toHaveLength(1);
+});
+```
+
+The handler is a function, not a script: it receives the model, the protocol
+transcript, and the tool names offered on that turn, and returns what the
+provider should answer — `{ say }` to end the turn — the loop stops on an
+assistant message with no tool calls — `{ callTool }` to drive a tool round trip
+and be called again with the result, `{ httpError }` for a refusal, `{ raw }`
+for a `Response` you build yourself. So a test can assert on
+*what the model was asked*, which is usually the more interesting half.
+
+Four things about it are deliberate:
+
+- **It is opt-in per file, not installed suite-wide.** A file that does not ask
+  for it behaves exactly as it did before, so adopting this does not quietly
+  change what every other file is asserting.
+- **Any other outbound host is refused, and the refusal is recorded as well as
+  thrown.** Production turns a failed provider fetch into a run failure and a
+  failed catalog fetch into a shrug, so a throw on its own gets swallowed on the
+  way out and the surprise is lost. The recorded list is asserted empty after
+  every test, which is what makes an unexpected call visible instead of a
+  mystery later. `vi.stubGlobal` replaces `fetch` for the whole isolate, so this
+  is the only thing standing between you and a silently swallowed call.
+- **The model catalog answers empty on purpose.** The harness falls back to its
+  own documented context window for a model the catalog does not describe, and a
+  test double is not the place to invent that number
+  ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
+- **It uses `vi.stubGlobal`, not `fetchMock` from `cloudflare:test`.** That
+  export does not exist in `@cloudflare/vitest-pool-workers` 0.22.0, the newest
+  published version, nor in the Miniflare it carries — checked 0.18.0, 0.20.0
+  and 0.21.3 as well. The package still ships the `MockAgent` and
+  `MockReplyOptionsCallback` types and its README still advertises "a
+  declarative interface for mocking outbound requests", so the API looks
+  available and is not; the runtime export list stops at `SELF`, `env`,
+  `runInDurableObject`, `reset` and friends. `vi.stubGlobal` works because the
+  test file, the production modules, and the code running inside a Durable
+  Object share one isolate here.
 
 ## Advisements, to-dos, and traps from Cloudflare's own docs
 

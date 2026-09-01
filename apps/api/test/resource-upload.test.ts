@@ -22,6 +22,7 @@ const connectorResourceId = '00000000-0000-7000-8000-000000000022';
 const markdownResourceId = '00000000-0000-7000-8000-000000000023';
 const csvResourceId = '00000000-0000-7000-8000-000000000024';
 const documentResourceId = '00000000-0000-7000-8000-000000000025';
+const audioResourceId = '00000000-0000-7000-8000-000000000026';
 
 const auth: AuthContext = {
   sessionId: 'session-1',
@@ -308,6 +309,7 @@ describe('uploaded attachment drafts', () => {
       ['source-markdown', '# Source brief'],
       ['source-csv', 'month,total\nJuly,42'],
       ['model-document', '# Converted proposal'],
+      ['source-audio', 'ID3audio'],
     ]);
     const reads: string[] = [];
     const { database, env } = fixture({
@@ -339,6 +341,8 @@ describe('uploaded attachment drafts', () => {
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'source-document', 'b'.repeat(64), 'model-document', 'text/markdown',
       'c'.repeat(64), 'ready', ATTACHMENT_TEXT_EXTRACTOR_VERSION, 20);
+    previewRow.run(audioResourceId, workspaceId, 'voice.mp3', 'audio/mpeg', 'source-audio',
+      'e'.repeat(64), null, null, null, 'unsupported', ATTACHMENT_TEXT_EXTRACTOR_VERSION, null);
     const service = new ResourceService(env, auth);
 
     const markdown = await service.preview(markdownResourceId, new AbortController().signal);
@@ -352,7 +356,9 @@ describe('uploaded attachment drafts', () => {
 
     const document = await service.preview(documentResourceId, new AbortController().signal);
     expect(await document.text()).toBe('# Converted proposal');
-    expect(reads).toEqual(['source-markdown', 'source-csv', 'model-document']);
+    const audio = await service.preview(audioResourceId, new AbortController().signal);
+    expect(await audio.text()).toBe('ID3audio');
+    expect(reads).toEqual(['source-markdown', 'source-csv', 'model-document', 'source-audio']);
   });
 
   it('updates only hydration timestamps when connector content is unchanged', async () => {

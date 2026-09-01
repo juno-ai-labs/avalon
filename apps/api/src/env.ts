@@ -1,4 +1,8 @@
-import { DesktopDeepLinkUrlSchema, HttpUrlSchema } from "@rally/contracts/url-schemas";
+import {
+  AzureInferenceEndpointSchema,
+  DesktopDeepLinkUrlSchema,
+  HttpUrlSchema,
+} from "@rally/contracts/url-schemas";
 import type { Pipeline } from "cloudflare:pipelines";
 import { z } from "zod";
 import type { Region, UserId, WorkspaceId } from "@rally/contracts";
@@ -28,6 +32,8 @@ import type { BlockDashboardAgent } from "./durable-objects/block-dashboard-agen
 import type { AutomationAgent } from "./durable-objects/automation-agent";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
+import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
+import type { TerminalProviderRpcBinding } from './services/terminal/provider-rpc-contract';
 
 export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
 
@@ -35,11 +41,15 @@ export interface Env {
   DB: D1Database;
   PAYLOADS: R2Bucket;
   TELEMETRY_PAYLOADS: R2Bucket;
+  /** One globally replicated cache shared by the Global and EU Workers. */
+  INFERENCE_PRICING_CACHE: KVNamespace;
   IMAGES: ImagesBinding;
   AI: Ai;
   MEMORY_INDEX: VectorizeIndex;
   RUN_ANALYTICS: AnalyticsEngineDataset;
   TERMINAL_ANALYTICS: AnalyticsEngineDataset;
+  DOCUMENT_PROCESSOR: DocumentProcessingRpcBinding;
+  TERMINAL_PROVIDER: TerminalProviderRpcBinding;
   // Optional because a Worker may run without the binding. Note that
   // `wrangler dev --local` still provides the object — it is every *call* that
   // throws `Binding FLAGS needs to be run remotely`, so readers must handle
@@ -119,6 +129,9 @@ export interface Env {
   AZURE_OPENAI_ENDPOINT?: string;
   AZURE_OPENAI_API_KEY?: string;
   AZURE_OPENAI_REALTIME_DEPLOYMENT?: string;
+  /** Optional Global inference resource; kept separate from regional dictation. */
+  AZURE_INFERENCE_ENDPOINT?: string;
+  AZURE_INFERENCE_API_KEY?: string;
   FIRECRAWL_API_KEY?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
@@ -288,11 +301,14 @@ const EnvContractSchema = z.object({
   DB: binding<D1Database>(),
   PAYLOADS: binding<R2Bucket>(),
   TELEMETRY_PAYLOADS: binding<R2Bucket>(),
+  INFERENCE_PRICING_CACHE: binding<KVNamespace>(),
   IMAGES: binding<ImagesBinding>(),
   AI: binding<Ai>(),
   MEMORY_INDEX: binding<VectorizeIndex>(),
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
   TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
+  DOCUMENT_PROCESSOR: binding<DocumentProcessingRpcBinding>().optional(),
+  TERMINAL_PROVIDER: binding<TerminalProviderRpcBinding>().optional(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
   AUTOMATION_AGENTS: binding<DurableObjectNamespace<AutomationAgent>>(),
   BLOCK_DASHBOARD_AGENTS: binding<DurableObjectNamespace<BlockDashboardAgent>>(),
@@ -329,6 +345,9 @@ const EnvContractSchema = z.object({
   OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
   OPENROUTER_STRUCTURED_MODEL: z.string().min(1),
   OPENROUTER_AUTOMATION_MODEL: z.string().min(1),
+  AZURE_INFERENCE_ENDPOINT: AzureInferenceEndpointSchema.optional(),
+  // Deliberately optional: Azure model routing degrades to OpenRouter when absent.
+  AZURE_INFERENCE_API_KEY: z.string().min(1).optional(),
 
   SESSION_SIGNING_KEY: z.string().min(1),
   OAUTH_STATE_ENCRYPTION_KEY: z.string().min(1),
@@ -416,6 +435,8 @@ const productionOnlySecrets = [
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 const productionOnlyBindings = [
+  { key: "DOCUMENT_PROCESSOR", regions: ["global", "eu"] },
+  { key: "TERMINAL_PROVIDER", regions: ["global", "eu"] },
   { key: "INFERENCE_LAKEHOUSE_QUEUE", regions: ["global"] },
   { key: "INFERENCE_LAKEHOUSE", regions: ["global"] },
   { key: "ANALYTICS_LAKEHOUSE_QUEUE", regions: ["global"] },
@@ -493,11 +514,16 @@ export function assertEnvContract(env: Env): void {
           : []),
       ]
     : [];
+  const azureInferenceConfigurationIssues = Boolean(env.AZURE_INFERENCE_ENDPOINT)
+    === Boolean(env.AZURE_INFERENCE_API_KEY)
+    ? []
+    : ["AZURE_INFERENCE_ENDPOINT and AZURE_INFERENCE_API_KEY must be configured together"];
   if (
     result.success
     && missingSecrets.length === 0
     && missingBindings.length === 0
     && terminalConfigurationIssues.length === 0
+    && azureInferenceConfigurationIssues.length === 0
   ) {
     validated.add(env);
     return;
@@ -515,6 +541,7 @@ export function assertEnvContract(env: Env): void {
     ...missingSecrets.map((key) => `${key} is missing`),
     ...missingBindings.map((key) => `${key} is missing`),
     ...terminalConfigurationIssues,
+    ...azureInferenceConfigurationIssues,
   ];
   throw new EnvContractError([...new Set(keys)].sort());
 }

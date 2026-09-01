@@ -4,6 +4,7 @@ import {
   TranscriptActivitySchema,
   PendingTranscriptInputSchema,
   TranscriptRangeResultSchema,
+  TranscriptTurnIdSchema,
   TranscriptTurnSchema,
   WorkstreamTranscriptRangeRequestSchema,
   WorkstreamTranscriptSnapshotSchema,
@@ -12,7 +13,10 @@ export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, ResourceSlugSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
-import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
+import {
+  ResourceDirectionSchema,
+  WireResourceRelationshipTypeSchema,
+} from "./resource-relationships";
 import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
 import {
   ActivitySourceBindingKeySchema,
@@ -206,7 +210,6 @@ export const AGENT_MODEL_ROLES = [
   "meeting_notes",
   "addressing_classifier",
   "workstream_naming",
-  "activity_structured",
   "work_opportunity_admission",
   "work_opportunity_ranking",
   "workstream_description",
@@ -222,7 +225,6 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   meeting_notes: "agent-model-meeting-notes",
   addressing_classifier: "agent-model-addressing-classifier",
   workstream_naming: "agent-model-workstream-naming",
-  activity_structured: "agent-model-activity-structured",
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
   workstream_description: "agent-model-workstream-description",
@@ -415,6 +417,27 @@ export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
 export const WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH = 40;
 
 /**
+ * The most faces a sidebar work-stream row paints before the overflow circle.
+ *
+ * The directory carries only this many participant ids per personal row, newest
+ * overlay first; `participantExtraCount` is everyone past the cap. Raising it
+ * is a product decision, not a layout tweak — the sidebar's dense row is what
+ * the number was sized for.
+ */
+export const WORKSTREAM_SIDEBAR_FACEPILE_LIMIT = 3;
+
+/** Cap a recency-sorted participant id list for the sidebar facepile. */
+export function workstreamParticipantPreview(userIds: readonly string[]): {
+  participantUserIds: string[];
+  participantExtraCount: number;
+} {
+  return {
+    participantUserIds: userIds.slice(0, WORKSTREAM_SIDEBAR_FACEPILE_LIMIT),
+    participantExtraCount: Math.max(0, userIds.length - WORKSTREAM_SIDEBAR_FACEPILE_LIMIT),
+  };
+}
+
+/**
  * The most text one message from a person may carry — an opening message that
  * starts a work stream, or a reply sent into one.
  *
@@ -564,7 +587,19 @@ export const WorkstreamSchema = z.object({
    * relative to the reader's other pins and changes whenever they rearrange
    * them. Sort by it; do not store it as an identity.
    */
-  pinPosition: z.number().int().nonnegative().nullable().default(null)
+  pinPosition: z.number().int().nonnegative().nullable().default(null),
+  /**
+   * People in a personal work stream, for the sidebar facepile. At most
+   * {@link WORKSTREAM_SIDEBAR_FACEPILE_LIMIT} ids, newest first, with
+   * `participantExtraCount` for everyone past that. Empty on a workspace-scoped
+   * row: that surface paints a public marker rather than a pile, and the
+   * directory must not carry what it does not paint.
+   *
+   * Defaulted because a payload written before this field existed is a row
+   * whose sidebar showed a lock instead.
+   */
+  participantUserIds: z.array(IdSchema).max(WORKSTREAM_SIDEBAR_FACEPILE_LIMIT).default([]),
+  participantExtraCount: z.number().int().nonnegative().default(0),
 });
 
 export const ExternalActorSchema = z.object({
@@ -602,7 +637,7 @@ export const MessageAttachmentSchema = z.object({
 });
 
 export const MessageSchema = z.object({
-  id: IdSchema,
+  id: TranscriptTurnIdSchema,
   clientMessageId: z.string().max(120).nullable(),
   workspaceId: IdSchema,
   workstreamId: IdSchema,
@@ -641,7 +676,10 @@ export const ResourceSchema = z.object({
 });
 
 export const WorkstreamResourceSchema = ResourceSchema.extend({
-  relationshipType: ResourceRelationshipTypeSchema,
+  // The live storage vocabulary excludes `suggested_activity`. This wire-only
+  // parser admits the previous Worker's accepted-resource snapshots long
+  // enough for a newer desktop to normalize them to ordinary attachments.
+  relationshipType: WireResourceRelationshipTypeSchema,
   direction: ResourceDirectionSchema,
 });
 
@@ -1020,7 +1058,7 @@ export const BackgroundTaskSchema = z.object({
   completedAt: TimestampSchema.nullable(),
   tokenCount: z.number().int().nonnegative().nullable(),
   toolUses: z.number().int().nonnegative().nullable(),
-  transcriptTurnId: z.string().min(1).max(180).nullable()
+  transcriptTurnId: TranscriptTurnIdSchema.nullable()
 });
 
 export const ElicitationOptionSchema = z.object({
@@ -1043,19 +1081,6 @@ export const ElicitationSchema = z.object({
   answeredByUserId: IdSchema.nullable(),
   createdAt: TimestampSchema,
   answeredAt: TimestampSchema.nullable()
-});
-
-export const ActivitySuggestionSchema = z.object({
-  id: IdSchema,
-  activityId: IdSchema,
-  workstreamId: IdSchema,
-  title: z.string().min(1).max(300),
-  summary: z.string().max(2000),
-  confidence: z.number().min(0).max(1),
-  reason: z.string().min(1).max(1200),
-  status: z.enum(["pending", "accepted", "dismissed"]),
-  createdAt: TimestampSchema,
-  resolvedAt: TimestampSchema.nullable()
 });
 
 export const BlockDashboardBlockRunStatusSchema = z.enum([
@@ -1124,7 +1149,11 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   connections: z.array(ConnectionSchema),
   backgroundTasks: z.array(BackgroundTaskSchema).default([]),
   openElicitations: z.array(ElicitationSchema),
-  suggestions: z.array(ActivitySuggestionSchema),
+  /**
+   * Rollout tombstone for desktop builds that still require this response key.
+   * New Workers always serialize an empty array and current clients ignore it.
+   */
+  suggestions: z.array(z.unknown()).default([]),
   latestHarnessRunId: IdSchema.nullable(),
   latestHarnessRun: HarnessRunMetadataSchema.nullable().optional(),
 });
@@ -1724,6 +1753,29 @@ export const ReorderWorkstreamPinsRequestSchema = z.object({
   workstreamIds: z.array(IdSchema),
 });
 
+/**
+ * The visible pending-input queue in its new promotion order, not a move of
+ * one row.
+ *
+ * A drag produces a complete arrangement. Sending that arrangement lets the
+ * object permute the existing `input_sequence` values without inferring a
+ * gap from a list state the client may no longer share. Ids that have
+ * already been delivered are ignored rather than rejected, and visible
+ * pending inputs the caller does not name keep their relative order behind
+ * the ones it did.
+ *
+ * Deliberately unbounded. Nothing limits how many messages may wait on a
+ * loop, so any count this array could be capped at would refuse a drag and
+ * leave the queue unreorderable for as long as the person stayed above it.
+ */
+export const ReorderPendingLoopInputsRequestSchema = z.object({
+  inputIds: z.array(IdSchema),
+});
+
+export const ReorderPendingLoopInputsResultSchema = z.object({
+  pendingInputs: z.array(PendingTranscriptInputSchema),
+});
+
 export const CreateMessageRequestSchema = z.object({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
   clientMessageId: z.string().min(1).max(120),
@@ -1854,9 +1906,7 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("add_participant"), userId: IdSchema }),
   z.object({ type: z.literal("remove_participant"), userId: IdSchema }),
   z.object({ type: z.literal("attach_resource"), resourceId: IdSchema }),
-  z.object({ type: z.literal("detach_resource"), resourceId: IdSchema }),
-  z.object({ type: z.literal("accept_activity_suggestion"), suggestionId: IdSchema }),
-  z.object({ type: z.literal("dismiss_activity_suggestion"), suggestionId: IdSchema })
+  z.object({ type: z.literal("detach_resource"), resourceId: IdSchema })
 ]);
 
 /** Workspace-owned query surfaces kept coherent by the one WorkspaceDO socket. */
@@ -2287,7 +2337,7 @@ export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocke
 export const WorkstreamMessageDeliveryStateSchema = z.enum(["canonical", "pending"]);
 export const WorkstreamMessageAdmissionReceiptSchema = z.object({
   turn: z.object({
-    turnId: IdSchema,
+    turnId: TranscriptTurnIdSchema,
     clientMessageId: z.string().min(1).max(120),
     createdAt: TimestampSchema,
   }).strict(),
@@ -2320,7 +2370,7 @@ const ServerEventBaseSchema = z.object({
 });
 const StreamEventBaseSchema = ServerEventBaseSchema.extend({
   /** Stable identity for one model turn, across retries and route fallbacks. */
-  turnId: z.string().min(1).max(180),
+  turnId: TranscriptTurnIdSchema,
   /** Canonical position reserved before the provider request begins. */
   transcriptSequence: z.number().int().positive(),
   /** Increments whenever a turn restarts on the same or a fallback route. */
@@ -2337,10 +2387,10 @@ const ActiveStreamCheckpointBaseSchema = z.object({
   /** Transient identity for one run's streamed output; never a transcript turn. */
   streamId: IdSchema,
   harnessRunId: IdSchema,
-  turnId: z.string().min(1).max(180),
+  turnId: TranscriptTurnIdSchema,
   epoch: z.number().int().nonnegative(),
   streamSeq: z.number().int().nonnegative(),
-  seenTurnIds: z.array(z.string().min(1).max(180)),
+  seenTurnIds: z.array(TranscriptTurnIdSchema),
   text: z.string(),
   turnStartOffset: z.number().int().nonnegative(),
   roomSequence: z.number().int().nonnegative(),
@@ -2530,8 +2580,11 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("participant_removed"), userId: IdSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("resource_attached"), resource: WorkstreamResourceSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("resource_updated"), resource: WorkstreamResourceSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: ActivitySuggestionSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: ActivitySuggestionSchema }),
+  // Parse-only rollout compatibility for events emitted by the previous
+  // Worker while a newer desktop is already running. No current producer or
+  // consumer uses the payload.
+  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: z.unknown() }),
+  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: z.unknown() }),
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_configuration_updated"), blockDashboard: BlockDashboardSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_block_run_updated"), run: BlockDashboardBlockRunSchema }),
   ServerEventBaseSchema.extend({
@@ -2829,14 +2882,6 @@ export const WORKSTREAM_NAMING_GRACE_MS = 60_000;
  */
 export const WorkstreamNameResultSchema = z.object({
   title: z.string().trim().min(1).max(80)
-});
-
-export const ActivityRoutingResultSchema = z.object({
-  candidateWorkstreamId: IdSchema.nullable(),
-  confidence: z.number().min(0).max(1),
-  reason: z.string().min(1).max(1000),
-  matchedEntities: z.array(z.string()),
-  suggest: z.boolean()
 });
 
 export const ToolDefinitionSchema = z.object({
@@ -3236,7 +3281,6 @@ export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
-export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
 export type WorkOpportunity = z.infer<typeof WorkOpportunitySchema>;
 export type WorkOpportunityPage = z.infer<typeof WorkOpportunityPageSchema>;
 export type BlockDashboard = z.infer<typeof BlockDashboardSchema>;
@@ -3354,7 +3398,6 @@ export type TerminalWorkstreamState = z.infer<typeof TerminalWorkstreamStateSche
 export type SlackSearchAuthorization = z.infer<typeof SlackSearchAuthorizationSchema>;
 export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
 export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;
-export type ActivityRoutingResult = z.infer<typeof ActivityRoutingResultSchema>;
 export type WorkstreamNameResult = z.infer<typeof WorkstreamNameResultSchema>;
 export type ToolDefinition = z.infer<typeof ToolDefinitionSchema>;
 export type ConnectorSurface = z.infer<typeof ConnectorSurfaceSchema>;

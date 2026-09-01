@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   citationFootnotes,
   citationScheme,
+  connectorMentionHref,
+  connectorTypeFromEmbedHref,
+  connectorTypeFromMentionHref,
+  embeddedResourceCitations,
+  isConnectorHref,
   parseCitationHref,
+  personIdFromMentionHref,
+  personMentionHref,
+  personMentionMarkdownPattern,
   rewriteCitationsAsPlainText,
 } from "./citations";
 
@@ -54,17 +62,82 @@ describe("parseCitationHref", () => {
       url: "http://example.com",
     });
     expect(parseCitationHref("person:0192f3ac-1b2c-7000-8000-abcdefabcdef").scheme).toBe("person");
+    expect(parseCitationHref("person://0192f3ac-1b2c-7000-8000-abcdefabcdef").scheme).toBe("person");
     // Any `person:` target is an identity, well-formed or not — it must reach
     // the cell that renders it inert rather than one that could give it a
     // destination.
     expect(parseCitationHref("person:someone").scheme).toBe("person");
-    expect(parseCitationHref("connector:abc123:slack").scheme).toBe("connector");
+    expect(parseCitationHref("person://someone").scheme).toBe("person");
+  });
+
+  it("does not treat a connector mention href as a citation scheme", () => {
+    // Connector chips are render-minted mentions, not citations. Classifying
+    // them here would put them in the matrix; they stay unknown to the protocol.
+    expect(parseCitationHref("connector:abc123:slack").scheme).toBe("unknown");
+    expect(parseCitationHref("connector://abc123:slack").scheme).toBe("unknown");
   });
 
   it("treats every other scheme as text, so message content reaches no protocol handler", () => {
     for (const href of ["javascript:alert(1)", "file:///etc/passwd", "data:text/html,<b>", "mailto:a@b.c", undefined]) {
       expect(parseCitationHref(href).scheme).toBe("unknown");
     }
+  });
+});
+
+describe("person mention hrefs", () => {
+  const id = "0192f3ac-1b2c-7000-8000-abcdefabcdef";
+
+  it("emits the house person:// form", () => {
+    expect(personMentionHref(id)).toBe(`person://${id}`);
+  });
+
+  it("reads both house and legacy spellings, and nothing else", () => {
+    expect(personIdFromMentionHref(`person://${id}`)).toBe(id);
+    expect(personIdFromMentionHref(`person:${id}`)).toBe(id);
+    expect(personIdFromMentionHref(`PERSON://${id.toUpperCase()}`)).toBe(id);
+    expect(personIdFromMentionHref("person:someone")).toBeUndefined();
+    expect(personIdFromMentionHref(`person:///${id}`)).toBeUndefined();
+    expect(personIdFromMentionHref(undefined)).toBeUndefined();
+  });
+
+  it("reduces both Markdown spellings to the label", () => {
+    const house = `Ask [@Ada](person://${id}) please.`;
+    const legacy = `Ask [@Ada](person:${id}) please.`;
+    expect(house.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
+    expect(legacy.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
+  });
+});
+
+describe("connector mention hrefs", () => {
+  it("emits the house connector:// form", () => {
+    expect(connectorMentionHref("tok", "ops")).toBe("connector://tok:ops");
+    expect(connectorMentionHref("tok", "google drive")).toBe("connector://tok:google%20drive");
+  });
+
+  it("reads both house and legacy tokened spellings for this render's token", () => {
+    expect(connectorTypeFromMentionHref("connector://tok:ops", "tok")).toBe("ops");
+    expect(connectorTypeFromMentionHref("connector:tok:ops", "tok")).toBe("ops");
+    expect(connectorTypeFromMentionHref("CONNECTOR://tok:ops", "tok")).toBe("ops");
+    expect(connectorTypeFromMentionHref("connector://tok:google%20drive", "tok")).toBe("google drive");
+    expect(connectorTypeFromMentionHref("connector://other:ops", "tok")).toBeUndefined();
+    expect(connectorTypeFromMentionHref("connector:ops", "tok")).toBeUndefined();
+    expect(connectorTypeFromMentionHref("connector:%", "tok")).toBeUndefined();
+    expect(connectorTypeFromMentionHref(undefined, "tok")).toBeUndefined();
+  });
+
+  it("reads only bare connector embed hrefs", () => {
+    expect(connectorTypeFromEmbedHref("connector://google")).toBe("google");
+    expect(connectorTypeFromEmbedHref("connector:GOOGLE_DRIVE")).toBe("google_drive");
+    expect(connectorTypeFromEmbedHref("connector://tok:google")).toBeUndefined();
+    expect(connectorTypeFromEmbedHref("connector:%")).toBeUndefined();
+    expect(connectorTypeFromEmbedHref("https://example.com")).toBeUndefined();
+  });
+
+  it("recognizes connector hrefs without making them citations", () => {
+    expect(isConnectorHref("connector://google")).toBe(true);
+    expect(isConnectorHref("CONNECTOR://tok:google")).toBe(true);
+    expect(isConnectorHref("resource://google")).toBe(false);
+    expect(isConnectorHref(undefined)).toBe(false);
   });
 });
 
@@ -328,6 +401,61 @@ describe("rewriteCitationsAsPlainText", () => {
   });
 });
 
+describe("embeddedResourceCitations", () => {
+  it("names the image-syntax resource a card is drawn from", () => {
+    expect(embeddedResourceCitations("Published:\n\n![Mute windows PRD](resource://prd-mute)\n"))
+      .toEqual([{ resourceId: "prd-mute" }]);
+  });
+
+  it("ignores a chip, a footnote, and a real image — none of those are the announcement card", () => {
+    expect(embeddedResourceCitations("See [the deck](resource://board-deck) and ![a chart](https://example.com/c.png)."))
+      .toEqual([]);
+    expect(embeddedResourceCitations("A claim.[^1]\n\n[^1]: [Deck](resource://board-deck)"))
+      .toEqual([]);
+  });
+
+  it("keeps document order when a message announces more than one resource", () => {
+    expect(embeddedResourceCitations("![One](resource://a)\n\n![Two](resource://b)"))
+      .toEqual([{ resourceId: "a" }, { resourceId: "b" }]);
+  });
+
+  it("reads the alias spelling and strips a reserved version parameter", () => {
+    expect(embeddedResourceCitations("![Deck](resource:board-deck-q3)"))
+      .toEqual([{ resourceId: "board-deck-q3" }]);
+    expect(embeddedResourceCitations("![Deck](resource://board-deck?v=3)"))
+      .toEqual([{ resourceId: "board-deck" }]);
+  });
+
+  it("omits a malformed target, which never becomes a card", () => {
+    expect(embeddedResourceCitations("![Plan](resource://plans/2026)")).toEqual([]);
+    expect(embeddedResourceCitations("![Empty](resource://)")).toEqual([]);
+  });
+
+  it("reads nothing out of a fence, a span, or an indented block, where the syntax is sample text", () => {
+    expect(embeddedResourceCitations("```md\n![Title](resource://the-id)\n```")).toEqual([]);
+    expect(embeddedResourceCitations("Write `![Title](resource://id)` to embed.")).toEqual([]);
+    expect(embeddedResourceCitations("Example:\n\n    ![Title](resource://the-id)\n")).toEqual([]);
+  });
+
+  it("still reads an indented line that only continues a paragraph", () => {
+    expect(embeddedResourceCitations("Published, and\n    ![the deck](resource://abc)"))
+      .toEqual([{ resourceId: "abc" }]);
+  });
+
+  it("does not treat an escaped bang as a card", () => {
+    // The renderer draws a chip; auto-opening here would open a document the
+    // transcript never announced as one.
+    expect(embeddedResourceCitations("See \\![the deck](resource://board-deck).")).toEqual([]);
+  });
+
+  it("does not treat a footnote definition as a card", () => {
+    // The rewrite strips definitions before it scans; this has to agree, or a
+    // pill that never became a card would still open the inspector.
+    expect(embeddedResourceCitations("A claim.[^1]\n\n[^1]: ![Deck](resource://board-deck)")).toEqual([]);
+    expect(embeddedResourceCitations("A claim.[^1]\n\n[^1]: [Deck](resource://board-deck)")).toEqual([]);
+  });
+});
+
 describe("citationScheme", () => {
   it("routes a malformed resource target to the cell that knows how to degrade it", () => {
     // The parser says unknown; the cell must still be the resource one, or the
@@ -347,7 +475,6 @@ describe("citationScheme", () => {
       "resource://ok",
       "https://example.com",
       "person:0192f3ac-1b2c-7000-8000-abcdefabcdef",
-      "connector:token:slack",
     ]) {
       expect(citationScheme(href)).toBe(parseCitationHref(href).scheme);
     }

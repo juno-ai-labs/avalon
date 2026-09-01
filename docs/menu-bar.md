@@ -337,7 +337,10 @@ Two traps. `MenuBarContentStore` takes an injectable `now`, so drive the
 staleness window with it rather than with a timer. And the template's `click`
 handlers are typed with the menu item, window, and event AppKit passes but ignore
 all three, so tests call them through a cast rather than fabricating those
-arguments.
+arguments. The renderer Settings shell shows disabled controls while
+`getApplicationSettings` is pending; the presence of an unrelated switch does
+not prove availability has loaded. A test for an unavailable menu bar waits for
+the menu-bar control itself to disappear after the bridge answer is applied.
 
 The status item itself cannot be verified in the sandbox — see
 [`dev-environment.md`](dev-environment.md#what-cannot-be-verified-in-a-sandbox).

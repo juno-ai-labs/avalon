@@ -114,14 +114,14 @@ function requiredInferenceOptionRule(option, methods, message) {
 
 export const requireInferenceSignalRule = requiredInferenceOptionRule(
   "signal",
-  new Set(["stream", "structured"]),
+  new Set(["stream", "structured", "embed"]),
   "Inference calls must pass an AbortSignal so a stalled provider cannot outlive its owning operation.",
 );
 
 export const requireInferenceDiagnosticsRule = requiredInferenceOptionRule(
   "onDiagnostic",
-  new Set(["structured"]),
-  "Structured inference must pass onDiagnostic so provider and validation failures remain observable.",
+  new Set(["structured", "embed"]),
+  "Inference must pass onDiagnostic so provider and validation failures remain observable.",
 );
 
 const TICKET_METHODS = new Set([

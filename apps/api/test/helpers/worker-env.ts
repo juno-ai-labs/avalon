@@ -16,8 +16,10 @@ function binding(): never {
 export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
   return createTestEnv({
     DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
+    INFERENCE_PRICING_CACHE: binding(),
     IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
-    RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(), CRASH_SYMBOLICATOR: binding(),
+    RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(),
+    DOCUMENT_PROCESSOR: binding(), TERMINAL_PROVIDER: binding(), CRASH_SYMBOLICATOR: binding(),
     SUBSTREAM_AGENTS: binding(), AUTOMATION_AGENTS: binding(), BLOCK_DASHBOARD_AGENTS: binding(),
     WORKSTREAM_DOS: binding(), WORKSPACE_DOS: binding(),
     SLACK_REACTION_TICKERS: binding(),

@@ -253,7 +253,11 @@ It deliberately does not:
 Two traps in the desktop tests. jsdom implements no `DataTransfer`, so a drag
 event needs the small stub in that file rather than `new DataTransfer()`. And an
 open error dialog hides the sidebar from the accessibility tree, so the pinned
-order can only be read back after the dialog is dismissed.
+order can only be read back after the dialog is dismissed. The keyboard reorder
+callback also fires before `commitPinnedOrder` clears its optimistic order in a
+`finally`; a test that clears its spy and sends another key immediately after
+observing the callback races that cleanup. Wait for the rendered order that the
+next assertion is meant to act on.
 
 The legacy API suite runs the checked-in D1 migrations against `node:sqlite` in
 memory. Post-cutover ownership assertions belong in the workerd suite; do not
@@ -271,6 +275,25 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-30 — Command-number pills share the automation You chip
+
+**What changed:** The held-Command `⌘1`–`⌘9` overlay now renders through the
+same `Badge` + `scope-badge` chrome as an automation row's You / Workspace
+chip, instead of a taller, shadowed, warmer pill of its own.
+
+**Why:** The two chips sit in the same sidebar, and the command hints were
+reading as a second control language — larger, raised, and a different grey —
+next to the flat You badges they were meant to sit beside.
+
+**Considered and rejected:** Restating the You-chip colours and padding on
+`.command-shortcut-pill`. That would match once and drift the next time either
+rule moved. Sharing the classes is the thing that keeps them the same.
+
+**Consequences:** Overlay-only extras (the fade-in, tabular numbers, and the
+command glyph) live on `.scope-badge.command-shortcut-pill` so they cannot lose
+to `.scope-badge` on source order. Changing the automation badge now changes
+the command hints too; that is the point.
 
 ### 2026-08-27 — Project ordering stays independent from pins
 

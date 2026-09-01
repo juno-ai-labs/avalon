@@ -124,7 +124,6 @@ export const messageSchema = z
       'text',
       'tool_event',
       'elicitation',
-      'activity_suggestion',
       'system',
     ]),
     text: z.string().optional(),
@@ -151,17 +150,6 @@ export const messageSchema = z
         status: z.enum(['open', 'answered']),
         answer: z.unknown().optional(),
         answeredByName: z.string().optional(),
-      })
-      .passthrough()
-      .optional(),
-    activitySuggestion: z
-      .object({
-        id: z.string(),
-        title: z.string(),
-        source: z.string().optional(),
-        occurredAt: z.string().optional(),
-        reason: z.string(),
-        status: z.enum(['pending', 'accepted', 'dismissed']),
       })
       .passthrough()
       .optional(),

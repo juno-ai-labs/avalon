@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AzureInferenceEndpointSchema,
   DesktopDeepLinkUrlSchema,
   HttpsUrlSchema,
   HttpOrDesktopDeepLinkUrlSchema,
@@ -22,6 +23,24 @@ describe("explicit URL contracts", () => {
     expect(DesktopDeepLinkUrlSchema.safeParse("rallywithai://workstreams/123").success).toBe(true);
     expect(HttpOrDesktopDeepLinkUrlSchema.safeParse("rallywithai://auth/complete").success).toBe(true);
     expect(DesktopDeepLinkUrlSchema.safeParse("mailto:someone@rallywith.ai").success).toBe(false);
+  });
+
+  it("accepts only Azure inference resource roots and OpenAI-compatible bases", () => {
+    expect(AzureInferenceEndpointSchema.safeParse(
+      "https://monad-prod-resource.services.ai.azure.com",
+    ).success).toBe(true);
+    expect(AzureInferenceEndpointSchema.safeParse(
+      "https://monad-prod-resource.services.ai.azure.com/openai/v1/",
+    ).success).toBe(true);
+    expect(AzureInferenceEndpointSchema.safeParse(
+      "http://monad-prod-resource.services.ai.azure.com",
+    ).success).toBe(false);
+    expect(AzureInferenceEndpointSchema.safeParse(
+      "https://monad-prod-resource.services.ai.azure.com/openai/deployments/grok-4.3",
+    ).success).toBe(false);
+    expect(AzureInferenceEndpointSchema.safeParse(
+      "https://user:secret@monad-prod-resource.services.ai.azure.com?api-version=preview",
+    ).success).toBe(false);
   });
 
   it("accepts only WebSocket schemes for socket URLs", () => {

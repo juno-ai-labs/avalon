@@ -123,7 +123,7 @@ but still keeps one stable loop identity.
 
 ### Addressing
 
-Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
+Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
 
 ### Naming
 
@@ -203,7 +203,7 @@ After admission Rally validates the execution principal and persists an immutabl
 
 Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. Automation runs also receive the pinned template name/version, instructions, expected outputs, default behavior, subscription overrides, and the active destinations Rally will deliver the result to. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
 
-Attached resources are exposed as an authorized index and hydrated lazily through tools. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
+Attached resources are exposed as an authorized index and hydrated lazily through tools. Their manifests and contents remain untrusted evidence. A partial read is not represented as the whole resource: the prompt requires exact cursor continuation when more coverage is needed and requires the answer to disclose any remaining `charactersBefore` or `charactersAfter` boundary. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
 
 All base prompts are rendered by typed, dependency-free functions in `@rally/agent-harness`, and the prompt version is frozen with the run. Per-run time, reason, IDs, and trigger evidence are user-role messages rather than mutations of the system prefix, so retries and route fallbacks see stable policy. Bind validates the transcript before inference and heals dangling or orphaned tool-protocol rows; Rally records diagnostics without adding provider-controlled text to the system prompt.
 
@@ -219,11 +219,11 @@ Interactive multi-round work starts with a short plan and reports meaningful pha
 
 An automation run's final message is what Rally delivers, so the run is told which destinations Rally will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Rally and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
 
-A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the trigger — an explicit document type, a composition past roughly three paragraphs organized with headings or a table, or a result long enough to bury the conversation — plus the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is rendered only for a run that can produce one — the region reports Terminal supported, and the run is not an automation, a scheduled digest, an inbound email, or Slack-originated, each of which delivers a final message that a rail entry is not part of. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the rule steers into.
+A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds, while a HyperSight block run skips publication and submits finished Markdown through its required block tool. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
-An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. Unlike `DOCUMENT_GENERATION_POLICY` it is **not** gated, because a resource worth citing can be in context on any run — but the *announcement* rule is, and lives there: the embed form announces something the run produced, and a run that was deliberately not told it may publish has nothing to announce. Rendered for every work-stream run — interactive, automation and scheduled digest alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
+An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. The *announcement* rule — the embed form for a document the run just published — lives in `DOCUMENT_GENERATION_POLICY` so there is one rule for that act. Rendered for every work-stream run — interactive, automation and scheduled digest alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
 
-Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — the character itself is typed instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). The rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
+Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — Unicode or plain words are used instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). Elicitation questions and option labels are plain text because their surface does not render Markdown. The TeX rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
 ### Automation compilation
 
@@ -274,9 +274,31 @@ principal/resource and repository/publication checks remain executor
 preconditions rather than scopes. The sandbox lifecycle and authority fence are owned by
 [`terminal-workspaces.md`](terminal-workspaces.md), not by Bind.
 
+Ordinary work-stream runs with the main Azure inference credentials also
+register the deferred built-in `rally:multimodal-generation` plugin. It has no
+connection row and exposes three record-before-execute writes: create one image
+from a prompt, edit one currently visible image with an optional PNG mask, or
+turn bounded text into one AI-generated MP3 recording.
+Each tool has a five-minute ceiling and fixes the provider request to
+`gpt-image-2` for images or `gpt-4o-mini-tts` for speech. Image moderation,
+quality, background and count are fixed to low, medium, automatic and one;
+speech output is fixed to MP3 and defaults to the `marin` voice.
+The executor publishes the verified bytes to the workspace resource authority.
+Generation attaches a new resource; editing compare-and-swaps a new version onto
+the selected resource, preserving its ID and version history. A durable
+effect-intent-derived identity makes a settled replay converge on that resource;
+no raw media bytes enter a receipt or transcript. Audio remains a playable
+human-facing resource and is not projected back to the model. The shared
+OpenRouter-average pricing record is advisory on this surface: unavailable
+pricing or usage is logged and produces no image charge rather than hiding the
+plugin or refusing the call. [`agent-tools.md`](agent-tools.md#multimodal-generation-tool-contract-registry)
+owns the exact schemas and resource result.
+
 Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Rally revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
 
 Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference, and is answered from Rally's own records: the principal, the work stream, the automation authority, the connection's identity, scope, owner, grants, and disablement are what that check exists to catch, and all of them are already known here. Asking the provider instead would spend a round trip per active plugin per turn to rediscover them, and on a connector whose health check writes it would repeat that write. A credential the provider has since refused therefore surfaces on the next tool call rather than between turns — which is the right place, since that is where a provider call was going to happen anyway.
+
+A built-in plugin carries no credential, so its authorization is settled by the run scope alone and can never be indeterminate. The set of built-ins that hold that authority is derived from the plugins the run registered — registration is already the conditional decision, since Terminal is absent without its provider configuration, `rally:web` without `FIRECRAWL_API_KEY`, and multimodal generation without the Azure inference pair. An id the run does not carry, whether invented by the model or restored from an activation hint a later deploy stopped registering, is denied.
 
 Revalidation answers with one of three verdicts, and the third one is the point of having them. `authorized` activates; `denied` is a decision about authority — a revoked credential, a withdrawn grant, an owner who no longer holds the connection — and reaches the model as `plugin_not_authorized`; `indeterminate` means the host could not reach a decision at all, because the provider timed out, the transport failed, or the health check answered something that says nothing about this run's authority. Both non-authorized verdicts leave the plugin inactive, so the distinction costs the run nothing, and it is what stops a provider hiccup from being reported as a permission problem: an `indeterminate` load returns `plugin_authorization_unavailable`, and the host logs `connector_plugin_reauthorization_failed` with the connection and the underlying cause rather than discarding it. An adapter distinguishes the two the same way, through `reconnectRequired` on its health result. A verdict must never be derived from a swallowed exception — a failure to verify is not a denial, and reporting it as one sends a run off to explain a permission problem that may not exist.
 
@@ -335,6 +357,10 @@ and only bounded resource paths travel through the structured failure allowlist.
 8. Stop on completion, elicitation, the host's safe-boundary loop stop, ambiguous
    write, limit, lease loss, or failure. Receipt-local cancellation remains a
    separate terminal signal for child and generic non-work-stream executions.
+9. Run external-platform delivery only after reloading a saved canonical turn:
+   the exact terminal turn normally, or the open elicitation turn while waiting
+   on a person. Status cleanup and suppressed-delivery receipts may run without
+   one; reply or comment content may not.
 
 Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY` and from inbound-email runs.
 
@@ -452,20 +478,125 @@ Each agent's default model and its fallback stages are one Cloudflare Flagship f
 
 Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks. The harness package has a separate portability boundary: production sources cannot import database, connector, API, or Node-only implementations and cannot read `process`; host capabilities arrive through explicit ports.
 
-OpenRouter routing is deterministic and versioned. Empty completions, truncated
-tool calls, and fallback-eligible failures may retry or traverse configured
-model stages only before an assistant byte is published and before a tool effect
-begins. The first observable delta closes that route permanently. A later
-failure terminalizes the step, removes its transient preview, and materializes
-the reserved failure status instead of asking another provider for a competing
-answer. Cancellation and host failures never route onward.
+Provider routing is deterministic and versioned by Bind. Rally contributes a
+checked-in canonical-model binding and one planner transport per provider; Bind
+resolves the policy, filters candidates against the turn's actual capabilities,
+builds the Azure/OpenRouter/model stages, operates their shared circuit breaker,
+and executes traversal. `x-ai/grok-4.3` and `x-ai/grok-4.6` are Azure-bound:
+their same-model route is Azure first and OpenRouter second. Other canonical
+models remain OpenRouter-only. A file-parser request, audio input, or another
+capability an Azure binding has not proved skips that candidate before any
+network request rather than sending a body the deployment may reject.
 
-The Bind/OpenAI/OpenRouter boundary is converted member by member rather than
-asserted through `unknown`. Model content parts and function tools are mapped to
-Rally's wire types, unsupported tool variants fail at the boundary, and input
-audio admits only the `wav` and `mp3` formats the SDK contract supports. This
-keeps an SDK union or return-shape change visible to the compiler instead of
-letting it emerge later in a provider request.
+The Azure transport is enabled only when its dedicated endpoint and API key are
+both present. Those values are separate from realtime-dictation configuration,
+so configuring an EU dictation resource cannot accidentally send an EU work
+stream to the Global Monad production inference resource. A shared contract
+accepts only an HTTPS resource root or `/openai/v1` base, so an endpoint the
+transport cannot address fails Worker startup rather than the first model turn.
+Azure receives the
+deployment name as `model`, the standard OpenAI-compatible message/tool body,
+and `reasoning_effort` only for a binding that declares it. OpenRouter-only
+Broadcast fields, plugins, routing metadata, and headers never cross that
+boundary. Canonical `x-ai/...` identity remains in Rally's transcript and
+ledger; the Azure deployment name is recorded separately as the provider
+invocation model.
+
+The checked-in Monad production bindings were verified against the live
+`monad-prod-resource` deployment details on 2026-08-30:
+
+| Canonical model | Azure deployment | Version / lifecycle | Deployment | Live quota | Guardrail |
+| --- | --- | --- | --- | --- | --- |
+| `x-ai/grok-4.3` | `grok-4.3` | `1` / Preview | Global Standard | 250,000 TPM / 250 RPM | DefaultV2 |
+| `x-ai/grok-4.6` | `grok-4.6` | `1` / Preview | Global Standard | 2,250,000 TPM / 2,250 RPM | DefaultV2 |
+
+Both expose
+`https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions`.
+Manual inference probes returned token usage but no dollar `cost` or `price`
+field. When that happens, the configured fallback is the unweighted arithmetic
+mean of OpenRouter's published endpoint prices for that canonical model—not the
+top-level model-catalog price, which OpenRouter documents as the lowest endpoint
+price. On 2026-08-30 the four 4.3 endpoints averaged $1.875 input, $0.30 cached
+input, and $3.75 output per million tokens through the first 200,000 prompt
+tokens, then $3.75 / $0.60 / $7.50. The five 4.6 endpoints averaged
+$2.84 / $0.71 / $8.52, then $5.68 / $1.42 / $17.04 at the same OpenRouter
+catalog threshold. A dedicated Global cron refreshes those rates hourly,
+writes each model under its canonical OpenRouter ID in the shared regional KV,
+and preserves the decimal costs as strings. The inventory covers every model in
+the developer-mode manual selector plus every Monad production Azure
+deployment carried by OpenRouter: fourteen unique IDs on that date. API inference
+only reads the cache when the primary or a fallback model has an Azure binding;
+it never fetches or writes pricing. A failed cache read omits Azure and leaves
+OpenRouter available. Azure's Retail Prices
+API separately published 4.3 Global meters but no 4.6 meter that day; that API
+is useful corroboration, not this fallback's rate authority.
+The Azure agent route does not enable provider web search, so the separate
+per-search catalog charge is neither incurred nor folded into token rates.
+
+Empty completions, truncated tool calls, and fallback-eligible failures may
+retry or traverse configured provider and model stages only before an assistant
+byte is published and before a tool effect begins. The first observable delta
+closes that route permanently. A later failure terminalizes the step, removes
+its transient preview, and materializes the reserved failure status instead of
+asking another provider for a competing answer. Cancellation and host failures
+never route onward.
+
+OpenRouter reports dollars directly. Azure reports token counts, so Rally feeds
+the cached per-million-token rates and declared disjoint Grok cache semantics
+through Bind's configured-rate billing function. Azure reports cached Grok
+tokens alongside rather than inside `prompt_tokens`, so Rally adds both input
+buckets only to select the OpenRouter prompt-size tier; Bind still prices each
+bucket exactly once. A missing, malformed, or
+legacy numeric-cost record removes that Azure candidate before the request;
+stale valid pricing remains usable. Missing or internally inconsistent final
+Azure usage fails the attempt; it is never recorded as a zero-cost call and
+cannot silently bypass a run cost ceiling.
+Azure Grok also reports reasoning outside `completion_tokens` while including
+it in `total_tokens`; Bind is therefore given `total_tokens - prompt_tokens` as
+the billable output count so hidden reasoning is not treated as free.
+
+The Bind/OpenRouter boundary is converted member by member rather than asserted
+through `unknown`. Bind's OpenAI-wire-compatible structural messages remain an
+internal loop contract, but Rally has no direct OpenAI SDK dependency: the
+official `@openrouter/sdk` schemas own provider request serialization and
+successful response/chunk parsing. Model content parts and function tools are
+mapped to Rally's wire types, unsupported tool variants fail at the boundary,
+and input audio admits only the `wav` and `mp3` formats the OpenRouter SDK
+contract supports. This keeps an SDK union or return-shape change visible to the
+compiler instead of letting it emerge later in a provider request.
+
+Every OpenRouter request opts into router metadata and carries a Broadcast trace
+envelope. One harness loop has one `trace_id`, fixed to its durable request/run
+ID across every model turn, including tool call, tool result, and final-answer
+turns. Every model turn has its own `span_name`; the OpenRouter request is the
+generation inside that span. `turn_id`, inference request, and route cursor
+fields distinguish the individual generations and retries.
+For work-stream inference, `session_id` is exactly
+`<workstream_id>-<substream_id>`. Both OpenRouter's top-level `user` and trace
+`user_id` are the opaque Rally workspace ID, giving Broadcast and PostHog one
+stable tenant identity for user- and system-initiated runs. A relevant person,
+when one exists, is kept separately as `context_user_id`. The trace also carries
+source, workspace, work-stream, substream, request, parent request, harness run,
+draft, region, environment, build, principal, invocation type, provider/model,
+inference-request, and route-cursor metadata when each value exists. `feature`
+is the authoritative Flagship model-category key (for example,
+`agent-model-workstream`), `source` is the inference surface, and `product` is
+`rally`. `intended_model` is the primary model Rally selected before route
+traversal; `model` is the candidate used for that request, so a mismatch (or a
+nonzero `route_stage_index`) identifies application-level fallback.
+OpenRouter's PostHog Broadcast
+mapping therefore receives the workspace as `distinct_id`, the work-stream
+session as `$ai_session_id`, the loop trace as `$ai_trace_id`, the turn
+generation name as `$ai_span_name`, and the remaining fields as `metadata_*`
+properties. One-shot structured calls use one call-scoped trace ID across
+retries, repairs, and fallback models, and use their schema name as the
+generation name.
+OpenRouter's returned
+`openrouter_metadata` is retained with successful streaming attempts so routing
+and pipeline decisions join the same lakehouse evidence. Broadcast destination
+enablement and content/privacy policy remain OpenRouter account configuration;
+the request path supplies trace data but does not silently alter that account
+setting.
 
 Every classified provider attempt appends an immutable operational
 `inference_attempts` row in the owning `SubstreamAgent` or
@@ -492,7 +623,7 @@ outcome.
 
 ### Streaming stability
 
-OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
+OpenAI-compatible SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and attempt boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
 
@@ -573,9 +704,12 @@ accepts exactly one of a content query or `memoryItemId`; the exact-ID form is t
 conflict-recovery read for a mutation and still reauthorizes the item against the
 host-derived scope union. The host returns scope provenance without allowing the
 model to select scope IDs. Ad-hoc user runs search workspace, user, and work-stream
-memory. Personal automations search workspace, owner-user, and automation memory.
-Workspace automations search workspace and automation memory. All work streams
-created by one automation subscription therefore share one automation scope.
+memory. An automation run's memory tools execute inside its named
+`AutomationAgent` and reach that automation's own memory; the workspace-side
+automation scope union was retired with the 2026-08-28 automation cutover, and
+`resolveMemoryAccess` refuses a subscription-declaring run by name
+(`memory_automation_scope_retired`) rather than reading a subscription row no
+reachable store still holds.
 
 **A run in a work stream an automation created, carrying no subscription of its
 own, is none of those**, and the run's own `automationSubscriptionId` — not the
@@ -617,7 +751,7 @@ should start owning a work-stream scope once people are talking in it is a
 second. Neither is the memory union's to decide on its own, and neither writes a
 row today, so both stay open.
 
-Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; Workers AI embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
+Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; OpenRouter reporting a different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
 
 Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
 
@@ -877,7 +1011,7 @@ A published document is readable in the desktop client, and was not until 2026-0
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
-When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is never written to structured Workers Logs or the object-local operational inference ledger: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose. For Global inference it is retained only inside the deliberately sensitive inference-lakehouse record, alongside the prompt it may quote, so lossless provider diagnosis does not turn the ordinary log surface into a content store. For EU inference it is not retained for later analysis.
+When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is never written to structured Workers Logs, the object-local operational inference ledger, or the Global inference lakehouse: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose. EU inference likewise does not retain it for later analysis.
 
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, WebP, HEIF/HEIC, and the primary TIFF path are normalized through Cloudflare Images; the TIFF fallback preflights dimensions before pixel decode, while HEIF has no whole-buffer local fallback. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
 
@@ -960,11 +1094,10 @@ proof.
 | `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts` | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content. |
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
-| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, invalidation races, and bounded insert contention. |
+| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, and invalidation races, against a real `WorkspaceDO` standing in for the memory authority. `apps/api/test-workers/workspace-memory.test.ts` proves the object's transactional receipts, witnesses, and FTS triggers on real workerd. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
 | `apps/api/test/digest-run-context.test.ts` | A scheduled digest's hidden brief becomes an explicit derived activation input with stable logical identity instead of disappearing on loop resume. |
-| `apps/api/test/document-run-context.test.ts` | Which runs are told to write documents: an interactive run in a region with Terminal is, and a region without Terminal, an inbound-email run and a Slack-origin run are not. The automation and digest origins are pinned in their own suites, beside the delivery context each already proves. **The trap:** the gate reads the whole Terminal region configuration, so a test asserting the section's *absence* must set `TERMINAL_REGION_CAPABILITY`, all four `DAYTONA_*` variables and `TERMINAL_EMERGENCY_DISABLED` — otherwise it passes because the region is unsupported rather than because of the origin it names. |
 | `apps/api/test/block-dashboard-submission.test.ts` | The single nudge, the `block_dashboard_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
 | `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
@@ -988,15 +1121,17 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 **A memory-scope fixture can enforce rules production dropped.**
-`scoped-memory.test.ts` builds on `preRetirementProductSqliteDatabase()`, which
-replays migrations only through 0089 — one short of the 0090 that moved
-`memory_scopes` into WorkspaceDO and dropped migration 0036's four owner-validation
-triggers with it. Left in place, those triggers enforce from the fixture the very
-rules `resolveMemoryAccess` is now solely responsible for, so neutering a scope
-condition still fails a test — on `memory_scope_workstream_owner_invalid`, from a
-constraint no deployed database has, rather than on the union the test asserts.
-The fixture drops all four for that reason. Anything that reaches
-`memory_scopes` through another fixture owes the same check.
+`scoped-memory.test.ts` used to build its memory tables on
+`preRetirementProductSqliteDatabase()`, whose through-0089 snapshot still carried
+migration 0036's four owner-validation triggers — constraints no deployed
+database has — so neutering a scope condition failed a test on
+`memory_scope_workstream_owner_invalid` rather than on the union the test
+asserts, and the fixture had to drop them by hand. Since memory moved behind
+typed WorkspaceDO methods the suite stands up the real object with
+`createTestWorkspaceDO`, whose schema is the object's own migration ledger, and
+the snapshot serves only identity and membership. Anything that reaches
+`memory_scopes` through another fixture still owes this check: a stand-in schema
+must not enforce rules the code under test is now solely responsible for.
 
 And **the route circuit breaker is module-scoped**, keyed by provider, model,
 credential source, and workspace. A test that deliberately fails one endpoint
@@ -1009,6 +1144,350 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-31 — Built-in plugin authorization is derived from registration
+
+**What changed:** `isLoadableBuiltinHarnessPlugin` now reads a
+`builtinPluginIds` set derived where the built-ins are registered, replacing a
+hand-maintained literal of three plugin IDs. `builtinPluginAuthorization` and the
+`beforeToolCall` scope check read that one derivation in both the root run and
+the inline child surface; the root's activation persistence and
+`resolveHarnessToolReceiptPolicy` read it too. The child's activation
+persistence is not a consumer: it guards on its own `childPluginSurfaceHashes`
+entry instead, and is unchanged. Two tests assert the invariant over the
+registered surface rather than a repeated list: every registered non-connector
+plugin authorizes for activation while an unregistered built-in id and an
+invented one are denied, and the child's set stays narrower than the parent's.
+
+**Why:** The literal list was a second, unlinked statement of which built-ins
+exist. `rally:multimodal-generation` shipped absent from it, so image, image-edit
+and speech generation registered, entered the plugin catalog, were found by
+`search_plugins` — and had every `load_plugin` denied as
+`plugin_not_authorized`. Because that verdict's guidance is written for
+credential connectors, runs told users to have a workspace owner restore a
+connection that does not exist, and fell back to hand-drawn SVG. Nothing failed
+at startup, no test covered the list's contents, and the defect was only
+reachable in production. Deriving the set makes registering a built-in and
+authorizing it the same edit.
+
+**Considered and rejected:** Adding the one missing ID and keeping the literal.
+That fixes this instance and leaves the trap armed for the next built-in, with
+the same silent, production-only failure. Also rejected: removing the classifier
+altogether — its `resolveHarnessToolReceiptPolicy` use is a branch that mints the built-in
+receipt identity (`connectionId: null` plus the surface hash), so deleting it
+sends every built-in into the connector arm and throws
+`Connector identity is outside this run scope`, breaking web, workstream and
+Terminal to unblock multimodal.
+
+**Consequences:** A built-in plugin's eligibility is now exactly its
+registration, which is where the conditions already live — the Azure inference
+pair, `FIRECRAWL_API_KEY`, Terminal's provider configuration. Registering a new
+built-in therefore grants it run-scope authority with no second list to update,
+so the registration site is the review point for that authority, and the
+conditional-registration branches are load-bearing: a built-in that registers
+unconditionally and fails inside its tool calls would advertise a capability the
+discovery prompt promises is available.
+
+Shipped in the pull request for this change.
+
+### 2026-08-30 — The multimodal plugin creates replay-safe speech resources
+
+**What changed:** `rally_multimodal_generation` now advertises a third Bind
+write, `generate_audio`. It calls the main Azure `gpt-4o-mini-tts` deployment,
+MIME-verifies and bounds one MP3 response, and publishes it under the durable
+effect identity. Desktop current-resource and version previews render native
+audio controls; the tool result and plugin system message carry the AI-voice
+disclosure because the same player also serves user-uploaded audio.
+
+**Why:** Generated speech needs the same plugin activation, receipt, timeout,
+regional storage and resource ownership as generated images. Keeping it in the
+existing multimodal plugin avoids a parallel lifecycle for one media subtype.
+
+**Considered and rejected:** Injecting generated audio into the following model
+turn. The output is for the person to play, not evidence the model needs to
+reconsume. Also rejected: a guessed charge when Azure returns no usage and the
+shared OpenRouter cache has no endpoint price for this model.
+
+**Consequences:** Audio generation is available anywhere the main Azure
+credential pair already enables multimodal generation. Its receipt and metadata
+must not persist the source text or instructions, and no billing entry is
+created without provider usage and a valid shared price.
+
+### 2026-08-30 — A dedicated plugin generates and edits durable images
+
+**What changed:** Runs with main Azure inference credentials now advertise the
+deferred `rally_multimodal_generation` plugin. Its initial two Bind tools call Azure's
+`gpt-image-2` image endpoints, return an ephemeral image part to the current
+turn. Generation publishes one durable generated resource under a
+receipt-derived identity; editing publishes a new version of the selected image
+resource under the same resource ID. Tool timeouts are fixed at five minutes.
+
+**Why:** The agent needs a native image capability that participates in Bind's
+plugin discovery, receipt policy, and workstream resource ownership. Reusing a
+chat-model route or Terminal would either misstate the provider API or make a
+first-class product operation depend on a sandbox.
+
+**Considered and rejected:** Preloading the plugin on every run; generation is
+specialized and its instructions and tools need not consume every model turn.
+Also rejected: failing closed on a missing cached price, because an
+observability/cache failure should not deny the requested image. The no-price
+case is logged and left uncharged.
+
+**Consequences:** The plugin is absent without the main Azure credential pair.
+West remains future fallback infrastructure and is not selected implicitly.
+The durable receipt stores JSON only; a later turn views the attached resource
+instead of replaying provider bytes.
+
+### 2026-08-30 — Bound Grok models use Bind's Azure-first provider route
+
+**What changed:** Work-stream and inline-child turns whose canonical model is
+`x-ai/grok-4.3` or `x-ai/grok-4.6` now give Bind an Azure candidate followed by
+the existing OpenRouter candidate for that same model. Rally supplies the
+deployment binding and provider-specific wire adapter; Bind owns policy
+resolution, capability skips, route construction, breaker admission, traversal,
+failure disposition, and configured-rate cost arithmetic. A dedicated optional
+Azure inference endpoint/key pair enables the transport without changing model
+flags. Provider invocation names remain separate from canonical model identity
+in the inference ledger. The host resolves an unweighted average of all
+OpenRouter endpoints for each bound Grok model and gives those rates to Bind.
+One public-metadata record per canonical OpenRouter model ID is cached in a
+Cloudflare KV namespace shared by the Global and EU Workers. A dedicated Global
+cron refreshes the developer-selector and Azure-deployment union hourly; base
+and prompt-threshold override costs remain decimal strings in KV and are
+converted only at Bind's billing boundary. Startup now validates the Azure
+endpoint against the same exact contract used by the transport, and turns whose
+primary and fallback models are all OpenRouter-only do not read pricing KV.
+
+**Why:** Monad production carries Global Standard version-1 deployments for
+both Grok models, while Rally sent every agent turn through OpenRouter even though its
+Bind version already had a multi-provider route executor. Using the same-model
+Azure endpoint first gives Rally that deployment's capacity and commercial path
+without turning a provider choice into a product model change. The change also
+had to preserve cost ceilings: Azure returns usage rather than dollars, and
+Grok's cached count is disjoint from `prompt_tokens` while reasoning is separate
+from `completion_tokens`, so ordinary subset billing would either undercount or
+reject a valid response. When Azure omits dollars, both bindings use the most
+recent valid average of OpenRouter endpoint rates, including the 200,000-token
+long-context override rather than silently billing a large request at the base
+rate. Using the catalog's cheapest
+headline price was rejected because it would systematically understate the
+intended market-average fallback. Keeping those rates as dated source constants
+was also rejected because endpoint inventory changes independently of a Rally
+release.
+
+**Considered and rejected:** Encoding Azure as another fallback model. That
+would lose the difference between the product model and its provider endpoint,
+mislabel same-model traversal in telemetry, and bypass Bind's capability and
+circuit-breaker semantics. Reusing the realtime-dictation Azure variables was
+also rejected: those are regional and may be configured in EU, while the Monad
+production inference resource is a distinct routing authority. A missing Azure
+pair therefore omits that provider and leaves the existing OpenRouter route
+unchanged.
+
+**Consequences:** A new Azure model needs a checked-in canonical-to-deployment
+binding with proved capabilities and a canonical OpenRouter identity in the
+Azure pricing inventory. The cron fetches every inventoried model before it
+writes any of them; stale valid per-model KV is a deliberate availability
+fallback, while no valid price omits Azure instead of treating a request as
+free. KV is eventually consistent, which is acceptable for public hourly
+pricing metadata and must not be extended to workspace state. Do not make
+the Azure client carry OpenRouter Broadcast fields or plugins. Keep turn
+requirements accurate: an Azure candidate that cannot serve a file parser,
+input modality, reasoning control, or tool surface must be skipped before I/O.
+Missing final Azure usage is a failed attempt, never a free one. Provider
+ordering remains policy, so changing Azure-first behavior belongs in the route
+registry rather than in request code.
+### 2026-08-30 — Document generation is standing policy, not a gated section
+
+**What changed:** `DOCUMENT_GENERATION_POLICY` moves into the work-stream
+`SYSTEM_PROMPT` alongside the other standing sections. `documentPublishing` and
+`runPublishesDocuments` are gone — every work-stream run sees `# Documents`,
+including automations, digests, inbound email, Slack-origin, HyperSight blocks,
+and regions without Terminal. The host-side gate tests go with them. A typed
+output surface now follows the standing rule: external deliveries require the
+complete usable body in the final message, and HyperSight blocks require
+finished Markdown through the block submission tool instead of a document.
+
+**Why:** The section already told the model what to do when the sandbox cannot
+be reached ("answer in the chat and inform the user"). A host gate that omitted
+the section for delivery-path and unsupported-region runs was solving the same
+problem a second time, and the wrong resolution of an absent rule — promising a
+document that never appears — was exactly what the gate existed to prevent. One
+standing rule with an explicit fallback is cheaper to reason about than a
+conditional render whose absence itself needed reasoning.
+
+**Considered and rejected:** Restoring a host gate for delivery and HyperSight
+runs — rejected because absence makes the platform rule depend on every caller
+remembering the exclusion. A standing rule followed by an explicit,
+surface-specific tie-break keeps one default while stating the actual output
+contract where it differs.
+
+**Consequences:** The work-stream golden hash moves. The standing prompt now
+always pays for the documents section; the 8,000-byte ceiling in
+`prompts.test.ts` is the bound that matters. Output-surface derivation is part of
+run-context assembly and must cover any new external delivery origin. Prompt
+assembly joins optional sections without blank tombstones, while preserving
+blank lines inside authorized task data.
+
+### 2026-08-29 — External delivery reads the exact saved terminal turn
+
+**What changed:** Work-stream terminal side effects reload `finalTurnId`
+directly from the canonical transcript instead of fetching the latest 250
+messages and searching them. For `needs_input`, they reload the oldest open
+elicitation through its canonical transcript turn so the saved structured
+prompt remains actionable externally. The shared transcript-turn schema now
+accepts the durable loop's structured assistant IDs. When no saved turn exists,
+connector status and suppressed automation receipts settle but no external
+result body is synthesized. A named-but-missing turn leaves a durable diagnostic
+without putting status cleanup behind an endless retry.
+
+**Why:** A completed assistant turn was durable under its stable structured ID,
+but generic message hydration still required a UUID. Settlement retried before
+Slack delivery on every attempt. The bounded recent-message search also made
+external delivery depend on transcript length instead of the terminal fact it
+was given.
+
+**What was rejected:** Generating fallback failure/completion prose inside the
+delivery layer, or searching a wider transcript page. The first publishes text
+that is not canonical; the second remains a page-size-dependent lookup for an
+exact key.
+
+**What a future change has to respect:** External adapters project a hydrated
+canonical turn and nothing else. A new Teams, Linear, or other conversational
+delivery branch belongs after saved-turn hydration, never on the live
+stream/checkpoint path.
+
+### 2026-08-29 — Automation authoring preserves connector tool deadlines
+
+**What changed:** The automation creator's connector catalog now carries each
+tool's optional `timeoutMs` from API discovery into the executable `HarnessTool`
+that Bind receives.
+
+**Why:** The ordinary work-stream path already honored Granola's five-minute
+`query_granola_meetings` deadline, but automation authoring copied only the
+tool's schema and safety fields into its intermediate catalog. Reconstructing
+the tool without the deadline silently restored the shared 30-second default,
+so the same provider query still failed in one supported invocation path.
+
+**What was rejected:** Special-casing Granola inside the automation compiler.
+The deadline is part of the trusted `ToolDefinition` selected by the connector;
+every catalog projection must preserve that contract regardless of provider.
+
+**What a future change has to respect:** Any intermediate representation that
+reconstructs an executable tool must carry execution policy fields as well as
+model-visible schema. Omitting an optional field is a behavioral change even
+when the model-facing catalog looks identical. Bind still combines each tool
+deadline with its caller's parent signal: preserving a five-minute tool value
+does not widen automation compilation's independent 180-second run ceiling.
+
+### 2026-08-29 — `runHarness` imports the Bind runtime statically
+
+**What changed:** `runHarness` in `packages/agent-harness/src/index.ts` calls
+`runHarnessWithBind` through a static import instead of
+`await import("./bind-runtime")`.
+
+**Why:** the dynamic form never settled under
+`@cloudflare/vitest-pool-workers`. The import promise stayed pending past 36
+seconds while a 2-second timer kept firing in the same isolate — so the isolate
+was alive and the module load simply never completed, rather than being slow.
+Every workers test that let a run reach inference therefore hung inside
+`runHarness` and failed as a timeout on some later, unrelated assertion. That
+made the whole class of run-completing tests impossible to write, which is what
+`participant-notification.test.ts` ran into.
+
+**What was rejected:** leaving the dynamic form and warming the module from the
+test. There is no exported path to `bind-runtime` to warm, and it would have
+left the same trap armed for the next person.
+
+**Why the lazy form existed is not recorded.** The line arrives with the
+repository's initial import and carries no rationale, and no comment, commit
+message, or document explains it. The plausible reason is the Workers startup
+CPU budget — `bind-runtime` is large, and a dynamic import defers evaluating it
+until a run actually needs it. That is a guess and is written here as one. **A
+change that needs the lazy form back must establish its reason afresh** and
+verify it against this failure, rather than restoring it on the strength of this
+note.
+
+**What a future change has to respect:** `bind-runtime` imports seven runtime
+values back from `index` (`OpenRouterClient`, `OpenRouterError`,
+`HarnessPluginActivationError`, `canonicalToolInputHash`,
+`modelMessageWithoutProvenance`, `AVALON_DISCOVERY_PLUGIN_ID`,
+`AVALON_DISCOVERY_TOOL_DEFINITIONS`), so the two modules are now a static cycle.
+It is sound only because all seven are read inside function bodies rather than
+at module top level. Moving any of them into top-level initialization on either
+side breaks the cycle at load time.
+
+### 2026-08-29 — Workspace memory becomes typed WorkspaceDO methods, and the retired automation union fails by name
+
+**What changed:** Every statement the memory services ran against the
+memory-owned tables — `memory_scopes`, `memory_items`, `memory_items_fts`,
+`memory_mutations`, `memory_index_outbox`, and the six `memory_table*` tables —
+left the workspace runtime facade and became typed WorkspaceDO methods
+(`workspace-memory-protocol.ts` / `workspace-memory-storage.ts`). Each mutation
+now decides its receipt replay, compare-and-set, audit record, and outbox
+intent inside one `transactionSync`, refuses with a discriminated outcome
+rather than a thrown SQL error, and judges its CAS by a `RETURNING` witness
+rather than a write counter. Two failure modes ceased to exist with the D1
+batches that produced them: `memory_table_insert_contention` (the insert's
+bounded retry loop around its own revision counter) and
+`memory_table_query_changed_during_read` (the row page and the revision
+re-check were separate round trips). The embedding-outbox processor claims,
+completes, and retries through the same typed methods; running inside
+WorkspaceDO's own alarm it resolves to the registered instance rather than an
+RPC to itself. `resolveMemoryAccess`'s automation branch no longer reads
+`automation_subscriptions` — it throws `memory_automation_scope_retired` after
+the work-stream mismatch check — and the automation memory-table materializers
+(`buildAutomationMemoryTableStatements`, `ensureAutomationMemoryTables`,
+`loadAutomationMemoryTableContext`) were deleted. The converted tables joined
+`WORKSPACE_TYPED_RPC_ONLY_TABLES`, all except `memory_index_outbox`, whose due
+time the schedule's alarm-target derivation still reads generically inside the
+object.
+
+**Why:** The facade classifies each statement by the table names it mentions
+and sends anything it does not recognise to the regional database, which is the
+defect class that took automation run work streams down in production
+(`no such table: automation_directory`). The memory domain was carrying a live
+instance of it: the 2026-08-28 automation cutover dropped
+`automation_subscriptions` from every migrated WorkspaceDO while the facade
+still routes that name there, so both the automation branch of
+`resolveMemoryAccess` and the memory-table materializers would have answered
+`no such table: automation_subscriptions` had anything reached them. Nothing
+does — automation runs route memory through `AutomationAgent`, and a
+subscription-declaring input without frozen context is stopped by name in
+`loadRunPromptContext` — but the honest fix for an unreachable branch reading a
+dropped table is a named refusal, and for materializers with no callers since
+the cutover, deletion.
+
+**Considered and rejected:** Converting the automation branch and the
+materializers to typed methods — the rows they read and join no longer exist in
+any store this service can reach, so a faithful conversion would have encoded a
+query that can never answer. Also rejected: chunking caller-sized `IN (…)`
+lists into runs of 90 to stay under object SQLite's 100-bound-parameter
+refusal; every id list binds as a single JSON parameter expanded with
+`json_each` instead, which removes the ceiling rather than budgeting for it.
+
+**What a future change has to respect:** WorkspaceDO's memory rows are
+reachable only through the typed methods — the generic SQL port refuses the
+tables by name, with `memory_index_outbox` as the one deliberate exception —
+and a memory mutation's replay decision must stay inside the same transaction
+as its write, answered as an outcome with a returned witness, never derived
+from `rowsWritten` or reconstructed from a constraint violation after a lost
+race.
+
+A typed write that leaves an embedding intent must also arm the alarm that
+projects it. `memory_index_outbox` is on `WORKSPACE_ALARM_SOURCE_TABLES`, and
+while these writes were generic statements `executeRuntimeSql` re-derived the
+schedule for them; the first cut of this conversion dropped that, which would
+have left a memory written into a quiet workspace unprojected until an
+unrelated mutation happened to reconcile. `addMemoryItem`, `updateMemoryItem`
+and `invalidateMemoryItem` now call `refreshScheduleAfterMemoryOutboxWrite`,
+gated on an outcome that actually wrote a row — a replay or a refusal left no
+intent. The outbox claim, completion and retry methods deliberately do not:
+their only caller is `processMemoryIndexOutbox`, reached only as the
+`memory_index` maintenance target, which runs inside the object's own alarm
+drain, whose statements go through the local executor and never carried the
+auto-refresh either. A reconcile started there would race the drain's own
+end-of-drain `schedule_reconcile` with a stale target list.
 
 ### 2026-08-28 — A second host runs the compiler, and a semantic refinement has to be in the executor
 
@@ -1417,6 +1896,8 @@ feature exists to remove. Shipped in
 
 ### 2026-08-27 — A document request becomes a published resource, not a wall of chat
 
+Superseded by the 2026-08-30 standing-policy and output-surface entry above.
+
 **What changed:** `DOCUMENT_GENERATION_POLICY` joined the work-stream system
 prompt as a `# Documents` section, rendered only when `loadRunPromptContext`
 resolves `documentPublishing` — the region reports Terminal supported, and the
@@ -1474,6 +1955,81 @@ acceptance criterion — a rail entry that opens to the formatted document —
 cannot be met until the rail can show one. That is a client change the PRD
 deliberately excluded ("no desktop release"), so it is named here rather than
 smuggled in.
+### 2026-08-27 — Durable-memory embeddings move to OpenRouter
+
+**What changed:** Memory query and document embeddings now use OpenRouter's
+native embeddings endpoint through the shared inference gateway, with
+`qwen/qwen3-embedding-8b` as a fixed route with no model fallbacks and explicit 1,024
+dimensions. Query/document input types remain distinct. Vector namespaces are
+derived from the fixed requested model and dimension contract, provider model
+drift fails closed, and WorkspaceDO
+migration 23 requeues every current active memory while keeping old Qwen
+vectors unreachable during the rebuild.
+
+**Why:** Memory embeddings were the remaining language-model inference path
+calling Workers AI directly, outside the shared provider and observability
+boundary. Reusing the existing 1,024-dimensional indexes avoids a destructive
+Vectorize replacement, but equal vector length is not semantic compatibility,
+so the old and new spaces need a hard query boundary.
+
+**Considered and rejected:** Mixing the previous Workers AI Qwen3 0.6B and new
+OpenRouter Qwen3 8B vectors because both are 1,024-dimensional, replacing both
+regional Vectorize indexes, and using a
+metadata filter that would require provisioning another metadata index. A
+versioned namespace is supported without extra index configuration and makes a
+partial rebuild fail toward FTS rather than false semantic matches.
+
+**Consequences:** The static `memory_embedding` feature label identifies this
+category in diagnostics, but no Flagship rule or Ace edit can change its model.
+Changing the fixed model requires a code change paired with an active-memory
+requeue.
+The current OpenRouter embeddings request schema does not accept Broadcast's
+custom `trace` object. It receives workspace `user` plus `X-Session-ID`; Rally
+keeps feature, trace, intended/requested/resolved model, fallback, and latency
+as content-free regional diagnostics. Query embeddings use the active
+substream in that session; document projection uses the owning work stream's
+canonical main substream.
+
+### 2026-08-27 — OpenRouter SDK serialization and loop-wide provider traces
+
+**What changed:** Rally's provider boundary now uses the official OpenRouter SDK
+schemas instead of a direct OpenAI SDK type dependency. Every structured and
+streaming request enables router metadata and sends `user`, a stable
+`session_id`, and a Broadcast `trace` envelope. A harness loop keeps one
+`trace_id` across all of its turns, and each model turn is a separate named span
+containing its OpenRouter generation; inference and route fields distinguish
+retries. `feature` carries the model category's exact Flagship key while
+`source` retains the execution surface. Provider `user` and trace `user_id`
+both use the workspace ID; a relevant person remains separate as
+`context_user_id`. `intended_model` retains the primary model selected before
+route traversal while `model` records each attempted candidate, making fallback
+requests directly queryable. Successful streaming attempts retain returned router
+metadata.
+
+Locally invalid SDK requests are terminal before transport: Rally does not
+retry them on the same model or send them to a fallback. Structured retries,
+repairs, and fallback models retain one trace ID while their provider request
+IDs remain distinct. Provider-controlled error prose is discarded before any
+operational or lakehouse record is built.
+
+**Why:** The local inference lakehouse proves what Rally sent and received, but
+provider-side diagnosis previously had no complete way to join a routed request
+back to its workspace, conversation, relevant person, run, deployment, or exact
+loop turn. Changing trace IDs per turn would also fragment one agent execution
+into unrelated traces.
+
+**Considered and rejected:** Using one trace per model turn, overloading
+`session_id` with a host request ID, deriving product identity from synthetic
+harness plumbing, and treating OpenRouter Broadcast as a replacement for the
+Global-only Rally lakehouse. Those respectively lose loop topology, break
+conversation grouping, mislabel one-shot surfaces such as meeting notes, or
+weaken Rally's exact regional evidence.
+
+**Consequences:** New inference surfaces must provide an explicit trace context
+when the generic harness IDs are not product IDs. Work-stream sessions remain
+`<workstream_id>-<substream_id>`, trace IDs remain stable for a loop, workspace
+IDs are the provider/PostHog identity, and OpenRouter account owners must
+configure Broadcast destinations and privacy policy separately.
 
 ### 2026-08-27 — Explicit plugin activation may prepare convergent runtime state
 
@@ -1525,6 +2081,45 @@ is only the admitted input; the ledger follows every later accepted mutation.
 **Consequences:** A run cannot continue when transcript persistence or boundary
 equality fails. The system prompt remains a deterministic runtime projection,
 but its rendered bytes and revision participate in every equality check.
+### 2026-08-26 — The addressing classifier is told who a message mentions
+
+**What changed:** `classifyAddressing` and its prompt gained a `humanMentions`
+input — the display names of the people the message mentions, resolved by the
+work-stream object from the same validated mention rows that drive
+notifications, and serialized into the classifier's user-role JSON beside
+`connectorMentions`. The prompt now rules that a message telling, asking, or
+assigning something to a mentioned person (or to someone it addresses by name)
+is that person's to act on — `human_only` even during an active task, even when
+Rally spoke last, and even when it states facts or times Rally could act on —
+with two stated tie-breaks: naming a person never cancels a request aimed at
+Rally, and `addressesRally` reports only that the text contains the product's
+name, which the model must read as addressing only when the message speaks *to*
+Rally. The deterministic imperative fast path no longer fires when the message
+mentions a person; it hands those to the model instead. The work-stream object
+also now labels the agent's own turns "Rally" rather than "Avalon" in the
+classifier's recent-message context.
+
+**Why:** a member tagged a teammate — "@Alex Todorovic this was sent at
+12:08 Pac" — and Rally answered, checking the current time and "logging" the
+timestamp. The classifier never received who the message mentioned: the object
+resolved and validated the mentions, then dropped them, so the model saw only
+raw text, an active-task flag, and an outcome list with no rule for
+person-directed messages. During an active task that reads as a continuation of
+work. The prompt could not state a person-addressing rule a medium model could
+follow until the audience arrived as data, which is the same reason the
+ambiguous product name rides in as `addressesRally` rather than being decided by
+regex. The "Avalon" author label was a rebrand miss of the documented
+model-facing-string class: the prompt introduces the agent as Rally, so history
+attributed to "Avalon" hid from the classifier that the agent itself had asked
+the pending question.
+
+**Consequences:** an imperative message that mentions a person now costs a model
+call where it used to classify deterministically at 0.9 — the price of not
+answering work that was handed to a teammate. A message that only *names* a
+person mid-sentence without a mention chip carries no `humanMentions` entry and
+is covered only by the prompt's addressed-by-name clause, so plain-text
+addressing remains a judgment call for the model. `docs/rally-rebrand-inventory.md`
+records the author-label rename.
 
 ### 2026-08-26 — A run's own subscription decides whether it is an automation run
 

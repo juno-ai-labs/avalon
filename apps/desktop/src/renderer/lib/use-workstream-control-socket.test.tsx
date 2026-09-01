@@ -87,6 +87,8 @@ function summary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary 
     scope: 'workspace',
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     ...overrides,
   };
 }

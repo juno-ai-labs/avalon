@@ -16,6 +16,7 @@ import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
 import type { AttachmentPreview } from './attachments';
+import { ComposerQueue, type ComposerQueueItem } from './composer-queue';
 import { ComposerInput } from './composer-input';
 import { Avatar, Badge, Button, Modal } from './primitives';
 
@@ -53,6 +54,8 @@ interface WorkstreamComposerProps {
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
   onStop: () => Promise<void>;
+  queueItems?: ComposerQueueItem[];
+  onReorderQueue?: (inputIds: string[]) => Promise<void>;
 }
 
 interface PendingMentionConfirmation {
@@ -89,6 +92,8 @@ export function WorkstreamComposer({
   onRemoveAttachment,
   onRetryAttachment,
   onStop,
+  queueItems = [],
+  onReorderQueue,
 }: WorkstreamComposerProps): React.JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
@@ -102,7 +107,6 @@ export function WorkstreamComposer({
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [deliveryMode, setDeliveryMode] = useState<WorkstreamMessageDeliveryMode>('steer');
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
   const candidates = useMemo<MentionCandidate[]>(() => members
@@ -286,22 +290,18 @@ export function WorkstreamComposer({
         text: trimmed,
         mentions: submitted.mentions,
         members: nonparticipants,
-        ...(workstream.harnessStatus === 'running' ? { deliveryMode } : {}),
+        ...(workstream.harnessStatus === 'running' ? { deliveryMode: 'queue' as const } : {}),
       });
       return;
     }
     const mentions = submitted.mentions;
     const revision = draftRevisionRef.current;
-    const submittedDeliveryMode = workstream.harnessStatus === 'running' ? deliveryMode : undefined;
+    const submittedDeliveryMode = workstream.harnessStatus === 'running' ? 'queue' as const : undefined;
     resetDraft();
-    setDeliveryMode('steer');
     try {
       await onSend(trimmed, mentions, undefined, submittedDeliveryMode);
     } catch {
       restoreDraft(trimmed, mentions, revision);
-      if (draftRevisionRef.current === revision && submittedDeliveryMode) {
-        setDeliveryMode(submittedDeliveryMode);
-      }
     }
   };
 
@@ -312,7 +312,6 @@ export function WorkstreamComposer({
     setConfirming(true);
     setPendingConfirmation(null);
     resetDraft();
-    setDeliveryMode('steer');
     try {
       await onSend(
         submitted.text,
@@ -322,9 +321,6 @@ export function WorkstreamComposer({
       );
     } catch {
       restoreDraft(submitted.text, submitted.mentions, revision);
-      if (draftRevisionRef.current === revision && submitted.deliveryMode) {
-        setDeliveryMode(submitted.deliveryMode);
-      }
     } finally {
       setConfirming(false);
     }
@@ -376,6 +372,12 @@ export function WorkstreamComposer({
             </button>
           ))}
         </div>
+      )}
+      {queueItems.length > 0 && (
+        <ComposerQueue
+          items={queueItems}
+          onReorder={onReorderQueue ?? (async () => undefined)}
+        />
       )}
       <ComposerInput
         api={api}
@@ -442,17 +444,6 @@ export function WorkstreamComposer({
         submitAccessory={workstream.harnessStatus === 'running'
           ? (
               <div className="message-delivery-controls">
-                <label className="sr-only" htmlFor={`message-delivery-mode-${workstream.id}`}>Message delivery</label>
-                <select
-                  aria-label="Message delivery"
-                  className="message-delivery-mode"
-                  id={`message-delivery-mode-${workstream.id}`}
-                  onChange={(event) => setDeliveryMode(event.target.value as WorkstreamMessageDeliveryMode)}
-                  value={deliveryMode}
-                >
-                  <option value="steer">Steer after this response</option>
-                  <option value="queue">Queue for next loop</option>
-                </select>
                 <Button
                   className="stop-button"
                   disabled={workstream.stopRequested}

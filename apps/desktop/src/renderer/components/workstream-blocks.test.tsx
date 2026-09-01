@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
 import type { ElicitationData, Message } from '../lib/types';
+import { applyTheme } from '../lib/theme';
 import {
   createConnectorMentionToken,
   ElicitationPanel,
@@ -10,6 +11,7 @@ import {
   splitStreamingMarkdown,
   withConnectorMentionLinks,
 } from './workstream-blocks';
+import { SpeechPlaybackProvider, type SpeechApi, type SpeechPlayer } from './speech-playback';
 
 const copyText = vi.hoisted(() => vi.fn());
 const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => Promise<MessageExportResult>>(
@@ -17,15 +19,38 @@ const exportMessage = vi.hoisted(() => vi.fn<(request: MessageExportRequest) => 
 ));
 const desktopServicesAvailable = vi.hoisted(() => vi.fn(() => true));
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn(async () => undefined));
+const setWindowTheme = vi.hoisted(() => vi.fn(async () => undefined));
+const initializeMermaid = vi.hoisted(() => vi.fn());
+const mermaidRender = vi.hoisted(() => vi.fn());
+const getMermaidDiagram = vi.hoisted(() => vi.fn(async () => ({ db: {} })));
+const getMermaidConfig = vi.hoisted(() => vi.fn(() => ({ maxTextSize: 50_000 })));
+const readMermaidThemeConfig = vi.hoisted(() => vi.fn(
+  () => ({
+    fontFamily: 'token-font',
+    fontSize: 13,
+    themeCSS: 'token-derived-theme',
+    themeVariables: { primaryColor: 'token' },
+  }),
+));
 
 vi.mock('../lib/platform', () => ({
-  desktopBridge: () => ({ copyText, exportMessage, reportTelemetryProductIntent }),
+  desktopBridge: () => ({ copyText, exportMessage, reportTelemetryProductIntent, setWindowTheme }),
   desktopServicesAvailable,
 }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
     <span data-paused={String(paused)} data-size={size} data-state={state} data-testid="thinking-orb" />
   ),
+}));
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: initializeMermaid,
+    mermaidAPI: { getConfig: getMermaidConfig, getDiagramFromText: getMermaidDiagram },
+    render: mermaidRender,
+  },
+}));
+vi.mock('./markdown-mermaid-theme', () => ({
+  readMermaidThemeConfig,
 }));
 
 afterEach(() => vi.useRealTimers());
@@ -43,7 +68,6 @@ const baseMessage: Message = {
 
 const actions = {
   onAnswerElicitation: vi.fn(async () => undefined),
-  onResolveSuggestion: vi.fn(async () => undefined),
 };
 
 describe('MessageBlock model timing', () => {
@@ -81,58 +105,6 @@ describe('MessageBlock model timing', () => {
     expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
     expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
-  });
-});
-
-describe('MessageBlock suggested context', () => {
-  const suggestionMessage: Message = {
-    ...baseMessage,
-    id: 'suggestion-suggestion-one',
-    authorType: 'system',
-    author: undefined,
-    messageType: 'activity_suggestion',
-    text: undefined,
-    activitySuggestion: {
-      id: 'suggestion-one',
-      title: 'Review requested on the privacy fix',
-      source: 'GitHub',
-      reason: 'The pull request changes the same work-stream authorization boundary.',
-      status: 'pending',
-    },
-  };
-
-  it('renders the evidence and resolves either action through the suggestion id', async () => {
-    const onResolveSuggestion = vi.fn(async () => undefined);
-    render(
-      <MessageBlock
-        {...actions}
-        message={suggestionMessage}
-        onResolveSuggestion={onResolveSuggestion}
-      />,
-    );
-
-    expect(screen.getByText('Suggested context')).toBeInTheDocument();
-    expect(screen.getByText('Review requested on the privacy fix')).toBeInTheDocument();
-    expect(screen.getByText('GitHub')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Add to work stream/u }));
-
-    await waitFor(() => expect(onResolveSuggestion).toHaveBeenCalledWith('suggestion-one', 'accept'));
-  });
-
-  it('renders an accepted suggestion without offering another decision', () => {
-    render(
-      <MessageBlock
-        {...actions}
-        message={{
-          ...suggestionMessage,
-          activitySuggestion: { ...suggestionMessage.activitySuggestion!, status: 'accepted' },
-        }}
-      />,
-    );
-
-    expect(screen.getByText('Added to this work stream')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Add to work stream/u })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Dismiss/u })).not.toBeInTheDocument();
   });
 });
 
@@ -474,14 +446,14 @@ describe('MessageBlock markdown', () => {
       id: 'message-person-mention',
       authorType: 'agent',
       author: undefined,
-      text: `Ask [@Spoofed label](person:${personId}) for a review.`,
+      text: `Ask [@Spoofed label](person://${personId}) for a review.`,
       mentions: [{
         type: 'person',
         personId,
         displayName: 'Ada Lovelace',
         avatarUrl: 'https://example.com/ada.png',
         startOffset: 4,
-        endOffset: 65,
+        endOffset: 67,
       }],
     };
 
@@ -493,6 +465,29 @@ describe('MessageBlock markdown', () => {
     expect(screen.queryByRole('link', { name: '@Ada Lovelace' })).not.toBeInTheDocument();
     expect(screen.queryByText('@Spoofed label')).not.toBeInTheDocument();
     expect(chip?.querySelector('img')).toHaveAttribute('src', 'https://example.com/ada.png');
+  });
+
+  it('still resolves a stored bare person: mention to a chip', () => {
+    const personId = '00000000-0000-7000-8000-000000000042';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-person-mention-legacy',
+      authorType: 'agent',
+      author: undefined,
+      text: `Ask [@Ada Lovelace](person:${personId}) for a review.`,
+      mentions: [{
+        type: 'person',
+        personId,
+        displayName: 'Ada Lovelace',
+        startOffset: 4,
+        endOffset: 65,
+      }],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(screen.getByText('@Ada Lovelace').closest('.mention-chip'))
+      .toHaveAttribute('data-person-id', personId);
   });
 
   it('keeps person Markdown inert when authoritative mention metadata is absent', () => {
@@ -519,20 +514,24 @@ describe('MessageBlock markdown', () => {
       id: 'message-connector-mention',
       text,
       mentions: [
-        { type: 'connector', connectorType: 'google_drive', startOffset: 4, endOffset: 17 },
+        { type: 'connector', connectorType: 'google', startOffset: 4, endOffset: 17 },
         { type: 'connector', connectorType: 'linear', startOffset: 22, endOffset: 29 },
       ],
     };
 
     render(<MessageBlock {...actions} message={message} />);
 
-    const drive = screen.getByText('@Google Drive').closest('.mention-chip');
-    expect(drive).toHaveAttribute('data-connector-type', 'google_drive');
+    const drive = screen.getByText('Google Drive').closest('.mention-chip');
+    expect(drive).toHaveAttribute('data-connector-type', 'google');
+    expect(drive).toHaveAttribute('data-connector-status', 'missing');
+    expect(drive?.querySelector('.mention-chip-status')).toHaveTextContent('Not connected');
     expect(drive?.tagName).toBe('SPAN');
-    expect(screen.getByText('@Linear').closest('.mention-chip'))
+    expect(screen.getByText('Linear').closest('.mention-chip'))
       .toHaveAttribute('data-connector-type', 'linear');
-    expect(screen.queryByRole('link', { name: '@Google Drive' })).not.toBeInTheDocument();
-    expect(document.querySelector('.markdown-body')).toHaveTextContent(text);
+    expect(screen.queryByRole('link', { name: 'Google Drive' })).not.toBeInTheDocument();
+    const body = document.querySelector('.markdown-body');
+    expect(body).toHaveTextContent(/Ask.*Google Drive.*Linear.*to sync/u);
+    expect(drive?.querySelector('.mention-chip-connector-icon.provider-icon')).toBeInTheDocument();
   });
 
   it('repairs a model\'s TeX without disturbing the mention offsets beside it', () => {
@@ -546,16 +545,16 @@ describe('MessageBlock markdown', () => {
       id: 'message-connector-mention-tex',
       text: 'Ask @Google Drive to move Backlog $\\rightarrow$ Done, and @Linear to log it.',
       mentions: [
-        { type: 'connector', connectorType: 'google_drive', startOffset: 4, endOffset: 17 },
+        { type: 'connector', connectorType: 'google', startOffset: 4, endOffset: 17 },
         { type: 'connector', connectorType: 'linear', startOffset: 58, endOffset: 65 },
       ],
     };
 
     render(<MessageBlock {...actions} message={message} />);
 
-    expect(screen.getByText('@Google Drive').closest('.mention-chip'))
-      .toHaveAttribute('data-connector-type', 'google_drive');
-    expect(screen.getByText('@Linear').closest('.mention-chip'))
+    expect(screen.getByText('Google Drive').closest('.mention-chip'))
+      .toHaveAttribute('data-connector-type', 'google');
+    expect(screen.getByText('Linear').closest('.mention-chip'))
       .toHaveAttribute('data-connector-type', 'linear');
     expect(document.querySelector('.markdown-body')).toHaveTextContent('Backlog → Done');
     expect(document.querySelector('.markdown-body')?.textContent).not.toContain('rightarrow');
@@ -597,7 +596,7 @@ describe('MessageBlock markdown', () => {
       ...baseMessage,
       id: 'message-connector-mention-stale',
       text: 'Ask @Google Drive to sync.',
-      mentions: [{ type: 'connector', connectorType: 'google_drive', startOffset: 0, endOffset: 3 }],
+      mentions: [{ type: 'connector', connectorType: 'google', startOffset: 0, endOffset: 3 }],
     };
 
     render(<MessageBlock {...actions} message={message} />);
@@ -609,21 +608,39 @@ describe('MessageBlock markdown', () => {
   it('escapes connection labels and ignores overlapping or malformed ranges', () => {
     expect(withConnectorMentionLinks('Ping @Ops [beta]', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 16 },
-    ], 'tok')).toBe('Ping [@Ops \\[beta\\]](connector:tok:ops)');
+    ], 'tok')).toBe('Ping [@Ops \\[beta\\]](connector://tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops *now* & co', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 20 },
-    ], 'tok')).toBe('Ping [@Ops \\*now\\* \\& co](connector:tok:ops)');
+    ], 'tok')).toBe('Ping [@Ops \\*now\\* &amp; co](connector://tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 },
       { type: 'connector', connectorType: 'ops', startOffset: 6, endOffset: 9 },
-    ], 'tok')).toBe('Ping [@Ops](connector:tok:ops)');
+    ], 'tok')).toBe('Ping [@Ops](connector://tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 40 },
       { type: 'person', personId: 'user-1', startOffset: 0, endOffset: 4 },
     ], 'tok')).toBe('Ping @Ops');
+  });
+
+  it('renders ampersands in connection labels literally instead of as entities', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-mention-ampersand',
+      text: 'Ask @R&D and @A &copy;.',
+      mentions: [
+        { type: 'connector', connectorType: 'research', startOffset: 4, endOffset: 8 },
+        { type: 'connector', connectorType: 'archive', startOffset: 13, endOffset: 22 },
+      ],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(screen.getByText('R&D').closest('.mention-chip')).not.toBeNull();
+    expect(screen.getByText('A &copy;').closest('.mention-chip')).not.toBeNull();
+    expect(document.querySelector('.markdown-body')).not.toHaveTextContent('A ©');
   });
 
   it('mints a distinct connector token per call', () => {
@@ -722,9 +739,10 @@ describe('MessageBlock markdown', () => {
       ].join('\n'),
     };
 
-    render(<MessageBlock {...actions} message={markdownMessage} />);
+    render(<MessageBlock {...actions} collapseHeadings message={markdownMessage} />);
 
     expect(screen.getByRole('heading', { name: 'Harness API' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand section' }));
     expect(screen.getByRole('link', { name: 'docs/bind.md' })).toHaveAttribute('rel', 'noopener noreferrer');
     expect(screen.getByRole('link', { name: 'docs/bind.md' })).toHaveAttribute('target', '_blank');
     expect(screen.getByText('load_tool_group')).toHaveClass('markdown-inline-code');
@@ -777,21 +795,328 @@ describe('MessageBlock markdown', () => {
     expect(table.parentElement).toHaveClass('fade-x', 'fade-scrollbar-safe-x');
   });
 
+  it('turns HTML break tags into line breaks in tables and in prose, not in code', () => {
+    // Models write `<br/>` inside GFM table cells because a real newline ends
+    // the row, and they write the same tag in ordinary paragraphs. Neither is
+    // HTML this renderer parses — `rehype-raw` is off — so the tags used to
+    // print as characters (or vanish, when micromark classifies them as html).
+    render(
+      <MarkdownBody>
+        {[
+          'Line one<br/>Line two',
+          '',
+          '| Phase | Deliverables |',
+          '| --- | --- |',
+          '| One | `src/a.ts` <br/>• migrations<br/>• tests |',
+          '',
+          'A <div>stay</div> and a <br class="x"> stay text.',
+          '',
+          'Keep a `a<br/>b` span, and a fence:',
+          '',
+          '```html',
+          '<br/>',
+          '```',
+        ].join('\n')}
+      </MarkdownBody>,
+    );
+
+    const body = document.querySelector('.markdown-body')!;
+    const paragraph = body.querySelector('p')!;
+    expect(paragraph.querySelectorAll('br')).toHaveLength(1);
+    expect(paragraph.firstChild?.textContent).toBe('Line one');
+    expect(paragraph.lastChild?.textContent?.trim()).toBe('Line two');
+
+    const cell = screen.getByRole('cell', { name: /src\/a\.ts/u });
+    expect(cell.querySelectorAll('br')).toHaveLength(2);
+    expect(cell.textContent).not.toContain('<br');
+    expect(cell.querySelector('.markdown-inline-code')?.textContent).toBe('src/a.ts');
+
+    const taggedParagraph = Array.from(body.querySelectorAll('p'))
+      .find((candidate) => candidate.textContent?.includes('<br class="x">'));
+    expect(taggedParagraph).toBeDefined();
+    expect(taggedParagraph?.querySelectorAll('br')).toHaveLength(0);
+    expect(taggedParagraph?.textContent).toContain('<div>stay</div>');
+    expect(screen.getByText('a<br/>b')).toHaveClass('markdown-inline-code');
+    expect(document.querySelector('.markdown-code-block')?.textContent).toContain('<br/>');
+  });
+
+  it('rewrites break tags in a verbatim document the same way', () => {
+    // The inspector and the lightbox are verbatim because TeX repair must not
+    // rewrite a file. A break tag in that file is still a line break the
+    // renderer should honour — it is not TeX.
+    render(<MarkdownBody verbatim>{'Hello<br />there'}</MarkdownBody>);
+    const paragraph = document.querySelector('.markdown-body p')!;
+    expect(paragraph.querySelectorAll('br')).toHaveLength(1);
+    expect(paragraph.firstChild?.textContent).toBe('Hello');
+    expect(paragraph.lastChild?.textContent?.trim()).toBe('there');
+  });
+
+  it.each([false, true])('keeps escaped break-tag text when verbatim is %s', (verbatim) => {
+    const source = 'Backslash \\<br/> and entity &lt;br/&gt; stay text.';
+    render(<MarkdownBody verbatim={verbatim}>{source}</MarkdownBody>);
+
+    const paragraph = document.querySelector('.markdown-body p')!;
+    expect(paragraph.querySelectorAll('br')).toHaveLength(0);
+    expect(paragraph.textContent).toBe('Backslash <br/> and entity <br/> stay text.');
+  });
+
   it('renders unsupported fenced languages as plain text without losing their label', () => {
     const message: Message = {
       ...baseMessage,
       id: 'message-unsupported-language',
       authorType: 'agent',
       author: undefined,
-      text: '```mermaid\ngraph TD; A-->B\n```',
+      text: '```brainfuck\n+[-->-[>>+>-----<<]<--<---]>-.\n```',
     };
 
     render(<MessageBlock {...actions} message={message} />);
 
-    expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'mermaid');
+    expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'brainfuck');
     expect(document.querySelector('.prism-code')).toHaveClass('language-plain');
-    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.getByText('+[-->-[>>+>-----<<]<--<---]>-.')).toBeVisible();
+    expect(screen.getByText('Brainfuck')).toHaveClass('markdown-code-language');
+  });
+
+  it('renders a completed Mermaid fence as a strict, theme-aware diagram', async () => {
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Rendered graph</text></svg>' });
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-mermaid',
+      authorType: 'agent',
+      author: undefined,
+      text: '```mermaid\ngraph TD; A-->B\n```',
+    };
+
+    const { container } = render(<MessageBlock {...actions} message={message} />);
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(container.querySelector('.markdown-mermaid-diagram svg')).not.toBeNull();
+    expect(container.querySelector('.markdown-mermaid-svg')).toHaveStyle({ width: '40px' });
+    expect(screen.getByText('Rendered graph')).toBeVisible();
+    expect(initializeMermaid).toHaveBeenCalledWith(expect.objectContaining({
+      altFontFamily: 'token-font',
+      fontFamily: 'token-font',
+      fontSize: 13,
+      flowchart: { htmlLabels: false },
+      htmlLabels: false,
+      securityLevel: 'strict',
+      startOnLoad: false,
+      suppressErrorRendering: true,
+      theme: 'base',
+      look: 'classic',
+      themeCSS: 'token-derived-theme',
+      themeVariables: { primaryColor: 'token' },
+    }));
+    expect(initializeMermaid.mock.calls[0]?.[0]?.secure).toEqual(expect.arrayContaining([
+      'securityLevel',
+      'htmlLabels',
+      'theme',
+      'themeCSS',
+      'themeVariables',
+      'fontFamily',
+      'altFontFamily',
+      'fontSize',
+      'look',
+    ]));
+    expect(mermaidRender).toHaveBeenCalledWith(expect.stringMatching(/^rally-mermaid-[A-Za-z0-9_-]+$/u), 'graph TD; A-->B');
+    expect(screen.getByRole('img', { name: 'Mermaid diagram' })).toHaveAccessibleDescription('Diagram source: graph TD; A-->B');
     expect(screen.getByText('Mermaid')).toHaveClass('markdown-code-language');
+    expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
+  });
+
+  it('keeps invalid Mermaid readable as source', async () => {
+    mermaidRender.mockRejectedValueOnce(new Error('syntax error'));
+
+    render(<MarkdownBody>{'```mermaid\nnot a diagram\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(screen.getByText('not a diagram')).toBeVisible();
+  });
+
+  it('rejects Mermaid source above its configured text limit before parsing', async () => {
+    const parseCallBaseline = getMermaidDiagram.mock.calls.length;
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidConfig.mockReturnValueOnce({ maxTextSize: 12 });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(getMermaidDiagram).toHaveBeenCalledTimes(parseCallBaseline);
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('rejects external resources in Mermaid SVG style blocks', async () => {
+    mermaidRender.mockResolvedValueOnce({
+      svg: '<svg viewBox="0 0 40 20"><style>.node { fill: url(https://example.invalid/beacon); }</style><text>Unsafe graph</text></svg>',
+    });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(screen.queryByText('Unsafe graph')).toBeNull();
+  });
+
+  it('rejects forbidden elements in generated Mermaid SVG', async () => {
+    mermaidRender.mockResolvedValueOnce({
+      svg: '<svg viewBox="0 0 40 20"><foreignObject><div>Unsafe graph</div></foreignObject></svg>',
+    });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(screen.queryByText('Unsafe graph')).toBeNull();
+  });
+
+  it('rejects parsed Mermaid CSS resources before rendering', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidDiagram.mockResolvedValueOnce({
+      db: { getClasses: () => new Map([['remote', { styles: ['fill:url(https://example.invalid/beacon)'] }]]) },
+    });
+
+    render(<MarkdownBody>{'```mermaid\nflowchart TD; A-->B\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('rejects parsed block styles before rendering', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidDiagram.mockResolvedValueOnce({
+      db: { getBlocksFlat: () => [{ styles: ['fill:url(https://example.invalid/beacon)'] }] },
+    });
+
+    render(<MarkdownBody>{'```mermaid\nblock-beta\n  A["Review"]\n```'}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('rejects diagram-independent CSS resource functions before rendering', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    const source = `block-beta
+  A["Review"]
+  style A fill:url(https://example.invalid/beacon.svg)`;
+
+    render(<MarkdownBody>{`\`\`\`mermaid\n${source}\n\`\`\``}</MarkdownBody>);
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
+  });
+
+  it('allows CSS-looking text in a Mermaid label', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Read url(https://example.com)</text></svg>' });
+    const source = 'flowchart TD\n  A["Read url(https://example.com)"]';
+
+    render(<MarkdownBody>{`\`\`\`mermaid\n${source}\n\`\`\``}</MarkdownBody>);
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
+  it('keeps Mermaid source in stills, glances, and streams, then renders the settled turn', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Settled graph</text></svg>' });
+    const markdown = '```mermaid\ngraph TD; A-->B\n```';
+    const view = render(<MarkdownBody still>{markdown}</MarkdownBody>);
+
+    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.queryByRole('img', { name: 'Mermaid diagram' })).toBeNull();
+
+    view.rerender(<MarkdownBody glance>{markdown}</MarkdownBody>);
+    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.queryByRole('img', { name: 'Mermaid diagram' })).toBeNull();
+
+    view.rerender(<MarkdownBody streaming>{markdown}</MarkdownBody>);
+    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+    expect(screen.queryByRole('img', { name: 'Mermaid diagram' })).toBeNull();
+
+    view.rerender(<MarkdownBody>{markdown}</MarkdownBody>);
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(screen.getByText('Settled graph')).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
+  it('serialises Mermaid renders and resolves each theme when its queued work starts', async () => {
+    let resolveFirst!: (value: { svg: string }) => void;
+    const firstRender = new Promise<{ svg: string }>((resolve) => { resolveFirst = resolve; });
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    const themeCallBaseline = readMermaidThemeConfig.mock.calls.length;
+    mermaidRender
+      .mockImplementationOnce(() => firstRender)
+      .mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Second graph</text></svg>' });
+
+    render(
+      <>
+        <MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>
+        <MarkdownBody>{'```mermaid\ngraph TD; C-->D\n```'}</MarkdownBody>
+      </>,
+    );
+
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1));
+    expect(readMermaidThemeConfig).toHaveBeenCalledTimes(themeCallBaseline + 1);
+
+    await act(async () => { resolveFirst({ svg: '<svg viewBox="0 0 40 20"><text>First graph</text></svg>' }); });
+
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 2));
+    expect(readMermaidThemeConfig).toHaveBeenCalledTimes(themeCallBaseline + 2);
+    expect(screen.getByText('First graph')).toBeVisible();
+    expect(await screen.findByText('Second graph')).toBeVisible();
+  });
+
+  it('skips Mermaid work that unmounts before its turn in the render queue', async () => {
+    let resolveFirst!: (value: { svg: string }) => void;
+    const firstRender = new Promise<{ svg: string }>((resolve) => { resolveFirst = resolve; });
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender
+      .mockImplementationOnce(() => firstRender)
+      .mockResolvedValueOnce({ svg: '<svg viewBox="0 0 40 20"><text>Discarded graph</text></svg>' });
+
+    render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+    const queued = render(<MarkdownBody>{'```mermaid\ngraph TD; C-->D\n```'}</MarkdownBody>);
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1));
+
+    queued.unmount();
+    await act(async () => {
+      resolveFirst({ svg: '<svg viewBox="0 0 40 20"><text>Kept graph</text></svg>' });
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText('Kept graph')).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
+  it('skips Mermaid rendering when work unmounts during resource preflight', async () => {
+    let resolvePreflight!: (value: { db: object }) => void;
+    const pendingPreflight = new Promise<{ db: object }>((resolve) => { resolvePreflight = resolve; });
+    const parseCallBaseline = getMermaidDiagram.mock.calls.length;
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    getMermaidDiagram.mockImplementationOnce(() => pendingPreflight);
+    mermaidRender.mockResolvedValue({ svg: '<svg viewBox="0 0 40 20"><text>Current graph</text></svg>' });
+
+    const stale = render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+    await waitFor(() => expect(getMermaidDiagram).toHaveBeenCalledTimes(parseCallBaseline + 1));
+    stale.unmount();
+    render(<MarkdownBody>{'```mermaid\ngraph TD; C-->D\n```'}</MarkdownBody>);
+
+    await act(async () => { resolvePreflight({ db: {} }); });
+
+    expect(await screen.findByRole('img', { name: 'Mermaid diagram' })).toBeVisible();
+    expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1);
+  });
+
+  it('re-renders a settled Mermaid diagram when the resolved theme changes', async () => {
+    const renderCallBaseline = mermaidRender.mock.calls.length;
+    mermaidRender.mockResolvedValue({ svg: '<svg viewBox="0 0 40 20"><text>Themed graph</text></svg>' });
+
+    const view = render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 1));
+
+    act(() => { applyTheme({ family: 'air', mode: 'dark' }); });
+
+    await waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline + 2));
+    view.unmount();
+    act(() => { applyTheme({ family: 'terra', mode: 'light' }); });
   });
 
   it('keeps code copy retryable when clipboard access is unavailable', async () => {
@@ -912,6 +1237,44 @@ describe('MessageBlock export actions', () => {
     expect(screen.getByRole('button', { name: 'Copy response' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Download response as an image' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save response as a PDF' })).not.toBeInTheDocument();
+  });
+});
+
+describe('MessageBlock speech action', () => {
+  it('speaks the complete markdown source even after its sections are collapsed, then stops', async () => {
+    const markdown = '## Visible section\n\nVisible copy.\n\n## Collapsed section\n\nThe complete hidden detail.';
+    const streamMessageSpeech = vi.fn(async () => new ReadableStream<Uint8Array>());
+    const stop = vi.fn();
+    const player: SpeechPlayer = {
+      prepare: vi.fn(async () => undefined),
+      play: vi.fn(async () => new Promise<void>(() => undefined)),
+      stop,
+    };
+    const api = { streamMessageSpeech } satisfies SpeechApi;
+    render(
+      <SpeechPlaybackProvider api={api} createPlayer={() => player}>
+        <MessageBlock {...actions} collapseHeadings message={{
+          ...baseMessage,
+          id: 'message-agent-speech',
+          authorType: 'agent',
+          author: undefined,
+          text: markdown,
+        }} />
+      </SpeechPlaybackProvider>,
+    );
+    expect(screen.getByRole('button', { name: 'Expand all sections' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Speak response with an AI-generated voice' }));
+
+    await waitFor(() => expect(streamMessageSpeech).toHaveBeenCalledWith(markdown, expect.any(AbortSignal)));
+    const stopButton = screen.getByRole('button', { name: 'Stop speaking' });
+    expect(stopButton).toHaveTextContent('Stop speaking');
+    expect(stopButton.closest('.agent-message-actions')).toHaveClass('is-speaking');
+
+    fireEvent.click(stopButton);
+
+    expect(stop).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Speak response with an AI-generated voice' })).toBeVisible();
   });
 });
 
@@ -1056,14 +1419,24 @@ describe('MessageBlock tool rows', () => {
 });
 
 describe('MessageBlock plugin activity rows', () => {
-  const pluginRow = (id: string, pluginActivity: NonNullable<Message['pluginActivity']>): Message => ({
+  // Most rows use the default phrasing, so the helper supplies it and a case
+  // that cares about wording overrides it explicitly.
+  const pluginRow = (
+    id: string,
+    pluginActivity: Omit<NonNullable<Message['pluginActivity']>, 'activeVerb' | 'completedVerb'>
+      & Partial<Pick<NonNullable<Message['pluginActivity']>, 'activeVerb' | 'completedVerb'>>,
+  ): Message => ({
     ...baseMessage,
     id,
     authorType: 'agent',
     author: undefined,
     messageType: 'plugin_activity',
     text: undefined,
-    pluginActivity,
+    pluginActivity: {
+      activeVerb: `${pluginActivity.name} is working`,
+      completedVerb: `${pluginActivity.name} worked`,
+      ...pluginActivity,
+    },
   });
 
   it('names the plugin rather than the calls it made, and pulses its mark while it works', () => {
@@ -1228,5 +1601,128 @@ describe('MarkdownBody streaming mode', () => {
     expect([...settledBody.querySelectorAll('li')].map((item) => item.textContent?.trim()))
       .toEqual(['first', 'second', 'third']);
     expect(settledBody.querySelectorAll('ol')).toHaveLength(1);
+  });
+});
+
+describe('MarkdownBody heading collapse', () => {
+  const markdown = [
+    'Lead paragraph.',
+    '',
+    '## Alpha',
+    '',
+    'First section body that is long enough to preview.',
+    '',
+    '### Nested',
+    '',
+    'This nested heading must not be its own accordion.',
+    '',
+    '## Beta',
+    '',
+    'Second section body.',
+    '',
+  ].join('\n');
+
+  it('does not collapse headings when the renderer has not opted into heading collapse', () => {
+    const { container } = render(<MarkdownBody>{markdown}</MarkdownBody>);
+    expect(container.querySelector('.markdown-collapse')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
+  });
+
+  it('collapses every h2 when enabled and leaves a nested h3 without a chevron', () => {
+    const { container } = render(<MarkdownBody collapseHeadings>{markdown}</MarkdownBody>);
+    const sections = container.querySelectorAll('.markdown-collapse');
+    expect(sections).toHaveLength(2);
+    expect([...sections].every((section) => section.classList.contains('is-collapsed'))).toBe(true);
+    expect(screen.getAllByRole('button', { name: 'Expand section' })).toHaveLength(2);
+    const nested = container.querySelector('h3');
+    expect(nested).toHaveTextContent('Nested');
+    expect(nested).not.toHaveClass('markdown-collapse-heading');
+    expect(nested?.querySelector('.markdown-collapse-chevron')).toBeNull();
+    expect(sections[0]!.querySelector('.markdown-collapse-body')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('toggles a section from the heading and from the chevron', () => {
+    const { container } = render(<MarkdownBody collapseHeadings>{markdown}</MarkdownBody>);
+    const [first, second] = container.querySelectorAll('.markdown-collapse');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Expand section' })[0]!);
+    expect(first).toHaveClass('is-expanded');
+    expect(second).toHaveClass('is-collapsed');
+    fireEvent.click(container.querySelector('h2')!);
+    expect(first).toHaveClass('is-collapsed');
+  });
+
+  it('does not toggle a section when the heading text is selected', () => {
+    const { container } = render(<MarkdownBody collapseHeadings>{markdown}</MarkdownBody>);
+    const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ isCollapsed: false } as Selection);
+    fireEvent.click(container.querySelector('h2')!);
+    expect(container.querySelector('.markdown-collapse')).toHaveClass('is-collapsed');
+    selection.mockRestore();
+  });
+
+  it('resolves a reference-style link whose definition lives under a later heading', () => {
+    const { container } = render(
+      <MarkdownBody collapseHeadings>
+        {['## Claims', '', 'See [the note][ref].', '', '## Sources', '', '[ref]: https://example.com/note', ''].join('\n')}
+      </MarkdownBody>,
+    );
+    const link = [...container.querySelectorAll('a')].find((anchor) => anchor.getAttribute('href') === 'https://example.com/note');
+    expect(link).toHaveTextContent('the note');
+  });
+
+  it('does not collapse a glance or a still', () => {
+    const glance = render(<MarkdownBody collapseHeadings glance>{markdown}</MarkdownBody>);
+    expect(glance.container.querySelector('.markdown-collapse')).toBeNull();
+    glance.unmount();
+    const still = render(<MarkdownBody collapseHeadings still>{markdown}</MarkdownBody>);
+    expect(still.container.querySelector('.markdown-collapse')).toBeNull();
+    expect(still.container.querySelector('h2')).toHaveTextContent('Alpha');
+  });
+
+  it('keeps an expanded section open while a later heading streams in collapsed', () => {
+    const first = '## Alpha\n\nFirst section body.\n';
+    const { container, rerender } = render(<MarkdownBody collapseHeadings streaming>{first}</MarkdownBody>);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand section' }));
+    expect(container.querySelector('.markdown-collapse')).toHaveClass('is-expanded');
+    rerender(<MarkdownBody collapseHeadings streaming>{`${first}\n## Beta\n\nSecond section body.\n`}</MarkdownBody>);
+    const sections = container.querySelectorAll('.markdown-collapse');
+    expect(sections).toHaveLength(2);
+    expect(sections[0]).toHaveClass('is-expanded');
+    expect(sections[1]).toHaveClass('is-collapsed');
+  });
+});
+
+describe('MessageBlock heading collapse control', () => {
+  it('places a collapse-all control to the right of Worked for and toggles every section', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'agent-one',
+      authorType: 'agent',
+      author: undefined,
+      text: '## Alpha\n\nFirst.\n\n## Beta\n\nSecond.\n',
+      workSummary: { durationMs: 83_000 },
+    };
+    const { container } = render(<MessageBlock {...actions} collapseHeadings message={message} />);
+    expect(screen.getByText('Worked for 1m 23s')).toBeInTheDocument();
+    const header = container.querySelector('.message-block > header')!;
+    const summary = header.querySelector('.message-work-summary');
+    const toggle = screen.getByRole('button', { name: 'Expand all sections' });
+    expect(summary?.nextElementSibling).toBe(toggle);
+    expect(container.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(2);
+    fireEvent.click(toggle);
+    expect(container.querySelectorAll('.markdown-collapse.is-expanded')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Collapse all sections' })).toBeInTheDocument();
+  });
+
+  it('hides the collapse-all control when the turn has no collapsible headings', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'agent-plain',
+      authorType: 'agent',
+      author: undefined,
+      text: 'A paragraph with no headings.',
+      workSummary: { durationMs: 1_000 },
+    };
+    render(<MessageBlock {...actions} collapseHeadings message={message} />);
+    expect(screen.queryByRole('button', { name: 'Expand all sections' })).toBeNull();
   });
 });

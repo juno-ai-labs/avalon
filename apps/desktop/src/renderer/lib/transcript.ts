@@ -1,10 +1,10 @@
 import type { ElicitationData, Message, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
 import {
-  ActivitySuggestionSchema,
   ElicitationSchema,
   type TranscriptActivity,
   type PendingTranscriptInput,
+  type TranscriptPluginRun,
   type TranscriptRange,
   type TranscriptTurn,
   type WorkstreamTranscriptSnapshot,
@@ -18,8 +18,7 @@ export type TranscriptOverlayIdentity =
   | { type: 'loop_input'; inputId: string; futureTurnId: string }
   | { type: 'assistant_turn'; turnId: string }
   | { type: 'tool_call'; toolCallId: string }
-  | { type: 'elicitation'; elicitationId: string }
-  | { type: 'activity_suggestion'; suggestionId: string };
+  | { type: 'elicitation'; elicitationId: string };
 
 export type TranscriptOverlayProvenance =
   | { source: 'client_command'; phase: 'sending' | 'accepted' }
@@ -43,6 +42,12 @@ export interface TranscriptOverlay {
     afterTranscriptSequence: number;
     eventSequence: number;
   };
+  /**
+   * Promotion order among pending loop inputs. Socket room sequence is not
+   * FIFO, so the composer queue sorts on this instead of `position`.
+   * Optimistic sending rows omit it and sort last.
+   */
+  queueSequence?: number;
   message: Message;
 }
 
@@ -106,17 +111,6 @@ const activityReceiptMonotonic = new WeakMap<TranscriptActivity, {
   receivedAt: number;
 }>();
 
-export function dismissedSuggestionIdsQueryKey(workstreamId: string): readonly ['dismissed-suggestion-ids', string] {
-  return ['dismissed-suggestion-ids', workstreamId];
-}
-
-export function appendDismissedSuggestionId(
-  current: readonly string[] | undefined,
-  suggestionId: string,
-): readonly string[] {
-  return current?.includes(suggestionId) ? current : [...(current ?? []), suggestionId];
-}
-
 export function createTextMessage({ text, ...message }: TextMessageInput): Message {
   return { ...message, messageType: 'text', text };
 }
@@ -137,8 +131,6 @@ export function isSameLogicalMessage(left: Message, right: Message): boolean {
   )) return true;
   if (right.clientMessageId && right.clientMessageId === left.id) return true;
   if (left.elicitation && right.elicitation && left.elicitation.id === right.elicitation.id) return true;
-  if (left.activitySuggestion && right.activitySuggestion
-    && left.activitySuggestion.id === right.activitySuggestion.id) return true;
   return Boolean(left.toolEvent && right.toolEvent
     && (left.toolEvent.toolCallId ?? left.toolEvent.id) === (right.toolEvent.toolCallId ?? right.toolEvent.id));
 }
@@ -225,6 +217,20 @@ export function orderedTranscriptMessages(
     if (activity.scope !== 'plugin' || !activity.parentActivityId) continue;
     pluginActivitiesByTurnActivity.set(`${activity.parentActivityId}\u0000${activity.subjectId}`, activity);
   }
+  // The server's own answer, when it gives one. `pluginRuns` states which
+  // plugin ran in which turn, for how long, and which calls it made, so a row
+  // built from it needs none of the joins above — which is the point: every one
+  // of those joins could miss, and when one did the row claimed `0ms` rather
+  // than admitting it could not see the timing.
+  //
+  // Empty means the API predates the field, not that no plugin ran, so the
+  // activity-tree derivation below stays as the fallback until every deployed
+  // API reports runs.
+  const resolvedPluginRuns = resolvePluginRuns(snapshot);
+  const pluginRunByToolCallId = new Map<string, TranscriptPluginRun>();
+  for (const run of resolvedPluginRuns) {
+    for (const toolCallId of run.toolCallIds) pluginRunByToolCallId.set(toolCallId, run);
+  }
   const lastTurnByResponseActivityId = new Map<string, TranscriptTurn>();
   for (const turn of orderedTurns) {
     const assistantActivity = turn.activityId ? activities.get(turn.activityId) : undefined;
@@ -236,6 +242,9 @@ export function orderedTranscriptMessages(
     .flatMap((turn) => turn.blocks
       .slice()
       .sort((left, right) => left.blockIndex - right.blockIndex)
+      // Older Workers may have projected a Suggested context block before the
+      // feature was retired. It is no longer part of the feed.
+      .filter((block) => !(block.type === 'text' && block.messageType === 'suggestion'))
       .map((block): Message => {
         const rememberOrder = (messageId: string): void => {
           // An open elicitation and its durable answer deliberately share one
@@ -274,9 +283,6 @@ export function orderedTranscriptMessages(
           const elicitation = ElicitationSchema.safeParse(
             'elicitation' in structured ? structured['elicitation'] : structured,
           );
-          const suggestion = ActivitySuggestionSchema.safeParse(
-            'suggestion' in structured ? structured['suggestion'] : structured,
-          );
           const statusKind = structured['kind'] === 'assistant_turn_failed'
             || structured['kind'] === 'assistant_turn_stopped'
             ? structured['kind']
@@ -286,9 +292,9 @@ export function orderedTranscriptMessages(
             : 'assistant_turn_interrupted';
           const messageType: Message['messageType'] = statusKind
             ? 'system'
-            : block.messageType === 'suggestion'
-            ? 'activity_suggestion'
-            : block.messageType ?? 'text';
+            : block.messageType === 'elicitation' || block.messageType === 'system'
+              ? block.messageType
+              : 'text';
           const messageId = elicitation.success ? elicitationMessageId(elicitation.data.id) : block.blockId;
           rememberOrder(messageId);
           return {
@@ -315,16 +321,6 @@ export function orderedTranscriptMessages(
               ? { contextLabel: structured['label'] }
               : {}),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
-            ...(suggestion.success ? {
-              activitySuggestion: {
-                id: suggestion.data.id,
-                title: suggestion.data.title,
-                source: 'Activity',
-                occurredAt: suggestion.data.createdAt,
-                reason: suggestion.data.reason,
-                status: suggestion.data.status,
-              },
-            } : {}),
           };
         }
         if (block.type === 'thinking') {
@@ -348,9 +344,17 @@ export function orderedTranscriptMessages(
           };
         }
         const activity = block.activityId ? activities.get(block.activityId) : undefined;
+        // The run names the plugin when the server reported one, which is the
+        // whole point: the map below is the nullable-`turn.activityId` join
+        // this contract exists to stop depending on, and in the production
+        // shape it returns nothing. Without a name here a `connection:` block
+        // resolves to no group at all and its row is dropped rather than
+        // folded, so this is what puts a connector back in the feed.
+        const run = pluginRunByToolCallId.get(block.toolCallId);
         const owner = block.pluginId
           ? pluginActivitiesByTurnActivity.get(`${turn.activityId ?? ''}\u0000${block.pluginId}`)
           : undefined;
+        const pluginName = run?.displayName ?? owner?.label;
         rememberOrder(block.blockId);
         return {
           ...base,
@@ -360,7 +364,7 @@ export function orderedTranscriptMessages(
             id: block.toolCallId,
             toolCallId: block.toolCallId,
             ...(block.pluginId ? { pluginId: block.pluginId } : {}),
-            ...(owner ? { pluginName: owner.label } : {}),
+            ...(pluginName === undefined ? {} : { pluginName }),
             name: block.toolName,
             status: block.status === 'planned' || block.status === 'started'
               ? 'started'
@@ -441,24 +445,32 @@ export function orderedTranscriptMessages(
       tieBreaker: activity.activityId,
     });
   }
-  for (const activity of snapshot.activities) {
-    if (activity.scope !== 'plugin') continue;
-    const parent = activity.parentActivityId
-      ? activities.get(activity.parentActivityId)
-      : undefined;
-    const lastTurn = parent?.scope === 'assistant_turn'
-      ? turnsById.get(parent.subjectId)
-      : undefined;
+  for (const run of resolvedPluginRuns) {
+    const lastTurn = turnsById.get(run.turnId);
     if (!lastTurn) continue;
-    const lastToolIndex = Math.max(...lastTurn.blocks.flatMap((block) =>
-      block.type === 'tool' && block.pluginId === activity.subjectId ? [block.blockIndex] : []));
-    if (!Number.isFinite(lastToolIndex)) continue;
-    const group = pluginGroup(activity.subjectId, activity.label);
+    // Position the row at the plugin's last call in the turn. `toolCallIds` is
+    // the precise answer and is preferred, but a run resolved from an activity
+    // tree that carries no `tool_call` activities has none — so the plugin's
+    // own id is the fallback, which is what positioning used before runs
+    // existed. Without it such a row has nowhere to sit and is dropped.
+    const calls = new Set(run.toolCallIds);
+    const anchored = Math.max(...lastTurn.blocks.flatMap((block) => block.type === 'tool'
+      && (calls.size > 0 ? calls.has(block.toolCallId) : block.pluginId === run.pluginId)
+      ? [block.blockIndex]
+      : []));
+    // A run the authority reported is work that happened, so it gets a row even
+    // when nothing in the turn anchors it — the blocks may not have streamed in
+    // yet, or the turn may be an omitted-blocks placeholder. Anchoring decides
+    // *where* the row sits, not whether it exists, and an unanchored one goes
+    // last in its turn, which is where the response's own total already sits.
+    const lastToolIndex = Number.isFinite(anchored)
+      ? anchored
+      : Math.max(-1, ...lastTurn.blocks.map((block) => block.blockIndex)) + 1;
+    const group = pluginGroup(run.pluginId, run.displayName);
     if (!group) continue;
-    const timing = activityTiming(activity);
-    const activeInterval = activity.intervals.find((interval) => interval.stoppedAtUtc === null);
+    const timing = pluginRunTiming(run);
     messages.push({
-      id: activity.activityId,
+      id: run.pluginRunId,
       transcriptTurnId: lastTurn.turnId,
       transcriptSequence: lastTurn.transcriptSequence,
       workstreamId,
@@ -466,23 +478,25 @@ export function orderedTranscriptMessages(
       attentionSequenceNumber: null,
       authorType: 'agent',
       messageType: 'plugin_activity',
-      createdAt: activeInterval?.startedAtUtc ?? lastTurn.createdAtUtc,
+      createdAt: lastTurn.createdAtUtc,
       pluginActivity: {
         groupKey: group.key,
         name: group.name,
         icon: group.icon,
-        active: activity.state === 'active',
-        durationMs: timing.durationMs,
-        timingAccuracy: timing.timingAccuracy,
+        activeVerb: group.activeVerb,
+        completedVerb: group.completedVerb,
+        active: run.state === 'active',
+        durationMs: run.durationMs,
+        timingAccuracy: run.timingAccuracy,
         ...(timing.monotonicStartedAt === undefined
           ? {}
           : { monotonicStartedAt: [timing.monotonicStartedAt] }),
       },
     });
-    messageOrder.set(activity.activityId, {
+    messageOrder.set(run.pluginRunId, {
       turnSequence: lastTurn.transcriptSequence,
       position: lastToolIndex * 2 + 1,
-      tieBreaker: activity.activityId,
+      tieBreaker: run.pluginRunId,
     });
   }
   // Canonical blocks are not optimistic messages. In particular, every block
@@ -526,7 +540,6 @@ export function orderedTranscriptMessages(
 
 function canonicalLogicalMessageKey(message: Message): string {
   if (message.elicitation) return `elicitation:${message.elicitation.id}`;
-  if (message.activitySuggestion) return `activity_suggestion:${message.activitySuggestion.id}`;
   if (message.toolEvent) {
     return `tool_call:${message.toolEvent.toolCallId ?? message.toolEvent.id}`;
   }
@@ -558,8 +571,6 @@ export function transcriptOverlaysWithoutCanonicalMatch(
   }));
   const elicitationIds = new Set(canonical.flatMap((message) =>
     message.elicitation ? [message.elicitation.id] : []));
-  const suggestionIds = new Set(canonical.flatMap((message) =>
-    message.activitySuggestion ? [message.activitySuggestion.id] : []));
   return overlays.filter((overlay) => {
     const identity = overlay.identity;
     if (identity.type === 'client_message') {
@@ -570,7 +581,7 @@ export function transcriptOverlaysWithoutCanonicalMatch(
     if (identity.type === 'assistant_turn') return !settledAssistantTurnIds.has(identity.turnId);
     if (identity.type === 'tool_call') return !toolCallIds.has(identity.toolCallId);
     if (identity.type === 'elicitation') return !elicitationIds.has(identity.elicitationId);
-    return !suggestionIds.has(identity.suggestionId);
+    return false;
   });
 }
 
@@ -634,7 +645,6 @@ export function transcriptOverlayIdentityKey(identity: TranscriptOverlayIdentity
     case 'assistant_turn': return `assistant_turn:${identity.turnId}`;
     case 'tool_call': return `tool_call:${identity.toolCallId}`;
     case 'elicitation': return `elicitation:${identity.elicitationId}`;
-    case 'activity_suggestion': return `activity_suggestion:${identity.suggestionId}`;
   }
 }
 
@@ -657,6 +667,7 @@ export function pendingTranscriptInputOverlay(
         ? provenance.eventSequence
         : input.inputSequence,
     },
+    queueSequence: input.inputSequence,
     message: {
       id: input.futureTurnId,
       ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
@@ -685,6 +696,107 @@ export function pendingTranscriptInputOverlay(
       deliveryState: input.deliveryMode === 'steer' ? 'steer_pending' : 'queue_pending',
     },
   };
+}
+
+/**
+ * The pending-input id a composer-queue row can send on reorder, or undefined
+ * when the overlay is still an optimistic send with no server identity.
+ */
+export function pendingOverlayInputId(overlay: TranscriptOverlay): string | undefined {
+  if (overlay.identity.type === 'loop_input') return overlay.identity.inputId;
+  if (overlay.identity.type === 'client_message' && overlay.identity.turnId) {
+    return overlay.identity.turnId;
+  }
+  return undefined;
+}
+
+/**
+ * Pending loop inputs, plus an in-flight send while the harness is running.
+ * Those rows live on the composer, not in the transcript.
+ */
+export function isComposerQueueOverlay(
+  overlay: TranscriptOverlay,
+  options: { harnessRunning: boolean },
+): boolean {
+  const state = overlay.message.deliveryState;
+  if (state === 'steer_pending' || state === 'queue_pending') return true;
+  return options.harnessRunning && state === 'sending';
+}
+
+/** Visible composer-queue rows in promotion order; sending rows without a sequence sit last. */
+export function composerQueueOverlays(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  options: { harnessRunning: boolean },
+): TranscriptOverlay[] {
+  return (overlays ?? [])
+    .filter((overlay) => isComposerQueueOverlay(overlay, options))
+    .sort((left, right) => {
+      const leftSequence = left.queueSequence;
+      const rightSequence = right.queueSequence;
+      if (leftSequence === undefined && rightSequence === undefined) {
+        return left.message.id < right.message.id ? -1 : left.message.id > right.message.id ? 1 : 0;
+      }
+      if (leftSequence === undefined) return 1;
+      if (rightSequence === undefined) return -1;
+      return leftSequence - rightSequence
+        || (left.message.id < right.message.id ? -1 : left.message.id > right.message.id ? 1 : 0);
+    });
+}
+
+/**
+ * Optimistically permute `queueSequence` among named pending overlays.
+ * Unnamed visible ids keep their relative order behind the named ones —
+ * the same merge the object applies, so a concurrent admission is not lost.
+ */
+export function applyPendingInputQueueOrder(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  orderedInputIds: readonly string[],
+): TranscriptOverlay[] {
+  const current = overlays ?? [];
+  const draggable = current.filter((overlay) => pendingOverlayInputId(overlay) !== undefined);
+  const byId = new Map(draggable.map((overlay) => [pendingOverlayInputId(overlay)!, overlay]));
+  const named = orderedInputIds.flatMap((inputId) => {
+    const overlay = byId.get(inputId);
+    return overlay ? [overlay] : [];
+  });
+  const namedIds = new Set(named.map((overlay) => pendingOverlayInputId(overlay)!));
+  const unnamed = draggable.filter((overlay) => !namedIds.has(pendingOverlayInputId(overlay)!));
+  const ordered = [...named, ...unnamed];
+  const sequences = draggable
+    .map((overlay) => overlay.queueSequence)
+    .filter((sequence): sequence is number => typeof sequence === 'number')
+    .sort((left, right) => left - right);
+  const nextSequence = new Map(ordered.flatMap((overlay, index) => {
+    const inputId = pendingOverlayInputId(overlay);
+    const sequence = sequences[index];
+    return inputId !== undefined && sequence !== undefined
+      ? [[inputId, sequence] as const]
+      : [];
+  }));
+  return current.map((overlay) => {
+    const inputId = pendingOverlayInputId(overlay);
+    if (inputId === undefined) return overlay;
+    const sequence = nextSequence.get(inputId);
+    return sequence === undefined || sequence === overlay.queueSequence
+      ? overlay
+      : { ...overlay, queueSequence: sequence };
+  });
+}
+
+/** Replace local queue sequences with the object's current pending-input order. */
+export function assignPendingInputQueueSequences(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  pendingInputs: readonly Pick<PendingTranscriptInput, 'inputId' | 'inputSequence'>[],
+): TranscriptOverlay[] {
+  const byInputId = new Map(pendingInputs.map((input) => [input.inputId, input.inputSequence]));
+  return (overlays ?? []).map((overlay) => {
+    const inputId = pendingOverlayInputId(overlay);
+    if (inputId === undefined) return overlay;
+    const sequence = byInputId.get(inputId);
+    return sequence === undefined || sequence === overlay.queueSequence
+      ? overlay
+      : { ...overlay, queueSequence: sequence };
+  });
 }
 
 /** Update presentation content without weakening its identity or provenance. */
@@ -791,8 +903,12 @@ function pluginGroupContribution(message: Message): {
       groupKey: group.key,
       name: group.name,
       icon: group.icon,
+      activeVerb: group.activeVerb,
+      completedVerb: group.completedVerb,
       active: tool.status === 'started',
-      durationMs: tool.durationMs ?? 0,
+      // Undefined here is an unknown duration, not a zero one: the row carries
+      // a time only when its tool-call activity reached the snapshot.
+      durationMs: tool.durationMs ?? null,
     },
     authoritativeDuration: false,
   };
@@ -839,10 +955,13 @@ function continuesPluginActivityRun(message: Message): boolean {
 export function groupPluginToolMessages(messages: readonly Message[]): Message[] {
   interface GroupTiming {
     row: number;
-    identity: Pick<PluginActivityData, 'groupKey' | 'icon' | 'name'>;
+    identity: Pick<PluginActivityData, 'activeVerb' | 'completedVerb' | 'groupKey' | 'icon' | 'name'>;
     active: boolean;
     activityDurationMs: number;
     toolDurationMs: number;
+    /** Cleared by any contribution whose own duration is unknown. */
+    activityDurationKnown: boolean;
+    toolDurationKnown: boolean;
     sawActivity: boolean;
     monotonicStartedAt: number[];
     upperBound: boolean;
@@ -866,13 +985,15 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     }
     let group = open.get(contribution.key);
     if (!group) {
-      const { groupKey, icon, name } = contribution.activity;
+      const { activeVerb, completedVerb, groupKey, icon, name } = contribution.activity;
       group = {
         row: rows.length,
-        identity: { groupKey, icon, name },
+        identity: { activeVerb, completedVerb, groupKey, icon, name },
         active: false,
         activityDurationMs: 0,
         toolDurationMs: 0,
+        activityDurationKnown: true,
+        toolDurationKnown: true,
         sawActivity: false,
         monotonicStartedAt: [],
         upperBound: false,
@@ -898,9 +1019,15 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
       });
     }
     group.active ||= contribution.activity.active;
+    // One unknown piece makes the whole total unknowable rather than smaller:
+    // adding up only the parts that reported would understate the work by
+    // exactly the part that did not, and present the result as certain.
     if (contribution.authoritativeDuration) {
       group.sawActivity = true;
-      group.activityDurationMs += contribution.activity.durationMs;
+      if (contribution.activity.durationMs === null) group.activityDurationKnown = false;
+      else group.activityDurationMs += contribution.activity.durationMs;
+    } else if (contribution.activity.durationMs === null) {
+      group.toolDurationKnown = false;
     } else {
       group.toolDurationMs += contribution.activity.durationMs;
     }
@@ -917,7 +1044,9 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
       pluginActivity: {
         ...group.identity,
         active: group.active,
-        durationMs: group.sawActivity ? group.activityDurationMs : group.toolDurationMs,
+        durationMs: group.sawActivity
+          ? group.activityDurationKnown ? group.activityDurationMs : null
+          : group.toolDurationKnown ? group.toolDurationMs : null,
         ...(group.monotonicStartedAt.length === 0
           ? {}
           : { monotonicStartedAt: group.monotonicStartedAt }),
@@ -1045,6 +1174,7 @@ export function mergeRealtimeTranscriptTurn(
       },
       turns: [turn],
       activities: [],
+      pluginRuns: [],
     });
   }
   return {
@@ -1066,11 +1196,17 @@ export function mergeTranscriptRange(
     if (!current || current.revision < activity.revision) activities.set(activity.activityId, activity);
   }
   const mergedActivities = [...activities.values()];
+  // Runs come with the range for the same reason activities do: the turns it
+  // brings in were never covered by the opening snapshot, so their timing has
+  // to arrive with them or those rows have nothing to render from.
+  const pluginRuns = new Map(snapshot.pluginRuns.map((run) => [run.pluginRunId, run]));
+  for (const run of range.pluginRuns) pluginRuns.set(run.pluginRunId, run);
   return {
     ...snapshot,
     ranges: [...snapshot.ranges, range],
     activities: mergedActivities,
     activeActivities: mergedActivities.filter((activity) => activity.state === 'active'),
+    pluginRuns: [...pluginRuns.values()],
   };
 }
 
@@ -1137,12 +1273,17 @@ export function mergeCanonicalTranscriptSnapshot(
       const turns = range.turns.filter((turn) =>
         turn.transcriptSequence >= covered.startInclusive
         && turn.transcriptSequence < covered.endExclusive);
+      const retainedTurnIds = new Set(turns.map((turn) => turn.turnId));
       return {
         purpose: 'requested' as const,
         requested: covered,
         covered,
         turns,
         activities: activitiesForTurns(range.activities, turns),
+        // The turns survive the reconcile, so their timing has to survive with
+        // them. Dropping the runs here would blank the duration on every row
+        // above the incoming snapshot's coverage the first time one arrived.
+        pluginRuns: range.pluginRuns.filter((run) => retainedTurnIds.has(run.turnId)),
       };
     }));
 
@@ -1159,12 +1300,19 @@ export function mergeCanonicalTranscriptSnapshot(
     }
   }
   const mergedActivities = [...activities.values()];
+  // Same rule for the snapshot-level list: the incoming snapshot is
+  // authoritative for the turns it covers, and the runs it does not cover are
+  // the ones the retained ranges still need.
+  const pluginRuns = new Map(retainedRanges.flatMap((range) =>
+    range.pluginRuns.map((run) => [run.pluginRunId, run] as const)));
+  for (const run of incoming.pluginRuns) pluginRuns.set(run.pluginRunId, run);
 
   return {
     ...incoming,
     ranges: [...retainedRanges, ...incoming.ranges],
     activities: mergedActivities,
     activeActivities: mergedActivities.filter((activity) => activity.state === 'active'),
+    pluginRuns: [...pluginRuns.values()],
   };
 }
 
@@ -1187,6 +1335,119 @@ export function mergeRealtimeTranscriptActivity(
     activities,
     activeActivities: activities.filter((candidate) => candidate.state === 'active'),
   };
+}
+
+/**
+ * The plugin runs the activity tree can account for.
+ *
+ * The server's `pluginRuns` is resolved once, when a snapshot is taken. The
+ * activity tree, by contrast, is kept current by realtime: a plugin that
+ * completes mid-run arrives as `transcript_activity_upserted` and lands in
+ * `activities`. So where the tree *can* account for a run, it is the fresher of
+ * the two, and a row built only from the snapshot's copy would tick forever
+ * because its `state` never leaves `active`.
+ *
+ * Where the tree cannot account for one — the parent chain that names the turn
+ * is exactly what the nullable seeds fail to deliver — this returns nothing for
+ * it and the snapshot's own run stands. That is the case this whole contract
+ * exists for, and the two sources compose rather than competing:
+ * `resolvePluginRuns` overlays what the tree knows onto what the server said.
+ */
+function pluginRunsFromActivities(
+  activities: readonly TranscriptActivity[],
+): Map<string, TranscriptPluginRun> {
+  const byId = new Map(activities.map((activity) => [activity.activityId, activity]));
+  const callsByPlugin = new Map<string, string[]>();
+  for (const activity of activities) {
+    if (activity.scope !== 'tool_call' || !activity.parentActivityId) continue;
+    const current = callsByPlugin.get(activity.parentActivityId) ?? [];
+    current.push(activity.subjectId);
+    callsByPlugin.set(activity.parentActivityId, current);
+  }
+  const runs = new Map<string, TranscriptPluginRun>();
+  for (const activity of activities) {
+    if (activity.scope !== 'plugin' || !activity.parentActivityId) continue;
+    const parent = byId.get(activity.parentActivityId);
+    if (parent?.scope !== 'assistant_turn') continue;
+    let completedMs = 0;
+    let elapsedMsAtSnapshot: number | null = null;
+    // The same rule the server folds by: a stopped interval that recorded no
+    // duration makes the total unknowable, not smaller.
+    let durationKnown = activity.intervals.length > 0;
+    let upperBound = false;
+    for (const interval of activity.intervals) {
+      if (interval.timingAccuracy === 'upper_bound') upperBound = true;
+      if (interval.stoppedAtUtc === null) {
+        elapsedMsAtSnapshot = (elapsedMsAtSnapshot ?? 0) + (interval.elapsedMsAtSnapshot ?? 0);
+        continue;
+      }
+      if (interval.durationMs === null) durationKnown = false;
+      else completedMs += interval.durationMs;
+    }
+    runs.set(activity.activityId, {
+      pluginRunId: activity.activityId,
+      turnId: parent.subjectId,
+      pluginId: activity.subjectId,
+      displayName: activity.label,
+      state: activity.state,
+      durationMs: durationKnown ? completedMs : null,
+      elapsedMsAtSnapshot,
+      timingAccuracy: upperBound ? 'upper_bound' : 'observed',
+      toolCallIds: callsByPlugin.get(activity.activityId) ?? [],
+    });
+  }
+  return runs;
+}
+
+/**
+ * One list of runs from the two sources, newest fact winning per field.
+ *
+ * The snapshot's run is the base, because it is the one that exists even when
+ * the tree cannot reach the activity. The tree's view is overlaid on top when
+ * it has one, because realtime keeps it current. `toolCallIds` is the exception
+ * to "newest wins": an empty list there is the tree failing to see the calls
+ * rather than the plugin having made none, and an empty list leaves the row
+ * with nowhere to sit.
+ */
+function resolvePluginRuns(snapshot: WorkstreamTranscriptSnapshot): TranscriptPluginRun[] {
+  const derived = pluginRunsFromActivities(snapshot.activities);
+  const resolved = snapshot.pluginRuns.map((run) => {
+    const fresh = derived.get(run.pluginRunId);
+    derived.delete(run.pluginRunId);
+    if (!fresh) return run;
+    return {
+      ...run,
+      ...fresh,
+      toolCallIds: fresh.toolCallIds.length > 0 ? fresh.toolCallIds : run.toolCallIds,
+    };
+  });
+  // A plugin that started after the snapshot was taken has no server run yet.
+  return [...resolved, ...derived.values()];
+}
+
+/**
+ * The local monotonic anchor a still-running plugin row ticks from.
+ *
+ * The server reports how long the run has been going as of the snapshot, never
+ * a wall-clock start: the two clocks are not the same one, and subtracting a
+ * server timestamp from a local `Date.now()` reports the skew between them as
+ * work. So the client stamps `performance.now()` the first time it sees a given
+ * elapsed reading and counts forward from there, re-stamping only when the
+ * server sends a new one.
+ */
+const pluginRunReceiptMonotonic = new WeakMap<TranscriptPluginRun, number>();
+
+function pluginRunTiming(run: TranscriptPluginRun): { monotonicStartedAt?: number } {
+  if (run.state !== 'active' || run.elapsedMsAtSnapshot === null) return {};
+  // Keyed on the run object, like `activityReceiptMonotonic` beside it: a new
+  // snapshot brings a new object and re-stamps, and an entry is collected with
+  // the snapshot that produced it rather than outliving the work stream.
+  const cached = pluginRunReceiptMonotonic.get(run);
+  // The reading was already `elapsedMsAtSnapshot` old when it was taken, so the
+  // segment began that far before this moment.
+  const receivedAt = cached ?? performance.now() - run.elapsedMsAtSnapshot;
+  pluginRunReceiptMonotonic.set(run, receivedAt);
+  return { monotonicStartedAt: receivedAt };
 }
 
 function activityDuration(activity: TranscriptActivity | undefined): number {
@@ -1227,4 +1488,61 @@ function activityTiming(activity: TranscriptActivity | undefined): {
     monotonicStartedAt: receivedAt,
     timingAccuracy,
   };
+}
+
+/**
+ * Move a finished response's total onto the message it produced.
+ *
+ * A response-level timer is progress while it runs, so it stays a row of its
+ * own and the reader watches it climb. The moment it settles it is no longer
+ * progress — it is a fact about the answer above it — and a spent timer parked
+ * under that answer reads like another step still to come. Folding it into the
+ * header puts it where the rest of the message's provenance already is:
+ * "Rally · 11 minutes ago · Worked for 2m 52s".
+ *
+ * Only the response scope moves. A turn's thinking row stays where it is: it
+ * annotates one step inside the run rather than summarizing the whole of it,
+ * and several of them can belong to a single message.
+ */
+export function foldSettledWorkIntoMessages(messages: readonly Message[]): Message[] {
+  const rows: Message[] = [];
+  for (const message of messages) {
+    const thought = message.thoughtEvent;
+    const settledResponseWork = thought !== undefined
+      && message.messageType === 'thought'
+      && thought.status !== 'started'
+      // 'thinking' is a turn's own reasoning; 'working' is the whole response.
+      && (thought.activeVerb ?? 'working') === 'working';
+    if (!settledResponseWork) {
+      rows.push(message);
+      continue;
+    }
+    // The answer this total belongs to is the nearest agent text above it from
+    // the same turn. `findLastIndex` would say it more directly, but the
+    // renderer's lib target predates it.
+    let host = -1;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const candidate = rows[index]!;
+      if (candidate.authorType === 'agent'
+        && candidate.messageType === 'text'
+        && candidate.transcriptTurnId === message.transcriptTurnId) {
+        host = index;
+        break;
+      }
+    }
+    if (host === -1) {
+      // Nothing to attach to — an answer that was omitted or has not arrived.
+      // The row stays rather than taking the timing out of the feed entirely.
+      rows.push(message);
+      continue;
+    }
+    rows[host] = {
+      ...rows[host]!,
+      workSummary: {
+        durationMs: thought.durationMs,
+        ...(thought.timingAccuracy === undefined ? {} : { timingAccuracy: thought.timingAccuracy }),
+      },
+    };
+  }
+  return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }

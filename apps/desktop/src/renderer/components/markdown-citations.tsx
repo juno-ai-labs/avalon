@@ -1,13 +1,18 @@
 import {
+  type AttachmentKind,
+  classifyAttachmentKind,
+} from '@rally/contracts';
+import {
   type CitationScheme,
   type CitationTarget,
   type FootnoteCitation,
   citationScheme,
+  isConnectorHref,
   parseCitationHref,
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { ChevronRight, File, FileText, Link2 } from 'lucide-react';
-import { createContext, useContext } from 'react';
+import { File, FileText, Link2, Volume2 } from 'lucide-react';
+import { createContext, useContext, useEffect, useState, type ComponentType } from 'react';
 
 /**
  * Citations, as the desktop draws them.
@@ -29,9 +34,11 @@ import { createContext, useContext } from 'react';
  * Two rules run through every cell:
  *
  * - **Navigation is a property of the protocol.** `resource://` and `http(s)`
- *   name openable content and navigate; `person:` and `connector:` name
- *   identities and never do, in any position. That asymmetry is deliberate and
- *   is the renderer's existing security posture, not a new one.
+ *   name openable content and navigate; `person:` / `person://` names an
+ *   identity and never does, in any position. Connector mention chips
+ *   (`connector://`) share that non-navigating identity path but are not a
+ *   citation scheme — they are handled before the matrix. That asymmetry is
+ *   deliberate and is the renderer's existing security posture, not a new one.
  * - **A citation adds affordance, never disclosure.** When a target cannot be
  *   resolved — unknown, revoked, or simply not visible to this viewer — what
  *   renders is the label the message text already carried, and nothing else.
@@ -42,6 +49,8 @@ export interface CitationResource {
   readonly id: string;
   readonly title: string;
   readonly resourceType: string;
+  /** Present when the record knows a MIME type; the kind label classifies from it. */
+  readonly mimeType?: string;
 }
 
 export interface CitationContext {
@@ -54,6 +63,16 @@ export interface CitationContext {
   resolve: (resourceId: string) => CitationResource | undefined;
   /** Where an opened citation goes. The host owns the route; this owns the click. */
   open: (target: CitationTarget) => void;
+  /**
+   * The resource's markdown-converted text for the embed card's preview, or
+   * `undefined` for a resource this context cannot resolve. The text is the
+   * preview route's derivative — a Word file's markdown, a PDF's OCR — not the
+   * source bytes, and the promise settles only once the route has stopped
+   * answering "still preparing"; the card shows its skeleton exactly as long
+   * as the promise is open. Optional because a surface with no work stream
+   * behind it has no route to read, and the card then simply keeps its room.
+   */
+  preview?: (resourceId: string) => Promise<string> | undefined;
 }
 
 /**
@@ -88,6 +107,17 @@ export interface CitationRender {
    * bare numbers over nothing, which is worse than either form on its own.
    */
   readonly still?: boolean;
+  /**
+   * How the embed card's preview renders the derivative's markdown.
+   *
+   * Lives here rather than as an import of `MarkdownBody` because that module
+   * already imports this one for the citation matrix; a reverse import would
+   * cycle. The body supplies itself — glance, verbatim, no citations — so the
+   * preview uses the one renderer without mounting a second `react-markdown`,
+   * a document that cites another resource cannot draw a card inside this card,
+   * and a fence or a link cannot nest a control inside the card's button.
+   */
+  readonly PreviewBody?: ComponentType<{ children: string }>;
 }
 
 export const CitationsProvider = CitationsContext.Provider;
@@ -109,15 +139,51 @@ const EMPTY_RENDER: CitationRender = {
  * `github_pull_request`, `gmail_thread`, `linear_project_update`. A CSS
  * `capitalize` on that prints `Github_pull_request`; the underscores have to go
  * before the words do.
+ *
+ * Provenance types (`generated_file`, `uploaded_file`) are not kinds a person
+ * can tell apart: every published file is one. Those classify from MIME and
+ * filename into the attachment kinds, and a slide deck reads as "Deck" rather
+ * than "Presentation" because that is the word the rest of the product uses.
  */
-export function resourceKindLabel(resourceType: string): string {
-  const words = resourceType.replace(/[_-]+/gu, ' ').trim();
-  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : resourceType;
+const FILE_KIND_LABELS: Record<AttachmentKind, string> = {
+  image: 'Image',
+  audio: 'Audio',
+  markdown: 'Markdown',
+  pdf: 'PDF',
+  document: 'Document',
+  spreadsheet: 'Spreadsheet',
+  presentation: 'Deck',
+  text: 'Text',
+  other: 'File',
+};
+
+const FILE_PROVENANCE_TYPES = new Set(['generated_file', 'uploaded_file']);
+
+export function resourceKindLabel(resource: Pick<CitationResource, 'resourceType' | 'title' | 'mimeType'>): string {
+  const type = resource.resourceType;
+  if (FILE_PROVENANCE_TYPES.has(type)) {
+    return FILE_KIND_LABELS[classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title })];
+  }
+  if (isAttachmentKind(type)) return FILE_KIND_LABELS[type];
+  const words = type.replace(/[_-]+/gu, ' ').trim();
+  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : type;
+}
+
+function isAttachmentKind(value: string): value is AttachmentKind {
+  return Object.hasOwn(FILE_KIND_LABELS, value);
+}
+
+function resourceIconType(resource: CitationResource): string {
+  if (FILE_PROVENANCE_TYPES.has(resource.resourceType)) {
+    return classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title });
+  }
+  return resource.resourceType;
 }
 
 /** The kind of thing a resource is, at a glance. Shared with the rail's own list. */
 export function ResourceIcon({ type }: { type: string }): React.JSX.Element {
   const normalized = type.toLowerCase();
+  if (normalized.includes('audio')) return <Volume2 size={15} />;
   if (normalized.includes('doc') || normalized.includes('text')) return <FileText size={15} />;
   if (normalized.includes('url') || normalized.includes('web')) return <Link2 size={15} />;
   return <File size={15} />;
@@ -137,7 +203,7 @@ function ResourceChip({ label, resource, onOpen }: {
       onClick={onOpen}
       type="button"
     >
-      <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon type={resource.resourceType} /></span>
+      <span aria-hidden="true" className="citation-chip-icon"><ResourceIcon type={resourceIconType(resource)} /></span>
       <span className="citation-chip-label">{label}</span>
     </button>
   );
@@ -150,12 +216,57 @@ function ResourceChip({ label, resource, onOpen }: {
  * Models put image syntax on its own line by training, the way they treat actual
  * images, so the card lands between sentences rather than cutting one into three
  * — no renderer heuristic has to guess where a block belongs.
+ *
+ * It is drawn as a file tile — the kind badge at the head, the title and kind at
+ * the foot, room between — rather than as a list row, so an announced resource
+ * reads as a thing that was produced, not as another line of the sentence.
+ *
+ * The room is not always empty: when the host can read the resource's
+ * markdown-converted text, the card shows the opening lines of it between the
+ * badge and the title, clipped by the stylesheet — never scrolled — and shows
+ * a shimmering skeleton for exactly as long as the derivative is still being
+ * prepared. The preview is presentation, so it is `aria-hidden` and `inert`,
+ * and the button's label stays the title alone. A still render skips it
+ * entirely: a picture serialized mid-skeleton would keep the skeleton forever.
  */
-function ResourceEmbedCard({ label, resource, onOpen }: {
+function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   label: React.ReactNode;
   resource: CitationResource;
   onOpen: () => void;
+  preview?: ((resourceId: string) => Promise<string> | undefined) | undefined;
 }): React.JSX.Element {
+  const { PreviewBody } = useCitationRender();
+  const [excerpt, setExcerpt] = useState<{ for: string; text?: string; open?: boolean }>({ for: '' });
+  useEffect(() => {
+    const request = preview?.(resource.id);
+    if (!request) {
+      setExcerpt({ for: resource.id });
+      return;
+    }
+    let cancelled = false;
+    // Announced unconditionally, including for a read the host has already
+    // cached. React processes this update and the settled promise's own in one
+    // commit, so a warm card re-running this effect — a refetch of the resource
+    // list changes the callback's identity, and every mounted card asks again —
+    // never paints the skeleton over an excerpt it already had. Review raised
+    // that flash; a MutationObserver across every commit shows no skeleton node
+    // is created at all, so guarding it here would be a fix for nothing.
+    setExcerpt({ for: resource.id, open: true });
+    request
+      .then((text) => {
+        if (!cancelled) setExcerpt({ for: resource.id, text: previewExcerpt(text) });
+      })
+      .catch(() => {
+        // Every rejection — unavailable, unconvertible, retries spent — means
+        // the same thing here: the card keeps its empty room, exactly as it
+        // stands on a surface that offers no preview at all.
+        if (!cancelled) setExcerpt({ for: resource.id });
+      });
+    return () => { cancelled = true; };
+  }, [preview, resource.id]);
+  // A commit can hand this mounted card a different resource before the effect
+  // re-runs; matching on the id keeps the old resource's text off the new one.
+  const settled = excerpt.for === resource.id ? excerpt : { for: resource.id };
   return (
     <button
       aria-label={`Open ${resource.title}`}
@@ -164,14 +275,159 @@ function ResourceEmbedCard({ label, resource, onOpen }: {
       onClick={onOpen}
       type="button"
     >
-      <span aria-hidden="true" className="citation-card-icon"><ResourceIcon type={resource.resourceType} /></span>
+      <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type={resourceIconType(resource)} /></span>
+      {settled.open && (
+        <span aria-hidden="true" className="citation-card-preview-skeleton">
+          <span /><span /><span />
+        </span>
+      )}
+      {settled.text !== undefined && settled.text !== '' && (
+        <span aria-hidden="true" className="citation-card-preview" inert>
+            {PreviewBody ? <PreviewBody>{settled.text}</PreviewBody> : settled.text}
+        </span>
+      )}
       <span className="citation-card-text">
         <strong className="citation-card-title">{label}</strong>
-        <small className="citation-card-kind">{resourceKindLabel(resource.resourceType)}</small>
+        <small className="citation-card-kind">{resourceKindLabel(resource)}</small>
       </span>
-      <ChevronRight aria-hidden="true" className="citation-card-chevron" size={15} />
     </button>
   );
+}
+
+/**
+ * The slice of a derivative the preview actually shows.
+ *
+ * Blank lines stay: they *are* the block grammar, and collapsing them used
+ * to be a plain-text trick for spending the clamp on words rather than on
+ * empty lines. Fed to `MarkdownBody` that rewrite joins paragraphs, promotes
+ * a paragraph above `---` into a heading, and swallows the sentence after a
+ * list into its last item. The clamp's seams now live in CSS (`margin: 0` on
+ * the nested body) rather than in the source. The tail beyond a few times
+ * the visible clamp is still not put in the DOM — the stylesheet clips at
+ * four lines, so shipping a whole document into the box would render the
+ * same pixels at many times the node weight.
+ */
+function previewExcerpt(text: string): string {
+  return text
+    .replace(/\r\n/gu, '\n')
+    .trim()
+    .slice(0, 600);
+}
+
+/**
+ * The slice of a hast node the embed-row pass reads and rewrites. Structural
+ * rather than imported: the renderer depends on `hast` only transitively
+ * through react-markdown, and four optional fields are the whole contract.
+ */
+interface EmbedRowNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: EmbedRowNode[];
+}
+
+function isWhitespaceNode(node: EmbedRowNode): boolean {
+  return node.type === 'text' && typeof node.value === 'string' && node.value.trim() === '';
+}
+
+/**
+ * The resource images of a paragraph that holds nothing else, or `null` for
+ * any other node. Only the `resource:` scheme counts, and only a target this
+ * render will actually draw as a card: an identity card or a real image beside
+ * an embed keeps its paragraph exactly as written.
+ */
+function embedImages(node: EmbedRowNode, rendersCard: (resourceId: string) => boolean): EmbedRowNode[] | null {
+  if (node.type !== 'element' || node.tagName !== 'p' || !node.children) return null;
+  const images: EmbedRowNode[] = [];
+  for (const child of node.children) {
+    if (isWhitespaceNode(child)) continue;
+    const src = child.type === 'element' && child.tagName === 'img' ? String(child.properties?.src ?? '') : undefined;
+    // One condition, not two: the parse already says whether this is a
+    // resource target, and a second scheme test beside it would be a guard no
+    // break could reach — which is to say a guard no test could cover.
+    if (src !== undefined) {
+      const target = parseCitationHref(src);
+      if (target.scheme === 'resource' && rendersCard(target.resourceId)) {
+        images.push(child);
+        continue;
+      }
+    }
+    return null;
+  }
+  return images.length > 0 ? images : null;
+}
+
+/**
+ * Consecutive embeds share one row.
+ *
+ * The announcement form arrives one card per paragraph — models write each
+ * image on a line of its own — so a run of them renders as a column of tiles
+ * between two sentences. This pass merges adjacent embed-only paragraphs (and
+ * several embeds inside one paragraph) into a single `.citation-card-row`,
+ * which the stylesheet lets scroll sideways. A lone embed keeps its paragraph:
+ * the row exists for runs, and rewriting the common case would change the DOM
+ * every existing surface asserts on.
+ *
+ * It runs on hast, after the markdown has been parsed and before the citation
+ * matrix renders anything — so it is told, through `rendersCard`, which targets
+ * that matrix will actually draw as a card. **It groups nothing else**, and the
+ * distinction is not academic: a `resource://` image on a surface with no
+ * citation context, or one naming a resource this work stream does not carry,
+ * renders as the label text the message already had. Grouping those would take
+ * a run of ordinary sentences and lay them out side by side in a horizontal
+ * scroller — which is exactly what happened on the five surfaces that render
+ * `MarkdownBody` without citations, until review caught it.
+ *
+ * Intra-run whitespace text nodes are dropped rather than carried into the row:
+ * the row is a flex container whose `gap` owns the spacing, and a stray newline
+ * between two flex items renders as nothing anyway.
+ */
+export function rehypeCitationEmbedRows(rendersCard: (resourceId: string) => boolean) {
+  return function attacher(): (tree: unknown) => void {
+    return (tree) => {
+      const root = tree as EmbedRowNode;
+      if (!root.children) return;
+      const source = root.children;
+      const rebuilt: EmbedRowNode[] = [];
+      let index = 0;
+      while (index < source.length) {
+        const first = embedImages(source[index]!, rendersCard);
+        if (!first) {
+          rebuilt.push(source[index]!);
+          index += 1;
+          continue;
+        }
+        const run = [...first];
+        let end = index + 1;
+        let cursor = end;
+        while (cursor < source.length) {
+          if (isWhitespaceNode(source[cursor]!)) {
+            cursor += 1;
+            continue;
+          }
+          const more = embedImages(source[cursor]!, rendersCard);
+          if (!more) break;
+          run.push(...more);
+          cursor += 1;
+          end = cursor;
+        }
+        if (run.length < 2) {
+          rebuilt.push(source[index]!);
+          index += 1;
+          continue;
+        }
+        rebuilt.push({
+          type: 'element',
+          tagName: 'div',
+          properties: { className: ['citation-card-row'] },
+          children: run,
+        });
+        index = end;
+      }
+      root.children = rebuilt;
+    };
+  };
 }
 
 /**
@@ -282,7 +538,6 @@ const LINK_CELLS: Matrix<LinkArgs> = {
   // to the system browser through its existing allowlist.
   external: (args) => <a {...args.anchor} rel="noopener noreferrer" target="_blank">{args.label}</a>,
   person: (args) => args.identity(),
-  connector: (args) => args.identity(),
   // Not "render as text": this is where `mailto:`, `tel:` and every relative
   // target keep exactly the behavior they have today, including the dead anchor
   // the default transform leaves behind for a scheme it rejects.
@@ -294,7 +549,11 @@ const IMAGE_CELLS: Matrix<ImageArgs> = {
     const resource = resolved(args);
     const onOpen = opener(args.render, args.target);
     if (!resource || !onOpen) return <>{args.label}</>;
-    return <ResourceEmbedCard label={args.label} onOpen={onOpen} resource={resource} />;
+    // A still keeps the empty room: the saved card is serialized at one
+    // moment, and a skeleton or a half-loaded excerpt caught in that moment
+    // would be printed into the picture forever.
+    const preview = args.render.still ? undefined : args.render.citations?.preview;
+    return <ResourceEmbedCard label={args.label} onOpen={onOpen} preview={preview} resource={resource} />;
   },
   // Deliberately *not* a citation. The renderer's CSP permits external images
   // and markdown images render today, so this syntax is live and means what it
@@ -302,7 +561,6 @@ const IMAGE_CELLS: Matrix<ImageArgs> = {
   // embedding an image.
   external: (args) => <img {...args.image} />,
   person: (args) => <IdentityCard label={args.label} />,
-  connector: (args) => <IdentityCard label={args.label} />,
   unknown: (args) => <>{args.label}</>,
 };
 
@@ -322,7 +580,6 @@ const FOOTNOTE_CELLS: Matrix<FootnoteArgs> = {
     />
   ),
   person: (args) => <CitationPill citation={args.citation} number={args.number} />,
-  connector: (args) => <CitationPill citation={args.citation} number={args.number} />,
   // Unreachable through the pinned grammar, which refuses a definition whose one
   // link names no known scheme. Defined anyway, because "cannot happen" is not a
   // thing the type system can check and a superscript is the honest fallback.
@@ -391,6 +648,12 @@ export function CitationLink({ anchor, children, footnoteRef, href, identity }: 
     // A definition that did not qualify keeps classic GFM rendering, and its
     // reference keeps pointing at the entry that is still in the trailing list.
     return <a {...anchor} href={href}>{children}</a>;
+  }
+  // Connector chips are minted at render time and are not a citation scheme.
+  // Route them through the host's identity path before the matrix, or they
+  // would land in `unknown` as a navigable (or emptied) anchor.
+  if (isConnectorHref(href)) {
+    return <>{identity()}</>;
   }
   const cell = LINK_CELLS[citationScheme(href)];
   return <>{cell({ anchor, identity, label: children, render, target: parseCitationHref(href) })}</>;

@@ -211,6 +211,12 @@ skipped rather than re-targeted. An automation outlives the address it was
 accepted with, and a corporate mailbox reassigned to a different person is the
 case that matters — the run was authorized to mail a named address, and quietly
 sending its contents somewhere else is not the smaller surprise.
+This section describes behaviour that was unreachable in production between
+migration 0090 and 2026-08-31: `AutomationAgent` read the connector rows from
+regional D1, which no longer had them, so every attempt to save a connector
+destination answered `500`. See the changelog in
+[`automation-lifecycle.md`](automation-lifecycle.md).
+
 **Every edit re-resolves the whole set** — `PATCH /automations/:id`
 takes the complete destination list and rewrites it, so a Slack link that has gone
 stale or an account address that has changed is picked up by the next edit, and a

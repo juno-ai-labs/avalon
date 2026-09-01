@@ -73,6 +73,15 @@ describe("Slack workspace workstream assignment", () => {
   it("assigns ownerless Slack workstreams when a verified-email member joins", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
+    // A real WorkspaceDO, so the seat this assignment performs and the row the
+    // test reads back are one store. `slack_agent_sessions` is the object's
+    // table since the cutover; asserting on the regional fixture would assert
+    // on a database the write never reaches.
+    const { instance: workspaceObject, objectDatabase } = createTestWorkspaceDO({
+      workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524",
+      regionalDatabase: database,
+      register: (created) => { databases.push(created); },
+    });
     const encrypted = await encryptString(
       JSON.stringify({ botAccessToken: "xoxb-test" }),
       credentialsKey,
@@ -105,6 +114,21 @@ describe("Slack workspace workstream assignment", () => {
          harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
       VALUES ('7a000000-0000-4000-8000-000000000001', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Investigate', 'Investigate',
               'ad_hoc', NULL, 'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
+    `);
+    // The sessions live in the object, not in the regional fixture the
+    // facade used to answer from. The connection comes with them because
+    // they reference it — the object enforces that foreign key, which the
+    // regional fixture never had to.
+    objectDatabase.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, encrypted_credentials, credential_iv, credential_key_version,
+         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+         model_plugin_id)
+      VALUES ('connection-slack', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T123',
+              'Slack', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
+              '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+              'plugin_slack_workspace');
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
@@ -137,6 +161,9 @@ describe("Slack workspace workstream assignment", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS),
+      }),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -152,7 +179,7 @@ describe("Slack workspace workstream assignment", () => {
       "taylor@example.com",
     )).resolves.toBe(1);
 
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       `SELECT assigned_user_id, assignment_method, execution_scope, linked_user_id
        FROM slack_agent_sessions WHERE id = 'session-ownerless'`,
     ).get()).toEqual({
@@ -170,6 +197,15 @@ describe("Slack workspace workstream assignment", () => {
   it("keeps an existing creator when a later Slack assignment resolves the same session", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
+    // A real WorkspaceDO, so the seat this assignment performs and the row the
+    // test reads back are one store. `slack_agent_sessions` is the object's
+    // table since the cutover; asserting on the regional fixture would assert
+    // on a database the write never reaches.
+    const { instance: workspaceObject, objectDatabase } = createTestWorkspaceDO({
+      workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524",
+      regionalDatabase: database,
+      register: (created) => { databases.push(created); },
+    });
     const encrypted = await encryptString(
       JSON.stringify({ botAccessToken: "xoxb-test" }),
       credentialsKey,
@@ -202,6 +238,21 @@ describe("Slack workspace workstream assignment", () => {
          harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
       VALUES ('7a000000-0000-4000-8000-000000000002', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Investigate', 'Investigate',
               'ad_hoc', 'user-owner', 'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
+    `);
+    // The sessions live in the object, not in the regional fixture the
+    // facade used to answer from. The connection comes with them because
+    // they reference it — the object enforces that foreign key, which the
+    // regional fixture never had to.
+    objectDatabase.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, encrypted_credentials, credential_iv, credential_key_version,
+         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+         model_plugin_id)
+      VALUES ('connection-slack', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T123',
+              'Slack', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
+              '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+              'plugin_slack_workspace');
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
@@ -230,6 +281,9 @@ describe("Slack workspace workstream assignment", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS),
+      }),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
@@ -246,6 +300,139 @@ describe("Slack workspace workstream assignment", () => {
     )).resolves.toBe(1);
 
     expect(workstreamObjectRootRow(objectStore, "created_by_user_id")).toEqual({ created_by_user_id: "user-owner" });
+  });
+
+  it("seats the connections behind a failed one instead of abandoning the loop", async () => {
+    // A workspace can carry more than one workspace-scoped Slack installation:
+    // `connector_connections_active_model_plugin_id_uq` is unique on
+    // `(workspace_id, model_plugin_id)`, and `allocateModelPluginId` suffixes
+    // (`plugin_slack_workspace_2`) rather than refusing, which is why the two
+    // rows here differ in that column and only in that column. Seating is a
+    // WorkspaceDO write that can fail transiently. When it
+    // does, only that connection is skipped: letting the throw out of the loop
+    // would silently leave every later installation unseated, which is the
+    // regression that arrives the moment the seating call shares the Slack
+    // lookup's `try` block or nothing at all.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance: workspaceObject, objectDatabase } = createTestWorkspaceDO({
+      workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524",
+      regionalDatabase: database,
+      register: (created) => { databases.push(created); },
+    });
+    const failing = await encryptString(
+      JSON.stringify({ botAccessToken: "xoxb-a" }), credentialsKey, "connection-a",
+    );
+    const healthy = await encryptString(
+      JSON.stringify({ botAccessToken: "xoxb-b" }), credentialsKey, "connection-b",
+    );
+    const connections = `
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, encrypted_credentials, credential_iv, credential_key_version,
+         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+         model_plugin_id)
+      VALUES
+        ('connection-a', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T1',
+         'Slack A', '${failing.ciphertext}', '${failing.iv}', 1,
+         '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+         'plugin_slack_workspace'),
+        ('connection-b', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T2',
+         'Slack B', '${healthy.ciphertext}', '${healthy.iv}', 1,
+         '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+         'plugin_slack_workspace_2');
+    `;
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES
+        ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
+        ('a352221e-2577-4ad0-8889-5b24421f63fb', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('3f88f9ca-d7b3-4714-828e-b22187914524', 'Slack Workspace', 'slack-workspace', 'global',
+              'user-owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'user-owner', 'owner', 'active', '2026-01-01'),
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'a352221e-2577-4ad0-8889-5b24421f63fb', 'member', 'active', '2026-02-01');
+      ${connections}
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('7a000000-0000-4000-8000-000000000009', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Later', 'Later',
+              'ad_hoc', NULL, 'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
+    `);
+    // Only the second installation owns a session, so the count this returns is
+    // exactly the evidence that the loop reached it.
+    objectDatabase.exec(`
+      ${connections}
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-later', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-b', NULL, 'workspace',
+              'T2', 'U456', 'C123', '1.0', 'event:later', '7a000000-0000-4000-8000-000000000009',
+              'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
+    `);
+    const objectStores = new Map<string, DatabaseSync>();
+    seedWorkstreamObject(
+      objectStores,
+      { workstreamId: "7a000000-0000-4000-8000-000000000009", workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524" },
+      { title: "Later", objective: "Later", createdByUserId: null, exactState: "completed" },
+    );
+    // Each installation is its own Slack team, so the lookup answers with the
+    // team belonging to the bot token it was called with — `validSlackHuman`
+    // rejects a member from another team, and a single-team stub would make
+    // the second connection look like a mismatch rather than a seating.
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const authorization = String(new Headers(init?.headers).get("authorization") ?? "");
+      return new Response(JSON.stringify({
+        ok: true,
+        user: {
+          id: "U456",
+          team_id: authorization.includes("xoxb-b") ? "T2" : "T1",
+          deleted: false,
+          is_bot: false,
+          profile: { email: "taylor@example.com" },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    const rpcs = workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS);
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          ...rpcs,
+          // The object refusing one installation's write, the way an overloaded
+          // object would. Everything else stays the real method.
+          assignSlackSessions: async (input: { connectionId: string }) => {
+            if (input.connectionId === "connection-a") throw new Error("workspace_object_overloaded");
+            return (rpcs.assignSlackSessions as (request: unknown) => unknown)(input);
+          },
+        },
+      }),
+      AVALON_REGION: "global",
+      CONNECTOR_CREDENTIALS_KEY: credentialsKey,
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+      SLACK_CLIENT_ID: "client",
+      SLACK_CLIENT_SECRET: "secret",
+      SLACK_SIGNING_SECRET: "signing",
+    });
+
+    // One, not zero and not a throw: `connection-a` was skipped, `connection-b`
+    // was still seated.
+    await expect(new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
+      "3f88f9ca-d7b3-4714-828e-b22187914524",
+      "a352221e-2577-4ad0-8889-5b24421f63fb",
+      "taylor@example.com",
+    )).resolves.toBe(1);
+
+    expect(objectDatabase.prepare(
+      `SELECT assigned_user_id FROM slack_agent_sessions WHERE id = 'session-later'`,
+    ).get()).toEqual({ assigned_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
   });
 
   it("does not answer the next external elicitation when a Slack event is retried", async () => {
@@ -520,6 +707,15 @@ describe("Slack workspace workstream assignment", () => {
   it("lets an explicit account link correct a creator its own email guess produced", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
+    // A real WorkspaceDO, serving both the typed session methods and
+    // `executeRuntimeSql`, so the seat this link performs and the rows it reads
+    // are one store. Seating is a typed method now; leaving the sessions in the
+    // regional fixture would assert against a database the write never reaches.
+    const { instance: workspaceObject, objectDatabase } = createTestWorkspaceDO({
+      workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524",
+      regionalDatabase: database,
+      register: (created) => { databases.push(created); },
+    });
     const encrypted = await encryptString(
       JSON.stringify({ botAccessToken: "xoxb-test" }),
       credentialsKey,
@@ -560,6 +756,29 @@ describe("Slack workspace workstream assignment", () => {
       INSERT INTO workstream_participants
         (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
       VALUES ('7a000000-0000-4000-8000-000000000003', 'user-jordan', 'user-jordan', 'creator', '2026-01-01');
+      INSERT INTO slack_installation_routes
+        (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+      VALUES ('T123', 'global', '3f88f9ca-d7b3-4714-828e-b22187914524',
+              'connection-slack', 'active', '2026-01-01', '2026-01-01');
+    `);
+    // `slack_agent_sessions` is WorkspaceDO's table: the rows live in the
+    // object, not in the regional fixture the facade used to answer from. The
+    // connection comes with them because the sessions reference it — the object
+    // enforces that foreign key, which the regional fixture never had to.
+    objectDatabase.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, encrypted_credentials, credential_iv, credential_key_version,
+         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+         model_plugin_id)
+      VALUES ('connection-slack', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T123',
+              'Slack', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
+              '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+              'plugin_slack_workspace');
+      INSERT INTO slack_link_challenges
+        (token_hash, connection_id, slack_team_id, slack_user_id, expires_at, created_at)
+      VALUES ('${await sha256("link-token")}', 'connection-slack', 'T123', 'U456',
+              '2099-01-01T00:00:00.000Z', '2026-01-01');
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
@@ -574,14 +793,6 @@ describe("Slack workspace workstream assignment", () => {
          'T123', 'U456', 'C123', '2.0', 'event:elsewhere', '7a000000-0000-4000-8000-000000000004',
          'app_mention', 'public', 'user-owner', '2026-01-01', 'explicit_link', '{}',
          '2026-01-01', '2026-01-01');
-      INSERT INTO slack_link_challenges
-        (token_hash, connection_id, slack_team_id, slack_user_id, expires_at, created_at)
-      VALUES ('${await sha256("link-token")}', 'connection-slack', 'T123', 'U456',
-              '2099-01-01T00:00:00.000Z', '2026-01-01');
-      INSERT INTO slack_installation_routes
-        (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
-      VALUES ('T123', 'global', '3f88f9ca-d7b3-4714-828e-b22187914524',
-              'connection-slack', 'active', '2026-01-01', '2026-01-01');
     `);
     const objectStores = new Map<string, DatabaseSync>();
     const guessedStore = seedWorkstreamObject(
@@ -609,6 +820,7 @@ describe("Slack workspace workstream assignment", () => {
       // directory after cutover; an empty page keeps the link flow moving.
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
+          ...workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS),
           recentWorkstreamDirectory: vi.fn(async () => ({ items: [] })),
           listAutomationDirectory: vi.fn(async () => ({ items: [] })),
         },
@@ -713,6 +925,113 @@ describe("Slack connector principal delivery", () => {
       }),
     });
   }
+
+  it("closes a legacy empty stream and posts only the complete saved outcome", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    objectDatabase.exec(`
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         slack_stream_ts, opening_client_message_id, workstream_id, invocation_kind,
+         channel_type, context_json, created_at, updated_at)
+      VALUES ('session-saved-outcome', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', '2.0', 'event:saved-outcome',
+              '7a000000-0000-4000-8000-0000000000ab', 'app_mention', 'public',
+              '{}', '2026-01-01', '2026-01-01');
+    `);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const method = url.pathname.split("/").at(-1)!;
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      calls.push({ method, body });
+      if (method === "chat.stopStream") {
+        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "2.0" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "assistant.threads.setStatus") {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "chat.postMessage") {
+        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "3.0" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+
+    const clearLegacyStream = vi.spyOn(instance, "setSlackSessionStream");
+    const service = new SlackAgentService(slackMembershipEnvironment(
+      database,
+      instance,
+      credentialsKey,
+      vi.fn(async () => undefined),
+      undefined,
+      { PUBLIC_WEB_BASE_URL: "https://rallywith.ai" },
+    ));
+    await service.deliverWorkstreamOutcome(
+      "22222222-2222-4222-8222-222222222222",
+      "7a000000-0000-4000-8000-0000000000ab",
+      "The saved final answer",
+      "run-saved:completed",
+      "completed",
+    );
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "chat.stopStream",
+      "chat.postMessage",
+      "chat.postMessage",
+      "assistant.threads.setStatus",
+    ]);
+    expect(calls.some((call) => call.method === "chat.startStream" || call.method === "chat.appendStream"))
+      .toBe(false);
+    expect(calls[1]?.body).toMatchObject({
+      channel: "C123",
+      thread_ts: "1.0",
+      text: "The saved final answer",
+    });
+    expect(objectDatabase.prepare(
+      "SELECT slack_stream_ts, last_delivery_key FROM slack_agent_sessions WHERE id = 'session-saved-outcome'",
+    ).get()).toEqual({ slack_stream_ts: null, last_delivery_key: "run-saved:completed" });
+    expect(clearLegacyStream).toHaveBeenCalledTimes(1);
+
+    objectDatabase.exec(`
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-no-saved-turn', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '4.0', 'event:no-saved-turn',
+              '7a000000-0000-4000-8000-0000000000ac', 'app_mention', 'public',
+              '{}', '2026-01-01', '2026-01-01');
+    `);
+    calls.length = 0;
+
+    await service.deliverWorkstreamOutcome(
+      "22222222-2222-4222-8222-222222222222",
+      "7a000000-0000-4000-8000-0000000000ac",
+      null,
+      "run-unsaved:failed",
+      "failed",
+    );
+
+    expect(calls.map((call) => call.method)).toEqual(["assistant.threads.setStatus"]);
+    expect(objectDatabase.prepare(
+      "SELECT last_delivery_key FROM slack_agent_sessions WHERE id = 'session-no-saved-turn'",
+    ).get()).toEqual({ last_delivery_key: "run-unsaved:failed" });
+    expect(clearLegacyStream).toHaveBeenCalledTimes(1);
+  });
 
   it("presents the connector principal to the work-stream object, not a login session", async () => {
     const database = migratedDatabase();
@@ -1058,7 +1377,7 @@ describe("Slack public channel membership", () => {
     expect(activityQueueSend).not.toHaveBeenCalled();
   });
 
-  it("adds eyes to the triggering message before starting Slack task processing", async () => {
+  it("adds eyes before task processing without opening a Slack response stream", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
@@ -1100,11 +1419,6 @@ describe("Slack public channel membership", () => {
           headers: { "content-type": "application/json" },
         });
       }
-      if (method === "chat.startStream") return new Response(JSON.stringify({
-        ok: true,
-        channel: "C123",
-        ts: "2.0",
-      }), { status: 200, headers: { "content-type": "application/json" } });
       throw new Error(`Unexpected Slack request ${url}`);
     }));
     const env = createTestEnv({
@@ -1118,6 +1432,7 @@ describe("Slack public channel membership", () => {
 
     expect(methods.indexOf("reactions.add")).toBeGreaterThan(methods.indexOf("users.info"));
     expect(methods.indexOf("reactions.add")).toBeLessThan(methods.indexOf("assistant.threads.setStatus"));
+    expect(methods).not.toContain("chat.startStream");
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
     expect(objectDatabase.prepare(
       "SELECT status, payload_json FROM slack_ingress_jobs WHERE id = 'event:acknowledge'",
@@ -1378,12 +1693,6 @@ describe("Slack public channel membership", () => {
           headers: { "content-type": "application/json" },
         });
       }
-      if (url.pathname.endsWith("chat.startStream")) {
-        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1.1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
       throw new Error(`Unexpected Slack request ${url}`);
     }));
 
@@ -1566,12 +1875,6 @@ describe("Slack public channel membership", () => {
       if (url.pathname.endsWith("assistant.threads.setTitle")) {
         threadTitles.push(String((JSON.parse(String(init?.body)) as Record<string, unknown>).title));
         return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.pathname.endsWith("chat.startStream")) {
-        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1.3" }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -2279,11 +2582,6 @@ function slackTaskApiFetcher(
         headers: { "content-type": "application/json" },
       });
     }
-    if (method === "chat.startStream") return new Response(JSON.stringify({
-      ok: true,
-      channel: "C123",
-      ts: "2.0",
-    }), { status: 200, headers: { "content-type": "application/json" } });
     throw new Error(`Unexpected Slack request ${url}`);
   });
   return { fetcher, methods };

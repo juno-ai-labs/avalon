@@ -18,7 +18,8 @@ behavior is in the approved [Projects design](PRDs/2026-08-26_projects/prd.md).
 | `apps/api/src/durable-objects/workspace-project-storage.ts` | Synchronous project transactions, visibility filtering, and per-person ordering. |
 | `apps/api/src/services/project-service.ts` | Cross-object audience effects, membership settlement, and Queue publication. |
 | `apps/api/src/queues/activity-consumer.ts` | Fenced default-resource attachment through the regional activity Queue. |
-| `apps/desktop/src/renderer/components/project-sidebar-section.tsx` | Creation, fixed ordering, accordion membership, drag targets, and recovery. |
+| `apps/desktop/src/renderer/screens/project-space.tsx` | Project dashboard: work-stream list, default resources, inline presentation and audience controls. The Work streams heading plus opens the same **New project work stream** route as the sidebar row plus. |
+| `apps/desktop/src/renderer/components/project-sidebar-section.tsx` | Creation, fixed ordering, accordion membership, drag targets, and recovery. Nested members render through the sidebar's work-stream row. |
 
 ## How it works
 
@@ -145,11 +146,21 @@ real migration ledger to SQLite and proves constraints through version 17.
 `apps/api/test-workers/project-authority.test.ts` runs the RPC behavior
 on workerd with real Durable Object storage and D1 membership rows.
 
+`apps/desktop/src/renderer/screens/project-space-screen.test.tsx` covers the
+Work streams heading plus, the empty-state copy for active and archived
+projects, and the other inline project-space mutations.
+`apps/api/test/workstream-project-start.test.ts` proves project-start audience
+resolution, including that a personal project seats its full roster, that
+current default resources are attached in the initialize payload, and that an
+origin already in the project's defaults is not attached twice.
+
 Run the focused checks with:
 
 ```bash
 pnpm --filter @rally/contracts test -- projects.test.ts
 pnpm --filter @rally/api exec vitest run test/workspace-project-schema.test.ts
+pnpm --filter @rally/api exec vitest run test/workstream-project-start.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/screens/project-space-screen.test.tsx
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/project-authority.test.ts
 ```
 
@@ -204,6 +215,51 @@ send leaves them pending for a later alarm; accepted messages remain safe to
 duplicate because the consumer rechecks target generations.
 
 ## Changelog
+
+### 2026-08-30 — Archived project-space empty copy no longer points at a disabled plus
+
+**What changed:** An empty Work streams section now says "Start one with the plus button in this section." only while the project is active. An archived empty project says "This archived project has no work streams." The start helper documents that caller origin resources precede project defaults and are deduplicated, and the tests lock both the copy and the overlap case.
+
+**Why:** Review of the heading-plus change found that the new empty copy pointed at a plus that is disabled on archived projects. The previous sidebar-pointing sentence had the same problem, but this version sat next to a visible dead control. The overlap test was missing even though the `Set` union already dropped duplicates.
+
+**Considered and rejected:** Telling people to restore the project from the empty state. Restore is already a labeled header button, so a second instruction would compete with it. Aligning the heading plus on Tabler `IconPlus` to match the sidebar: this file is already lucide, and the mismatch is not worth a second icon import.
+
+**Consequences:** Keyboard and screen-reader users on an archived empty project still find the disabled plus (same pattern as **Add resource**); they are no longer told to use it.
+
+### 2026-08-30 — Project space starts a work stream from its Work streams heading
+
+**What changed:** The project-space **Work streams** heading now carries a right-justified plus that opens `/projects/:id/workstreams/new`, the same **New project work stream** page as the plus on that project's sidebar row. Starting there still seats every active personal-project participant and attaches the project's current default resources in the initialize transaction that admits the first run.
+
+**Why:** The empty table told people to use the sidebar plus, so starting a work stream from the dashboard they were already looking at required leaving the page. The inheritance path was already the project-start create; this change only makes that path reachable from the section that lists the members.
+
+**Considered and rejected:** A labeled **New work stream** button matching **Add resource** on the section below. The request was specifically the compact plus used on the sidebar row, including its accessible name, so a second labeled control would have been a different object next to the one people already know.
+
+**Consequences:** An archived project's plus is disabled, matching the other mutations on that space. The empty-state copy now points at this heading rather than the sidebar.
+
+### 2026-08-30 — Nested project work streams use the sidebar's own row
+
+**What changed:** Expanding a project now renders each member through the same
+work-stream row the rest of the sidebar uses — title, description, marker, and
+context menu — starting where the accordion control ends. The project row
+itself wears the shared `.sidebar-row` hover fill, radius, and padding, and
+its plus control is visible only while that row is hovered or focused.
+
+**Why:** The accordion had been a second, thinner list: title-only children
+indented past the project icon, a private hover fill, and a standing column of
+pluses. That made a work stream inside a project look like a different object
+from the same work stream in the recent list, and the pluses competed with the
+names they sat beside.
+
+**Considered and rejected:** Restyling `.project-sidebar-workstream` to
+approximate the shared row. Matching font, hover, and a description by copying
+rules would have drifted the moment either surface moved, which is how the two
+lists got out of step. Passing the existing row in is the cheaper thing to
+keep true.
+
+**Consequences:** Nested members are the sidebar work-stream row, including
+its context menu and drag payload. Command-number hints stay on the
+pinned-then-recent run, not the accordion. The plus on the Projects heading
+stays visible; only the per-row plus is hover-revealed.
 
 ### 2026-08-27 — Direct participant removal keeps the project audience fence
 

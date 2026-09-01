@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { Check, ChevronDown, LoaderCircle, X } from 'lucide-react';
 import { ThinkingOrb, type OrbSize, type OrbState } from 'thinking-orbs';
 import {
+  Fragment,
   forwardRef,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
@@ -192,52 +193,79 @@ export function Avatar({
 export function AvatarStack({
   members,
   limit = 4,
+  extraCount,
   presentUserIds = [],
   currentUserId = null,
+  nameTooltip = true,
 }: {
   members: WorkspaceMember[];
   limit?: number;
+  /**
+   * Overflow past `limit` when the caller already truncated `members`.
+   * Omit to derive it from `members.length`.
+   */
+  extraCount?: number;
+  /**
+   * Ids of members currently viewing this work stream. Members in this set who
+   * are not `currentUserId` get a presence ring and an "is viewing" tooltip.
+   */
   presentUserIds?: readonly string[];
+  /**
+   * The signed-in viewer. When set, their avatar never shows a presence ping
+   * or "is viewing" tooltip — that sentence is about other people. Callers
+   * that do not pass presence can omit this; the default is `null`.
+   */
   currentUserId?: string | null;
+  /**
+   * When false, skip the per-face name tooltip. Presence still opens one.
+   * Use this when an ancestor already explains the stack — a second tooltip
+   * on the same hover is the native-`title` problem this component exists to
+   * avoid.
+   */
+  nameTooltip?: boolean;
 }): React.JSX.Element {
   const visible = members.slice(0, limit);
-  const overflow = members.length - visible.length;
+  const overflow = extraCount ?? Math.max(0, members.length - visible.length);
   const present = new Set(presentUserIds);
+  const named = members.map((member) => (
+    present.has(member.id) && member.id !== currentUserId
+      ? `${member.name} is viewing this workstream.`
+      : member.name
+  ));
+  if (overflow > 0) named.push(`and ${overflow} more`);
   return (
     <span
-      aria-label={members.map((member) => (
-        present.has(member.id) && member.id !== currentUserId
-          ? `${member.name} is viewing this workstream.`
-          : member.name
-      )).join('; ')}
+      aria-label={named.join('; ')}
       className="avatar-stack"
     >
       {visible.map((member) => {
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
-        const presenceDescription = `${member.name} is viewing this workstream.`;
+        const tooltip = showingPresence
+          ? `${member.name} is viewing this workstream.`
+          : member.name;
+        const item = (
+          <span className={clsx('avatar-stack-item', showingPresence && 'is-present')}>
+            {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
+            <Avatar member={member} size="small" title={null} />
+          </span>
+        );
+        if (!nameTooltip && !showingPresence) {
+          return <Fragment key={member.id}>{item}</Fragment>;
+        }
         return (
           <Tooltip.Root
             delayDuration={300}
             key={member.id}
           >
-            <Tooltip.Trigger
-              asChild
-              onFocus={showingPresence ? undefined : (event) => event.preventDefault()}
-              onPointerMove={showingPresence ? undefined : (event) => event.preventDefault()}
-            >
-              <span className={clsx('avatar-stack-item', showingPresence && 'is-present')}>
-                {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
-                <Avatar member={member} size="small" title={showingPresence ? null : member.name} />
-              </span>
+            <Tooltip.Trigger asChild>
+              {item}
             </Tooltip.Trigger>
-            {showingPresence && (
-              <Tooltip.Portal>
-                <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
-                  {presenceDescription}
-                  <Tooltip.Arrow className="tooltip-arrow" />
-                </Tooltip.Content>
-              </Tooltip.Portal>
-            )}
+            <Tooltip.Portal>
+              <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
+                {tooltip}
+                <Tooltip.Arrow className="tooltip-arrow" />
+              </Tooltip.Content>
+            </Tooltip.Portal>
           </Tooltip.Root>
         );
       })}

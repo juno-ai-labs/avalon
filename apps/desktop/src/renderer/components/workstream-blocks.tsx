@@ -17,13 +17,22 @@ import {
   FileDown,
   ImageDown,
   LoaderCircle,
-  Pin,
+  Square,
   TerminalSquare,
-  X,
+  Volume2,
 } from 'lucide-react';
-import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Children, Fragment, memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
-import { citationFootnotes, citationScheme } from '@rally/contracts/citations';
+import {
+  citationFootnotes,
+  citationScheme,
+  connectorMentionHref,
+  connectorTypeFromEmbedHref,
+  connectorTypeFromMentionHref,
+  isConnectorHref,
+  personIdFromMentionHref,
+} from '@rally/contracts/citations';
+import { ConnectorEmbedCard, ConnectorMentionChip } from './connector-mentions';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -33,25 +42,40 @@ import { logError } from '../../common/logger';
 import { messageExportDate, messageExportFileName, type MessageExportFormat } from '../../common/message-export';
 import { formatDuration, formatRelative } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
+import { markdownDefinitionBlocks, splitCollapsibleMarkdown, withMarkdownDefinitions } from '../lib/markdown-collapse';
 import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
-import { reportTelemetryProductIntent } from '../lib/telemetry';
-import { useTextClamped } from '../lib/use-text-clamped';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
-import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
+import { reportTelemetryProductIntent } from '../lib/telemetry';
+import type { ElicitationData, Message, MessageMention } from '../lib/types';
+import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
+import {
+  MarkdownCollapseAllButton,
+  MarkdownCollapseController,
+  MarkdownCollapseH2,
+  MarkdownCollapseH3,
+  MarkdownCollapseH4,
+  MarkdownCollapseH5,
+  MarkdownCollapseH6,
+  MarkdownCollapseSection,
+  useMarkdownCollapse,
+} from './markdown-collapse';
+import { MarkdownMermaid } from './markdown-mermaid';
 import {
   CitationFootnoteItem,
   CitationFootnoteSection,
   CitationImage,
   CitationLink,
   CitationsProvider,
+  rehypeCitationEmbedRows,
   type CitationContext,
   type CitationRender,
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
-import { Badge, Button, ConnectorMark, InlineError, RallyMark } from './primitives';
+import { Button, ConnectorMark, InlineError, RallyMark } from './primitives';
+import { useSpeechPlayback } from './speech-playback';
 
 /**
  * A stable colour per participant. The values are the theme's, reached through
@@ -164,9 +188,11 @@ interface MessageCopyTelemetry {
   workstreamId: string;
 }
 
-function MarkdownCodeBlock({ code, language, telemetry }: {
+function MarkdownCodeBlock({ code, glance, language, renderDiagrams, telemetry }: {
   code: string;
+  glance?: boolean;
   language: string;
+  renderDiagrams?: boolean;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
@@ -195,35 +221,45 @@ function MarkdownCodeBlock({ code, language, telemetry }: {
     }
   };
 
+  const highlighted = (
+    <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
+      {({ className, getLineProps, getTokenProps, style, tokens }) => (
+        <pre className={className} style={style}>
+          <code>
+            {tokens.map((line, lineIndex) => (
+              <span {...getLineProps({ line })} key={lineIndex}>
+                {line.map((token, tokenIndex) => (
+                  <span {...getTokenProps({ token })} key={tokenIndex} />
+                ))}
+                {lineIndex < tokens.length - 1 ? '\n' : null}
+              </span>
+            ))}
+          </code>
+        </pre>
+      )}
+    </Highlight>
+  );
+
   return (
     <div className="markdown-code-block" data-language={normalizedLanguage}>
-      <div className="markdown-code-block-header">
-        <span className="markdown-code-language">{languageLabel}</span>
-        <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
-          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-        </button>
-      </div>
-      <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
-        {({ className, getLineProps, getTokenProps, style, tokens }) => (
-          <pre className={className} style={style}>
-            <code>
-              {tokens.map((line, lineIndex) => (
-                <span {...getLineProps({ line })} key={lineIndex}>
-                  {line.map((token, tokenIndex) => (
-                    <span {...getTokenProps({ token })} key={tokenIndex} />
-                  ))}
-                  {lineIndex < tokens.length - 1 ? '\n' : null}
-                </span>
-              ))}
-            </code>
-          </pre>
-        )}
-      </Highlight>
+      {glance ? null : (
+        <div className="markdown-code-block-header">
+          <span className="markdown-code-language">{languageLabel}</span>
+          <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
+            {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+          </button>
+        </div>
+      )}
+      {renderDiagrams && normalizedLanguage === 'mermaid'
+        ? <MarkdownMermaid code={code} fallback={highlighted} />
+        : highlighted}
     </div>
   );
 }
 
-function MarkdownCode({ children, className, telemetry }: React.ComponentProps<'code'> & {
+function MarkdownCode({ children, className, glance, renderDiagrams, telemetry }: React.ComponentProps<'code'> & {
+  glance?: boolean;
+  renderDiagrams?: boolean;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
   const source = String(children ?? '');
@@ -235,7 +271,9 @@ function MarkdownCode({ children, className, telemetry }: React.ComponentProps<'
   return (
     <MarkdownCodeBlock
       code={source.replace(/\n$/u, '')}
+      glance={glance}
       language={languageMatch?.[1]?.toLowerCase() ?? ''}
+      renderDiagrams={renderDiagrams}
       telemetry={telemetry}
     />
   );
@@ -261,39 +299,78 @@ function MarkdownTable({ children, node, style, ...props }: React.ComponentProps
   );
 }
 
-const PERSON_LINK_PATTERN = /^person:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu;
-const CONNECTOR_LINK_PATTERN = /^connector:([0-9a-z]+):(.+)$/u;
+/**
+ * Models write `<br/>` for a line break — especially inside a GFM table cell,
+ * which cannot contain a real newline without ending the row. This renderer
+ * does not parse HTML (`rehype-raw` is deliberately off), so those tags would
+ * otherwise print as characters, or vanish when micromark classifies them as
+ * `html` and remark-rehype drops the node. The rewrite is the closed
+ * exception: a bare break tag becomes an mdast `break`, which is a real
+ * `<br>` downstream. Code is skipped, because a sample may be showing the
+ * tag on purpose.
+ *
+ * It runs on every body, verbatim included. This is a renderer affordance for
+ * one HTML tag, not a repair of what a model meant — a stored document's table
+ * uses the same workaround, and rewriting it is showing the line break the
+ * file asked for.
+ *
+ * The pattern is a bare tag only. `<br class="x">` and every other element
+ * stay as they were, which is what keeps this from becoming an HTML parser.
+ */
+const BARE_BREAK_TAG = /^<br\s*\/?>$/iu;
+
+/**
+ * The slice of an mdast node the break rewrite reads. Structural rather than
+ * imported: the renderer depends on `mdast` only transitively through
+ * react-markdown.
+ */
+interface BreaksNode {
+  type: string;
+  value?: string;
+  children?: BreaksNode[];
+}
+
+function remarkHtmlBreaks() {
+  return (tree: unknown) => {
+    rewriteMarkdownBreaks(tree as BreaksNode);
+  };
+}
+
+function rewriteMarkdownBreaks(node: BreaksNode): void {
+  if (node.type === 'code' || node.type === 'inlineCode') return;
+  const children = node.children;
+  if (children === undefined) return;
+  let rebuilt: BreaksNode[] | undefined;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]!;
+    if (child.type === 'html' && child.value !== undefined && BARE_BREAK_TAG.test(child.value.trim())) {
+      rebuilt ??= children.slice(0, index);
+      rebuilt.push({ type: 'break' });
+      continue;
+    }
+    rewriteMarkdownBreaks(child);
+    rebuilt?.push(child);
+  }
+  if (rebuilt !== undefined) node.children = rebuilt;
+}
 
 function personIdFromHref(href: string | undefined): string | undefined {
-  return href?.match(PERSON_LINK_PATTERN)?.[1]?.toLowerCase();
+  return personIdFromMentionHref(href);
 }
 
 /**
- * A `connector:` link counts only when it carries this render's token. The token
- * is minted in the browser and never appears in the stored message, so a link
- * someone wrote into the text cannot carry it — no guessing at labels or offsets.
+ * A `connector:` / `connector://` link counts only when it carries this render's
+ * token. The token is minted in the browser and never appears in the stored
+ * message, so a link someone wrote into the text cannot carry it — no guessing
+ * at labels or offsets.
  */
 export function createConnectorMentionToken(): string {
   return globalThis.crypto?.randomUUID?.().replace(/-/gu, '')
     ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }
 
-/** Any `connector:` href, tokened or not — all of them stay inert rather than navigating. */
-function isConnectorHref(href: string | undefined): boolean {
-  return href !== undefined && href.startsWith('connector:');
-}
-
-function connectorTypeFromHref(href: string | undefined, token: string): string | undefined {
-  const match = href?.match(CONNECTOR_LINK_PATTERN);
-  if (!match || match[1] !== token) return undefined;
-  try {
-    return decodeURIComponent(match[2] ?? '');
-  } catch {
-    // Message text is authored by people and models, so `[x](connector:%)` is a
-    // reachable input. A malformed escape is simply not a connector reference —
-    // it must not throw through the renderer and take the transcript with it.
-    return undefined;
-  }
+function tokenedConnectorType(href: string | undefined, token: string): string | undefined {
+  return connectorTypeFromMentionHref(href, token);
 }
 
 /**
@@ -301,7 +378,9 @@ function connectorTypeFromHref(href: string | undefined, token: string): string 
  * it, and `&` would let a character reference decode into something else.
  */
 function escapeMarkdownLabel(label: string): string {
-  return label.replace(/[\\[\]*_`~&]/gu, (character) => `\\${character}`);
+  return label
+    .replace(/&/gu, '&amp;')
+    .replace(/[\\[\]*_`~]/gu, (character) => `\\${character}`);
 }
 
 /** The rendered label of a link, when it is a single plain string. */
@@ -312,15 +391,17 @@ function linkLabelText(children: React.ReactNode): string | undefined {
 }
 
 /**
- * Person mentions arrive as durable `[@Name](person:<id>)` Markdown, but a
- * connection mention stays human-readable text because Rally has no
- * identity-bearing connector reference yet. Its stored offsets are still
- * authoritative, so this turns them into the same link shape at render time —
- * presentation only, leaving the message text models and Slack see untouched.
+ * Person mentions arrive as durable `[@Name](person://<id>)` Markdown — bare
+ * `person:<id>` still resolves — but a connection mention stays human-readable
+ * text because Rally has no identity-bearing connector reference yet. Its
+ * stored offsets are still authoritative, so this turns them into the same link
+ * shape at render time — presentation only, leaving the message text models and
+ * Slack see untouched.
  *
  * Each emitted link carries `token`, which is what makes it authoritative: a
- * `connector:` link already present in the message text is something a person or
- * a model wrote, cannot carry the token, and must not be dressed as a mention.
+ * `connector:` / `connector://` link already present in the message text is
+ * something a person or a model wrote, cannot carry the token, and must not be
+ * dressed as a mention.
  */
 export function withConnectorMentionLinks(text: string, mentions: MessageMention[], token: string): string {
   const connectors = mentions
@@ -336,7 +417,7 @@ export function withConnectorMentionLinks(text: string, mentions: MessageMention
     const source = text.slice(startOffset, endOffset);
     if (!source.startsWith('@')) continue;
     output += text.slice(cursor, startOffset);
-    output += `[${escapeMarkdownLabel(source)}](connector:${token}:${encodeURIComponent(connectorType)})`;
+    output += `[${escapeMarkdownLabel(source)}](${connectorMentionHref(token, connectorType)})`;
     cursor = endOffset;
   }
   return output + text.slice(cursor);
@@ -382,33 +463,39 @@ function MentionChip({ fallbackLabel, mention, personId }: {
   );
 }
 
-/** The three schemes whose cells need the target the model actually wrote. */
-const INTERNAL_CITATION_SCHEMES: ReadonlySet<string> = new Set(['resource', 'person', 'connector']);
+/** The schemes whose cells need the target the model actually wrote. */
+const INTERNAL_CITATION_SCHEMES: ReadonlySet<string> = new Set(['resource', 'person']);
 
 /**
  * Which targets bypass `defaultUrlTransform` on their way to a component.
  *
- * An allowlist of three schemes in two positions, and nothing wider: everything
- * else — `javascript:`, `data:`, `file:` — keeps going through the default
- * transform, which empties what it rejects. The position matters as much as the
- * scheme, because `resource:` has to survive on an `img` as well as an `a`: the
- * embed card is reached through image syntax.
+ * An allowlist of citation schemes plus the render-minted connector mention
+ * href, in two positions, and nothing wider: everything else — `javascript:`,
+ * `data:`, `file:` — keeps going through the default transform, which empties
+ * what it rejects. The position matters as much as the scheme, because
+ * `resource:` has to survive on an `img` as well as an `a`: the embed card is
+ * reached through image syntax.
  *
  * Passing a scheme here is not the same as rendering it. Every cell downstream
  * emits a chip, a card, or text — never the value itself as a destination.
+ * Connector hrefs are allowed through so the identity path can chip them; they
+ * are not a {@link citationScheme}.
  */
 function isInternalCitationTarget(url: string, key: string, tagName: string): boolean {
   const position = (key === 'href' && tagName === 'a') || (key === 'src' && tagName === 'img');
-  return position && INTERNAL_CITATION_SCHEMES.has(citationScheme(url));
+  if (!position) return false;
+  if (isConnectorHref(url)) return true;
+  return INTERNAL_CITATION_SCHEMES.has(citationScheme(url));
 }
 
 /**
  * The identity cells of the citation matrix, in one place.
  *
- * Mentions are unchanged by citations and stay unchanged here: a `person:` href
- * resolves against this render's `mentions`, a `connector:` one counts only when
- * it carries this render's token, and neither is ever emitted as something with
- * a destination. What moved is only where the decision is called from.
+ * Mentions are unchanged by citations and stay unchanged here: a `person:` /
+ * `person://` href resolves against this render's `mentions`, a `connector:` /
+ * `connector://` one counts only when it carries this render's token, and
+ * neither is ever emitted as something with a destination. What moved is only
+ * where the decision is called from.
  */
 function renderIdentity(
   href: string | undefined,
@@ -425,18 +512,14 @@ function renderIdentity(
     return <MentionChip fallbackLabel={label} mention={mention} personId={personId} />;
   }
   if (isConnectorHref(href)) {
-    const connectorType = connectorTypeFromHref(href, token);
+    const connectorType = tokenedConnectorType(href, token);
     const text = linkLabelText(label);
     // Without this render's token the link is text someone wrote, not a
     // mention: it neither earns a chip nor becomes something clickable.
     if (connectorType === undefined || text === undefined) {
       return <span className="mention-text-fallback">{label}</span>;
     }
-    return (
-      <span className="mention-chip mention-chip-connector" data-connector-type={connectorType}>
-        <span className="mention-chip-label">{text}</span>
-      </span>
-    );
+    return <ConnectorMentionChip connectorType={connectorType} label={text} />;
   }
   // A `person:` target that is not an id is text a model wrote. It reaches here
   // intact because `urlTransform` passes the whole scheme through —
@@ -445,11 +528,20 @@ function renderIdentity(
   return <span className="mention-text-fallback">{label}</span>;
 }
 
-const REMARK_PLUGINS = [remarkGfm];
+const REMARK_PLUGINS = [remarkGfm, remarkHtmlBreaks];
+/**
+ * The embed-row pass groups only what the citation matrix will draw as a card,
+ * so a surface with no citation context groups nothing at all — and gets a
+ * hoisted empty array rather than a new one per render, because these reach the
+ * settled segments' memo by identity.
+ */
+const NO_REHYPE_PLUGINS: MarkdownRehypePlugins = [];
 
 type MarkdownComponents = NonNullable<React.ComponentProps<typeof ReactMarkdown>['components']>;
 type MarkdownUrlTransform = NonNullable<React.ComponentProps<typeof ReactMarkdown>['urlTransform']>;
 type MarkdownRehypeOptions = NonNullable<React.ComponentProps<typeof ReactMarkdown>['remarkRehypeOptions']>;
+/** Taken from the component's own props rather than from `unified`, which is a transitive dependency. */
+type MarkdownRehypePlugins = NonNullable<React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']>;
 
 /** A blank line: the classic boundary between markdown blocks. */
 const BLANK_LINE = /^\s*$/u;
@@ -568,15 +660,17 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
  * makes a paced reveal affordable: each animation-frame commit re-parses only
  * the open tail, while every settled segment's element is reused untouched.
  */
-const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, rehypeOptions, source, urlTransform }: {
+const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, rehypeOptions, rehypePlugins, source, urlTransform }: {
   components: MarkdownComponents;
   rehypeOptions: MarkdownRehypeOptions;
+  rehypePlugins: MarkdownRehypePlugins;
   source: string;
   urlTransform: MarkdownUrlTransform;
 }): React.JSX.Element {
   return (
     <ReactMarkdown
       components={components}
+      rehypePlugins={rehypePlugins}
       remarkPlugins={REMARK_PLUGINS}
       remarkRehypeOptions={rehypeOptions}
       urlTransform={urlTransform}
@@ -593,10 +687,13 @@ const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components
  * turning the streaming fast path back into a whole-body re-parse.
  */
 const NO_MENTIONS: MessageMention[] = [];
+const EMPTY_DEFINITION_BLOCKS: string[] = [];
 
 export function MarkdownBody({
   children,
   citations,
+  collapseHeadings = false,
+  glance = false,
   mentions = NO_MENTIONS,
   still = false,
   streaming = false,
@@ -611,6 +708,20 @@ export function MarkdownBody({
    * carried.
    */
   citations?: CitationContext;
+  /**
+   * Whether h2-h6 sections use the compact accordion treatment. It is opt-in
+   * because the main message feed is the one compact scanning surface; document
+   * readers and every other Markdown host render the source fully expanded.
+   */
+  collapseHeadings?: boolean;
+  /**
+   * This body is a glance inside an embed card, not a reader. Links, images,
+   * and code-block copy controls stay out of the DOM so the card remains one
+   * button: an `<a>` or a nested `<button>` inside it is invalid HTML, and an
+   * external image would fetch from a URL the document chose merely because
+   * the card painted.
+   */
+  glance?: boolean;
   mentions?: MessageMention[];
   /**
    * This body is being rendered into a picture rather than onto the screen.
@@ -622,9 +733,13 @@ export function MarkdownBody({
   still?: boolean;
   /**
    * The message is still growing. Rendering switches to settled segments plus
-   * an open tail so a per-frame commit does not re-parse the whole body; the
-   * commit that ends the stream renders the source whole again, which is also
-   * what heals any seam segmentation could not preserve.
+   * an open tail so a per-frame commit does not re-parse the whole body. When
+   * heading collapse is off, the commit that ends the stream renders the source
+   * whole again, which is also what heals any seam segmentation could not
+   * preserve. When collapse is on, each section stays its own parse after
+   * settle — footnote and link-reference definitions are appended onto fragments
+   * that do not already carry them, so a `[^1]` in one section still
+   * resolves against a definition under a later heading.
    */
   streaming?: boolean;
   telemetry?: MessageCopyTelemetry;
@@ -662,7 +777,7 @@ export function MarkdownBody({
     for (const identifier of referenced) {
       if (definitions.has(identifier)) numbers.set(identifier, numbers.size + 1);
     }
-    return { ...(citations ? { citations } : {}), footnotes: found, numbers, prefix, still };
+    return { ...(citations ? { citations } : {}), PreviewBody: CitationPreviewBody, footnotes: found, numbers, prefix, still };
   }, [citations, footnoteSource, prefix, still]);
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised
@@ -670,15 +785,28 @@ export function MarkdownBody({
   const { components, urlTransform } = useMemo(() => ({
     components: {
       a: ({ children: linkChildren, href, node, ...props }) => (
-        <CitationLink
-          anchor={{ ...props, href }}
-          footnoteRef={node?.properties?.dataFootnoteRef !== undefined}
-          href={href}
-          identity={() => renderIdentity(href, linkChildren, mentions, token)}
-        >{linkChildren}</CitationLink>
+        glance
+          ? <>{linkChildren}</>
+          : (
+            <CitationLink
+              anchor={{ ...props, href }}
+              footnoteRef={node?.properties?.dataFootnoteRef !== undefined}
+              href={href}
+              identity={() => renderIdentity(href, linkChildren, mentions, token)}
+            >{linkChildren}</CitationLink>
+          )
       ),
       img: ({ alt, node, src, ...props }) => {
         void node;
+        if (glance) return <>{alt}</>;
+        // Connector embeds are not a citation scheme. Image syntax still reaches
+        // here because urlTransform lets the href through; draw the card before
+        // the matrix would degrade it to alt text.
+        if (isConnectorHref(src)) {
+          const connectorType = connectorTypeFromEmbedHref(src);
+          if (connectorType === undefined) return <>{alt}</>;
+          return <ConnectorEmbedCard connectorType={connectorType} label={alt} />;
+        }
         return <CitationImage alt={alt} image={{ ...props, alt, src }} src={src} />;
       },
       li: ({ children: itemChildren, node, ...props }) => {
@@ -695,6 +823,11 @@ export function MarkdownBody({
       code: (properties) => (
         <MarkdownCode
           {...properties}
+          glance={glance}
+          // An open fence changes on every streaming commit, and Mermaid's
+          // asynchronous parse cannot be cancelled. Render once the turn is
+          // complete; glances and saved stills deliberately keep source code.
+          renderDiagrams={!glance && !still && !streaming}
           telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
         />
       ),
@@ -714,56 +847,220 @@ export function MarkdownBody({
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
-  }), [mentions, messageId, token, workstreamId]);
+  }), [glance, mentions, messageId, still, streaming, token, workstreamId]);
+  // Heading overrides are a second map so a nested h3 in a section body does
+  // not grow a chevron: only the section's own heading markdown uses these.
+  const headingComponents = useMemo<MarkdownComponents>(() => ({
+    ...components,
+    h2: MarkdownCollapseH2,
+    h3: MarkdownCollapseH3,
+    h4: MarkdownCollapseH4,
+    h5: MarkdownCollapseH5,
+    h6: MarkdownCollapseH6,
+  }), [components]);
   // A settled body's element is reused whenever the markdown has not changed,
   // so a commit elsewhere on the screen — another message streaming at 60
   // commits a second included — skips this subtree instead of re-parsing it.
   const rehypeOptions = useMemo<MarkdownRehypeOptions>(() => ({ clobberPrefix: prefix }), [prefix]);
+  // The row pass is told what the matrix will draw, so it groups embeds only
+  // where they become cards. A surface with no citation context takes the
+  // hoisted empty list: without that, a run of `resource://` images that render
+  // as their label text — which is what every such surface does — would be laid
+  // out side by side in a horizontal scroller instead of reading as sentences.
+  const rehypePlugins = useMemo<MarkdownRehypePlugins>(
+    () => (citations
+      ? [rehypeCitationEmbedRows((resourceId) => citations.resolve(resourceId) !== undefined)]
+      : NO_REHYPE_PLUGINS),
+    [citations],
+  );
+  const collapseParts = useMemo(() => {
+    // A glance is already clamped; a still is a picture that cannot be
+    // toggled. A surface can also opt out while retaining the ordinary link
+    // and citation behavior that `still` deliberately changes. A document
+    // with no collapsible heading keeps the single-parse path so streaming's
+    // settled/streaming DOM still match.
+    if (!collapseHeadings || glance || still || markdown === '') return null;
+    const parts = splitCollapsibleMarkdown(markdown);
+    return parts.some((part) => part.type === 'section') ? parts : null;
+  }, [collapseHeadings, glance, markdown, still]);
+  const collapseSectionIds = useMemo(
+    () => collapseParts?.flatMap((part) => (part.type === 'section' ? [part.id] : [])) ?? [],
+    [collapseParts],
+  );
+  const hostedCollapse = useMarkdownCollapse();
+  // Each section is its own react-markdown mount. A [^1] in ## Claims cannot
+  // see a [^1]: under ## Sources unless the definition rides along with the
+  // fragment. Identity of `fragment` is preserved when nothing is missing, so
+  // the parse that already owns the defs is unchanged.
+  const definitionBlocks = useMemo(
+    () => (collapseParts ? markdownDefinitionBlocks(markdown) : EMPTY_DEFINITION_BLOCKS),
+    [collapseParts, markdown],
+  );
+  const dropBorrowedFootnotes = useMemo<MarkdownComponents['section']>(() => (
+    ({ children: sectionChildren, node, ...props }) => {
+      if (node?.properties?.dataFootnotes !== undefined) return null;
+      return <section {...props}>{sectionChildren}</section>;
+    }
+  ), []);
+  const borrowedComponents = useMemo<MarkdownComponents>(() => ({
+    ...components,
+    section: dropBorrowedFootnotes,
+  }), [components, dropBorrowedFootnotes]);
+  const borrowedHeadingComponents = useMemo<MarkdownComponents>(() => ({
+    ...headingComponents,
+    section: dropBorrowedFootnotes,
+  }), [dropBorrowedFootnotes, headingComponents]);
   const rendered = useMemo(() => {
-    if (!streaming) {
+    const componentsFor = (source: string, extra: MarkdownComponents): {
+      resolved: string;
+      used: MarkdownComponents;
+    } => {
+      const resolved = withMarkdownDefinitions(source, definitionBlocks);
+      const borrowed = resolved !== source;
+      if (!borrowed) return { resolved, used: extra };
+      if (extra === headingComponents) return { resolved, used: borrowedHeadingComponents };
+      if (extra === components) return { resolved, used: borrowedComponents };
+      return { resolved, used: { ...extra, section: dropBorrowedFootnotes } };
+    };
+    const renderMarkdown = (source: string, extra: MarkdownComponents = components): React.JSX.Element => {
+      const { resolved, used } = componentsFor(source, extra);
       return (
         <ReactMarkdown
-          components={components}
+          components={used}
+          rehypePlugins={rehypePlugins}
           remarkPlugins={REMARK_PLUGINS}
           remarkRehypeOptions={rehypeOptions}
           urlTransform={urlTransform}
         >
-          {markdown}
+          {resolved}
         </ReactMarkdown>
       );
+    };
+    const renderStreaming = (source: string, extra: MarkdownComponents = components): React.JSX.Element => {
+      const { settled, tail } = splitStreamingMarkdown(source);
+      return (
+        <>
+          {settled.map((segment, index) => {
+            const { resolved, used } = componentsFor(segment, extra);
+            return (
+              <SettledMarkdownSegment
+                components={used}
+                rehypePlugins={rehypePlugins}
+                key={index}
+                rehypeOptions={rehypeOptions}
+                source={resolved}
+                urlTransform={urlTransform}
+              />
+            );
+          })}
+          {renderMarkdown(tail, extra)}
+        </>
+      );
+    };
+    const renderSettled = (source: string, extra: MarkdownComponents = components): React.JSX.Element => {
+      const { resolved, used } = componentsFor(source, extra);
+      return (
+        <SettledMarkdownSegment
+          components={used}
+          rehypePlugins={rehypePlugins}
+          rehypeOptions={rehypeOptions}
+          source={resolved}
+          urlTransform={urlTransform}
+        />
+      );
+    };
+    if (!collapseParts) {
+      return streaming ? renderStreaming(markdown) : renderMarkdown(markdown);
     }
-    const { settled, tail } = splitStreamingMarkdown(markdown);
+    const lastIndex = collapseParts.length - 1;
     return (
       <>
-        {settled.map((segment, index) => (
-          <SettledMarkdownSegment
-            components={components}
-            key={index}
-            rehypeOptions={rehypeOptions}
-            source={segment}
-            urlTransform={urlTransform}
-          />
-        ))}
-        <ReactMarkdown
-          components={components}
-          remarkPlugins={REMARK_PLUGINS}
-          remarkRehypeOptions={rehypeOptions}
-          urlTransform={urlTransform}
-        >
-          {tail}
-        </ReactMarkdown>
+        {collapseParts.map((part, index) => {
+          const streamThis = streaming && index === lastIndex;
+          if (part.type === 'preamble') {
+            if (!part.source) return null;
+            return (
+              <Fragment key={`preamble-${index}`}>
+                {streamThis ? renderStreaming(part.source) : renderSettled(part.source)}
+              </Fragment>
+            );
+          }
+          return (
+            <MarkdownCollapseSection
+              heading={(
+                <SettledMarkdownSegment
+                  components={headingComponents}
+                  rehypePlugins={rehypePlugins}
+                  rehypeOptions={rehypeOptions}
+                  source={part.heading}
+                  urlTransform={urlTransform}
+                />
+              )}
+              id={part.id}
+              key={part.id}
+            >
+              {streamThis
+                ? renderStreaming(part.body)
+                : part.body
+                  ? renderSettled(part.body)
+                  : null}
+            </MarkdownCollapseSection>
+          );
+        })}
       </>
     );
-  }, [components, markdown, rehypeOptions, streaming, urlTransform]);
+  }, [
+    borrowedComponents,
+    borrowedHeadingComponents,
+    collapseParts,
+    components,
+    definitionBlocks,
+    dropBorrowedFootnotes,
+    headingComponents,
+    markdown,
+    rehypeOptions,
+    rehypePlugins,
+    streaming,
+    urlTransform,
+  ]);
   // The provider sits outside the memoised body deliberately: a definition that
   // arrives mid-stream has to reach the pills, and a context update crosses a
   // `memo` boundary where a changed prop would have re-parsed everything under
   // it instead.
-  return (
+  const body = (
     <CitationsProvider value={render}>
       <div className="markdown-body">{rendered}</div>
     </CitationsProvider>
   );
+  if (!collapseParts) return body;
+  // The agent turn wraps this body in a controller so collapse-all in the
+  // header shares ids. A nested MarkdownBody (the embed glance) must not reuse
+  // that controller: its heading set is a different document.
+  if (
+    hostedCollapse
+    && hostedCollapse.sectionIds.join('\0') === collapseSectionIds.join('\0')
+  ) {
+    return body;
+  }
+  return (
+    <MarkdownCollapseController sectionIds={collapseSectionIds}>
+      {body}
+    </MarkdownCollapseController>
+  );
+}
+
+/**
+ * The embed card's preview, fed through this same renderer so a Word file's
+ * `**Author:**` bolds here the way it bolds in the rail one click away.
+ *
+ * Glance: a fence or a link cannot nest a control inside the card's button,
+ * and an external image cannot fetch from a URL the document chose. No
+ * citations: a document that cites another resource would otherwise draw a
+ * card inside this card. Verbatim: the text is the file's, and the model-text
+ * repair is a repair of what a model wrote.
+ */
+function CitationPreviewBody({ children }: { children: string }): React.JSX.Element {
+  return <MarkdownBody glance verbatim>{children}</MarkdownBody>;
 }
 
 /**
@@ -792,6 +1089,10 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
   const [saving, setSaving] = useState<MessageExportFormat | null>(null);
   const [failed, setFailed] = useState<MessageExportFormat | null>(null);
   const exportsAvailable = desktopServicesAvailable();
+  const fallbackSpeechId = useId();
+  const speech = useSpeechPlayback();
+  const speechId = telemetry?.messageId ?? fallbackSpeechId;
+  const speaking = speech?.activeMessageId === speechId;
 
   const copyResponse = async (): Promise<void> => {
     await desktopBridge().copyText(text);
@@ -831,7 +1132,7 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
 
   return (
     <footer
-      className="agent-message-actions"
+      className={clsx('agent-message-actions', speaking && 'is-speaking')}
       // The row itself is transient, so the failure on it should be too: it has
       // been read by the time the pointer leaves, and a stale "Image failed"
       // sitting under a turn the next day reads as a broken feature rather than
@@ -839,6 +1140,17 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
       onPointerLeave={() => setFailed(null)}
     >
       <button aria-label="Copy response" onClick={() => void copyResponse().catch(() => undefined)} type="button"><Clipboard size={12} /> Copy</button>
+      {speech && (
+        <button
+          aria-label={speaking ? 'Stop speaking' : 'Speak response with an AI-generated voice'}
+          onClick={() => speaking ? speech.stop() : speech.speak(speechId, text)}
+          title={speaking ? 'Stop speaking' : 'Play with an AI-generated voice'}
+          type="button"
+        >
+          {speaking ? <Square aria-hidden="true" fill="currentColor" size={11} /> : <Volume2 aria-hidden="true" size={12} />}
+          {speaking ? 'Stop speaking' : 'Speak'}
+        </button>
+      )}
       {exportsAvailable && (
         <>
           <button
@@ -877,6 +1189,7 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
 
 export function AssistantMessageContent({
   citations,
+  collapseHeadings = false,
   // The hoisted constant, not `= []`: a per-render array here would feed
   // MarkdownBody an always-new `mentions` and defeat its streaming memo.
   mentions = NO_MENTIONS,
@@ -886,6 +1199,7 @@ export function AssistantMessageContent({
   telemetry,
 }: {
   citations?: CitationContext;
+  collapseHeadings?: boolean;
   mentions?: MessageMention[];
   showCopy?: boolean;
   streaming?: boolean;
@@ -894,7 +1208,7 @@ export function AssistantMessageContent({
 }): React.JSX.Element {
   return (
     <>
-      {text ? <MarkdownBody citations={citations} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody> : null}
+      {text ? <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody> : null}
       {showCopy && !streaming && text && (
         <AssistantMessageActions citations={citations} mentions={mentions} telemetry={telemetry} text={text} />
       )}
@@ -1024,6 +1338,22 @@ function SystemMessageBlock({ disclosure, message }: { disclosure?: SystemRowDis
   );
 }
 
+/**
+ * How a settled response's total reads in a message header.
+ *
+ * Null is an unknown duration, not a zero one, and the header then says only
+ * that Rally worked — the same rule the plugin rows follow, for the same
+ * reason: a transcript that cannot see how long something took must not
+ * report a time it does not have.
+ */
+function workSummaryLabel(summary: NonNullable<Message['workSummary']>): string {
+  if (summary.durationMs === null) return 'Worked';
+  const duration = formatDuration(summary.durationMs) ?? '0ms';
+  return summary.timingAccuracy === 'upper_bound'
+    ? `Worked for at most ${duration}`
+    : `Worked for ${duration}`;
+}
+
 function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | null {
   const thought = message.thoughtEvent;
   if (!thought) return null;
@@ -1119,9 +1449,9 @@ function PluginActivityBlock({ message }: { message: Message }): React.JSX.Eleme
   return (
     <AgentWorkTiming
       active={group.active}
-      activeName={`${group.name} is working`}
-      activeVerb={`${group.name} is working`}
-      completedVerb={`${group.name} worked`}
+      activeName={group.activeVerb}
+      activeVerb={group.activeVerb}
+      completedVerb={group.completedVerb}
       durationMs={group.durationMs}
       icon={<PluginGlyph icon={group.icon} name={group.name} pulsing={group.active} />}
       monotonicStartedAt={group.monotonicStartedAt}
@@ -1386,49 +1716,6 @@ export function ElicitationPanel({
   );
 }
 
-function SuggestionBlock({
-  suggestion,
-  onResolve,
-}: {
-  suggestion: ActivitySuggestionData;
-  onResolve: (action: 'accept' | 'dismiss') => Promise<void>;
-}): React.JSX.Element {
-  const [pending, setPending] = useState<'accept' | 'dismiss' | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const resolve = async (action: 'accept' | 'dismiss'): Promise<void> => {
-    setPending(action);
-    setError(null);
-    try {
-      await onResolve(action);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The suggestion could not be updated.');
-    } finally {
-      setPending(null);
-    }
-  };
-  return (
-    <section className={clsx('suggestion-block', suggestion.status !== 'pending' && 'is-resolved')}>
-      <header>
-        <span><Pin aria-hidden="true" size={15} /></span>
-        <div><small>Suggested context</small><h3>{suggestion.title}</h3></div>
-        {suggestion.source && <Badge>{suggestion.source}</Badge>}
-      </header>
-      <div className="suggestion-reason"><small>Why</small><p>{suggestion.reason}</p></div>
-      {suggestion.status === 'pending' ? (
-        <footer>
-          <Button disabled={pending !== null} onClick={() => void resolve('dismiss')}><X size={14} /> Dismiss</Button>
-          <Button className="button-primary" disabled={pending !== null} onClick={() => void resolve('accept')}>
-            {pending === 'accept' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Add to work stream
-          </Button>
-        </footer>
-      ) : (
-        <p className="suggestion-resolution"><Check size={13} /> {suggestion.status === 'accepted' ? 'Added to this work stream' : 'Dismissed'}</p>
-      )}
-      {error && <InlineError>{error}</InlineError>}
-    </section>
-  );
-}
-
 interface MessageBlockProps {
   /**
    * How this transcript resolves and opens a citation. Absent on a surface
@@ -1436,23 +1723,28 @@ interface MessageBlockProps {
    * message degrades to the label text it already carried.
    */
   citations?: CitationContext;
+  /**
+   * Whether agent-message headings use the compact feed accordions. This is a
+   * host decision because MessageBlock also renders automation and launch
+   * conversations, which are not the main work-stream feed.
+   */
+  collapseHeadings?: boolean;
   currentUserId?: string;
   message: Message;
   loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
-  onResolveSuggestion: (suggestionId: string, action: 'accept' | 'dismiss') => Promise<void>;
   systemRowDisclosure?: SystemRowDisclosure;
 }
 
 export function MessageBlock({
   citations,
+  collapseHeadings = false,
   currentUserId,
   loadAttachmentContent,
   message,
   onAnswerElicitation,
   onOpenAttachment,
-  onResolveSuggestion,
   systemRowDisclosure,
 }: MessageBlockProps): React.JSX.Element {
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
@@ -1494,9 +1786,6 @@ export function MessageBlock({
     }
     return <div className="transcript-event" id={`message-${message.id}`}><ElicitationPanel elicitation={message.elicitation} onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)} /></div>;
   }
-  if (message.messageType === 'activity_suggestion' && message.activitySuggestion) {
-    return <div className="transcript-event" id={`message-${message.id}`}><SuggestionBlock onResolve={(action) => onResolveSuggestion(message.activitySuggestion!.id, action)} suggestion={message.activitySuggestion} /></div>;
-  }
   if (message.authorType === 'system' || message.messageType === 'system') {
     return <SystemMessageBlock disclosure={systemRowDisclosure} message={message} />;
   }
@@ -1515,7 +1804,7 @@ export function MessageBlock({
     : message.deliveryState === 'queue_pending'
       ? 'Queued for the next loop'
       : null;
-  return (
+  const article = (
     <article
       aria-label={sending ? 'Sending message' : pending && pendingLabel
         ? `${pendingLabel}: message from ${humanAuthorName}`
@@ -1549,6 +1838,8 @@ export function MessageBlock({
           )}
           {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
           <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
+          {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
+          {!human && collapseHeadings && <MarkdownCollapseAllButton />}
         </header>
       )}
       {sending
@@ -1584,6 +1875,7 @@ export function MessageBlock({
               ) : null}
               <AssistantMessageContent
                 citations={citations}
+                collapseHeadings={collapseHeadings}
                 mentions={message.mentions}
                 streaming={message.streaming}
                 text={message.text ?? ''}
@@ -1592,5 +1884,14 @@ export function MessageBlock({
             </>
           )}
     </article>
+  );
+  if (human || !collapseHeadings) return article;
+  // Same repair the body applies, so the header's collapse-all and the
+  // body's section wrappers agree on `section-${index}` ids. Mentions are
+  // inline links and cannot change the heading count.
+  return (
+    <MarkdownCollapseController markdown={normalizeModelMarkdown(message.text ?? '')}>
+      {article}
+    </MarkdownCollapseController>
   );
 }

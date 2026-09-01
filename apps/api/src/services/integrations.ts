@@ -133,7 +133,13 @@ import {
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
-import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
+import {
+  AGENT_MODEL_FLAG_KEYS,
+  resolveAgentModelRouting,
+  resolveWorkstreamModelRouting,
+} from "./agent-model-flags";
+import { createAzureModelPricingResolver } from "./openrouter-pricing-cache";
+import { createAvalonMultimodalGenerationPlugin } from "./multimodal-generation/plugin";
 import {
   emitAgentToolStartedTelemetry,
   emitAgentToolTerminalTelemetry,
@@ -236,10 +242,10 @@ import {
   freezeRunMemoryContext,
 } from "./memory-service";
 import { createMemoryTableTools } from "./memory-table-service";
-import type { loadAutomationMemoryTableContext } from "./memory-table-service";
+import type { MaterializedMemoryTable } from "./memory-table-service";
 import { readAutomationMemoryBootstrapForRun } from "./automation-memory-client";
 import { workstreamRunLimits } from "./workstream-run-policy";
-import { parseTerminalRegionConfiguration, TERMINAL_PLUGIN_ID } from "./terminal/contract";
+import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 import { requireOpenWorkstreamAuthority } from "./workstream-authority";
@@ -1483,12 +1489,14 @@ export async function classifyWorkstreamMessage(
     message: string;
     activeTask: boolean;
     connectorMentions: string[];
+    humanMentions: string[];
     recentMessages: AddressingContextMessage[];
     // Required, not optional: `workspaceId` is the rollout bucketing key, and
     // omitting it would drop this classifier into the default bucket while the
     // rest of its workspace ran on a rolled-out variant.
     workspaceId: string;
     workstreamId: string;
+    userId: string;
   },
 ): Promise<AddressingClassification> {
   const routing = await resolveAgentModelRouting(env, "addressing_classifier", {
@@ -1502,7 +1510,19 @@ export async function classifyWorkstreamMessage(
     message: input.message,
     activeTask: input.activeTask,
     connectorMentions: input.connectorMentions,
+    humanMentions: input.humanMentions,
     recentMessages: input.recentMessages,
+    traceContext: {
+      source: "addressing_classifier",
+      feature: AGENT_MODEL_FLAG_KEYS.addressing_classifier,
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      substreamId: "0",
+      contextUserId: input.userId,
+      region: env.AVALON_REGION,
+      environment: env.APP_ENV,
+      ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
+    },
     // Without this the classifier is the one model caller that leaves no trace:
     // a provider rejection here is silently absorbed into the heuristic result.
     onDiagnostic: async (diagnostic) => {
@@ -1588,7 +1608,7 @@ async function loadAutomationDraftAttachmentParts(
   const parts = await buildAttachmentModelParts(
     env.PAYLOADS,
     ids.map((id) => sources.get(id)!),
-    { database: env.DB, images: env.IMAGES },
+    { database: env.DB, images: env.IMAGES, documentProcessor: env.DOCUMENT_PROCESSOR },
   );
   return { parts, frozenResourceIds: ids };
 }
@@ -1719,6 +1739,19 @@ export async function compileAutomationDraft(
       loopId: `automation-draft:${input.draftId ?? input.userId}:loop`,
       workspaceId: input.workspaceId,
       userId: input.userId,
+      traceContext: {
+        source: "automation_compiler",
+        feature: AGENT_MODEL_FLAG_KEYS.automation_compiler,
+        workspaceId: input.workspaceId,
+        contextUserId: input.userId,
+        requestId: input.requestId,
+        ...(input.draftId ? { draftId: input.draftId } : {}),
+        region: env.AVALON_REGION,
+        environment: env.APP_ENV,
+        ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
+        executionPrincipalType: "user",
+        executionPrincipalId: input.userId,
+      },
       fallbackModels: routing.fallbackModels,
       transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
       messages: input.messages,
@@ -1887,6 +1920,7 @@ async function loadAutomationCreatorPluginCatalog(
           capability: definition.capability,
           mode: definition.mode,
           idempotency: definition.idempotency,
+          ...(definition.timeoutMs === undefined ? {} : { timeoutMs: definition.timeoutMs }),
           inputSchema: definition.inputSchema,
           execute: (toolInput, context) => executeAutomationCreatorConnectorTool(
             env,
@@ -2716,6 +2750,7 @@ export async function runWorkstreamHarness(
         fallbackModels: modelRouting.fallbackModels,
         appUrl: env.PUBLIC_API_BASE_URL,
         appName: "Rally",
+        ...azureInferenceConfig(env),
         ...runLimits,
         toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
@@ -2732,10 +2767,32 @@ export async function runWorkstreamHarness(
         transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
       },
       workspaceId: input.workspaceId,
+      resolveAzureModelPricing: createAzureModelPricingResolver(env),
       workstreamId: input.workstreamId,
       loopId: input.loopId,
       harnessRunId: input.harnessRunId,
       executionPrincipal: input.executionPrincipal,
+      traceContext: {
+        source: blockDashboardRun ? "block_dashboard" : "workstream",
+        feature: blockDashboardRun
+          ? AGENT_MODEL_FLAG_KEYS.block_dashboard
+          : AGENT_MODEL_FLAG_KEYS.workstream,
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        substreamId: input.substreamId ?? "0",
+        ...(input.executionPrincipal.type === "user"
+          ? { contextUserId: input.executionPrincipal.userId }
+          : {}),
+        requestId: input.harnessRunId,
+        harnessRunId: input.harnessRunId,
+        region: env.AVALON_REGION,
+        environment: env.APP_ENV,
+        ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
+        executionPrincipalType: input.executionPrincipal.type,
+        executionPrincipalId: input.executionPrincipal.type === "user"
+          ? input.executionPrincipal.userId
+          : input.executionPrincipal.workspaceId,
+      },
       systemPrompt: blockDashboardRun
         ? `${promptContext.systemPrompt}\n\n${BLOCK_DASHBOARD_SYSTEM_PROMPT}`
         : promptContext.systemPrompt,
@@ -4084,6 +4141,16 @@ function delayWithSignal(milliseconds: number, signal: AbortSignal): Promise<voi
   });
 }
 
+function azureInferenceConfig(env: Env): Pick<RunHarnessInput["config"], "azure"> | Record<never, never> {
+  const endpoint = env.AZURE_INFERENCE_ENDPOINT?.trim();
+  const apiKey = env.AZURE_INFERENCE_API_KEY?.trim();
+  if (!endpoint && !apiKey) return {};
+  if (!endpoint || !apiKey) {
+    throw new Error("AZURE_INFERENCE_ENDPOINT and AZURE_INFERENCE_API_KEY must be configured together");
+  }
+  return { azure: { endpoint, apiKey } };
+}
+
 function childRunLimits(env: Env) {
   return {
     maxIterations: Math.min(8, numericEnv(env, "HARNESS_CHILD_MAX_MODEL_ITERATIONS", 4)),
@@ -4233,12 +4300,17 @@ async function createInlineChildHarnessSurface(options: {
     corePlugins: childCorePlugins,
     tools: [
       ...childCoreTools,
+      // Deduplication, not authorization: both plugins are built by filtering
+      // `childCoreTools`, so this array already carries their tools and
+      // flattening them again would list each one twice. The authorization
+      // question these two ids used to answer is `builtinPluginIds` below.
       ...childPlugins
         .filter((plugin) =>
           ![AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID].includes(plugin.canonicalId))
         .flatMap((plugin) => plugin.tools),
     ],
     plugins: childPlugins,
+    builtinPluginIds: new Set(childBuiltinPlugins.map((plugin) => plugin.canonicalId)),
     frozenConnections: childFrozenConnections,
     pluginSurfaceHashes: childPluginSurfaceHashes,
     legacyPluginSurfaceHashes: childLegacyPluginSurfaceHashes,
@@ -4497,6 +4569,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             fallbackModels: childModelRouting.fallbackModels,
             appUrl: options.env.PUBLIC_API_BASE_URL,
             appName: "Rally",
+            ...azureInferenceConfig(options.env),
             maxIterations: limits.maxIterations,
             maxToolCalls: limits.maxToolCalls,
             maxWallClockMs: limits.maxWallClockMs,
@@ -4511,10 +4584,31 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             transportRetries: countEnv(options.env, "HARNESS_TRANSPORT_RETRIES", 1),
           },
           workspaceId: childInput.workspaceId,
+          resolveAzureModelPricing: createAzureModelPricingResolver(options.env),
           workstreamId: childInput.workstreamId,
           loopId: childInput.loopId,
           harnessRunId: childInput.harnessRunId,
           executionPrincipal: childInput.executionPrincipal,
+          traceContext: {
+            source: "inline_child",
+            feature: AGENT_MODEL_FLAG_KEYS.inline_child,
+            workspaceId: childInput.workspaceId,
+            workstreamId: childInput.workstreamId,
+            substreamId: childInput.substreamId ?? "0",
+            ...(childInput.executionPrincipal.type === "user"
+              ? { contextUserId: childInput.executionPrincipal.userId }
+              : {}),
+            requestId: childInput.harnessRunId,
+            parentRequestId: parentInput.harnessRunId,
+            harnessRunId: childInput.harnessRunId,
+            region: options.env.AVALON_REGION,
+            environment: options.env.APP_ENV,
+            ...(options.env.BUILD_SHA ? { buildSha: options.env.BUILD_SHA } : {}),
+            executionPrincipalType: childInput.executionPrincipal.type,
+            executionPrincipalId: childInput.executionPrincipal.type === "user"
+              ? childInput.executionPrincipal.userId
+              : childInput.executionPrincipal.workspaceId,
+          },
           systemPrompt: INLINE_CHILD_SYSTEM_PROMPT,
           messages: [{ role: "user", content: args.objective }],
           // Same offer the parent gets, for the same reason: a catalog line is
@@ -5061,44 +5155,6 @@ async function loadConnectorTriggerContext(
  * re-rendered on every turn and must be byte-identical across a retry, and
  * SQLite is free to return two rows in either order.
  */
-/**
- * Whether this run can land a document as a work-stream resource.
- *
- * Two conditions, and the second is the one worth reading twice. The first is
- * availability: the terminal workspace is what a document is written in, and
- * where the region has none the guidance would be a procedure the run cannot
- * follow. The second is where the result is read. A run whose answer leaves
- * through a delivery path — an automation's frozen destinations, a scheduled
- * digest's delivery, an inbound email's reply, a Slack thread — delivers a
- * final message and nothing else, so a document in the rail would be named to
- * someone with no way to open it. Those origins keep today's inline answer
- * until their delivery paths can carry a reference to one.
- *
- * Delegated child runs need no clause here: they are given their own system
- * prompt, which this section is not part of.
- */
-function runPublishesDocuments(env: Env, input: WorkstreamWorkflowInput): boolean {
-  const terminal = parseTerminalRegionConfiguration(env);
-  // The emergency switch is part of "available": it keeps the plugin
-  // discoverable but refuses every acquisition, so rendering the section
-  // through an incident costs a guaranteed-failing sandbox call on every
-  // document-shaped request across the region — which is when that traffic is
-  // least wanted. Both halves are deploy-time values, so a run still renders
-  // the same bytes on every attempt.
-  if (terminal.capability !== "supported" || terminal.emergencyDisabled) return false;
-  return !input.automationSubscriptionId
-    && !input.digestDeliveryId
-    && !input.slackOrigin
-    && input.reason !== "inbound_email"
-    // A HyperSight block's product is the Markdown it submits, and the run is
-    // read-only — every step of the section is a write tool the loop refuses
-    // before it runs. Worse, a dashboard block is itself structured and
-    // sectioned, so the trigger fires on the very thing the run exists to
-    // produce, and a model that obeys submits a block saying it published a
-    // document somewhere.
-    && input.reason !== "block_dashboard_block";
-}
-
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -5118,7 +5174,7 @@ async function loadRunPromptContext(
         resultDelivery: Array<{ channel: "email" | "slack_agent_dm"; destination: string }>;
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
-        durableTables: Awaited<ReturnType<typeof loadAutomationMemoryTableContext>>;
+        durableTables: MaterializedMemoryTable[];
       }
     | undefined;
   if (input.automationSubscriptionId) {
@@ -5303,7 +5359,14 @@ async function loadRunPromptContext(
       title: workstream.title,
       objective: workstream.objective,
       executionAuthority: input.executionPrincipal.type,
-      documentPublishing: runPublishesDocuments(env, input),
+      outputSurface: input.reason === "block_dashboard_block"
+        ? "block_dashboard"
+        : input.reason === "inbound_email"
+          || Boolean(input.digestDeliveryId)
+          || Boolean(input.slackOrigin)
+          || (automationContext?.resultDelivery.length ?? 0) > 0
+          ? "external_delivery"
+          : "workstream",
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { automation: automationContext } : {}),
     }),
@@ -5632,6 +5695,8 @@ async function loadHarnessTools(
   corePlugins: HarnessPlugin[];
   tools: HarnessTool[];
   plugins: HarnessPlugin[];
+  /** Canonical IDs of the built-in plugins this run registered. */
+  builtinPluginIds: ReadonlySet<string>;
   frozenConnections: Map<string, FrozenConnectorPlugin>;
   pluginSurfaceHashes: Map<string, string>;
   legacyPluginSurfaceHashes: Map<string, string>;
@@ -5678,11 +5743,16 @@ async function loadHarnessTools(
     input,
     inObjectResourceAttacher,
   );
+  const multimodalGenerationPlugin = createAvalonMultimodalGenerationPlugin(
+    env,
+    input,
+    inObjectResourceAttacher,
+  );
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
-  const builtinPlugins = [workstreamPlugin, webPlugin, terminalPlugin].filter(
+  const builtinPlugins = [workstreamPlugin, webPlugin, terminalPlugin, multimodalGenerationPlugin].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
   const plugins: HarnessPlugin[] = [...builtinPlugins];
@@ -5907,6 +5977,14 @@ async function loadHarnessTools(
     tools,
     plugins: plugins.sort((left, right) => left.canonicalId < right.canonicalId
       ? -1 : left.canonicalId > right.canonicalId ? 1 : 0),
+    // Derived from the plugins this run actually registered, never restated.
+    // A built-in holds run-scope authority instead of a credential, so the
+    // authorization checks below have to recognize it by identity — and a
+    // second hand-maintained list of those identities is a list that drifts.
+    // It did: the multimodal plugin registered, entered the catalog, and had
+    // every `load_plugin` denied from the day it shipped, because it was absent
+    // from the literal list this set replaces.
+    builtinPluginIds: new Set(builtinPlugins.map((plugin) => plugin.canonicalId)),
     frozenConnections,
     pluginSurfaceHashes,
     legacyPluginSurfaceHashes,
@@ -6769,12 +6847,22 @@ function builtinPluginAuthorization(
   return isLoadableBuiltinHarnessPlugin(pluginId, harnessTools) ? "authorized" : "denied";
 }
 
+/**
+ * Whether this id is a built-in plugin **this run registered**.
+ *
+ * Registration is already conditional and already the decision: Terminal is
+ * absent without its provider configuration, the web plugin without
+ * `FIRECRAWL_API_KEY`, multimodal generation without the Azure inference pair.
+ * So the set is derived there and only read here, which keeps the answer
+ * fail-closed for an id this run does not carry — an invented pluginId, or a
+ * restored activation hint for a plugin a later deploy stopped registering —
+ * without a second list to keep in step.
+ */
 function isLoadableBuiltinHarnessPlugin(
   pluginId: string,
   harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
 ): boolean {
-  return ([AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID, TERMINAL_PLUGIN_ID] as string[]).includes(pluginId)
-    && harnessTools.plugins.some((plugin) => plugin.canonicalId === pluginId);
+  return harnessTools.builtinPluginIds.has(pluginId);
 }
 
 /**
@@ -8192,6 +8280,7 @@ export const __integrationTesting = {
   persistPolledActivity,
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,
+  builtinPluginAuthorization,
   reauthorizeFrozenPlugin,
   createTextDeltaBatcher,
   classifyHarnessToolFailure,

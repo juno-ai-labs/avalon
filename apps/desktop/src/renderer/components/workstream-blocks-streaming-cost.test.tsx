@@ -47,13 +47,11 @@ function resolvedCitationsPerCommit(initialText: string): { mount: number; updat
   // thing this counts behind a change of the test's own making.
   const citations: CitationContext = { open: vi.fn(), resolve };
   const onAnswerElicitation = vi.fn(async () => undefined);
-  const onResolveSuggestion = vi.fn(async () => undefined);
   const view = render(
     <MessageBlock
       citations={citations}
       message={message(text)}
       onAnswerElicitation={onAnswerElicitation}
-      onResolveSuggestion={onResolveSuggestion}
     />,
   );
   const mount = resolve.mock.calls.length;
@@ -66,7 +64,6 @@ function resolvedCitationsPerCommit(initialText: string): { mount: number; updat
         citations={citations}
         message={message(text)}
         onAnswerElicitation={onAnswerElicitation}
-        onResolveSuggestion={onResolveSuggestion}
       />,
     );
     updates.push(resolve.mock.calls.length);

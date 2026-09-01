@@ -39,6 +39,7 @@ import {
 } from "./scheduled-alarms";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
+  isRetiredSuggestionFeedbackEffect,
   WorkstreamRegionalEffectAckSchema,
   WorkstreamRegionalEffectEnvelopeSchema,
   WorkstreamRegionalEffectSchema,
@@ -425,6 +426,39 @@ export const WORKSTREAM_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
     `CREATE INDEX durable_outbox_delivery_idx
       ON durable_outbox(state, not_before, created_at, message_id)`,
   ],
+}, {
+  version: 4,
+  description: "retire context-suggestion deliveries from the durable outbox",
+  statements: [
+    `CREATE TABLE durable_outbox_without_suggestions (
+      message_id TEXT PRIMARY KEY,
+      partition_key TEXT NOT NULL,
+      source_version INTEGER NOT NULL CHECK (source_version > 0),
+      source_epoch INTEGER NOT NULL CHECK (source_epoch > 0),
+      effect_kind TEXT NOT NULL CHECK (effect_kind IN (
+        'directory_common', 'directory_user', 'activity_event',
+        'mention_notification', 'participant_notification'
+      )),
+      payload_json TEXT NOT NULL CHECK (
+        json_valid(payload_json) AND length(CAST(payload_json AS BLOB)) <= 1900000
+      ),
+      payload_hash TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'inflight')),
+      attempts INTEGER NOT NULL CHECK (attempts >= 0),
+      not_before INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT`,
+    `INSERT INTO durable_outbox_without_suggestions
+       (message_id, partition_key, source_version, source_epoch, effect_kind,
+        payload_json, payload_hash, state, attempts, not_before, created_at)
+     SELECT message_id, partition_key, source_version, source_epoch, effect_kind,
+            payload_json, payload_hash, state, attempts, not_before, created_at
+       FROM durable_outbox WHERE effect_kind != 'suggestion_feedback'`,
+    `DROP TABLE durable_outbox`,
+    `ALTER TABLE durable_outbox_without_suggestions RENAME TO durable_outbox`,
+    `CREATE INDEX durable_outbox_delivery_idx
+      ON durable_outbox(state, not_before, created_at, message_id)`,
+  ],
 }];
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -534,6 +568,17 @@ function newestCommon(effects: WorkstreamRegionalEffect[]): Extract<WorkstreamRe
   ));
   if (common.length === 0) throw new Error("workstream_common_projection_missing");
   return [...common].sort((left, right) => right.lastActivityAt.localeCompare(left.lastActivityAt))[0]!;
+}
+
+function latestParticipantAddedAt(
+  effects: readonly Extract<WorkstreamRegionalEffect, { kind: "directory_user" }>[],
+): string | null {
+  let latest: string | null = null;
+  for (const effect of effects) {
+    if (!effect.isParticipant || effect.participantAddedAt == null) continue;
+    if (latest === null || effect.participantAddedAt > latest) latest = effect.participantAddedAt;
+  }
+  return latest;
 }
 
 export { workstreamDOName };
@@ -1713,7 +1758,12 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       let accepted = 0;
       for (const envelope of parsed.data.envelopes) {
         if (envelope.region !== this.env.AVALON_REGION) throw new Error("workstream_effect_region_mismatch");
-        this.applyChildEnvelope(parsed.data.substreamId, envelope);
+        // An old child may have committed this just before the deployment.
+        // Returning it as accepted lets that child delete the row; persisting
+        // it in the new parent would revive the retired feedback protocol.
+        if (!isRetiredSuggestionFeedbackEffect(envelope.effect)) {
+          this.applyChildEnvelope(parsed.data.substreamId, envelope);
+        }
         accepted += 1;
       }
       await this.armNextAlarm();
@@ -1910,6 +1960,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       kind: "directory_user",
       userId,
       isParticipant: effects.some((effect) => effect.isParticipant),
+      participantAddedAt: latestParticipantAddedAt(effects),
       unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
       youAreMentioned: effects.some((effect) => effect.youAreMentioned),
       // An OR across substreams, which is only the top level's answer because
@@ -2039,6 +2090,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       kind: "directory_user",
       userId,
       isParticipant: effects.some((effect) => effect.isParticipant),
+      participantAddedAt: latestParticipantAddedAt(effects),
       unreadCount: effects.reduce((count, effect) => count + effect.unreadCount, 0),
       youAreMentioned: effects.some((effect) => effect.youAreMentioned),
       // An OR across substreams, which is only the top level's answer because
@@ -2332,9 +2384,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       requiredProjectionVersion = (projection?.next_version ?? 1) - 1;
       if (requiredProjectionVersion <= 0) throw new Error("workstream_notification_projection_dependency_uncommitted");
     }
-    const messageId = source.effect.kind === "suggestion_feedback"
-      ? uuidV7(now)
-      : `substream:${substreamId}:${source.messageId}`;
+    const messageId = `substream:${substreamId}:${source.messageId}`;
     const payloadHash = workstreamRegionalEffectHash(source.effect, requiredProjectionVersion);
     this.insertOutbox({
       ...source,
@@ -2389,7 +2439,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<StoredEnvelopeRow>(
       `SELECT payload_json, payload_hash, attempts FROM durable_outbox
         WHERE state IN ('pending', 'inflight')
-          AND effect_kind IN ('directory_common', 'directory_user', 'suggestion_feedback')
+          AND effect_kind IN ('directory_common', 'directory_user')
         ORDER BY CASE effect_kind
                    WHEN 'directory_common' THEN 0
                    WHEN 'directory_user' THEN 1

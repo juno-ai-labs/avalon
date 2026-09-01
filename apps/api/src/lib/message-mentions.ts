@@ -1,4 +1,5 @@
 import type { Message } from "@rally/contracts";
+import { personMentionHref } from "@rally/contracts/citations";
 
 type Mention = Message["mentions"][number];
 
@@ -13,6 +14,20 @@ export interface PreparedMention extends Mention {
   avatarUrl?: string | null;
 }
 
+/**
+ * The people a prepared message explicitly mentions, as display names in
+ * document order, for surfaces that reason about who a message is aimed at.
+ * De-duplicated: a person mentioned twice is one audience entry.
+ */
+export function mentionedPersonNames(mentions: readonly PreparedMention[]): string[] {
+  const names: string[] = [];
+  for (const mention of mentions) {
+    if (mention.type !== "person" || !mention.displayName) continue;
+    if (!names.includes(mention.displayName)) names.push(mention.displayName);
+  }
+  return names;
+}
+
 function escapeMarkdownLabel(label: string): string {
   return label
     .replace(/\\/gu, "\\\\")
@@ -21,7 +36,7 @@ function escapeMarkdownLabel(label: string): string {
 }
 
 export function renderPersonMentionMarkdown(person: MentionPerson): string {
-  return `[@${escapeMarkdownLabel(person.name)}](person:${person.id})`;
+  return `[@${escapeMarkdownLabel(person.name)}](${personMentionHref(person.id)})`;
 }
 
 export function isCanonicalPersonMention(
@@ -30,7 +45,10 @@ export function isCanonicalPersonMention(
 ): boolean {
   if (mention.type !== "person" || !mention.userId) return false;
   const value = text.slice(mention.startOffset, mention.endOffset);
-  return value.startsWith("[@") && value.endsWith(`](person:${mention.userId})`);
+  if (!value.startsWith("[@")) return false;
+  // House form is person://; bare person: remains canonical for stored text.
+  return value.endsWith(`](${personMentionHref(mention.userId)})`)
+    || value.endsWith(`](person:${mention.userId})`);
 }
 
 function visiblePersonMentionMatches(value: string, person: MentionPerson): boolean {

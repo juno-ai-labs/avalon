@@ -21,6 +21,7 @@ outside this document can break without their own tests failing.
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
 | `apps/desktop/src/renderer/index.html` | The Content Security Policy. |
 | `apps/desktop/src/main/theme-assets.ts` | The two theme-asset schemes: a backdrop document's policy, and the remote-font cache that keeps the renderer off remote hosts. |
+| `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The one generated-SVG boundary in Markdown: strict Mermaid configuration, disabled HTML labels and interactions, and source fallback. |
 | `apps/desktop/src/main/session-encryption.ts`, `stored-auth.ts`, `stored-session.ts`, `session-file.ts` | The versioned credential envelope and the serialized session-mutation boundary. |
 | `apps/desktop/src/main/lockdown-mode.ts` | The `safeStorage` mode and its migration. |
 | `apps/desktop/src/main/application-settings.ts` | The shared write queue every preference goes through. |
@@ -51,10 +52,34 @@ are canonical storage services, not authorization layers.
   sandbox. Its bridge exposes a small named API and never exposes `ipcRenderer`,
   environment variables, filesystem paths, or arbitrary channel names.
 - Every IPC argument is parsed before use.
+- Four windows are trusted IPC senders: main, settings, meeting, and the
+  deep-link failure window. Handlers that must not be reachable from every one of
+  them narrow further — `assertDeepLinkErrorIpcSender` admits only the failure
+  window, because its channels read and close that window. The failure window's
+  message travels as a string, and one deep-link message interpolates the link's
+  own `error` parameter, so text chosen outside Rally can be displayed
+  always-on-top under Rally's name; `DEEP_LINK_ERROR_MESSAGE_LIMIT` bounds it and
+  is currently open. See
+  [`deep-link-failures.md`](deep-link-failures.md#failure-modes-and-limits).
+  Admitting that window to the shared check widens what it *could* call to every
+  handler behind `assertTrustedIpcSender` — `system:open-settings` and
+  `system:open-external` among them — which it has no reason to. It is kept
+  there because its renderer is the application's own error telemetry and theme
+  code, which does invoke on that boundary, and because the window renders one
+  string with no scripting, no session, and no network of its own. That balance
+  holds only while the window stays this small: give it any further UI and its
+  privileges should be narrowed to the channels it actually uses first.
 - Navigation and popup creation are denied by default; OAuth opens in the system
   browser.
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
+- Markdown treats model, member, email, and attachment text as untrusted.
+  `react-markdown` evaluates no raw HTML. A fenced `mermaid` block is the one
+  generated-markup path: Mermaid runs with `securityLevel: strict`, HTML labels
+  and interaction disabled and those settings locked against diagram
+  frontmatter before its sanitised SVG is inserted. The application never calls
+  Mermaid's binding callback, so a diagram cannot install click handlers. A
+  rejected parse leaves the original source visible.
 - Refresh material is encrypted in the main process. By default the desktop uses
   an application-wide embedded key so a saved session survives signing-identity
   and keystore changes. Application → **Lockdown mode** replaces that with
@@ -253,6 +278,10 @@ test. Otherwise Chromium rejects the request before authentication or route code
 runs, which appears to the renderer as a transport failure and leaves no API
 request log for the blocked mutation. The required implementation and test steps
 live in [When adding a new HTTP header](when-adding-a-new-http-header.md).
+The message speech path follows that same boundary: the renderer sends its Rally
+session to the regional `/speech` route, while Azure credentials remain Worker
+secrets. Raw PCM returns as an in-memory response stream and never creates a
+provider URL, preload capability, or broader media origin.
 
 The same exact origin policy admits `https://rallywith.ai`,
 `https://www.rallywith.ai`, `https://with-avalon.com`, and
@@ -589,6 +618,7 @@ does not own the subsystems on either side of them:
 | Telemetry contracts, opt-out, identities, crash lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Public-site anonymous identity, event surface, and handoff negative space | [`public-site-telemetry.md`](public-site-telemetry.md) |
 | Rotating a key or responding to an incident | [`runbook.md`](runbook.md) |
+| Access Managed OAuth and destructive operator SQLite inspection | [`engineering-mcp.md`](engineering-mcp.md) |
 
 ## Failure modes and limits
 
@@ -676,6 +706,131 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-30 — Spoken messages keep Azure authority in the regional Worker
+
+**What changed:** The renderer can stream message PCM only through the
+authenticated regional `/speech` route. The Worker owns the Azure inference
+endpoint and key; the renderer validates Rally's fixed PCM format and plays the
+in-memory stream without changing CSP.
+
+**Why:** Direct provider playback would put production inference authority in an
+untrusted renderer. A provider URL or preload audio bridge would widen a second
+trust boundary when the existing authenticated HTTP boundary already supports a
+streaming body.
+
+**Considered and rejected:** Exposing an Azure key, minting provider URLs, and
+adding an Electron IPC/media bridge. Each grants more authority than reading one
+already-authorized Rally response.
+
+**Consequences:** Speech stays region-scoped and content-free in logs. Future
+audio playback must not treat `media-src`, preload, or direct provider access as
+a shortcut around the regional API.
+
+### 2026-08-30 — Renderer media is limited to owned and in-memory URLs
+
+**What changed:** The desktop renderer CSP now declares
+`media-src 'self' blob:` in both the checked-in HTML policy and the runtime
+response-header policy. Generated audio is fetched through Rally's authorized
+resource route, converted to an in-memory object URL, and played by the native
+audio element; no remote or data-URL media origin was added.
+
+**Why:** The renderer already allowed `blob:` images, but an audio element fell
+back to `default-src 'self'` and Electron blocked its object URL after the
+resource had loaded successfully. Visible controls therefore looked usable
+while playback could never begin.
+
+**Considered and rejected:** Adding `https:` to `media-src` or pointing the
+element at an authenticated API URL. The former lets document-authored remote
+media bypass Rally's resource boundary; the latter cannot carry the main
+process-owned session and complicates revocation. A short-lived object URL keeps
+the existing authorized fetch and cleanup lifecycle.
+
+**Consequences:** Any future media player must use same-origin or revocable
+`blob:` content. The HTML and runtime policies are an intentional duplicate and
+their invariant test must keep them aligned.
+
+### 2026-08-30 — Separate operator OAuth from product identity
+
+**What changed:** `mcp.internal.rallywith.ai` is protected by its own Cloudflare
+Access application with Managed OAuth and Dynamic Client Registration. It
+copies Ace's configured identity providers and admission policy but receives a
+distinct audience, which the Worker verifies before registering raw-SQL tools.
+
+**Why:** Database-console authority must be granted as operator access, never as
+a consequence of Rally membership or a client-supplied header.
+
+**Considered and rejected:** Rally sessions, a shared bearer secret, and
+trusting Access headers without signature/issuer/audience verification all mix
+trust domains or fail open if the Access route is removed.
+
+**Consequences:** An admitted Access identity can deliberately mutate product
+SQLite in either region. Audit logs identify the actor/tool/target but must not
+contain SQL, bindings, returned rows, or SQLite error text.
+
+### 2026-08-30 — Mermaid SVG is a strict generated-markup boundary
+
+**What changed:** The Markdown renderer may insert SVG generated from a
+`mermaid` fence. Mermaid is initialized with strict security, HTML labels and
+interaction disabled, and secure configuration keys that keep diagram
+frontmatter from widening those choices or replacing Rally's token-derived
+theme. The lock covers the security level, HTML labels, startup/error/resource
+caps, theme, theme CSS/variables, typography, and visual look. Its
+`bindFunctions` result is not used; invalid input falls back to the source
+block. Both the global and flowchart-specific HTML-label settings are false,
+because some Mermaid flowchart shapes read the nested value directly. Strict
+mode still emits ordinary SVG links, so Rally unwraps anchors and
+removes every non-fragment `href` before inserting the result. A generated style
+block or presentation attribute containing a non-fragment CSS resource rejects
+the entire diagram instead of allowing its display to make an external request.
+Before preflight parsing, Rally applies Mermaid's initialized and secured text-size
+ceiling. A source preflight rejects external CSS resource functions in Mermaid
+style directives, and parsed flowchart image nodes and block styles are rejected
+from Mermaid's database before render, because Mermaid can otherwise fetch them
+while drawing or measuring, before output sanitisation can run. Parsed-style and
+generated-SVG scans remain as additional boundaries before insertion, and the
+generated SVG is rejected if it contains a `script` or `foreignObject` even if
+Mermaid's strict sanitizer were to regress.
+
+**Why:** Diagram rendering necessarily produces markup from untrusted model or
+member text, unlike the rest of Rally's raw-HTML-free Markdown path. Naming and
+locking the one exception keeps `dangerouslySetInnerHTML` from quietly becoming
+a general rendering technique and prevents a model-authored diagram from
+turning labels into HTML or destinations into UI behavior.
+
+**What a future change has to respect:** keep the insertion point confined to
+Mermaid's strict sanitised SVG. Do not enable loose/antiscript mode, HTML labels,
+callbacks, or `bindFunctions`. Keep the post-render link removal even when
+upgrading Mermaid, and keep rejecting pre-render image nodes, non-fragment CSS
+resources, and scriptable output elements: `strict` does not mean non-interactive
+or network-inert. A request for interactive diagrams is a new trust-boundary
+decision, not a styling change.
+
+### 2026-08-29 — The deep-link failure window joins the trusted-sender set
+
+**What changed:** A fourth BrowserWindow, showing a refused deep link, is a
+trusted IPC sender. Its own three channels are gated by a narrower check that
+admits only that window, and the message it displays is validated in main against
+an open length limit.
+
+**Why:** The failure had no visible surface at all for the case that matters
+most — a connector completion is delivered to the settings window, which renders
+no application shell — so the message had to leave the renderer, and a window
+that main owns is a new sender on the boundary this section defines. The narrower
+check exists because `deep-link-error:dismiss` closes a window: reachable from
+every renderer, any of them could discard a message the person had not read.
+
+**Considered and rejected:** Reusing `assertTrustedIpcSender` alone for all three
+channels. It is the check every other handler uses, but it admits four windows to
+a channel that only one of them has any business calling.
+
+**Consequences:** Anything that enumerates Rally windows must tolerate one that
+can appear with no session behind it. The message is a string rather than a
+closed set of codes, so untrusted text from a `rally://` link can reach an
+always-on-top window; bounding it at the point it is built is the real fix, and
+the limit is the backstop until then.
+
+Shipped in #TBD.
 
 ### 2026-08-26 — Broker fallback and payload policy stay inside the capability
 

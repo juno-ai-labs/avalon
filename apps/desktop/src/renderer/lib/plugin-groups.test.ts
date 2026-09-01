@@ -10,33 +10,69 @@ describe('pluginGroup', () => {
     'rally:tables',
     'rally.skills',
   ])('folds %s into one Rally row', (pluginId) => {
-    expect(pluginGroup(pluginId, pluginId)).toEqual({ key: 'rally', name: 'Rally', icon: 'rally' });
+    expect(pluginGroup(pluginId, pluginId)).toMatchObject({ key: 'rally', name: 'Rally', icon: 'rally' });
     // Still Rally the day the harness gives one of them a display name: these
     // are named in the map, not swept up by the unnamed-first-party fallback.
-    expect(pluginGroup(pluginId, 'Memory')).toEqual({ key: 'rally', name: 'Rally', icon: 'rally' });
+    expect(pluginGroup(pluginId, 'Memory')).toMatchObject({ key: 'rally', name: 'Rally', icon: 'rally' });
   });
 
   it.each(['rally:terminal', 'rally:workstream'])('folds %s into one Computer row', (pluginId) => {
     // Both carry a display name of their own — Terminal, Workstream — and are
     // grouped anyway: the map, not the naming, is what decides.
     expect(pluginGroup(pluginId, 'Terminal')).toEqual({
-      key: 'computer', name: 'Computer', icon: 'computer',
+      key: 'computer',
+      name: 'Computer',
+      icon: 'computer',
+      // The one group whose name is a common noun, so the one that takes an
+      // article: "Used a computer", never "Used Computer".
+      activeVerb: 'Using a computer',
+      completedVerb: 'Used a computer',
     });
   });
 
   it('folds an unnamed first-party plugin nobody has decided about into Rally', () => {
-    expect(pluginGroup('rally:ledger', 'rally:ledger')).toEqual(
+    expect(pluginGroup('rally:ledger', 'rally:ledger')).toMatchObject(
       { key: 'rally', name: 'Rally', icon: 'rally' },
     );
-    expect(pluginGroup('rally:ledger', undefined)).toEqual(
+    expect(pluginGroup('rally:ledger', undefined)).toMatchObject(
       { key: 'rally', name: 'Rally', icon: 'rally' },
     );
   });
 
   it('leaves a named first-party plugin its own row', () => {
     expect(pluginGroup('rally:web', 'Web')).toEqual(
-      { key: 'name:Web', name: 'Web', icon: 'web' },
+      {
+        key: 'name:Web',
+        name: 'Web',
+        icon: 'web',
+        // A plugin Rally reached for reads as something Rally did with it.
+        activeVerb: 'Using Web',
+        completedVerb: 'Used Web',
+      },
     );
+    expect(pluginGroup('rally:multimodal-generation', 'Multimodal generation')).toEqual(
+      {
+        key: 'name:Multimodal generation',
+        name: 'Multimodal generation',
+        icon: 'plug',
+        activeVerb: 'Using Multimodal generation',
+        completedVerb: 'Used Multimodal generation',
+      },
+    );
+  });
+
+  it('phrases Rally as the actor and every other plugin as something it used', () => {
+    // Rally is the agent, so it works. A connector is a thing the agent picked
+    // up, so it gets used — and only the common-noun group takes an article.
+    expect(pluginGroup('rally:core', 'rally:core')).toMatchObject({
+      activeVerb: 'Rally is working', completedVerb: 'Rally worked',
+    });
+    expect(pluginGroup('connection:one', 'Slack')).toMatchObject({
+      activeVerb: 'Using Slack', completedVerb: 'Used Slack',
+    });
+    expect(pluginGroup('rally:terminal', 'Terminal')).toMatchObject({
+      activeVerb: 'Using a computer', completedVerb: 'Used a computer',
+    });
   });
 
   it('keys a connector on its name so two connections to one service share a row', () => {
@@ -45,7 +81,7 @@ describe('pluginGroup', () => {
     expect(pluginGroup('connection:aaaaaaaa-0000-4000-8000-000000000001', 'Slack'))
       .toEqual(pluginGroup('plugin_slack', 'Slack'));
     expect(pluginGroup('connection:aaaaaaaa-0000-4000-8000-000000000002', 'Slack'))
-      .toEqual({ key: 'name:Slack', name: 'Slack', icon: 'slack' });
+      .toMatchObject({ key: 'name:Slack', name: 'Slack', icon: 'slack' });
   });
 
   it.each([

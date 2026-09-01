@@ -61,7 +61,7 @@ rule here, visible the first time a card is looked at.
 Three things on the card are drawn rather than reproduced: the code block's copy
 button is hidden, a task list's checkboxes are redrawn as marks, and a citation
 keeps its shape but loses everything that promises interaction — the footnote
-pill's hover popover and the embed card's chevron are both `display: none`. A
+pill's hover popover is `display: none`. A
 picture of a control is a lie, a greyed system checkbox reads as broken rather
 than as a task that is not done, and a hover popover printed into a PNG is a grey
 box over the text with no way to dismiss it.
@@ -77,6 +77,14 @@ the transcript drops: on screen a pill's sources are one hover away, and here
 that hover does not exist and its popover is hidden two paragraphs above. Without
 it the card printed numbered pills over nothing — the claims kept their markers
 and the sources left the file entirely.
+
+A Mermaid fence is deliberately saved as its highlighted source rather than as
+the live diagram. Mermaid rendering is asynchronous, while the detached
+`MarkdownBody` root is serialized synchronously; capturing that live branch
+would save whichever loading state happened to win the race. The source is the
+complete, deterministic content and keeps the diagram reproducible. If exports
+need SVG later, the export operation must await a prepared render before taking
+`innerHTML`.
 
 The colours are the light inverse of the application's, with one deliberate
 exception — a code block stays dark. The highlighter writes its colours as inline
@@ -227,7 +235,8 @@ The document is written from text a model produced, so it is treated the way
 [`security.md`](security.md) treats every model output.
 
 - `react-markdown` renders markup in its input as text — no `rehype-raw` — so the
-  HTML that crosses the bridge carries no script to begin with.
+  HTML that crosses the bridge carries no script to begin with. The closed bare
+  break-tag rewrite is the one exception and emits only an empty `<br>`.
 - The window that renders it has `sandbox`, `contextIsolation`, no preload, no
   Node integration, and no devtools, and the response carries
   `default-src 'none'; img-src data: https:; style-src 'unsafe-inline'`.
@@ -272,6 +281,91 @@ Two traps:
   `../lib/platform` mock, or the buttons throw on render.
 
 ## Changelog
+
+### 2026-08-30 — Export trust names the closed break-tag exception
+
+**What changed:** The export contract and this document now state that the
+shared Markdown renderer may emit an empty `<br>` from a bare break tag while
+every other source HTML remains text.
+
+**Why:** The break-tag affordance changed the markup crossing the renderer-to-
+main bridge, but the older trust wording still claimed that every source tag
+was text. The window remains safe because the rewrite is a closed empty-element
+case and its CSP still forbids script.
+
+**What a future change has to respect:** Keep the common contract, main-process
+interpolation comment, and this trust model aligned. Adding another generated
+element requires reviewing the bridge and export-window CSP, not merely widening
+the Markdown rewrite.
+
+### 2026-08-30 — Mermaid diagrams save as source
+
+**What changed:** A `mermaid` fence remains the ordinary highlighted code block
+when `MarkdownBody` renders with `still`, even though it becomes an SVG diagram
+on live reader surfaces.
+
+**Why:** Mermaid rendering is asynchronous and the export root is intentionally
+serialized in one synchronous pass. Mounting the live branch would save a
+loading fallback nondeterministically; source preserves every byte needed to
+reproduce the diagram and keeps the established no-suspension export contract.
+
+**What a future change has to respect:** rendering diagrams into exports means
+preparing the SVG before serialization and awaiting it explicitly. Do not make
+the detached root race an effect or add a fixed wait.
+
+### 2026-08-30 — The card composes the tile the way the app composes it
+
+**What changed:** the export `.citation-card` takes the app's `gap: 9px` and
+drops `justify-content: space-between`, leaving `.citation-card-text`'s own
+`margin-top: auto` to push the title block to the foot.
+
+**Why:** review noticed the two had drifted — the app moved to a 9px gap with an
+auto margin when the preview landed between badge and title, and this file kept
+the 26px gap and the `space-between` from the version before it. The palette
+here is deliberately the card's own; the *proportions* are not, and
+`space-between` only agrees with the app while the card has exactly two
+children, which is a coincidence of the preview being absent rather than a
+layout rule.
+
+### 2026-08-29 — The card draws no preview, because it can never have one
+
+**What changed:** `.citation-card-preview` and `.citation-card-preview-skeleton`
+are declared `display: none` here.
+
+**Why:** the renderer's embed card now previews the resource's converted text,
+and shows a shimmering skeleton while that text is being prepared. A still is
+serialized at one moment, so `MarkdownBody`'s `still` flag stops the card
+asking at all — neither element can appear in a saved picture. The rules exist
+because the coverage test names every citation class the renderer can emit and
+requires an answer here, and the honest answer for a live-loading affordance in
+a picture is that it is not drawn.
+
+**What a future change has to respect:** a rule here is not what stops the
+preview appearing — `still` is. Removing that flag's effect would put a frozen
+skeleton into somebody's saved file, and this stylesheet would hide it only by
+accident.
+
+### 2026-08-29 — The embed card follows the renderer's file-tile shape
+
+**What changed:** The `.citation-card` rules here redraw the renderer's reworked
+embed card — a fixed-width tile with the kind badge at the head and the title
+and kind at the foot — in this document's fixed light palette. The chevron rule
+is gone because the renderer no longer emits the element, so the class left the
+parameterised coverage list on its own. The renderer's `.citation-card-row`
+(a run of embeds sharing one horizontal row) wraps here instead of scrolling:
+a still cannot scroll, and a row that clipped would drop cards from the file
+somebody keeps.
+
+**Why:** The renderer reshaped the embed card from a one-line row into a file
+tile, and this stylesheet mirrors the markup `MarkdownBody` emits — a card
+whose rules still describe the row would have drawn the new badge unstyled and
+the tile as a squashed line. The palette stays this document's own: the card is
+deliberately unthemed, so it takes the shape, not the tokens.
+
+**What a future change has to respect:** the coverage test only proves every
+citation class has *a* rule here, not that the rule still matches the
+renderer's layout. A reshape over there is a redraw over here, in the same
+change.
 
 ### 2026-08-28 — The card keeps a citation's sources
 
@@ -361,7 +455,7 @@ text off the device to have a picture of it made.
 
 Three details are load-bearing and look arbitrary from inside the file:
 
-- **The document is served over `avalon-export://` rather than handed to the
+- **The document is served over `rallywithai-export://` rather than handed to the
   window as a `data:` URL.** Chromium refuses a top-level `data:` navigation past
   roughly 128 KB, which a message with a table in it reaches; the failure is an
   opaque `ERR_FAILED` at load. A scheme also carries a real CSP response header.

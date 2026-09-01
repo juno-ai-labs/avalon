@@ -44,8 +44,8 @@ source of truth for retry, replay, and compaction recovery.
 
 ### Kind and schema selection
 
-Rally classifies an attachment into exactly one of `image`, `markdown`, `pdf`,
-`document`, `spreadsheet`, `presentation`, `text`, or `other`. A verified MIME
+Rally classifies an attachment into exactly one of `image`, `audio`, `markdown`,
+`pdf`, `document`, `spreadsheet`, `presentation`, `text`, or `other`. A verified MIME
 type wins. A sanitized final filename extension participates only when MIME is
 missing or a generic binary type. The model selects a natural-language kind in
 a list request; it never supplies or guesses a MIME filter.
@@ -429,7 +429,9 @@ generic tool execution/receipt loop is owned by
   source pixels, 8 MiB per derivative, 12 MiB across all delivered derivatives,
   and a 2,048-pixel native long edge. Cloudflare Images scale-down is bounded to
   that edge. HEIF is accepted only through that isolated service; TIFF
-  dimensions are checked before pixels are decoded in the Worker.
+  dimensions are checked before pixels are decoded in the Worker. The final
+  OpenRouter serializer admits base64 image parts only as PNG, JPEG, WebP, or
+  GIF and rejects every other data-URL MIME before issuing the provider request.
 
 ## Testing
 
@@ -614,6 +616,70 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-30 — Generated audio is a playable, non-model-readable kind
+
+**What changed:** The shared attachment registry now classifies verified audio
+MIME types and common audio extensions as `audio`. MP3 signatures are verified
+server-side. Current and historical audio resources flow directly from regional
+R2 to native desktop players, while manifests and resource listings advertise
+`contentMode: "unsupported"` to the agent.
+
+**Why:** Treating generated speech as `other` hid a format the product can
+present, while treating it as readable text invited the model to call document
+tools that cannot transcribe it. A distinct natural kind states both truths.
+
+**Considered and rejected:** Classifying audio as `text` or building implicit
+transcription into preview. Both would couple a media-generation feature to a
+second inference operation and change what a resource means without an explicit
+transcription request.
+
+**Consequences:** Attachment-kind consumers must handle `audio` explicitly.
+Audio preview routes serve stored bytes directly, derivative builders do not
+attempt text extraction, and adding agent-readable audio later requires a
+separate transcription contract rather than changing this kind silently.
+
+### 2026-08-30 — Archive waits for the unlink before leaving the document
+
+**What changed:** Continue on the inspector **Archive** dialog awaits the detach
+mutation, stays open with the error if it fails, and only then returns to
+context. Image resources render in the document host.
+
+**Why:** Closing on click treated a refused DELETE as success and dropped
+keyboard focus with the Archive button. An image had no body once the metadata
+card went away.
+
+**What a future change has to respect:** the unlink is still detach, not a
+workspace-object delete. Do not clear the inspector until the mutation
+resolves.
+
+### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
+
+**What changed:** **Versions** in the inspector header opens a dropdown of the
+resource's history rather than replacing the document pane. **Archive** still
+asks continue/cancel, now from a danger-coloured icon.
+
+**Why:** Swapping the pane hid the file. The header dropdown is the existing
+pattern for a list of actions off an icon button. The unlink still has no restore,
+so the modal stays.
+
+**What a future change has to respect:** the version list is still newest-first
+and still marks current by list position, not by the detail's cached number.
+Sparse dates are calendar buckets, not `formatRelative`'s "3 hours ago".
+
+### 2026-08-30 — Resource versions move behind a header control
+
+**What changed:** The inspector rail's resource detail no longer lists versions
+under the document. **Versions** in the header opens them, grouped by sparse
+relative dates. **Archive** replaces **Remove** and confirms before unlinking.
+
+**Why:** Once the body became the document, an inline history under it was a
+second pane competing with the file. A header control keeps the document the
+default, and an unconfirmed unlink next to that document was the wrong weight.
+
+**What a future change has to respect:** the version list is still newest-first
+and still marks current by list position, not by the detail's cached number.
+Sparse dates are calendar buckets, not `formatRelative`'s "3 hours ago".
 
 ### 2026-08-29 — Resource statements become typed WorkspaceDO methods
 
@@ -866,6 +932,26 @@ attribution the rail would render as fact. A resource with one version shows no
 history section. Agent-decided re-fetch still has no path: `hydrate` is
 reachable only from its endpoint and a tool for it is a separate decision, so
 the loop closes today through the participant.
+### 2026-08-27 — OpenRouter image admission is enforced at the provider boundary
+
+**What changed:** The final OpenRouter serializer now rejects image data URLs
+unless they declare PNG, JPEG, WebP, or GIF. Persisted model derivatives are
+also signature-checked against their recorded supported MIME before reuse.
+
+**Why:** The normalization pipeline already emitted only OpenRouter-supported
+formats, but its TypeScript union was not a runtime fence at the final provider
+boundary. A malformed replay or future producer could otherwise bypass the
+attachment converter with an unsupported image MIME.
+
+**Considered and rejected:** Relying only on the provider to reject unsupported
+content. That turns a deterministic local contract violation into a billable,
+less-diagnosable inference failure after the complete prompt has left Rally.
+
+**Consequences:** Private Rally attachments remain base64 data URLs produced by
+the existing normalization path. Rally deliberately rejects public HTTP(S)
+image URLs at this boundary because their response MIME cannot be established
+from the provider request body; every image payload is locally allowlisted
+before transmission.
 
 ### 2026-08-27 — Message attachments use the canonical transcript relationship
 

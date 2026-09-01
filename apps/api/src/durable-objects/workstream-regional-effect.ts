@@ -50,6 +50,14 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
   kind: z.literal("directory_user"),
   userId: IdSchema,
   isParticipant: z.boolean(),
+  /**
+   * When this person joined, copied from `participants.added_at`.
+   *
+   * Optional because effects written before this field existed are still in
+   * flight and still parse; absent means the overlay should keep whatever
+   * timestamp it already stored rather than treating the person as new.
+   */
+  participantAddedAt: TimestampSchema.nullable().optional(),
   unreadCount: z.number().int().nonnegative(),
   youAreMentioned: z.boolean(),
   /**
@@ -141,7 +149,13 @@ export const WorkstreamParticipantNotificationEffectSchema = z.object({
   occurredAt: TimestampSchema,
 }).strict();
 
-export const WorkstreamSuggestionFeedbackEffectSchema = z.object({
+/**
+ * Parse-only rolling-deployment tombstone. Previous SubstreamAgent and
+ * WorkstreamDO isolates may still forward this envelope after the receiving
+ * object has upgraded. Receivers acknowledge it without storing or applying
+ * feedback; no current producer can create one.
+ */
+export const RetiredSuggestionFeedbackEffectSchema = z.object({
   kind: z.literal("suggestion_feedback"),
   actionId: IdSchema,
   activityId: IdSchema,
@@ -151,14 +165,32 @@ export const WorkstreamSuggestionFeedbackEffectSchema = z.object({
   resolvedByUserId: IdSchema,
 }).strict();
 
+/** Effects current code may produce and persist. */
 export const WorkstreamRegionalEffectSchema = z.discriminatedUnion("kind", [
   WorkstreamDirectoryCommonEffectSchema,
   WorkstreamDirectoryUserEffectSchema,
   WorkstreamActivityEffectSchema,
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
-  WorkstreamSuggestionFeedbackEffectSchema,
 ]);
+export type WorkstreamRegionalEffect = z.infer<typeof WorkstreamRegionalEffectSchema>;
+
+/** Receiver-only union for envelopes committed by the previous deployment. */
+export const WireWorkstreamRegionalEffectSchema = z.discriminatedUnion("kind", [
+  WorkstreamDirectoryCommonEffectSchema,
+  WorkstreamDirectoryUserEffectSchema,
+  WorkstreamActivityEffectSchema,
+  WorkstreamMentionNotificationEffectSchema,
+  WorkstreamParticipantNotificationEffectSchema,
+  RetiredSuggestionFeedbackEffectSchema,
+]);
+export type WireWorkstreamRegionalEffect = z.infer<typeof WireWorkstreamRegionalEffectSchema>;
+
+export function isRetiredSuggestionFeedbackEffect(
+  effect: WireWorkstreamRegionalEffect,
+): effect is z.infer<typeof RetiredSuggestionFeedbackEffectSchema> {
+  return effect.kind === "suggestion_feedback";
+}
 
 /**
  * The effects that tell one person something, and therefore may not be
@@ -166,14 +198,12 @@ export const WorkstreamRegionalEffectSchema = z.discriminatedUnion("kind", [
  * gated on `requiredProjectionVersion`; see the refinement below.
  */
 export function isPersonNotificationEffect(
-  effect: WorkstreamRegionalEffect,
+  effect: WireWorkstreamRegionalEffect,
 ): effect is Extract<WorkstreamRegionalEffect, {
   kind: "mention_notification" | "participant_notification";
 }> {
   return effect.kind === "mention_notification" || effect.kind === "participant_notification";
 }
-
-export type WorkstreamRegionalEffect = z.infer<typeof WorkstreamRegionalEffectSchema>;
 
 export const WorkstreamRegionalEffectEnvelopeSchema = z.object({
   kind: z.literal("workstream_regional_effect"),
@@ -187,7 +217,7 @@ export const WorkstreamRegionalEffectEnvelopeSchema = z.object({
   sourceVersion: z.number().int().positive(),
   requiredProjectionVersion: z.number().int().positive().nullable(),
   payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
-  effect: WorkstreamRegionalEffectSchema,
+  effect: WireWorkstreamRegionalEffectSchema,
 }).strict().superRefine((envelope, context) => {
   const requiresViewer = isPersonNotificationEffect(envelope.effect);
   if (requiresViewer !== (envelope.requiredProjectionVersion !== null)) {
@@ -251,7 +281,7 @@ function canonicalJson(value: unknown): string {
 }
 
 export function workstreamRegionalEffectHash(
-  effect: WorkstreamRegionalEffect,
+  effect: WireWorkstreamRegionalEffect,
   requiredProjectionVersion: number | null = null,
 ): string {
   let hash = 0xcbf29ce484222325n;

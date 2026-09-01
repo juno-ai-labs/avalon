@@ -45,8 +45,12 @@ import {
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
   WorkstreamContextSchema,
+  WorkstreamSchema,
+  WorkstreamResourceSchema,
   WorkstreamSocketCommandResultSchema,
-  WorkstreamWorkflowInputSchema
+  WorkstreamWorkflowInputSchema,
+  WORKSTREAM_SIDEBAR_FACEPILE_LIMIT,
+  workstreamParticipantPreview,
 } from "./index";
 
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
@@ -58,6 +62,29 @@ describe("boundary contracts", () => {
     expect(resourceDirectionForRelationship("generated")).toBe("artifact");
     expect(resourceDirectionForRelationship("origin")).toBe("source");
     expect(resourceDirectionForRelationship("attachment")).toBe("source");
+  });
+
+  it("parses the retired relationship only at rolling-deploy wire boundaries", () => {
+    const legacy = WorkstreamResourceSchema.parse({
+      id,
+      workspaceId: id,
+      connectionId: null,
+      resourceType: "document",
+      provider: "google_drive",
+      providerResourceId: "drive-1",
+      title: "Accepted context",
+      mimeType: null,
+      canonicalUrl: null,
+      watchEnabled: false,
+      watchStatus: "unsupported",
+      lastHydratedAt: null,
+      createdAt: "2026-08-30T00:00:00.000Z",
+      updatedAt: "2026-08-30T00:00:00.000Z",
+      relationshipType: "suggested_activity",
+      direction: "source",
+    });
+    expect(legacy.relationshipType).toBe("suggested_activity");
+    expect(ResourceRelationshipTypeSchema.safeParse(legacy.relationshipType).success).toBe(false);
   });
 
   it("adds a bounded optional suggested-work surface without breaking older clients", () => {
@@ -184,6 +211,27 @@ describe("boundary contracts", () => {
     });
   });
 
+  it("accepts structured assistant turn IDs as message identity", () => {
+    const turnId = `${id}:turn:3`;
+    const message = MessageSchema.parse({
+      id: turnId,
+      clientMessageId: null,
+      workspaceId: id,
+      workstreamId: id,
+      author: { type: "agent" },
+      messageType: "text",
+      textContent: "Saved answer",
+      structuredContent: null,
+      mentions: [],
+      attachments: [],
+      sequenceNumber: 3,
+      createdAt: "2026-08-29T00:00:00.000Z",
+      editedAt: null,
+    });
+
+    expect(message.id).toBe(turnId);
+  });
+
   it("allows a new work stream to start with text, attachments, or both", () => {
     const base = {
       clientMessageId: id,
@@ -251,7 +299,6 @@ describe("boundary contracts", () => {
       "meeting_notes",
       "addressing_classifier",
       "workstream_naming",
-      "activity_structured",
       "work_opportunity_admission",
       "work_opportunity_ranking",
       "workstream_description",
@@ -264,7 +311,6 @@ describe("boundary contracts", () => {
       "agent-model-meeting-notes",
       "agent-model-addressing-classifier",
       "agent-model-workstream-naming",
-      "agent-model-activity-structured",
       "agent-model-work-opportunity-admission",
       "agent-model-work-opportunity-ranking",
       "agent-model-workstream-description",
@@ -1380,5 +1426,56 @@ describe("resource version provenance", () => {
     });
     expect(resource).toMatchObject({ slug: null, refreshSupported: false });
     expect(ResourceSchema.parse({ ...resource, refreshSupported: true }).refreshSupported).toBe(true);
+  });
+
+  it("caps a sidebar facepile preview and defaults an older work-stream payload", () => {
+    const ids = [
+      "00000000-0000-7000-8000-0000000000b1",
+      "00000000-0000-7000-8000-0000000000b2",
+      "00000000-0000-7000-8000-0000000000b3",
+      "00000000-0000-7000-8000-0000000000b4",
+      "00000000-0000-7000-8000-0000000000b5",
+    ];
+    expect(workstreamParticipantPreview(ids)).toEqual({
+      participantUserIds: ids.slice(0, WORKSTREAM_SIDEBAR_FACEPILE_LIMIT),
+      participantExtraCount: 2,
+    });
+    expect(workstreamParticipantPreview(ids.slice(0, 2))).toEqual({
+      participantUserIds: ids.slice(0, 2),
+      participantExtraCount: 0,
+    });
+
+    const at = "2026-08-30T00:00:00.000Z";
+    const workstream = WorkstreamSchema.parse({
+      id: "00000000-0000-7000-8000-0000000000c1",
+      workspaceId: "00000000-0000-7000-8000-0000000000c2",
+      title: "Launch",
+      titleStatus: "settled",
+      objective: "",
+      emailAddress: null,
+      originType: "ad_hoc",
+      originLabel: null,
+      createdByUserId: null,
+      automationSubscriptionId: null,
+      automationRunId: null,
+      plannedFor: null,
+      harnessStatus: "completed",
+      latestAttentionSequenceNumber: 0,
+      readThroughSequenceNumber: 0,
+      manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 0,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+      lastActivityAt: at,
+      createdAt: at,
+      updatedAt: at,
+      archivedAt: null,
+    });
+    expect(workstream.participantUserIds).toEqual([]);
+    expect(workstream.participantExtraCount).toBe(0);
+    expect(WorkstreamSchema.safeParse({
+      ...workstream,
+      participantUserIds: ids,
+    }).success).toBe(false);
   });
 });
