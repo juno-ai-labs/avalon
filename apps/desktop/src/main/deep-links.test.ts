@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { acceptedDeepLink, isConnectorOAuthResult } from './deep-links';
+import {
+  acceptedDeepLink,
+  isConnectorOAuthResult,
+  shouldDeliverConnectorResultToSettings,
+} from './deep-links';
 
 const WORKSPACE_ID = '00000000-0000-7000-8000-000000000019';
 const WORKSTREAM_ID = '00000000-0000-7000-8000-000000000021';
@@ -36,5 +40,19 @@ describe('main-process workspace deep-link boundary', () => {
         `rallywithai://workspace/global/${WORKSPACE_ID}/auth/complete?provider=${provider}&connection=${CONNECTION_ID}&status=connected`,
       ), provider).toBe(true);
     }
+  });
+
+  it('delivers only legacy unaddressed connector results to Settings', () => {
+    const result = `connection=${CONNECTION_ID}&status=connected&attempt=${'a'.repeat(43)}&provider=slack`;
+
+    expect(shouldDeliverConnectorResultToSettings(
+      `rallywithai://auth/complete?${result}&region=global`,
+    )).toBe(true);
+    expect(shouldDeliverConnectorResultToSettings(
+      `rallywithai://workspace/global/${WORKSPACE_ID}/auth/complete?${result}`,
+    )).toBe(false);
+    expect(shouldDeliverConnectorResultToSettings(
+      `rallywithai://workspace/global/${WORKSPACE_ID}/settings/connections`,
+    )).toBe(false);
   });
 });
