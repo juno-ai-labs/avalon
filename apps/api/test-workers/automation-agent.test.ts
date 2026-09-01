@@ -22,7 +22,8 @@ import { AutomationAgentService } from "../src/services/automation-agent-service
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000b1");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000000b2");
 const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-0000000000b3");
-const CLIENT_MESSAGE_ID = "00000000-0000-7000-8000-0000000000b4";
+/** The room these fixtures are drafted in, since a draft now always has one. */
+const AUTHORING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000b9";
 
 function automationStub() {
   return env.AUTOMATION_AGENTS.get(env.AUTOMATION_AGENTS.idFromName(
@@ -73,45 +74,25 @@ function readyDefinition(name: string) {
 }
 
 /**
- * An automation whose first turn is admitted and whose compiler run settled on
- * one ready definition — the state a person is in when they press Create.
+ * An automation holding one ready definition — the state a person is in when a
+ * proposal card offers them Create.
  *
- * The compiler run is marked `completed` inside the same invocation that admits
- * it. `admitDraftTurn` arms a dispatch alarm for `now`, and the tests below go
- * on asserting from outside this callback: the patched `executeCompilerRun`
- * covers the window before the update lands, and the settled row is what makes
- * a drain on a fresh instance after eviction a no-op rather than a real
- * compiler run against the placeholder provider key.
+ * Seeded through `admitAuthoredDraft`, which is the only way a draft is made
+ * now that the compiler loop is gone. That makes these fixtures exercise the
+ * surviving path rather than a retired one, so a change to how a draft is
+ * recorded breaks them here rather than in production.
  */
 async function seedReadyDraft(definition: ReturnType<typeof readyDefinition>): Promise<void> {
-  await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
-    (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-    const admission = await instance.admitDraftTurn({
+  await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+    await instance.admitAuthoredDraft({
       schemaVersion: 1,
       automationId: AUTOMATION_ID,
       workspaceId: WORKSPACE_ID,
       authorUserId: AUTHOR_ID,
       region: "global",
-      clientMessageId: CLIENT_MESSAGE_ID,
-      content: "Summarize my unread email every weekday at 9am",
-      attachmentIds: [],
-      inputMode: "typed",
+      authoredInWorkstreamId: AUTHORING_WORKSTREAM_ID,
+      draft: definition,
     });
-    state.storage.sql.exec(
-      `UPDATE automation_compiler_runs SET state = 'completed', settled_at = 1 WHERE run_id = ?`,
-      admission.compilerRunId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO automation_definition_revisions
-         (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
-       VALUES (1, ?, ?, 'sha256:definition', 1, 1)`,
-      admission.compilerRunId,
-      JSON.stringify(definition),
-    );
-    state.storage.sql.exec(
-      `UPDATE automation_state SET definition_revision = 1, title = ? WHERE id = 1`,
-      definition.name,
-    );
   });
 }
 
@@ -195,94 +176,10 @@ describe("AutomationAgent", () => {
     });
   });
 
-  it("persists identity, the first human turn, and one compiler admission before dispatch", async () => {
+  it("accepts the canonical revision in place, leaving one definition behind", async () => {
+    await seedReadyDraft(readyDefinition("Manual helper"));
     const stub = automationStub();
     await runInDurableObject(stub, async (instance: AutomationAgent, state) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-      const request = {
-        schemaVersion: 1 as const,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global" as const,
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Tell me when a Slack message contains foobar",
-        attachmentIds: [],
-        inputMode: "typed" as const,
-      };
-
-      const first = await instance.admitDraftTurn(request);
-      const retry = await instance.admitDraftTurn(request);
-
-      expect(first.admitted).toBe(true);
-      expect(retry).toEqual({ ...first, admitted: false });
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
-      ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM transcript_payloads`,
-      ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM automation_compiler_runs`,
-      ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ author_user_id: string }>(
-        `SELECT author_user_id FROM automation_identity WHERE id = 1`,
-      ).one().author_user_id).toBe(AUTHOR_ID);
-      expect(await state.storage.getAlarm()).not.toBeNull();
-
-      await expect(instance.admitDraftTurn({
-        ...request,
-        clientMessageId: "00000000-0000-7000-8000-0000000000b5",
-        content: "A second concurrent turn",
-      })).rejects.toThrow("automation_compiler_busy");
-    });
-  });
-
-  it("records evaluator replacement and receipt in the same object transaction", async () => {
-    const stub = automationStub();
-    await runInDurableObject(stub, async (instance: AutomationAgent, state) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-      const admission = await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Watch Slack",
-        attachmentIds: [],
-        inputMode: "typed",
-      });
-      state.storage.sql.exec(
-        `UPDATE automation_compiler_runs SET state = 'running' WHERE run_id = ?`,
-        admission.compilerRunId,
-      );
-      const mutation = {
-        schemaVersion: 1 as const,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        compilerRunId: admission.compilerRunId,
-        providerCallId: "call-1",
-        inputHash: "sha256:rules",
-        evaluatorRules: { schemaVersion: 1, evaluators: [] },
-      };
-
-      expect(await instance.setEvaluatorRules(mutation)).toEqual({ accepted: true });
-      expect(await instance.setEvaluatorRules(mutation)).toEqual({ accepted: true });
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM automation_tool_receipts`,
-      ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ evaluator_rules_json: string }>(
-        `SELECT evaluator_rules_json FROM automation_draft_evaluator_sets`,
-      ).one().evaluator_rules_json).toBe('{"schemaVersion":1,"evaluators":[]}');
-    });
-  });
-
-  it("accepts the canonical revision in place and deletes only the draft conversation", async () => {
-    const stub = automationStub();
-    await runInDurableObject(stub, async (instance: AutomationAgent, state) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
       (instance as unknown as { workspace(): unknown }).workspace = async () => ({
         applyExternalEventRegistrations: async () => ({
           applied: true,
@@ -290,49 +187,6 @@ describe("AutomationAgent", () => {
         }),
         applyAutomationProjection: async () => ({ applied: true }),
       });
-      const admission = await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Run when I ask",
-        attachmentIds: [],
-        inputMode: "typed",
-      });
-      const definition = {
-        name: "Manual helper",
-        description: "Runs on request",
-        overview: "A manual automation",
-        instructions: "Do the requested work.",
-        triggers: [{ type: "manual" as const }],
-        requiredCapabilities: [],
-        expectedOutputs: [],
-        requestedDelivery: [],
-        defaultBehavior: {},
-        recommendedPlugins: [],
-        memoryTables: [],
-        suggestedScope: "personal" as const,
-        followUpQuestion: null,
-        elicitation: null,
-        ready: true,
-      };
-      state.storage.sql.exec(
-        `UPDATE automation_compiler_runs SET state = 'completed', settled_at = 1 WHERE run_id = ?`,
-        admission.compilerRunId,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO automation_definition_revisions
-           (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
-         VALUES (1, ?, ?, 'sha256:definition', 1, 1)`,
-        admission.compilerRunId,
-        JSON.stringify(definition),
-      );
-      state.storage.sql.exec(
-        `UPDATE automation_state SET definition_revision = 1, title = ? WHERE id = 1`,
-        definition.name,
-      );
 
       const detail = await instance.acceptDraft({
         schemaVersion: 1,
@@ -351,38 +205,16 @@ describe("AutomationAgent", () => {
       expect(state.storage.sql.exec<{ lifecycle: string }>(
         `SELECT lifecycle FROM automation_state WHERE id = 1`,
       ).one().lifecycle).toBe("active");
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
-      ).one().count).toBe(0);
+      // Accepting settles the revision it accepted rather than accumulating a
+      // second one, which is what makes a re-accept idempotent.
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM automation_definition_revisions`,
       ).one().count).toBe(1);
+      // The registration's own sequence is carried onto the acceptance, so an
+      // event admitted before activation is not replayed into the first run.
       expect(state.storage.sql.exec<{ effective_after_event_sequence: number }>(
         `SELECT effective_after_event_sequence FROM automation_acceptance WHERE id = 1`,
       ).one().effective_after_event_sequence).toBe(7);
-
-      const started = await instance.runNow({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        idempotencyKey: "manual-overview-run",
-      });
-      const afterRun = await instance.readDetail({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-      });
-      expect(afterRun.recentRuns).toEqual([expect.objectContaining({
-        id: started.runId,
-        workstreamId: started.workstreamId,
-        triggerType: "manual",
-        status: "scheduled",
-      })]);
-      await expect(instance.listRuns({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-      })).resolves.toEqual({ items: afterRun.recentRuns });
     });
   });
 
@@ -626,47 +458,6 @@ describe("AutomationAgent", () => {
     }
   });
 
-  it("refuses a create against a draft the compiler has not compiled yet", async () => {
-    // `admitFirstTurn` answers with the automation's id as soon as the turn is
-    // durable, so a caller can reach `accept` before any definition revision
-    // exists. `AutomationDraftSchema.parse(null)` threw a `ZodError` from
-    // between the two refusals this change fixed, which is the same 500 by
-    // another route.
-    const stub = automationStub();
-    await runInDurableObject(stub, async (instance: AutomationAgent) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-      await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Watch the release channel",
-        attachmentIds: [],
-        inputMode: "typed",
-      });
-    });
-
-    await expect(authorService().accept({
-      draftId: AUTOMATION_ID,
-      draft: {
-        name: "Not compiled yet",
-        description: "Nothing has been compiled for this draft.",
-        overview: "Nothing has been compiled for this draft.",
-        instructions: "Nothing has been compiled for this draft.",
-        triggers: [{ type: "manual" as const }],
-        suggestedScope: "personal" as const,
-        followUpQuestion: null,
-        ready: true,
-      },
-      scope: "personal",
-    })).rejects.toMatchObject({
-      status: 409,
-      code: "automation_definition_not_ready",
-    });
-  });
-
   it("tells a reader why an imported automation with an unrunnable trigger is stopped", async () => {
     // The one thing a person has to be told after the cutover: this automation
     // is not waiting for its next run, it has none. The reason travels on the
@@ -812,63 +603,6 @@ describe("AutomationAgent", () => {
       expect(state.storage.sql.exec<{ operation: string }>(
         `SELECT operation FROM automation_memory_mutations ORDER BY settled_at DESC LIMIT 1`,
       ).one().operation).toBe("table_create");
-    });
-  });
-
-  it("answers a follow-up question so the draft can still be accepted", async () => {
-    const now = 1_800_000_000_000;
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-      const first = await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Watch the release channel",
-        attachmentIds: [],
-        inputMode: "typed",
-      });
-      // Stand in for a compiler run that asked a question rather than
-      // finishing: one revision, one pending elicitation against it.
-      state.storage.sql.exec(
-        `INSERT INTO automation_definition_revisions
-           (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
-         VALUES (1, ?, '{}', 'sha256:draft', 0, ?)`,
-        first.compilerRunId, now,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO automation_pending_elicitations
-           (elicitation_id, definition_revision, payload_json, state, created_at)
-         VALUES ('00000000-0000-7000-8000-0000000000e1', 1, '{"question":"Which channel?"}', 'pending', ?)`,
-        now,
-      );
-      state.storage.sql.exec(
-        `UPDATE automation_compiler_runs SET state = 'needs_input', settled_at = ? WHERE run_id = ?`,
-        now, first.compilerRunId,
-      );
-
-      await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: "00000000-0000-7000-8000-0000000000e2",
-        content: "#shipping",
-        attachmentIds: [],
-        inputMode: "elicitation_response",
-      });
-
-      // The person answered, so nothing is outstanding — which is what
-      // `acceptDraft` reads before it will create the automation at all.
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM automation_pending_elicitations WHERE state = 'pending'`,
-      ).one().count).toBe(0);
-      expect(state.storage.sql.exec<{ state: string }>(
-        `SELECT state FROM automation_pending_elicitations`,
-      ).one().state).toBe("answered");
     });
   });
 

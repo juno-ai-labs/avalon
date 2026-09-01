@@ -4,8 +4,6 @@ import {
   AutomationAttentionReasonSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   AutomationDraftSchema,
-  AutomationDraftTurnAdmissionRequestSchema,
-  AutomationDraftTurnAdmissionResultSchema,
   AgentModelOverrideSchema,
   AutomationDeliveryTargetSetSchema,
   AutomationDetailSchema,
@@ -25,7 +23,6 @@ import {
   type AutomationAgentSnapshot,
   type AutomationDraft,
   type AutomationDraftTurnAdmissionRequest,
-  type AutomationDraftTurnAdmissionResult,
   type AutomationDetail,
   type AutomationSetEvaluatorRulesMutation,
   type AutomationRunContextV1,
@@ -41,7 +38,6 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { assistantMessageForDraft } from "../services/automation-service";
 import { classifyAutomationResult } from "../services/automation-result-disposition";
-import { compileAutomationDraft } from "../services/integrations";
 import { activateWorkstreamLoop } from "../services/integrations";
 import {
   withWorkspaceRuntimeDatabase,
@@ -965,146 +961,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return row !== null;
   }
 
-  async admitDraftTurn(rawInput: AutomationDraftTurnAdmissionRequest): Promise<AutomationDraftTurnAdmissionResult> {
-    await this.initialized;
-    const input = AutomationDraftTurnAdmissionRequestSchema.parse(rawInput);
-    const now = Date.now();
-    const turnId = uuidV7(now);
-    const runId = uuidV7(now + 1);
-    const preparedMessage = await this.transcript().prepareMessage({
-      turnId,
-      actor: "human",
-      authorUserId: input.authorUserId,
-      text: input.content,
-      producedByRunId: runId,
-      createdAt: now,
-    });
-    const result = this.state.storage.transactionSync(() => {
-      this.ensureIdentity(input, now);
-      this.assertDraftAuthor(input);
-      const existing = this.state.storage.sql.exec<{
-        turn_id: string;
-        transcript_sequence: number;
-        compiler_run_id: string;
-        projection_version: number | null;
-      }>(`SELECT metadata.turn_id, turn.transcript_sequence, metadata.compiler_run_id,
-                 metadata.projection_version
-           FROM automation_draft_message_metadata metadata
-           JOIN participant_transcript_turns turn ON turn.turn_id = metadata.turn_id
-          WHERE metadata.client_message_id = ?`, input.clientMessageId).toArray()[0];
-      if (existing) {
-        return AutomationDraftTurnAdmissionResultSchema.parse({
-          automationId: input.automationId,
-          turnId: existing.turn_id,
-          transcriptSequence: existing.transcript_sequence,
-          compilerRunId: existing.compiler_run_id,
-          admitted: false,
-          ...(existing.projection_version === null
-            ? {}
-            : { projectionVersion: existing.projection_version }),
-        });
-      }
-      const busy = this.activeCompilerRun();
-      if (busy && (busy.state === "admitted" || busy.state === "running")) {
-        throw new Error("automation_compiler_busy");
-      }
-      const inheritedEvaluators = this.state.storage.sql.exec<{
-        evaluator_rules_json: string;
-        input_hash: string;
-      }>(`SELECT evaluator.evaluator_rules_json, evaluator.input_hash
-            FROM automation_definition_revisions definition
-            JOIN automation_draft_evaluator_sets evaluator
-              ON evaluator.compiler_run_id = definition.compiler_run_id
-           ORDER BY definition.definition_revision DESC LIMIT 1`).toArray()[0];
-      const sequence = this.transcript().appendPreparedMessage(preparedMessage);
-      const projectionVersion = this.nextProjectionVersion();
-      this.state.storage.sql.exec(
-        `INSERT INTO automation_draft_message_metadata
-           (turn_id, client_message_id, attachment_ids_json, compiler_run_id, input_mode,
-            projection_version)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        turnId,
-        input.clientMessageId,
-        JSON.stringify(input.attachmentIds),
-        runId,
-        input.inputMode,
-        projectionVersion,
-      );
-      // The author writing again is the answer to whatever the architect last
-      // asked. Without this the row inserted by `settleCompilerSuccess` stays
-      // `pending` forever, and two things follow on the ordinary authoring
-      // path: `acceptDraft` refuses with `automation_pending_elicitation` for
-      // the rest of the draft's life, and the next question the architect asks
-      // violates `automation_pending_elicitation_one_idx` from inside the
-      // settle transaction, rolling back the turn, the definition revision and
-      // the projection with it. The only other statement that cleared this
-      // table was `deleteDraftConversation`, which runs after acceptance
-      // succeeds — so the cleanup was gated behind the thing it would unblock.
-      this.state.storage.sql.exec(
-        `UPDATE automation_pending_elicitations
-            SET state = 'answered', settled_at = ?
-          WHERE state = 'pending'`,
-        Date.now(),
-      );
-      this.state.storage.sql.exec(
-        `INSERT INTO automation_compiler_runs
-           (run_id, admitted_turn_id, state, attempt, request_id, input_mode,
-            admitted_at, updated_at)
-         VALUES (?, ?, 'admitted', 0, ?, ?, ?, ?)`,
-        runId,
-        turnId,
-        input.clientMessageId,
-        input.inputMode,
-        now,
-        now,
-      );
-      if (inheritedEvaluators) {
-        this.state.storage.sql.exec(
-          `INSERT INTO automation_draft_evaluator_sets
-             (compiler_run_id, provider_call_id, input_hash, evaluator_rules_json, updated_at)
-           VALUES (?, ?, ?, ?, ?)`,
-          runId,
-          `inherited:${runId}`,
-          inheritedEvaluators.input_hash,
-          inheritedEvaluators.evaluator_rules_json,
-          now,
-        );
-      }
-      this.appendRealtimeEvent("turn_admitted", { turnId, runId, transcriptSequence: sequence }, now);
-      // A failed turn keeps its narration on screen until the next one starts,
-      // so deltas are retired when they are superseded rather than when their
-      // run settles.
-      this.retireSupersededCompilerStreamEvents(runId);
-      return AutomationDraftTurnAdmissionResultSchema.parse({
-        automationId: input.automationId,
-        turnId,
-        transcriptSequence: sequence,
-        compilerRunId: runId,
-        admitted: true,
-        // The Worker writes the first directory projection itself so the
-        // sidebar row exists before the outbox drains; it must use the
-        // coordinate this object allocated, not one derived from a cursor
-        // acceptance later resets.
-        projectionVersion,
-      });
-    });
-    if (result.admitted) {
-      await this.scheduleAlarm({
-        kind: COMPILER_DISPATCH_ALARM_KIND,
-        key: result.compilerRunId,
-        dueAt: now,
-      });
-      this.broadcastLatestEvents();
-    }
-    return result;
-  }
-
-  async readSnapshot(input: { automationId: string; workspaceId: string; userId: string }): Promise<AutomationAgentSnapshot> {
-    await this.initialized;
-    this.assertAuthor(input.automationId, input.workspaceId, input.userId);
-    return this.snapshotUnchecked();
-  }
-
   /**
    * The draft, for somebody the owning room vouches for rather than its author.
    *
@@ -1128,57 +984,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       throw new Error("automation_access_denied");
     }
     return this.snapshotUnchecked();
-  }
-
-  async cancelCompilerRun(input: { automationId: string; workspaceId: string; userId: string; runId: string }): Promise<void> {
-    await this.initialized;
-    this.assertAuthor(input.automationId, input.workspaceId, input.userId);
-    const now = Date.now();
-    this.state.storage.transactionSync(() => {
-      this.state.storage.sql.exec(
-        `UPDATE automation_compiler_runs
-            SET state = 'cancelled', error_code = 'cancelled_by_author',
-                error_message = 'Stopped', settled_at = ?, updated_at = ?
-          WHERE run_id = ? AND state IN ('admitted', 'running')`,
-        now,
-        now,
-        input.runId,
-      );
-      this.appendRealtimeEvent("compiler_cancelled", { runId: input.runId }, now);
-    });
-    await this.cancelScheduledAlarm(COMPILER_DISPATCH_ALARM_KIND, input.runId);
-    this.broadcastLatestEvents();
-  }
-
-  async retryCompilerRun(input: { automationId: string; workspaceId: string; userId: string; runId: string }): Promise<void> {
-    await this.initialized;
-    this.assertAuthor(input.automationId, input.workspaceId, input.userId);
-    const now = Date.now();
-    // No success flag to test afterwards: every rejection below throws, so the
-    // transaction either commits the retry or does not return at all. A
-    // `if (!retried) return` here would be a branch that can never be taken,
-    // and reads as though one of these refusals were survivable.
-    this.state.storage.transactionSync(() => {
-      const run = this.state.storage.sql.exec<{ state: string }>(
-        `SELECT state FROM automation_compiler_runs WHERE run_id = ?`,
-        input.runId,
-      ).toArray()[0];
-      if (!run) throw new Error("automation_compiler_run_not_found");
-      if (run.state !== "failed") throw new Error("automation_compiler_run_not_retryable");
-      if (this.activeCompilerRun()) throw new Error("automation_compiler_busy");
-      this.state.storage.sql.exec(
-        `UPDATE automation_compiler_runs
-            SET state = 'admitted', error_code = NULL, error_message = NULL,
-                settled_at = NULL, updated_at = ?
-          WHERE run_id = ? AND state = 'failed'`,
-        now,
-        input.runId,
-      );
-      this.appendRealtimeEvent("compiler_retried", { runId: input.runId }, now);
-    });
-    await this.scheduleAlarm({ kind: COMPILER_DISPATCH_ALARM_KIND, key: input.runId, dueAt: now });
-    await this.armNextAlarm();
-    this.broadcastLatestEvents();
   }
 
   async setEvaluatorRules(rawMutation: AutomationSetEvaluatorRulesMutation): Promise<{ accepted: true }> {
@@ -1231,34 +1036,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       return result;
     });
     return result;
-  }
-
-  async stageDraftSubmission(input: unknown): Promise<{ accepted: true }> {
-    await this.initialized;
-    const request = z.strictObject({
-      automationId: z.string().uuid(),
-      workspaceId: z.string().uuid(),
-      authorUserId: z.string().uuid(),
-      compilerRunId: z.string().uuid(),
-      providerCallId: z.string().min(1),
-      inputHash: z.string().min(1),
-      draft: AutomationDraftSchema,
-    }).parse(input);
-    this.assertAuthor(request.automationId, request.workspaceId, request.authorUserId);
-    const hasExternalTrigger = request.draft.triggers.some((trigger) => (
-      trigger.type === "connector_activity"
-      || trigger.type === "semantic_activity"
-      || trigger.type === "webhook"
-    ));
-    return this.recordDraftMutation({
-      compilerRunId: request.compilerRunId,
-      providerCallId: request.providerCallId,
-      inputHash: request.inputHash,
-      toolName: "automation_submit_draft",
-      table: "automation_staged_submissions",
-      json: JSON.stringify(request.draft),
-      evaluatorDisposition: hasExternalTrigger ? "require" : "clear",
-    });
   }
 
   /**
@@ -1403,28 +1180,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return raw === null
       ? null
       : AutomationRunContextV1Schema.shape.authoringOrigin.parse(JSON.parse(raw));
-  }
-
-  async stageDraftElicitation(input: unknown): Promise<{ accepted: true }> {
-    await this.initialized;
-    const request = z.strictObject({
-      automationId: z.string().uuid(),
-      workspaceId: z.string().uuid(),
-      authorUserId: z.string().uuid(),
-      compilerRunId: z.string().uuid(),
-      providerCallId: z.string().min(1),
-      inputHash: z.string().min(1),
-      elicitation: RequestElicitationInputSchema,
-    }).parse(input);
-    this.assertAuthor(request.automationId, request.workspaceId, request.authorUserId);
-    return this.recordDraftMutation({
-      compilerRunId: request.compilerRunId,
-      providerCallId: request.providerCallId,
-      inputHash: request.inputHash,
-      toolName: "automation_request_elicitation",
-      table: "automation_staged_elicitations",
-      json: JSON.stringify(request.elicitation),
-    });
   }
 
   /** Freeze the current compiled revision and activate this same durable object. */
@@ -3043,7 +2798,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome> {
     if (alarm.kind === COMPILER_DISPATCH_ALARM_KIND) {
-      await this.executeCompilerRun(alarm.key);
+      // The drafting loop this alarm dispatched is gone. An object that stored
+      // one before that deploy still wakes on it, and the kind is retained for
+      // exactly that: settling it here discards it the way finishing the run
+      // used to, where falling through would raise `automation_alarm_kind_unknown`
+      // on every wake, forever, for an object whose only fault is being old.
       return;
     }
     if (alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND) {
@@ -3130,88 +2889,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       );
     });
     return false;
-  }
-
-  private async executeCompilerRun(runId: string): Promise<void> {
-    await this.initialized;
-    if (!await this.workspaceOperationalOrFence()) return;
-    const claimed = this.state.storage.transactionSync(() => {
-      const run = this.state.storage.sql.exec<ActiveCompilerRow>(
-        `SELECT run_id, state, admitted_turn_id, error_code, error_message
-           FROM automation_compiler_runs WHERE run_id = ?`,
-        runId,
-      ).toArray()[0];
-      if (!run || !["admitted", "running"].includes(run.state)) return null;
-      const now = Date.now();
-      if (run.state === "admitted") {
-        this.state.storage.sql.exec(
-          `UPDATE automation_compiler_runs
-              SET state = 'running', attempt = attempt + 1,
-                  started_at = COALESCE(started_at, ?), updated_at = ?
-            WHERE run_id = ? AND state = 'admitted'`,
-          now,
-          now,
-          runId,
-        );
-        this.appendRealtimeEvent("compiler_started", { runId }, now);
-      }
-      const identity = this.identity();
-      const messages = this.compilerMessages();
-      const currentDraft = this.currentDefinition();
-      const attachmentIds = this.currentAttachmentIds();
-      return { identity, messages, currentDraft, attachmentIds };
-    });
-    if (!claimed) return;
-    this.broadcastLatestEvents();
-
-    const runtimeEnv = withWorkspaceRuntimeDatabase(this.env, asWorkspaceId(claimed.identity.workspace_id));
-    try {
-      const draft = await compileAutomationDraft(runtimeEnv, {
-        requestId: runId,
-        workspaceId: asWorkspaceId(claimed.identity.workspace_id),
-        userId: asUserId(claimed.identity.author_user_id),
-        messages: claimed.messages,
-        currentDraft: claimed.currentDraft,
-        attachmentIds: claimed.attachmentIds,
-        defaultTimezones: { personal: "UTC", workspace: "UTC" },
-        draftMutationPort: {
-          setEvaluatorRules: async (rules, context) => this.setEvaluatorRules({
-            schemaVersion: 1,
-            automationId: asAutomationId(claimed.identity.automation_id),
-            workspaceId: asWorkspaceId(claimed.identity.workspace_id),
-            authorUserId: asUserId(claimed.identity.author_user_id),
-            compilerRunId: runId,
-            providerCallId: context.toolCallId,
-            inputHash: await sha256(JSON.stringify(rules)),
-            evaluatorRules: rules,
-          }),
-          submitDraft: async (draft, context) => this.stageDraftSubmission({
-            automationId: claimed.identity.automation_id,
-            workspaceId: claimed.identity.workspace_id,
-            authorUserId: claimed.identity.author_user_id,
-            compilerRunId: runId,
-            providerCallId: context.toolCallId,
-            inputHash: await sha256(JSON.stringify(draft)),
-            draft,
-          }),
-          requestElicitation: async (elicitation, context) => this.stageDraftElicitation({
-            automationId: claimed.identity.automation_id,
-            workspaceId: claimed.identity.workspace_id,
-            authorUserId: claimed.identity.author_user_id,
-            compilerRunId: runId,
-            providerCallId: context.toolCallId,
-            inputHash: await sha256(JSON.stringify(elicitation)),
-            elicitation,
-          }),
-        },
-        onStreamEvent: (event) => this.recordCompilerStreamEvent(runId, event),
-      });
-      await this.settleCompilerSuccess(runId, draft);
-    } catch (error) {
-      await this.settleCompilerFailure(runId, error);
-    } finally {
-      await this.cancelScheduledAlarm(COMPILER_DISPATCH_ALARM_KIND, runId);
-    }
   }
 
   private async recordCompilerStreamEvent(runId: string, event: AutomationCompilerStreamEvent): Promise<void> {

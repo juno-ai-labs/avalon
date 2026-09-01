@@ -1,12 +1,10 @@
 import {
-  AutomationDraftTurnAdmissionRequestSchema,
   AutomationDraftSchema,
   CreateAutomationRequestSchema,
   IdSchema,
   asAutomationId,
   type AutomationAgentSnapshot,
   type AutomationDetail,
-  type AutomationDraftTurnAdmissionResult,
 } from "@rally/contracts";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
@@ -330,24 +328,6 @@ export class AutomationAgentService {
       draft,
     });
     return { templateId: created.id };
-  }
-
-  private async admit(
-    automationId: ReturnType<typeof asAutomationId>,
-    input: AutomationDraftTurnRequest,
-  ): Promise<AutomationDraftTurnAdmissionResult> {
-    const agent = await this.agent(automationId);
-    return withAutomationErrors(() => agent.admitDraftTurn(AutomationDraftTurnAdmissionRequestSchema.parse({
-      schemaVersion: 1,
-      automationId,
-      workspaceId: this.auth.workspaceId,
-      authorUserId: this.auth.userId,
-      region: this.env.AVALON_REGION,
-      clientMessageId: input.clientMessageId,
-      content: input.content,
-      attachmentIds: input.attachmentIds,
-      inputMode: input.inputMode,
-    })));
   }
 
   /**
