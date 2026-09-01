@@ -1,7 +1,8 @@
 import clsx from 'clsx';
 import { GripVertical } from 'lucide-react';
 import { useRef, useState } from 'react';
-import type { Message, WorkspaceMember } from '../lib/types';
+import type { Message, MessageMention, WorkspaceMember } from '../lib/types';
+import { MarkdownBody } from './workstream-blocks';
 import { Avatar } from './primitives';
 
 export interface ComposerQueueItem {
@@ -9,6 +10,14 @@ export interface ComposerQueueItem {
   /** Server pending-input id. Null while the send is still optimistic. */
   inputId: string | null;
   text: string;
+  /**
+   * The message's stored mentions, carried so a queued row draws the same chips
+   * the turn will draw once it lands. Required rather than optional: a
+   * connection mention is nothing but its offsets into `text`, so a row that
+   * silently defaulted to none would render the author's `@Google Drive` as
+   * prose and nobody would learn why.
+   */
+  mentions: MessageMention[];
   member: WorkspaceMember;
   sending: boolean;
 }
@@ -59,6 +68,22 @@ export function queueAuthorMember(
   return { id: message.id, name: 'Someone', email: '', timezone: 'UTC' };
 }
 
+/** `[label](target)` and `![alt](target)`, with the label and the target apart. */
+const MARKDOWN_LINK = /!?\[([^\]]*)\]\([^)\s]*(?:\s+"[^"]*")?\)/gu;
+
+/**
+ * What a screen reader is told a queued row says.
+ *
+ * Only link and image syntax is unwritten, and only to its label — that is the
+ * shape whose *target* is unreadable aloud, because a person mention's target is
+ * a UUID. Emphasis markers are left as the author typed them: they read as
+ * punctuation rather than as an identifier, and unpicking them from a message
+ * that may be about Markdown is a rewrite this name does not need.
+ */
+export function queuePreviewLabel(text: string): string {
+  return text.replace(MARKDOWN_LINK, (_match, label: string) => label).trim();
+}
+
 export function ComposerQueue({ items, onReorder }: ComposerQueueProps): React.JSX.Element | null {
   const [dragOrder, setDragOrder] = useState<string[] | null>(null);
   const draggingIdRef = useRef<string | null>(null);
@@ -104,7 +129,14 @@ export function ComposerQueue({ items, onReorder }: ComposerQueueProps): React.J
     >
       {visible.map((item, index) => {
         const draggable = item.inputId !== null;
-        const preview = item.text.trim() || (item.sending ? 'Sending…' : 'Queued message');
+        // The stand-in covers a message that is only attachments, and the
+        // instant between a send leaving the composer and its text arriving
+        // back as an overlay. `item.text` itself is never trimmed on its way to
+        // the renderer: the mention offsets are measured against it, and
+        // dropping a leading space would slide every chip one column left.
+        const placeholder = item.sending ? 'Sending…' : 'Queued message';
+        const empty = item.text.trim() === '';
+        const preview = empty ? placeholder : queuePreviewLabel(item.text) || placeholder;
         return (
           <li
             className={clsx(
@@ -173,7 +205,18 @@ export function ComposerQueue({ items, onReorder }: ComposerQueueProps): React.J
             <span aria-hidden="true" className="composer-queue-avatar">
               <Avatar member={item.member} size="small" title={item.member.name} />
             </span>
-            <span className="composer-queue-text">{preview}</span>
+            <span className="composer-queue-text">
+              {empty
+                ? placeholder
+                // The transcript's renderer on the transcript's terms for a
+                // person's own words: `verbatim`, because the model-text repair
+                // has no business rewriting what a member typed, and the stored
+                // mentions, because a connection mention is nothing but its
+                // offsets into this exact string. The row is laid out as one
+                // clipped line in CSS rather than by a second renderer that
+                // would have to keep pace with this one.
+                : <MarkdownBody mentions={item.mentions} verbatim>{item.text}</MarkdownBody>}
+            </span>
             <span className="sr-only">{`${item.member.name}, ${index + 1} of ${visible.length}`}</span>
           </li>
         );
