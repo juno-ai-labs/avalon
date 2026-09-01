@@ -28,18 +28,18 @@ import { logWarn } from "../observability/logger";
  */
 const RevocationTargetSchema = z.discriminatedUnion("scope", [
   /** Published by whoever wrote the retraction. Every other scope descends from it. */
-  z.object({ scope: z.literal("workspace") }).strict(),
-  z.object({ scope: z.literal("workstream"), workstreamId: IdSchema }).strict(),
-  z.object({
+  z.strictObject({ scope: z.literal("workspace") }),
+  z.strictObject({ scope: z.literal("workstream"), workstreamId: IdSchema }),
+  z.strictObject({
     scope: z.literal("substream"),
     workstreamId: IdSchema,
     substreamId: z.union([z.literal("0"), IdSchema]),
-  }).strict(),
-  z.object({ scope: z.literal("block"), workstreamId: IdSchema, blockId: IdSchema }).strict(),
-  z.object({ scope: z.literal("automation"), automationId: IdSchema }).strict(),
+  }),
+  z.strictObject({ scope: z.literal("block"), workstreamId: IdSchema, blockId: IdSchema }),
+  z.strictObject({ scope: z.literal("automation"), automationId: IdSchema }),
 ]);
 
-export const AccessRevocationMessageSchema = z.object({
+export const AccessRevocationMessageSchema = z.strictObject({
   kind: z.literal("access_revoked"),
   /** Why access ended. Carried for operators; the fan-out treats all alike. */
   reason: z.enum([
@@ -59,7 +59,7 @@ export const AccessRevocationMessageSchema = z.object({
   sessionId: z.string().min(1).max(200).nullable(),
   target: RevocationTargetSchema,
   occurredAt: TimestampSchema,
-}).strict();
+});
 
 export type AccessRevocationMessage = z.infer<typeof AccessRevocationMessageSchema>;
 export type RevocationTarget = z.infer<typeof RevocationTargetSchema>;

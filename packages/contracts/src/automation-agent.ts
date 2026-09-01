@@ -26,7 +26,7 @@ export const AutomationCompilerRunStateSchema = z.enum([
   "cancelled",
 ]);
 
-export const AutomationDraftTurnAdmissionRequestSchema = z.object({
+export const AutomationDraftTurnAdmissionRequestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
   workspaceId: WorkspaceIdSchema,
@@ -36,22 +36,22 @@ export const AutomationDraftTurnAdmissionRequestSchema = z.object({
   content: z.string().min(1),
   attachmentIds: z.array(IdSchema).default([]),
   inputMode: z.enum(["typed", "suggested_prompt", "elicitation_response", "edit"]).default("typed"),
-}).strict();
+});
 
-export const AutomationDraftCreationClaimRequestSchema = z.object({
+export const AutomationDraftCreationClaimRequestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   workspaceId: WorkspaceIdSchema,
   authorUserId: UserIdSchema,
   region: z.enum(["global", "eu"]),
   clientCreationKey: IdSchema,
-}).strict();
+});
 
-export const AutomationDraftCreationClaimResultSchema = z.object({
+export const AutomationDraftCreationClaimResultSchema = z.strictObject({
   automationId: AutomationIdSchema,
   created: z.boolean(),
-}).strict();
+});
 
-export const AutomationDraftTurnAdmissionResultSchema = z.object({
+export const AutomationDraftTurnAdmissionResultSchema = z.strictObject({
   automationId: AutomationIdSchema,
   turnId: IdSchema,
   transcriptSequence: z.number().int().positive(),
@@ -66,9 +66,9 @@ export const AutomationDraftTurnAdmissionResultSchema = z.object({
    * monotonic counter rather than each inventing a number.
    */
   projectionVersion: z.number().int().positive().optional(),
-}).strict();
+});
 
-export const AutomationDraftMessageSchema = z.object({
+export const AutomationDraftMessageSchema = z.strictObject({
   turnId: IdSchema,
   transcriptSequence: z.number().int().positive(),
   role: z.enum(["user", "assistant"]),
@@ -77,9 +77,9 @@ export const AutomationDraftMessageSchema = z.object({
   content: z.string(),
   attachmentIds: z.array(IdSchema),
   createdAt: z.number().int().nonnegative(),
-}).strict();
+});
 
-export const AutomationAgentSnapshotSchema = z.object({
+export const AutomationAgentSnapshotSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
   workspaceId: WorkspaceIdSchema,
@@ -91,26 +91,26 @@ export const AutomationAgentSnapshotSchema = z.object({
   definitionRevision: z.number().int().nonnegative(),
   definition: z.unknown().nullable(),
   messages: z.array(AutomationDraftMessageSchema),
-  activeCompilerRun: z.object({
+  activeCompilerRun: z.strictObject({
     id: IdSchema,
     state: AutomationCompilerRunStateSchema,
     admittedTurnId: IdSchema,
     errorCode: z.string().nullable(),
     errorMessage: z.string().nullable(),
-  }).strict().nullable(),
-  compilerCheckpoint: z.object({
+  }).nullable(),
+  compilerCheckpoint: z.strictObject({
     runId: IdSchema,
     narration: z.string(),
-  }).strict().nullable(),
-  pendingElicitation: z.object({
+  }).nullable(),
+  pendingElicitation: z.strictObject({
     id: IdSchema,
     definitionRevision: z.number().int().positive(),
     payload: z.unknown(),
-  }).strict().nullable(),
+  }).nullable(),
   eventSequence: z.number().int().nonnegative(),
-}).strict();
+});
 
-export const AutomationSetEvaluatorRulesMutationSchema = z.object({
+export const AutomationSetEvaluatorRulesMutationSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
   workspaceId: WorkspaceIdSchema,
@@ -119,52 +119,52 @@ export const AutomationSetEvaluatorRulesMutationSchema = z.object({
   providerCallId: z.string().min(1),
   inputHash: z.string().min(1),
   evaluatorRules: z.unknown(),
-}).strict();
+});
 
 const AutomationRunDeliveryTargetV1Schema = z.discriminatedUnion("type", [
-  z.object({
+  z.strictObject({
     type: z.literal("email"),
     emailAddress: z.string().email(),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     type: z.literal("slack_agent_dm"),
     connectionId: IdSchema,
     slackTeamId: z.string().min(1),
     slackUserId: z.string().min(1),
-  }).strict(),
+  }),
 ]);
 
 export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("manual"), requestedByUserId: UserIdSchema }).strict(),
-  z.object({
+  z.strictObject({ kind: z.literal("manual"), requestedByUserId: UserIdSchema }),
+  z.strictObject({
     kind: z.literal("schedule"),
     scheduleId: IdSchema,
     scheduleKind: z.enum(["calendar", "interval"]),
     plannedFor: z.number().int().nonnegative(),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     kind: z.literal("external_event"),
     workspaceEventId: IdSchema,
     eventType: z.string().min(1),
     occurredAt: z.number().int().nonnegative(),
     payloadHash: z.string().min(1),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     kind: z.literal("inbound_email"),
     receiptId: IdSchema,
     occurredAt: z.number().int().nonnegative(),
-  }).strict(),
+  }),
 ]);
 
 /** Immutable, self-contained execution input frozen when an occurrence commits. */
-export const AutomationRunContextV1Schema = z.object({
+export const AutomationRunContextV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
   workspaceId: WorkspaceIdSchema,
   runId: IdSchema,
   authorityGeneration: z.number().int().positive(),
   definitionRevision: z.number().int().positive(),
-  definition: z.object({
+  definition: z.strictObject({
     name: z.string().min(1),
     description: z.string().min(1),
     overview: z.string().min(1),
@@ -174,25 +174,25 @@ export const AutomationRunContextV1Schema = z.object({
     defaultBehavior: z.record(z.string(), z.unknown()),
     recommendedPlugins: z.array(z.unknown()),
     memoryTables: z.array(z.unknown()),
-  }).strict(),
+  }),
   defaultPluginIds: z.array(z.string().min(1)),
   activitySourcePluginIds: z.record(z.string(), z.string().min(1)),
   connectorBindings: z.record(z.string(), z.unknown()),
   deliveryTargets: z.array(AutomationRunDeliveryTargetV1Schema),
   modelOverride: z.string().min(1).nullable(),
-  executionPrincipal: z.object({ type: z.literal("user"), userId: UserIdSchema }).strict(),
+  executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
   trigger: AutomationRunTriggerV1Schema,
-  opening: z.object({
+  opening: z.strictObject({
     clientMessageId: IdSchema,
     textContent: z.string().min(1),
     structuredContent: z.record(z.string(), z.unknown()),
     resourceId: IdSchema,
-  }).strict().nullable().default(null),
-  memoryScope: z.object({
+  }).nullable().default(null),
+  memoryScope: z.strictObject({
     automationId: AutomationIdSchema,
     authorityGeneration: z.number().int().positive(),
-  }).strict(),
-}).strict();
+  }),
+});
 
 export type AutomationLifecycleState = z.infer<typeof AutomationLifecycleStateSchema>;
 export type AutomationDraftTurnAdmissionRequest = z.infer<typeof AutomationDraftTurnAdmissionRequestSchema>;

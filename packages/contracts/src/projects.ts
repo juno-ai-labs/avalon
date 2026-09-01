@@ -63,14 +63,14 @@ export const ProjectStatusSchema = z.enum([
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 export const ProjectParticipantStateSchema = z.enum(["adding", "active", "removing", "removed"]);
 
-export const ProjectParticipantSchema = z.object({
+export const ProjectParticipantSchema = z.strictObject({
   userId: z.string().uuid(),
   state: ProjectParticipantStateSchema,
   generation: z.number().int().positive(),
-}).strict();
+});
 export type ProjectParticipant = z.infer<typeof ProjectParticipantSchema>;
 
-export const ProjectSummarySchema = z.object({
+export const ProjectSummarySchema = z.strictObject({
   id: ProjectIdSchema,
   name: z.string().trim().min(1),
   iconKey: ProjectIconKeySchema,
@@ -85,45 +85,45 @@ export const ProjectSummarySchema = z.object({
   defaultResourceIds: z.array(z.string().uuid()).default([]),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
-}).strict();
+});
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 
-export const CreateProjectRequestSchema = z.object({
+export const CreateProjectRequestSchema = z.strictObject({
   name: z.string().trim().min(1),
   iconKey: ProjectIconKeySchema,
   colorKey: ProjectColorKeySchema,
   scope: ProjectScopeSchema,
-}).strict();
+});
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
-export const UpdateProjectPresentationRequestSchema = z.object({
+export const UpdateProjectPresentationRequestSchema = z.strictObject({
   name: z.string().trim().min(1),
   iconKey: ProjectIconKeySchema,
   colorKey: ProjectColorKeySchema,
-}).strict();
+});
 export type UpdateProjectPresentationRequest = z.infer<typeof UpdateProjectPresentationRequestSchema>;
 
-export const UpdateProjectAudienceRequestSchema = z.object({
+export const UpdateProjectAudienceRequestSchema = z.strictObject({
   scope: ProjectScopeSchema,
   participantUserIds: z.array(z.string().uuid()).min(1),
-}).strict();
+});
 export type UpdateProjectAudienceRequest = z.infer<typeof UpdateProjectAudienceRequestSchema>;
 
-export const ReorderProjectsRequestSchema = z.object({
+export const ReorderProjectsRequestSchema = z.strictObject({
   projectIds: z.array(ProjectIdSchema),
-}).strict();
+});
 export type ReorderProjectsRequest = z.infer<typeof ReorderProjectsRequestSchema>;
 
-export const ProjectDirectorySchema = z.object({
+export const ProjectDirectorySchema = z.strictObject({
   waterline: z.number().int().nonnegative(),
   items: z.array(ProjectSummarySchema),
-}).strict();
+});
 export type ProjectDirectory = z.infer<typeof ProjectDirectorySchema>;
 
-export const ProjectSnapshotSchema = z.object({
+export const ProjectSnapshotSchema = z.strictObject({
   active: ProjectDirectorySchema,
   inactive: ProjectDirectorySchema,
-}).strict().superRefine((snapshot, context) => {
+}).superRefine((snapshot, context) => {
   if (snapshot.active.waterline !== snapshot.inactive.waterline) {
     context.addIssue({
       code: "custom",

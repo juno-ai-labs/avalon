@@ -6,9 +6,9 @@ import { zValidator } from "../middleware/validation";
 import { logEvent } from "../observability/logger";
 import { streamMessageSpeech } from "../services/message-speech-service";
 
-const SpeechBodySchema = z.object({
+const SpeechBodySchema = z.strictObject({
   markdown: z.string().trim().min(1),
-}).strict();
+});
 
 export const speechRoutes = new Hono<HonoAppEnv>();
 

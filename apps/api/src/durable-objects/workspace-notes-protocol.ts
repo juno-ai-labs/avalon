@@ -31,7 +31,7 @@ const TimestampSchema = z.string().min(1);
  */
 export const WorkspaceNoteAccessSchema = z.enum(["any", "view", "edit"]);
 
-export const WorkspaceNoteRecordSchema = z.object({
+export const WorkspaceNoteRecordSchema = z.strictObject({
   id: IdSchema,
   workspaceId: IdSchema,
   ownerUserId: IdSchema,
@@ -50,10 +50,10 @@ export const WorkspaceNoteRecordSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
   archivedAt: TimestampSchema.nullable(),
-}).strict();
+});
 
 /** Field names match the `NoteTranscriptSegment` contract the routes serve. */
-export const WorkspaceNoteSegmentRecordSchema = z.object({
+export const WorkspaceNoteSegmentRecordSchema = z.strictObject({
   id: IdSchema,
   noteId: IdSchema,
   sequenceNumber: z.number().int().min(1),
@@ -63,14 +63,14 @@ export const WorkspaceNoteSegmentRecordSchema = z.object({
   speakerLabel: z.string().nullable(),
   text: z.string(),
   createdAt: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceNoteStateRequestSchema = z.object({
+export const WorkspaceNoteStateRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
   access: WorkspaceNoteAccessSchema,
-}).strict();
+});
 
 /**
  * The note and its ordered transcript in one read; both empty on a miss, and
@@ -78,12 +78,12 @@ export const WorkspaceNoteStateRequestSchema = z.object({
  * existence, and its caller re-reads under the view guard before showing
  * anything.
  */
-export const WorkspaceNoteStateSchema = z.object({
+export const WorkspaceNoteStateSchema = z.strictObject({
   note: WorkspaceNoteRecordSchema.nullable(),
   segments: z.array(WorkspaceNoteSegmentRecordSchema),
-}).strict();
+});
 
-export const WorkspaceNoteUpdateRequestSchema = z.object({
+export const WorkspaceNoteUpdateRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
@@ -97,7 +97,7 @@ export const WorkspaceNoteUpdateRequestSchema = z.object({
   // the route contract's, and it survives the RPC because absence does.
   startedAt: TimestampSchema.nullable().optional(),
   endedAt: TimestampSchema.nullable().optional(),
-}).strict();
+});
 
 /**
  * `becamePrivate` is decided inside the same transaction as the write, from
@@ -107,17 +107,17 @@ export const WorkspaceNoteUpdateRequestSchema = z.object({
  * cutover — the object writes the transition row itself, atomically with the
  * scope change.
  */
-export const WorkspaceNoteUpdateResultSchema = z.object({
+export const WorkspaceNoteUpdateResultSchema = z.strictObject({
   outcome: z.enum(["updated", "not_found"]),
   becamePrivate: z.boolean(),
-}).strict();
+});
 
-export const WorkspaceNoteArchiveRequestSchema = z.object({
+export const WorkspaceNoteArchiveRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * `recording` and `not_found` owe the caller different answers — ending the
@@ -125,11 +125,11 @@ export const WorkspaceNoteArchiveRequestSchema = z.object({
  * read they were decided one round trip apart, so the classification could
  * describe a row the write never saw.
  */
-export const WorkspaceNoteArchiveResultSchema = z.object({
+export const WorkspaceNoteArchiveResultSchema = z.strictObject({
   outcome: z.enum(["archived", "not_found", "recording"]),
-}).strict();
+});
 
-export const WorkspaceNoteSegmentAppendRequestSchema = z.object({
+export const WorkspaceNoteSegmentAppendRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
@@ -141,7 +141,7 @@ export const WorkspaceNoteSegmentAppendRequestSchema = z.object({
   speakerLabel: z.string().nullable(),
   text: z.string(),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * `duplicate` returns the stored segment for the same `clientSegmentId`, so a
@@ -150,12 +150,12 @@ export const WorkspaceNoteSegmentAppendRequestSchema = z.object({
  * trips: a replay racing itself burned a sequence number and fell into the
  * unique constraint, and the service carried a compensating re-read for it.
  */
-export const WorkspaceNoteSegmentAppendResultSchema = z.object({
+export const WorkspaceNoteSegmentAppendResultSchema = z.strictObject({
   outcome: z.enum(["appended", "duplicate", "note_not_found"]),
   segment: WorkspaceNoteSegmentRecordSchema.nullable(),
-}).strict();
+});
 
-export const WorkspaceNoteGenerationCommitRequestSchema = z.object({
+export const WorkspaceNoteGenerationCommitRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
@@ -165,25 +165,25 @@ export const WorkspaceNoteGenerationCommitRequestSchema = z.object({
   /** The cursor pair the caller read before inference; the commit lands only if both still hold. */
   expectedThroughSequence: z.number().int().nonnegative(),
   expectedGeneratedAt: TimestampSchema.nullable(),
-}).strict();
+});
 
-export const WorkspaceNoteGenerationCommitResultSchema = z.object({
+export const WorkspaceNoteGenerationCommitResultSchema = z.strictObject({
   outcome: z.enum(["committed", "stale"]),
-}).strict();
+});
 
-export const WorkspaceNoteSidebarRequestSchema = z.object({
+export const WorkspaceNoteSidebarRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   limit: z.number().int().min(1),
-}).strict();
+});
 
 /**
  * Loose mirror of the `NoteSummary` contract: the object already validated
  * each row against `NoteSidebarRowSchema`, and the summary contract's tighter
  * bounds belong to the route that serves it.
  */
-export const WorkspaceNoteSidebarListSchema = z.object({
-  items: z.array(z.object({
+export const WorkspaceNoteSidebarListSchema = z.strictObject({
+  items: z.array(z.strictObject({
     id: IdSchema,
     workspaceId: IdSchema,
     resourceId: IdSchema,
@@ -199,26 +199,26 @@ export const WorkspaceNoteSidebarListSchema = z.object({
     createdAt: TimestampSchema,
     updatedAt: TimestampSchema,
     archivedAt: TimestampSchema.nullable(),
-  }).strict()),
-}).strict();
+  })),
+});
 
-export const WorkspaceNoteVisibilityRequestSchema = z.object({
+export const WorkspaceNoteVisibilityRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   /** Null for a non-user principal, which sees only workspace-scoped notes. */
   userId: IdSchema.nullable(),
   resourceIds: z.array(IdSchema).min(1),
-}).strict();
+});
 
-export const WorkspaceNoteVisibilityResultSchema = z.object({
+export const WorkspaceNoteVisibilityResultSchema = z.strictObject({
   resourceIds: z.array(IdSchema),
-}).strict();
+});
 
-export const WorkspaceNotePrivacyPendingRequestSchema = z.object({
+export const WorkspaceNotePrivacyPendingRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema.optional(),
-}).strict();
+});
 
-export const WorkspaceNotePrivacyTransitionSchema = z.object({
+export const WorkspaceNotePrivacyTransitionSchema = z.strictObject({
   id: z.string().min(1),
   workspaceId: IdSchema,
   noteId: IdSchema,
@@ -226,42 +226,42 @@ export const WorkspaceNotePrivacyTransitionSchema = z.object({
   noteTitle: z.string(),
   actorUserId: IdSchema,
   createdAt: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceNotePrivacyPendingResultSchema = z.object({
+export const WorkspaceNotePrivacyPendingResultSchema = z.strictObject({
   items: z.array(WorkspaceNotePrivacyTransitionSchema),
-}).strict();
+});
 
-export const WorkspaceNotePrivacyMarkRequestSchema = z.object({
+export const WorkspaceNotePrivacyMarkRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   transitionId: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceNotePrivacyMarkResultSchema = z.object({
+export const WorkspaceNotePrivacyMarkResultSchema = z.strictObject({
   outcome: z.enum(["processed", "not_pending"]),
-}).strict();
+});
 
-export const WorkspaceNoteDeletionOutboxRequestSchema = z.object({
+export const WorkspaceNoteDeletionOutboxRequestSchema = z.strictObject({
   workspaceId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceNoteDeletionOutboxSchema = z.object({
-  items: z.array(z.object({
+export const WorkspaceNoteDeletionOutboxSchema = z.strictObject({
+  items: z.array(z.strictObject({
     resourceId: IdSchema,
     contentRef: z.string().nullable(),
     modelContentRef: z.string().nullable(),
-  }).strict()),
-}).strict();
+  })),
+});
 
-export const WorkspaceNoteDeletionRetireRequestSchema = z.object({
+export const WorkspaceNoteDeletionRetireRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceNoteDeletionRetireResultSchema = z.object({
+export const WorkspaceNoteDeletionRetireResultSchema = z.strictObject({
   outcome: z.enum(["retired", "not_found"]),
-}).strict();
+});
 
 export type WorkspaceNoteAccess = z.infer<typeof WorkspaceNoteAccessSchema>;
 export type WorkspaceNoteRecord = z.infer<typeof WorkspaceNoteRecordSchema>;

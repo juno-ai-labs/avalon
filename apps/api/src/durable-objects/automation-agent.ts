@@ -131,7 +131,7 @@ const COMPILER_DISPATCH_ALARM_KIND = "compiler_dispatch";
 const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
 const DEFAULT_AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR = 30;
 
-const AutomationInboundEmailAdmissionSchema = z.object({
+const AutomationInboundEmailAdmissionSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -144,9 +144,9 @@ const AutomationInboundEmailAdmissionSchema = z.object({
   resourceId: z.string().uuid(),
   textContent: z.string().min(1),
   structuredContent: z.record(z.string(), z.unknown()),
-}).strict();
+});
 
-const AutomationAcceptDraftRequestSchema = z.object({
+const AutomationAcceptDraftRequestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -165,25 +165,25 @@ const AutomationAcceptDraftRequestSchema = z.object({
    * personal acceptance parses unchanged.
    */
   actorRole: z.string().optional(),
-}).strict();
+});
 
-const AutomationSocketRevocationSchema = z.object({
+const AutomationSocketRevocationSchema = z.strictObject({
   reason: z.string().min(1),
   workspaceId: z.string().uuid(),
   userId: z.string().uuid().nullable(),
   sessionId: z.string().min(1).nullable(),
-}).strict();
+});
 
-const AutomationSocketIdentitySchema = z.object({
+const AutomationSocketIdentitySchema = z.strictObject({
   workspaceId: z.string().uuid(),
   userId: z.string().uuid(),
   automationId: z.string().uuid(),
   sessionId: z.string().min(1),
   ticketId: z.string().min(1),
   ticketExpiresAt: z.coerce.number().int().positive(),
-}).strict();
+});
 
-const AutomationInboundEmailScreenSchema = z.object({
+const AutomationInboundEmailScreenSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -191,16 +191,16 @@ const AutomationInboundEmailScreenSchema = z.object({
   resendEmailId: z.string().min(1),
   /** Absent before the message is fetched; null once fetched and unresolvable. */
   senderUserId: z.string().uuid().nullable().optional(),
-}).strict();
+});
 
-const AutomationLegacyImportRequestSchema = z.object({
+const AutomationLegacyImportRequestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: z.string().uuid(),
   workspaceId: z.string().uuid(),
   authorUserId: z.string().uuid(),
   region: z.enum(["global", "eu"]),
   sourceHash: z.string().min(1),
-  source: z.object({
+  source: z.strictObject({
     definition: AutomationDraftSchema,
     status: z.enum(["active", "paused", "error"]),
     scope: ScopeSchema,
@@ -213,13 +213,13 @@ const AutomationLegacyImportRequestSchema = z.object({
     modelOverride: AgentModelOverrideSchema.nullable(),
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
-    schedules: z.array(z.object({
+    schedules: z.array(z.strictObject({
       scheduleId: z.string().min(1),
       kind: z.enum(["calendar", "interval"]),
       definition: z.record(z.string(), z.unknown()),
       nextDueAt: z.number().int().nonnegative().nullable(),
-    }).strict()),
-    runs: z.array(z.object({
+    })),
+    runs: z.array(z.strictObject({
       runId: z.string().uuid(),
       workstreamId: z.string().uuid(),
       triggerType: z.string().min(1),
@@ -228,8 +228,8 @@ const AutomationLegacyImportRequestSchema = z.object({
       workflowInstanceId: z.string().nullable(),
       createdAt: z.number().int().nonnegative(),
       updatedAt: z.number().int().nonnegative(),
-    }).strict()),
-    memoryRecords: z.array(z.object({
+    })),
+    memoryRecords: z.array(z.strictObject({
       kind: z.enum([
         "scope",
         "item",
@@ -243,9 +243,9 @@ const AutomationLegacyImportRequestSchema = z.object({
       ]),
       recordId: z.string().min(1),
       payload: z.record(z.string(), z.unknown()),
-    }).strict()),
+    })),
     /** The pre-cutover inbound-email dedupe ledger and its hourly windows. */
-    inboundEmailReceipts: z.array(z.object({
+    inboundEmailReceipts: z.array(z.strictObject({
       resendEmailId: z.string().min(1),
       svixId: z.string().min(1),
       payloadRef: z.string().min(1).nullable(),
@@ -253,13 +253,13 @@ const AutomationLegacyImportRequestSchema = z.object({
       runId: z.string().uuid().nullable(),
       receivedAt: z.number().int().nonnegative(),
       refused: z.boolean(),
-    }).strict()).optional(),
-    inboundEmailRateWindows: z.array(z.object({
+    })).optional(),
+    inboundEmailRateWindows: z.array(z.strictObject({
       windowStartedAt: z.number().int().nonnegative(),
       acceptedCount: z.number().int().nonnegative(),
-    }).strict()).optional(),
-  }).strict(),
-}).strict();
+    })).optional(),
+  }),
+});
 
 export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -1023,7 +1023,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
   async stageDraftSubmission(input: unknown): Promise<{ accepted: true }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       automationId: z.string().uuid(),
       workspaceId: z.string().uuid(),
       authorUserId: z.string().uuid(),
@@ -1031,7 +1031,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       providerCallId: z.string().min(1),
       inputHash: z.string().min(1),
       draft: AutomationDraftSchema,
-    }).strict().parse(input);
+    }).parse(input);
     this.assertAuthor(request.automationId, request.workspaceId, request.authorUserId);
     const hasExternalTrigger = request.draft.triggers.some((trigger) => (
       trigger.type === "connector_activity"
@@ -1051,7 +1051,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
   async stageDraftElicitation(input: unknown): Promise<{ accepted: true }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       automationId: z.string().uuid(),
       workspaceId: z.string().uuid(),
       authorUserId: z.string().uuid(),
@@ -1059,7 +1059,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       providerCallId: z.string().min(1),
       inputHash: z.string().min(1),
       elicitation: RequestElicitationInputSchema,
-    }).strict().parse(input);
+    }).parse(input);
     this.assertAuthor(request.automationId, request.workspaceId, request.authorUserId);
     return this.recordDraftMutation({
       compilerRunId: request.compilerRunId,
@@ -2032,7 +2032,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
   async applyRunProjection(input: unknown): Promise<{ applied: boolean; outcomeCode: string }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       automationId: z.string().uuid(),
       workspaceId: z.string().uuid(),
@@ -2056,7 +2056,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       // queued up behind one unparseable state.
       state: z.enum([...RUN_PROJECTION_STATES]),
       completedAt: z.number().int().nonnegative().nullable(),
-    }).strict().parse(input);
+    }).parse(input);
     const identity = this.identity();
     if (identity.automation_id !== request.automationId || identity.workspace_id !== request.workspaceId) {
       return { applied: false, outcomeCode: "automation_run_projection_destination_mismatch" };
@@ -2243,7 +2243,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   /** Record one child-owned delivery outcome without copying its result bytes. */
   async recordDeliveryReceipt(input: unknown): Promise<{ applied: boolean; outcomeCode: string }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       automationId: z.string().uuid(),
       workspaceId: z.string().uuid(),
@@ -2253,7 +2253,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       payloadHash: z.string().min(1),
       state: z.enum(["delivered", "skipped", "failed"]),
       outcomeCode: z.string().min(1).max(160),
-    }).strict().parse(input);
+    }).parse(input);
     const identity = this.identity();
     if (identity.automation_id !== request.automationId || identity.workspace_id !== request.workspaceId) {
       throw new Error("automation_identity_mismatch");
@@ -2352,7 +2352,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   /** Admit one matched external event exactly once; execution provisioning is a later durable lane. */
   async admitExternalEvent(input: unknown): Promise<{ admitted: boolean; outcomeCode: string }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       automationId: z.string().min(1),
       workspaceId: z.string().min(1),
@@ -2362,7 +2362,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       eventType: z.string().min(1),
       occurredAt: z.number().int().nonnegative(),
       payloadHash: z.string().min(1),
-    }).strict().parse(input);
+    }).parse(input);
     const identity = this.identity();
     if (
       identity.automation_id !== request.automationId

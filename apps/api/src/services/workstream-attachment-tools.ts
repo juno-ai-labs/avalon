@@ -75,7 +75,7 @@ export interface WorkstreamAttachmentToolOptions {
 }
 
 const ListCursorStateSchema = z.discriminatedUnion("mode", [
-  z.object({
+  z.strictObject({
     mode: z.literal("database"),
     fingerprint: z.string().min(1).max(100),
     attachmentKind: AttachmentKindSchema.nullable(),
@@ -83,24 +83,24 @@ const ListCursorStateSchema = z.discriminatedUnion("mode", [
     afterAttachedAt: z.string().datetime({ offset: true }),
     afterResourceId: z.string().uuid(),
     asOf: z.string().datetime({ offset: true }),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     mode: z.literal("in_memory"),
     fingerprint: z.string().min(1).max(100),
     attachmentKind: AttachmentKindSchema.nullable(),
     limit: z.number().int().min(1).max(50),
     nextIndex: z.number().int().nonnegative(),
     asOf: z.string().datetime({ offset: true }),
-  }).strict(),
+  }),
 ]);
 
-const ReadCursorStateSchema = z.object({
+const ReadCursorStateSchema = z.strictObject({
   resourceId: z.string().uuid(),
   sha256: z.string().min(1).max(128),
   extractorVersion: z.string().min(1).max(160),
   start: z.number().int().nonnegative(),
   pageSize: z.number().int().min(1).max(MAXIMUM_READ_CHARACTERS),
-}).strict();
+});
 
 class AttachmentOperationError extends Error {
   constructor(readonly code: string, message: string, readonly details?: Record<string, unknown>) {

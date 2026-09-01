@@ -36,16 +36,16 @@ import type { Env } from "./env";
 import { durableObjectStubForWorkspace } from "./lib/durable-object-namespace";
 import { parseRpcInput } from "./lib/rpc-contracts";
 
-const WorkspaceInventoryRowSchema = z.object({
+const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
   name: z.string(),
   slug: z.string(),
   region: z.enum(["global", "eu"]),
   placement_affinity: z.string(),
   authority_state: z.string().nullable(),
-}).strict();
+});
 
-const WorkstreamDirectoryRowSchema = z.object({
+const WorkstreamDirectoryRowSchema = z.strictObject({
   workstream_id: z.string(),
   title: z.string(),
   scope: z.string(),
@@ -53,11 +53,11 @@ const WorkstreamDirectoryRowSchema = z.object({
   system_kind: z.string().nullable(),
   last_activity_at: z.number().int().nonnegative(),
   archived_at: z.number().int().nonnegative().nullable(),
-}).strict();
+});
 
-const SubstreamDirectoryRowSchema = z.object({
+const SubstreamDirectoryRowSchema = z.strictObject({
   substream_id: z.string(),
-}).strict();
+});
 
 async function workspaceStub(env: Env, workspaceId: string) {
   const brandedWorkspaceId = asWorkspaceId(workspaceId);

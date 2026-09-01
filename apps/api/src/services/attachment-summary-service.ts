@@ -6,17 +6,17 @@ import { runStructuredInference } from "./structured-inference";
 const MAX_SAMPLED_CHARACTERS = 80_000;
 const MAX_SAMPLE_SEGMENTS = 8;
 
-const AttachmentSummarySchema = z.object({
-  outline: z.array(z.object({
+const AttachmentSummarySchema = z.strictObject({
+  outline: z.array(z.strictObject({
     heading: z.string().max(200),
     sourceId: z.string().max(40),
-  }).strict()).max(50),
+  })).max(50),
   summary: z.string().max(20_000),
-  citations: z.array(z.object({
+  citations: z.array(z.strictObject({
     label: z.string().max(200),
     sourceId: z.string().max(40),
-  }).strict()).max(50),
-}).strict();
+  })).max(50),
+});
 type InferredAttachmentSummary = z.infer<typeof AttachmentSummarySchema>;
 
 export interface AttachmentSummaryRequest {

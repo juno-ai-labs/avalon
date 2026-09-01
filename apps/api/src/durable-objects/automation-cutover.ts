@@ -6,10 +6,10 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { automationAgentName } from "./names";
 import { canonicalTranscriptJson } from "./ordered-transcript-sqlite/canonical-payload-store";
 
-const CutoverRequestSchema = z.object({
+const CutoverRequestSchema = z.strictObject({
   workspaceId: z.string().uuid(),
   expectedDraftIds: z.array(z.string().uuid()),
-}).strict();
+});
 
 type ProjectionWriter = (input: unknown) => Promise<{ applied: boolean }>;
 
@@ -360,7 +360,7 @@ export async function cutoverWorkspaceAutomations(input: {
         ? run.started_at === null ? String(run.created_at) : String(run.started_at)
         : String(run.completed_at)) ?? 0,
     }));
-    const principal = z.object({ userId: z.string().uuid().optional() }).passthrough()
+    const principal = z.looseObject({ userId: z.string().uuid().optional() })
       .parse(JSON.parse(String(row.execution_principal_json)));
     const authorUserId = row.owner_user_id === null
       ? principal.userId ?? String(row.template_owner_user_id)

@@ -27,54 +27,54 @@ type TerminalToolExecutor = (input: unknown, context: HarnessToolContext) => Pro
 export type TerminalToolExecutors = Record<TerminalToolName, TerminalToolExecutor>;
 
 const relativePath = z.string().min(1).max(4_096);
-const readFileArguments = z.object({
+const readFileArguments = z.strictObject({
   filePath: relativePath,
   offset: z.number().int().positive().optional(),
   limit: z.number().int().positive().max(1_000).optional(),
-}).strict();
-const editFileArguments = z.object({
+});
+const editFileArguments = z.strictObject({
   filePath: relativePath,
   oldString: z.string().max(1_048_576),
   newString: z.string().max(1_048_576),
   replaceAll: z.boolean().optional(),
-}).strict();
-const writeFileArguments = z.object({
+});
+const writeFileArguments = z.strictObject({
   filePath: relativePath,
   content: z.string().max(10 * 1_048_576),
-}).strict();
-const applyPatchArguments = z.object({
+});
+const applyPatchArguments = z.strictObject({
   patch: z.string().min(1).max(2 * 1_048_576),
-}).strict();
-const runCommandArguments = z.object({
+});
+const runCommandArguments = z.strictObject({
   command: z.string().min(1).max(32 * 1_024),
   cwd: relativePath.optional(),
   timeoutMs: z.number().int().positive().max(900_000).optional(),
   description: z.string().min(1).max(240).optional(),
-}).strict();
-const checkoutRepositoryArguments = z.object({
+});
+const checkoutRepositoryArguments = z.strictObject({
   repositoryFullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
   requiredRemoteAccess: z.enum(["read_only", "full_access"]).default("read_only"),
-}).strict();
+});
 // The wire schema no longer declares the destinationPath/overwrite pairing, so
 // this message is the model's only feedback on it; see `SearchInputSchema` in
 // `memory-service.ts` for why a union's default reads backwards.
 const importResourceArguments = z.union([
-  z.object({ resourceId: z.string().uuid() }).strict(),
-  z.object({
+  z.strictObject({ resourceId: z.string().uuid() }),
+  z.strictObject({
     resourceId: z.string().uuid(),
     destinationPath: relativePath,
     overwrite: z.boolean().optional(),
-  }).strict(),
+  }),
 ], { error: "Send resourceId alone for deterministic placement, or resourceId with destinationPath. overwrite is only accepted alongside destinationPath." });
-const publishResourceArguments = z.object({
+const publishResourceArguments = z.strictObject({
   filePath: relativePath,
   displayName: z.string().min(1).max(300).optional(),
   description: z.string().max(2_000).optional(),
-}).strict();
-const publishBranchAndPrArguments = z.object({
+});
+const publishBranchAndPrArguments = z.strictObject({
   title: z.string().min(1).max(256),
   body: z.string().max(65_536),
-}).strict();
+});
 
 export const TerminalArgumentSchemas = {
   read_file: readFileArguments,

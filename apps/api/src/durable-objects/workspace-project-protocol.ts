@@ -20,15 +20,15 @@ export const WorkspaceProjectErrorCodeSchema = z.enum([
 ]);
 export type WorkspaceProjectErrorCode = z.infer<typeof WorkspaceProjectErrorCodeSchema>;
 
-const WorkspaceProjectFailureSchema = z.object({
+const WorkspaceProjectFailureSchema = z.strictObject({
   ok: z.literal(false),
   code: WorkspaceProjectErrorCodeSchema,
-}).strict();
+});
 
-const WorkspaceProjectActorSchema = z.object({
+const WorkspaceProjectActorSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   userId: UserIdSchema,
-}).strict();
+});
 
 export const WorkspaceProjectCreateRequestSchema = WorkspaceProjectActorSchema.extend({
   project: CreateProjectRequestSchema,
@@ -70,10 +70,10 @@ export const WorkspaceProjectWorkstreamConstraintRequestSchema = WorkspaceProjec
   workstreamId: WorkstreamIdSchema,
 }).strict();
 export type WorkspaceProjectWorkstreamConstraintRequest = z.infer<typeof WorkspaceProjectWorkstreamConstraintRequestSchema>;
-export const WorkspaceProjectWorkstreamConstraintResultSchema = z.object({
+export const WorkspaceProjectWorkstreamConstraintResultSchema = z.strictObject({
   activeProject: z.boolean(),
   requiresWorkspaceScope: z.boolean(),
-}).strict();
+});
 export type WorkspaceProjectWorkstreamConstraintResult = z.infer<typeof WorkspaceProjectWorkstreamConstraintResultSchema>;
 
 export const WorkspaceProjectMembershipSettleRequestSchema = WorkspaceProjectMembershipPrepareRequestSchema.extend({
@@ -83,13 +83,13 @@ export const WorkspaceProjectMembershipSettleRequestSchema = WorkspaceProjectMem
 }).strict();
 export type WorkspaceProjectMembershipSettleRequest = z.infer<typeof WorkspaceProjectMembershipSettleRequestSchema>;
 
-export const WorkspaceProjectMembershipPlanSchema = z.object({
+export const WorkspaceProjectMembershipPlanSchema = z.strictObject({
   ok: z.literal(true),
   project: ProjectSummarySchema,
   sourceProjectId: ProjectIdSchema.nullable(),
   sourceDetached: z.boolean(),
   membershipGeneration: z.number().int().positive(),
-}).strict();
+});
 export const WorkspaceProjectMembershipPlanResultSchema = z.union([
   WorkspaceProjectMembershipPlanSchema,
   WorkspaceProjectFailureSchema,
@@ -102,21 +102,21 @@ export const WorkspaceProjectDefaultResourceRequestSchema = WorkspaceProjectActo
 }).strict();
 export type WorkspaceProjectDefaultResourceRequest = z.infer<typeof WorkspaceProjectDefaultResourceRequestSchema>;
 
-export const WorkspaceProjectDefaultTargetSchema = z.object({
+export const WorkspaceProjectDefaultTargetSchema = z.strictObject({
   projectId: ProjectIdSchema,
   resourceId: IdSchema,
   defaultGeneration: z.number().int().positive(),
   workstreamId: WorkstreamIdSchema,
   membershipGeneration: z.number().int().positive(),
-}).strict();
+});
 export type WorkspaceProjectDefaultTarget = z.infer<typeof WorkspaceProjectDefaultTargetSchema>;
 
 export const WorkspaceProjectDefaultResultSchema = z.union([
-  z.object({
+  z.strictObject({
     ok: z.literal(true),
     project: ProjectSummarySchema,
     targets: z.array(WorkspaceProjectDefaultTargetSchema),
-  }).strict(),
+  }),
   WorkspaceProjectFailureSchema,
 ]);
 export type WorkspaceProjectDefaultResult = z.infer<typeof WorkspaceProjectDefaultResultSchema>;
@@ -130,13 +130,13 @@ export const ProjectDefaultResourceQueueMessageSchema = WorkspaceProjectDefaultT
 export type ProjectDefaultResourceQueueMessage = z.infer<typeof ProjectDefaultResourceQueueMessageSchema>;
 
 export const WorkspaceProjectMutationResultSchema = z.union([
-  z.object({ ok: z.literal(true), project: ProjectSummarySchema }).strict(),
+  z.strictObject({ ok: z.literal(true), project: ProjectSummarySchema }),
   WorkspaceProjectFailureSchema,
 ]);
 export type WorkspaceProjectMutationResult = z.infer<typeof WorkspaceProjectMutationResultSchema>;
 
 export const WorkspaceProjectDirectoryResultSchema = z.union([
-  z.object({ ok: z.literal(true), directory: ProjectDirectorySchema }).strict(),
+  z.strictObject({ ok: z.literal(true), directory: ProjectDirectorySchema }),
   WorkspaceProjectFailureSchema,
 ]);
 export type WorkspaceProjectDirectoryResult = z.infer<typeof WorkspaceProjectDirectoryResultSchema>;

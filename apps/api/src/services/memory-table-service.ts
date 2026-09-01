@@ -57,15 +57,15 @@ interface FilterPredicate {
 
 type FilterNode = FilterPredicate | { all: FilterNode[] } | { any: FilterNode[] };
 
-const ColumnSchema = z.object({
+const ColumnSchema = z.strictObject({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(800),
   type: z.enum(["string", "url", "number", "integer", "boolean", "datetime", "date"]),
   required: z.boolean().default(false),
   searchable: z.boolean().default(false),
-}).strict();
+});
 
-const CreateSchema = z.object({
+const CreateSchema = z.strictObject({
   scopeKind: z.enum(MEMORY_SCOPE_KINDS),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(1_200),
@@ -73,61 +73,61 @@ const CreateSchema = z.object({
   columns: z.array(ColumnSchema).min(1),
   keyColumns: z.array(z.string().trim().min(1).max(120)).min(1),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
+});
 
-const PredicateSchema = z.object({
+const PredicateSchema = z.strictObject({
   column: z.string().min(1),
   op: z.enum([
     "eq", "neq", "in", "not_in", "gt", "gte", "lt", "lte", "between",
     "contains", "not_contains", "starts_with", "ends_with", "is_null", "is_not_null",
   ]),
   value: z.unknown().optional(),
-}).strict();
+});
 
 const FilterSchema: z.ZodType<FilterNode> = z.lazy(() => z.union([
   PredicateSchema,
-  z.object({ all: z.array(FilterSchema) }).strict(),
-  z.object({ any: z.array(FilterSchema) }).strict(),
+  z.strictObject({ all: z.array(FilterSchema) }),
+  z.strictObject({ any: z.array(FilterSchema) }),
 ]));
 
-const QuerySchema = z.object({
+const QuerySchema = z.strictObject({
   memoryTableId: z.string().min(1),
   memoryTableRowIds: z.array(z.string().min(1)).min(1).max(100).optional(),
   search: z.string().trim().min(1).max(2_000).optional(),
   filter: FilterSchema.optional(),
-  orderBy: z.array(z.object({
+  orderBy: z.array(z.strictObject({
     column: z.string().min(1),
     direction: z.enum(["asc", "desc"]),
-  }).strict()).optional(),
+  })).optional(),
   select: z.array(z.string().min(1)).optional(),
   pageSize: z.number().int().min(1).max(100).optional(),
   cursor: z.string().min(1).optional(),
-}).strict();
+});
 
-const InsertSchema = z.object({
+const InsertSchema = z.strictObject({
   memoryTableId: z.string().min(1),
   rows: z.array(z.record(z.string(), z.unknown())).min(1),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
+});
 
-const UpdateSchema = z.object({
+const UpdateSchema = z.strictObject({
   memoryTableId: z.string().min(1),
-  rows: z.array(z.object({
+  rows: z.array(z.strictObject({
     memoryTableRowId: z.string().min(1),
     expectedRevision: z.number().int().positive(),
     values: z.record(z.string(), z.unknown()),
-  }).strict()).min(1),
+  })).min(1),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
+});
 
-const InvalidateSchema = z.object({
+const InvalidateSchema = z.strictObject({
   memoryTableId: z.string().min(1),
-  rows: z.array(z.object({
+  rows: z.array(z.strictObject({
     memoryTableRowId: z.string().min(1),
     expectedRevision: z.number().int().positive(),
-  }).strict()).min(1),
+  })).min(1),
   reason: z.string().trim().min(1).max(2_000),
-}).strict();
+});
 
 class MemoryTableToolError extends Error {
   override readonly name = "MemoryTableToolError";
@@ -151,8 +151,8 @@ function memoryTableRevisionConflict(code = "memory_table_revision_conflict"): M
   );
 }
 
-const SearchSchema = z.object({ query: z.string().trim().min(1).max(2_000) }).strict();
-const DescribeSchema = z.object({ memoryTableId: z.string().min(1) }).strict();
+const SearchSchema = z.strictObject({ query: z.string().trim().min(1).max(2_000) });
+const DescribeSchema = z.strictObject({ memoryTableId: z.string().min(1) });
 
 /** The WorkspaceDO that owns this workspace's durable-table storage. */
 function workspaceMemoryObject(env: Env, workspaceId: string) {

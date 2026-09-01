@@ -222,7 +222,7 @@ export const SlackAgentPluginDescriptor = defineConnectorAgentPlugin({
   tools: slackTools,
 });
 
-const SlackIngressEnvelopeSchema = z.object({
+const SlackIngressEnvelopeSchema = z.looseObject({
   token: z.string().optional(),
   team_id: z.string().min(1).optional(),
   api_app_id: z.string().min(1).optional(),
@@ -232,7 +232,7 @@ const SlackIngressEnvelopeSchema = z.object({
   challenge: z.string().optional(),
   event: z.record(z.string(), z.unknown()).optional(),
   authorizations: z.array(z.record(z.string(), z.unknown())).optional(),
-}).passthrough();
+});
 
 export type SlackIngressEnvelope = z.infer<typeof SlackIngressEnvelopeSchema>;
 
@@ -454,14 +454,14 @@ function slackTimestampIso(timestamp: string | null, eventTime?: number): string
  * always what the event carried — a DM opens its channel and posts its own
  * thread root before there is anything to reply under.
  */
-export const SlackAgentSessionOriginSchema = z.object({
+export const SlackAgentSessionOriginSchema = z.strictObject({
   teamId: z.string().min(1).max(255),
   channelId: z.string().min(1).max(255),
   threadTs: z.string().min(1).max(80),
   channelName: z.string().min(1).max(255).nullable().default(null),
   channelType: z.enum(["public", "private", "im", "unknown"]).default("unknown"),
   invocationType: z.string().min(1).max(80).nullable().default(null),
-}).strict();
+});
 
 export type SlackAgentSessionOrigin = z.input<typeof SlackAgentSessionOriginSchema>;
 
@@ -676,14 +676,14 @@ const SlackTimestampSchema = z.string().min(1);
  * for the state, used when Slack rejects a configured emoji as `invalid_name` —
  * Slack has no way to check a name in advance, so the check is the use.
  */
-export const SlackAgentReactionCommandSchema = z.object({
+export const SlackAgentReactionCommandSchema = z.strictObject({
   kind: z.literal("reaction"),
   channelId: SlackIdSchema,
   timestamp: SlackTimestampSchema,
   add: SlackEmojiNameSchema.nullable().default(null),
   remove: SlackEmojiNameSchema.nullable().default(null),
   fallback: SlackEmojiNameSchema.nullable().default(null),
-}).strict();
+});
 export type SlackAgentReactionCommand = z.input<typeof SlackAgentReactionCommandSchema>;
 export interface SlackAgentReactionResult {
   success: true;
@@ -695,8 +695,8 @@ export interface SlackAgentReactionResult {
 }
 const SlackBlockSchema = z.record(z.string(), z.unknown());
 const SlackViewSchema = z.record(z.string(), z.unknown()).refine((view) => typeof view.type === "string", "Slack view type is required");
-const SlackOkSchema = z.object({ ok: z.literal(true) }).passthrough();
-const SlackChannelSchema = z.object({ id: SlackIdSchema }).passthrough();
+const SlackOkSchema = z.looseObject({ ok: z.literal(true) });
+const SlackChannelSchema = z.looseObject({ id: SlackIdSchema });
 const SlackConversationSchema = SlackChannelSchema.extend({
   name: z.string().optional(),
   // Optional because Slack omits it entirely on an `im` response. Consumers
@@ -717,7 +717,7 @@ const SlackListedPublicChannelSchema = SlackChannelSchema.extend({
 });
 const SlackMessageResponseSchema = SlackOkSchema.extend({ channel: SlackIdSchema, ts: SlackTimestampSchema });
 const SlackStreamResponseSchema = SlackOkSchema.extend({ channel: SlackIdSchema, ts: SlackTimestampSchema });
-const SlackHistoryFileSchema = z.object({
+const SlackHistoryFileSchema = z.looseObject({
   id: SlackIdSchema.optional(),
   name: z.string().optional(),
   title: z.string().optional(),
@@ -727,8 +727,8 @@ const SlackHistoryFileSchema = z.object({
   url_private: HttpsUrlSchema.optional(),
   url_private_download: HttpsUrlSchema.optional(),
   permalink: z.string().optional(),
-}).passthrough();
-const SlackHistoryMessageSchema = z.object({
+});
+const SlackHistoryMessageSchema = z.looseObject({
   type: z.string().optional(),
   ts: SlackTimestampSchema,
   user: SlackIdSchema.optional(),
@@ -737,13 +737,13 @@ const SlackHistoryMessageSchema = z.object({
   thread_ts: SlackTimestampSchema.optional(),
   files: z.array(SlackHistoryFileSchema).optional(),
   attachments: z.array(z.record(z.string(), z.unknown())).optional(),
-}).passthrough();
+});
 const SlackHistoryResponseSchema = SlackOkSchema.extend({
   messages: z.array(SlackHistoryMessageSchema),
   has_more: z.boolean().optional(),
-  response_metadata: z.object({ next_cursor: z.string().optional() }).passthrough().optional(),
+  response_metadata: z.looseObject({ next_cursor: z.string().optional() }).optional(),
 });
-const SlackUserSchema = z.object({
+const SlackUserSchema = z.looseObject({
   id: SlackIdSchema,
   team_id: SlackIdSchema,
   name: z.string().optional(),
@@ -753,24 +753,24 @@ const SlackUserSchema = z.object({
   is_app_user: z.boolean().optional(),
   is_restricted: z.boolean().optional(),
   is_ultra_restricted: z.boolean().optional(),
-  profile: z.object({
+  profile: z.looseObject({
     display_name: z.string().optional(),
     real_name: z.string().optional(),
     email: z.string().max(254).optional(),
     image_192: z.string().max(2_000).optional(),
     image_72: z.string().max(2_000).optional(),
-  }).passthrough().optional(),
-}).passthrough();
-const SlackSearchResultsSchema = z.object({
+  }).optional(),
+});
+const SlackSearchResultsSchema = z.looseObject({
   messages: z.array(z.record(z.string(), z.unknown())).optional(),
   files: z.array(z.record(z.string(), z.unknown())).optional(),
   channels: z.array(z.record(z.string(), z.unknown())).optional(),
   users: z.array(z.record(z.string(), z.unknown())).optional(),
   next_cursor: z.string().optional(),
-}).passthrough();
+});
 const SlackWebApiSchemas = {
   "assistant.search.context": {
-    request: z.object({
+    request: z.strictObject({
       query: z.string().min(1).max(4_000),
       action_token: z.string().min(1).max(4_096).optional(),
       channel_types: z.array(z.enum(["public_channel", "private_channel", "mpim", "im"])).min(1).max(4).optional(),
@@ -785,18 +785,18 @@ const SlackWebApiSchemas = {
       limit: z.number().int().min(1).max(20).optional(),
       sort: z.enum(["score", "timestamp"]).optional(),
       sort_dir: z.enum(["asc", "desc"]).optional(),
-    }).strict(),
+    }),
     response: SlackOkSchema.extend({ results: SlackSearchResultsSchema }),
   },
   "assistant.threads.setStatus": {
-    request: z.object({ channel_id: SlackIdSchema, thread_ts: SlackTimestampSchema, status: z.string() }).strict(),
+    request: z.strictObject({ channel_id: SlackIdSchema, thread_ts: SlackTimestampSchema, status: z.string() }),
     response: SlackOkSchema,
   },
   "assistant.threads.setTitle": {
-    request: z.object({ channel_id: SlackIdSchema, thread_ts: SlackTimestampSchema, title: z.string().min(1) }).strict(),
+    request: z.strictObject({ channel_id: SlackIdSchema, thread_ts: SlackTimestampSchema, title: z.string().min(1) }),
     response: SlackOkSchema,
   },
-  "auth.revoke": { request: z.object({}).strict(), response: SlackOkSchema.extend({ revoked: z.boolean().optional() }) },
+  "auth.revoke": { request: z.strictObject({}), response: SlackOkSchema.extend({ revoked: z.boolean().optional() }) },
   // `user_id` is optional only because `auth.test` is also called for its
   // `x-oauth-scopes` header alone. Slack itself always names the principal a
   // token belongs to, which is what makes this the authority for a personal
@@ -805,149 +805,149 @@ const SlackWebApiSchemas = {
   // never the missing field, and a second source for it would be one more
   // shape nothing reads.
   "auth.test": {
-    request: z.object({}).strict(),
+    request: z.strictObject({}),
     response: SlackOkSchema.extend({ user_id: z.string().min(1).optional() }),
   },
   "chat.getPermalink": {
-    request: z.object({ channel: SlackIdSchema, message_ts: SlackTimestampSchema }).strict(),
+    request: z.strictObject({ channel: SlackIdSchema, message_ts: SlackTimestampSchema }),
     response: SlackOkSchema.extend({ permalink: HttpsUrlSchema }),
   },
   "chat.postMessage": {
-    request: z.object({
+    request: z.strictObject({
       channel: SlackIdSchema,
       text: z.string().min(1).max(40_000),
       thread_ts: SlackTimestampSchema.optional(),
       client_msg_id: z.string().uuid().optional(),
       blocks: z.array(SlackBlockSchema).max(50).optional(),
-    }).strict(),
+    }),
     response: SlackMessageResponseSchema,
   },
   // Kept only to close placeholder streams created by versions deployed before
   // external delivery became saved-turn-only. Starting and appending streams
   // are intentionally absent from the callable method contract.
   "chat.stopStream": {
-    request: z.object({ channel: SlackIdSchema, ts: SlackTimestampSchema, blocks: z.array(SlackBlockSchema).max(50).optional() }).strict(),
+    request: z.strictObject({ channel: SlackIdSchema, ts: SlackTimestampSchema, blocks: z.array(SlackBlockSchema).max(50).optional() }),
     response: SlackStreamResponseSchema,
   },
   "chat.unfurl": {
-    request: z.object({ channel: SlackIdSchema, ts: SlackTimestampSchema, unfurls: z.record(z.string(), z.unknown()) }).strict(),
+    request: z.strictObject({ channel: SlackIdSchema, ts: SlackTimestampSchema, unfurls: z.record(z.string(), z.unknown()) }),
     response: SlackOkSchema,
   },
   "conversations.open": {
-    request: z.object({ users: SlackIdSchema }).strict(),
+    request: z.strictObject({ users: SlackIdSchema }),
     response: SlackOkSchema.extend({ channel: SlackChannelSchema }),
   },
   "conversations.create": {
-    request: z.object({
+    request: z.strictObject({
       name: z.string().min(1).max(80).regex(/^[a-z0-9_-]+$/u),
       is_private: z.boolean().optional(),
-    }).strict(),
+    }),
     response: SlackOkSchema.extend({ channel: SlackConversationSchema }),
   },
   "conversations.history": {
-    request: z.object({
+    request: z.strictObject({
       channel: SlackIdSchema,
       cursor: z.string().min(1).optional(),
       oldest: SlackTimestampSchema.optional(),
       latest: SlackTimestampSchema.optional(),
       inclusive: z.boolean().optional(),
       limit: z.number().int().min(1).max(100).optional(),
-    }).strict(),
+    }),
     response: SlackHistoryResponseSchema,
   },
   "conversations.info": {
-    request: z.object({ channel: SlackIdSchema }).strict(),
+    request: z.strictObject({ channel: SlackIdSchema }),
     response: SlackOkSchema.extend({ channel: SlackConversationSchema }),
   },
   "conversations.join": {
-    request: z.object({ channel: SlackIdSchema }).strict(),
+    request: z.strictObject({ channel: SlackIdSchema }),
     response: SlackOkSchema.extend({
       channel: SlackChannelSchema,
       warning: z.string().optional(),
     }),
   },
   "conversations.list": {
-    request: z.object({
+    request: z.strictObject({
       cursor: z.string().min(1).optional(),
       exclude_archived: z.boolean().optional(),
       limit: z.number().int().min(1).max(999).optional(),
       types: z.string().regex(/^(?:public_channel|private_channel|mpim|im)(?:,(?:public_channel|private_channel|mpim|im))*$/u).optional(),
-    }).strict(),
+    }),
     response: SlackOkSchema.extend({
       channels: z.array(SlackListedPublicChannelSchema),
-      response_metadata: z.object({ next_cursor: z.string().optional() }).passthrough().optional(),
+      response_metadata: z.looseObject({ next_cursor: z.string().optional() }).optional(),
     }),
   },
   "conversations.members": {
-    request: z.object({
+    request: z.strictObject({
       channel: SlackIdSchema,
       cursor: z.string().min(1).optional(),
       limit: z.number().int().min(1).max(200).optional(),
-    }).strict(),
+    }),
     response: SlackOkSchema.extend({
       members: z.array(SlackIdSchema),
-      response_metadata: z.object({ next_cursor: z.string().optional() }).passthrough().optional(),
+      response_metadata: z.looseObject({ next_cursor: z.string().optional() }).optional(),
     }),
   },
   "conversations.replies": {
-    request: z.object({
+    request: z.strictObject({
       channel: SlackIdSchema,
       ts: SlackTimestampSchema,
       latest: SlackTimestampSchema.optional(),
       cursor: z.string().min(1).optional(),
       inclusive: z.boolean().optional(),
       limit: z.number().int().min(1).max(100).optional(),
-    }).strict(),
+    }),
     response: SlackHistoryResponseSchema,
   },
   "files.info": {
-    request: z.object({ file: SlackIdSchema }).strict(),
+    request: z.strictObject({ file: SlackIdSchema }),
     response: SlackOkSchema.extend({ file: SlackHistoryFileSchema }),
   },
   "reactions.add": {
-    request: z.object({
+    request: z.strictObject({
       channel: SlackIdSchema,
       timestamp: SlackTimestampSchema,
       name: SlackEmojiNameSchema,
-    }).strict(),
+    }),
     response: SlackOkSchema,
   },
   "reactions.remove": {
-    request: z.object({
+    request: z.strictObject({
       channel: SlackIdSchema,
       timestamp: SlackTimestampSchema,
       name: SlackEmojiNameSchema,
-    }).strict(),
+    }),
     response: SlackOkSchema,
   },
-  "team.billing.info": { request: z.object({}).strict(), response: SlackOkSchema.extend({ plan: z.string().min(1) }) },
+  "team.billing.info": { request: z.strictObject({}), response: SlackOkSchema.extend({ plan: z.string().min(1) }) },
   "users.lookupByEmail": {
-    request: z.object({ email: z.string().email().max(254) }).strict(),
+    request: z.strictObject({ email: z.string().email().max(254) }),
     response: SlackOkSchema.extend({
       user: SlackUserSchema,
     }),
   },
   "users.info": {
-    request: z.object({ user: SlackIdSchema }).strict(),
+    request: z.strictObject({ user: SlackIdSchema }),
     response: SlackOkSchema.extend({ user: SlackUserSchema }),
   },
   "users.list": {
-    request: z.object({
+    request: z.strictObject({
       cursor: z.string().min(1).optional(),
       include_locale: z.boolean().optional(),
       limit: z.number().int().min(1).max(200).optional(),
-    }).strict(),
+    }),
     response: SlackOkSchema.extend({
       members: z.array(SlackUserSchema),
-      response_metadata: z.object({ next_cursor: z.string().optional() }).passthrough().optional(),
+      response_metadata: z.looseObject({ next_cursor: z.string().optional() }).optional(),
     }),
   },
   "views.open": {
-    request: z.object({ trigger_id: z.string().min(1), view: SlackViewSchema }).strict(),
+    request: z.strictObject({ trigger_id: z.string().min(1), view: SlackViewSchema }),
     response: SlackOkSchema.extend({ view: z.record(z.string(), z.unknown()).optional() }),
   },
   "views.publish": {
-    request: z.object({ user_id: SlackIdSchema, view: SlackViewSchema, hash: z.string().min(1).optional() }).strict(),
+    request: z.strictObject({ user_id: SlackIdSchema, view: SlackViewSchema, hash: z.string().min(1).optional() }),
     response: SlackOkSchema.extend({ view: z.record(z.string(), z.unknown()).optional() }),
   },
 } as const;
@@ -956,12 +956,12 @@ export type SlackWebApiMethod = keyof typeof SlackWebApiSchemas;
 export type SlackApiRequest<M extends SlackWebApiMethod> = z.input<(typeof SlackWebApiSchemas)[M]["request"]>;
 export type SlackApiResponse<M extends SlackWebApiMethod> = z.output<(typeof SlackWebApiSchemas)[M]["response"]>;
 
-const SlackApiErrorSchema = z.object({
+const SlackApiErrorSchema = z.looseObject({
   ok: z.literal(false),
   error: z.string().min(1),
-}).passthrough();
+});
 
-const SlackOAuthSuccessSchema = z.object({
+const SlackOAuthSuccessSchema = z.looseObject({
   ok: z.literal(true),
   access_token: z.string().min(1).optional(),
   scope: z.string().optional(),
@@ -969,38 +969,38 @@ const SlackOAuthSuccessSchema = z.object({
   app_id: z.string().min(1).optional(),
   expires_in: z.number().int().positive().optional(),
   refresh_token: z.string().min(1).optional(),
-  team: z.object({ id: z.string().min(1), name: z.string().optional() }).passthrough(),
-  authed_user: z.object({
+  team: z.looseObject({ id: z.string().min(1), name: z.string().optional() }),
+  authed_user: z.looseObject({
     id: z.string().min(1).optional(),
     access_token: z.string().min(1).optional(),
     scope: z.string().optional(),
     expires_in: z.number().int().positive().optional(),
     refresh_token: z.string().min(1).optional(),
-  }).passthrough().optional(),
+  }).optional(),
   authed_user_id: z.string().min(1).optional(),
-}).passthrough();
+});
 
-const SlackRefreshSuccessSchema = z.object({
+const SlackRefreshSuccessSchema = z.looseObject({
   ok: z.literal(true),
   access_token: z.string().min(1).optional(),
   scope: z.string().optional(),
   expires_in: z.number().int().positive().optional(),
   refresh_token: z.string().min(1).optional(),
-  authed_user: z.object({
+  authed_user: z.looseObject({
     access_token: z.string().min(1).optional(),
     scope: z.string().optional(),
     expires_in: z.number().int().positive().optional(),
     refresh_token: z.string().min(1).optional(),
-  }).passthrough().optional(),
-}).passthrough();
+  }).optional(),
+});
 
 const SlackDirectInputSchemas = {
-  search: z.object({
+  search: z.strictObject({
     query: z.string().min(1).max(4_000),
     limit: z.number().int().min(1).max(20).optional(),
     cursor: z.string().min(1).max(2_000).nullable().optional(),
-  }).strict(),
-  search_messages: z.object({
+  }),
+  search_messages: z.strictObject({
     query: z.string().min(1).max(4_000),
     channel_id: SlackIdSchema.nullable().optional(),
     author_user_id: SlackIdSchema.nullable().optional(),
@@ -1011,45 +1011,45 @@ const SlackDirectInputSchemas = {
     include_bots: z.boolean().optional(),
     limit: z.number().int().min(1).max(20).optional(),
     cursor: z.string().min(1).max(2_000).nullable().optional(),
-  }).strict(),
-  find_users: z.object({
+  }),
+  find_users: z.strictObject({
     query: z.string().min(1).max(500),
     include_deleted: z.boolean().optional(),
     limit: z.number().int().min(1).max(200).optional(),
-  }).strict(),
-  find_channels: z.object({
+  }),
+  find_channels: z.strictObject({
     query: z.string().min(1).max(500),
     include_archived: z.boolean().optional(),
     limit: z.number().int().min(1).max(200).optional(),
-  }).strict(),
-  read_message_context: z.object({
+  }),
+  read_message_context: z.strictObject({
     channel_id: SlackIdSchema,
     message_ts: SlackTimestampSchema,
     before: z.number().int().min(0).max(50).optional(),
     after: z.number().int().min(0).max(50).optional(),
-  }).strict(),
-  read_channel: z.object({
+  }),
+  read_channel: z.strictObject({
     channel_id: SlackIdSchema,
     limit: z.number().int().min(1).max(100).optional(),
     cursor: z.string().min(1).nullable().optional(),
-  }).strict(),
-  read_thread: z.object({
+  }),
+  read_thread: z.strictObject({
     channel_id: SlackIdSchema,
     thread_ts: SlackTimestampSchema,
     limit: z.number().int().min(1).max(100).optional(),
     cursor: z.string().min(1).nullable().optional(),
-  }).strict(),
-  read_file: z.object({ file_id: SlackIdSchema }).strict(),
-  send_message: z.object({
+  }),
+  read_file: z.strictObject({ file_id: SlackIdSchema }),
+  send_message: z.strictObject({
     channel_id: SlackIdSchema,
     text: z.string().min(1).max(40_000),
     thread_ts: SlackTimestampSchema.nullable().optional(),
-  }).strict(),
-  create_conversation: z.object({
+  }),
+  create_conversation: z.strictObject({
     name: z.string().min(1).max(80).nullable().optional(),
     user_ids: z.array(SlackIdSchema).min(1).max(8).optional(),
     is_private: z.boolean().optional(),
-  }).strict().superRefine((value, context) => {
+  }).superRefine((value, context) => {
     const hasName = Boolean(value.name);
     const hasUsers = Boolean(value.user_ids?.length);
     if (hasName === hasUsers) {
@@ -1059,17 +1059,17 @@ const SlackDirectInputSchemas = {
       });
     }
   }),
-  add_reaction: z.object({
+  add_reaction: z.strictObject({
     channel_id: SlackIdSchema,
     timestamp: SlackTimestampSchema,
     name: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_+-]+$/u),
-  }).strict(),
-  read_user_profile: z.object({ user_id: SlackIdSchema }).strict(),
-  list_channel_members: z.object({
+  }),
+  read_user_profile: z.strictObject({ user_id: SlackIdSchema }),
+  list_channel_members: z.strictObject({
     channel_id: SlackIdSchema,
     limit: z.number().int().min(1).max(200).optional(),
     cursor: z.string().min(1).nullable().optional(),
-  }).strict(),
+  }),
 } as const;
 
 type SlackDirectTool = keyof typeof SlackDirectInputSchemas;

@@ -5,12 +5,12 @@ import {
   type AudioVoice,
 } from "./contract";
 
-const ErrorEnvelopeSchema = z.object({
-  error: z.object({
+const ErrorEnvelopeSchema = z.looseObject({
+  error: z.looseObject({
     code: z.string().optional(),
     message: z.string().optional(),
-  }).passthrough(),
-}).passthrough();
+  }),
+});
 
 export interface AzureAudioResult {
   bytes: Uint8Array;

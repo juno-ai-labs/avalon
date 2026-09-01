@@ -9,7 +9,7 @@ import {
 } from "./object-port-protocol";
 import type { WorkstreamMessageStorage } from "./workstream-message-storage";
 
-export const AppendMessageInputSchema = z.object({
+export const AppendMessageInputSchema = z.strictObject({
   messageId: z.string().min(1),
   clientMessageId: z.string().min(1),
   authorType: z.enum(["agent", "external", "system"]),
@@ -20,7 +20,7 @@ export const AppendMessageInputSchema = z.object({
   structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
   producedByRunId: z.string().min(1).nullable(),
   now: z.number().finite(),
-}).strict();
+});
 
 /**
  * The wire contract for one work stream's transcript.

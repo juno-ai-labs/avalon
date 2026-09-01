@@ -91,12 +91,12 @@ const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 // record lives in the parent's run ledger.
 const DISPATCH_LEDGER_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
-const BlockDashboardBlockIdentityInputSchema = z.object({
+const BlockDashboardBlockIdentityInputSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   blockId: BlockIdSchema,
   region: RegionSchema,
-}).strict();
+});
 type BlockDashboardBlockIdentityInput = z.infer<typeof BlockDashboardBlockIdentityInputSchema>;
 
 const BlockDashboardSocketIdentitySchema = BlockDashboardBlockIdentityInputSchema.extend({
@@ -107,7 +107,7 @@ const BlockDashboardSocketIdentitySchema = BlockDashboardBlockIdentityInputSchem
 }).strict();
 
 const BlockDashboardStreamEventSchema = z.discriminatedUnion("type", [
-  z.object({
+  z.looseObject({
     type: z.literal("stream_started"),
     streamId: z.string().min(1),
     harnessRunId: z.string().min(1),
@@ -117,8 +117,8 @@ const BlockDashboardStreamEventSchema = z.discriminatedUnion("type", [
     reset: z.literal(false),
     sequence: z.number().int().positive(),
     occurredAt: z.string().datetime({ offset: true }),
-  }).passthrough(),
-  z.object({
+  }),
+  z.looseObject({
     type: z.literal("stream_delta"),
     streamId: z.string().min(1),
     harnessRunId: z.string().min(1).optional(),
@@ -129,7 +129,7 @@ const BlockDashboardStreamEventSchema = z.discriminatedUnion("type", [
     reset: z.boolean(),
     sequence: z.number().int().positive(),
     occurredAt: z.string().datetime({ offset: true }),
-  }).passthrough(),
+  }),
 ]);
 
 function applyBlockDashboardStreamEvent(
@@ -205,9 +205,9 @@ const BlockDashboardSocketAttachmentSchema = BlockDashboardSocketIdentitySchema.
 }).strict();
 type BlockDashboardSocketAttachment = z.infer<typeof BlockDashboardSocketAttachmentSchema>;
 
-const TerminalOutcomeSchema = z.object({
+const TerminalOutcomeSchema = z.strictObject({
   run: BlockDashboardBlockRunSchema,
-}).strict();
+});
 type TerminalOutcome = z.infer<typeof TerminalOutcomeSchema>;
 
 interface DispatchRow extends Record<string, SqlStorageValue> {

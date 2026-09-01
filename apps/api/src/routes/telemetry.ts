@@ -60,7 +60,7 @@ publicTelemetryRoutes.get("/route", async (c) => {
   ));
 });
 
-const CrashUploadMetadataSchema = z.object({
+const CrashUploadMetadataSchema = z.strictObject({
   uploadId: z.string().uuid().refine((value) => value[14] === "7"),
   installationId: z.string().uuid().refine((value) => value[14] === "7"),
   route: z.enum(["global", "eu"]),
@@ -71,7 +71,7 @@ const CrashUploadMetadataSchema = z.object({
   processRole: z.enum(["main", "renderer", "utility", "gpu", "unknown"]),
   launchId: z.string().uuid().refine((value) => value[14] === "7"),
   channel: z.enum(["development", "alpha", "beta", "stable"]),
-}).strict();
+});
 
 export async function parseCrashUpload(c: Context<HonoAppEnv>) {
   let form: FormData;

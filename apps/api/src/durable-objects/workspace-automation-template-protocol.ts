@@ -14,7 +14,7 @@ import { z } from "zod";
 const TimestampSchema = z.string().datetime({ offset: true });
 const JsonArraySchema = z.string().min(2);
 
-export const WorkspaceAutomationTemplateVersionInputSchema = z.object({
+export const WorkspaceAutomationTemplateVersionInputSchema = z.strictObject({
   versionId: IdSchema,
   overview: z.string(),
   instructions: z.string(),
@@ -26,16 +26,16 @@ export const WorkspaceAutomationTemplateVersionInputSchema = z.object({
   memoryTablesJson: JsonArraySchema,
   createdByUserId: IdSchema,
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceAutomationTemplatePublishRequestSchema = z.object({
+export const WorkspaceAutomationTemplatePublishRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   templateId: IdSchema,
   ownerUserId: IdSchema,
   name: z.string(),
   description: z.string(),
   version: WorkspaceAutomationTemplateVersionInputSchema,
-}).strict();
+});
 
 /**
  * Does this person own an active template with this id?
@@ -45,23 +45,23 @@ export const WorkspaceAutomationTemplatePublishRequestSchema = z.object({
  * error. The write below fences on ownership again — this preflight decides
  * what a caller is told, not what they are allowed to write.
  */
-export const WorkspaceAutomationTemplateOwnershipRequestSchema = z.object({
+export const WorkspaceAutomationTemplateOwnershipRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   templateId: IdSchema,
   ownerUserId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceAutomationTemplateOwnershipSchema = z.object({
+export const WorkspaceAutomationTemplateOwnershipSchema = z.strictObject({
   owned: z.boolean(),
-}).strict();
+});
 
-export const WorkspaceAutomationTemplateVersionRequestSchema = z.object({
+export const WorkspaceAutomationTemplateVersionRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   templateId: IdSchema,
   /** Only the owner may add a version; the object fences on this, not the caller. */
   ownerUserId: IdSchema,
   version: WorkspaceAutomationTemplateVersionInputSchema,
-}).strict();
+});
 
 /**
  * The new version's number, or that there was no template to add one to.
@@ -78,14 +78,14 @@ export const WorkspaceAutomationTemplateVersionRequestSchema = z.object({
  * whichever lost.
  */
 export const WorkspaceAutomationTemplateVersionResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.literal("added"),
     versionNumber: z.number().int().positive(),
-  }).strict(),
-  z.object({ outcome: z.literal("template_not_found") }).strict(),
+  }),
+  z.strictObject({ outcome: z.literal("template_not_found") }),
 ]);
 
-export const WorkspaceAutomationTemplateSchema = z.object({
+export const WorkspaceAutomationTemplateSchema = z.strictObject({
   id: IdSchema,
   ownerUserId: IdSchema.nullable(),
   name: z.string(),
@@ -93,11 +93,11 @@ export const WorkspaceAutomationTemplateSchema = z.object({
   latestVersionNumber: z.number().int().positive(),
   requiredCapabilitiesJson: z.string(),
   triggerDefinitionsJson: z.string(),
-}).strict();
+});
 
-export const WorkspaceAutomationTemplateListSchema = z.object({
+export const WorkspaceAutomationTemplateListSchema = z.strictObject({
   items: z.array(WorkspaceAutomationTemplateSchema),
-}).strict();
+});
 
 export type WorkspaceAutomationTemplatePublishRequest = z.infer<
   typeof WorkspaceAutomationTemplatePublishRequestSchema

@@ -4,16 +4,16 @@ import { z } from "zod";
 
 import { WorkspaceConnectorEventSchema } from "./workspace-connector-event-protocol";
 
-export const OpportunityAudienceSchema = z.object({
+export const OpportunityAudienceSchema = z.strictObject({
   scope: z.enum(["personal", "workspace"]),
   userId: IdSchema.nullable(),
-}).strict().superRefine((value, context) => {
+}).superRefine((value, context) => {
   if ((value.scope === "personal") !== (value.userId !== null)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Opportunity audience is inconsistent" });
   }
 });
 
-export const WorkspaceOpportunityEnqueueRequestSchema = z.object({
+export const WorkspaceOpportunityEnqueueRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   partitionKey: z.string().min(1).max(500),
   audience: OpportunityAudienceSchema,
@@ -21,54 +21,54 @@ export const WorkspaceOpportunityEnqueueRequestSchema = z.object({
   sourceId: z.string().min(1).max(200),
   occurredAt: z.string().datetime(),
   inputCharacters: z.number().int().nonnegative(),
-}).strict();
+});
 
-export const WorkspaceOpportunityEnqueueResultSchema = z.object({
+export const WorkspaceOpportunityEnqueueResultSchema = z.strictObject({
   windowId: IdSchema,
   processAfter: z.string().datetime(),
   inserted: z.boolean(),
-}).strict();
+});
 
 export const WorkspaceOpportunityWorkflowInputSchema = z.discriminatedUnion("kind", [
-  z.object({
+  z.strictObject({
     kind: z.literal("admission"),
     region: RegionSchema,
     workspaceId: WorkspaceIdSchema,
     windowId: IdSchema,
     leaseId: IdSchema,
     attempt: z.number().int().min(0).max(5),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     kind: z.literal("ranking"),
     region: RegionSchema,
     workspaceId: WorkspaceIdSchema,
     userId: UserIdSchema,
     requestSeq: z.number().int().nonnegative(),
     leaseId: IdSchema,
-  }).strict(),
+  }),
 ]);
 
-export const WorkspaceOpportunityWindowRequestSchema = z.object({
+export const WorkspaceOpportunityWindowRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   windowId: IdSchema,
   leaseId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceOpportunityWindowSchema = z.object({
+export const WorkspaceOpportunityWindowSchema = z.strictObject({
   id: IdSchema,
   partitionKey: z.string(),
   audience: OpportunityAudienceSchema,
   firstEventAt: z.string().datetime(),
   lastEventAt: z.string().datetime(),
-  events: z.array(z.object({
+  events: z.array(z.strictObject({
     id: IdSchema,
     sourceKind: z.enum(["activity", "message"]),
     sourceId: z.string(),
     occurredAt: z.string().datetime(),
     inputCharacters: z.number().int().nonnegative(),
     attemptCount: z.number().int().nonnegative(),
-  }).strict()).max(5_000),
-}).strict();
+  })).max(5_000),
+});
 
 export const WorkspaceOpportunityBatchEventsRequestSchema = WorkspaceOpportunityWindowRequestSchema.extend({
   eventIds: z.array(IdSchema).min(1).max(100),
@@ -80,14 +80,14 @@ export const WorkspaceOpportunityWindowSettleRequestSchema = WorkspaceOpportunit
   retryDelayMs: z.number().int().min(1_000).max(60 * 60_000),
 }).strict();
 
-export const WorkspaceOpportunityExistingRequestSchema = z.object({
+export const WorkspaceOpportunityExistingRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   audience: OpportunityAudienceSchema,
   now: z.string().datetime(),
   limit: z.number().int().min(1).max(100),
-}).strict();
+});
 
-export const WorkspaceOpportunitySourceSchema = z.object({
+export const WorkspaceOpportunitySourceSchema = z.strictObject({
   id: z.string().min(1).max(200),
   kind: z.enum(["activity", "message"]),
   provider: z.string().min(1).max(120),
@@ -103,9 +103,9 @@ export const WorkspaceOpportunitySourceSchema = z.object({
   canonicalUrl: z.string().max(2_000).nullable(),
   workstreamId: IdSchema.nullable(),
   occurredAt: z.string().datetime(),
-}).strict();
+});
 
-export const WorkspaceOpportunityPersistLinkSchema = z.object({
+export const WorkspaceOpportunityPersistLinkSchema = z.strictObject({
   id: IdSchema,
   sourceId: z.string().min(1).max(200),
   userId: IdSchema.nullable(),
@@ -115,14 +115,14 @@ export const WorkspaceOpportunityPersistLinkSchema = z.object({
   sourceText: z.string().max(1_000),
   startOffset: z.number().int().nonnegative().nullable(),
   endOffset: z.number().int().positive().nullable(),
-  verifiedIdentity: z.object({
+  verifiedIdentity: z.strictObject({
     id: IdSchema,
     provider: z.string().max(120),
     providerTenantId: z.string().max(500),
-  }).strict().nullable(),
-}).strict();
+  }).nullable(),
+});
 
-export const WorkspaceOpportunityPersistRequestSchema = z.object({
+export const WorkspaceOpportunityPersistRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   audience: OpportunityAudienceSchema,
   proposedId: IdSchema,
@@ -141,28 +141,28 @@ export const WorkspaceOpportunityPersistRequestSchema = z.object({
   rankUserIds: z.array(IdSchema).max(10_000),
   eagerUserIds: z.array(IdSchema).max(30),
   rankDueAt: z.string().datetime(),
-}).strict();
+});
 
-export const WorkspaceOpportunityPersistResultSchema = z.object({
+export const WorkspaceOpportunityPersistResultSchema = z.strictObject({
   opportunityId: IdSchema,
   version: z.number().int().positive(),
   eagerUserIds: z.array(IdSchema),
-}).strict();
+});
 
-export const WorkspaceOpportunityUserRequestSchema = z.object({
+export const WorkspaceOpportunityUserRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
-}).strict();
+});
 
 export const WorkspaceOpportunityRankingCandidatesRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
   now: z.string().datetime(),
 }).strict();
 
-export const WorkspaceOpportunityRankingStateSchema = z.object({
+export const WorkspaceOpportunityRankingStateSchema = z.strictObject({
   candidateFingerprint: z.string(),
   opportunityIds: z.array(IdSchema),
   status: z.enum(["stale", "ready", "failed"]),
-}).strict().nullable();
+}).nullable();
 
 export const WorkspaceOpportunityRankingRoundRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
   roundId: IdSchema,
@@ -194,26 +194,26 @@ export const WorkspaceOpportunityListRequestSchema = WorkspaceOpportunityUserReq
   scheduleAt: z.string().datetime(),
 }).strict();
 
-export const WorkspaceOpportunityPublicSchema = z.object({
+export const WorkspaceOpportunityPublicSchema = z.strictObject({
   id: IdSchema,
   version: z.number().int().positive(),
   displayPrompt: z.string(),
   icon: z.string(),
   sourceLabel: z.string(),
-}).strict();
+});
 
-export const WorkspaceOpportunityRankingCandidatesResultSchema = z.array(z.object({
+export const WorkspaceOpportunityRankingCandidatesResultSchema = z.array(z.strictObject({
   id: IdSchema,
   version: z.number().int().positive(),
   displayPrompt: z.string(),
   admissionReasoning: z.string(),
-  linkedUsers: z.array(z.object({
+  linkedUsers: z.array(z.looseObject({
     user_id: IdSchema.nullable(),
     role: z.string(),
     resolution: z.string(),
     reasoning: z.string(),
-  }).passthrough()),
-  provenance: z.array(z.object({
+  })),
+  provenance: z.array(z.looseObject({
     id: IdSchema,
     kind: z.string(),
     label: z.string(),
@@ -224,23 +224,23 @@ export const WorkspaceOpportunityRankingCandidatesResultSchema = z.array(z.objec
     parentNodeId: IdSchema.optional(),
     depth: z.number().int().nonnegative(),
     locator: z.string(),
-  }).passthrough()),
-  age: z.object({
+  })),
+  age: z.strictObject({
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
-  }).strict(),
-  impressions: z.object({
+  }),
+  impressions: z.strictObject({
     count: z.number().int().nonnegative(),
     firstAt: z.string().datetime().nullable(),
     lastAt: z.string().datetime().nullable(),
-  }).strict(),
+  }),
   currentlySuggested: z.boolean(),
   public: WorkspaceOpportunityPublicSchema,
-}).strict());
+}));
 
-export const WorkspaceOpportunityListResultSchema = z.object({
+export const WorkspaceOpportunityListResultSchema = z.strictObject({
   items: z.array(WorkspaceOpportunityPublicSchema).max(4),
-}).strict();
+});
 
 export const WorkspaceOpportunityImpressionsRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
   opportunityIds: z.array(IdSchema).max(4),
@@ -248,7 +248,7 @@ export const WorkspaceOpportunityImpressionsRequestSchema = WorkspaceOpportunity
   rerankBefore: z.string().datetime(),
 }).strict();
 
-export const WorkspaceOpportunityTelemetryContextSchema = z.object({
+export const WorkspaceOpportunityTelemetryContextSchema = z.strictObject({
   opportunityId: IdSchema,
   version: z.number().int().positive(),
   audienceScope: z.enum(["personal", "workspace"]),
@@ -256,16 +256,16 @@ export const WorkspaceOpportunityTelemetryContextSchema = z.object({
   impressionCount: z.number().int().nonnegative(),
   firstImpressedAt: z.string().datetime().nullable(),
   connectorTypes: z.array(z.enum(TELEMETRY_CONNECTOR_TYPES)).max(TELEMETRY_CONNECTOR_TYPES.length),
-}).strict();
+});
 
 export const WorkspaceOpportunityTelemetryContextsSchema = z.array(
   WorkspaceOpportunityTelemetryContextSchema,
 ).max(4);
 
-export const WorkspaceOpportunityDismissResultSchema = z.object({
+export const WorkspaceOpportunityDismissResultSchema = z.strictObject({
   dismissed: z.boolean(),
   telemetryContext: WorkspaceOpportunityTelemetryContextSchema.nullable(),
-}).strict();
+});
 
 export const WorkspaceOpportunityDismissRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
   opportunityId: IdSchema,
@@ -290,11 +290,11 @@ export const WorkspaceOpportunityClaimStartRequestSchema = WorkspaceOpportunityG
   idempotencyKey: z.string().min(1).max(200),
 }).strict();
 
-export const WorkspaceOpportunityClaimStartResultSchema = z.object({
+export const WorkspaceOpportunityClaimStartResultSchema = z.strictObject({
   outcome: z.enum(["not_found", "stale", "claimed", "busy", "replay"]),
   opportunity: z.record(z.string(), z.unknown()).nullable(),
   telemetryContext: WorkspaceOpportunityTelemetryContextSchema.nullable(),
-}).strict();
+});
 
 export const WorkspaceOpportunityReleaseStartRequestSchema = WorkspaceOpportunityClaimStartRequestSchema;
 

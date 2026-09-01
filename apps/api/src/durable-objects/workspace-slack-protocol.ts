@@ -32,7 +32,7 @@ const TimestampSchema = z.string().datetime({ offset: true });
 const SlackIngressJobKindSchema = z.enum(["event", "interaction", "command"]);
 const SlackIngressJobStatusSchema = z.enum(["queued", "processing", "completed", "failed"]);
 
-export const WorkspaceSlackIngressEnqueueRequestSchema = z.object({
+export const WorkspaceSlackIngressEnqueueRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   jobId: z.string().min(1),
   connectionId: z.string().min(1),
@@ -42,7 +42,7 @@ export const WorkspaceSlackIngressEnqueueRequestSchema = z.object({
   /** Serialized by the caller; the object stores it verbatim. */
   payloadJson: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * What the insert found: a fresh row, a replay, or Slack reusing an identity.
@@ -71,18 +71,18 @@ export const WorkspaceSlackIngressEnqueueRequestSchema = z.object({
 export const SLACK_INGRESS_ATTEMPT_LIMIT = 20;
 
 export const WorkspaceSlackIngressEnqueueResultSchema = z.discriminatedUnion("outcome", [
-  z.object({ outcome: z.literal("queued") }).strict(),
+  z.strictObject({ outcome: z.literal("queued") }),
   /** The same id with the same body: an idempotent retry, safe to re-announce. */
-  z.object({ outcome: z.literal("replayed"), status: SlackIngressJobStatusSchema }).strict(),
+  z.strictObject({ outcome: z.literal("replayed"), status: SlackIngressJobStatusSchema }),
   /** The same id with different content — Slack reused an event identity. */
-  z.object({ outcome: z.literal("conflict") }).strict(),
+  z.strictObject({ outcome: z.literal("conflict") }),
 ]);
 
-export const WorkspaceSlackIngressClaimRequestSchema = z.object({
+export const WorkspaceSlackIngressClaimRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   jobId: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * The claimed job travels with the lease that fenced it.
@@ -95,34 +95,34 @@ export const WorkspaceSlackIngressClaimRequestSchema = z.object({
  * reports what it found rather than inventing a payload.
  */
 export const WorkspaceSlackIngressClaimResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.literal("claimed"),
     leaseId: z.string().min(1),
-    job: z.object({
+    job: z.strictObject({
       jobId: z.string().min(1),
       connectionId: z.string().min(1),
       teamId: z.string().min(1),
       bodyHash: z.string().min(1),
       kind: SlackIngressJobKindSchema,
       payloadJson: z.string().nullable(),
-    }).strict(),
-  }).strict(),
+    }),
+  }),
   /** Terminal, at the attempt ceiling, or another worker's live lease. */
-  z.object({ outcome: z.literal("unavailable") }).strict(),
+  z.strictObject({ outcome: z.literal("unavailable") }),
 ]);
 
-export const WorkspaceSlackIngressCompleteRequestSchema = z.object({
+export const WorkspaceSlackIngressCompleteRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   jobId: z.string().min(1),
   leaseId: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceSlackIngressSettleResultSchema = z.object({
+export const WorkspaceSlackIngressSettleResultSchema = z.strictObject({
   outcome: z.enum(["settled", "stale"]),
-}).strict();
+});
 
-export const WorkspaceSlackIngressFailRequestSchema = z.object({
+export const WorkspaceSlackIngressFailRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   jobId: z.string().min(1),
   leaseId: z.string().min(1),
@@ -135,7 +135,7 @@ export const WorkspaceSlackIngressFailRequestSchema = z.object({
    */
   exhaustionEpisodeStartedAt: TimestampSchema,
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * The failure and the exhaustion-notice decision, taken together.
@@ -146,29 +146,29 @@ export const WorkspaceSlackIngressFailRequestSchema = z.object({
  * first report" from the same state the write produced.
  */
 export const WorkspaceSlackIngressFailResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.literal("failed"),
     attemptCount: z.number().int().nonnegative(),
     exhausted: z.boolean(),
     /** True when no other job on this connection exhausted the same way inside the episode. */
     firstExhaustionReport: z.boolean(),
-  }).strict(),
-  z.object({ outcome: z.literal("stale") }).strict(),
+  }),
+  z.strictObject({ outcome: z.literal("stale") }),
 ]);
 
-export const WorkspaceSlackIngressRecoverableRequestSchema = z.object({
+export const WorkspaceSlackIngressRecoverableRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   /** Queued or failed jobs untouched since this instant are worth re-announcing. */
   staleBefore: TimestampSchema,
   at: TimestampSchema,
   limit: z.number().int().positive(),
-}).strict();
+});
 
-export const WorkspaceSlackIngressRecoverableResultSchema = z.object({
+export const WorkspaceSlackIngressRecoverableResultSchema = z.strictObject({
   jobIds: z.array(z.string().min(1)),
-}).strict();
+});
 
-export const WorkspaceSlackIngressSweepRequestSchema = z.object({
+export const WorkspaceSlackIngressSweepRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   at: TimestampSchema,
   /** Completed and permanently failed jobs older than this are removed. */
@@ -177,43 +177,43 @@ export const WorkspaceSlackIngressSweepRequestSchema = z.object({
   spentBefore: TimestampSchema,
   /** How many exhausted jobs the standing report names. */
   exhaustedReportLimit: z.number().int().positive(),
-}).strict();
+});
 
-export const WorkspaceSlackIngressSweepResultSchema = z.object({
+export const WorkspaceSlackIngressSweepResultSchema = z.strictObject({
   /** The standing exhausted set after the sweep, newest first. */
-  exhausted: z.array(z.object({
+  exhausted: z.array(z.strictObject({
     jobId: z.string().min(1),
     errorCode: z.string().nullable(),
-  }).strict()),
-}).strict();
+  })),
+});
 
-export const WorkspaceSlackThreadRoutableRequestSchema = z.object({
+export const WorkspaceSlackThreadRoutableRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   slackUserId: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceSlackThreadRoutableResultSchema = z.object({
+export const WorkspaceSlackThreadRoutableResultSchema = z.strictObject({
   routable: z.boolean(),
-}).strict();
+});
 
-export const WorkspaceSlackPendingPromptRequestSchema = z.object({
+export const WorkspaceSlackPendingPromptRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   slackUserId: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceSlackPendingPromptResultSchema = z.object({
+export const WorkspaceSlackPendingPromptResultSchema = z.strictObject({
   prompt: z.string().nullable(),
-}).strict();
+});
 
-export const WorkspaceSlackPendingPromptStoreRequestSchema = z.object({
+export const WorkspaceSlackPendingPromptStoreRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
@@ -225,23 +225,23 @@ export const WorkspaceSlackPendingPromptStoreRequestSchema = z.object({
   /** The retention decision stays the service's; the object stores its answer. */
   expiresAt: TimestampSchema,
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceSlackPendingPromptClearRequestSchema = z.object({
+export const WorkspaceSlackPendingPromptClearRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   slackUserId: z.string().min(1),
-}).strict();
+});
 
-export const WorkspaceSlackThreadClaimRequestSchema = z.object({
+export const WorkspaceSlackThreadClaimRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * Either this caller now initializes the thread, or somebody else already is.
@@ -251,17 +251,17 @@ export const WorkspaceSlackThreadClaimRequestSchema = z.object({
  * `rowsWritten` comparison masquerade as a claim elsewhere.
  */
 export const WorkspaceSlackThreadClaimResultSchema = z.discriminatedUnion("outcome", [
-  z.object({ outcome: z.literal("claimed"), leaseId: z.string().min(1) }).strict(),
-  z.object({ outcome: z.literal("held") }).strict(),
+  z.strictObject({ outcome: z.literal("claimed"), leaseId: z.string().min(1) }),
+  z.strictObject({ outcome: z.literal("held") }),
 ]);
 
-export const WorkspaceSlackThreadReleaseRequestSchema = z.object({
+export const WorkspaceSlackThreadReleaseRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   leaseId: z.string().min(1),
-}).strict();
+});
 
 /**
  * The agent-session lifecycle: the thread's Rally identity, its delivery
@@ -278,7 +278,7 @@ const SlackAssignmentMethodSchema = z.enum(["verified_email", "explicit_link"]);
 const SlackFeedbackRatingSchema = z.enum(["helpful", "needs_improvement"]);
 
 /** The session as its readers consume it, in the object's own column names. */
-export const WorkspaceSlackSessionSchema = z.object({
+export const WorkspaceSlackSessionSchema = z.strictObject({
   id: z.string().min(1),
   workspace_id: z.string().min(1),
   connection_id: z.string().min(1),
@@ -299,40 +299,40 @@ export const WorkspaceSlackSessionSchema = z.object({
   /** Only what Rally placed itself, so a transition never takes a member's. */
   reaction_current: z.string().nullable(),
   reaction_cursor: z.number().int().nonnegative(),
-}).strict();
+});
 
-export const WorkspaceSlackSessionResultSchema = z.object({
+export const WorkspaceSlackSessionResultSchema = z.strictObject({
   session: WorkspaceSlackSessionSchema.nullable(),
-}).strict();
+});
 
-export const WorkspaceSlackSessionByIdRequestSchema = z.object({
+export const WorkspaceSlackSessionByIdRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
-}).strict();
+});
 
-export const WorkspaceSlackSessionByThreadRequestSchema = z.object({
+export const WorkspaceSlackSessionByThreadRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
-}).strict();
+});
 
-export const WorkspaceSlackSessionByWorkstreamRequestSchema = z.object({
+export const WorkspaceSlackSessionByWorkstreamRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceSlackSessionExistsRequestSchema = z.object({
+export const WorkspaceSlackSessionExistsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   connectionId: z.string().min(1),
-}).strict();
+});
 
-export const WorkspaceSlackSessionExistsResultSchema = z.object({
+export const WorkspaceSlackSessionExistsResultSchema = z.strictObject({
   sessionId: z.string().nullable(),
-}).strict();
+});
 
-export const WorkspaceSlackSessionCreateRequestSchema = z.object({
+export const WorkspaceSlackSessionCreateRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   connectionId: z.string().min(1),
@@ -351,9 +351,9 @@ export const WorkspaceSlackSessionCreateRequestSchema = z.object({
   claimedAt: TimestampSchema.nullable(),
   contextJson: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceSlackSessionAssignRequestSchema = z.object({
+export const WorkspaceSlackSessionAssignRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   teamId: z.string().min(1),
@@ -361,7 +361,7 @@ export const WorkspaceSlackSessionAssignRequestSchema = z.object({
   assignedUserId: z.string().min(1),
   assignmentMethod: SlackAssignmentMethodSchema,
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * The sessions this assignment moved, with the values it moved them *from*.
@@ -377,30 +377,30 @@ export const WorkspaceSlackSessionAssignRequestSchema = z.object({
  * The count the service used to take from `meta.changes` is this array's
  * length, decided by which rows the update actually returned.
  */
-export const WorkspaceSlackSessionAssignResultSchema = z.object({
-  sessions: z.array(z.object({
+export const WorkspaceSlackSessionAssignResultSchema = z.strictObject({
+  sessions: z.array(z.strictObject({
     id: z.string().min(1),
     workspaceId: z.string().min(1),
     workstreamId: z.string().min(1),
     previousAssignedUserId: z.string().nullable(),
     previousAssignmentMethod: SlackAssignmentMethodSchema.nullable(),
-  }).strict()),
-}).strict();
+  })),
+});
 
-export const WorkspaceSlackSessionDeliveryKeyRequestSchema = z.object({
+export const WorkspaceSlackSessionDeliveryKeyRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   deliveryKey: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceSlackSessionStreamRequestSchema = z.object({
+export const WorkspaceSlackSessionStreamRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   /** Legacy compatibility pointer may only be cleared; new streams are forbidden. */
   streamTs: z.null(),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * Settle the status reaction, conditional on the emoji this transition removed.
@@ -419,18 +419,18 @@ export const WorkspaceSlackSessionStreamRequestSchema = z.object({
  * forward from the statement this replaced, which already had it right; what
  * moved is only how the outcome is decided.
  */
-export const WorkspaceSlackSessionReactionRequestSchema = z.object({
+export const WorkspaceSlackSessionReactionRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   expected: z.string().nullable(),
   reaction: z.string().nullable(),
   cursor: z.number().int().nonnegative().optional(),
   at: TimestampSchema,
-}).strict();
+});
 
 export const WorkspaceSlackSessionReactionResultSchema = z.discriminatedUnion("outcome", [
-  z.object({ outcome: z.literal("settled") }).strict(),
-  z.object({ outcome: z.literal("raced") }).strict(),
+  z.strictObject({ outcome: z.literal("settled") }),
+  z.strictObject({ outcome: z.literal("raced") }),
 ]);
 
 /**
@@ -441,32 +441,32 @@ export const WorkspaceSlackSessionReactionResultSchema = z.discriminatedUnion("o
  * unlike {@link WorkspaceSlackSessionReactionRequestSchema}: this is the run
  * declaring where its status now lives, not a transition racing another.
  */
-export const WorkspaceSlackSessionReactionAnchorRequestSchema = z.object({
+export const WorkspaceSlackSessionReactionAnchorRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   channelId: z.string().min(1),
   messageTs: z.string().min(1),
   reaction: z.string().nullable(),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceSlackContextRequestSchema = z.object({
+export const WorkspaceSlackContextRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   slackUserId: z.string().min(1),
-}).strict();
+});
 
-export const WorkspaceSlackContextResultSchema = z.object({
+export const WorkspaceSlackContextResultSchema = z.strictObject({
   contextJson: z.string().nullable(),
-}).strict();
+});
 
-export const WorkspaceSlackContextStoreRequestSchema = z.object({
+export const WorkspaceSlackContextStoreRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   slackUserId: z.string().min(1),
   contextJson: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * One feedback row per ingress job.
@@ -477,7 +477,7 @@ export const WorkspaceSlackContextStoreRequestSchema = z.object({
  * discarded the result. The witness makes the replay reportable, which is the
  * only thing a caller can usefully do with it.
  */
-export const WorkspaceSlackFeedbackRequestSchema = z.object({
+export const WorkspaceSlackFeedbackRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   feedbackId: z.string().min(1),
   ingressJobId: z.string().min(1),
@@ -487,11 +487,11 @@ export const WorkspaceSlackFeedbackRequestSchema = z.object({
   rating: SlackFeedbackRatingSchema,
   comment: z.string().nullable(),
   at: TimestampSchema,
-}).strict();
+});
 
 export const WorkspaceSlackFeedbackResultSchema = z.discriminatedUnion("outcome", [
-  z.object({ outcome: z.literal("recorded") }).strict(),
-  z.object({ outcome: z.literal("replayed") }).strict(),
+  z.strictObject({ outcome: z.literal("recorded") }),
+  z.strictObject({ outcome: z.literal("replayed") }),
 ]);
 
 export type WorkspaceSlackIngressEnqueueRequest = z.infer<typeof WorkspaceSlackIngressEnqueueRequestSchema>;

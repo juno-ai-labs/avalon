@@ -16,7 +16,7 @@ import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 
-const PinnedWorkstreamsSchema = z.object({ items: z.array(WorkstreamSchema) }).strict();
+const PinnedWorkstreamsSchema = z.strictObject({ items: z.array(WorkstreamSchema) });
 
 /** Typed WorkspaceDO client for the authoritative cross-workstream directory. */
 export class WorkstreamDirectoryService {
