@@ -97,6 +97,12 @@ so two links cannot finish in the opposite order. A target API also owns normal
 credential renewal; an access token expiring between activation and a Slack or
 connector request does not change the workspace binding.
 
+Addressed connector results are delivered only to the main renderer, which owns
+the serialized activation and then opens Connections. Legacy unaddressed results
+also reach an already-open Settings renderer to preserve its active-relative
+cache refresh; treating a path-addressed result as legacy would run the same
+activation concurrently in both renderer processes.
+
 ID-only links already in mail, Slack history, and older clients remain readable
 against the active workspace. They are compatibility inputs only; searching
 every credential for a matching resource would create a cross-workspace directory
@@ -237,13 +243,16 @@ best-effort remote revocation.
 **What changed:** An addressed Settings, connector-result, or Slack handoff that
 changes workspaces resets the main window behind Settings to the new workspace's
 landing page. Same-workspace handoffs preserve the current route, and regional
-membership denials retain access-failure wording through Electron IPC.
+membership denials retain access-failure wording through Electron IPC. Addressed
+connector results are main-only instead of being duplicated into Settings.
 
 **Why:** Real-window connector verification showed that authorization remained
 correct but closing Settings could expose the previous workspace's resource
 route, which then failed to load under the newly active credential. A suspended
 local membership also proved that the server's “access is unavailable” denial
-was being mistaken for a network outage.
+was being mistaken for a network outage. Follow-up review found the Settings
+delivery gate still looking for the removed query-addressed workspace field,
+which made path-addressed results race activation in two renderer processes.
 
 **Considered and rejected:** Leaving the stale route to fail closed, and always
 resetting the main window. The first turns a successful connector return into a
