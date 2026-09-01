@@ -11,7 +11,7 @@ import {
   parseCitationHref,
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { File, FileText, Link2, Volume2 } from 'lucide-react';
+import { File, FileText, Image as ImageIcon, Link2, Volume2 } from 'lucide-react';
 import { createContext, useContext, useEffect, useState, type ComponentType } from 'react';
 
 /**
@@ -189,6 +189,7 @@ function resourceIconType(resource: CitationResource): string {
 export function ResourceIcon({ type }: { type: string }): React.JSX.Element {
   const normalized = type.toLowerCase();
   if (normalized.includes('audio')) return <Volume2 size={15} />;
+  if (normalized.includes('image')) return <ImageIcon size={15} />;
   if (normalized.includes('doc') || normalized.includes('text')) return <FileText size={15} />;
   if (normalized.includes('url') || normalized.includes('web')) return <Link2 size={15} />;
   return <File size={15} />;
