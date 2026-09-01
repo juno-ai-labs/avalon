@@ -197,7 +197,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_workstream_effect_receipts",
   "workspace_workstream_resource_links",
   "workspace_workstream_viewers",
-  "workstream_notification_intents_kinds",
 ] as const;
 
 /** Every table WorkspaceDO's migrations leave standing, in application order. */
@@ -211,6 +210,16 @@ function workspaceObjectTables(): Set<string> {
       for (const match of statement.matchAll(
         /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?["`]?(\w+)/giu,
       )) live.delete(String(match[1]).toLowerCase());
+      // A table rebuild is create-copy-drop-rename, so the name that survives
+      // is the one the last statement renames *to*. Without this the scratch
+      // name reads as a live undeclared table and the real one reads as gone —
+      // the check would fail on every correct rebuild and pass on a wrong one.
+      for (const match of statement.matchAll(
+        /ALTER\s+TABLE\s+["`]?(\w+)["`]?\s+RENAME\s+TO\s+["`]?(\w+)/giu,
+      )) {
+        live.delete(String(match[1]).toLowerCase());
+        live.add(String(match[2]).toLowerCase());
+      }
     }
   }
   return live;
