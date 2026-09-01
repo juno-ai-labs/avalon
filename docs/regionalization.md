@@ -218,6 +218,11 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
   activation, creation, or invitation acceptance. A session whose claim
   disagrees with its row is a
   cross-region read with a valid signature on it.
+- **An external workspace target is routing context, never regional authority.**
+  The desktop may use `(region, workspace_id)` to select which stored credential
+  should answer an explicit link, but the owning regional Worker must still mint
+  or refresh that session and authorize every request. A missing or refused target
+  never falls back across regions.
 - **A platform identity may have one active binding per workspace, across both
   regions.** Placement affinity is per `(platform_user_id, region)` and adding
   an EU route never rewrites the Global route or vice versa.
@@ -383,6 +388,27 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-09-01 — External routing names the region without authorizing it
+
+**What changed:** Current workspace-scoped handoffs carry region and workspace
+coordinates, and the desktop activates the exact regional session before using
+them.
+
+**Why:** Region-only connector callbacks and ID-only resource links were
+ambiguous once one account retained Global and EU workspaces. Using whichever
+session was active either rejected a legitimate callback or opened the route in
+the wrong authority.
+
+**Considered and rejected:** Discovering the region from a resource ID or trying
+stored credentials until one answers. Both violate the rule that object IDs do
+not select regions and turn a link open into cross-region enumeration.
+
+**Consequences:** Public link coordinates remain non-secret. Only ordinary
+regional activation and middleware can convert them into an authorized session;
+a failure leaves the existing region selected.
+
+Shipped in #464.
 
 ### 2026-08-31 — Global discovery retains plural regional workspace routes
 

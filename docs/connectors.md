@@ -13,6 +13,16 @@ success commits the connection row and attempt's `connection_id` in one
 WorkspaceDO transaction; only the opaque D1 ingress-route synchronization is a
 recoverable post-commit edge.
 
+The callback target also carries the attempt's owning `(region, workspace_id)`.
+OAuth state remains the server authority: changing the active desktop workspace
+while consent is open cannot rebind the attempt or connection. The desktop treats
+the callback as an explicit destination, activates that exact workspace through
+the ordinary membership and meeting-change guard, and only then refreshes its
+connector caches. If the state cannot be resolved, the server emits an
+unaddressed failure because inventing a workspace would be less safe than asking
+the member to restart. This path is shared by Google, GitHub, Granola, Linear,
+Notion, and Slack; a provider-specific callback must not mint its own link shape.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -885,6 +895,32 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-01 — Connector completion stays with the workspace that started it
+
+**What changed:** Every resolvable connector success, denial, and failure target
+includes the OAuth state's regional workspace. Desktop completion activates that
+workspace before cache refresh or messaging, and Settings polls a pending attempt
+only while that workspace is active. Electron's provider-result classifier now
+derives from the shared provider list, including Granola.
+
+**Why:** OAuth state and connection writes were already correctly bound to
+workspace A, but the native callback carried only a region. After a switch to B,
+the renderer could refresh or poll B for A's result and cross-region callbacks
+were rejected outright. Granola separately fell out of a hand-maintained desktop
+provider list.
+
+**Considered and rejected:** Rebinding to the active workspace, prompting for a
+workspace after consent, and provider-specific callback fixes. OAuth already
+records the unambiguous origin, and all three alternatives create either a second
+authority or another list that can drift.
+
+**Consequences:** Following a connector callback may switch the foreground
+workspace. Unknown-state failures remain unaddressed and never guess. A connector
+added to `ConnectorOAuthProviders` automatically participates in main-process
+completion delivery, but its API flow must still use `connectorAttemptTarget`.
+
+Shipped in #464.
 
 ### 2026-08-30 — Connector activity no longer produces Suggested context
 

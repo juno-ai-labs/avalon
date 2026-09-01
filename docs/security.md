@@ -229,6 +229,14 @@ denial, failure, or expiry even if the custom-protocol notification is lost. OAu
 states and desktop tickets are expiring and atomically consumed. Refresh tokens
 are hashed for sessions or AES-GCM encrypted for providers.
 
+Every resolvable connector callback and every newly emitted workspace-scoped
+external link carries `(region, workspace_id)` as routing context. Those values
+are public identifiers, not bearer authority. The renderer must activate the
+target through Electron main, verify the returned session names the exact pair,
+and only then use the destination. The regional middleware still resolves active
+membership and workspace scope on every request. A failed activation cannot fall
+back to the currently active workspace or search other stored credentials.
+
 Every API resource query includes `workspace_id`. Mutations additionally resolve
 membership role. A connector ingress may assert a member's own authority by
 marking its auth `principal: "connector"` — set only after verifying the account
@@ -713,6 +721,27 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-01 — Link routing context never becomes authorization
+
+**What changed:** Workspace-scoped connector, Slack, settings, automation, and
+work-stream handoffs carry a region/workspace target. Native activation and an
+exact returned-session check precede navigation or mutation; a refusal leaves
+the current workspace untouched.
+
+**Why:** The server already authorized connector state against its originating
+workspace, but an under-addressed desktop callback could be applied after the
+person switched elsewhere. ID-only resource links had the same ambiguity.
+
+**Considered and rejected:** Treating the target as a capability or resolving a
+resource across stored sessions. Both bypass the existing regional membership
+boundary and turn public identifiers into authority.
+
+**Consequences:** Every target remains safe to expose in paths/query strings;
+tokens remain in fragments. Regional membership and resource authorization are
+still mandatory, and link-open failures never retry against another workspace.
+
+Shipped in #464.
 
 ### 2026-08-31 — Lockdown encrypts the complete account credential set
 
