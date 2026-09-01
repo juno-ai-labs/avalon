@@ -9,6 +9,21 @@ export const AutomationIdSchema = IdSchema.brand<"AutomationId">();
 export type AutomationId = z.infer<typeof AutomationIdSchema>;
 export const asAutomationId = (value: string): AutomationId => AutomationIdSchema.parse(value);
 
+/**
+ * Who can see an automation and who may change it — and nothing else.
+ *
+ * Deliberately not `ScopeSchema`, which a work stream shares: a work stream has
+ * no third scope, and widening the shared enum would offer `workstream` in
+ * every place a room's audience is chosen.
+ *
+ * Scope is not a destination. Where a result goes follows from what the
+ * automation belongs to: a person's own destinations for `personal`, the owning
+ * room for `workstream`, and nothing at all for `workspace`, which reaches
+ * people by acting with its connector tools rather than by delivering.
+ */
+export const AutomationScopeSchema = z.enum(["personal", "workspace", "workstream"]);
+export type AutomationScope = z.infer<typeof AutomationScopeSchema>;
+
 export const AutomationLifecycleStateSchema = z.enum([
   "draft",
   "activating",
