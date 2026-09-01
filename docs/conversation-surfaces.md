@@ -69,6 +69,26 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-01 — An automation's result is a message in the room, named Automation
+
+**What changed:** `automation_activation` is a participant message type, and
+`MessageBlock` renders it as the ordinary authored row with `Automation` in the
+author slot. The check sits *ahead* of the system-row branch and keys on the
+type rather than the author, because Rally appends the row on the automation's
+behalf and it therefore arrives with a machine author.
+
+**Why:** A system row means "Rally is noting something that happened *to* this
+work stream" — a wake-up fired, a watched resource went stale — and it carries a
+renderer, a projector rule, and a reader's expectation to match. An automation's
+result is none of those things: it is what somebody in the room is being told,
+and it should read like every other thing they are told.
+
+**Considered and rejected:** a row kind of its own. It would need its own empty
+and error states, its own answer every time this family changes, and a reason
+for every one of them — to present something a reader already knows how to read.
+The author line does all of the work a bespoke row would have done.
+
+
 ### 2026-09-01 — One feed component, and the draft conversation stops being a second one
 
 **What changed:** `message-feed.tsx` exists. Until now this document named it and

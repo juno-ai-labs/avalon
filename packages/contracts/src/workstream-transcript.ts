@@ -101,7 +101,7 @@ export const TranscriptTextBlockSchema = z.object({
   streaming: z.boolean(),
   mentions: z.array(TranscriptMentionSchema).optional(),
   attachments: z.array(TranscriptAttachmentSchema).optional(),
-  messageType: z.enum(["text", "system", "elicitation", "suggestion"]).optional(),
+  messageType: z.enum(["text", "system", "elicitation", "suggestion", "automation_activation"]).optional(),
   structuredContent: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
