@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { getAuth } from "../middleware/auth";
+import { ArtifactOpenService } from "../services/artifact-open-service";
 import { ResourceService } from "../services/resource-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -33,6 +34,22 @@ const ResourcePageSchema = z.object({
 });
 const ResourceRevisionListSchema = z.array(ResourceRevisionSchema);
 const WatchStateSchema = z.object({ watchEnabled: z.boolean() });
+const ArtifactOpenResultSchema = z.object({
+  openUrl: HttpUrlSchema,
+  canonicalUrl: HttpUrlSchema,
+  artifactId: IdSchema,
+  mode: z.enum(["static", "active"]),
+  stateful: z.boolean(),
+}).strict();
+const ArtifactErrorListSchema = z.array(z.object({
+  occurredAt: z.number().int().nonnegative(),
+  version: z.number().int().positive(),
+  requestPath: z.string(),
+  // Model-authored text, so it is bounded here as well as at the write: this
+  // reaches a renderer that will display it.
+  message: z.string().max(4_000),
+  stack: z.string().max(8_000).nullable(),
+}).strict());
 
 export const resourceRoutes = new Hono<HonoAppEnv>();
 
@@ -63,6 +80,26 @@ resourceRoutes.get("/:id", zValidator("param", idParam), async (c) =>
 );
 resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
   new ResourceService(c.env, getAuth(c)).content(c.req.valid("param").id),
+);
+/**
+ * Mint this person's access to a live artifact.
+ *
+ * `POST` rather than `GET` because it *creates* something — a single-use code —
+ * and because a `GET` would be prefetchable and cacheable, both of which are
+ * wrong for a credential. The response's `openUrl` carries the code in its
+ * fragment, which a browser never sends to a server, so the code stays out of
+ * every request log on the way to the artifact origin.
+ */
+resourceRoutes.post("/:id/artifact/open", zValidator("param", idParam), async (c) =>
+  c.json(ArtifactOpenResultSchema.parse(
+    await new ArtifactOpenService(c.env, getAuth(c)).open(c.req.valid("param").id),
+  )),
+);
+/** What the artifact's server module threw, for the rail to show a participant. */
+resourceRoutes.get("/:id/artifact/errors", zValidator("param", idParam), async (c) =>
+  c.json(ArtifactErrorListSchema.parse(
+    await new ArtifactOpenService(c.env, getAuth(c)).errors(c.req.valid("param").id),
+  )),
 );
 resourceRoutes.get("/:id/versions", zValidator("param", idParam), async (c) =>
   c.json(ResourceRevisionListSchema.parse(
