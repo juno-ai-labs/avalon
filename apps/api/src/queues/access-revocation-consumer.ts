@@ -1,4 +1,5 @@
 import { asAutomationId, asBlockId, asWorkspaceId, asWorkstreamId, type SubstreamId } from "@rally/contracts";
+import { normalizedZodIssueCode } from "@rally/contracts/zod-error";
 
 import {
   automationAgentName,
@@ -151,7 +152,7 @@ export async function consumeAccessRevocationQueue(
           ? String((body as { kind: unknown }).kind).slice(0, 64)
           : "absent",
         errors: parsed.error.issues.slice(0, 4).map((issue) =>
-          `${issue.path.join(".") || "(root)"}: ${issue.code}`),
+          `${issue.path.join(".") || "(root)"}: ${normalizedZodIssueCode(issue.code)}`),
       });
       message.ack();
       return;

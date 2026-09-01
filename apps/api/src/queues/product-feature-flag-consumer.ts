@@ -3,6 +3,7 @@ import {
   ProductFeatureFlagFanoutMessageSchema,
   type ProductFeatureFlagFanoutMessage,
 } from "@rally/contracts";
+import { normalizedZodIssueCode } from "@rally/contracts/zod-error";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
@@ -50,7 +51,7 @@ export async function consumeProductFeatureFlagQueue(
     if (!parsed.success) {
       logWarn(env, "product_feature_flag_message_invalid", {
         errors: parsed.error.issues.slice(0, 4).map((issue) =>
-          `${issue.path.join(".") || "(root)"}: ${issue.code}`),
+          `${issue.path.join(".") || "(root)"}: ${normalizedZodIssueCode(issue.code)}`),
       });
       message.ack();
       return;

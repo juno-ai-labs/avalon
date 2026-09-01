@@ -1,6 +1,7 @@
 import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { normalizedZodIssueCode } from "@rally/contracts/zod-error";
 import {
   AutomationAttentionReasonSchema,
   AutomationDraftCreationClaimRequestSchema,
@@ -2822,7 +2823,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         frameBytes,
         validationIssues: parsed.error.issues.map((issue) => ({
           path: issue.path.map(String).join(".") || "(root)",
-          code: issue.code,
+          code: normalizedZodIssueCode(issue.code),
         })),
       });
       return;

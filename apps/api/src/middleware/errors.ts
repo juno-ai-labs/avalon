@@ -1,4 +1,4 @@
-import { isZodValidationError } from "@rally/contracts/zod-error";
+import { isZodValidationError, normalizedZodIssueCode } from "@rally/contracts/zod-error";
 import type { ErrorHandler, NotFoundHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { RepositoryError } from "@rally/db";
@@ -87,7 +87,7 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
         method: c.req.method,
         validation_issues: error.issues.slice(0, 25).map((issue) => ({
           path: issue.path.map(String).join(".") || "(root)",
-          code: issue.code,
+          code: normalizedZodIssueCode(issue.code),
         })),
       }
       : {}),

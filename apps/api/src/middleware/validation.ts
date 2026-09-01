@@ -1,4 +1,5 @@
 import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from "@rally/contracts";
+import { normalizedZodIssueCode } from "@rally/contracts/zod-error";
 import { zValidator as honoZValidator } from "@hono/zod-validator";
 import type { MiddlewareHandler } from "hono";
 
@@ -48,7 +49,7 @@ export class RequestValidationError extends ApiError {
     this.name = "RequestValidationError";
     this.validationIssues = issues.slice(0, 25).map((issue) => ({
       path: issue.path.map(String).join(".") || "(root)",
-      code: issue.code,
+      code: normalizedZodIssueCode(issue.code),
     }));
     this.requestBody = validationTarget === "json"
       ? redactJsonBodyShape(input)

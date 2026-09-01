@@ -94,8 +94,8 @@ explicit adapters.
 startup CPU error 10021. Its retained profile attributed most active startup to
 Zod v4 schema constructors and garbage collection. In the exact merged bundle,
 local active startup was 205.4 ms including 109.9 ms of GC; the compatible
-runtime reduced five repeated samples to 71.5–72.9 ms including 22.7–24.9 ms of
-GC on the final 7,339.63 KiB artifact.
+runtime reduced five repeated samples to 71.7–74.0 ms including 23.8–27.7 ms of
+GC on the final 7,340.37 KiB artifact.
 
 **Considered and rejected:** Retrying or minifying the same eager graph leaves
 deployment dependent on validator timing. Request-time imports violate the

@@ -842,7 +842,7 @@ or retries would not remove the measured constructor work.
 
 **Consequences:** The public API remains one logical regional authority and all
 imports remain static. The artifact carries two Zod runtimes, but five local
-profiles hold active startup to 71.5–72.9 ms instead of the failed artifact's
+profiles hold active startup to 71.7–74.0 ms instead of the failed artifact's
 205.4 ms sample. The source guard and compatibility tests are part of the API
 startup contract. There is no data migration.
 
