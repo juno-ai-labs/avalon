@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AutomationRunContextV1Schema } from "./automation-agent";
+import { AutomationRunContextV1Schema, AutomationScopeSchema } from "./automation-agent";
 import {
   TranscriptActivitySchema,
   PendingTranscriptInputSchema,
@@ -1306,7 +1306,15 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
  * draft's prose — the compiler is the one thing in the system that already
  * parsed the sentence.
  */
-export const AutomationRequestedDeliverySchema = z.enum(["email", "slack_agent_dm"]);
+/**
+ * Where a draft asks to be delivered.
+ *
+ * `channel` is not a second shape: a workspace automation reaches people by
+ * acting with its connector tools, and this says the person asked for a channel
+ * rather than naming one. Which channel is decided when the automation runs,
+ * from where it was authored — nothing here carries an ID.
+ */
+export const AutomationRequestedDeliverySchema = z.enum(["email", "slack_agent_dm", "channel"]);
 export const AutomationDraftSchema = z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
@@ -1320,11 +1328,28 @@ export const AutomationDraftSchema = z.object({
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
-  suggestedScope: ScopeSchema,
+  /**
+   * Who will be able to see and change this automation, asked before it is
+   * submitted because it cannot be changed afterwards. `workstream` is the room
+   * the authoring run happened in — there is no ID to name here and none can
+   * be, because no other room is reachable.
+   */
+  suggestedScope: AutomationScopeSchema,
   followUpQuestion: z.string().nullable(),
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()
 }).superRefine((draft, context) => {
+  // Scope is the destination for a room's automation: its results land in the
+  // room that owns it, and there is nothing else for it to ask for. A draft
+  // that named one anyway would be asking for two destinations, one of which
+  // nobody chose.
+  if (draft.suggestedScope === "workstream" && draft.requestedDelivery.length > 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["requestedDelivery"],
+      message: "A work-stream automation delivers to its work stream, so it requests no delivery",
+    });
+  }
   const names = new Set<string>();
   draft.memoryTables.forEach((table, index) => {
     const normalized = table.name.toLocaleLowerCase();
