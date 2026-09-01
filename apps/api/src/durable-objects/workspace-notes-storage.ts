@@ -1,4 +1,4 @@
-import type { NoteSummary } from "@rally/contracts";
+import type { NoteSummary, WorkstreamBatchFilter } from "@rally/contracts";
 
 import { uuidV7 } from "../lib/uuid-v7";
 
@@ -309,6 +309,103 @@ export function archiveWorkspaceNote(
     advanceNoteSidebar(storage);
     return WorkspaceNoteArchiveResultSchema.parse({ outcome: "archived" });
   });
+}
+
+/**
+ * The one selection a grouping's **Archive all** makes over notes.
+ *
+ * Three fences beyond the range, and each of them is a note the single-row
+ * archive would refuse rather than one this is being cautious about:
+ * `owner_user_id` because only an owner may archive a note, so a colleague's
+ * workspace note sits in the reader's sidebar under the same heading and is
+ * still not theirs to retire; `recording_status` because archiving under a
+ * live meeting window 404s the next segment save while capture keeps running;
+ * and `archived_at` because an already-archived note is not in the group.
+ *
+ * The preview counts this same selection, so the number in the confirmation is
+ * the number of notes that will actually go.
+ */
+const NOTE_BATCH_SELECTION_FENCE = `workspace_id = ? AND archived_at IS NULL
+      AND owner_user_id = ?
+      AND recording_status != 'recording'
+      AND (? IS NULL OR last_activity_at >= ?)
+      AND (? IS NULL OR last_activity_at < ?)`;
+
+/**
+ * `notes.last_activity_at` is an ISO string written by the server's own clock,
+ * so the range is compared as text — and text comparison is only correct while
+ * both sides are the same canonical UTC spelling. The filter's timestamps come
+ * off the wire, where an offset is a legal way to write the same instant, so
+ * they are re-spelled here rather than trusted to sort.
+ *
+ * Deliberately without a fallback for a value that will not parse. The filter
+ * is schema-validated as a datetime before it reaches this object, so there is
+ * none; and were that ever to change, `toISOString` throwing is the failure to
+ * want — treating an unreadable bound as "no bound" would quietly widen an
+ * archive rather than refuse it.
+ */
+function noteRangeBound(value: string | undefined): string | null {
+  return value === undefined ? null : new Date(Date.parse(value)).toISOString();
+}
+
+function noteBatchBindings(
+  workspaceId: string,
+  userId: string,
+  filter: WorkstreamBatchFilter,
+): (string | null)[] {
+  const atOrAfter = noteRangeBound(filter.lastActivityAt?.atOrAfter);
+  const before = noteRangeBound(filter.lastActivityAt?.before);
+  return [workspaceId, userId, atOrAfter, atOrAfter, before, before];
+}
+
+/**
+ * A note is never pinned, so a filter asking only for pinned rows asks for no
+ * notes at all — said once here rather than as a SQL clause that could only
+ * ever compare a constant against itself.
+ */
+function noteBatchExcluded(filter: WorkstreamBatchFilter): boolean {
+  return filter.pinned === true;
+}
+
+/** Which notes one grouping's archive would take, for the confirmation's count. */
+export function workspaceNoteBatchTargets(
+  storage: DurableObjectStorage,
+  workspaceId: string,
+  userId: string,
+  filter: WorkstreamBatchFilter,
+): string[] {
+  if (noteBatchExcluded(filter)) return [];
+  return storage.sql.exec<{ id: string }>(
+    `SELECT id FROM notes WHERE ${NOTE_BATCH_SELECTION_FENCE} ORDER BY id`,
+    ...noteBatchBindings(workspaceId, userId, filter),
+  ).toArray().map((row) => row.id);
+}
+
+/**
+ * Archive every note the filter selects, and say which ones went.
+ *
+ * One statement rather than a read followed by a loop of single-row archives:
+ * the rows are all in this database, so the whole group is one transition, and
+ * a partially applied "archive all" is a state nobody asked for. The archived
+ * ids come back from the statement itself — `rowsWritten` counts physical
+ * writes, index maintenance included, and would overstate the group the moment
+ * `notes_sidebar_idx` is touched.
+ */
+export function archiveWorkspaceNotesInRange(
+  storage: DurableObjectStorage,
+  request: { workspaceId: string; userId: string; filter: WorkstreamBatchFilter; at: string },
+): string[] {
+  if (noteBatchExcluded(request.filter)) return [];
+  const archived = storage.sql.exec<{ id: string }>(
+    `UPDATE notes SET archived_at = ?, updated_at = ?
+      WHERE ${NOTE_BATCH_SELECTION_FENCE}
+      RETURNING id`,
+    request.at,
+    request.at,
+    ...noteBatchBindings(request.workspaceId, request.userId, request.filter),
+  ).toArray().map((row) => row.id).sort();
+  if (archived.length > 0) advanceNoteSidebar(storage);
+  return archived;
 }
 
 /**

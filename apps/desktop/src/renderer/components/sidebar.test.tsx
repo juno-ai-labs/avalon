@@ -78,13 +78,15 @@ const workspace: Workspace = {
 const defaultActions = {
   onArchiveNote: async (): Promise<void> => undefined,
   onArchiveWorkstream: async (): Promise<void> => undefined,
-  onApplyWorkstreamBatch: async (): Promise<number> => 0,
+  onApplyWorkstreamBatch: async (): Promise<{ enqueuedCount: number; archivedNoteCount: number }> =>
+    ({ enqueuedCount: 0, archivedNoteCount: 0 }),
   onChangeNoteScope: async (): Promise<void> => undefined,
   onChangeWorkstreamScope: async (): Promise<void> => undefined,
   onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
-  onPreviewWorkstreamBatch: async (): Promise<number> => 0,
+  onPreviewWorkstreamBatch: async (): Promise<{ matchedCount: number; matchedNoteCount: number }> =>
+    ({ matchedCount: 0, matchedNoteCount: 0 }),
   onPinWorkstream: async (): Promise<boolean> => true,
   onReorderPinnedWorkstreams: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
@@ -744,8 +746,8 @@ describe('Sidebar work-stream markers', () => {
     updateKind,
     resultCopy,
   ) => {
-    const onPreviewWorkstreamBatch = vi.fn(async () => 20);
-    const onApplyWorkstreamBatch = vi.fn(async () => 20);
+    const onPreviewWorkstreamBatch = vi.fn(async () => ({ matchedCount: 20, matchedNoteCount: 0 }));
+    const onApplyWorkstreamBatch = vi.fn(async () => ({ enqueuedCount: 20, archivedNoteCount: 0 }));
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -787,10 +789,113 @@ describe('Sidebar work-stream markers', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: menuLabel })).not.toBeInTheDocument());
   });
 
+  it('names the notes a grouping archive will take, and seeds the count from the rows it can see', async () => {
+    // The defect: **Archive all** under a heading emptied the work streams and
+    // left the notes, so the group came back half full. The dialog has to say
+    // both halves are going, or agreeing to it means something else.
+    // Held open, so the seed the menu computed is still on screen to assert on:
+    // the server's count replaces it the moment the preview lands.
+    let landPreview!: (counts: { matchedCount: number; matchedNoteCount: number }) => void;
+    const onPreviewWorkstreamBatch = vi.fn(() => new Promise<{
+      matchedCount: number;
+      matchedNoteCount: number;
+    }>((resolve) => {
+      landPreview = resolve;
+    }));
+    const onApplyWorkstreamBatch = vi.fn(async () => ({ enqueuedCount: 4, archivedNoteCount: 2 }));
+    const at = new Date().toISOString();
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[
+              note('00000000-0000-4000-8000-0000000000a1', 'Kickoff', at),
+              note('00000000-0000-4000-8000-0000000000a2', 'Retro', at),
+              // Neither of these is this reader's to archive, so neither may be
+              // counted: the server will not take them either.
+              {
+                ...note('00000000-0000-4000-8000-0000000000a3', 'Somebody else\'s', at),
+                ownerUserId: '00000000-0000-4000-8000-0000000000ff',
+                scope: 'workspace',
+              },
+              {
+                ...note('00000000-0000-4000-8000-0000000000a4', 'Still recording', at),
+                recordingStatus: 'recording',
+              },
+            ]}
+            onApplyWorkstreamBatch={onApplyWorkstreamBatch}
+            onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', at)]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive all' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Archive all' });
+    // Two of the four notes on screen, before the server has answered.
+    expect(dialog).toHaveTextContent('1 work stream and 2 notes');
+
+    act(() => landPreview({ matchedCount: 4, matchedNoteCount: 2 }));
+    await waitFor(() => expect(dialog).toHaveTextContent(
+      /4 work streams and 2 notes.*will be archived/u,
+    ));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(onApplyWorkstreamBatch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ pinned: false, includeSystem: false }),
+      { kind: 'archive' },
+    ));
+  });
+
+  it('offers no notes when a grouping is only being marked as read', async () => {
+    // A note has no read state to clear, so naming one here would promise
+    // something that cannot happen.
+    const onPreviewWorkstreamBatch = vi.fn(async () => ({ matchedCount: 4, matchedNoteCount: 2 }));
+    const at = new Date().toISOString();
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[note('00000000-0000-4000-8000-0000000000b1', 'Kickoff', at)]}
+            onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', at)]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Mark all as read' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Mark all as read' });
+    await waitFor(() => expect(dialog).toHaveTextContent(
+      /4 work streams in.*will be marked as read/u,
+    ));
+    expect(dialog).not.toHaveTextContent('note');
+  });
+
   it('keeps one operation id when a failed Queue dispatch is retried', async () => {
     const onApplyWorkstreamBatch = vi.fn()
       .mockRejectedValueOnce(new Error('One Queue chunk was not published.'))
-      .mockResolvedValueOnce(20);
+      .mockResolvedValueOnce({ enqueuedCount: 20, archivedNoteCount: 0 });
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -798,7 +903,7 @@ describe('Sidebar work-stream markers', () => {
             {...defaultActions}
             automations={[]}
             onApplyWorkstreamBatch={onApplyWorkstreamBatch}
-            onPreviewWorkstreamBatch={vi.fn(async () => 20)}
+            onPreviewWorkstreamBatch={vi.fn(async () => ({ matchedCount: 20, matchedNoteCount: 0 }))}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', new Date().toISOString())]}
@@ -828,7 +933,7 @@ describe('Sidebar work-stream markers', () => {
   it('moves a row at its recency boundary and previews with the new clock', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-31T20:00:00.000Z'));
-    const onPreviewWorkstreamBatch = vi.fn(async () => 1);
+    const onPreviewWorkstreamBatch = vi.fn(async () => ({ matchedCount: 1, matchedNoteCount: 0 }));
     try {
       render(
         <MemoryRouter>

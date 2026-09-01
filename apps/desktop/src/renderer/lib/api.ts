@@ -1263,26 +1263,28 @@ export class RallyApi {
     return mapWorkstreamSummary(workstream);
   }
 
-  async previewWorkstreamBatch(filter: WorkstreamBatchFilter): Promise<number> {
+  async previewWorkstreamBatch(
+    filter: WorkstreamBatchFilter,
+  ): Promise<{ matchedCount: number; matchedNoteCount: number }> {
     const result = await this.request('/workstreams/batch/preview', {
       method: 'POST',
       body: { filter },
       schema: WireWorkstreamBatchPreviewSchema,
     });
-    return result.matchedCount;
+    return { matchedCount: result.matchedCount, matchedNoteCount: result.matchedNoteCount };
   }
 
   async applyWorkstreamBatch(
     operationId: string,
     filter: WorkstreamBatchFilter,
     update: WorkstreamBatchUpdate,
-  ): Promise<number> {
+  ): Promise<{ enqueuedCount: number; archivedNoteCount: number }> {
     const result = await this.request('/workstreams/batch', {
       method: 'POST',
       body: { operationId, filter, update },
       schema: WireWorkstreamBatchAcceptedSchema,
     });
-    return result.enqueuedCount;
+    return { enqueuedCount: result.enqueuedCount, archivedNoteCount: result.archivedNoteCount };
   }
 
   async acknowledgeWorkstreamRead(

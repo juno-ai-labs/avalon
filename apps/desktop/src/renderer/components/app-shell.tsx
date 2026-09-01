@@ -109,6 +109,33 @@ export function invitationAccountMismatch(invitationEmail: string, accountEmail:
   return `This invitation is for ${invitationEmail}. Sign in with that account to continue.`;
 }
 
+/**
+ * Mirror WorkspaceDO's note selection, only to decide whether this route must
+ * leave.
+ *
+ * The three fences beyond the range are the object's, restated because the
+ * answer here has to agree with what the server archived: a note somebody else
+ * owns and a note still recording were not in the group, so an open one of
+ * either stays open.
+ */
+export function noteMatchesBatchFilter(
+  note: NoteSummary,
+  filter: WorkstreamBatchFilter,
+  viewerId: string,
+): boolean {
+  // A note is never pinned, so a filter that wants only pinned rows wants none.
+  if (filter.pinned === true) return false;
+  if (note.ownerUserId !== viewerId) return false;
+  if (note.recordingStatus === 'recording') return false;
+  const activityAt = Date.parse(note.lastActivityAt);
+  if (!Number.isFinite(activityAt)) return false;
+  const atOrAfter = filter.lastActivityAt?.atOrAfter;
+  const before = filter.lastActivityAt?.before;
+  if (atOrAfter !== undefined && activityAt < Date.parse(atOrAfter)) return false;
+  if (before !== undefined && activityAt >= Date.parse(before)) return false;
+  return true;
+}
+
 /** Mirror the generic directory predicate only to decide whether this route must leave. */
 export function workstreamMatchesBatchFilter(
   workstream: WorkstreamSummary,
@@ -560,7 +587,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         }}
         onApplyWorkstreamBatch={async (operationId, filter, update) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const enqueuedCount = await api.applyWorkstreamBatch(operationId, filter, update);
+          const accepted = await api.applyWorkstreamBatch(operationId, filter, update);
           const selected = activeWorkstreamId === null
             ? undefined
             : workstreams.data?.find((workstream) => workstream.id === activeWorkstreamId);
@@ -568,7 +595,27 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             queryClient.removeQueries({ queryKey: ['workstream', selected.id], exact: true });
             void navigate('/workstreams/new', { replace: true });
           }
-          return enqueuedCount;
+          if (accepted.archivedNoteCount > 0) {
+            // The same caches a single note's archive shakes loose, for the same
+            // reason: an archived note's resource stops being served everywhere,
+            // and a work stream it was attached to holds it in a cache no socket
+            // event reaches. The note list itself is not here — WorkspaceDO
+            // pushes it off the write that archived them.
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+              queryClient.invalidateQueries({ queryKey: ['workstream-context'] }),
+              queryClient.invalidateQueries({ queryKey: ['resources'] }),
+            ]);
+            // Matched the way a single note's archive matches it, against the
+            // list rather than by parsing the path: the id in the route is the
+            // one this list holds, so there is nothing to decode.
+            const openNote = notes.data?.find((note) => location.pathname === `/notes/${note.id}`);
+            if (openNote && noteMatchesBatchFilter(openNote, filter, workspace.currentUser.id)) {
+              queryClient.removeQueries({ queryKey: ['note', openNote.id] });
+              void navigate('/workstreams/new', { replace: true });
+            }
+          }
+          return accepted;
         }}
         onChangeNoteScope={async (note, scope) => {
           if (!api) return;
