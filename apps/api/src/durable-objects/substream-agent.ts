@@ -149,7 +149,7 @@ import {
 import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
 import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
-import { SubstreamLoopStorage } from "./substream-loop-storage";
+import { LOOP_EXECUTION_LEASE_MS, SubstreamLoopStorage } from "./substream-loop-storage";
 import {
   TranscriptOperationRequestSchema,
   type TranscriptOperationRequest,
@@ -505,8 +505,6 @@ const KEEP_ALIVE_INTERVAL_MS = 30_000;
  * this only bounds how hot a poisoned row can spin the alarm.
  */
 const SEMANTIC_REALTIME_RETRY_MS = 5_000;
-/** The loop and harness attempt use the same five-minute recovery horizon. */
-const LOOP_EXECUTION_LEASE_MS = 5 * 60_000;
 /** `_internal_durable_alarms.kind` for a wake-up an agent run scheduled for itself. */
 const AGENT_TIMER_ALARM_KIND = "agent_timer";
 /**
@@ -5015,14 +5013,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (loop && this.loop.pendingInputs().length > 0) return now;
     const preparation = this.product.nextRecoverableInputPreparationAt(now);
     if (preparation !== null) return preparation;
-    // A preparation this isolate is still running is in-memory work standing
-    // over a durable reservation, so it derives a wake-up exactly the way a
-    // live run drain does: the claim cannot outlive the isolate, and the
-    // replacement is what resumes it. Returning `null` here instead is what
+    // An admission this isolate is still preparing is in-memory work standing
+    // over a durable reservation, and that reservation is hidden from
+    // `pendingInputs` until it settles. Returning `null` here instead is what
     // let the re-arm at the end of the very alarm that found it delete the
     // object's only wake-up, stranding that message — and, behind the
-    // head-of-line gate, every message queued after it.
-    if (this.product.hasUnresolvedInputPreparation()) return now + KEEP_ALIVE_INTERVAL_MS;
+    // head-of-line gate, every message queued after it. The instant is when
+    // the claim stops being evidence of a running owner, at which point the
+    // branch above takes over and resumes it.
+    const claimed = this.product.nextInputPreparationWakeAt(now);
+    if (claimed !== null) return claimed;
     const receipt = this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(COALESCE(execution_available_at, created_at)) AS due_at FROM runs
         WHERE execution_context_json IS NOT NULL

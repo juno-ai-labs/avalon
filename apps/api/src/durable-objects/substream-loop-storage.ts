@@ -2,6 +2,21 @@
 
 import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 
+/**
+ * How long this object waits before treating work an invocation claimed as
+ * abandoned: the singleton execution lease, the harness attempt lease, and the
+ * in-memory claim a message admission holds over its mailbox row all use it.
+ *
+ * They share it because they share the failure: a Workers invocation the
+ * runtime cancels neither throws nor runs a `finally`, so nothing announces
+ * that the claim's owner is gone and only elapsed time can. Five minutes is
+ * comfortably longer than any of the three legitimately takes — an admission
+ * reserving several attachments is the slowest, and it is seconds — so
+ * recovery cannot race work that is merely slow, and every takeover it does
+ * start is idempotent against the durable row it re-enters.
+ */
+export const LOOP_EXECUTION_LEASE_MS = 5 * 60_000;
+
 export type LoopInputMode = "steer" | "queue";
 export type PendingInputPreparationKind =
   | "human_message"
