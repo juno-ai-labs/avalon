@@ -122,7 +122,7 @@ ready signal before starting EU. The Workers then run concurrently as before.
 EU session instead of comparing that local session with the production host.
 Each regional command supplies the API, document-processing, and Terminal
 provider configs to one Wrangler multi-Worker session; Global also supplies its
-private PostHog-delivery config. Local calls therefore use the same typed
+private telemetry-delivery config. Local calls therefore use the same typed
 Service Bindings as production without loading provider modules from a request
 handler.
 This short serialization is required because both regional configs build the
@@ -150,7 +150,7 @@ followed by the Docker error above, in spite of `--enable-containers=false`; the
 Workers never bind their ports, so the whole command fails rather than starting
 without containers. The EU command passes three `--config` files — the API,
 document-processing, and Terminal Workers — while Global passes those plus its
-private PostHog-delivery Worker. Auxiliary configs can lose the flag: the same
+private telemetry-delivery Worker. Auxiliary configs can lose the flag: the same
 command with one `--config` is ready in about two seconds and builds no image.
 `"dev": { "enable_containers": false }` in the config is ignored the same way,
 in the main config and across the multi-config session. Observed on

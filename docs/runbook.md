@@ -102,8 +102,8 @@ Set these shared Worker secrets separately in each regional deployment:
   posts nothing and `/health` reports `opsNotifications` as not or half configured
 
 Set `POSTHOG_PROJECT_TOKEN` only on the Global API Worker
-(`avalon-api-global`) when PostHog delivery is enabled. The private delivery
-Worker (`avalon-api-posthog-global`) must not store the token; the API passes it
+(`avalon-api-global`) when PostHog delivery is enabled. The private telemetry
+delivery Worker (`avalon-api-telemetry-delivery-global`) must not store the token; the API passes it
 only with an approved private RPC call. The checked-in Global configuration
 fixes `POSTHOG_HOST` to the approved US ingest origin; EU must have neither
 value. Until the token is provisioned,
