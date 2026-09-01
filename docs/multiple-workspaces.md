@@ -58,6 +58,28 @@ device workspace cap remain `LIMIT UNSET`; do not invent either number. There is
 currently no periodic refresh: focus and menu opening are the only refresh
 triggers until the team chooses a cadence.
 
+### Workspace-addressed handoffs
+
+Every newly emitted external destination for workspace content or settings
+carries `(region, workspace_id)`. It is a routing coordinate, not a capability.
+When a person opens one, the desktop asks main to activate the exact stored or
+regional workspace session, verifies the returned binding, clears the previous
+workspace cache, and only then applies the resource, connector result, Slack
+identity challenge, settings section, or automation route.
+
+An explicit handoff is allowed to change the foreground workspace because the
+person followed a destination. Background attention and reconciliation never do.
+If the meeting guard refuses the change, the credential is missing, or regional
+membership has been revoked, activation fails closed: the current workspace and
+route remain unchanged and the deep-link failure window explains that the target
+could not be accessed. The target pair never substitutes for the regional API's
+membership check.
+
+ID-only links already in mail, Slack history, and older clients remain readable
+against the active workspace. They are compatibility inputs only; searching
+every credential for a matching resource would create a cross-workspace directory
+and is deliberately not done.
+
 ### Membership lifecycle
 
 `DELETE /workspaces/:workspaceId/membership` acts only on the caller. A sole
@@ -185,6 +207,28 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-01 — Explicit links activate their addressed workspace
+
+**What changed:** Connector callbacks and all current workspace-scoped external
+links carry a region/workspace target. The desktop activates and verifies that
+target before applying the destination, while pending connector polling pauses
+outside the workspace that created the attempt.
+
+**Why:** Switching from A to B while provider consent was open left the callback
+owned by A but the renderer applying or polling B. Resource links had the same
+ambiguity and navigated under the active workspace regardless of their origin.
+
+**Considered and rejected:** Binding callbacks to whatever is active, showing a
+choice after every callback, and scanning all stored workspaces. The first writes
+the wrong context, the second asks the person to reconstruct state OAuth already
+knows, and the third weakens workspace isolation into discovery by resource ID.
+
+**Consequences:** Following a targeted link may switch the foreground workspace;
+background work may not. Membership and the meeting guard remain authoritative,
+so a refused switch changes neither workspace nor route.
+
+Shipped in #464.
 
 ### 2026-09-01 — Review closes regional and lifecycle races
 

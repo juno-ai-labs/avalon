@@ -157,8 +157,13 @@ logs.
 2. The regional service creates a random, hashed, 15-minute link challenge bound
    to the workspace installation and Slack user ID, and returns it in a modal
    opened against that same click.
-3. The HTTPS handoff keeps the token in a URL fragment, removes it from browser history, and opens the signed-in Rally desktop app.
-4. The desktop app calls authenticated `POST /connections/slack/link` against its active regional session; the endpoint consumes the challenge and binds that Rally user to the Slack identity.
+3. The HTTPS handoff keeps the token and its `(region, workspace_id)` routing
+   coordinates in a URL fragment, removes them from browser history, and opens
+   the signed-in Rally desktop app.
+4. The desktop activates and verifies that workspace, then calls authenticated
+   `POST /connections/slack/link` against its regional session; the endpoint
+   consumes the challenge and binds that Rally user to the Slack identity. A
+   refused activation never tries the token against whichever workspace was open.
 5. The desktop then starts the personal Slack authorization against that same account, so one
    click accomplishes both halves rather than leaving the second as an errand. A link that
    committed survives a failed authorization; only the half that did not finish is reported.
@@ -404,15 +409,19 @@ or delays that product summary rather than reading a frozen D1 work-stream row.
 - Rally person mention: notify the matched member in the Rally Agent DM, falling back to email.
 - Rally links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Rally authorization for its contents.
 
-Every work-stream link Rally posts is the canonical
-`https://rallywith.ai/app/workstreams/<uuid>` — see
+Every work-stream link Rally posts is the canonical workspace-addressed
+`https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>` — see
 [`workstream-links.md`](workstream-links.md). Slack delivers `link_shared` only
 for the registered unfurl domain, so a link must be on that domain, with the id
 in its path, to be unfurled at all; `rallywithai://` links pasted by a member never
 produce an event and cannot be previewed. The unfurl handler also still accepts
 the legacy `/open#target=` handoff already sitting in channel history.
 
-Every other web button uses a static, allowlisted HTTPS-to-desktop handoff. Workstream IDs may cross that boundary; connector tokens and Slack link challenges stay in fragments and are removed from browser history. The single button carrying a link challenge is the one inside the connect modal, which exists only for as long as that modal is open.
+Every other web button uses an allowlisted HTTPS-to-desktop handoff carrying the
+installation's region/workspace target. Workstream IDs may cross that boundary;
+connector tokens and Slack link challenges stay in fragments and are removed
+from browser history. The single button carrying a link challenge is the one
+inside the connect modal, which exists only for as long as that modal is open.
 
 Modal submissions are validated server-side. Modals never request Rally or provider passwords.
 
@@ -798,6 +807,30 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-09-01 — Slack handoffs retain their Rally workspace
+
+**What changed:** Link challenges, App Home settings/automation buttons,
+work-stream links, result controls, and refreshed unfurls all emit the Slack
+installation's regional Rally workspace. The desktop activates that workspace
+before redeeming or navigating, and an unfurl refuses a current URL addressed to
+another workspace while retaining legacy ID-only history support.
+
+**Why:** A member could open the Slack handoff after switching Rally workspaces.
+The challenge itself was server-bound and therefore safe, but the desktop sent it
+to the active workspace and produced a mismatch; static buttons and resource
+links had the same active-relative ambiguity.
+
+**Considered and rejected:** Letting the challenge error identify the correct
+workspace, or searching every stored credential. Both discover tenancy only
+after acting on a bearer or resource ID. Slack already names the installation
+that minted the link, so carrying its target is direct and deterministic.
+
+**Consequences:** Slack may switch Rally's foreground workspace when a member
+follows an explicit button. The target is not authorization: challenge binding,
+active membership, and the regional resource checks still decide access.
+
+Shipped in #464.
 
 ### 2026-08-29 — Slack result delivery becomes saved-turn-only
 
