@@ -14,6 +14,7 @@ import {
   type AppSessionDesktopBridge,
 } from './app-session';
 import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
+import { newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
 import { useDraftText } from './use-draft-text';
 import type { RallyApi } from './api';
 import { readDevicePreferences } from './device-preferences';
@@ -942,20 +943,23 @@ describe('draft cache lifetime across a session', () => {
 
     expect(await screen.findByText('eu:European Research')).toBeVisible();
     await waitFor(() => expect(observedApi).not.toBeNull());
-    expect((await readDraftText('new-workstream:workspace-eu'))?.text).toBe('written before the last quit');
+    await waitFor(async () => expect((await readDraftText(
+      newWorkstreamDraftKey('eu', 'workspace-eu'),
+    ))?.text).toBe('written before the last quit'));
   });
 
   it('drops every draft when the session ends without going through signOut', async () => {
     bridge.getSession.mockResolvedValue(euSession);
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
-    await writeDraftText('workstream:1', 'half a thought');
+    const draftKey = workstreamDraftKey('eu', 'workspace-eu', '1');
+    await writeDraftText(draftKey, 'half a thought');
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
     // Main surrendering a terminally expired credential, not a button press.
     act(() => sessionListener?.(null));
 
-    await waitFor(async () => expect(await readDraftText('workstream:1')).toBeNull());
+    await waitFor(async () => expect(await readDraftText(draftKey)).toBeNull());
   });
 
   it('abandons an opening attempt when the session that owns it ends', async () => {
@@ -983,12 +987,16 @@ describe('draft cache lifetime across a session', () => {
     bridge.getSession.mockResolvedValue(euSession);
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
-    await writeDraftText('workstream:1', 'half a thought');
+    const draftKey = workstreamDraftKey('eu', 'workspace-eu', '1');
+    await writeDraftText(draftKey, 'half a thought');
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
-    act(() => sessionListener?.({ ...euSession, user: { ...euSession.user, id: 'user-2' } }));
+    act(() => sessionListener?.({
+      ...euSession,
+      user: { ...euSession.user, id: 'user-2', email: 'another@example.com' },
+    }));
 
-    await waitFor(async () => expect(await readDraftText('workstream:1')).toBeNull());
+    await waitFor(async () => expect(await readDraftText(draftKey)).toBeNull());
   });
 
   it('preserves both workspace draft scopes while switching within one account', async () => {
@@ -1000,15 +1008,17 @@ describe('draft cache lifetime across a session', () => {
     bridge.getSession.mockResolvedValue(euSession);
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
-    await writeDraftText('workspace:workspace-eu:workstream:1', 'eu thought');
-    await writeDraftText('workspace:workspace-global:workstream:2', 'global thought');
+    const euDraft = workstreamDraftKey('eu', 'workspace-eu', '1');
+    const globalDraft = workstreamDraftKey('global', 'workspace-global', '2');
+    await writeDraftText(euDraft, 'eu thought');
+    await writeDraftText(globalDraft, 'global thought');
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
     act(() => sessionListener?.(globalSession));
 
     expect(await screen.findByText('global:Global Research')).toBeVisible();
-    expect((await readDraftText('workspace:workspace-eu:workstream:1'))?.text).toBe('eu thought');
-    expect((await readDraftText('workspace:workspace-global:workstream:2'))?.text).toBe('global thought');
+    expect((await readDraftText(euDraft))?.text).toBe('eu thought');
+    expect((await readDraftText(globalDraft))?.text).toBe('global thought');
   });
 
   it('clears only the departed workspace draft scope after leave succeeds', async () => {
@@ -1016,8 +1026,10 @@ describe('draft cache lifetime across a session', () => {
     bridge.leaveWorkspace.mockResolvedValue({ outcome: 'left' });
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
-    await writeDraftText('workspace:workspace-eu:workstream:1', 'eu thought');
-    await writeDraftText('workspace:workspace-global:workstream:2', 'global thought');
+    const euDraft = workstreamDraftKey('eu', 'workspace-eu', '1');
+    const globalDraft = workstreamDraftKey('global', 'workspace-eu', '2');
+    await writeDraftText(euDraft, 'eu thought');
+    await writeDraftText(globalDraft, 'global thought');
     await waitFor(() => expect(observedLeaveWorkspace).not.toBeNull());
 
     await act(async () => {
@@ -1025,8 +1037,8 @@ describe('draft cache lifetime across a session', () => {
     });
 
     expect(bridge.leaveWorkspace).toHaveBeenCalledWith({ region: 'eu', workspaceId: 'workspace-eu' });
-    expect(await readDraftText('workspace:workspace-eu:workstream:1')).toBeNull();
-    expect((await readDraftText('workspace:workspace-global:workstream:2'))?.text).toBe('global thought');
+    expect(await readDraftText(euDraft)).toBeNull();
+    expect((await readDraftText(globalDraft))?.text).toBe('global thought');
   });
 
   it('cannot be repopulated by a composer flushing its draft on the way out', async () => {
