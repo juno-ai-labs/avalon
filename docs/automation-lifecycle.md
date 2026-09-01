@@ -99,7 +99,10 @@ evaluator tool with an empty array.
 `admitAuthoredDraft` enforces that, on the rules themselves rather than on
 whether the tool was called: a **ready** draft carrying a `connector_activity`,
 `semantic_activity` or `webhook` trigger is refused when its staged set is
-absent **or** empty, which is the same condition `prepareAcceptance` applies. A
+absent **or** empty. It is not merely the same condition `prepareAcceptance`
+applies but literally the same predicate — `evaluatorRulesMissing`, over
+`externalEventTriggers` — so a new trigger kind reaches both boundaries or
+neither. A
 draft that is not ready is exempt — a partial submission paired with a
 clarifying question has not chosen its rules yet, and acceptance refuses it on
 `ready` alone. Submission is the last point at which missing rules are the
@@ -631,9 +634,16 @@ cannot work. A refused tool call inside the loop is repaired and retried
 instead. The `ready` exemption is deliberate and load-bearing: without it a
 partial submission paired with a clarifying question — the ordinary way a draft
 asks for a missing detail — would be refused, and the test asserts that case for
-that reason. A future change must keep the two conditions identical; the same
-class of defect was fixed once before in the compiler path this replaced, and it
-recurred because each end read the state its own way.
+that reason.
+
+Both boundaries call one predicate, `evaluatorRulesMissing`, rather than each
+spelling the condition out. The first draft of this change duplicated it and
+left a note saying the two must be kept identical; review pointed out that a
+note is what failed last time. The same class of defect was fixed once before in
+the compiler path this replaced and recurred here because each end read the
+state its own way, so the requirement is structural now — dropping a trigger
+kind from `externalEventTriggers` breaks the regression test rather than
+silently teaching one boundary and not the other.
 
 ### 2026-09-01 — The disposition classifier gets a corpus, and it is a gate
 

@@ -24,6 +24,7 @@ import {
   type AutomationDraft,
   type AutomationDraftTurnAdmissionRequest,
   type AutomationDetail,
+  type AutomationSetEvaluatorRulesInputV1,
   type AutomationSetEvaluatorRulesMutation,
   type AutomationRunContextV1,
 } from "@rally/contracts";
@@ -755,6 +756,38 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
  * type, which is most of what tells a summary of a candidate email apart from a
  * summary of a spreadsheet save.
  */
+/**
+ * The triggers whose events an evaluator rule set decides on.
+ *
+ * One definition of "external event", read by both boundaries that enforce the
+ * rule requirement, so adding a trigger kind cannot teach one of them about it
+ * and not the other.
+ */
+function externalEventTriggers(draft: AutomationDraft): AutomationDraft["triggers"] {
+  return draft.triggers.filter((trigger) => (
+    trigger.type === "connector_activity"
+    || trigger.type === "semantic_activity"
+    || trigger.type === "webhook"
+  ));
+}
+
+/**
+ * Whether a definition needs evaluator rules and does not have them.
+ *
+ * Submission and acceptance both refuse on this, and the defect each exists to
+ * catch is what happens when they disagree: a draft the first admits and the
+ * second refuses reaches a person as a proposal whose Create button cannot
+ * work. They shared a written invariant before and drifted anyway, so they
+ * share the predicate now — a missing set and an explicit empty one are one
+ * answer here, because the tool documents `[]` as the way to clear rules.
+ */
+function evaluatorRulesMissing(
+  draft: AutomationDraft,
+  rules: AutomationSetEvaluatorRulesInputV1 | null,
+): boolean {
+  return externalEventTriggers(draft).length > 0 && (rules?.evaluators.length ?? 0) === 0;
+}
+
 function automationTriggerSummary(trigger: AutomationRunContextV1["trigger"]): string | null {
   switch (trigger.kind) {
     case "external_event": return trigger.eventType;
@@ -1081,23 +1114,17 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.nullable().default(null),
       draft: AutomationDraftSchema,
     }).parse(input);
-    // The same condition `prepareAcceptance` applies, applied here instead.
-    // An event-driven draft whose rules are absent or empty is one Create can
-    // only refuse, and by then the refusal has nowhere to go: the drafting loop
-    // has ended, and what is left is a proposal card whose button never works.
-    // Refusing the submission puts it back inside that loop, where a rejected
-    // tool call is repaired and retried. Only a `ready` draft is held to it —
-    // a partial submission paired with a clarifying question has not chosen its
-    // rules yet, and acceptance refuses it on `ready` alone anyway.
-    if (
-      request.draft.ready
-      && (request.evaluatorRules?.evaluators.length ?? 0) === 0
-      && request.draft.triggers.some((trigger) => (
-        trigger.type === "connector_activity"
-        || trigger.type === "semantic_activity"
-        || trigger.type === "webhook"
-      ))
-    ) throw new Error("automation_evaluator_rules_required");
+    // `prepareAcceptance`'s own condition, applied here instead. An event-driven
+    // draft whose rules are absent or empty is one Create can only refuse, and
+    // by then the refusal has nowhere to go: the drafting loop has ended, and
+    // what is left is a proposal card whose button never works. Refusing the
+    // submission puts it back inside that loop, where a rejected tool call is
+    // repaired and retried. Only a `ready` draft is held to it — a partial
+    // submission paired with a clarifying question has not chosen its rules
+    // yet, and acceptance refuses it on `ready` alone anyway.
+    if (request.draft.ready && evaluatorRulesMissing(request.draft, request.evaluatorRules)) {
+      throw new Error("automation_evaluator_rules_required");
+    }
     const now = Date.now();
     const existing = this.state.storage.sql.exec<{
       automation_id: string;
@@ -3062,11 +3089,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
     const deliveryTargets = await this.resolveDeliveryTargets(input);
 
-    const externalTriggers = definition.triggers.filter((trigger) => (
-      trigger.type === "connector_activity"
-      || trigger.type === "semantic_activity"
-      || trigger.type === "webhook"
-    ));
+    const externalTriggers = externalEventTriggers(definition);
     const staged = this.state.storage.sql.exec<{ evaluator_rules_json: string | null }>(
       `SELECT evaluator.evaluator_rules_json
          FROM automation_definition_revisions definition
@@ -3088,7 +3111,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     const rules = rulesJson
       ? AutomationSetEvaluatorRulesInputV1Schema.parse(JSON.parse(rulesJson))
       : AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [] });
-    if (externalTriggers.length > 0 && rules.evaluators.length === 0) {
+    if (evaluatorRulesMissing(definition, rules)) {
       throw new Error("automation_evaluator_rules_required");
     }
     const selectedByBinding = new Map(Object.entries(input.activitySourcePluginIds));
