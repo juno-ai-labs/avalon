@@ -19,9 +19,9 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
  * names what happened and the service maps it to its own `ApiError`.
  */
 
-const TimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
-const MinuteOfDaySchema = deferredZodSchema(() => z.number().int().min(0).max(1439));
-const DayMaskSchema = deferredZodSchema(() => z.number().int().min(0).max(127));
+const TimestampSchema = z.string().datetime({ offset: true });
+const MinuteOfDaySchema = z.number().int().min(0).max(1439);
+const DayMaskSchema = z.number().int().min(0).max(127);
 
 /** One configured digest, without its frozen destinations. */
 export const WorkspaceDigestScheduleSchema = deferredZodSchema(() => z.strictObject({

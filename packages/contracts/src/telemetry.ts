@@ -67,7 +67,7 @@ interface TelemetryRegistryEntry {
   authoritativeSource: TelemetrySource;
   category: TelemetryCategory;
   identityScopes: readonly TelemetryIdentityScope[];
-  properties: z.ZodType;
+  properties: z.ZodLazy<z.ZodObject<z.ZodRawShape>>;
   propertyClassifications: Readonly<Record<string, TelemetryPropertyClassification>>;
   sampleRate: number;
   priority: "critical" | "high" | "normal" | "low";
@@ -96,7 +96,7 @@ function event<T extends RegistryInput>(input: T): T & {
   };
 }
 
-const lifecycleState = deferredZodSchema(() => z.enum(["launch_started", "ready", "foreground", "background", "graceful_exit"]));
+const lifecycleState = z.enum(["launch_started", "ready", "foreground", "background", "graceful_exit"]);
 const applicationVersionProperties = deferredZodSchema(() => z.strictObject({
   state: z.enum(["installed", "updated"]),
   previousVersion: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u).optional(),
@@ -108,13 +108,13 @@ const applicationVersionProperties = deferredZodSchema(() => z.strictObject({
     context.addIssue({ code: "custom", message: "application_version_transition_invalid" });
   }
 }));
-const durationBucket = deferredZodSchema(() => z.enum(["lt_100ms", "100ms_1s", "1s_5s", "5s_30s", "gte_30s"]));
-const journeyDurationBucket = deferredZodSchema(() => z.enum(["unknown", "lt_1s", "1s_5s", "5s_30s", "30s_2m", "2m_10m", "gte_10m"]));
-const countBucket = deferredZodSchema(() => z.enum(["zero", "one", "two_to_five", "six_to_twenty", "twenty_one_to_one_hundred", "over_one_hundred"]));
-const resultClass = deferredZodSchema(() => z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed"]));
-const region = deferredZodSchema(() => z.enum(["global", "eu"]));
-const entrypoint = deferredZodSchema(() => z.enum(["first_run", "settings", "invitation", "workspace_switcher", "composer"]));
-const screen = deferredZodSchema(() => z.enum([
+const durationBucket = z.enum(["lt_100ms", "100ms_1s", "1s_5s", "5s_30s", "gte_30s"]);
+const journeyDurationBucket = z.enum(["unknown", "lt_1s", "1s_5s", "5s_30s", "30s_2m", "2m_10m", "gte_10m"]);
+const countBucket = z.enum(["zero", "one", "two_to_five", "six_to_twenty", "twenty_one_to_one_hundred", "over_one_hundred"]);
+const resultClass = z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed"]);
+const region = z.enum(["global", "eu"]);
+const entrypoint = z.enum(["first_run", "settings", "invitation", "workspace_switcher", "composer"]);
+const screen = z.enum([
   "onboarding_welcome",
   "onboarding_region",
   "onboarding_workspace",
@@ -122,33 +122,33 @@ const screen = deferredZodSchema(() => z.enum([
   "workstream",
   "application_settings",
   "developer_settings",
-]));
-const applicationIcon = deferredZodSchema(() => z.enum(TELEMETRY_APPLICATION_ICON_IDS));
-const resourceId = deferredZodSchema(() => z.string().uuid());
-const uuidV7Id = deferredZodSchema(() => z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7"));
-const visibility = deferredZodSchema(() => z.enum(["private", "public"]));
-const resourceCount = deferredZodSchema(() => z.number().int().min(0).max(100));
-const connectorType = deferredZodSchema(() => z.enum(TELEMETRY_CONNECTOR_TYPES));
-const safeTelemetryTaxonomyValue = deferredZodSchema(() => z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/u));
-const safeModelRoute = deferredZodSchema(() => z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/u));
-const telemetrySurface = deferredZodSchema(() => z.enum([
+]);
+const applicationIcon = z.enum(TELEMETRY_APPLICATION_ICON_IDS);
+const resourceId = z.string().uuid();
+const uuidV7Id = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
+const visibility = z.enum(["private", "public"]);
+const resourceCount = z.number().int().min(0).max(100);
+const connectorType = z.enum(TELEMETRY_CONNECTOR_TYPES);
+const safeTelemetryTaxonomyValue = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/u);
+const safeModelRoute = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/u);
+const telemetrySurface = z.enum([
   "onboarding_welcome", "onboarding_region", "onboarding_workspace", "workspace_home",
   "workstream", "note_detail", "meeting_capture", "automation_builder", "automation_detail",
   "settings_account", "settings_digest", "settings_workspace", "settings_connections",
   "settings_application", "settings_developer", "resource_inspector", "hypersight", "terminal",
-]));
-const surfaceEntrypoint = deferredZodSchema(() => z.enum([
+]);
+const surfaceEntrypoint = z.enum([
   "direct", "sidebar_new", "sidebar_pinned", "sidebar_recent", "sidebar_note", "sidebar_automation",
   "home_waiting", "home_suggested", "menu_bar", "command_shortcut", "deep_link", "notification",
   "automation_run_list", "in_app_link", "settings", "unknown",
-]));
-const automationTriggerType = deferredZodSchema(() => z.enum([
+]);
+const automationTriggerType = z.enum([
   "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "inbound_email",
-]));
-const automationDeliveryTargetType = deferredZodSchema(() => z.enum(["email", "slack_agent_dm"]));
-const connectorScope = deferredZodSchema(() => z.enum(["personal", "workspace"]));
-const connectorSetupMethod = deferredZodSchema(() => z.enum(["oauth", "api_key", "direct", "webhook"]));
-const connectorHealth = deferredZodSchema(() => z.enum(["healthy", "needs_reconnect", "error", "disabled", "unknown"]));
+]);
+const automationDeliveryTargetType = z.enum(["email", "slack_agent_dm"]);
+const connectorScope = z.enum(["personal", "workspace"]);
+const connectorSetupMethod = z.enum(["oauth", "api_key", "direct", "webhook"]);
+const connectorHealth = z.enum(["healthy", "needs_reconnect", "error", "disabled", "unknown"]);
 export const TELEMETRY_REALTIME_SOCKETS = [
   "workspace",
   "workstream_control",
@@ -183,9 +183,9 @@ const realtimeSocketProperties = deferredZodSchema(() => z.strictObject({
   }
 }));
 
-const generatedJavascriptFrame = deferredZodSchema(() => z.string().min(1).max(192)
+const generatedJavascriptFrame = z.string().min(1).max(192)
   .regex(/^[a-zA-Z0-9_-][a-zA-Z0-9._/-]{0,159}\.(?:c?js):\d{1,7}:\d{1,5}$/u)
-  .refine((value) => !value.startsWith("/") && !value.includes("..")));
+  .refine((value) => !value.startsWith("/") && !value.includes(".."));
 
 const common = {
   owner: "product-analytics",
@@ -1959,8 +1959,8 @@ export type TelemetryEventProperties<TName extends TelemetryEventName> = z.infer
 >;
 export const telemetryEventNames = Object.keys(TELEMETRY_EVENTS) as TelemetryEventName[];
 
-const UuidV7Schema = deferredZodSchema(() => z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7"));
-const SafeReleaseSchema = deferredZodSchema(() => z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u));
+const UuidV7Schema = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
+const SafeReleaseSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u);
 
 export const TelemetryBreadcrumbSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   z.strictObject({
@@ -2094,7 +2094,7 @@ const EnvelopeBaseSchema = deferredZodSchema(() => z.union([
   }),
 ]));
 
-export const TelemetryEnvelopeSchema = deferredZodSchema(() => EnvelopeBaseSchema.superRefine((value, context) => {
+export const TelemetryEnvelopeSchema = EnvelopeBaseSchema.superRefine((value, context) => {
   const entry = TELEMETRY_EVENTS[value.name as TelemetryEventName];
   if (!entry) {
     context.addIssue({ code: "custom", message: "telemetry_event_unregistered", path: ["name"] });
@@ -2116,7 +2116,7 @@ export const TelemetryEnvelopeSchema = deferredZodSchema(() => EnvelopeBaseSchem
   if (!properties.success) {
     context.addIssue({ code: "custom", message: "telemetry_properties_invalid", path: ["properties"] });
   }
-}));
+});
 
 export type TelemetryEnvelope = z.infer<typeof TelemetryEnvelopeSchema>;
 

@@ -12,8 +12,8 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";
 
-const TimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
-const UuidV7Schema = deferredZodSchema(() => IdSchema.refine((value) => value[14] === "7", "must be UUIDv7"));
+const TimestampSchema = z.string().datetime({ offset: true });
+const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
 
 export const WorkspaceAttentionRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
@@ -94,7 +94,7 @@ export const WorkspaceDirectoryBatchTargetsResultSchema = deferredZodSchema(() =
   noteIds: z.array(IdSchema),
 }));
 
-const WorkstreamBatchRequestHashSchema = deferredZodSchema(() => z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u));
+const WorkstreamBatchRequestHashSchema = z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u);
 
 /** Freeze one generic filtered batch so transport retries cannot widen its target set. */
 export const WorkspaceBatchDispatchBeginRequestSchema = deferredZodSchema(() => z.strictObject({
