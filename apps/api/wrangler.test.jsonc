@@ -32,6 +32,7 @@
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
+      { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" },
       { "name": "MIGRATION_PROBE_DO", "class_name": "MigrationProbeDO" }
     ]
   },
@@ -45,6 +46,7 @@
         "WorkstreamDO",
         "WorkspaceDO",
         "SlackReactionTicker",
+        "ArtifactHostDO",
         "MigrationProbeDO"
       ]
     }
