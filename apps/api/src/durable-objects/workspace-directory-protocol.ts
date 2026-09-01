@@ -13,22 +13,22 @@ import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-ef
 const TimestampSchema = z.string().datetime({ offset: true });
 const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
 
-export const WorkspaceAttentionRequestSchema = z.object({
+export const WorkspaceAttentionRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
-}).strict();
+});
 
 export const WorkspaceAttentionResultSchema = WorkspaceAttentionSchema.strict();
 
-export const WorkspaceDirectoryListRequestSchema = z.object({
+export const WorkspaceDirectoryListRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   limit: z.number().int().min(1).max(250),
   before: WorkspaceWorkstreamCursorSchema.optional(),
   includeSystem: z.boolean(),
-}).strict();
+});
 
-export const WorkspaceDirectoryPageSchema = z.object({
+export const WorkspaceDirectoryPageSchema = z.strictObject({
   // Pins and running connection targets are returned in addition to the
   // requested recent-work page. They remain available without consuming its
   // infinite-scroll cursor budget. Pins have their own product limit, while
@@ -38,7 +38,7 @@ export const WorkspaceDirectoryPageSchema = z.object({
   stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
   directoryWaterline: z.number().int().nonnegative(),
-}).strict().superRefine((page, context) => {
+}).superRefine((page, context) => {
   const itemIds = new Set(page.items.map((item) => item.id));
   const versionIds = new Set(page.stateVersions.map((version) => version.workstreamId));
   if (itemIds.size !== page.items.length
@@ -53,96 +53,96 @@ export const WorkspaceDirectoryPageSchema = z.object({
   }
 });
 
-export const WorkspaceDirectoryVisibilityRequestSchema = z.object({
+export const WorkspaceDirectoryVisibilityRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   workstreamId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDirectoryReadableIdsRequestSchema = z.object({
+export const WorkspaceDirectoryReadableIdsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   workstreamIds: z.array(IdSchema).min(1).max(100),
-}).strict();
+});
 
-export const WorkspaceDirectoryReadableIdsResultSchema = z.object({
+export const WorkspaceDirectoryReadableIdsResultSchema = z.strictObject({
   items: z.array(IdSchema).max(100),
-}).strict();
+});
 
-export const WorkspaceDirectoryBatchTargetsRequestSchema = z.object({
+export const WorkspaceDirectoryBatchTargetsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   filter: WorkstreamBatchFilterSchema,
-}).strict();
+});
 
-export const WorkspaceDirectoryBatchTargetsResultSchema = z.object({
+export const WorkspaceDirectoryBatchTargetsResultSchema = z.strictObject({
   // Intentionally uncapped: the public filter may legitimately select the
   // whole sidebar. The regional Worker chunks these ids into 50-message Queue
   // calls, below the platform's 100-message sendBatch maximum, instead of
   // truncating them.
   items: z.array(IdSchema),
-}).strict();
+});
 
 const WorkstreamBatchRequestHashSchema = z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u);
 
 /** Freeze one generic filtered batch so transport retries cannot widen its target set. */
-export const WorkspaceBatchDispatchBeginRequestSchema = z.object({
+export const WorkspaceBatchDispatchBeginRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   operationId: IdSchema,
   requestHash: WorkstreamBatchRequestHashSchema,
   filter: WorkstreamBatchFilterSchema,
-}).strict();
+});
 
-export const WorkspaceBatchDispatchBeginResultSchema = z.object({
+export const WorkspaceBatchDispatchBeginResultSchema = z.strictObject({
   items: z.array(IdSchema),
   targetCount: z.number().int().nonnegative(),
-}).strict();
+});
 
 /** Record one successfully published Queue chunk for a frozen generic batch. */
-export const WorkspaceBatchDispatchAdvanceRequestSchema = z.object({
+export const WorkspaceBatchDispatchAdvanceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   operationId: IdSchema,
   requestHash: WorkstreamBatchRequestHashSchema,
   workstreamIds: z.array(IdSchema).min(1).max(100),
-}).strict();
+});
 
-export const WorkspaceBatchDispatchAdvanceResultSchema = z.object({
+export const WorkspaceBatchDispatchAdvanceResultSchema = z.strictObject({
   remainingCount: z.number().int().nonnegative(),
-}).strict();
+});
 
-export const WorkspaceDirectoryVisibleIdsRequestSchema = z.object({
+export const WorkspaceDirectoryVisibleIdsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   includeSystem: z.boolean(),
   participantsOnly: z.boolean(),
   after: IdSchema.optional(),
   limit: z.number().int().min(1).max(250),
-}).strict();
+});
 
-export const WorkspaceDirectoryVisibleIdsPageSchema = z.object({
+export const WorkspaceDirectoryVisibleIdsPageSchema = z.strictObject({
   items: z.array(IdSchema).max(250),
   nextCursor: IdSchema.nullable(),
-}).strict();
+});
 
-export const WorkspaceDirectoryExistsRequestSchema = z.object({
+export const WorkspaceDirectoryExistsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDirectoryPlannedRequestSchema = z.object({
+export const WorkspaceDirectoryPlannedRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   automationSubscriptionId: IdSchema,
   plannedFor: TimestampSchema,
-}).strict();
+});
 
 /** Internal scheduler lookup; unlike the member-facing lookup it is not visibility-filtered. */
-export const WorkspaceDirectoryPlannedAutomationRequestSchema = z.object({
+export const WorkspaceDirectoryPlannedAutomationRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   automationSubscriptionId: IdSchema,
   plannedFor: TimestampSchema,
-}).strict();
+});
 
 /**
  * An automation's current title, for the origin label on a work stream it made.
@@ -156,53 +156,53 @@ export const WorkspaceDirectoryPlannedAutomationRequestSchema = z.object({
  * automation's run work stream returned 500. A method names its tables in the
  * object that has them, and cannot be routed anywhere else.
  */
-export const WorkspaceAutomationOriginLabelRequestSchema = z.object({
+export const WorkspaceAutomationOriginLabelRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   automationId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceAutomationOriginLabelSchema = z.object({
+export const WorkspaceAutomationOriginLabelSchema = z.strictObject({
   /**
    * The automation's title, or null when the workspace has no live directory
    * row for it. The caller truncates for display; this carries what the
    * directory holds.
    */
   title: z.string().nullable(),
-}).strict();
+});
 
 export const WorkspaceDirectoryPinRequestSchema = WorkspaceDirectoryVisibilityRequestSchema;
 
-export const WorkspaceDirectoryReorderPinsRequestSchema = z.object({
+export const WorkspaceDirectoryReorderPinsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   workstreamIds: z.array(IdSchema).max(1_000),
-}).strict();
+});
 
-export const WorkspaceDirectoryNotificationRequestSchema = z.object({
+export const WorkspaceDirectoryNotificationRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   userId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDirectoryNotificationStateSchema = z.object({
+export const WorkspaceDirectoryNotificationStateSchema = z.strictObject({
   authorityGeneration: z.number().int().positive(),
   viewerVersion: z.number().int().positive(),
   listable: z.boolean(),
   title: z.string().min(1).max(500),
   emailAddress: z.string().email().max(254).nullable(),
-}).strict();
+});
 
-export const WorkspaceDirectoryResourceRequestSchema = z.object({
+export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   watchedOnly: z.boolean(),
-}).strict();
+});
 
-export const WorkspaceDirectoryResourceResultSchema = z.object({
+export const WorkspaceDirectoryResourceResultSchema = z.strictObject({
   workstreamIds: z.array(IdSchema).max(10_000),
-}).strict();
+});
 
-export const WorkspaceDirectoryInternalItemSchema = z.object({
+export const WorkspaceDirectoryInternalItemSchema = z.strictObject({
   workstreamId: IdSchema,
   title: z.string().min(1).max(500),
   description: z.string().max(10_000),
@@ -218,69 +218,69 @@ export const WorkspaceDirectoryInternalItemSchema = z.object({
   automationSubscriptionId: IdSchema.nullable(),
   automationRunId: IdSchema.nullable(),
   plannedFor: TimestampSchema.nullable(),
-}).strict();
+});
 
-export const WorkspaceDirectoryLookupRequestSchema = z.object({
+export const WorkspaceDirectoryLookupRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   workstreamIds: z.array(IdSchema).min(1).max(250),
-}).strict();
+});
 
-export const WorkspaceDirectoryLookupResultSchema = z.object({
+export const WorkspaceDirectoryLookupResultSchema = z.strictObject({
   items: z.array(WorkspaceDirectoryInternalItemSchema).max(250),
-}).strict();
+});
 
 export const WorkspaceDirectoryAudienceSchema = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("workspace") }).strict(),
-  z.object({ scope: z.literal("user"), userId: IdSchema }).strict(),
+  z.strictObject({ scope: z.literal("workspace") }),
+  z.strictObject({ scope: z.literal("user"), userId: IdSchema }),
 ]);
 
-export const WorkspaceDirectoryRecentRequestSchema = z.object({
+export const WorkspaceDirectoryRecentRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   audience: WorkspaceDirectoryAudienceSchema,
   includeSystem: z.boolean(),
   participantsOnly: z.boolean(),
   limit: z.number().int().min(1).max(250),
-}).strict();
+});
 
-export const WorkspaceDirectoryDueRequestSchema = z.object({
+export const WorkspaceDirectoryDueRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   kind: z.enum(["terminal", "wakeup"]),
   through: TimestampSchema,
   limit: z.number().int().min(1).max(250),
-}).strict();
+});
 
-export const WorkspaceDirectoryScheduleTargetsRequestSchema = z.object({
+export const WorkspaceDirectoryScheduleTargetsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDirectoryScheduleTargetsResultSchema = z.object({
-  items: z.array(z.object({
+export const WorkspaceDirectoryScheduleTargetsResultSchema = z.strictObject({
+  items: z.array(z.strictObject({
     kind: z.enum(["wakeup", "terminal"]),
     workstreamId: IdSchema,
     dueAt: TimestampSchema,
-  }).strict()).max(20_000),
-}).strict();
+  })).max(20_000),
+});
 
-export const WorkspaceDirectoryResourceAccessRequestSchema = z.object({
+export const WorkspaceDirectoryResourceAccessRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   userId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDirectoryResourceAccessResultSchema = z.object({
-  items: z.array(z.object({
+export const WorkspaceDirectoryResourceAccessResultSchema = z.strictObject({
+  items: z.array(z.strictObject({
     workstreamId: IdSchema,
     scope: z.enum(["personal", "workspace"]),
     createdByUserId: IdSchema.nullable(),
     automationSubscriptionId: IdSchema.nullable(),
     isParticipant: z.boolean(),
-  }).strict()).max(10_000),
-}).strict();
+  })).max(10_000),
+});
 
-export const WorkspaceDirectoryApplyRequestSchema = z.object({
+export const WorkspaceDirectoryApplyRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   envelopes: z.array(WorkstreamRegionalEffectEnvelopeSchema).min(1).max(25),
-}).strict().superRefine((request, context) => {
+}).superRefine((request, context) => {
   for (const [index, envelope] of request.envelopes.entries()) {
     if (envelope.workspaceId !== request.workspaceId) {
       context.addIssue({
@@ -309,13 +309,13 @@ export const WorkspaceDirectoryApplyRequestSchema = z.object({
   }
 });
 
-export const WorkspaceDirectoryApplyResultSchema = z.object({
-  accepted: z.array(z.object({
+export const WorkspaceDirectoryApplyResultSchema = z.strictObject({
+  accepted: z.array(z.strictObject({
     messageId: z.string().min(1).max(500),
     payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
-  }).strict()).max(25),
+  })).max(25),
   directoryChanged: z.boolean(),
-}).strict();
+});
 
 /**
  * One WorkstreamDO activity/mention effect, applied with its receipt in a
@@ -324,13 +324,13 @@ export const WorkspaceDirectoryApplyResultSchema = z.object({
  * commits only what it was handed, so the effect and its idempotency receipt
  * can never land in different authorities.
  */
-export const WorkspaceRegionalEffectApplyRequestSchema = z.object({
+export const WorkspaceRegionalEffectApplyRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   envelope: WorkstreamRegionalEffectEnvelopeSchema,
   actorUserId: IdSchema.nullable(),
   targetUserIds: z.array(IdSchema).max(100),
   recipientIsActiveMember: z.boolean(),
-}).strict().superRefine((request, context) => {
+}).superRefine((request, context) => {
   if (request.envelope.workspaceId !== request.workspaceId) {
     context.addIssue({
       code: "custom",
@@ -348,10 +348,10 @@ export const WorkspaceRegionalEffectApplyRequestSchema = z.object({
   }
 });
 
-export const WorkspaceRegionalEffectApplyResultSchema = z.object({
+export const WorkspaceRegionalEffectApplyResultSchema = z.strictObject({
   replayed: z.boolean(),
   notificationIntentId: z.string().min(1).max(300).nullable(),
-}).strict();
+});
 
 export type WorkspaceDirectoryListRequest = z.infer<typeof WorkspaceDirectoryListRequestSchema>;
 export type WorkspaceAttentionRequest = z.infer<typeof WorkspaceAttentionRequestSchema>;

@@ -11,7 +11,7 @@ const JsonStringSchema = z.string().refine((value) => {
   }
 }, "Expected valid JSON");
 
-export const WorkspaceDraftAttachmentSchema = z.object({
+export const WorkspaceDraftAttachmentSchema = z.strictObject({
   id: IdSchema,
   connectionId: IdSchema.nullable(),
   resourceType: z.string().min(1),
@@ -32,33 +32,33 @@ export const WorkspaceDraftAttachmentSchema = z.object({
   modelContentErrorCode: z.string().nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceReserveDraftAttachmentsRequestSchema = z.object({
+export const WorkspaceReserveDraftAttachmentsRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   inputId: IdSchema,
   userId: UserIdSchema,
   resourceIds: z.array(IdSchema),
-}).strict();
+});
 
 export const WorkspaceReserveDraftAttachmentsResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.enum(["reserved", "replayed"]),
     resources: z.array(WorkspaceDraftAttachmentSchema),
-  }).strict(),
-  z.object({ outcome: z.literal("unavailable") }).strict(),
+  }),
+  z.strictObject({ outcome: z.literal("unavailable") }),
 ]);
 
-export const WorkspaceReleaseDraftAttachmentsRequestSchema = z.object({
+export const WorkspaceReleaseDraftAttachmentsRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   inputId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceReleaseDraftAttachmentsResultSchema = z.object({
+export const WorkspaceReleaseDraftAttachmentsResultSchema = z.strictObject({
   released: z.number().int().nonnegative(),
-}).strict();
+});
 
 export type WorkspaceReserveDraftAttachmentsRequest = z.infer<
   typeof WorkspaceReserveDraftAttachmentsRequestSchema

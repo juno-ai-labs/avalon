@@ -48,11 +48,11 @@ function suggestionFreshness(createdAt: string): "lt_1h" | "1h_24h" | "1d_7d" | 
  * route and its harness run have all committed. The desktop client parses this
  * response with the base schema, so the detail's extra keys were never read.
  */
-export const StartedWorkOpportunityResponseSchema = z.object({
+export const StartedWorkOpportunityResponseSchema = z.strictObject({
   workstream: WorkstreamSchema,
   turnId: IdSchema,
   harnessRunId: IdSchema.nullable(),
-}).strict();
+});
 
 export const workOpportunityRoutes = new Hono<HonoAppEnv>();
 

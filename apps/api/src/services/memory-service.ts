@@ -105,30 +105,30 @@ function workspaceMemoryObject(env: Env, workspaceId: string) {
  * retries with `{}`, which fails too.
  */
 const SearchInputSchema = z.union([
-  z.object({ query: z.string().trim().min(1).max(2_000) }).strict(),
-  z.object({ memoryItemId: z.string().uuid() }).strict(),
+  z.strictObject({ query: z.string().trim().min(1).max(2_000) }),
+  z.strictObject({ memoryItemId: z.string().uuid() }),
 ], { error: "Send exactly one of query or memoryItemId: query to search, memoryItemId to reread one known item." });
 
-const AddInputSchema = z.object({
+const AddInputSchema = z.strictObject({
   scopeKind: z.enum(MEMORY_SCOPE_KINDS),
   text: z.string().trim().min(1).max(16_000),
   expiresAt: z.string().datetime({ offset: true }).optional(),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
+});
 
-const UpdateInputSchema = z.object({
+const UpdateInputSchema = z.strictObject({
   memoryItemId: z.string().uuid(),
   expectedRevision: z.number().int().positive(),
   text: z.string().trim().min(1).max(16_000),
   expiresAt: z.string().datetime({ offset: true }).optional(),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
+});
 
-const InvalidateInputSchema = z.object({
+const InvalidateInputSchema = z.strictObject({
   memoryItemId: z.string().uuid(),
   expectedRevision: z.number().int().positive(),
   reason: z.string().trim().min(1).max(2_000),
-}).strict();
+});
 
 class MemoryToolError extends Error {
   override readonly name = "MemoryToolError";
@@ -694,14 +694,14 @@ export async function freezeRunMemoryContext(
     ? [input.automationRunContext!.automationId]
     : workspaceRecall!.scopes.map((scope) => scope.memoryScopeId).sort();
   const results = recalled
-    ? z.object({ results: z.array(z.object({
+    ? z.looseObject({ results: z.array(z.strictObject({
         memoryItemId: z.string(),
         memoryScopeId: z.string(),
         scopeKind: z.literal("automation"),
         text: z.string(),
         revision: z.number().int().positive(),
         expiresAt: z.string().nullable(),
-      }).strict()) }).passthrough().parse(recalled.output).results
+      })) }).parse(recalled.output).results
     : workspaceRecall!.results;
   const retrievalMode = recalled ? "fts_only" as const : workspaceRecall!.retrievalMode;
   const memoryContextHash = await sha256(stableJson({ memoryScopeIds, query, retrievalMode, results }));

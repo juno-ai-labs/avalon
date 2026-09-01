@@ -17,13 +17,13 @@ import { AutomationService } from "./automation-service";
 import { automationRefusal, withAutomationErrors } from "./automation-agent-errors";
 import { logWarn } from "../observability/logger";
 
-export const AutomationDraftTurnRequestSchema = z.object({
+export const AutomationDraftTurnRequestSchema = z.strictObject({
   clientCreationKey: IdSchema.optional(),
   clientMessageId: IdSchema,
   content: z.string().min(1),
   attachmentIds: z.array(IdSchema).default([]),
   inputMode: z.enum(["typed", "suggested_prompt", "elicitation_response", "edit"]).default("typed"),
-}).strict();
+});
 
 export type AutomationDraftTurnRequest = z.infer<typeof AutomationDraftTurnRequestSchema>;
 

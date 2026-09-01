@@ -11,7 +11,7 @@ import { ensureFreshConnectorCredentials } from "./connector-credential-refresh"
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
-const SlackMentionConnectionSchema = z.object({
+const SlackMentionConnectionSchema = z.strictObject({
   id: z.string().uuid(),
   workspace_id: z.string().uuid(),
   provider_account_id: z.string().min(1),
@@ -19,9 +19,9 @@ const SlackMentionConnectionSchema = z.object({
   credential_iv: z.string().min(1),
   credential_key_version: z.coerce.number().int().positive(),
   linked_slack_user_id: z.string().min(1).nullable(),
-}).strict();
+});
 
-const SlackCredentialsSchema = z.object({ botAccessToken: z.string().min(1) }).passthrough();
+const SlackCredentialsSchema = z.looseObject({ botAccessToken: z.string().min(1) });
 type SlackMentionConnection = z.infer<typeof SlackMentionConnectionSchema>;
 type SlackMentionDestination = {
   connection: SlackMentionConnection;

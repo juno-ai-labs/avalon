@@ -11,7 +11,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 
-const ExternalMessageBaseSchema = z.object({
+const ExternalMessageBaseSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   messageId: IdSchema,
@@ -26,7 +26,7 @@ const ExternalMessageBaseSchema = z.object({
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
   runMode: z.enum(["steer", "queue"]).default("steer"),
   now: z.number().int().nonnegative(),
-}).strict();
+});
 
 /** An external participant message that must reach the persistent Bind loop. */
 export const AdmitExternalMessageInputSchema = ExternalMessageBaseSchema.extend({

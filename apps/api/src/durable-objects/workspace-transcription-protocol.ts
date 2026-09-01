@@ -17,7 +17,7 @@ import { z } from "zod";
  * being restated by whoever calls it: admission policy belongs to the object
  * that holds the sessions.
  */
-export const WorkspaceTranscriptionAdmitRequestSchema = z.object({
+export const WorkspaceTranscriptionAdmitRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   /** The socket ticket being spent; consuming it is what makes it one-time. */
@@ -26,7 +26,7 @@ export const WorkspaceTranscriptionAdmitRequestSchema = z.object({
   ticketExpiresAtSeconds: z.number().int().nonnegative(),
   sessionId: IdSchema,
   nowSeconds: z.number().int().nonnegative(),
-}).strict();
+});
 
 /**
  * Why admission ended, as data rather than as a thrown error.
@@ -37,21 +37,21 @@ export const WorkspaceTranscriptionAdmitRequestSchema = z.object({
  * maps it to an `ApiError`. Throwing across RPC would arrive as a bare message
  * with the status lost.
  */
-export const WorkspaceTranscriptionAdmitResultSchema = z.object({
+export const WorkspaceTranscriptionAdmitResultSchema = z.strictObject({
   outcome: z.enum(["admitted", "ticket_replayed", "concurrency_limit"]),
   /** When the admitted session's lease runs out; absent on a refusal. */
   expiresAtSeconds: z.number().int().nonnegative().nullable(),
-}).strict();
+});
 
-export const WorkspaceTranscriptionSessionRequestSchema = z.object({
+export const WorkspaceTranscriptionSessionRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   sessionId: IdSchema,
-}).strict();
+});
 
 export const WorkspaceTranscriptionRenewRequestSchema = WorkspaceTranscriptionSessionRequestSchema
   .extend({ nowSeconds: z.number().int().nonnegative() });
 
-export const WorkspaceTranscriptionRenewResultSchema = z.object({
+export const WorkspaceTranscriptionRenewResultSchema = z.strictObject({
   /**
    * False when the session was already gone — swept, or released by the peer
    * that owned it. The caller stops renewing rather than resurrecting a lease
@@ -59,7 +59,7 @@ export const WorkspaceTranscriptionRenewResultSchema = z.object({
    */
   renewed: z.boolean(),
   expiresAtSeconds: z.number().int().nonnegative().nullable(),
-}).strict();
+});
 
 export type WorkspaceTranscriptionAdmitRequest = z.infer<
   typeof WorkspaceTranscriptionAdmitRequestSchema

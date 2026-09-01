@@ -12,12 +12,12 @@ export const ANALYTICS_LAKEHOUSE_QUEUE_NAMES = new Set([
   "avalon-global-analytics-events-lakehouse",
 ]);
 
-export const AnalyticsLakehousePointerSchema = z.object({
+export const AnalyticsLakehousePointerSchema = z.strictObject({
   schemaVersion: z.literal(1),
   eventId: z.string().uuid(),
   payloadHash: z.string().min(1),
   region: z.literal("global"),
-}).strict();
+});
 
 export type AnalyticsLakehousePointer = z.infer<typeof AnalyticsLakehousePointerSchema>;
 

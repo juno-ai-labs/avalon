@@ -159,7 +159,7 @@ type SlackPromptSource = {
   attachments: SlackOriginAttachment[];
 };
 
-const SlackModalContextSchema = z.object({
+const SlackModalContextSchema = z.strictObject({
   kind: z.enum(["shortcut", "slash_command"]),
   channelType: z.enum(["public", "private", "im", "unknown"]),
   channelResolutionFailure: z.enum(["missing_scope", "lookup_failed"]).nullable().optional().default(null),
@@ -167,15 +167,15 @@ const SlackModalContextSchema = z.object({
   channelName: z.string().min(1).max(255).nullable().optional().default(null),
   threadTs: z.string().min(1).nullable(),
   messageTs: z.string().min(1).nullable().optional().default(null),
-  attachments: z.array(z.object({
+  attachments: z.array(z.strictObject({
     id: z.string().min(1).max(255).nullable(),
     name: z.string().min(1).max(500),
     title: z.string().max(500).nullable(),
     mimeType: z.string().max(255).nullable(),
     fileType: z.string().max(120).nullable(),
     permalink: httpsUrlSchema(2000).nullable(),
-  }).strict()).max(10).optional().default([]),
-}).strict();
+  })).max(10).optional().default([]),
+});
 
 const SLACK_PENDING_PROMPT_TTL_MS = 24 * 60 * 60_000;
 
@@ -3550,11 +3550,11 @@ async function reconcileSlackWorkstreamIdentity(
   });
 }
 
-const SlackResponseMessageSchema = z.object({
+const SlackResponseMessageSchema = z.strictObject({
   response_type: z.enum(["ephemeral", "in_channel"]),
   replace_original: z.boolean(),
   text: z.string().min(1),
-}).strict();
+});
 
 async function postSlackResponse(responseUrl: string, message: z.input<typeof SlackResponseMessageSchema>): Promise<void> {
   const url = new URL(responseUrl);
@@ -3793,7 +3793,7 @@ function slackElicitationRequest(
       return [];
     }
   })();
-  const options = z.array(z.object({ value: z.string(), label: z.string() }).passthrough())
+  const options = z.array(z.looseObject({ value: z.string(), label: z.string() }))
     .catch([])
     .parse(rawOptions);
   const byLabel = new Map(options.flatMap((option) => [

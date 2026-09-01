@@ -6,16 +6,16 @@ import {
   type CanonicalPreferenceResult,
 } from './preference';
 
-const CapabilityCommandSchema = z.object({
+const CapabilityCommandSchema = z.strictObject({
   capability: z.string().min(32).max(2_048),
   expectedRoute: z.literal('eu'),
-}).strict();
+});
 
-const CapabilityProjectionSchema = z.object({
+const CapabilityProjectionSchema = z.strictObject({
   route: z.literal('eu'),
   anonymousEpochId: z.string().uuid(),
   closed: z.boolean(),
-}).strict();
+});
 
 export type CapabilityProjection = z.infer<typeof CapabilityProjectionSchema>;
 

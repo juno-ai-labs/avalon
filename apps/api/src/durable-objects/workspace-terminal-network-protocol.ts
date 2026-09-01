@@ -17,7 +17,7 @@ const TimestampSchema = z.string().datetime({ offset: true });
 const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
 const VerificationStateSchema = z.enum(["pending", "verified", "failed"]);
 
-export const WorkspaceTerminalNetworkPolicySchema = z.object({
+export const WorkspaceTerminalNetworkPolicySchema = z.strictObject({
   mode: TerminalNetworkModeSchema,
   revision: z.number().int().positive(),
   verificationState: VerificationStateSchema,
@@ -31,7 +31,7 @@ export const WorkspaceTerminalNetworkPolicySchema = z.object({
    * *would* send, which is the same thing right up until the manifest changes.
    */
   effectiveDomains: z.array(z.string().min(1)),
-}).strict();
+});
 
 /**
  * The policy and its domains together, because nothing ever wants one alone.
@@ -41,18 +41,18 @@ export const WorkspaceTerminalNetworkPolicySchema = z.object({
  * default policy when there is none, so a workspace that has never opened the
  * setting still answers.
  */
-export const WorkspaceTerminalNetworkSettingsRequestSchema = z.object({
+export const WorkspaceTerminalNetworkSettingsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   /** The default row's manifest version, when this read is the one that creates it. */
   baselineManifestVersion: z.string().min(1),
   defaultEffectiveDomains: z.array(z.string().min(1)),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceTerminalNetworkSettingsSchema = z.object({
+export const WorkspaceTerminalNetworkSettingsSchema = z.strictObject({
   policy: WorkspaceTerminalNetworkPolicySchema,
   customDomains: z.array(z.string().min(1)),
-}).strict();
+});
 
 /**
  * The mode alone, without creating anything.
@@ -63,11 +63,11 @@ export const WorkspaceTerminalNetworkSettingsSchema = z.object({
  * `null` and the caller uses the same default the settings screen would have
  * written, rather than the agent loop writing a row as a side effect.
  */
-export const WorkspaceTerminalNetworkModeSchema = z.object({
+export const WorkspaceTerminalNetworkModeSchema = z.strictObject({
   mode: TerminalNetworkModeSchema.nullable(),
-}).strict();
+});
 
-export const WorkspaceTerminalPolicyPreviewRequestSchema = z.object({
+export const WorkspaceTerminalPolicyPreviewRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   mutationId: IdSchema,
   requestedByUserId: IdSchema,
@@ -77,15 +77,15 @@ export const WorkspaceTerminalPolicyPreviewRequestSchema = z.object({
   effectiveDomains: z.array(z.string().min(1)),
   affectedWorkstreamIds: z.array(IdSchema),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceTerminalPolicyClaimRequestSchema = z.object({
+export const WorkspaceTerminalPolicyClaimRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   mutationId: IdSchema,
   requestedByUserId: IdSchema,
   expectedRevision: z.number().int().positive(),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * Why the claim ended, and the mutation it claimed.
@@ -96,37 +96,37 @@ export const WorkspaceTerminalPolicyClaimRequestSchema = z.object({
  * a refusal here means nothing was written and there is nothing to undo.
  */
 export const WorkspaceTerminalPolicyClaimResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.literal("claimed"),
-    mutation: z.object({
+    mutation: z.strictObject({
       proposedMode: TerminalNetworkModeSchema,
       proposedDomains: z.array(z.string().min(1)),
       effectiveDomains: z.array(z.string().min(1)),
-    }).strict(),
+    }),
     /** The policy as it stood when the claim was taken. */
     current: WorkspaceTerminalNetworkPolicySchema,
     currentCustomDomains: z.array(z.string().min(1)),
-  }).strict(),
+  }),
   // One member per outcome rather than an enum in a single member: the
   // discriminant has to be a literal for a caller to narrow past a refusal to
   // the branch that carries the mutation.
-  z.object({ outcome: z.literal("preview_stale") }).strict(),
-  z.object({ outcome: z.literal("revision_conflict") }).strict(),
+  z.strictObject({ outcome: z.literal("preview_stale") }),
+  z.strictObject({ outcome: z.literal("revision_conflict") }),
 ]);
 
-export const WorkspaceTerminalPolicySettlementResultSchema = z.object({
+export const WorkspaceTerminalPolicySettlementResultSchema = z.strictObject({
   outcome: z.enum(["settled", "stale"]),
-}).strict();
+});
 
-export const WorkspaceTerminalPolicyFailRequestSchema = z.object({
+export const WorkspaceTerminalPolicyFailRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   mutationId: IdSchema,
   revision: z.number().int().positive(),
   failureCode: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceTerminalPolicyCommitRequestSchema = z.object({
+export const WorkspaceTerminalPolicyCommitRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   mutationId: IdSchema,
   createdByUserId: IdSchema,
@@ -136,7 +136,7 @@ export const WorkspaceTerminalPolicyCommitRequestSchema = z.object({
   customDomains: z.array(z.string().min(1)),
   effectiveDomains: z.array(z.string().min(1)),
   at: TimestampSchema,
-}).strict();
+});
 
 export type WorkspaceTerminalNetworkMode = z.infer<typeof WorkspaceTerminalNetworkModeSchema>;
 export type WorkspaceTerminalNetworkPolicy = z.infer<typeof WorkspaceTerminalNetworkPolicySchema>;

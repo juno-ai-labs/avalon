@@ -4,10 +4,10 @@ import { z } from 'zod';
 import type { Env } from '../env';
 import type { TelemetryOperatorPrincipal } from './operator-auth';
 
-const ReplayInputSchema = z.object({
+const ReplayInputSchema = z.strictObject({
   eventId: z.string().uuid().refine((value) => value[14] === '7'),
   reason: z.enum(['destination_recovery', 'incident_response']),
-}).strict();
+});
 
 type ReplayResultCode =
   | 'requeued'

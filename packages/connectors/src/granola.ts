@@ -213,38 +213,38 @@ export const GranolaAgentPluginDescriptor = defineConnectorAgentPlugin({
 });
 
 const granolaDateFilter = z.union([z.string().date(), z.string().datetime({ offset: true })]);
-const listNotesInput = z.object({
+const listNotesInput = z.strictObject({
   createdBefore: granolaDateFilter.nullable().optional(),
   createdAfter: granolaDateFilter.nullable().optional(),
   updatedAfter: granolaDateFilter.nullable().optional(),
   folderId: z.string().regex(/^fol_[A-Za-z0-9]{14}$/u).nullable().optional(),
   cursor: z.string().max(4_096).nullable().optional(),
   pageSize: z.number().int().min(1).max(30).optional(),
-}).strict();
-const getNoteInput = z.object({
+});
+const getNoteInput = z.strictObject({
   noteId: z.string().regex(/^not_[A-Za-z0-9]{14}$/u),
   includeTranscript: z.boolean().optional(),
-}).strict();
-const listFoldersInput = z.object({
+});
+const listFoldersInput = z.strictObject({
   cursor: z.string().max(4_096).nullable().optional(),
   pageSize: z.number().int().min(1).max(30).optional(),
-}).strict();
+});
 export interface GranolaWebhookEndpoint {
   id: string;
   signingSecret: string;
 }
 
-const GranolaWebhookEndpointSchema = z.object({
+const GranolaWebhookEndpointSchema = z.looseObject({
   id: z.string().regex(/^whe_[A-Za-z0-9]{14}$/u),
   signing_secret: z.string().regex(/^whsec_[A-Za-z0-9+/=_-]+$/u),
-}).passthrough();
-const GranolaWebhookEventSchema = z.object({
+});
+const GranolaWebhookEventSchema = z.looseObject({
   event_id: z.string().uuid(),
   event_type: z.enum(["note.access_granted", "note.edited", "note.generated", "note.regenerated"]),
   note_id: z.string().regex(/^not_[A-Za-z0-9]{14}$/u),
   occurred_at: z.string().datetime({ offset: true }),
-  data: z.object({ changed_fields: z.array(z.string()).max(20).optional() }).passthrough().optional(),
-}).passthrough();
+  data: z.looseObject({ changed_fields: z.array(z.string()).max(20).optional() }).optional(),
+});
 
 export type VerifiedGranolaWebhook = z.infer<typeof GranolaWebhookEventSchema> & {
   signatureHash: string;
