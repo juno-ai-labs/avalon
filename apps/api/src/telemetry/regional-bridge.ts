@@ -5,14 +5,14 @@ import { TelemetryCollector, type TelemetryAcceptanceResult } from "./collector"
 import type { Env } from "../env";
 import { ensurePersonAnalyticsId, ensureWorkspaceAnalyticsId } from './authenticated';
 
-const AnonymousTelemetryProjectionSchema = z.object({
+const AnonymousTelemetryProjectionSchema = z.strictObject({
   event: TelemetryEnvelopeSchema,
   route: z.literal("eu"),
   routingBasis: z.enum(["ip_geolocation", "geolocation_fallback"]),
   analyticsSubjectId: z.string().uuid(),
   subjectUserId: z.null(),
   workspaceAnalyticsId: z.null(),
-}).strict();
+});
 
 export interface AnonymousTelemetryProjection {
   event: TelemetryEnvelope;
@@ -28,12 +28,12 @@ export interface RegionalTelemetryBridgeRpcBinding {
   acceptApiOutcome(input: unknown): Promise<TelemetryAcceptanceResult>;
 }
 
-const ApiOutcomeProjectionSchema = z.object({
+const ApiOutcomeProjectionSchema = z.strictObject({
   event: TelemetryEnvelopeSchema,
   route: z.literal('eu'),
   subjectUserId: IdSchema,
   workspaceId: IdSchema.nullable(),
-}).strict();
+});
 
 export async function acceptAnonymousTelemetryProjection(
   env: Env,

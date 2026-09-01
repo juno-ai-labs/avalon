@@ -7,7 +7,7 @@ import { consumeTelemetryRateLimit, recordTelemetryRejection } from './operation
 
 const MAX_DUMP_BYTES = 20 * 1024 * 1024;
 const MAX_NEW_CRASH_UPLOADS_PER_HOUR = 10;
-const CrashMetadataSchema = z.object({
+const CrashMetadataSchema = z.strictObject({
   uploadId: z.string().uuid().refine((value) => value[14] === '7'),
   installationId: z.string().uuid().refine((value) => value[14] === '7'),
   route: z.enum(['global', 'eu']),
@@ -18,7 +18,7 @@ const CrashMetadataSchema = z.object({
   processRole: z.enum(['main', 'renderer', 'utility', 'gpu', 'unknown']),
   launchId: z.string().uuid().refine((value) => value[14] === '7'),
   channel: z.enum(['development', 'alpha', 'beta', 'stable']),
-}).strict();
+});
 
 export interface CrashIngestInput extends z.infer<typeof CrashMetadataSchema> {
   dump: Uint8Array;

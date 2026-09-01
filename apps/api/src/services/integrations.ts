@@ -338,7 +338,7 @@ function blockDashboardSubmissionPlugin(
         },
       },
       execute: async (raw) => {
-        const args = z.object({ markdown: z.string().min(1).max(100_000) }).strict().parse(raw);
+        const args = z.strictObject({ markdown: z.string().min(1).max(100_000) }).parse(raw);
         await submit(args.markdown);
         state.markdown = args.markdown;
         return {
@@ -363,7 +363,7 @@ type WorkstreamContextCompaction = {
 };
 
 const PersistedCompactionMessagesSchema = z.array(z.discriminatedUnion("role", [
-  z.object({
+  z.looseObject({
     role: z.literal("user"),
     content: z.union([
       z.string(),
@@ -386,8 +386,8 @@ const PersistedCompactionMessagesSchema = z.array(z.discriminatedUnion("role", [
         }),
       ])),
     ]),
-  }).passthrough(),
-  z.object({ role: z.literal("assistant"), content: z.string().nullable() }).passthrough(),
+  }),
+  z.looseObject({ role: z.literal("assistant"), content: z.string().nullable() }),
 ]));
 
 const InlineChildToolInputSchema = z.object({
@@ -7302,12 +7302,12 @@ async function runLocalTimezones(
   };
 }
 
-const ScheduleWakeupInputSchema = z.object({
+const ScheduleWakeupInputSchema = z.strictObject({
   prompt: z.string().min(1).max(MAXIMUM_WAKEUP_PROMPT_LENGTH),
   delay: z.string().min(1).max(60).optional(),
   at: z.string().min(1).max(40).optional(),
   timezone: z.string().min(1).max(100).optional(),
-}).strict();
+});
 
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
   const tools: HarnessTool[] = [
@@ -7516,7 +7516,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         },
       },
       execute: async (raw) => {
-        const args = z.object({ wakeupId: z.string().uuid() }).strict().parse(raw);
+        const args = z.strictObject({ wakeupId: z.string().uuid() }).parse(raw);
         const scheduling = createSchedulingObjectPort(env, input.workspaceId, input.workstreamId);
         const outcome = await cancelWorkstreamWakeup(scheduling, { wakeupId: args.wakeupId });
         if (outcome === "not_found") {

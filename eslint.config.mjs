@@ -10,6 +10,7 @@ import {
 } from "./scripts/eslint-rules/inference-boundaries.mjs";
 import { noBareZodUrlRule } from "./scripts/eslint-rules/no-bare-zod-url.mjs";
 import { noDynamicImportRule } from "./scripts/eslint-rules/no-dynamic-import.mjs";
+import { preferZodDirectObjectRule } from "./scripts/eslint-rules/prefer-zod-direct-object.mjs";
 import { thesvgSubpathImportsRule } from "./scripts/eslint-rules/thesvg-subpath-imports.mjs";
 import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-point-check.mjs";
 import { providerJsonSchemaComplexityRule } from "./scripts/eslint-rules/provider-json-schema-complexity.mjs";
@@ -49,6 +50,7 @@ export default tseslint.config(
         rules: {
           "no-bare-zod-url": noBareZodUrlRule,
           "no-dynamic-import": noDynamicImportRule,
+          "prefer-zod-direct-object": preferZodDirectObjectRule,
           "thesvg-subpath-imports": thesvgSubpathImportsRule,
           "no-raw-entry-point-check": noRawEntryPointCheckRule,
           "no-direct-model-env-read": noDirectModelEnvReadRule,
@@ -77,6 +79,21 @@ export default tseslint.config(
       "rally/no-raw-entry-point-check": "error",
       "rally/thesvg-subpath-imports": "error",
       "rally/provider-json-schema-complexity": "error",
+    },
+  },
+  {
+    // These four source trees contain the regional API Worker and its Zod-owning
+    // production dependencies. Avoid making a startup-reachable object schema
+    // allocate a second mode-specific schema.
+    files: [
+      "apps/api/src/**/*.{ts,tsx}",
+      "packages/agent-harness/src/**/*.{ts,tsx}",
+      "packages/connectors/src/**/*.{ts,tsx}",
+      "packages/contracts/src/**/*.{ts,tsx}",
+    ],
+    ignores: ["**/*.test.{ts,tsx}"],
+    rules: {
+      "rally/prefer-zod-direct-object": "error",
     },
   },
   {

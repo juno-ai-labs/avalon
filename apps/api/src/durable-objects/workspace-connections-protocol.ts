@@ -37,7 +37,7 @@ const OAuthAttemptIdSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/u);
  * settlement, the failure-path reconciliation — needs the same row, telemetry
  * labels included, so there is one view rather than a projection per caller.
  */
-export const WorkspaceConnectorOAuthAttemptSchema = z.object({
+export const WorkspaceConnectorOAuthAttemptSchema = z.strictObject({
   attemptId: OAuthAttemptIdSchema,
   provider: OAuthProviderSchema,
   status: OAuthAttemptStatusSchema,
@@ -52,9 +52,9 @@ export const WorkspaceConnectorOAuthAttemptSchema = z.object({
   telemetryCapabilityCount: z.number().int().nonnegative().nullable(),
   telemetryReconnect: z.boolean(),
   createdAt: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceConnectorOAuthAttemptStartRequestSchema = z.object({
+export const WorkspaceConnectorOAuthAttemptStartRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   attemptId: OAuthAttemptIdSchema,
   region: RegionSchema,
@@ -65,17 +65,17 @@ export const WorkspaceConnectorOAuthAttemptStartRequestSchema = z.object({
   telemetryCapabilityCount: z.number().int().nonnegative(),
   telemetryReconnect: z.boolean(),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * Give a start back when its regional `oauth_states` receipt failed to write.
  * Only a still-pending attempt is deleted: expiry remains the recovery fence
  * if this compensation is itself interrupted.
  */
-export const WorkspaceConnectorOAuthAttemptAbandonRequestSchema = z.object({
+export const WorkspaceConnectorOAuthAttemptAbandonRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   attemptId: OAuthAttemptIdSchema,
-}).strict();
+});
 
 /**
  * GitHub's install-then-authorize handoff outlives the first expiry window, so
@@ -83,15 +83,15 @@ export const WorkspaceConnectorOAuthAttemptAbandonRequestSchema = z.object({
  * already marked failed, and only that one: any other terminal status is a
  * decision this must not reopen.
  */
-export const WorkspaceConnectorOAuthAttemptExtendRequestSchema = z.object({
+export const WorkspaceConnectorOAuthAttemptExtendRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   attemptId: OAuthAttemptIdSchema,
   region: RegionSchema,
   expiresAt: TimestampSchema,
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceConnectorOAuthAttemptReadRequestSchema = z.object({
+export const WorkspaceConnectorOAuthAttemptReadRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   attemptId: OAuthAttemptIdSchema,
   region: RegionSchema,
@@ -107,13 +107,13 @@ export const WorkspaceConnectorOAuthAttemptReadRequestSchema = z.object({
    * statement ahead of the read.
    */
   expireDueAt: TimestampSchema.nullable(),
-}).strict();
+});
 
-export const WorkspaceConnectorOAuthAttemptReadResultSchema = z.object({
+export const WorkspaceConnectorOAuthAttemptReadResultSchema = z.strictObject({
   attempt: WorkspaceConnectorOAuthAttemptSchema.nullable(),
-}).strict();
+});
 
-export const WorkspaceConnectorOAuthAttemptFinishRequestSchema = z.object({
+export const WorkspaceConnectorOAuthAttemptFinishRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   attemptId: OAuthAttemptIdSchema,
   region: RegionSchema,
@@ -121,7 +121,7 @@ export const WorkspaceConnectorOAuthAttemptFinishRequestSchema = z.object({
   connectionId: IdSchema.nullable(),
   errorCode: z.string().min(1).nullable(),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * How the finish ended. `finished` took the transition; `converged` found the
@@ -135,15 +135,15 @@ export const WorkspaceConnectorOAuthAttemptFinishRequestSchema = z.object({
  * telemetry and publish sync without a second read racing a later transition.
  */
 export const WorkspaceConnectorOAuthAttemptFinishResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.literal("finished"),
     attempt: WorkspaceConnectorOAuthAttemptSchema,
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     outcome: z.literal("converged"),
     attempt: WorkspaceConnectorOAuthAttemptSchema,
-  }).strict(),
-  z.object({ outcome: z.literal("conflict") }).strict(),
+  }),
+  z.strictObject({ outcome: z.literal("conflict") }),
 ]);
 
 /**
@@ -151,14 +151,14 @@ export const WorkspaceConnectorOAuthAttemptFinishResultSchema = z.discriminatedU
  * `telemetry_operation_id` carries a partial unique index, so binding one
  * operation to a second attempt still refuses at the constraint.
  */
-export const WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema = z.object({
+export const WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   attemptId: OAuthAttemptIdSchema,
   region: RegionSchema,
   operationId: z.string().min(1),
   eventVersion: z.union([z.literal(1), z.literal(2)]),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * Claim one webhook delivery for processing.
@@ -167,21 +167,21 @@ export const WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema = z.object
  * receipt key — not a signature and never the signing secret; verification
  * happened in the Worker before this claim is asked for.
  */
-export const WorkspaceWebhookReceiptClaimRequestSchema = z.object({
+export const WorkspaceWebhookReceiptClaimRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   receiptId: IdSchema,
   connectionId: IdSchema,
   signatureHash: z.string().min(1),
   receivedAt: TimestampSchema,
   expiresAt: TimestampSchema,
-}).strict();
+});
 
 export const WorkspaceWebhookReceiptClaimResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.literal("claimed"),
     receiptId: IdSchema,
-  }).strict(),
-  z.object({ outcome: z.literal("duplicate") }).strict(),
+  }),
+  z.strictObject({ outcome: z.literal("duplicate") }),
 ]);
 
 export type WorkspaceConnectorOAuthAttempt = z.infer<typeof WorkspaceConnectorOAuthAttemptSchema>;

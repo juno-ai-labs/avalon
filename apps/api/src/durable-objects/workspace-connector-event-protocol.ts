@@ -1,17 +1,17 @@
 import { IdSchema, NormalizedActivitySchema, RegionSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { z } from "zod";
 
-export const WorkspaceConnectorEventSchema = z.object({
+export const WorkspaceConnectorEventSchema = z.strictObject({
   connectorType: z.string().min(1).max(120),
   activity: NormalizedActivitySchema,
-}).strict();
+});
 
-export const WorkspaceConnectorEventIngestRequestSchema = z.object({
+export const WorkspaceConnectorEventIngestRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   ingressEventId: IdSchema,
   payloadHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
   event: WorkspaceConnectorEventSchema,
-}).strict().superRefine((value, context) => {
+}).superRefine((value, context) => {
   if (value.event.activity.id !== value.ingressEventId) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -37,15 +37,15 @@ export const WorkspaceConnectorEventIngestRequestSchema = z.object({
  * that shape: it would be stale or non-authoritative, would save no object RPC,
  * and would retain provider content through processing retries and in the DLQ.
  */
-export const WorkspaceConnectorEventQueueMessageSchema = z.object({
+export const WorkspaceConnectorEventQueueMessageSchema = z.strictObject({
   kind: z.literal("workspace_connector_event"),
   region: RegionSchema,
   attempt: z.number().int().min(0).max(5).default(0),
   request: WorkspaceConnectorEventIngestRequestSchema,
-}).strict();
+});
 
 /** Content-free processing wake-up; see the two-stage authority contract above. */
-export const WorkspaceConnectorEventProcessQueueMessageSchema = z.object({
+export const WorkspaceConnectorEventProcessQueueMessageSchema = z.strictObject({
   kind: z.literal("connector_event_process"),
   schemaVersion: z.literal(1),
   region: RegionSchema,
@@ -53,19 +53,19 @@ export const WorkspaceConnectorEventProcessQueueMessageSchema = z.object({
   eventId: IdSchema,
   processingOwnerId: z.string().uuid(),
   processingAttempt: z.number().int().min(0).max(5),
-}).strict();
+});
 
-export const WorkspaceConnectorEventIngestResultSchema = z.object({
+export const WorkspaceConnectorEventIngestResultSchema = z.strictObject({
   eventId: IdSchema,
   duplicate: z.boolean(),
   processingStatus: z.enum(["pending", "processing", "processed", "failed"]),
   processingAttempt: z.number().int().min(-1).max(5),
-}).strict();
+});
 
-export const WorkspaceConnectorEventRequestSchema = z.object({
+export const WorkspaceConnectorEventRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   eventId: IdSchema,
-}).strict();
+});
 
 export const WorkspaceConnectorEventClaimRequestSchema = WorkspaceConnectorEventRequestSchema.extend({
   processingOwnerId: z.string().min(1).max(100),
@@ -84,14 +84,14 @@ export const LegacyWorkspaceConnectorEventClaimRequestSchema = WorkspaceConnecto
 }).strict();
 
 export const WorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.literal("claimed"),
     event: WorkspaceConnectorEventSchema,
     processingLeaseId: z.string().min(1).max(100),
     processingLeaseExpiresAt: z.number().int().nonnegative().nullable(),
-  }).strict(),
-  z.object({ outcome: z.literal("processed") }).strict(),
-  z.object({
+  }),
+  z.strictObject({ outcome: z.literal("processed") }),
+  z.strictObject({
     outcome: z.literal("busy"),
     reason: z.enum([
       "active_lease_not_expired",
@@ -99,16 +99,16 @@ export const WorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("ou
       "failed_attempt_not_advanced",
     ]),
     retryAt: z.number().int().nonnegative().nullable(),
-  }).strict(),
+  }),
 ]);
 
 export const LegacyWorkspaceConnectorEventClaimResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.literal("claimed"),
     event: WorkspaceConnectorEventSchema,
-  }).strict(),
-  z.object({ outcome: z.literal("processed") }).strict(),
-  z.object({ outcome: z.literal("busy") }).strict(),
+  }),
+  z.strictObject({ outcome: z.literal("processed") }),
+  z.strictObject({ outcome: z.literal("busy") }),
 ]);
 
 export const WorkspaceConnectorEventClaimRpcRequestSchema = z.union([
@@ -136,13 +136,13 @@ export const WorkspaceConnectorEventSettleRpcRequestSchema = z.union([
   LegacyWorkspaceConnectorEventSettleRequestSchema,
 ]);
 
-export const ConnectorEventWorkflowInputSchema = z.object({
+export const ConnectorEventWorkflowInputSchema = z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   eventId: IdSchema,
   workflowInstanceId: z.string().min(1).max(100),
   attempt: z.number().int().min(0).max(5),
-}).strict();
+});
 
 export type WorkspaceConnectorEvent = z.infer<typeof WorkspaceConnectorEventSchema>;
 export type WorkspaceConnectorEventIngestRequest = z.infer<typeof WorkspaceConnectorEventIngestRequestSchema>;

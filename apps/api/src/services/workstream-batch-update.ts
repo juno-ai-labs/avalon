@@ -25,7 +25,7 @@ import { logInfo, logWarn } from "../observability/logger";
  */
 const QUEUE_SEND_BATCH_SIZE = 50;
 
-export const WorkstreamBatchUpdateQueueMessageSchema = z.object({
+export const WorkstreamBatchUpdateQueueMessageSchema = z.strictObject({
   kind: z.literal("workstream_batch_update"),
   region: z.enum(["global", "eu"]),
   operationId: z.string().uuid(),
@@ -34,16 +34,16 @@ export const WorkstreamBatchUpdateQueueMessageSchema = z.object({
   workstreamId: z.string().uuid(),
   userId: z.string().uuid(),
   update: WorkstreamBatchUpdateSchema,
-}).strict();
+});
 
 export type WorkstreamBatchUpdateQueueMessage = z.infer<
   typeof WorkstreamBatchUpdateQueueMessageSchema
 >;
 
-const QueuedWorkstreamBatchUpdateResultSchema = z.object({
+const QueuedWorkstreamBatchUpdateResultSchema = z.strictObject({
   outcome: z.enum(["applied", "replayed", "skipped"]),
   reason: z.string().min(1).max(160).nullable(),
-}).strict();
+});
 
 function chunks<T>(items: readonly T[], size: number): T[][] {
   const result: T[][] = [];

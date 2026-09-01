@@ -3,11 +3,11 @@ import { z } from 'zod';
 import type { Env } from '../env';
 import type { TelemetryOperatorPrincipal } from './operator-auth';
 
-const QuerySchema = z.object({ limit: z.number().int().min(1).max(100).default(50) }).strict();
-const AccessSchema = z.object({
+const QuerySchema = z.strictObject({ limit: z.number().int().min(1).max(100).default(50) });
+const AccessSchema = z.strictObject({
   crashId: z.string().uuid().refine((value) => value[14] === '7'),
   reason: z.enum(['customer_support', 'incident_response']),
-}).strict();
+});
 
 interface EuIssueRow {
   fingerprint: string;

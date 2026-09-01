@@ -63,17 +63,17 @@ export const SLACK_DEFAULT_REACTIONS: SlackReactionSet = {
  * A configured override. Every field is optional and an absent one inherits the
  * tier below, so a workspace that only wants its own checkmark writes only that.
  */
-export const SlackReactionOverrideSchema = z.object({
+export const SlackReactionOverrideSchema = z.strictObject({
   acknowledgement: SlackEmojiNameSchema.optional(),
   working: z.array(SlackEmojiNameSchema).min(1).max(12).optional(),
   workingIntervalMs: z.number().int().min(3_000).max(60_000).optional(),
-  outcomes: z.object({
+  outcomes: z.strictObject({
     completed: SlackEmojiNameSchema.optional(),
     needs_input: SlackEmojiNameSchema.optional(),
     failed: SlackEmojiNameSchema.optional(),
     stopped: SlackEmojiNameSchema.optional(),
-  }).strict().optional(),
-}).strict();
+  }).optional(),
+});
 export type SlackReactionOverride = z.infer<typeof SlackReactionOverrideSchema>;
 
 /**

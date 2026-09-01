@@ -40,6 +40,22 @@ versioned data. Do not trade an import-cycle problem for untyped `fetch`,
 `unknown` payloads, or duplicated interfaces. Put a shared contract in the
 lowest layer both sides can import without importing an implementation.
 
+## Construct Zod object modes directly
+
+In production source reachable from the API Worker, construct an object's
+unknown-key mode directly:
+
+- use `z.strictObject(shape)`, not `z.object(shape).strict()`;
+- use `z.looseObject(shape)`, not `z.object(shape).passthrough()` or
+  `z.object(shape).loose()`.
+
+The direct constructors preserve the corresponding validation behavior without
+first constructing a default object schema and then deriving a second schema.
+This rule applies only when the chain starts directly at `z.object()`. A mode
+change on an existing or further-derived schema is a different operation and
+must stay explicit. ESLint enforces the direct cases in the API, contracts,
+agent-harness, and connector production graphs.
+
 ## Testing
 
 Repository-wide rules should have a mechanical check when the syntax can be
@@ -50,6 +66,30 @@ native host-language calls such as Objective-C's `ObjC.import` are not
 JavaScript module imports.
 
 ## Changelog
+
+### 2026-09-01 — Construct API-reachable Zod object modes directly
+
+**What changed:** API Worker production code now uses `z.strictObject()` and
+`z.looseObject()` for direct object-mode construction. A scope-aware autofixable
+lint rule enforces the form across the API and its three Zod-owning workspace
+dependencies.
+
+**Why:** The retained exact-SHA startup profile attributed most active startup
+time to Zod schema construction and garbage collection. The direct public APIs
+preserve parsing behavior while avoiding an intermediate default object schema.
+
+**Considered and rejected:** A textual replacement was rejected because
+`BaseSchema.strict()` and a mode change after another schema derivation are not
+the same AST or necessarily the same construction. A startup-time lint
+threshold was rejected because local timing varies by machine and Wrangler
+already profiles the deployable artifact.
+
+**Consequences:** New direct `z.object().strict()`,
+`z.object().passthrough()`, and `z.object().loose()` chains in the startup graph
+fail lint and can be autofixed. The fixer preserves grouping parentheses and
+supplies the empty shape required by direct constructors when `z.object()`
+omits it. Other schema chains remain available when their semantics require
+them.
 
 ### 2026-08-30 — Module imports are always static
 

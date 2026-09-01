@@ -273,41 +273,41 @@ const SocketAttachmentSchema = z.object({
   }).nullable().default(null),
 });
 
-const BroadcastRequestSchema = z.object({
+const BroadcastRequestSchema = z.strictObject({
   event: z.unknown(),
   audienceUserId: IdSchema.optional(),
-}).strict();
-const RuntimeResourceRequestSchema = z.object({
+});
+const RuntimeResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   resourceId: IdSchema,
   attachedByUserId: IdSchema.nullable(),
   relationshipType: ResourceRelationshipTypeSchema.optional(),
-}).strict();
-const RuntimeReaderAudienceRequestSchema = z.object({
+});
+const RuntimeReaderAudienceRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
-}).strict();
-const RuntimeBootstrapRequestSchema = z.object({
+});
+const RuntimeBootstrapRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   generation: z.number().int().positive(),
-}).strict();
+});
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
-const AgentTerminalOutcomeSchema = z.object({
+const AgentTerminalOutcomeSchema = z.strictObject({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
   finalTurnId: TranscriptTurnIdSchema.optional(),
   error: z.object({ code: z.string(), message: z.string() }).optional(),
   metrics: HarnessRunMetricsSchema.optional(),
   cancellationReason: z.string().nullable().optional(),
-}).strict();
+});
 type AgentTerminalOutcome = z.infer<typeof AgentTerminalOutcomeSchema>;
-const AgentTimerRefreshRequestSchema = z.object({
+const AgentTimerRefreshRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   substreamId: SubstreamIdSchema,
-}).strict();
-const ProductAuthSchema = z.object({
+});
+const ProductAuthSchema = z.strictObject({
   sessionId: z.string().min(1).max(200),
   userId: UserIdSchema,
   workspaceId: WorkspaceIdSchema,
@@ -319,30 +319,30 @@ const ProductAuthSchema = z.object({
   // only, and the object verifies current membership instead — see
   // `connectorPrincipalAuth`.
   principal: z.literal("connector").optional(),
-}).strict();
+});
 const ProductRequestSchema = z.discriminatedUnion("operation", [
-  z.object({ operation: z.literal("initialize"), auth: ProductAuthSchema,
-    input: InitializeWorkstreamObjectInputSchema }).strict(),
-  z.object({ operation: z.literal("get"), auth: ProductAuthSchema }).strict(),
-  z.object({ operation: z.literal("boot"), auth: ProductAuthSchema }).strict(),
-  z.object({ operation: z.literal("update"), auth: ProductAuthSchema, input: UpdateWorkstreamRequestSchema }).strict(),
-  z.object({ operation: z.literal("acknowledge_read"), auth: ProductAuthSchema, input: AcknowledgeWorkstreamReadRequestSchema }).strict(),
-  z.object({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }).strict(),
-  z.object({ operation: z.literal("create_message"), auth: ProductAuthSchema,
-    input: WorkstreamObjectCreateMessageInputSchema }).strict(),
-  z.object({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema }).strict(),
-  z.object({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema }).strict(),
-  z.object({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }).strict(),
-  z.object({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }).strict(),
-  z.object({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
-    elicitationId: IdSchema, input: AnswerElicitationRequestSchema }).strict(),
-  z.object({
+  z.strictObject({ operation: z.literal("initialize"), auth: ProductAuthSchema,
+    input: InitializeWorkstreamObjectInputSchema }),
+  z.strictObject({ operation: z.literal("get"), auth: ProductAuthSchema }),
+  z.strictObject({ operation: z.literal("boot"), auth: ProductAuthSchema }),
+  z.strictObject({ operation: z.literal("update"), auth: ProductAuthSchema, input: UpdateWorkstreamRequestSchema }),
+  z.strictObject({ operation: z.literal("acknowledge_read"), auth: ProductAuthSchema, input: AcknowledgeWorkstreamReadRequestSchema }),
+  z.strictObject({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }),
+  z.strictObject({ operation: z.literal("create_message"), auth: ProductAuthSchema,
+    input: WorkstreamObjectCreateMessageInputSchema }),
+  z.strictObject({ operation: z.literal("add_participant"), auth: ProductAuthSchema, userId: IdSchema }),
+  z.strictObject({ operation: z.literal("remove_participant"), auth: ProductAuthSchema, userId: IdSchema }),
+  z.strictObject({ operation: z.literal("attach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
+  z.strictObject({ operation: z.literal("detach_resource"), auth: ProductAuthSchema, resourceId: IdSchema }),
+  z.strictObject({ operation: z.literal("answer_elicitation"), auth: ProductAuthSchema,
+    elicitationId: IdSchema, input: AnswerElicitationRequestSchema }),
+  z.strictObject({
     operation: z.literal("reorder_pending_inputs"),
     auth: ProductAuthSchema,
     inputIds: z.array(IdSchema),
-  }).strict(),
-  z.object({ operation: z.literal("stop"), auth: ProductAuthSchema }).strict(),
-  z.object({ operation: z.literal("retry"), auth: ProductAuthSchema }).strict(),
+  }),
+  z.strictObject({ operation: z.literal("stop"), auth: ProductAuthSchema }),
+  z.strictObject({ operation: z.literal("retry"), auth: ProductAuthSchema }),
 ]);
 /**
  * The flow a product operation belongs to. An operation outside the three
@@ -1187,7 +1187,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     code: string;
   }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       workspaceId: z.string().min(1),
       workstreamId: z.string().min(1),
@@ -1195,7 +1195,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       resourceId: z.string().min(1),
       authorityGeneration: z.number().int().positive(),
       deliveryId: z.string().min(1),
-      event: z.object({
+      event: z.strictObject({
         id: z.string().min(1),
         eventType: z.string().min(1),
         title: z.string().min(1),
@@ -1203,8 +1203,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         occurredAt: z.number().int().nonnegative(),
         audienceKind: z.enum(["workspace", "restricted"]),
         audienceUserIds: z.array(z.string().min(1)),
-      }).strict(),
-    }).strict().parse(input);
+      }),
+    }).parse(input);
     const clientMessageId = `resource-update:${request.deliveryId}`;
     const identity = this.objectStore.identity();
     if (!identity
@@ -2531,13 +2531,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const identity = this.objectStore.identity();
       const projection = this.transcript.readBindProjection(loop.loop_id);
       if (!identity) throw new Error("substream_loop_identity_unavailable");
-      const authorization = z.object({
+      const authorization = z.looseObject({
         executionPrincipal: z.unknown(),
         reason: z.string().min(1).max(500),
         telemetryOperationId: z.string().nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
-      }).passthrough().parse(JSON.parse(pending.authorization_json));
+      }).parse(JSON.parse(pending.authorization_json));
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
         region: this.env.AVALON_REGION,

@@ -229,7 +229,7 @@ export const DerivativeStatusSchema = z.enum([
 ]).nullable();
 export type DerivativeStatus = z.infer<typeof DerivativeStatusSchema>;
 
-export const AttachmentManifestEntrySchema = z.object({
+export const AttachmentManifestEntrySchema = z.strictObject({
   resourceId: CanonicalUuidSchema,
   fileName: z.string().max(300),
   mimeType: z.string().max(160),
@@ -239,74 +239,74 @@ export const AttachmentManifestEntrySchema = z.object({
   derivativeStatus: DerivativeStatusSchema,
   errorCode: z.string().min(1).max(160).nullable(),
   inlined: z.boolean(),
-}).strict();
+});
 export type AttachmentManifestEntry = z.infer<typeof AttachmentManifestEntrySchema>;
 
-export const ResourceVersionSchema = z.object({
+export const ResourceVersionSchema = z.strictObject({
   sha256: z.string().min(1).max(128),
   extractorVersion: z.string().min(1).max(160),
-}).strict();
+});
 export type ResourceVersion = z.infer<typeof ResourceVersionSchema>;
 
-export const CharacterRangeSchema = z.object({
+export const CharacterRangeSchema = z.strictObject({
   start: NonNegativeIntegerSchema,
   end: NonNegativeIntegerSchema,
-}).strict().refine((range) => range.end >= range.start, "Range end must not precede its start");
+}).refine((range) => range.end >= range.start, "Range end must not precede its start");
 export type CharacterRange = z.infer<typeof CharacterRangeSchema>;
 
 export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
-  z.object({
+  z.strictObject({
     tool: z.literal("workstream_read_resource"),
-    arguments: z.object({ resourceId: CanonicalUuidSchema }).strict(),
-  }).strict(),
-  z.object({
+    arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
+  }),
+  z.strictObject({
     tool: z.literal("workstream_view_resource"),
-    arguments: z.object({ resourceIds: z.tuple([CanonicalUuidSchema]) }).strict(),
-  }).strict(),
-  z.object({
+    arguments: z.strictObject({ resourceIds: z.tuple([CanonicalUuidSchema]) }),
+  }),
+  z.strictObject({
     tool: z.literal("automation_read_resource"),
-    arguments: z.object({ resourceId: CanonicalUuidSchema }).strict(),
-  }).strict(),
-  z.object({
+    arguments: z.strictObject({ resourceId: CanonicalUuidSchema }),
+  }),
+  z.strictObject({
     tool: z.literal("automation_view_resource"),
-    arguments: z.object({ resourceIds: z.tuple([CanonicalUuidSchema]) }).strict(),
-  }).strict(),
+    arguments: z.strictObject({ resourceIds: z.tuple([CanonicalUuidSchema]) }),
+  }),
 ]);
 export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentToolCallSchema>;
 
 export const AttachmentListResourcesArgumentsSchema = z.union([
-  z.object({
+  z.strictObject({
     limit: z.number().int().min(1).max(50).optional(),
     attachmentKind: AttachmentKindSchema.optional(),
-  }).strict(),
-  z.object({ cursor: CursorSchema }).strict(),
+  }),
+  z.strictObject({ cursor: CursorSchema }),
 ]);
 export const AttachmentReadResourceArgumentsSchema = z.union([
-  z.object({
+  z.strictObject({
     resourceId: CanonicalUuidSchema,
     startCharacter: NonNegativeIntegerSchema.optional(),
-  }).strict(),
-  z.object({ cursor: CursorSchema }).strict(),
+  }),
+  z.strictObject({ cursor: CursorSchema }),
 ]);
-export const AttachmentSearchResourceArgumentsSchema = z.object({
+export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
   resourceId: CanonicalUuidSchema,
   query: z.string().min(1).max(1_000),
   limit: z.number().int().min(1).max(5).optional(),
   maxPassageCharacters: z.number().int().min(500).max(4_000).optional(),
-}).strict();
-export const AttachmentViewResourceArgumentsSchema = z.object({
+});
+export const AttachmentViewResourceArgumentsSchema = z.strictObject({
   resourceIds: z.array(CanonicalUuidSchema).min(1).max(8),
   maxDimension: z.number().int().min(64).max(2_048).optional(),
-}).strict().superRefine((value, context) => {
+}).superRefine((value, context) => {
   if (new Set(value.resourceIds).size !== value.resourceIds.length) {
     context.addIssue({ code: "custom", message: "resourceIds must be unique", path: ["resourceIds"] });
   }
 });
-export const AttachmentSummarizeResourceArgumentsSchema = z.object({
+export const AttachmentSummarizeResourceArgumentsSchema = z.strictObject({
   resourceId: CanonicalUuidSchema,
   prompt: z.string().min(1).max(2_000).optional(),
   maxOutputCharacters: z.number().int().min(2_000).max(20_000).optional(),
-}).strict();
+});
 
 export const ATTACHMENT_TOOL_ARGUMENT_SCHEMAS = {
   listResources: AttachmentListResourcesArgumentsSchema,
@@ -325,7 +325,7 @@ export const ATTACHMENT_TOOL_ARGUMENT_SCHEMAS = {
  */
 export const ResourceSlugSchema = z.string().min(3).max(80);
 
-const ResourceListItemSchema = z.object({
+const ResourceListItemSchema = z.strictObject({
   resourceId: CanonicalUuidSchema,
   /**
    * The resource's short alias, cheaper for a model to read back and to write
@@ -345,19 +345,19 @@ const ResourceListItemSchema = z.object({
   attachmentKind: AttachmentKindSchema,
   contentMode: ContentModeSchema,
   derivativeStatus: DerivativeStatusSchema,
-}).strict();
+});
 
-export const WorkstreamListResourcesOutputSchema = z.object({
+export const WorkstreamListResourcesOutputSchema = z.strictObject({
   workstreamId: CanonicalUuidSchema,
   asOf: z.string().datetime({ offset: true }),
   totalVisibleResources: NonNegativeIntegerSchema,
   totalMatchingResources: NonNegativeIntegerSchema,
-  filters: z.object({ attachmentKind: AttachmentKindSchema.nullable() }).strict(),
+  filters: z.strictObject({ attachmentKind: AttachmentKindSchema.nullable() }),
   items: z.array(ResourceListItemSchema),
   nextCursor: CursorSchema.nullable(),
-}).strict();
+});
 
-export const WorkstreamReadResourceOutputSchema = z.object({
+export const WorkstreamReadResourceOutputSchema = z.strictObject({
   resourceId: CanonicalUuidSchema,
   title: z.string(),
   sourceMimeType: MimeTypeSchema,
@@ -371,7 +371,7 @@ export const WorkstreamReadResourceOutputSchema = z.object({
   text: z.string().max(24_000),
   previousCursor: CursorSchema.nullable(),
   nextCursor: CursorSchema.nullable(),
-}).strict().superRefine((value, context) => {
+}).superRefine((value, context) => {
   if (value.charactersBefore !== value.range.start
     || value.charactersReturned !== value.range.end - value.range.start
     || value.charactersAfter !== value.totalCharacters - value.range.end) {
@@ -379,7 +379,7 @@ export const WorkstreamReadResourceOutputSchema = z.object({
   }
 });
 
-export const WorkstreamSearchResourceOutputSchema = z.object({
+export const WorkstreamSearchResourceOutputSchema = z.strictObject({
   resourceId: CanonicalUuidSchema,
   title: z.string(),
   sourceMimeType: MimeTypeSchema,
@@ -388,15 +388,15 @@ export const WorkstreamSearchResourceOutputSchema = z.object({
   query: z.string().min(1).max(1_000),
   totalMatches: NonNegativeIntegerSchema,
   returnedMatches: NonNegativeIntegerSchema,
-  passages: z.array(z.object({
+  passages: z.array(z.strictObject({
     rank: z.number().int().positive(),
     sectionLabel: z.string().nullable(),
     range: CharacterRangeSchema,
     text: z.string().max(4_000),
     readCursor: CursorSchema,
-  }).strict()).max(5),
+  })).max(5),
   truncated: z.boolean(),
-}).strict();
+});
 
 const ViewReasonCodeSchema = z.enum([
   "resource_not_found",
@@ -406,10 +406,10 @@ const ViewReasonCodeSchema = z.enum([
   "resource_tool_mismatch",
 ]).nullable();
 
-export const WorkstreamViewResourceOutputSchema = z.object({
+export const WorkstreamViewResourceOutputSchema = z.strictObject({
   requested: z.number().int().min(1).max(8),
   returned: z.number().int().min(0).max(8),
-  items: z.array(z.object({
+  items: z.array(z.strictObject({
     resourceId: CanonicalUuidSchema,
     title: z.string(),
     sourceMimeType: MimeTypeSchema,
@@ -424,30 +424,30 @@ export const WorkstreamViewResourceOutputSchema = z.object({
     reason: z.string().max(1_000).nullable(),
     suggestedCall: SuggestedAttachmentToolCallSchema.nullable(),
     visualPartIndex: NonNegativeIntegerSchema.nullable(),
-  }).strict()).min(1).max(8),
-}).strict();
+  })).min(1).max(8),
+});
 
-export const WorkstreamSummarizeResourceOutputSchema = z.object({
+export const WorkstreamSummarizeResourceOutputSchema = z.strictObject({
   resourceId: CanonicalUuidSchema,
   title: z.string(),
   sourceMimeType: MimeTypeSchema,
   modelMimeType: z.string().min(1).max(160),
   version: ResourceVersionSchema,
   prompt: z.string().max(2_000).nullable(),
-  outline: z.array(z.object({ heading: z.string(), range: CharacterRangeSchema }).strict()).max(50),
+  outline: z.array(z.strictObject({ heading: z.string(), range: CharacterRangeSchema })).max(50),
   summary: z.string(),
-  citations: z.array(z.object({
+  citations: z.array(z.strictObject({
     label: z.string(),
     range: CharacterRangeSchema,
     readCursor: CursorSchema,
-  }).strict()).max(50),
-  coverage: z.object({
+  })).max(50),
+  coverage: z.strictObject({
     status: z.enum(["complete", "partial"]),
     totalCharacters: NonNegativeIntegerSchema,
     consideredCharacters: NonNegativeIntegerSchema,
     limitations: z.array(z.string()).max(20),
-  }).strict(),
-}).strict();
+  }),
+});
 
 export type AttachmentListResourcesArguments = z.infer<typeof AttachmentListResourcesArgumentsSchema>;
 export type AttachmentReadResourceArguments = z.infer<typeof AttachmentReadResourceArgumentsSchema>;

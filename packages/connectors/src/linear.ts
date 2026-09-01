@@ -231,24 +231,24 @@ export const LinearAgentPluginDescriptor = defineConnectorAgentPlugin({
  * issue is then wrong in a way nothing in the run can notice. Both fields are
  * accepted on create now, and anything genuinely undeclared is an error.
  */
-const searchIssuesSchema = z.object({
+const searchIssuesSchema = z.strictObject({
   query: z.string().min(1).max(500),
   first: z.number().int().min(1).max(25).default(20),
   after: z.string().max(500).nullable().optional(),
-}).strict();
+});
 const idSchema = z.string().min(1).max(200);
-const pageSchema = (maximum: number) => z.object({
+const pageSchema = (maximum: number) => z.strictObject({
   first: z.number().int().min(1).max(maximum).default(Math.min(maximum, 25)),
   after: z.string().max(500).nullable().optional(),
-}).strict();
-const listWorkflowStatesSchema = z.object({
+});
+const listWorkflowStatesSchema = z.strictObject({
   teamId: idSchema.nullable().optional(),
   // 50, matching `list_teams` rather than inventing a third page ceiling for a
   // family a model generalizes across.
   first: z.number().int().min(1).max(50).default(50),
   after: z.string().max(500).nullable().optional(),
-}).strict();
-const createIssueSchema = z.object({
+});
+const createIssueSchema = z.strictObject({
   teamId: idSchema,
   title: z.string().min(1).max(500),
   description: z.string().max(40_000).nullable().optional(),
@@ -257,8 +257,8 @@ const createIssueSchema = z.object({
   assigneeId: idSchema.nullable().optional(),
   stateId: idSchema.nullable().optional(),
   dueDate: z.string().date().nullable().optional(),
-}).strict();
-const updateIssueSchema = z.object({
+});
+const updateIssueSchema = z.strictObject({
   issueId: idSchema,
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(40_000).nullable().optional(),
@@ -267,23 +267,23 @@ const updateIssueSchema = z.object({
   projectId: idSchema.nullable().optional(),
   priority: z.number().int().min(0).max(4).nullable().optional(),
   dueDate: z.string().date().nullable().optional(),
-}).strict().refine((value) => Object.keys(value).some((key) => key !== "issueId"), {
+}).refine((value) => Object.keys(value).some((key) => key !== "issueId"), {
   message: "Choose at least one issue field to update",
 });
-const createCommentSchema = z.object({ issueId: idSchema, body: z.string().min(1).max(40_000) }).strict();
+const createCommentSchema = z.strictObject({ issueId: idSchema, body: z.string().min(1).max(40_000) });
 
-const authorizationInputSchema = z.object({
+const authorizationInputSchema = z.strictObject({
   state: z.string().min(20).max(2_000),
   codeChallenge: z.string().min(20).max(256),
   scopes: z.array(z.string().trim().min(1).max(100)).min(1).max(30),
   connectionScope: z.enum(["personal", "workspace"]),
-}).strict();
+});
 
-const authorizationCallbackSchema = z.object({
+const authorizationCallbackSchema = z.strictObject({
   code: z.string().min(1).max(2_000),
   codeVerifier: z.string().min(20).max(256),
   connectionScope: z.enum(["personal", "workspace"]),
-}).strict();
+});
 
 const issueFields = `
   id identifier title description priority dueDate url createdAt updatedAt canceledAt completedAt
@@ -789,7 +789,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }
 
       if (name === "read_issue") {
-        const issueId = z.object({ issueId: idSchema }).strict().parse(rawArgs).issueId;
+        const issueId = z.strictObject({ issueId: idSchema }).parse(rawArgs).issueId;
         return { output: await readIssue(context.connection, issueId, context.signal), summary: `Read Linear issue ${issueId}` };
       }
 
@@ -820,7 +820,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       }
 
       if (name === "read_project") {
-        const projectId = z.object({ projectId: idSchema }).strict().parse(rawArgs).projectId;
+        const projectId = z.strictObject({ projectId: idSchema }).parse(rawArgs).projectId;
         return { output: await readProject(context.connection, projectId, context.signal), summary: `Read Linear project ${projectId}` };
       }
 

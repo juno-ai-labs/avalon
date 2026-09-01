@@ -22,19 +22,19 @@ export const ImageGenerationSizeSchema = z.enum([
   "1024x1536",
 ]);
 
-export const GenerateImageArgumentsSchema = z.object({
+export const GenerateImageArgumentsSchema = z.strictObject({
   prompt: z.string().trim().min(1).max(32_000),
   title: z.string().trim().min(1).max(300).optional(),
   size: ImageGenerationSizeSchema.optional(),
-}).strict();
+});
 
-export const EditImageArgumentsSchema = z.object({
+export const EditImageArgumentsSchema = z.strictObject({
   resourceId: z.string().uuid(),
   prompt: z.string().trim().min(1).max(32_000),
   title: z.string().trim().min(1).max(300).optional(),
   size: ImageGenerationSizeSchema.optional(),
   maskResourceId: z.string().uuid().optional(),
-}).strict();
+});
 
 export const AudioVoiceSchema = z.enum([
   "alloy",
@@ -52,12 +52,12 @@ export const AudioVoiceSchema = z.enum([
   "cedar",
 ]);
 
-export const GenerateAudioArgumentsSchema = z.object({
+export const GenerateAudioArgumentsSchema = z.strictObject({
   text: z.string().trim().min(1).max(4_096),
   voice: AudioVoiceSchema.optional(),
   instructions: z.string().trim().min(1).optional(),
   title: z.string().trim().min(1).max(300).optional(),
-}).strict();
+});
 
 export type GenerateImageArguments = z.infer<typeof GenerateImageArgumentsSchema>;
 export type EditImageArguments = z.infer<typeof EditImageArgumentsSchema>;

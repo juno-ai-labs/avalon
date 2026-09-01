@@ -3653,7 +3653,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     sourceHash: string;
   }> {
     await this.initialized;
-    const workspaceId = z.object({ workspaceId: WorkspaceIdSchema }).passthrough().parse(input).workspaceId;
+    const workspaceId = z.looseObject({ workspaceId: WorkspaceIdSchema }).parse(input).workspaceId;
     this.assertWorkspace(workspaceId);
     const result = await cutoverWorkspaceAutomations({
       env: this.env,
@@ -3674,7 +3674,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Content-free list projection; the AutomationAgent remains canonical. */
   async applyAutomationProjection(input: unknown): Promise<{ applied: boolean }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       automationId: IdSchema,
       workspaceId: WorkspaceIdSchema,
@@ -3691,7 +3691,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // the sidebar reads, and a code nothing on the client can render is a
       // marker with no sentence behind it.
       attentionCode: AutomationAttentionReasonSchema.nullable(),
-    }).strict().parse(input);
+    }).parse(input);
     this.assertWorkspace(request.workspaceId);
     const result = this.state.storage.transactionSync(() => {
       const existing = this.state.storage.sql.exec<{
@@ -3761,7 +3761,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Content-free automation sidebar projection; AutomationAgent remains authority. */
   async listAutomationDirectory(input: unknown): Promise<{ items: AutomationSummary[] }> {
     await this.initialized;
-    const request = z.object({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).strict().parse(input);
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       throw new Error("automation_directory_access_denied");
@@ -3810,11 +3810,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Current membership plus projected scope gates direct AutomationAgent reads. */
   async authorizeAutomationViewer(input: unknown): Promise<{ authorized: boolean }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       workspaceId: WorkspaceIdSchema,
       automationId: AutomationIdSchema,
       userId: UserIdSchema,
-    }).strict().parse(input);
+    }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       return { authorized: false };
@@ -3928,11 +3928,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Cheap connector-ingress admission check; matching still happens after normalization. */
   async hasActiveExternalEventRegistration(input: unknown): Promise<{ active: boolean }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       workspaceId: WorkspaceIdSchema,
       connectionId: IdSchema,
       eventType: z.string().min(1).max(200),
-    }).strict().parse(input);
+    }).parse(input);
     this.assertWorkspace(request.workspaceId);
     const row = this.state.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one
@@ -3949,7 +3949,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Deterministically create ID-only destination receipts for one accepted event. */
   async matchExternalEventDestinations(input: unknown) {
     await this.initialized;
-    const request = z.object({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }).strict().parse(input);
+    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
     const event = this.state.storage.sql.exec<{
       event_id: string;

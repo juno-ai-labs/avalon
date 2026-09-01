@@ -2564,12 +2564,12 @@ export async function compileAutomation(input: {
     {
       definition: creatorDefinition("people_search"),
       validateInput: (raw) => {
-        const parsed = z.object({ query: z.string().min(1) }).strict().safeParse(raw);
+        const parsed = z.strictObject({ query: z.string().min(1) }).safeParse(raw);
         return parsed.success ? null : parsed.error;
       },
       execute: async (raw) => {
         if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
-        const { query } = z.object({ query: z.string().min(1) }).strict().parse(raw);
+        const { query } = z.strictObject({ query: z.string().min(1) }).parse(raw);
         const output = await input.draftResearchPort.searchPeople(query);
         const people = asRecord(output).people;
         if (Array.isArray(people)) {
@@ -2587,12 +2587,12 @@ export async function compileAutomation(input: {
     {
       definition: creatorDefinition("resources_search"),
       validateInput: (raw) => {
-        const parsed = z.object({ query: z.string().min(1) }).strict().safeParse(raw);
+        const parsed = z.strictObject({ query: z.string().min(1) }).safeParse(raw);
         return parsed.success ? null : parsed.error;
       },
       execute: async (raw) => {
         if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
-        const { query } = z.object({ query: z.string().min(1) }).strict().parse(raw);
+        const { query } = z.strictObject({ query: z.string().min(1) }).parse(raw);
         const output = await input.draftResearchPort.searchResources(query);
         const resources = asRecord(output).resources;
         if (Array.isArray(resources)) {
@@ -3564,17 +3564,17 @@ export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
   },
 } as const satisfies ToolDefinition;
 
-export const RequestElicitationInputSchema = z.object({
+export const RequestElicitationInputSchema = z.strictObject({
   prompt: z.string().min(1).max(4_000),
   responseType: z.enum(["text", "radio", "single_select", "multi_select"]),
-  options: z.array(z.object({
+  options: z.array(z.strictObject({
     value: z.string().min(1).max(200),
     label: z.string().min(1).max(300),
     description: z.string().max(800).nullable().default(null),
-  }).strict()).max(30).default([]),
+  })).max(30).default([]),
   minimumSelections: z.number().int().nonnegative().default(0),
   maximumSelections: z.number().int().positive().nullable().default(null),
-}).strict().superRefine((input, context) => {
+}).superRefine((input, context) => {
   if (input.responseType !== "text" && input.options.length === 0) {
     context.addIssue({
       code: "custom",

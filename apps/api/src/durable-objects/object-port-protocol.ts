@@ -75,14 +75,14 @@ export function objectPortRequestSchema<TOperation extends string>(
   isOperation: (value: string) => value is TOperation,
   unknownOperationMessage: string,
 ) {
-  return z.object({
+  return z.strictObject({
     workspaceId: z.string().uuid(),
     workstreamId: z.string().uuid(),
     operation: z.string().min(1).max(64).refine(isOperation, {
       message: unknownOperationMessage,
     }),
     args: z.array(z.unknown()).max(MAX_OBJECT_PORT_OPERATION_ARGS),
-  }).strict();
+  });
 }
 
 /** A membership test over an operation list, for the schema's `refine`. */

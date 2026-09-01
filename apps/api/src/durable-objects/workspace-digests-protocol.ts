@@ -23,45 +23,45 @@ const MinuteOfDaySchema = z.number().int().min(0).max(1439);
 const DayMaskSchema = z.number().int().min(0).max(127);
 
 /** One configured digest, without its frozen destinations. */
-export const WorkspaceDigestScheduleSchema = z.object({
+export const WorkspaceDigestScheduleSchema = z.strictObject({
   id: IdSchema,
   dayMask: DayMaskSchema,
   enabled: z.boolean(),
-}).strict();
+});
 
-export const WorkspaceDigestSettingsRequestSchema = z.object({
+export const WorkspaceDigestSettingsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
-}).strict();
+});
 
 /**
  * Everything the settings surface reads except the delivery targets, whose
  * connector display names are a join the facade still carries.
  */
-export const WorkspaceDigestSettingsSchema = z.object({
+export const WorkspaceDigestSettingsSchema = z.strictObject({
   schedule: WorkspaceDigestScheduleSchema.nullable(),
   times: z.array(MinuteOfDaySchema),
   nextRunAt: z.string().nullable(),
   lastDeliveredAt: z.string().nullable(),
-}).strict();
+});
 
 /** One derived `schedules` row, fully computed by the caller: the recurrence policy stays in the service. */
-export const WorkspaceDigestScheduleRowInputSchema = z.object({
+export const WorkspaceDigestScheduleRowInputSchema = z.strictObject({
   id: IdSchema,
   rrule: z.string().min(1),
   nextRunAt: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceDigestTargetInputSchema = z.object({
+export const WorkspaceDigestTargetInputSchema = z.strictObject({
   id: IdSchema,
   targetType: z.string().min(1),
   connectionId: IdSchema.nullable(),
   providerTenantId: z.string().nullable(),
   providerUserId: z.string().nullable(),
   emailAddress: z.string().nullable(),
-}).strict();
+});
 
-export const WorkspaceDigestReplaceRequestSchema = z.object({
+export const WorkspaceDigestReplaceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   /** Used only when no digest exists yet; an existing one keeps its id. */
@@ -74,7 +74,7 @@ export const WorkspaceDigestReplaceRequestSchema = z.object({
   scheduleRows: z.array(WorkspaceDigestScheduleRowInputSchema),
   timezone: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * The id the digest actually has, which is not always the one the caller
@@ -82,12 +82,12 @@ export const WorkspaceDigestReplaceRequestSchema = z.object({
  * first saves racing each other converge on one row instead of the loser
  * hitting `UNIQUE (workspace_id, user_id)` as a 500.
  */
-export const WorkspaceDigestReplaceResultSchema = z.object({
+export const WorkspaceDigestReplaceResultSchema = z.strictObject({
   scheduleId: IdSchema,
   outcome: z.enum(["created", "updated"]),
-}).strict();
+});
 
-export const WorkspaceDigestDefaultRequestSchema = z.object({
+export const WorkspaceDigestDefaultRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   scheduleId: IdSchema,
@@ -97,64 +97,64 @@ export const WorkspaceDigestDefaultRequestSchema = z.object({
   emailAddress: z.string().min(1),
   executionPrincipalJson: z.string().min(2),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * What exists after the call, created or found. Absence is the only thing that
  * creates: a digest switched off keeps its row with `enabled = 0`, so the
  * default can never resurrect one somebody turned off.
  */
-export const WorkspaceDigestDefaultResultSchema = z.object({
+export const WorkspaceDigestDefaultResultSchema = z.strictObject({
   created: z.boolean(),
   schedule: WorkspaceDigestScheduleSchema,
   times: z.array(MinuteOfDaySchema),
-}).strict();
+});
 
-export const WorkspaceDigestRowStateRequestSchema = z.object({
+export const WorkspaceDigestRowStateRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   digestScheduleId: IdSchema,
   /** The account timezone the derived rows are expected to carry. */
   timezone: z.string().min(1),
-}).strict();
+});
 
-export const WorkspaceDigestRowStateSchema = z.object({
+export const WorkspaceDigestRowStateSchema = z.strictObject({
   rowCount: z.number().int().nonnegative(),
   timezoneMismatches: z.number().int().nonnegative(),
-}).strict();
+});
 
-export const WorkspaceDigestReplaceRowsRequestSchema = z.object({
+export const WorkspaceDigestReplaceRowsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   digestScheduleId: IdSchema,
   timezone: z.string().min(1),
   /** Empty clears: a disabled digest keeps its configuration and derives nothing. */
   rows: z.array(WorkspaceDigestScheduleRowInputSchema),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceDigestFireScheduleRequestSchema = z.object({
+export const WorkspaceDigestFireScheduleRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   scheduleId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDigestFireScheduleSchema = z.object({
-  schedule: z.object({
+export const WorkspaceDigestFireScheduleSchema = z.strictObject({
+  schedule: z.strictObject({
     id: IdSchema,
     userId: IdSchema,
     enabled: z.boolean(),
     executionPrincipalJson: z.string(),
-  }).strict().nullable(),
-}).strict();
+  }).nullable(),
+});
 
-export const WorkspaceDigestCursorRequestSchema = z.object({
+export const WorkspaceDigestCursorRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   digestScheduleId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDigestCursorSchema = z.object({
+export const WorkspaceDigestCursorSchema = z.strictObject({
   cursorThrough: z.number().int().nonnegative().nullable(),
-}).strict();
+});
 
-export const WorkspaceDigestClaimRequestSchema = z.object({
+export const WorkspaceDigestClaimRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
   digestScheduleId: IdSchema,
@@ -167,61 +167,61 @@ export const WorkspaceDigestClaimRequestSchema = z.object({
   /** `empty` settles the occurrence at claim time: nothing runs, the cursor still moves. */
   status: z.enum(["empty", "planned"]),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * `already_planned` is `UNIQUE (digest_schedule_id, planned_for)` as an
  * answer: a retried alarm resolves to the attempt already in flight rather
  * than digesting the same window twice.
  */
-export const WorkspaceDigestClaimResultSchema = z.object({
+export const WorkspaceDigestClaimResultSchema = z.strictObject({
   outcome: z.enum(["claimed", "already_planned"]),
-}).strict();
+});
 
-export const WorkspaceDigestDeliveryWorkstreamRequestSchema = z.object({
+export const WorkspaceDigestDeliveryWorkstreamRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
   workstreamId: IdSchema,
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceDigestDeliveryRunningRequestSchema = z.object({
+export const WorkspaceDigestDeliveryRunningRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
   harnessRunId: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * `not_planned` means the claim was no longer waiting for its launch — it was
  * released, settled, or never existed. The caller just launched a run against
  * it, so silence here would leave nothing saying the two disagree.
  */
-export const WorkspaceDigestRunningResultSchema = z.object({
+export const WorkspaceDigestRunningResultSchema = z.strictObject({
   outcome: z.enum(["running", "not_planned"]),
-}).strict();
+});
 
-export const WorkspaceDigestReleaseClaimRequestSchema = z.object({
+export const WorkspaceDigestReleaseClaimRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
-}).strict();
+});
 
 /**
  * `kept` means the claim had already left `planned` — a launch that got as far
  * as recording its run must keep the occurrence, or a retry would digest the
  * same window twice.
  */
-export const WorkspaceDigestReleaseClaimResultSchema = z.object({
+export const WorkspaceDigestReleaseClaimResultSchema = z.strictObject({
   outcome: z.enum(["released", "kept"]),
-}).strict();
+});
 
-export const WorkspaceDigestDeliveryContextRequestSchema = z.object({
+export const WorkspaceDigestDeliveryContextRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDigestDeliveryContextSchema = z.object({
-  delivery: z.object({
+export const WorkspaceDigestDeliveryContextSchema = z.strictObject({
+  delivery: z.strictObject({
     id: IdSchema,
     userId: IdSchema,
     plannedFor: z.string(),
@@ -229,23 +229,23 @@ export const WorkspaceDigestDeliveryContextSchema = z.object({
     highlightCount: z.number().int().nonnegative(),
     status: z.enum(["planned", "running", "delivered", "empty", "failed"]),
     workstreamId: z.string().nullable(),
-  }).strict().nullable(),
-}).strict();
+  }).nullable(),
+});
 
-export const WorkspaceDigestSummaryRequestSchema = z.object({
+export const WorkspaceDigestSummaryRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
   summaryMarkdown: z.string().min(1),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceDigestSettleRequestSchema = z.object({
+export const WorkspaceDigestSettleRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
   status: z.enum(["delivered", "failed"]),
   errorJson: z.string().nullable(),
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * Which settlement attempt won. Settlement is a claim: two consumers — a
@@ -254,27 +254,27 @@ export const WorkspaceDigestSettleRequestSchema = z.object({
  * telemetry and append the delivery note as though it were the only one. The
  * compare-and-set returns its witness so the loser can stand down.
  */
-export const WorkspaceDigestSettleResultSchema = z.object({
+export const WorkspaceDigestSettleResultSchema = z.strictObject({
   outcome: z.enum(["settled", "already_settled", "not_found"]),
-}).strict();
+});
 
-export const WorkspaceDigestTerminalContextRequestSchema = z.object({
+export const WorkspaceDigestTerminalContextRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDigestTerminalContextSchema = z.object({
+export const WorkspaceDigestTerminalContextSchema = z.strictObject({
   targetTypes: z.array(z.string()),
   priorDeliveredCount: z.number().int().nonnegative(),
-}).strict();
+});
 
-export const WorkspaceDigestDeliveryTargetsRequestSchema = z.object({
+export const WorkspaceDigestDeliveryTargetsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
   userId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDigestDeliveryTargetSchema = z.object({
+export const WorkspaceDigestDeliveryTargetSchema = z.strictObject({
   id: IdSchema,
   targetType: z.string(),
   connectionId: z.string().nullable(),
@@ -282,31 +282,31 @@ export const WorkspaceDigestDeliveryTargetSchema = z.object({
   providerUserId: z.string().nullable(),
   emailAddress: z.string().nullable(),
   lastDeliveredDeliveryId: z.string().nullable(),
-}).strict();
+});
 
-export const WorkspaceDigestDeliveryTargetsSchema = z.object({
+export const WorkspaceDigestDeliveryTargetsSchema = z.strictObject({
   targets: z.array(WorkspaceDigestDeliveryTargetSchema),
-}).strict();
+});
 
-export const WorkspaceDigestTargetDeliveredRequestSchema = z.object({
+export const WorkspaceDigestTargetDeliveredRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   targetId: IdSchema,
   deliveryId: IdSchema,
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceDigestTargetFailedRequestSchema = z.object({
+export const WorkspaceDigestTargetFailedRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   targetId: IdSchema,
   /** Only a permanent rejection parks the target in `needs_input`. */
   permanent: z.boolean(),
   errorJson: z.string().min(2),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceDigestTargetOutcomeResultSchema = z.object({
+export const WorkspaceDigestTargetOutcomeResultSchema = z.strictObject({
   outcome: z.enum(["recorded", "target_not_found"]),
-}).strict();
+});
 
 export type WorkspaceDigestSettingsRequest = z.infer<typeof WorkspaceDigestSettingsRequestSchema>;
 export type WorkspaceDigestSettings = z.infer<typeof WorkspaceDigestSettingsSchema>;
