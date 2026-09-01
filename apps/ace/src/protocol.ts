@@ -7,7 +7,7 @@ import {
   type AgentModelRouting,
   type AGENT_MODEL_FLAG_KEYS,
 } from '@rally/contracts';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 export const MODEL_CHOICES = [
   ...AGENT_MODEL_OVERRIDES,
@@ -204,7 +204,7 @@ export const ConditionSchema: z.ZodType<AceCondition> = z.lazy(() => z.union([
 ]));
 
 export const FlagRuleSchema = z.object({
-  priority: z.number().int().min(1),
+  priority: z.number().int().safe().min(1),
   conditions: z.array(ConditionSchema),
   serve_variation: z.enum(['on', 'off']),
   rollout: z.object({ percentage: z.number().min(0).max(100), attribute: AttributeSchema.optional() }).optional(),

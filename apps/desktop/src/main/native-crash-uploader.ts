@@ -1,7 +1,8 @@
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
+import { STRICT_UUID_PATTERN } from '@rally/contracts/uuid-validation';
 import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { TelemetryBreadcrumbSidecarSchema } from '@rally/contracts';
 import { uuidV7 } from './telemetry-identity';
 
@@ -17,13 +18,13 @@ const ManifestSchema = z.object({
     buildId: z.string().min(1).max(64),
     platform: z.enum(['darwin', 'win32', 'linux']),
     architecture: z.enum(['arm64', 'x64']),
-    launchId: z.string().uuid().refine((value) => value[14] === '7'),
+    launchId: z.string().regex(STRICT_UUID_PATTERN, 'Invalid UUID').refine((value) => value[14] === '7'),
     channel: z.enum(['development', 'alpha', 'beta', 'stable']),
   }).strict(),
 }).strict();
 const UploadSidecarSchema = z.object({
   version: z.literal(1),
-  uploadId: z.string().uuid().refine((value) => value[14] === '7'),
+  uploadId: z.string().regex(STRICT_UUID_PATTERN, 'Invalid UUID').refine((value) => value[14] === '7'),
 }).strict();
 
 export interface NativeCrashUploaderOptions {

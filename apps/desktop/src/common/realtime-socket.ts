@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { WebSocketUrlSchema } from '@rally/contracts/url-schemas';
 import {
   REALTIME_SOCKET_ID_PATTERN,
@@ -36,7 +36,7 @@ export type DesktopRealtimeSocketSendInput = z.infer<typeof DesktopRealtimeSocke
 
 export const DesktopRealtimeSocketCloseInputSchema = z.object({
   socketId: DesktopRealtimeSocketIdSchema,
-  code: z.number().int().refine(validWebSocketCloseCode).optional(),
+  code: z.number().int().safe().refine(validWebSocketCloseCode).optional(),
   reason: z.string().refine(validWebSocketCloseReason).optional(),
 }).strict();
 export type DesktopRealtimeSocketCloseInput = z.infer<typeof DesktopRealtimeSocketCloseInputSchema>;
@@ -60,7 +60,7 @@ export const DesktopRealtimeSocketEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('close'),
     socketId: DesktopRealtimeSocketIdSchema,
-    code: z.number().int(),
+    code: z.number().int().safe(),
     reason: z.string(),
     wasClean: z.boolean(),
   }).strict(),

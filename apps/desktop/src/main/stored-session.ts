@@ -8,7 +8,7 @@ import {
   type Session,
 } from '@rally/contracts';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 const PACIFIC_TIMEZONE = 'America/Los_Angeles';
 const EU_TIMEZONE = 'Europe/London';

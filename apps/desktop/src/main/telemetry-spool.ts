@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from '@rally/contracts';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 const LOCAL_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -16,7 +16,7 @@ const StoredRowSchema = z.object({
   acceptedAt: z.string().datetime({ offset: true }),
   deleteAfter: z.string().datetime({ offset: true }),
   firstSentAt: z.string().datetime({ offset: true }).nullable().default(null),
-  attempts: z.number().int().nonnegative(),
+  attempts: z.number().int().safe().nonnegative(),
   nextAttemptAt: z.string().datetime({ offset: true }),
 }).strict().superRefine((row, context) => {
   if (Date.parse(row.deleteAfter) !== Date.parse(row.acceptedAt) + LOCAL_RETENTION_MS) {

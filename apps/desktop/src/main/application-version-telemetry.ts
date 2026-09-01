@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { z } from 'zod';
+import { STRICT_UUID_PATTERN } from '@rally/contracts/uuid-validation';
+import { z } from 'zod/v3';
 import { uuidV7 } from './telemetry-identity';
 
 const VersionValue = z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u);
-const EventId = z.string().uuid().refine((value) => value[14] === '7', 'must be UUIDv7');
+const EventId = z.string().regex(STRICT_UUID_PATTERN, 'Invalid UUID').refine((value) => value[14] === '7', 'must be UUIDv7');
 const ApplicationVersionTransitionSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('installed') }).strict(),
   z.object({

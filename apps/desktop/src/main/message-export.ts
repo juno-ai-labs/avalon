@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import {
   MESSAGE_EXPORT_FILE_NAME_PATTERN,
   MESSAGE_EXPORT_FILE_TYPES,

@@ -43,11 +43,13 @@ lowest layer both sides can import without importing an implementation.
 ## API schemas use the startup-efficient runtime
 
 Schema-heavy production modules in `apps/api`, `packages/contracts`, and
-`packages/connectors` import `zod/v3`. Bind and the harness features that compile
-JSON Schema retain an explicit Zod v4 compatibility edge. Do not move an
-ordinary validation schema back to the bare `zod` export: Zod v4's classic API
-allocates substantially more objects while the Worker evaluates its static
-module graph.
+`packages/connectors` import `zod/v3`. Ace and desktop modules that compose those
+shared schemas use the same runtime. Bind, the Engineering MCP SDK, and harness
+features that require Zod v4 retain an explicit adapter at that compatibility
+edge. Do not move an ordinary validation schema back to the bare `zod` export:
+Zod v4's classic API allocates substantially more objects while the Worker
+evaluates its static module graph, and nesting schemas from different major
+runtimes breaks their input/output inference.
 
 The compatibility runtime does not authorize a looser contract. Integer chains
 include `.safe()` because Zod v4's `.int()` rejects integers JavaScript cannot
@@ -76,9 +78,11 @@ JavaScript module imports.
 ### 2026-09-01 — API schema construction leaves the Zod v4 hot path
 
 **What changed:** Schema-heavy API, contract, and connector modules now use the
-shipped Zod v3-compatible runtime. A checked compatibility layer preserves safe
-integer, strict UUID, provider JSON-Schema, and cross-version error behavior;
-Bind's JSON-Schema compiler remains on Zod v4.
+shipped Zod v3-compatible runtime, as do Ace and desktop consumers that compose
+those shared schemas. A checked compatibility layer preserves safe integer,
+strict UUID, provider JSON-Schema, and cross-version error behavior; Bind's
+JSON-Schema compiler and the Engineering MCP SDK remain on Zod v4 through
+explicit adapters.
 
 **Why:** Cloudflare rejected a fully verified 7.16 MiB Global API artifact with
 startup CPU error 10021. Its retained profile attributed most active startup to
@@ -94,9 +98,10 @@ schemas enforce regional routes, RPC, and Durable Object authority rather than
 one coherent stateless provider capability.
 
 **Consequences:** Both Zod runtimes remain in the artifact, so this optimizes
-initialization rather than source bytes. New API schemas use `zod/v3` and its
-checked semantic shims; v4-only work stays at the named compatibility edge.
-There is no data migration.
+initialization rather than source bytes. New API schemas and consumers that
+compose them use `zod/v3` and its checked semantic shims; v4-only work stays at
+the named compatibility edge and reparses through the shared contract. There is
+no data migration.
 
 ### 2026-08-30 — Module imports are always static
 

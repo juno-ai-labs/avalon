@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import {
   emptyMenuBarContent,
   MENU_BAR_PINNED_LIMIT,
@@ -21,14 +21,14 @@ const MenuBarWorkstreamPageSchema = z.object({
     titleStatus: z.enum(['naming', 'automatic', 'settled']).default('settled'),
     // The reader's own place for this work stream in their arrangement, or null
     // if they have not pinned it. See `workstream-pinning.md`.
-    pinPosition: z.number().int().nonnegative().nullable().default(null),
+    pinPosition: z.number().int().safe().nonnegative().nullable().default(null),
   })),
 });
 
 const MenuBarOpportunityPageSchema = z.object({
   items: z.array(z.object({
     id: z.string().min(1),
-    version: z.number().int().positive(),
+    version: z.number().int().safe().positive(),
     displayPrompt: z.string().min(1),
   })),
 });

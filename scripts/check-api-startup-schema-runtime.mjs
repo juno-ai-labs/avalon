@@ -14,6 +14,12 @@ export const schemaHeavyWorkerRoots = [
   'packages/connectors/src',
 ];
 
+export const sharedSchemaConsumerRoots = [
+  ...schemaHeavyWorkerRoots,
+  'apps/ace/src',
+  'apps/desktop/src',
+];
+
 /**
  * The harness consumes Zod v4 schemas owned by Bind and compiles JSON Schema
  * back into Zod v4 for argument classification. Keep that compatibility edge
@@ -32,7 +38,7 @@ const LOOSE_V3_UUID = /\.uuid\(\)/u;
 
 export async function findBareWorkerZodImports({
   rootDirectory = repositoryDirectory,
-  roots = [...schemaHeavyWorkerRoots, 'packages/agent-harness/src'],
+  roots = [...sharedSchemaConsumerRoots, 'packages/agent-harness/src'],
   allowlist = zodV4WorkerAllowlist,
 } = {}) {
   const violations = [];
@@ -49,7 +55,7 @@ export async function findBareWorkerZodImports({
 
 export async function findWorkerSchemaCompatibilityViolations({
   rootDirectory = repositoryDirectory,
-  roots = schemaHeavyWorkerRoots,
+  roots = sharedSchemaConsumerRoots,
 } = {}) {
   const violations = [];
   for (const root of roots) {
@@ -79,7 +85,7 @@ async function run() {
   violations.push(...await findWorkerSchemaCompatibilityViolations());
   if (violations.length > 0) {
     throw new Error([
-      'Schema-heavy Worker modules must import the startup-efficient `zod/v3` runtime.',
+      'Modules that compose shared Worker schemas must import the startup-efficient `zod/v3` runtime.',
       ...violations.map((file) => `- ${file}`),
     ].join('\n'));
   }

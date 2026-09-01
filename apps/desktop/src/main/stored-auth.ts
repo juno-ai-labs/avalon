@@ -8,7 +8,7 @@ import {
   type Region,
   type Session,
 } from '@rally/contracts';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 
 const storedAuthSchema = z.object({

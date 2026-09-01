@@ -1,5 +1,5 @@
 import { ProductFeatureFlagKeySchema, type ProductFeatureFlagKey } from '@rally/contracts';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { Env } from './env';
 import {
   MANAGED_FLAGS,

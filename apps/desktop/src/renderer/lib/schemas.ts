@@ -3,7 +3,7 @@ import {
   ResourceDirectionSchema,
   ResourceRelationshipTypeSchema,
 } from '@rally/contracts';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 
 const scopeSchema = z.enum(['you', 'workspace']);
 const harnessStatusSchema = z.enum(['scheduled', 'running', 'needs_input', 'completed', 'failed', 'stopped']);
@@ -73,7 +73,7 @@ export const resourceSchema = z
     watchEnabled: z.boolean().default(false),
     watchStatus: z.enum(['watching', 'paused', 'unsupported', 'error']).default('paused'),
     updatedAt: z.string().optional(),
-    currentVersion: z.number().int().positive().default(1),
+    currentVersion: z.number().int().safe().positive().default(1),
     relationshipType: ResourceRelationshipTypeSchema.default('attachment'),
     direction: ResourceDirectionSchema.default('source'),
   })
@@ -110,7 +110,7 @@ export const messageSchema = z
     id: z.string(),
     workstreamId: z.string(),
     sequenceNumber: z.number(),
-    attentionSequenceNumber: z.number().int().positive().nullable().optional(),
+    attentionSequenceNumber: z.number().int().safe().positive().nullable().optional(),
     authorType: z.enum(['human', 'external', 'agent', 'system']),
     author: workspaceMemberSchema.optional(),
     externalActor: z.object({
@@ -246,8 +246,8 @@ export const automationDraftResponseSchema = z
           value: z.string(),
           description: z.string().optional(),
         })).default([]),
-        minimumSelections: z.number().int().positive().optional(),
-        maximumSelections: z.number().int().positive().optional(),
+        minimumSelections: z.number().int().safe().positive().optional(),
+        maximumSelections: z.number().int().safe().positive().optional(),
         allowOther: z.boolean().default(false),
       })
       .optional(),
