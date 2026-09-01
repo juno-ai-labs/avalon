@@ -32,6 +32,7 @@ import type {
   Scope,
 } from "@rally/contracts";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { addWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { newId, nowIso } from "@rally/db";
 import type { z } from "zod";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
@@ -41,7 +42,12 @@ import { ApiError } from "../lib/api-error";
 import { connectionFromRow } from "../mappers/connection";
 import { connectorRegistryForEnv, githubConnectorConfig, xConnectorConfig } from "../lib/connector-registry";
 import { encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
-import { compatibleDesktopDeepLink, connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
+import {
+  compatibleDesktopDeepLink,
+  connectorAttemptTarget,
+  normalizeConnectorOAuthErrorCode,
+  unknownConnectorAttemptFailureTarget,
+} from "../lib/desktop-handoff";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
 import { withAuthorizedConnection } from "./connector-connection-access";
@@ -484,6 +490,7 @@ export class ConnectionService {
     scope: Scope;
     capabilities: string[];
     connectionId?: string;
+    desktopHandoffVersion?: 1 | 2;
   }): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
@@ -514,6 +521,7 @@ export class ConnectionService {
       scope: input.scope,
       capabilityCount: capabilities.length,
       reconnect: input.connectionId !== undefined,
+      desktopHandoffVersion: input.desktopHandoffVersion ?? 1,
     });
     const adapter = this.registry().get("google");
     const authorization = await adapter.beginAuthorization?.({
@@ -642,12 +650,18 @@ export class ConnectionService {
       ...(attemptId ? { attemptId } : {}),
       connectionId,
       workspaceId: String(row.workspace_id),
+      returnUri: String(row.return_uri),
     });
   }
 
   async beginProvider(
     provider: OAuthConnectorProvider,
-    input: { scope: Scope; capabilities: string[]; connectionId?: string },
+    input: {
+      scope: Scope;
+      capabilities: string[];
+      connectionId?: string;
+      desktopHandoffVersion?: 1 | 2;
+    },
   ): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
@@ -712,6 +726,7 @@ export class ConnectionService {
       scope: input.scope,
       capabilityCount: capabilities.length,
       reconnect: input.connectionId !== undefined,
+      desktopHandoffVersion: input.desktopHandoffVersion ?? 1,
     });
     return { url: authorization.url, attemptId };
   }
@@ -720,6 +735,7 @@ export class ConnectionService {
     scope: Scope;
     capabilities: string[];
     connectionId?: string;
+    desktopHandoffVersion?: 1 | 2;
   }): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
@@ -755,6 +771,7 @@ export class ConnectionService {
       scope: input.scope,
       capabilityCount: capabilities.length,
       reconnect: input.connectionId !== undefined,
+      desktopHandoffVersion: input.desktopHandoffVersion ?? 1,
     });
     const url = new URL(`https://github.com/apps/${encodeURIComponent(this.env.GITHUB_APP_SLUG)}/installations/new`);
     url.searchParams.set("state", state);
@@ -977,6 +994,7 @@ export class ConnectionService {
       ...(attemptId ? { attemptId } : {}),
       connectionId,
       workspaceId: String(row.workspace_id),
+      returnUri: String(row.return_uri),
     });
   }
 
@@ -1251,6 +1269,7 @@ export class ConnectionService {
       ...(attemptId ? { attemptId } : {}),
       connectionId,
       workspaceId: String(row.workspace_id),
+      returnUri: String(row.return_uri),
     });
   }
 
@@ -1264,6 +1283,7 @@ export class ConnectionService {
       attemptId,
       errorCode: "oauth_denied",
       workspaceId: String(row.workspace_id),
+      returnUri: String(row.return_uri),
     });
   }
 
@@ -1278,9 +1298,8 @@ export class ConnectionService {
          AND purpose IN ('connector', 'github_install')`,
     ).bind(state, provider, this.env.AVALON_REGION).first<Record<string, unknown>>();
     if (!row) {
-      return this.connectorAttemptTarget({
+      return unknownConnectorAttemptFailureTarget(this.env, {
         provider,
-        status: "failed",
         errorCode: normalizeConnectorOAuthErrorCode(errorCode),
       });
     }
@@ -1295,6 +1314,7 @@ export class ConnectionService {
         status: "failed",
         errorCode: normalizeConnectorOAuthErrorCode(errorCode),
         workspaceId,
+        returnUri: String(row.return_uri),
       });
     }
     const existing = await this.loadOAuthAttempt(workspaceId, attemptId);
@@ -1305,6 +1325,7 @@ export class ConnectionService {
         attemptId,
         connectionId: existing.connectionId,
         workspaceId,
+        returnUri: String(row.return_uri),
       });
     }
     if (
@@ -1323,6 +1344,7 @@ export class ConnectionService {
           attemptId,
           connectionId: committed.id,
           workspaceId,
+          returnUri: String(row.return_uri),
         });
       }
     }
@@ -1337,6 +1359,7 @@ export class ConnectionService {
       attemptId,
       errorCode: terminalError,
       workspaceId,
+      returnUri: String(row.return_uri),
     });
   }
 
@@ -1366,13 +1389,14 @@ export class ConnectionService {
     };
   }
 
-  async reconnect(id: string): Promise<ConnectorOAuthStart> {
+  async reconnect(id: string, desktopHandoffVersion: 1 | 2 = 1): Promise<ConnectorOAuthStart> {
     const connection = await this.loadAuthorized(id);
     if (connection.connector_type === "google") {
       return this.beginGoogle({
         scope: connection.scope,
         capabilities: parseJson(connection.granted_scopes_json, []),
         connectionId: id,
+        desktopHandoffVersion,
       });
     }
     if (
@@ -1385,6 +1409,7 @@ export class ConnectionService {
         scope: connection.scope,
         capabilities: parseJson(connection.granted_scopes_json, []),
         connectionId: id,
+        desktopHandoffVersion,
       });
     }
     if (connection.connector_type === "github") {
@@ -1392,6 +1417,7 @@ export class ConnectionService {
         scope: connection.scope,
         capabilities: parseJson(connection.granted_scopes_json, []),
         connectionId: id,
+        desktopHandoffVersion,
       });
     }
     throw new ApiError(422, "reconnect_not_supported", "This connection does not use OAuth reconnect");
@@ -2496,6 +2522,7 @@ export class ConnectionService {
     scope: Scope;
     capabilityCount: number;
     reconnect: boolean;
+    desktopHandoffVersion: 1 | 2;
   }): Promise<void> {
     const at = nowIso();
     await (await this.workspaceObject(input.auth.workspaceId)).startConnectorOAuthAttempt({
@@ -2524,9 +2551,12 @@ export class ConnectionService {
         input.statePayload,
         input.auth.userId,
         input.auth.workspaceId,
-        // Connector start carries no caller scheme to record, unlike identity's
-        // `returnUri`, so this stores the scheme every live build answers to.
-        compatibleDesktopDeepLink(this.env).toString(),
+        (input.desktopHandoffVersion === 2
+          ? addWorkspaceTarget(compatibleDesktopDeepLink(this.env), {
+            region: this.env.AVALON_REGION,
+            workspaceId: input.auth.workspaceId,
+          })
+          : compatibleDesktopDeepLink(this.env)).toString(),
         input.expiresAt,
       ).run();
     } catch (error) {
@@ -2666,7 +2696,8 @@ export class ConnectionService {
     attemptId?: string;
     connectionId?: string;
     errorCode?: string;
-    workspaceId?: string;
+    workspaceId: string;
+    returnUri: string;
   }): string {
     return connectorAttemptTarget(this.env, input);
   }

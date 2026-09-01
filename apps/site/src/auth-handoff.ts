@@ -1,15 +1,8 @@
-import { ConnectorOAuthProviders } from '@rally/contracts/connector-oauth-providers';
-import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
-import { parseWorkspaceTarget } from '@rally/contracts/workspace-target';
+import type { ConnectorOAuthProviderValue } from '@rally/contracts/connector-oauth-providers';
+import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import { reportDesktopHandoff } from './telemetry';
 
-const DESKTOP_HOST = 'auth';
-const DESKTOP_PATH = '/complete';
-const TICKET_PATTERN = /^[A-Za-z0-9_-]{20,500}$/u;
-const ATTEMPT_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
-const ERROR_PATTERN = /^[a-z0-9_-]{1,100}$/u;
-const CONNECTION_PATTERN = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/iu;
-type ConnectorProvider = (typeof ConnectorOAuthProviders)[number];
+type ConnectorProvider = ConnectorOAuthProviderValue;
 
 const connectorName: Record<ConnectorProvider, string> = {
   google: 'Google',
@@ -19,9 +12,6 @@ const connectorName: Record<ConnectorProvider, string> = {
   notion: 'Notion',
   slack: 'Slack',
 };
-
-const hasSingleValue = (parameters: URLSearchParams, name: string): boolean =>
-  parameters.getAll(name).length === 1;
 
 /**
  * Accept only the exact desktop authentication deep-link forms emitted by the
@@ -35,110 +25,15 @@ export function parseDesktopTarget(fragment: string): string | null {
   if (
     fragmentEntries.length !== 1
     || fragmentEntries[0]?.[0] !== 'target'
-    || !hasSingleValue(fragmentParameters, 'target')
+    || fragmentParameters.getAll('target').length !== 1
   ) return null;
 
   const rawTarget = fragmentParameters.get('target');
   if (!rawTarget) return null;
 
-  let target: URL;
-  try {
-    target = new URL(rawTarget);
-  } catch {
-    return null;
-  }
-
-  if (
-    !isDesktopDeepLinkProtocol(target.protocol)
-    || target.hostname !== DESKTOP_HOST
-    || target.pathname !== DESKTOP_PATH
-    || target.username !== ''
-    || target.password !== ''
-    || target.port !== ''
-    || target.hash !== ''
-  ) return null;
-
-  const entries = [...target.searchParams.entries()];
-  const ticket = target.searchParams.get('ticket');
-  const error = target.searchParams.get('error');
-  const region = target.searchParams.get('region');
-  const attempt = target.searchParams.get('attempt');
-  const connection = target.searchParams.get('connection');
-  const provider = target.searchParams.get('provider');
-  const status = target.searchParams.get('status');
-  const workspaceId = target.searchParams.get('workspace');
-  const validRegion = region === 'global' || region === 'eu';
-  const validProvider = ConnectorOAuthProviders.some((candidate) => candidate === provider);
-  const workspaceTarget = workspaceId === null ? null : parseWorkspaceTarget(target.searchParams);
-  const validOptionalWorkspace = workspaceId === null
-    || (workspaceTarget !== null && workspaceTarget.region === region);
-
-  const validTicketTarget =
-    entries.length === 3
-    && entries.every(([name]) => name === 'ticket' || name === 'region' || name === 'attempt')
-    && hasSingleValue(target.searchParams, 'ticket')
-    && hasSingleValue(target.searchParams, 'region')
-    && hasSingleValue(target.searchParams, 'attempt')
-    && error === null
-    && ticket !== null
-    && TICKET_PATTERN.test(ticket)
-    && attempt !== null
-    && ATTEMPT_PATTERN.test(attempt)
-    && validRegion;
-
-  const validErrorTarget =
-    entries.length >= 1
-    && entries.length <= 3
-    && entries.every(([name]) => name === 'error' || name === 'region' || name === 'attempt')
-    && hasSingleValue(target.searchParams, 'error')
-    && ticket === null
-    && error !== null
-    && ERROR_PATTERN.test(error)
-    && (region === null || (hasSingleValue(target.searchParams, 'region') && validRegion))
-    && (
-      attempt === null
-      || (
-        region !== null
-        && hasSingleValue(target.searchParams, 'attempt')
-        && ATTEMPT_PATTERN.test(attempt)
-      )
-    );
-
-  const validConnectorSuccessTarget =
-    entries.length >= 4
-    && entries.length <= 6
-    && entries.every(([name]) => ['connection', 'status', 'region', 'workspace', 'attempt', 'provider'].includes(name))
-    && ['connection', 'status', 'region', 'provider'].every((name) => hasSingleValue(target.searchParams, name))
-    && connection !== null
-    && CONNECTION_PATTERN.test(connection)
-    && status === 'connected'
-    && validRegion
-    && validOptionalWorkspace
-    && (attempt === null || (hasSingleValue(target.searchParams, 'attempt') && ATTEMPT_PATTERN.test(attempt)))
-    && validProvider
-    && ticket === null
-    && error === null;
-
-  const validConnectorErrorTarget =
-    entries.length >= 4
-    && entries.length <= 6
-    && entries.every(([name]) => ['status', 'error', 'region', 'workspace', 'attempt', 'provider'].includes(name))
-    && ['status', 'error', 'region', 'provider'].every((name) => hasSingleValue(target.searchParams, name))
-    && (status === 'denied' || status === 'failed')
-    && error !== null
-    && ERROR_PATTERN.test(error)
-    && validRegion
-    && validOptionalWorkspace
-    && validProvider
-    && connection === null
-    && ticket === null
-    && (
-      attempt === null
-      || (hasSingleValue(target.searchParams, 'attempt') && ATTEMPT_PATTERN.test(attempt))
-    );
-
-  return validTicketTarget || validErrorTarget || validConnectorSuccessTarget || validConnectorErrorTarget
-    ? target.toString()
+  const intent = parseDesktopDeepLinkIntent(rawTarget);
+  return intent?.kind === 'identity-result' || intent?.kind === 'connector-result'
+    ? new URL(rawTarget).toString()
     : null;
 }
 

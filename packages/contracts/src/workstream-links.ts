@@ -18,7 +18,7 @@ import {
 import {
   addWorkspaceTarget,
   isWorkspaceTarget,
-  parseWorkspaceTarget,
+  parseWorkspaceAddressedDeepLink,
   type WorkspaceTarget,
 } from "./workspace-target";
 
@@ -114,18 +114,17 @@ export function parseWorkstreamLinkPath(pathname: string): string | null {
 }
 
 function parseDeepLink(url: URL): ParsedWorkstreamLinkTarget | null {
-  if (!isDesktopDeepLinkProtocol(url.protocol) || url.hostname !== DEEP_LINK_HOST) return null;
-  if (url.hash || url.username || url.password || url.port) return null;
-  const workstreamId = url.pathname.slice(1);
+  if (!isDesktopDeepLinkProtocol(url.protocol)) return null;
+  const addressed = parseWorkspaceAddressedDeepLink(url);
+  const destination = addressed?.destination ?? url;
+  if (destination.hostname !== DEEP_LINK_HOST) return null;
+  if (destination.hash || destination.username || destination.password || destination.port) return null;
+  const workstreamId = destination.pathname.slice(1);
   if (!isWorkstreamId(workstreamId)) return null;
-  if (!url.search) return { region: null, workspaceId: null, workstreamId };
-  const entries = [...url.searchParams.keys()];
-  if (
-    entries.length !== 2
-    || entries.some((name) => name !== "region" && name !== "workspace")
-  ) return null;
-  const workspace = parseWorkspaceTarget(url.searchParams);
-  return workspace ? { ...workspace, workstreamId } : null;
+  if (destination.search) return null;
+  return addressed
+    ? { ...addressed.target, workstreamId }
+    : { region: null, workspaceId: null, workstreamId };
 }
 
 /** Parse any current or already-circulating Rally work-stream link. */

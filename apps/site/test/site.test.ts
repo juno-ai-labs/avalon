@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
-import { parseSlackLinkFragment } from '../src/slack-link';
+import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import {
   desktopDmgUrl,
@@ -9,7 +9,7 @@ import {
   parseDesktopReleaseConfig,
   renderDesktopRelease,
 } from '../src/release-config';
-import { currentSitePage, normalizedTelemetryPathname } from '../src/telemetry';
+import { normalizedTelemetryPathname, sitePageForPath } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -414,6 +414,12 @@ describe('public Rally site', () => {
         token,
         workspaceTarget: { region: 'eu', workspaceId: '00000000-0000-7000-8000-000000000009' },
       });
+    expect(slackDesktopTarget({
+      token,
+      workspaceTarget: { region: 'eu', workspaceId: '00000000-0000-7000-8000-000000000009' },
+    })).toBe(
+      `rallywithai://workspace/eu/00000000-0000-7000-8000-000000000009/slack/link?token=${token}`,
+    );
     expect(parseSlackLinkFragment(`#token=${token}`)).toEqual({ token, workspaceTarget: null });
     expect(parseSlackLinkFragment(`#token=${token}&region=eu`)).toBeNull();
   });
@@ -433,9 +439,8 @@ describe('public Rally site', () => {
     expect(support).toContain('Create new key');
     expect(support).toContain('Personal connections use Granola’s browser sign-in and do not require an API key.');
     expect(support).toContain('https://docs.granola.ai/help-center/sharing/integrations/granola-api');
-    expect(handoff).toContain("url.hostname === 'workstreams'");
-    expect(handoff).toContain("url.hostname === 'settings'");
-    expect(handoff).toContain("url.hostname === 'automations'");
+    expect(handoff).toContain('parseDesktopDeepLinkIntent');
+    expect(handoff).toContain('parseWorkspaceAddressedDeepLink');
     expect(handoff).toContain('window.location.hash');
     expect(handoff).toContain('window.history.replaceState');
     expect(handoff).not.toContain('window.location.search');
@@ -571,9 +576,8 @@ describe('public Rally site', () => {
       handoffType: 'unknown', validity: 'invalid',
     });
 
-    window.history.replaceState({}, '', '/app/workspaces/eu/workspace/workstreams/workstream');
-    expect(currentSitePage()).toBe('workstream_handoff');
-    window.history.replaceState({}, '', '/');
+    expect(sitePageForPath('/app/workspaces/:region/:workspace/workstreams/:id'))
+      .toBe('workstream_handoff');
   });
 
   it('explains that an addressed Slack handoff opens its installing workspace', () => {
@@ -589,7 +593,7 @@ describe('public Rally site', () => {
     const successTarget = `avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}`;
     const errorTarget = `avalon://auth/complete?error=google_oauth_denied&region=global&attempt=${attempt}`;
     const connectorSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&attempt=${attempt}&provider=linear`;
-    const targetedConnectorSuccess = `${connectorSuccessTarget}&workspace=00000000-0000-7000-8000-000000000009`;
+    const targetedConnectorSuccess = `avalon://workspace/eu/00000000-0000-7000-8000-000000000009/auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&attempt=${attempt}&provider=linear`;
     const connectorErrorTarget = `avalon://auth/complete?provider=linear&region=eu&attempt=${attempt}&status=denied&error=oauth_denied`;
     const granolaSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000005&status=connected&region=global&attempt=${attempt}&provider=granola`;
     const granolaErrorTarget = `avalon://auth/complete?provider=granola&region=global&attempt=${attempt}&status=failed&error=connector_oauth_failed`;

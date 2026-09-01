@@ -206,7 +206,6 @@ import {
   parseStoredAuthSet,
   parseStoredProfileSet,
   removeStoredWorkspace,
-  selectStoredWorkspace,
   sessionFromStoredState,
   sessionsShareBinding,
   storedAuthFromSession,
@@ -2311,24 +2310,6 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
   const changeId = beginWorkspaceChange(parsed.data);
   try {
     const selectionIntent = ++workspaceSelectionIntent;
-    const cached = await withSessionMutation(async () => {
-      const auth = await loadStoredAuthSet();
-      if (!auth) return null;
-      const credential = storedWorkspaceCredential(auth, parsed.data.workspaceId, parsed.data.region);
-      if (!credential) return null;
-      const session = await storedSessionForCredential(credential);
-      if (!session || selectionIntent !== workspaceSelectionIntent) return null;
-      const selected = selectStoredWorkspace(auth, parsed.data.workspaceId, parsed.data.region);
-      await writeStoredAuthFile(
-        userDataDirectory(),
-        encryptStoredSessionValue(JSON.stringify(selected)),
-      );
-      inMemoryAuthSet = selected;
-      inMemorySession = session;
-      broadcastSessionChanged(session);
-      return publicSession(session);
-    });
-    if (cached) return cached;
     return await requestOnboardingSession(
       '/onboarding/workspace/activate',
       parsed.data,
