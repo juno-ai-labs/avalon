@@ -298,7 +298,21 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
         </span>
       )}
       {settled.src && (
-        <img alt="" aria-hidden="true" className="citation-card-image-preview" src={settled.src} />
+        <img
+          alt=""
+          aria-hidden="true"
+          className="citation-card-image-preview"
+          loading="lazy"
+          onError={() => {
+            // MIME metadata can be stale and valid image bytes can still be
+            // corrupt. A decode failure returns to the ordinary empty card
+            // instead of leaving Chromium's broken-image rendering behind.
+            setExcerpt((current) => current.for === resource.id && current.src === settled.src
+              ? { for: resource.id }
+              : current);
+          }}
+          src={settled.src}
+        />
       )}
       {settled.text !== undefined && settled.text !== '' && (
         <span aria-hidden="true" className="citation-card-preview" inert>
