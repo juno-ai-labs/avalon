@@ -1,3 +1,4 @@
+import { normalizedZodIssueCode } from "@rally/contracts/zod-error";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { logStructuredEvent } from "../observability/logger";
@@ -82,7 +83,7 @@ export async function consumeInferenceLakehouseQueue(
       logStructuredEvent(env, "error", "inference_lakehouse_pointer_invalid", {
         queue: batch.queue,
         errors: parsed.error.issues.slice(0, 4).map((issue) =>
-          `${issue.path.map(String).join(".") || "(root)"}: ${issue.code}`),
+          `${issue.path.map(String).join(".") || "(root)"}: ${normalizedZodIssueCode(issue.code)}`),
       });
       message.ack();
       return;

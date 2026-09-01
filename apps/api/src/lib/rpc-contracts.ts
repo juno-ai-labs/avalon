@@ -1,5 +1,6 @@
 import { IdSchema, RegionSchema } from "@rally/contracts";
 import { OffsetDateTimeSchema, RequiredUnknownSchema } from "@rally/contracts/schema-runtime";
+import { normalizedZodIssueCode } from "@rally/contracts/zod-error";
 import { z } from "zod/v3";
 
 import { ApiError } from "./api-error";
@@ -185,7 +186,7 @@ export function parseRpcInput<T extends z.ZodTypeAny>(
     method,
     issues: parsed.error.issues.slice(0, 25).map((issue) => ({
       path: issue.path.map(String).join(".") || "(root)",
-      code: issue.code === "invalid_enum_value" ? "invalid_value" : issue.code,
+      code: normalizedZodIssueCode(issue.code),
     })),
   });
 }

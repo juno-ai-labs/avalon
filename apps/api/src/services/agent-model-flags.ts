@@ -7,6 +7,7 @@ import {
   type AgentModelRole,
   type AgentModelRouting,
 } from "@rally/contracts";
+import { normalizedZodIssueCode } from "@rally/contracts/zod-error";
 import { BLOCK_DASHBOARD_MODEL, type Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import {
@@ -181,7 +182,7 @@ async function resolveAgentModelRoutingForSubject(
       variant: details.variant,
       validation_issues: parsed.error.issues.map((issue) => ({
         path: issue.path.join(".") || "(root)",
-        code: issue.code,
+        code: normalizedZodIssueCode(issue.code),
       })),
       model: fallback.model,
     });

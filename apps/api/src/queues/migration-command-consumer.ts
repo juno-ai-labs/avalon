@@ -30,6 +30,7 @@ import {
   DurableObjectMigrationCommandSchema,
   type DurableObjectMigrationCommand,
 } from "@rally/contracts/durable-object-migrations";
+import { normalizedZodIssueCode } from "@rally/contracts/zod-error";
 import { asWorkspaceId } from "@rally/contracts";
 
 import { BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS } from "../durable-objects/block-dashboard-agent";
@@ -173,7 +174,7 @@ export async function consumeMigrationCommandQueue(
       logWarn(env, "migration_command_invalid", {
         queue: batch.queue,
         errors: parsed.error.issues.slice(0, 4).map((issue) =>
-          `${issue.path.map(String).join(".") || "(root)"}: ${issue.code}`),
+          `${issue.path.map(String).join(".") || "(root)"}: ${normalizedZodIssueCode(issue.code)}`),
       });
       message.ack();
       return;

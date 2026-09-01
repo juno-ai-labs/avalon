@@ -1,3 +1,4 @@
+import { normalizedZodIssueCode } from "@rally/contracts/zod-error";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import {
@@ -15,7 +16,7 @@ export async function consumeAnalyticsLakehouseQueue(
       logStructuredEvent(env, "error", "analytics_lakehouse_pointer_invalid", {
         queue: batch.queue,
         errors: parsed.error.issues.slice(0, 4).map((issue) =>
-          `${issue.path.map(String).join(".") || "(root)"}: ${issue.code}`),
+          `${issue.path.map(String).join(".") || "(root)"}: ${normalizedZodIssueCode(issue.code)}`),
       });
       message.ack();
       return;
