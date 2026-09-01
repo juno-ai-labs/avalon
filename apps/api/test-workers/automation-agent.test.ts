@@ -176,6 +176,117 @@ describe("AutomationAgent", () => {
     });
   });
 
+  it("refuses an event-driven submission with no rules, and admits one that has them", async () => {
+    const NOTION_CONNECTION_ID = "00000000-0000-7000-8000-0000000000ba";
+    const eventDriven = (ready: boolean) => ({
+      ...readyDefinition("Report on new pages"),
+      triggers: [{
+        type: "connector_activity" as const,
+        connectorType: "notion",
+        sourceBindingKey: "notion_source",
+        suggestedSourcePluginId: "plugin_notion",
+        eventTypes: ["notion.page.created"],
+        deterministicFilters: {},
+      }],
+      ready,
+    });
+    const rules = {
+      schemaVersion: 1 as const,
+      evaluators: [{
+        evaluatorKey: "page_created",
+        source: {
+          sourceBindingKey: "notion_source",
+          suggestedSourcePluginId: "plugin_notion",
+          event: { kind: "event_type" as const, eventType: "notion.page.created" },
+        },
+        when: { kind: "always" as const },
+      }],
+    };
+    // Notion because the registry admits it without provider credentials, so
+    // acceptance resolves a real adapter and validates the rules against its
+    // real declared event vocabulary rather than a double.
+    await pinWorkspaceIdentity();
+    await runInDurableObject(
+      env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID))),
+      (_workspace, state) => {
+        state.storage.sql.exec(
+          `INSERT INTO connector_connections
+             (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+              display_name, granted_scopes_json, status, cursor_json, config_json,
+              created_at, updated_at, model_plugin_id)
+           VALUES (?, ?, 'notion', 'personal', ?, 'acct', 'A connection', '[]', 'healthy',
+                   '{}', '{}', 1, 1, 'plugin_notion')`,
+          NOTION_CONNECTION_ID, WORKSPACE_ID, AUTHOR_ID,
+        );
+      },
+    );
+
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      (instance as unknown as { workspace(): unknown }).workspace = async () => ({
+        applyExternalEventRegistrations: async () => ({ applied: true, effectiveAfterEventSequence: 7 }),
+        applyAutomationProjection: async () => ({ applied: true }),
+      });
+      const submit = (draft: unknown, evaluatorRules: unknown) => instance.admitAuthoredDraft({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        authoredInWorkstreamId: AUTHORING_WORKSTREAM_ID,
+        ...(evaluatorRules === undefined ? {} : { evaluatorRules }),
+        draft,
+      });
+
+      // A ready event-driven draft with no rules is what used to reach a person
+      // as a proposal card whose Create could only refuse.
+      await expect(submit(eventDriven(true), undefined))
+        .rejects.toThrow("automation_evaluator_rules_required");
+      // An empty set is the same answer, so the guard cannot be satisfied by
+      // merely having called the tool.
+      await expect(submit(eventDriven(true), { schemaVersion: 1, evaluators: [] }))
+        .rejects.toThrow("automation_evaluator_rules_required");
+      // Nothing was created by either refusal.
+      expect(state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM automation_definition_revisions`,
+      ).one().n).toBe(0);
+
+      // A partial draft has not chosen its rules yet — that is the clarifying
+      // question flow, and acceptance refuses it on `ready` alone anyway.
+      const partial = await submit(eventDriven(false), undefined);
+      expect(partial).toMatchObject({ created: true });
+      // As does a draft with no event trigger at all.
+      await expect(submit(readyDefinition("Manual helper"), undefined)).resolves.toMatchObject({
+        created: false,
+      });
+
+      // With real rules it is admitted, and acceptance registers those rules.
+      const admitted = await submit(eventDriven(true), rules);
+      await instance.acceptDraft({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        definitionRevision: admitted.definitionRevision,
+        scope: "personal",
+        defaultPluginIds: [],
+        activitySourcePluginIds: { notion_source: "plugin_notion" },
+        deliveryTargets: [],
+        modelOverride: null,
+      });
+      expect(JSON.parse(state.storage.sql.exec<{ json: string }>(
+        `SELECT evaluator_projection_json AS json FROM automation_acceptance WHERE id = 1`,
+      ).one().json)).toEqual([
+        expect.objectContaining({
+          source: expect.objectContaining({
+            connectorType: "notion",
+            connectionId: NOTION_CONNECTION_ID,
+            eventType: "notion.page.created",
+          }),
+        }),
+      ]);
+    });
+  });
+
   it("accepts the canonical revision in place, leaving one definition behind", async () => {
     await seedReadyDraft(readyDefinition("Manual helper"));
     const stub = automationStub();

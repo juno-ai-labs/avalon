@@ -1081,6 +1081,23 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.nullable().default(null),
       draft: AutomationDraftSchema,
     }).parse(input);
+    // The same condition `prepareAcceptance` applies, applied here instead.
+    // An event-driven draft whose rules are absent or empty is one Create can
+    // only refuse, and by then the refusal has nowhere to go: the drafting loop
+    // has ended, and what is left is a proposal card whose button never works.
+    // Refusing the submission puts it back inside that loop, where a rejected
+    // tool call is repaired and retried. Only a `ready` draft is held to it —
+    // a partial submission paired with a clarifying question has not chosen its
+    // rules yet, and acceptance refuses it on `ready` alone anyway.
+    if (
+      request.draft.ready
+      && (request.evaluatorRules?.evaluators.length ?? 0) === 0
+      && request.draft.triggers.some((trigger) => (
+        trigger.type === "connector_activity"
+        || trigger.type === "semantic_activity"
+        || trigger.type === "webhook"
+      ))
+    ) throw new Error("automation_evaluator_rules_required");
     const now = Date.now();
     const existing = this.state.storage.sql.exec<{
       automation_id: string;
