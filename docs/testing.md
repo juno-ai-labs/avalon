@@ -7,9 +7,10 @@ Two rules run through everything below. **Default to the real Cloudflare
 pipeline**: real workerd and a real Durable Object for anything the runtime
 decides, and the checked-in migrations against real SQLite for anything a query
 decides — a double stands in for something that *cannot* be run here, never for
-setup that was inconvenient. And **prove the test can fail**: a test that
-stays green when the code under it is broken is not covering that code, and the
-suite is worse off for it because the name says otherwise.
+setup that was inconvenient. And **prove the test can fail**, at the integration
+rungs: an integration test that stays green while the behavior under it is broken
+is not covering that behavior, and the suite is worse off for it because the name
+says otherwise.
 
 [`e2e.md`](e2e.md) owns the manual acceptance flows and the live-Worker smoke
 check; [`type-safety-boundaries.md`](type-safety-boundaries.md) owns how a test
@@ -422,19 +423,56 @@ beforeEach(async () => {
 - **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 
+## How much to run
+
+**Match the run to the size of the change.** A full `pnpm test` takes minutes and
+most changes do not need one locally. CI runs everything on every push, so a
+local full run buys confidence, not correctness.
+
+- **Documentation-only changes: run nothing.** No test covers prose. If the diff
+  touches only `docs/`, `README.md`, or comments, the gates have nothing to say.
+- **Ordinary changes: run the tests that cover what you touched.** One file, one
+  test name, or the one package's suite. Add a second package only when the
+  change crosses into it.
+- **Large changes, roughly 20 files or more: run the full package suite once**
+  before calling it done, because a change that wide can break a suite you had no
+  reason to think about.
+
+A narrow run you actually read beats a wide one you skim. If a test outside what
+you touched fails, that is a real result and it belongs to this change, whether
+or not you planned to run it.
+
 ## Prove the test can fail
 
-**Break the code the test covers, watch that test fail, then revert.** Do it
-before the change is called done, for every test written or substantially
-changed:
+**This applies to integration tests only.** That means rung 1 and rung 2 above:
+real workerd in `apps/api/test-workers/`, and Node tests that drive a route,
+service, or object against the checked-in migrations. It also applies to the
+local smoke and e2e lanes. Unit-level tests are exempt: rungs 3 and 4, pure
+`packages/*` logic, and desktop component tests. At that level the only break
+available is usually flipping the literal the assertion already mirrors, which
+costs a cycle and proves nothing. When writing one of those, read the catalogue
+below instead of running the check.
 
-```bash
-# 1. Make the production code wrong: invert the condition, delete the write,
-#    return the wrong constant. One edit, in the code — never in the test.
-# 2. Run only that file, and read the failure.
-pnpm --filter @rally/api exec vitest run test/<file>.test.ts &> /tmp/proof.log
-# 3. Confirm it failed *for the reason the test is named after*, then revert.
-```
+**Break the behavior the test names, watch that test fail, then revert.** Make
+one edit in the production code. Never edit the test. Run only what you are
+proving, one file or a single test name, and check that it failed for the reason
+the test is named after. Then revert.
+
+**Break it the way production would break.** Drop the write, skip the lease
+check, return the row without its fence, send the message to the wrong work
+stream, serve the stale value. What you want to learn is whether the test notices
+a defect a member could feel. Flipping a `true` into a `false` on the one line
+the assertion mirrors teaches you nothing: it is the same statement written
+twice. If that flip is the only break you can find, the test is pinned to a
+literal rather than to behavior, and moving it up a rung is the fix.
+
+**Prove each behavior once, not each `it()`.** If one break turns several tests
+in the file red, that single run proves all of them. Ten cases covering one
+decision need one cycle.
+
+**Keep the run narrow.** Two runs of that one file is the most this should cost.
+After you revert, do not run the package suite or `pnpm test` to confirm it.
+`git diff` already shows the break is gone.
 
 A failure that names something else — a fixture that threw, a schema parse, a
 timeout — proves the test runs, not that it observes the behavior. An assertion
