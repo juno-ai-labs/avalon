@@ -200,6 +200,7 @@ import {
 } from './session-file';
 import {
   activeStoredCredential,
+  activeStoredWorkspaceCredential,
   mergeStoredSession,
   parseStoredAuthSet,
   parseStoredProfileSet,
@@ -2009,7 +2010,6 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
     || runtimeConfig().api[session.workspace.region] !== apiBaseUrl
     || identity.workspace
     || identity.apiBaseUrl !== runtimeConfig().api.global
-    || identity.user.id !== session.user.id
     || identity.user.email.toLocaleLowerCase('en-US') !== session.user.email.toLocaleLowerCase('en-US')
   ) {
     throw new Error('The development session returned a mismatched regional endpoint');
@@ -2144,7 +2144,9 @@ async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
   }
   assertWorkspaceChangeAllowed();
   const authSet = await loadStoredAuthSet();
-  let credential = authSet ? storedWorkspaceCredential(authSet, workspaceId.data, region.data) : null;
+  let credential = authSet
+    ? activeStoredWorkspaceCredential(authSet, workspaceId.data, region.data)
+    : null;
   if (!credential) throw new Error('No credential is stored for this workspace');
   const ask = (stored: StoredAuth) => net.fetch(
     `${apiBaseForAuth(stored)}/workspaces/${encodeURIComponent(workspaceId.data)}/membership`,

@@ -2,13 +2,13 @@
  * Every composer that caches a draft names it here, so a text draft and its
  * attachments always agree on one key and no two surfaces can collide.
  */
-export function workstreamDraftKey(workspaceId: string, workstreamId: string): string {
-  return `workspace:${workspaceId}:workstream:${workstreamId}`;
+export function workstreamDraftKey(region: RallyRegion, workspaceId: string, workstreamId: string): string {
+  return `${workspaceDraftPrefix(region, workspaceId)}workstream:${workstreamId}`;
 }
 
 /** Scoped by workspace: the launcher is one composer per workspace, not per device. */
-export function newWorkstreamDraftKey(workspaceId: string): string {
-  return `workspace:${workspaceId}:new-workstream`;
+export function newWorkstreamDraftKey(region: RallyRegion, workspaceId: string): string {
+  return `${workspaceDraftPrefix(region, workspaceId)}new-workstream`;
 }
 
 /**
@@ -18,8 +18,17 @@ export function newWorkstreamDraftKey(workspaceId: string): string {
  * sentence — and worse, staged attachments — from the draft it was typed in
  * into the next draft's turn.
  */
-export function newAutomationDraftKey(workspaceId: string, draftAutomationId?: string | null): string {
+export function newAutomationDraftKey(
+  region: RallyRegion,
+  workspaceId: string,
+  draftAutomationId?: string | null,
+): string {
   return draftAutomationId
-    ? `workspace:${workspaceId}:new-automation:${draftAutomationId}`
-    : `workspace:${workspaceId}:new-automation`;
+    ? `${workspaceDraftPrefix(region, workspaceId)}new-automation:${draftAutomationId}`
+    : `${workspaceDraftPrefix(region, workspaceId)}new-automation`;
+}
+import { desktopWorkspaceIdentityKey, type RallyRegion } from '../../common/desktop';
+
+export function workspaceDraftPrefix(region: RallyRegion, workspaceId: string): string {
+  return `workspace:${desktopWorkspaceIdentityKey(region, workspaceId)}:`;
 }

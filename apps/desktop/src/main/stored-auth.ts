@@ -9,6 +9,7 @@ import {
   type Session,
 } from '@rally/contracts';
 import { z } from 'zod';
+import { desktopWorkspaceIdentityKey } from '../common/desktop';
 
 const storedAuthSchema = z.object({
   version: z.literal(1),
@@ -69,13 +70,6 @@ const storedAuthSetSchema = z.object({
     || recencyKeys.some((key) => !keys.includes(key))) {
     context.addIssue({ code: 'custom', path: ['workspaceRecency'], message: 'must contain unique stored workspaces' });
   }
-  const userIds = [
-    ...(value.account ? [value.account.binding.userId] : []),
-    ...value.workspaces.map((auth) => auth.binding.userId),
-  ];
-  if (new Set(userIds).size > 1) {
-    context.addIssue({ code: 'custom', path: [], message: 'must belong to one account' });
-  }
 });
 
 const storedProfileSetSchema = z.object({
@@ -106,7 +100,7 @@ export function parseStoredAuth(value: unknown): StoredAuth | null {
 }
 
 export function workspaceReferenceKey(reference: StoredWorkspaceReference): string {
-  return `${reference.region}:${reference.workspaceId}`;
+  return desktopWorkspaceIdentityKey(reference.region, reference.workspaceId);
 }
 
 function workspaceReferenceMatches(
@@ -215,6 +209,16 @@ export function activeStoredCredential(auth: StoredAuthSet): StoredAuth | null {
     )) ?? null;
   }
   return auth.account ?? auth.workspaces[0] ?? null;
+}
+
+export function activeStoredWorkspaceCredential(
+  auth: StoredAuthSet,
+  workspaceId: string,
+  region: Region,
+): StoredAuth | null {
+  if (!workspaceReferenceMatches(auth.activeWorkspace, workspaceId, region)) return null;
+  const active = activeStoredCredential(auth);
+  return active?.binding.workspaceId === workspaceId && active.binding.region === region ? active : null;
 }
 
 export function storedWorkspaceCredential(
