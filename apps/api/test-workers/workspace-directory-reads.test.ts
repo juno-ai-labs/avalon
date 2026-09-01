@@ -354,6 +354,17 @@ describe("what the workspace object answers about its work streams", () => {
   });
 
   describe("lookupWorkstreamDirectory — Slack's unfurl summaries", () => {
+    it("accepts the lookup schema maximum without exceeding the SQLite bind limit", async () => {
+      const unknownIds = Array.from({ length: 250 }, (_, index) => (
+        asWorkstreamId(`00000000-0000-7000-8000-${String(900_000 + index).padStart(12, "0")}`)
+      ));
+
+      await expect(workspace().lookupWorkstreamDirectory({
+        workspaceId: WORKSPACE_ID,
+        workstreamIds: unknownIds,
+      })).resolves.toEqual({ items: [] });
+    });
+
     it("returns exactly the ids asked for, and no others", async () => {
       const wanted = await seedWorkstream({
         title: "Quarterly planning",
@@ -868,6 +879,18 @@ describe("what the workspace object answers about its work streams", () => {
   });
 
   describe("canReadWorkstream — what the activity router is allowed to route into", () => {
+    it("accepts the readable-id schema maximum without exceeding the SQLite bind limit", async () => {
+      const unknownIds = Array.from({ length: 100 }, (_, index) => (
+        asWorkstreamId(`00000000-0000-7000-8000-${String(910_000 + index).padStart(12, "0")}`)
+      ));
+
+      await expect(workspace().readableWorkstreamIds({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        workstreamIds: unknownIds,
+      })).resolves.toEqual({ items: [] });
+    });
+
     it("filters a bounded set through one directory audience read", async () => {
       const shared = await seedWorkstream({
         title: "Workspace scoped batch",

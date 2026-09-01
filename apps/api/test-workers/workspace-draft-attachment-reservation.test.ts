@@ -69,6 +69,20 @@ beforeEach(async () => {
 });
 
 describe("WorkspaceDO pending attachment reservations", () => {
+  it("rejects 100 unavailable drafts without exceeding the SQLite bind limit", async () => {
+    const resourceIds = Array.from({ length: 100 }, (_, index) => (
+      `00000000-0000-7000-8000-${String(920_000 + index).padStart(12, "0")}`
+    ));
+
+    await expect(workspace().reserveDraftAttachments({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      inputId: INPUT_ID,
+      userId: USER_ID,
+      resourceIds,
+    })).resolves.toEqual({ outcome: "unavailable" });
+  });
+
   it("freezes the descriptor idempotently until canonical resource projection", async () => {
     const request = {
       workspaceId: WORKSPACE_ID,
