@@ -72,10 +72,13 @@ interface SidebarProps {
   workstreams: WorkstreamSummary[];
   /** Whether a page of work streams remains beyond the ones listed. */
   hasMoreWorkstreams?: boolean;
+  hasMoreNotes?: boolean;
   /** A further page is in flight, so the end of the list is not the end. */
   loadingMoreWorkstreams?: boolean;
+  loadingMoreNotes?: boolean;
   /** Ask for the next page. Called when the scroll approaches the bottom. */
   onLoadMoreWorkstreams?: () => void;
+  onLoadMoreNotes?: () => void;
   loading?: boolean;
   meetingRecordingAvailable?: boolean;
   accountMenu?: ReactNode;
@@ -85,7 +88,7 @@ interface SidebarProps {
     operationId: string,
     filter: WorkstreamBatchFilter,
     update: WorkstreamBatchUpdate,
-  ) => Promise<number>;
+  ) => Promise<{ enqueuedCount: number; archivedNoteCount: number }>;
   onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
@@ -103,7 +106,9 @@ interface SidebarProps {
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
   onOpenMeetingNotes: (noteId?: string) => Promise<void>;
-  onPreviewWorkstreamBatch: (filter: WorkstreamBatchFilter) => Promise<number>;
+  onPreviewWorkstreamBatch: (
+    filter: WorkstreamBatchFilter,
+  ) => Promise<{ matchedCount: number; matchedNoteCount: number }>;
   onCreateProject?: (input: CreateProjectRequest) => Promise<ProjectSummary>;
   onAddWorkstreamToProject?: (projectId: string, workstreamId: string) => Promise<void>;
   onReorderProjects?: (projectIds: string[]) => Promise<void>;
@@ -121,6 +126,66 @@ interface WorkstreamBatchTarget {
   filter: WorkstreamBatchFilter;
   update: WorkstreamBatchUpdate;
   matchedCount: number;
+  /**
+   * Counted apart from the work streams because only `archive` reaches notes,
+   * and because the dialog has to name both: "everything under this heading" is
+   * what the reader means, and two authorities is not something they should
+   * have to know to be told what is about to go.
+   */
+  matchedNoteCount: number;
+}
+
+/**
+ * The note half, which only `archive` has. `mark_read` has nothing to do to a
+ * note — a note has no read state to clear — so the dialog for it must not
+ * offer to touch one.
+ */
+function batchNoteCount(target: WorkstreamBatchTarget): number {
+  return target.update.kind === 'archive' ? target.matchedNoteCount : 0;
+}
+
+function batchTotal(target: WorkstreamBatchTarget): number {
+  return target.matchedCount + batchNoteCount(target);
+}
+
+/**
+ * What the confirmation says is about to change: "3 work streams and 1 note",
+ * or whichever half has anything in it.
+ *
+ * A zero half is dropped rather than written out. The sentence exists to tell
+ * somebody what they are about to lose, and "and 0 notes" only invites them to
+ * wonder which notes those were. With both halves empty the work-stream half
+ * still speaks, because the sentence needs a subject and Continue is refused
+ * behind it anyway.
+ */
+function batchSubject(target: WorkstreamBatchTarget): string {
+  const notes = batchNoteCount(target);
+  const workstreams = target.matchedCount === 1
+    ? '1 work stream'
+    : `${target.matchedCount} work streams`;
+  if (notes === 0) return workstreams;
+  const noteSubject = notes === 1 ? '1 note' : `${notes} notes`;
+  return target.matchedCount === 0 ? noteSubject : `${workstreams} and ${noteSubject}`;
+}
+
+/**
+ * The rows under one heading this reader can see, as the seed the dialog opens
+ * with before the server's own count replaces it.
+ *
+ * Notes are counted the way WorkspaceDO selects them — theirs to archive, and
+ * not mid-recording — so the number does not jump for a reason the reader
+ * cannot see when the preview lands.
+ */
+function visibleBatchCounts(
+  items: readonly RecentSidebarItem[],
+  viewerId: string,
+): { workstreams: number; notes: number } {
+  return {
+    workstreams: items.filter((item) => item.type === 'workstream').length,
+    notes: items.filter((item) => item.type === 'note'
+      && item.note.ownerUserId === viewerId
+      && item.note.recordingStatus !== 'recording').length,
+  };
 }
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
@@ -975,8 +1040,11 @@ export function Sidebar({
   onRestoreProject = async () => undefined,
   onSignOut,
   hasMoreWorkstreams = false,
+  hasMoreNotes = false,
   loadingMoreWorkstreams = false,
+  loadingMoreNotes = false,
   onLoadMoreWorkstreams,
+  onLoadMoreNotes,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
   const openDraftId = useOpenDraftId();
@@ -1026,11 +1094,26 @@ export function Sidebar({
    * without a cursor, so this is the cheap half of the same guard.
    */
   const loadMoreWhenNearBottom = useCallback((event: React.UIEvent<HTMLElement>): void => {
-    if (!hasMoreWorkstreams || loadingMoreWorkstreams || !onLoadMoreWorkstreams) return;
+    const wantsWorkstreams = hasMoreWorkstreams && !loadingMoreWorkstreams && onLoadMoreWorkstreams;
+    const wantsNotes = hasMoreNotes && !loadingMoreNotes && onLoadMoreNotes;
+    if (!wantsWorkstreams && !wantsNotes) return;
     const { clientHeight, scrollHeight, scrollTop } = event.currentTarget;
     if (scrollHeight - scrollTop - clientHeight > LOAD_MORE_DISTANCE) return;
-    onLoadMoreWorkstreams();
-  }, [hasMoreWorkstreams, loadingMoreWorkstreams, onLoadMoreWorkstreams]);
+    // Both, not whichever is nearer the bottom. The two lists are interleaved
+    // by recency under one set of headings, so the row at the end belongs to
+    // one of them and the *other* is what the next heading down needs. Asking
+    // only for the kind at the bottom would stall the list at the point where
+    // one of them runs out.
+    if (wantsWorkstreams) onLoadMoreWorkstreams();
+    if (wantsNotes) onLoadMoreNotes();
+  }, [
+    hasMoreNotes,
+    hasMoreWorkstreams,
+    loadingMoreNotes,
+    loadingMoreWorkstreams,
+    onLoadMoreNotes,
+    onLoadMoreWorkstreams,
+  ]);
   // The arrangement being dragged, held only for as long as the drag lasts.
   // The list renders from it while it exists, so rows move under the pointer
   // before anything is sent; the server's answer replaces it when the drag
@@ -1301,24 +1384,26 @@ export function Sidebar({
   const openWorkstreamBatch = (
     label: RecencyGroup,
     update: WorkstreamBatchUpdate,
-    visibleCount: number,
+    visible: readonly RecentSidebarItem[],
   ): void => {
     const filter = recencyGroupBatchFilter(label, new Date());
     const generation = batchPreviewGeneration.current + 1;
     batchPreviewGeneration.current = generation;
+    const seeded = visibleBatchCounts(visible, workspace.currentUser.id);
     setBatchTarget({
       label,
       operationId: crypto.randomUUID(),
       filter,
       update,
-      matchedCount: visibleCount,
+      matchedCount: seeded.workstreams,
+      matchedNoteCount: seeded.notes,
     });
     setBatchPreviewing(true);
     setBatchError(null);
     setBatchPreviewFailed(false);
-    void onPreviewWorkstreamBatch(filter).then((matchedCount) => {
+    void onPreviewWorkstreamBatch(filter).then(({ matchedCount, matchedNoteCount }) => {
       if (batchPreviewGeneration.current !== generation) return;
-      setBatchTarget((current) => current ? { ...current, matchedCount } : null);
+      setBatchTarget((current) => current ? { ...current, matchedCount, matchedNoteCount } : null);
     }).catch((error: unknown) => {
       if (batchPreviewGeneration.current !== generation) return;
       setBatchPreviewFailed(true);
@@ -1338,7 +1423,7 @@ export function Sidebar({
   };
 
   const submitWorkstreamBatch = async (): Promise<void> => {
-    if (!batchTarget || batchPreviewing || batchTarget.matchedCount === 0) return;
+    if (!batchTarget || batchPreviewing || batchTotal(batchTarget) === 0) return;
     setBatchApplying(true);
     setBatchError(null);
     try {
@@ -1840,7 +1925,7 @@ export function Sidebar({
                             onSelect={() => openWorkstreamBatch(
                               group.label,
                               { kind: 'mark_read' },
-                              group.streams.filter((item) => item.type === 'workstream').length,
+                              group.streams,
                             )}
                           >
                             Mark all as read
@@ -1850,7 +1935,7 @@ export function Sidebar({
                             onSelect={() => openWorkstreamBatch(
                               group.label,
                               { kind: 'archive' },
-                              group.streams.filter((item) => item.type === 'workstream').length,
+                              group.streams,
                             )}
                           >
                             Archive all
@@ -1900,7 +1985,7 @@ export function Sidebar({
             {/* Only while a page is actually in flight. A permanent "scroll for
                 more" would claim the list is incomplete every time it happens
                 to end exactly on a page boundary. */}
-            {loadingMoreWorkstreams && (
+            {(loadingMoreWorkstreams || loadingMoreNotes) && (
               <p aria-live="polite" className="sidebar-empty">Loading more…</p>
             )}
           </section>
@@ -2042,7 +2127,8 @@ export function Sidebar({
             <Button disabled={batchApplying} onClick={closeWorkstreamBatch}>Cancel</Button>
             <Button
               className={batchTarget?.update.kind === 'archive' ? 'button-danger' : 'button-primary'}
-              disabled={batchApplying || batchPreviewing || batchPreviewFailed || batchTarget?.matchedCount === 0}
+              disabled={batchApplying || batchPreviewing || batchPreviewFailed
+                || (batchTarget !== null && batchTotal(batchTarget) === 0)}
               onClick={() => void submitWorkstreamBatch()}
             >
               Continue
@@ -2056,8 +2142,7 @@ export function Sidebar({
         title={batchTarget?.update.kind === 'archive' ? 'Archive all' : 'Mark all as read'}
       >
         <p className="modal-copy">
-          This is a mass change. {batchTarget?.matchedCount ?? 0}{' '}
-          {(batchTarget?.matchedCount ?? 0) === 1 ? 'work stream' : 'work streams'} in{' '}
+          This is a mass change. {batchTarget ? batchSubject(batchTarget) : '0 work streams'} in{' '}
           <strong>{batchTarget?.label}</strong> will be{' '}
           {batchTarget?.update.kind === 'archive' ? 'archived' : 'marked as read'}. Are you sure?
         </p>

@@ -4,6 +4,7 @@ import {
   WorkspaceWorkstreamCursorSchema,
   WorkspaceWorkstreamStateVersionSchema,
   WorkstreamBatchFilterSchema,
+  WorkstreamBatchUpdateSchema,
   WorkstreamSchema,
 } from "@rally/contracts";
 import { z } from "zod";
@@ -81,6 +82,15 @@ export const WorkspaceDirectoryBatchTargetsResultSchema = z.strictObject({
   // calls, below the platform's 100-message sendBatch maximum, instead of
   // truncating them.
   items: z.array(IdSchema),
+  // The notes the same filter selects, resolved here rather than in a second
+  // round trip: both sets live in this object, and a preview that fetched them
+  // separately would show two counts read at two different instants.
+  //
+  // Only `archive` applies to these, so a `mark_read` caller reads the field
+  // and ignores it. The alternative — teaching this read which update it is
+  // for — would make one filter resolution answer differently depending on a
+  // mutation it does not perform.
+  noteIds: z.array(IdSchema),
 });
 
 const WorkstreamBatchRequestHashSchema = z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u);
@@ -92,6 +102,11 @@ export const WorkspaceBatchDispatchBeginRequestSchema = z.strictObject({
   operationId: IdSchema,
   requestHash: WorkstreamBatchRequestHashSchema,
   filter: WorkstreamBatchFilterSchema,
+  /**
+   * Which mutation this operation is, so the freeze knows whether the note half
+   * has a target set at all. Only `archive` reaches notes.
+   */
+  update: WorkstreamBatchUpdateSchema,
 });
 
 export const WorkspaceBatchDispatchBeginResultSchema = z.strictObject({
@@ -109,6 +124,31 @@ export const WorkspaceBatchDispatchAdvanceRequestSchema = z.strictObject({
 
 export const WorkspaceBatchDispatchAdvanceResultSchema = z.strictObject({
   remainingCount: z.number().int().nonnegative(),
+});
+
+/**
+ * Archive the notes one frozen batch selected, in the object that owns them.
+ *
+ * Notes take no Queue trip because they are not separate authorities: the rows
+ * are in this database, so the whole set is one transaction rather than one
+ * event per row. What they do share with the work-stream half is the operation:
+ * the dispatch row frozen by `beginWorkstreamBatchDispatch` is the fence, so
+ * this must be called after it and a retry of the same operation converges on
+ * the count the first call archived rather than sweeping in whatever has since
+ * entered the range.
+ */
+export const WorkspaceBatchNoteArchiveRequestSchema = z.strictObject({
+  workspaceId: IdSchema,
+  userId: IdSchema,
+  operationId: IdSchema,
+  requestHash: WorkstreamBatchRequestHashSchema,
+  at: TimestampSchema,
+});
+
+export const WorkspaceBatchNoteArchiveResultSchema = z.strictObject({
+  archivedNoteCount: z.number().int().nonnegative(),
+  /** True when the receipt already existed, so this call archived nothing. */
+  replayed: z.boolean(),
 });
 
 export const WorkspaceDirectoryVisibleIdsRequestSchema = z.strictObject({
@@ -362,6 +402,8 @@ export type WorkspaceDirectoryReadableIdsRequest = z.infer<typeof WorkspaceDirec
 export type WorkspaceDirectoryBatchTargetsRequest = z.infer<typeof WorkspaceDirectoryBatchTargetsRequestSchema>;
 export type WorkspaceBatchDispatchBeginRequest = z.infer<typeof WorkspaceBatchDispatchBeginRequestSchema>;
 export type WorkspaceBatchDispatchAdvanceRequest = z.infer<typeof WorkspaceBatchDispatchAdvanceRequestSchema>;
+export type WorkspaceBatchNoteArchiveRequest = z.infer<typeof WorkspaceBatchNoteArchiveRequestSchema>;
+export type WorkspaceBatchNoteArchiveResult = z.infer<typeof WorkspaceBatchNoteArchiveResultSchema>;
 export type WorkspaceDirectoryReadableIdsResult = z.infer<typeof WorkspaceDirectoryReadableIdsResultSchema>;
 export type WorkspaceDirectoryVisibleIdsRequest = z.infer<typeof WorkspaceDirectoryVisibleIdsRequestSchema>;
 export type WorkspaceDirectoryVisibleIdsPage = z.infer<typeof WorkspaceDirectoryVisibleIdsPageSchema>;
