@@ -381,12 +381,19 @@ describe("agent harness", () => {
     expect(submitTool!.function.parameters.properties).not.toHaveProperty("elicitation");
     expect(submitTool!.function.parameters.properties).not.toHaveProperty("followUpQuestion");
     expect(submitTool!.function.parameters.properties).not.toHaveProperty("requiredCapabilities");
-    // The enum is what stops "post it to #eng" reaching the draft as a
-    // destination; the prose around it cannot do that job. Required, because an
+    // The enum is what stops "post it to #eng" reaching the draft as a channel
+    // *name*; the prose around it cannot do that job. `channel` records that
+    // somebody asked for one and carries no ID — which channel is decided when
+    // the automation runs, from where it was written. Required, because an
     // omitted optional array is indistinguishable from a model that forgot, and
     // the create screen pre-ticks a real checkbox from the answer.
     expect(submitTool!.function.parameters.properties.requestedDelivery)
-      .toMatchObject({ items: { enum: ["email", "slack_agent_dm"] } });
+      .toMatchObject({ items: { enum: ["email", "slack_agent_dm", "channel"] } });
+    // A room's automation is one of the three things a person can be offered,
+    // and the enum is where the model learns that. There is no work stream to
+    // name beside it: an automation belongs to the one it was written in.
+    expect(submitTool!.function.parameters.properties.suggestedScope)
+      .toMatchObject({ enum: ["personal", "workspace", "workstream"] });
     expect(submitTool!.function.parameters.required).toEqual(expect.arrayContaining(["ready", "requestedDelivery"]));
     expect(submitTool!.function.parameters.required).not.toEqual(expect.arrayContaining([
       "followUpQuestion",
