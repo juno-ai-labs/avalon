@@ -3908,7 +3908,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const rows = this.state.storage.sql.exec<{
       automation_id: string;
-      lifecycle: "draft" | "activating" | "active" | "paused";
+      lifecycle: "activating" | "active" | "paused";
       scope: "personal" | "workspace";
       title: string;
       description: string;
@@ -3934,11 +3934,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         description: row.description,
         emailAddress: null,
         scope: row.scope,
-        status: row.lifecycle === "draft"
-          ? "draft"
-          : row.lifecycle === "paused"
-            ? "paused"
-            : row.attention_code ? "error" : "active",
+        // The sidebar excludes drafts, so this cannot be one. A draft row
+        // here led to the overview's "not created yet" error state.
+        status: row.lifecycle === "paused"
+          ? "paused"
+          : row.attention_code ? "error" : "active",
         // Carried beside the status rather than folded into it. Both codes the
         // cutover writes arrive on an automation it also paused, so the status
         // alone says "paused" and nothing says why.
@@ -3980,7 +3980,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const rows = this.state.storage.sql.exec<{
       automation_id: string;
-      lifecycle: "draft" | "activating" | "active" | "paused";
+      lifecycle: "activating" | "active" | "paused";
       title: string;
       description: string;
       next_run_at: number | null;
@@ -3989,9 +3989,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }>(`SELECT automation_id, lifecycle, title, description, next_run_at,
               attention_code, projected_at
           FROM automation_directory
-         WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
-         ORDER BY CASE lifecycle WHEN 'draft' THEN 1 ELSE 0 END,
-                  projected_at DESC, automation_id
+         WHERE owning_workstream_id = ? AND lifecycle NOT IN ('deleted', 'draft')
+         ORDER BY projected_at DESC, automation_id
          LIMIT 250`, request.workstreamId).toArray();
     return {
       items: rows.map((row) => ({
@@ -3999,11 +3998,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         name: row.title || "New automation",
         description: row.description,
         emailAddress: null,
-        status: row.lifecycle === "draft"
-          ? "draft"
-          : row.lifecycle === "paused"
-            ? "paused"
-            : row.attention_code ? "error" : "active",
+        // No draft arm: the query excludes them. A draft is decided on its
+        // proposal card in the feed, and a row here led to the overview's
+        // "this automation has not been created yet" — the same dead end the
+        // sidebar removed and this list reintroduced.
+        status: row.lifecycle === "paused"
+          ? "paused"
+          : row.attention_code ? "error" : "active",
         attention: automationAttention(row.attention_code),
         nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
         lastRunAt: null,

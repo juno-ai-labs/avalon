@@ -95,6 +95,11 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const { api, session } = useAppSession();
   const featureFlags = useClientFeatureFlags(api);
+  // Publishing still stores a template and the API still serves it, but the
+  // browser that installed one lived on the retired draft screen, so nothing
+  // in the client can subscribe to what this publishes. The flag is what keeps
+  // that out of everyone's way; the success copy no longer names a surface
+  // that is gone. Turning the flag on again wants an install surface first.
   const workspaceTemplatesEnabled = featureFlags.data?.automationWorkspaceTemplatesEnabled === true;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -496,7 +501,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         open={shareOpen}
         title="Share with your workspace"
       >
-        {share.data ? <div className="success-message"><ShieldCheck size={17} /><span><strong>Template published</strong><small>Coworkers can now find it inside New automation.</small></span></div> : <p className="modal-copy">Credentials and personal overrides are never copied into a template.</p>}
+        {share.data ? <div className="success-message"><ShieldCheck size={17} /><span><strong>Template published</strong><small>It is saved to your workspace. There is no browser for installing one yet.</small></span></div> : <p className="modal-copy">Credentials and personal overrides are never copied into a template.</p>}
         {share.error && <InlineError>{share.error.message}</InlineError>}
       </Modal>}
 
