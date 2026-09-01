@@ -1190,6 +1190,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
     try {
       const outcome = await this.product.applyQueuedBatchUpdate(auth, request);
+      // Bulk archive reaches the room through this path and never through
+      // `update`, so hanging the fan-out on `update` alone left every
+      // bulk-archived room's automations active — still firing schedules and
+      // still executing connector writes under a frozen principal, while
+      // delivery into the room was refused as archived. The effects continued
+      // and nothing but a log line said so.
+      if (request.update.kind === "archive" && outcome === "applied") {
+        const identity = this.objectStore.identity();
+        if (identity) await this.applyArchiveToOwnedAutomations(identity, true);
+      }
       return { outcome, reason: null };
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
