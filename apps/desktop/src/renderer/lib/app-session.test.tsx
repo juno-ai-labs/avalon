@@ -215,7 +215,11 @@ describe('single-platform desktop identity routing', () => {
     entrypoint: DesktopDeepLinkEntrypoint = 'deep_link',
   ): Promise<void> {
     await waitFor(() => expect(deepLinkListener).not.toBeNull());
-    act(() => deepLinkListener!({ url, entrypoint }));
+    await act(async () => {
+      deepLinkListener!({ url, entrypoint });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
   }
 
   afterEach(() => {
@@ -695,7 +699,7 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&workspace=${targetWorkspaceId}&attempt=${'a'.repeat(43)}&provider=granola`,
+      `rallywithai://workspace/global/${targetWorkspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=granola`,
     );
 
     await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
@@ -724,7 +728,7 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('global:Workspace B')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&workspace=${workspaceA}&attempt=${'a'.repeat(43)}&provider=slack`,
+      `rallywithai://workspace/global/${workspaceA}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=slack`,
     );
 
     await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
@@ -737,23 +741,23 @@ describe('single-platform desktop identity routing', () => {
   it.each([
     {
       name: 'work-stream',
-      url: 'rallywithai://workstreams/00000000-0000-7000-8000-000000000031?region=eu&workspace=00000000-0000-7000-8000-000000000030',
+      url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/workstreams/00000000-0000-7000-8000-000000000031',
       assertDestination: async () => expect(window.location.hash)
         .toBe('#/workstreams/00000000-0000-7000-8000-000000000031'),
     },
     {
       name: 'settings',
-      url: 'rallywithai://settings/connections?region=eu&workspace=00000000-0000-7000-8000-000000000030',
+      url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/settings/connections',
       assertDestination: async () => waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections')),
     },
     {
       name: 'automation',
-      url: 'rallywithai://automations/new?region=eu&workspace=00000000-0000-7000-8000-000000000030',
+      url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/automations/new',
       assertDestination: async () => expect(window.location.hash).toBe('#/automations/new'),
     },
     {
       name: 'connector result',
-      url: `rallywithai://auth/complete?connection=00000000-0000-7000-8000-000000000032&status=connected&region=eu&workspace=00000000-0000-7000-8000-000000000030&attempt=${'a'.repeat(43)}&provider=google`,
+      url: `rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/auth/complete?connection=00000000-0000-7000-8000-000000000032&status=connected&attempt=${'a'.repeat(43)}&provider=google`,
       assertDestination: async () => waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections')),
     },
   ])('activates an addressed $name link from an identity-only session', async ({ url, assertDestination }) => {
@@ -799,10 +803,10 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://workstreams/${firstWorkstreamId}?region=global&workspace=${workspaceId}`,
+      `rallywithai://workspace/global/${workspaceId}/workstreams/${firstWorkstreamId}`,
     );
     await dispatchDeepLink(
-      `rallywithai://workstreams/${secondWorkstreamId}?region=global&workspace=${workspaceId}`,
+      `rallywithai://workspace/global/${workspaceId}/workstreams/${secondWorkstreamId}`,
     );
 
     await waitFor(() => expect(activations).toHaveLength(1));
@@ -821,7 +825,7 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&workspace=${targetWorkspaceId}&attempt=${'a'.repeat(43)}&provider=notion`,
+      `rallywithai://workspace/global/${targetWorkspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=notion`,
     );
 
     await waitFor(() => expect(lastDeepLinkFailure()).toContain('access'));
@@ -839,7 +843,7 @@ describe('single-platform desktop identity routing', () => {
     const before = window.location.hash;
 
     await dispatchDeepLink(
-      `rallywithai://workstreams/00000000-0000-7000-8000-000000000021?region=global&workspace=${targetWorkspaceId}`,
+      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000021`,
     );
 
     await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
@@ -938,7 +942,9 @@ describe('single-platform desktop identity routing', () => {
     const [startUrl, startInit] = fetchRequest.mock.calls[2]!;
     expect(previewUrl).toBe('https://eu.api.rallywith.ai/connections/slack/link/preview');
     expect(linkUrl).toBe('https://eu.api.rallywith.ai/connections/slack/link');
-    expect(startUrl).toBe('https://eu.api.rallywith.ai/connections/slack/start?telemetryVersion=2');
+    expect(startUrl).toBe(
+      'https://eu.api.rallywith.ai/connections/slack/start?telemetryVersion=2&desktopHandoffVersion=2',
+    );
     expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${euSession.accessToken}`);
     expect(previewInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
     expect(linkInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
@@ -984,10 +990,14 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('global:Slack Workspace')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://slack/link?token=${'a'.repeat(43)}&region=global&workspace=${workspaceId}`,
+      `rallywithai://workspace/global/${workspaceId}/slack/link?token=${'a'.repeat(43)}`,
     );
 
     await waitFor(() => expect(fetchRequest).toHaveBeenCalledTimes(2));
+    expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId,
+    });
     expect(bridge.refreshSession).toHaveBeenCalledOnce();
     expect(new Headers(fetchRequest.mock.calls[1]?.[1]?.headers).get('authorization'))
       .toBe(`Bearer ${renewedSession.accessToken}`);
@@ -1111,7 +1121,7 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://settings/digest?region=global&workspace=${targetWorkspaceId}`,
+      `rallywithai://workspace/global/${targetWorkspaceId}/settings/digest`,
     );
 
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('digest'));
@@ -1161,7 +1171,7 @@ describe('single-platform desktop identity routing', () => {
     const before = window.location.hash;
 
     await dispatchDeepLink(
-      `rallywithai://workstreams/00000000-0000-7000-8000-000000000039?region=global&workspace=${targetWorkspaceId}`,
+      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000039`,
     );
 
     await waitFor(() => expect(lastDeepLinkFailure()).toContain('Check your connection'));

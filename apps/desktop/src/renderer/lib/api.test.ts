@@ -1025,7 +1025,7 @@ describe('Rally API wire adapter', () => {
     });
     const startHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      'https://api.rally.test/connections/linear/start?telemetryVersion=2',
+      'https://api.rally.test/connections/linear/start?telemetryVersion=2&desktopHandoffVersion=2',
     );
     expect(startHeaders.get('X-Rally-Operation-Id')).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,

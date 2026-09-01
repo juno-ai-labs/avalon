@@ -1,14 +1,14 @@
 import { reportDesktopHandoff } from './telemetry';
-import { parseWorkspaceTarget } from '@rally/contracts/workspace-target';
+import { addWorkspaceTarget, parseWorkspaceTargetParameters } from '@rally/contracts/workspace-target';
 
 export function parseSlackLinkFragment(fragment: string): {
   token: string;
-  workspaceTarget: ReturnType<typeof parseWorkspaceTarget>;
+  workspaceTarget: ReturnType<typeof parseWorkspaceTargetParameters>;
 } | null {
   const parameters = new URLSearchParams(fragment.replace(/^#/u, ''));
   const entries = [...parameters.entries()];
   const token = parameters.get('token');
-  const workspaceTarget = parseWorkspaceTarget(parameters);
+  const workspaceTarget = parseWorkspaceTargetParameters(parameters);
   const validLegacy = entries.length === 1 && entries[0]?.[0] === 'token';
   const validAddressed = entries.length === 3
     && entries.every(([name]) => name === 'token' || name === 'region' || name === 'workspace')
@@ -19,6 +19,13 @@ export function parseSlackLinkFragment(fragment: string): {
     && /^[A-Za-z0-9_-]{20,500}$/u.test(token)
     ? { token, workspaceTarget }
     : null;
+}
+
+export function slackDesktopTarget(parsed: NonNullable<ReturnType<typeof parseSlackLinkFragment>>): string {
+  let deepLink = new URL('rallywithai://slack/link');
+  deepLink.searchParams.set('token', parsed.token);
+  if (parsed.workspaceTarget) deepLink = addWorkspaceTarget(deepLink, parsed.workspaceTarget);
+  return deepLink.toString();
 }
 
 function initializeSlackLink(): void {
@@ -32,13 +39,7 @@ function initializeSlackLink(): void {
 
   if (button && parsed) {
     reportDesktopHandoff('slack', 'presented', 'valid');
-    const deepLink = new URL('rallywithai://slack/link');
-    deepLink.searchParams.set('token', parsed.token);
-    if (parsed.workspaceTarget) {
-      deepLink.searchParams.set('region', parsed.workspaceTarget.region);
-      deepLink.searchParams.set('workspace', parsed.workspaceTarget.workspaceId);
-    }
-    button.href = deepLink.toString();
+    button.href = slackDesktopTarget(parsed);
     button.removeAttribute('aria-disabled');
     button.addEventListener('click', () => reportDesktopHandoff('slack', 'manual', 'valid'));
   } else {

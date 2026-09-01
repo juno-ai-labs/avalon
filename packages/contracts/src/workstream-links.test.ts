@@ -19,7 +19,7 @@ describe("canonical work-stream links", () => {
     expect(workstreamCanonicalUrl(WEB_BASE_URL, TARGET))
       .toBe(`${WEB_BASE_URL}/app/workspaces/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
     expect(workstreamDeepLink(TARGET))
-      .toBe(`rallywithai://workstreams/${WORKSTREAM_ID}?region=eu&workspace=${WORKSPACE_ID}`);
+      .toBe(`rallywithai://workspace/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
   });
 
   it("mints an HTTPS link that carries the id in the path", () => {
@@ -42,7 +42,7 @@ describe("canonical work-stream links", () => {
 
   it("resolves to the deep link the desktop client registers", () => {
     expect(workstreamDeepLink(TARGET))
-      .toBe(`rallywithai://workstreams/${WORKSTREAM_ID}?region=eu&workspace=${WORKSPACE_ID}`);
+      .toBe(`rallywithai://workspace/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
   });
 
   it("never mints the superseded scheme", () => {
@@ -162,6 +162,7 @@ describe("reading a shared work-stream link", () => {
       `avalon://workstreams/${WORKSTREAM_ID}?token=leak`,
       `rallywithai://workstreams/${WORKSTREAM_ID}?region=eu`,
       `rallywithai://workstreams/${WORKSTREAM_ID}?region=eu&workspace=${WORKSPACE_ID}&extra=value`,
+      `rallywithai://workspace/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}?extra=value`,
       "not a url",
     ]) {
       expect(parseWorkstreamLink(candidate, { webBaseUrl: WEB_BASE_URL })).toBeNull();

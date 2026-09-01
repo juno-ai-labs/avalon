@@ -10,10 +10,10 @@ describe('main-process workspace deep-link boundary', () => {
   it('accepts legacy readers and the one workspace-addressed form', () => {
     for (const target of [
       `rallywithai://workstreams/${WORKSTREAM_ID}`,
-      `rallywithai://workstreams/${WORKSTREAM_ID}?region=global&workspace=${WORKSPACE_ID}`,
-      `rallywithai://settings/digest?region=global&workspace=${WORKSPACE_ID}`,
-      `rallywithai://automations/new?region=global&workspace=${WORKSPACE_ID}`,
-      `rallywithai://slack/link?token=${'a'.repeat(43)}&region=global&workspace=${WORKSPACE_ID}`,
+      `rallywithai://workspace/global/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`,
+      `rallywithai://workspace/global/${WORKSPACE_ID}/settings/digest`,
+      `rallywithai://workspace/global/${WORKSPACE_ID}/automations/new`,
+      `rallywithai://workspace/global/${WORKSPACE_ID}/slack/link?token=${'a'.repeat(43)}`,
     ]) {
       expect(acceptedDeepLink(target), target).toBe(target);
     }
@@ -22,9 +22,9 @@ describe('main-process workspace deep-link boundary', () => {
   it('rejects partial, duplicate, and augmented workspace targets', () => {
     for (const target of [
       `rallywithai://workstreams/${WORKSTREAM_ID}?region=global`,
-      `rallywithai://settings/digest?workspace=${WORKSPACE_ID}`,
-      `rallywithai://automations/new?region=global&workspace=${WORKSPACE_ID}&template=other`,
-      `rallywithai://slack/link?token=${'a'.repeat(43)}&region=global&workspace=${WORKSPACE_ID}&workspace=${WORKSPACE_ID}`,
+      `rallywithai://workspace/global/${WORKSPACE_ID}/settings/digest?workspace=${WORKSPACE_ID}`,
+      `rallywithai://workspace/global/${WORKSPACE_ID}/automations/new?template=other`,
+      `rallywithai://workspace/global/${WORKSPACE_ID}/slack/link?token=${'a'.repeat(43)}&workspace=${WORKSPACE_ID}`,
     ]) {
       expect(acceptedDeepLink(target), target).toBeNull();
     }
@@ -33,7 +33,7 @@ describe('main-process workspace deep-link boundary', () => {
   it('recognizes every shared connector provider, including Granola', () => {
     for (const provider of ['google', 'github', 'granola', 'linear', 'notion', 'slack']) {
       expect(isConnectorOAuthResult(
-        `rallywithai://auth/complete?provider=${provider}&region=global&workspace=${WORKSPACE_ID}&connection=${CONNECTION_ID}&status=connected`,
+        `rallywithai://workspace/global/${WORKSPACE_ID}/auth/complete?provider=${provider}&connection=${CONNECTION_ID}&status=connected`,
       ), provider).toBe(true);
     }
   });

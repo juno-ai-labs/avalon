@@ -102,11 +102,15 @@ export {
   addWorkspaceTarget,
   assertWorkspaceTarget,
   isWorkspaceTarget,
+  parseWorkspaceAddressedDeepLink,
   parseWorkspaceTarget,
+  parseWorkspaceTargetParameters,
   workspaceTargetsEqual,
+  type WorkspaceAddressedDeepLink,
   type WorkspaceTarget,
   type WorkspaceTargetRegion,
 } from "./workspace-target";
+export { parseDesktopDeepLinkIntent, type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
 
 export const TimestampSchema = z.string().datetime({ offset: true });
 export const RegionSchema = z.enum(["global", "eu"]);
