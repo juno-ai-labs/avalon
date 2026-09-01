@@ -505,8 +505,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       });
       return targetApi;
     };
-    const activateDeepLinkWorkspace = async (target: WorkspaceTarget): Promise<RallyApi> => {
+    const activateDeepLinkWorkspace = async (
+      target: WorkspaceTarget,
+    ): Promise<{ api: RallyApi; workspaceChanged: boolean }> => {
       if (!sessionRef.current) throw new Error('Sign in before opening a workspace link.');
+      const previousWorkspace = sessionRef.current.workspace;
       // An explicit target is an authorization request, even when it names the
       // workspace currently drawn. Main asks the platform to rediscover the
       // membership on every addressed link so a stale cached credential can
@@ -526,14 +529,30 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       // apply the second one to the workspace that was active before them.
       sessionRef.current = nextSession;
       applySession(nextSession);
-      return apiForSession(nextSession, target);
+      return {
+        api: apiForSession(nextSession, target),
+        workspaceChanged: !previousWorkspace || !workspaceTargetsEqual({
+          region: previousWorkspace.region,
+          workspaceId: previousWorkspace.id,
+        }, target),
+      };
     };
     const runInDeepLinkWorkspace = async (
       target: WorkspaceTarget,
       action: (targetApi: RallyApi) => void | Promise<void>,
+      resetBackgroundRoute = false,
     ): Promise<void> => {
       try {
-        await action(await activateDeepLinkWorkspace(target));
+        const activated = await activateDeepLinkWorkspace(target);
+        // Settings is a separate window. When its addressed handoff changed
+        // workspaces, the main window behind it must not keep a resource route
+        // from the workspace that just went away. A same-workspace handoff
+        // preserves the person's place, while a changed one has a safe landing
+        // ready when Settings closes.
+        if (resetBackgroundRoute && activated.workspaceChanged) {
+          window.location.hash = '/workstreams/new';
+        }
+        await action(activated.api);
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : '';
         reportDeepLinkFailure(
@@ -608,7 +627,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           setDeepLinkError(null);
           await bridge.openSettings(intent.section);
         };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openSettings);
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openSettings, true);
         else await openSettings();
         return;
       }
@@ -656,7 +675,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
             reportDeepLinkFailure(error instanceof Error ? error.message : 'Your Slack account could not be linked.');
           }
         };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, linkSlack);
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, linkSlack, true);
         else {
           const activeSession = requireActiveWorkspace(
             'Sign in to the matching Rally workspace before connecting your Slack account.',
@@ -694,7 +713,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           }
         };
         if (intent.target) {
-          await runInDeepLinkWorkspace(intent.target, applyConnectorResult);
+          await runInDeepLinkWorkspace(intent.target, applyConnectorResult, true);
           return;
         }
         const activeSession = requireActiveWorkspace('Rally received an invalid connector completion link.');
