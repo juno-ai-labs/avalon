@@ -49,8 +49,22 @@ const FenceSchema = z.strictObject({
   authorityGeneration: z.number().int().positive(),
 });
 
+/**
+ * The longest search query this authority accepts, in characters.
+ *
+ * The bound is written for a *model-issued* argument, which is the only kind
+ * the memory tools carry. Rally also searches this authority on its own behalf
+ * when it freezes a generated run's recall context, and that query is built by
+ * concatenating text — a work stream's title and objective plus the frozen
+ * automation context — with no length of its own. Naming the bound here is what
+ * lets that caller cut its query to fit instead of rediscovering the number:
+ * a refusal on the internal call is not a model-visible tool error, it is a
+ * `ZodError` that crosses the RPC hop as a plain `Error` and fails the run.
+ */
+export const AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS = 2_000;
+
 const SearchSchema = z.union([
-  z.strictObject({ query: z.string().trim().min(1).max(2_000) }),
+  z.strictObject({ query: z.string().trim().min(1).max(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS) }),
   z.strictObject({ memoryItemId: z.string().uuid() }),
 ]);
 const AddSchema = z.strictObject({
@@ -88,7 +102,9 @@ const TableCreateSchema = z.strictObject({
   keyColumns: z.array(z.string().trim().min(1).max(120)).min(1),
   rationale: z.string().trim().min(1).max(2_000),
 });
-const TableSearchSchema = z.strictObject({ query: z.string().trim().min(1).max(2_000) });
+const TableSearchSchema = z.strictObject({
+  query: z.string().trim().min(1).max(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS),
+});
 const TableDescribeSchema = z.strictObject({ memoryTableId: z.string().min(1) });
 const PredicateSchema = z.strictObject({
   column: z.string().min(1),

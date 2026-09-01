@@ -1,4 +1,4 @@
-import { asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +13,7 @@ import {
   resolveMemoryAccess,
 } from "../src/services/memory-service";
 import { createMemoryTableTools } from "../src/services/memory-table-service";
+import { AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS } from "../src/durable-objects/automation-agent-memory";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 import {
@@ -378,6 +379,50 @@ function input(
       ? { type: "workspace", workspaceId: WORKSPACE_ID }
       : { type: "user", userId: owner ? OWNER_ID : MEMBER_ID },
     reason: "memory test",
+  };
+}
+
+/**
+ * The frozen context a generated run carries. Only `automationId` and
+ * `memoryScope.authorityGeneration` reach the memory RPC's coordinates; the
+ * rest is what makes the object a real `AutomationRunContextV1` rather than a
+ * cast, and `definition.instructions` is the field whose length caused the
+ * outage the recall test below pins.
+ */
+function automationRunContext(): NonNullable<WorkstreamWorkflowInput["automationRunContext"]> {
+  return {
+    schemaVersion: 1,
+    automationId: asAutomationId(AUTOMATION_SUBSCRIPTION_ID),
+    workspaceId: WORKSPACE_ID,
+    runId: "00000000-0000-4000-8000-000000000041",
+    authorityGeneration: 1,
+    definitionRevision: 1,
+    definition: {
+      name: "Daily competitor briefing",
+      description: "Summarize competitor positioning every morning.",
+      overview: "Track a named list of competitors.",
+      instructions: "Watch each competitor and summarize. ".repeat(200),
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+    },
+    defaultPluginIds: [],
+    activitySourcePluginIds: {},
+    connectorBindings: {},
+    deliveryTargets: [],
+    // Nulls are the schema's own defaults: a workspace-scoped automation with no
+    // owning work stream and no Slack authoring channel, which is what this
+    // fixture is about. The recall query does not read any of them.
+    owningWorkstreamId: null,
+    scope: null,
+    authoringOrigin: null,
+    modelOverride: null,
+    executionPrincipal: { type: "user", userId: OWNER_ID },
+    trigger: { kind: "manual", requestedByUserId: OWNER_ID },
+    opening: null,
+    memoryScope: { automationId: asAutomationId(AUTOMATION_SUBSCRIPTION_ID), authorityGeneration: 1 },
   };
 }
 
@@ -1145,5 +1190,66 @@ describe("scoped agent memory", () => {
       { query: "private ledger" },
       toolContext(member, "member-table-search"),
     )).toMatchObject({ output: { tables: [] } });
+  });
+
+  it("cuts an automation's frozen recall query to the bound its authority declares", async () => {
+    // The outage this pins: every generated run failed before its first model
+    // turn. `freezeRunMemoryContext` builds the recall query out of Rally's own
+    // text — the work stream's title and objective plus `JSON.stringify` of the
+    // frozen automation context, which carries the whole compiled definition —
+    // and handed it to a schema whose bound was written for a model-issued
+    // argument. Any automation whose definition pushed that concatenation past
+    // the cap made the AutomationAgent throw a `ZodError`; a Durable Object RPC
+    // flattens that to a plain `Error`, so the harness could not read it as an
+    // argument-validation failure and ended the run `harness_execution_failed`.
+    // Interactive work streams were unaffected, which is why messages answered
+    // while every automation stayed broken.
+    //
+    // A rung below `test-workers/`: the real authority is a Durable Object, so
+    // the Node suite cannot run its schema. This asserts what production sends;
+    // `automation-agent.test.ts` proves the real object enforces the same bound.
+    const { env: baseEnv, database } = fixture();
+    const sent: unknown[] = [];
+    const env = createTestEnv({
+      ...baseEnv,
+      AUTOMATION_AGENTS: testSubstreamAgentsBinding(database, {
+        extra: {
+          executeMemoryTool: async (request: { args: { query?: string } }) => {
+            sent.push(request.args);
+            return { output: { results: [] }, summary: "Found 0 durable memories" };
+          },
+        },
+      }),
+    });
+
+    const runInput: WorkstreamWorkflowInput = {
+      ...input("owner", 1),
+      automationRunContext: automationRunContext(),
+    };
+    // The shape of a real briefing automation: a long standing prompt, which is
+    // what pushes the concatenation over the bound.
+    const rawQuery = [
+      "Daily Competitor Marketing & Positioning Intelligence Briefing",
+      "Track competitor positioning every morning",
+      JSON.stringify({ instructions: "Watch each competitor and summarize. ".repeat(200) }),
+    ].join("\n\n");
+    expect(rawQuery.length).toBeGreaterThan(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS);
+
+    const frozen = await freezeRunMemoryContext(
+      routedEnv(env, runInput),
+      runInput,
+      { attemptId: "attempt-auto-one", owner: "lease-auto-one" },
+      rawQuery,
+    );
+
+    expect(sent).toHaveLength(1);
+    const { query } = sent[0] as { query: string };
+    expect(query.length).toBeLessThanOrEqual(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS);
+    // Cut, not replaced: the recall still asks about this run's own subject.
+    expect(rawQuery.startsWith(query)).toBe(true);
+    expect(query.length).toBeGreaterThan(0);
+    // The frozen row keeps the query the run was actually built from, so the
+    // context hash still identifies the full recall input.
+    expect(frozen.query).toBe(rawQuery);
   });
 });
