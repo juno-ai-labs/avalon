@@ -1117,8 +1117,11 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink('rallywithai://settings/connections');
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
 
+    // The builder this link used to open is gone: an automation is drafted by
+    // asking for one in a work stream, so the link lands where that happens.
+    // The link itself keeps working — somebody's bookmark should not 404.
     await dispatchDeepLink('rallywithai://automations/new');
-    await waitFor(() => expect(window.location.hash).toBe('#/automations/new'));
+    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/new'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
