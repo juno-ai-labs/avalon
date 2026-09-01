@@ -90,15 +90,23 @@ distinction decides two paths that look alike:
   returns the caller's value unchanged, so the completion lands in the scheme
   that build registered. Pinning the scheme would reject every pre-rename client
   with `invalid_return_uri` before OAuth even began.
-- **Connector OAuth cannot, so it mints the compatible scheme.** A connector
-  start request carries only a scope and capabilities — there is no caller
-  scheme to record, and the completion is reached through a `return_uri` the
-  server stored earlier. `compatibleDesktopDeepLink` therefore mints
+- **Connector OAuth records the caller's handoff grammar, but still mints the
+  compatible scheme.** A current connector start adds
+  `desktopHandoffVersion=2`; an older API ignores that query field safely, and
+  an older desktop omits it. The accepting API stores either the versioned
+  workspace-addressed path or the legacy unaddressed path in `return_uri` and
+  uses that same value after the provider returns. There is still no caller
+  scheme to record, so `compatibleDesktopDeepLink` mints
   `COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL`: the oldest scheme still registered,
   which is the only one both build generations answer, because every build since
   the rename registers the current scheme *and* the legacy one. The same applies
   to the identity error path, which is reached when no stored return URI can be
   consumed.
+
+The versioned path has host `workspace`; builds released before workspace
+addressing do not recognize it and fail closed. This cannot be a query pair on a
+known host: the previous work-stream reader accepted extra query fields but
+ignored them, which would turn an addressed link into an active-workspace link.
 
 That constant is the single place this migration writes a superseded value on
 purpose, and it retires itself — when the last legacy scheme leaves the list, it
@@ -271,6 +279,26 @@ only in production, which is why they are runbook steps with an explicit order
 rather than assertions.
 
 ## Changelog
+
+### 2026-09-01 — Connector rollout negotiates path grammar independently of scheme
+
+**What changed:** Connector OAuth start now records handoff grammar version 2
+through an additive query marker and stores either an addressed or legacy return
+URI. The compatible `avalon://` scheme remains the common protocol for both.
+
+**Why:** Scheme compatibility alone does not make an old desktop understand a new
+workspace target. Query-addressed known hosts were worse than rejection because
+one previous reader silently ignored the target.
+
+**Considered and rejected:** A new request header and a coordinated minimum
+desktop version. The header breaks new-client/old-API CORS; coordination cannot
+repair links delivered to already installed builds.
+
+**Consequences:** Old/new combinations use the legacy callback safely. Only a
+new API receiving the explicit new-client marker emits the fail-closed addressed
+host.
+
+Shipped in #464.
 
 ### 2026-08-27 — The raster pipeline regenerates from the new vector
 

@@ -62,8 +62,15 @@ triggers until the team chooses a cadence.
 
 Every newly emitted external destination for workspace content or settings
 carries `(region, workspace_id)`. It is a routing coordinate, not a capability.
-When a person opens one, the desktop asks main to activate the exact stored or
-regional workspace session, verifies the returned binding, clears the previous
+The native shape is
+`rallywithai://workspace/<region>/<workspace-id>/<destination-host>/<destination-path>`.
+Its distinct host makes a desktop build from before this contract reject the
+link; a query-addressed shape is forbidden because an older work-stream parser
+would ignore those coordinates and open relative to the active workspace.
+
+When a person opens one, the desktop asks main to revalidate the exact target
+through Global discovery and regional activation—even when the target is already
+active—verifies the returned binding, clears the previous
 workspace cache, and only then applies the resource, connector result, Slack
 identity challenge, settings section, or automation route.
 
@@ -74,6 +81,13 @@ membership has been revoked, activation fails closed: the current workspace and
 route remain unchanged and the deep-link failure window explains that the target
 could not be accessed. The target pair never substitutes for the regional API's
 membership check.
+
+Addressed links can start from an identity-only session because the platform
+identity, not a current regional workspace, authorizes discovery. Delivery is
+serialized across main's cold-start queue and live operating-system callbacks,
+so two links cannot finish in the opposite order. A target API also owns normal
+credential renewal; an access token expiring between activation and a Slack or
+connector request does not change the workspace binding.
 
 ID-only links already in mail, Slack history, and older clients remain readable
 against the active workspace. They are compatibility inputs only; searching
@@ -132,6 +146,8 @@ active workspace.
 - Background workspaces expose aggregate attention only, never directory rows or
   content, and open no sockets.
 - A late activation may be retained but cannot replace a newer selection.
+- An explicitly addressed link always revalidates membership; a locally stored
+  credential is never enough to authorize it.
 - Leaving one workspace cannot delete another workspace's credential, profile,
   query state, or draft.
 - Abandonment retains data and is reversible only by a paired operator action;
@@ -207,6 +223,28 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-01 — Addressed links revalidate membership and fail closed on old builds
+
+**What changed:** The native target moved from query coordinates on a known host
+to a versioned `workspace/<region>/<workspace>/<destination>` path. Every explicit
+target now reaches platform activation even when already selected, works from an
+identity-only session, processes in delivery order, and renews credentials inside
+the activated target. Connector attempt state survives Settings remounts.
+
+**Why:** Review showed that a previous desktop could ignore the query target, a
+locally cached credential could outlive membership, and an expired target bearer
+or concurrent callback could apply a valid link in the wrong order or context.
+
+**Considered and rejected:** Keeping query routing with a minimum-version notice,
+and trusting a matching cached credential. The first cannot stop an installed old
+reader from silently accepting the URL; the second makes local state a membership
+authority.
+
+**Consequences:** Addressed links need connectivity and older builds reject them.
+Legacy unaddressed links remain active-workspace compatibility inputs.
+
+Shipped in #464.
 
 ### 2026-09-01 — Explicit links activate their addressed workspace
 

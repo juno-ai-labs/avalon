@@ -217,6 +217,25 @@ links at all. The desktop trust boundary that admits these IPC calls is owned by
 
 ## Changelog
 
+### 2026-09-01 — Connectivity failures give a retryable remedy
+
+**What changed:** Target activation distinguishes an unreachable service from
+access denial, tells the member to check connectivity and reopen the link, and
+the failure window exposes its message as the alert dialog's accessible
+description.
+
+**Why:** The previous access-denied wording blamed membership during an outage,
+and assistive technology announced only the window title rather than the reason.
+
+**Considered and rejected:** Automatically replaying the link after reconnect.
+Native callbacks may contain one-use material and Rally has no durable user
+decision to retry them without surprise.
+
+**Consequences:** Failed activation still changes neither route nor workspace;
+the member explicitly reopens the original link after connectivity returns.
+
+Shipped in #464.
+
 ### 2026-09-01 — A targeted connector result changes workspace once
 
 **What changed:** Main delivers current workspace-addressed connector results to

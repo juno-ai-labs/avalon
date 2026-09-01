@@ -233,9 +233,18 @@ Every resolvable connector callback and every newly emitted workspace-scoped
 external link carries `(region, workspace_id)` as routing context. Those values
 are public identifiers, not bearer authority. The renderer must activate the
 target through Electron main, verify the returned session names the exact pair,
-and only then use the destination. The regional middleware still resolves active
+and only then use the destination. Explicit activation always reaches the
+platform membership path, including when a matching credential is already
+selected; cached credentials remain an optimization for ordinary workspace
+selection, never proof for an external link. The regional middleware still resolves active
 membership and workspace scope on every request. A failed activation cannot fall
 back to the currently active workspace or search other stored credentials.
+
+Addressed native links use the distinct `workspace` host rather than routing
+query parameters. A pre-addressing desktop therefore rejects them instead of
+ignoring the target. Connector OAuth records whether its initiating desktop
+advertised this version and returns the stored legacy or addressed URI unchanged;
+deployment timing cannot silently reinterpret a callback.
 
 Every API resource query includes `workspace_id`. Mutations additionally resolve
 membership role. A connector ingress may assert a member's own authority by
@@ -721,6 +730,27 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-01 — External workspace targets cannot rely on local authority
+
+**What changed:** Addressed links use an old-client-rejected `workspace` host,
+always revalidate their exact target through the platform service, and verify
+renewed credentials stay on that target. Connector callbacks persist the
+initiating desktop's supported grammar.
+
+**Why:** Review found three ways local or stale state could weaken the boundary:
+an old parser ignored query targets, main accepted a cached credential without a
+membership round trip, and a one-off target API could not renew an expired bearer.
+
+**Considered and rejected:** Treating stored credentials or target identifiers as
+authority. Both can outlive membership; only the owning services can admit the
+session.
+
+**Consequences:** Explicit links fail closed during outages and tell the member
+to reconnect and reopen the link. The current workspace and route remain intact
+on denial or transport failure.
+
+Shipped in #464.
 
 ### 2026-09-01 — Link routing context never becomes authorization
 
