@@ -713,11 +713,11 @@ export function planSocketReplay(
  * A Durable Object RPC return crosses a serialization boundary like any other
  * network call, and this one decides whether people are interrupted.
  */
-const AutomationRunDispositionSchema = z.object({
+const AutomationRunDispositionSchema = z.strictObject({
   disposition: z.enum(["done", "deliver", "expose_workstream"]),
   reason: z.string(),
   source: z.enum(["classified", "default"]),
-}).strict();
+});
 
 /**
  * `automation_delivery_receipts.outcome_code` is 160 characters and is read by
@@ -1320,14 +1320,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     code: string;
   }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       workspaceId: z.string().min(1),
       workstreamId: z.string().min(1),
       definitionRevision: z.number().int().positive(),
       occurredAt: z.number().int().nonnegative(),
       card: AutomationDraftProposedV1Schema,
-    }).strict().parse(input);
+    }).parse(input);
     const card = request.card;
     const clientMessageId =
       `automation:${card.automationId}:draft:${request.definitionRevision}`;
@@ -1399,14 +1399,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     code: string;
   }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       workspaceId: z.string().min(1),
       workstreamId: z.string().min(1),
       authorityGeneration: z.number().int().positive(),
       occurredAt: z.number().int().nonnegative(),
       card: AutomationPrincipalUnavailableV1Schema,
-    }).strict().parse(input);
+    }).parse(input);
     const card = request.card;
     const clientMessageId =
       `automation:${card.automationId}:principal:${card.outgoingUserId}`;
@@ -1478,7 +1478,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     code: string;
   }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       workspaceId: z.string().min(1),
       workstreamId: z.string().min(1),
@@ -1487,7 +1487,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       text: z.string().min(1),
       executionPrincipal: ExecutionPrincipalSchema,
       activation: AutomationActivationV1Schema,
-    }).strict().parse(input);
+    }).parse(input);
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId

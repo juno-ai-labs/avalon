@@ -1534,13 +1534,13 @@ export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSum
  * them, and the card that prompted the claim stays up naming only those. The
  * rest of the automation moves regardless — most of it working beats none.
  */
-export const AutomationExecutionPrincipalClaimSchema = z.object({
+export const AutomationExecutionPrincipalClaimSchema = z.strictObject({
   principalUserId: IdSchema,
   reboundPluginIds: z.array(z.string().min(1)),
   unboundProviders: z.array(z.string().min(1)),
   /** False when the caller already ran it and nothing needed rebinding. */
   changed: z.boolean(),
-}).strict();
+});
 export type AutomationExecutionPrincipalClaim =
   z.infer<typeof AutomationExecutionPrincipalClaimSchema>;
 
