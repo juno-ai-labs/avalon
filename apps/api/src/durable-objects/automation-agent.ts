@@ -1100,17 +1100,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.nullable().default(null),
       draft: AutomationDraftSchema,
     }).parse(input);
-    // `prepareAcceptance`'s own condition, applied here instead. An event-driven
-    // draft whose rules are absent or empty is one Create can only refuse, and
-    // by then the refusal has nowhere to go: the drafting loop has ended, and
-    // what is left is a proposal card whose button never works. Refusing the
-    // submission puts it back inside that loop, where a rejected tool call is
-    // repaired and retried. Only a `ready` draft is held to it — a partial
-    // submission paired with a clarifying question has not chosen its rules
-    // yet, and acceptance refuses it on `ready` alone anyway.
-    if (request.draft.ready && evaluatorRulesMissing(request.draft, request.evaluatorRules)) {
-      throw new Error("automation_evaluator_rules_required");
-    }
     const now = Date.now();
     const existing = this.state.storage.sql.exec<{
       automation_id: string;
@@ -1126,6 +1115,22 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     // submission overwrite one would edit a running automation from a
     // conversation.
     if (existing && this.lifecycle() !== "draft") throw new Error("automation_not_draft");
+    // `prepareAcceptance`'s own condition, applied here instead. An event-driven
+    // draft whose rules are absent or empty is one Create can only refuse, and
+    // by then the refusal has nowhere to go: the drafting loop has ended, and
+    // what is left is a proposal card whose button never works. Refusing the
+    // submission puts it back inside that loop, where a rejected tool call is
+    // repaired and retried. Only a `ready` draft is held to it — a partial
+    // submission paired with a clarifying question has not chosen its rules
+    // yet, and acceptance refuses it on `ready` alone anyway.
+    //
+    // Below the two refusals above rather than ahead of them: all three are
+    // pure reads that write nothing, so the "nothing is committed" property
+    // holds either way, and a submission that is both rules-less and aimed at
+    // the wrong identity should answer with the sharper of the two.
+    if (request.draft.ready && evaluatorRulesMissing(request.draft, request.evaluatorRules)) {
+      throw new Error("automation_evaluator_rules_required");
+    }
     const created = !existing;
     const revision = this.state.storage.transactionSync(() => {
       if (created) {

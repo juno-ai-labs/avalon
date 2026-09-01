@@ -636,14 +636,38 @@ partial submission paired with a clarifying question — the ordinary way a draf
 asks for a missing detail — would be refused, and the test asserts that case for
 that reason.
 
-Both boundaries call one predicate, `evaluatorRulesMissing`, rather than each
-spelling the condition out. The first draft of this change duplicated it and
+The drafting tool refuses first, with a sentence rather than a code. A tool
+executor's thrown `Error` reaches the model as `error.message` verbatim, tagged
+an external fault, so the object's `automation_evaluator_rules_required` arrives
+naming nothing it can act on — and a model given that resubmits the same draft
+until the loop runs out, which `set_evaluator_rules`' own `validateInput`
+comment already records happening. `submit_draft` therefore carries the same
+check phrased as an instruction, beside the load-and-inspect refusal it mirrors,
+and `submit_draft`'s tool description states the requirement so the round trip
+is usually avoided. The object's throw stays as the one no caller can bypass.
+
+Both boundaries in the object call one predicate, `evaluatorRulesMissing`, over
+`isExternalEventTrigger` in `@rally/contracts`, rather than each spelling the
+condition out. The first draft of this change duplicated it and
 left a note saying the two must be kept identical; review pointed out that a
 note is what failed last time. The same class of defect was fixed once before in
 the compiler path this replaced and recurred here because each end read the
 state its own way, so the requirement is structural now — dropping a trigger
-kind from `externalEventTriggers` breaks the regression test rather than
-silently teaching one boundary and not the other.
+kind from `isExternalEventTrigger` breaks the regression test rather than
+silently teaching one boundary and not the other. The predicate lives in
+contracts beside the trigger union; the several other places in the tree that
+spell the three kinds out predate this and are not converted here.
+
+Author review added the drafting-tool half. The guard alone made the refusal
+*possible* to repair; what the model actually received still did not say how,
+which is the difference between a loop that recovers and one that repeats
+itself. It also caught a stale claim in the pull request description — copy
+quoted from a file the drafting-stack deletion had already removed — and noted
+what this does not close: `automation_evaluator_source_binding_mismatch`,
+`automation_evaluator_connection_missing` and `automation_plugin_unavailable`
+still refuse at Create in the same dead-end shape. Those depend on the accepting
+person's chosen connections rather than on the submitted draft, so they cannot
+move to submission the way this one could; the class is narrowed, not closed.
 
 ### 2026-09-01 — The disposition classifier gets a corpus, and it is a gate
 
