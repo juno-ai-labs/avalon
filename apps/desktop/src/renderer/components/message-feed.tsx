@@ -42,6 +42,10 @@ interface MessageFeedProps {
   onClaimExecutionPrincipal?: (automationId: string) => void;
   claimingExecutionPrincipalFor?: string | null;
   claimExecutionPrincipalError?: string | undefined;
+  /** Creates the automation a proposal card names; see its card. */
+  onAcceptDraft?: (automationId: string) => void;
+  acceptingDraftFor?: string | null;
+  acceptDraftError?: string | undefined;
   /**
    * Windowing, for the surface that pages.
    *
@@ -90,6 +94,9 @@ export function MessageFeed({
   onClaimExecutionPrincipal,
   claimingExecutionPrincipalFor,
   claimExecutionPrincipalError,
+  onAcceptDraft,
+  acceptingDraftFor,
+  acceptDraftError,
   virtualizer,
 }: MessageFeedProps): React.JSX.Element {
   // Held here rather than by each adapter: which system rows a reader has
@@ -126,6 +133,9 @@ export function MessageFeed({
           {...(onClaimExecutionPrincipal ? { onClaimExecutionPrincipal } : {})}
           claimingExecutionPrincipalFor={claimingExecutionPrincipalFor ?? null}
           claimExecutionPrincipalError={claimExecutionPrincipalError}
+          {...(onAcceptDraft ? { onAcceptDraft } : {})}
+          acceptingDraftFor={acceptingDraftFor ?? null}
+          acceptDraftError={acceptDraftError}
         />
       )}
     </>

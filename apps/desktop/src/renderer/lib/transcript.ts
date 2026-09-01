@@ -1,6 +1,7 @@
 import type { ElicitationData, Message, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
 import {
+  AutomationDraftProposedV1Schema,
   AutomationPrincipalUnavailableV1Schema,
   ElicitationSchema,
   type TranscriptActivity,
@@ -322,6 +323,7 @@ export function orderedTranscriptMessages(
               ? { contextLabel: structured['label'] }
               : {}),
             ...principalUnavailableFields(structured),
+            ...draftProposedFields(structured),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
         }
@@ -1568,6 +1570,31 @@ function principalUnavailableFields(
       automationName: parsed.data.automationName,
       outgoingUserName: parsed.data.outgoingUserName,
       unreachableProviders: parsed.data.unreachableProviders,
+    },
+  };
+}
+
+/**
+ * The proposal card's fields, or nothing.
+ *
+ * Parsed rather than trusted, for the same reason the principal card is: a
+ * half-formed card would offer an accept leading nowhere, and this row is one
+ * the room is being asked to act on.
+ */
+function draftProposedFields(
+  structured: Record<string, unknown>,
+): Pick<Message, 'draftProposed'> | Record<string, never> {
+  if (structured['type'] !== 'automation_draft_proposed') return {};
+  const parsed = AutomationDraftProposedV1Schema.safeParse(structured);
+  if (!parsed.success) return {};
+  return {
+    draftProposed: {
+      automationId: parsed.data.automationId,
+      automationName: parsed.data.automationName,
+      description: parsed.data.description,
+      triggerSummaries: [...parsed.data.triggerSummaries],
+      suggestedScope: parsed.data.suggestedScope,
+      ready: parsed.data.ready,
     },
   };
 }
