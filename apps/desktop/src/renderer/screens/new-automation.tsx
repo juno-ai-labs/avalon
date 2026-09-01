@@ -27,6 +27,7 @@ import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
 import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
+import { MessageFeed } from '../components/message-feed';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
 import { RallyMark, Badge, Button, EmptyState, IconButton, InlineError, Modal, SocketStatusIndicator } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
@@ -1353,6 +1354,47 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     void submitAsync(message, crypto.randomUUID(), undefined, inputMode).catch(() => undefined);
   };
 
+  /**
+   * The feed hands back an elicitation id rather than the turn, because it
+   * renders rows it does not own the state of. The open turn carrying that id
+   * is the one being answered; an already-answered panel re-fires this on its
+   * own re-render and finds nothing, which is the no-op the per-turn closure
+   * used to express by passing a different callback.
+   */
+  const answerElicitation = async (
+    elicitationId: string,
+    answer: string | string[] | null,
+  ): Promise<void> => {
+    const turn = turns.find((candidate) =>
+      candidate.messageType === 'elicitation'
+      && candidate.elicitation?.id === elicitationId
+      && candidate.elicitation.status === 'open');
+    const elicitation = turn?.elicitation;
+    if (!turn || !elicitation) return;
+    await answerElicitationOptimistically({
+      answer,
+      elicitationId: elicitation.id,
+      previousMessage: turn,
+      submit: () => submitAsync(
+        answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer,
+        turn.id,
+        {
+          id: elicitation.id,
+          answer,
+          responseType: elicitation.responseType === 'text'
+            ? 'free_text'
+            : elicitation.responseType === 'radio'
+              ? 'single_select'
+              : elicitation.responseType,
+          options: elicitation.options ?? [],
+          allowOther: elicitation.allowOther ?? false,
+          presentedAt: elicitation.createdAt ?? turn.createdAt,
+        },
+      ),
+      updateMessages: (update) => setTurns(update),
+    });
+  };
+
   const draftId = draft?.draftId;
 
   return (
@@ -1507,39 +1549,13 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
               </section>
             ) : (
               <div className="automation-chat-surface automation-conversation" aria-live="polite">
-                {turns.map((turn) => (
-                  <MessageBlock
-                    key={turn.id}
-                    currentUserId={AUTOMATION_USER_ID}
-                    loadAttachmentContent={loadAttachmentContent}
-                    message={turn}
-                    onAnswerElicitation={turn.messageType === 'elicitation' && turn.elicitation?.status === 'open'
-                      ? (_elicitationId, answer) => answerElicitationOptimistically({
-                          answer,
-                          elicitationId: turn.elicitation!.id,
-                          previousMessage: turn,
-                          submit: () => submitAsync(
-                            answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer,
-                            turn.id,
-                            {
-                              id: turn.elicitation!.id,
-                              answer,
-                              responseType: turn.elicitation!.responseType === 'text'
-                                ? 'free_text'
-                                : turn.elicitation!.responseType === 'radio'
-                                  ? 'single_select'
-                                  : turn.elicitation!.responseType,
-                              options: turn.elicitation!.options ?? [],
-                              allowOther: turn.elicitation!.allowOther ?? false,
-                              presentedAt: turn.elicitation!.createdAt ?? turn.createdAt,
-                            },
-                          ),
-                          updateMessages: (update) => setTurns(update),
-                        })
-                      : async () => undefined}
-                    onOpenAttachment={setAttachmentPreview}
-                  />
-                ))}
+                <MessageFeed
+                  currentUserId={AUTOMATION_USER_ID}
+                  loadAttachmentContent={loadAttachmentContent}
+                  messages={turns}
+                  onAnswerElicitation={answerElicitation}
+                  onOpenAttachment={setAttachmentPreview}
+                />
                 {(compilePending || (compilerError !== null && streamingText.trim().length > 0)) && (
                   // Trimmed, not just non-empty: an abandoned first turn
                   // resets to '' and a model that opens a narration turn with
@@ -1547,6 +1563,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   // Either would render as Rally having said something blank.
                   streamingText.trim().length > 0
                     ? <MessageBlock
+                        collapseHeadings
                         currentUserId={AUTOMATION_USER_ID}
                         message={automationTextMessage('automation-streaming', 'agent', streamingText, true)}
                         onAnswerElicitation={async () => undefined}

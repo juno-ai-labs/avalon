@@ -8,9 +8,12 @@ primitives, not product authority or one stateful screen component.
 
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
   transcript viewport, follow controller, and **Jump to latest** integration.
-- `apps/desktop/src/renderer/components/message-feed.tsx` and the message/card
-  components it composes render ordered human, assistant, tool, activity,
-  attachment, and failure rows.
+- `apps/desktop/src/renderer/components/message-feed.tsx` renders the ordered
+  list itself — every row, the unread divider, the oversized-message
+  placeholder, and system-row disclosure — and `workstream-blocks.tsx` renders
+  the human, assistant, tool, activity, attachment, and failure rows it
+  composes. Both adapters render `MessageFeed`; windowing is the one thing it
+  takes from its host, because only the paging surface needs it.
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
@@ -57,6 +60,39 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-01 — One feed component, and the draft conversation stops being a second one
+
+**What changed:** `message-feed.tsx` exists. Until now this document named it and
+the file did not: the ordered list lived inline in `workstream.tsx`, and
+`new-automation.tsx` mapped its turns through `MessageBlock` by hand. Both
+screens now render `MessageFeed`, and the draft conversation gets what only the
+work stream had — collapsible assistant headings, system-row disclosure, and the
+placeholder for a message too large to draw. `useMessageFeedVirtualizer` sits
+beside the component and is called by the *adapter*, because the work stream
+drives that instance for anchor restore and for reading which rows are on screen.
+
+**Why:** The split was invisible in the block and total in the loop around it.
+Every row prop the work stream passed — `collapseHeadings`,
+`systemRowDisclosure`, `citations` — was a decision the draft screen never made,
+so a long assistant answer folded into sections in one surface and ran flat in
+the other, from the same markdown. Nothing about a draft made that right; it was
+just the screen that had been written second.
+
+**Considered and rejected:** Windowing the draft feed too, for symmetry. A draft
+holds its whole conversation in memory, pages nothing, and ends with the
+compiler loop, so virtualization buys it nothing — and it costs something real:
+`getVirtualItems()` measures the scroll element with `getBoundingClientRect`,
+jsdom lays nothing out, and a virtualized draft feed renders zero rows under
+test. Nineteen tests went dark when it was tried. The `virtualizer` prop is
+optional and the rows are identical either way, so this is a windowing strategy
+the adapter picks, not a second presentation.
+
+**Also:** citations stay absent on the draft feed, as the prop's own docblock
+already said. A citation chip resolves against a work stream's resources and
+opens the rail; a draft has neither, so a citation there degrades to its label
+text. That is the "sharing stops at product semantics" line, not a gap left
+open.
 
 ### 2026-09-01 — A queued row renders the transcript's Markdown, clipped to one line
 
