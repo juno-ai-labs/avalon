@@ -727,6 +727,10 @@ describe("connector tools selected for harness runs", () => {
     ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("search");
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("fetch");
+    // Stripping the tools leaves no web plugin to register, so authorization
+    // has to refuse a `load_plugin` for it rather than rely on the empty surface.
+    expect(childTools.builtinPluginIds).toEqual(new Set(["rally:workstream"]));
+    expect(__integrationTesting.builtinPluginAuthorization("rally:web", childTools)).toBe("denied");
   });
 
   it("does not add plugin, schema, or result ceilings to child runs", () => {
