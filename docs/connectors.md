@@ -23,6 +23,15 @@ unaddressed failure because inventing a workspace would be less safe than asking
 the member to restart. This path is shared by Google, GitHub, Granola, Linear,
 Notion, and Slack; a provider-specific callback must not mint its own link shape.
 
+Connector start advertises `desktopHandoffVersion=2` as an additive query
+capability. The regional service persists the matching return URI with the OAuth
+state: version 2 uses the fail-closed `workspace/<region>/<workspace>/auth/complete`
+shape, while an omitted capability retains the legacy unaddressed callback for
+the older initiating desktop. An older API safely ignores the query marker and
+returns the legacy shape to a newer desktop. The pending attempt itself lives in
+the application session rather than a Settings component, so changing workspace
+or remounting Settings does not orphan reconciliation.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -895,6 +904,28 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-01 — OAuth persists the initiating desktop's handoff grammar
+
+**What changed:** Connector start advertises handoff version 2 in an additive
+query field. The regional OAuth state stores either a versioned addressed return
+or the legacy unaddressed return and every provider completion uses that stored
+value. Pending reconciliation moved from Settings-local state to app-session
+state.
+
+**Why:** Returning the new addressed shape to an older initiating desktop could
+be rejected or, with the earlier query grammar, silently applied to the active
+workspace. Switching workspaces could also unmount and forget the pending poll.
+
+**Considered and rejected:** A custom capability header. A new desktop reaching
+an older API would fail that API's CORS preflight before it could return the safe
+legacy callback; an unknown query field is ignored safely.
+
+**Consequences:** New/new pairs return to the originating workspace; either side
+being old uses the legacy callback. Unknown OAuth state remains explicitly
+unaddressed and asks the member to restart from Connections.
+
+Shipped in #464.
 
 ### 2026-09-01 — Connector completion stays with the workspace that started it
 

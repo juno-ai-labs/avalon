@@ -34,7 +34,7 @@ changing the Slack unfurl card or the sweep that keeps it current.
 | Form | Shape | Who mints it |
 | --- | --- | --- |
 | **Canonical link** | `https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>` | Every current surface that emits a work-stream link |
-| **Deep link** | `rallywithai://workstreams/<workstream-uuid>?region=<region>&workspace=<workspace-uuid>` | The canonical page, in the browser, as the last hop |
+| **Deep link** | `rallywithai://workspace/<region>/<workspace-uuid>/workstreams/<workstream-uuid>` | The canonical page, in the browser, as the last hop |
 | **Legacy reader** | `/app/workstreams/<workstream-uuid>` or an ID-only deep link | Compatibility only; interpreted relative to the active workspace and never newly emitted |
 
 `rallywithai://workstreams/<uuid>` is still the protocol the desktop client registers,
@@ -62,8 +62,11 @@ has to be somewhere a reader can see it.
 
 A work-stream id, region, and workspace id are not secrets and are not a
 capability: opening the canonical link grants nothing on its own. The pair is
-routing context. The desktop asks its native session layer to activate that exact
-workspace, verifies the returned session matches, and only then navigates. The
+routing context. The distinct `workspace` host is a version boundary: desktop
+builds that predate addressed links reject it instead of silently discarding a
+query target and opening the resource in the active workspace. The desktop asks
+its native session layer to revalidate and activate that exact workspace through
+the platform service, verifies the returned session matches, and only then navigates. The
 regional API still applies membership and work-stream authorization on the read.
 If activation is refused, the active workspace stays unchanged and no resource
 route opens.
@@ -241,9 +244,9 @@ The row it stores is described in [`data-model.md`](data-model.md).
 ### Deep links that have no canonical form
 
 Settings and automation deep links still go through the `/open#target=` handoff, whose
-allowlist lives in `apps/site/src/desktop-open.ts`. They address no shareable
+allowlist lives in the shared `desktop-deep-link-intent` contract. They address no shareable
 object, so they need neither a stable URL nor an unfurl, but every newly emitted
-one carries the same `region` and `workspace` query pair so a notification cannot
+one uses the same `workspace/<region>/<workspace-uuid>/<destination>` wrapper so a notification cannot
 open the same section in whichever workspace happens to be active. Give a new deep link a
 canonical HTTPS form only when someone would reasonably paste it somewhere else.
 
@@ -314,6 +317,25 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 [`data-model.md`](data-model.md) is authoritative for the columns.
 
 ## Changelog
+
+### 2026-09-01 — The addressed native hop has an old-client rejection boundary
+
+**What changed:** The browser now opens
+`rallywithai://workspace/<region>/<workspace>/workstreams/<workstream>` and all
+native surfaces share one intent parser. Explicit targets always revalidate
+membership before navigation.
+
+**Why:** A query-addressed work-stream URL was accepted by the previous parser,
+which ignored its target and navigated relative to the active workspace. A cached
+matching credential could also conceal revoked membership.
+
+**Considered and rejected:** Adding another query version field. The old parser
+would ignore that field too; a distinct unknown host is the only fail-closed shape.
+
+**Consequences:** Existing ID-only links still open relative to the active
+workspace. New addressed links require a compatible desktop and connectivity.
+
+Shipped in #464.
 
 ### 2026-09-01 — External links address a workspace before a resource
 
