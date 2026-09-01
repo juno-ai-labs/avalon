@@ -27,6 +27,8 @@ exists.
 | `apps/api/src/artifacts/serving-policy.ts` | The three fences: the page CSP, the fetch-metadata admission, and the prior-version mount rules. |
 | `apps/api/src/artifacts/read-only-sql.ts` | What a data query may run, and how a dynamic table name is admitted. |
 | `apps/api/src/artifacts/facet-host.ts` | The Rally-authored module source loaded into a stateful artifact's facet beside the model's own. |
+| `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The one thing that crosses into an artifact's isolate. |
+| `apps/api/src/artifacts/asset-shim.ts` | The two module sources that run inside the isolate: the wrapper that makes `fetch(string)` true, and the entry Rally puts in front of a stateless active site's own module. |
 | `apps/api/src/artifacts/pages.ts` | The neutral page, the plain error page, and the fragment-to-cookie bootstrap. |
 | `apps/api/wrangler.artifacts.{global,eu}.jsonc` | The serving Workers: wildcard route, cross-script DO binding, loader, bucket. |
 | `apps/api/src/services/workstream-artifact-data-tools.ts` | The two read-only data tools' contract: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
@@ -296,6 +298,7 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, and the overlay collapse. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
+| `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. |
 
 Two traps:
@@ -348,6 +351,41 @@ Worker's waistline is deliberately minimal, so a compromise of it exposes
 artifact content and viewer sessions rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-01 — `ASSETS` becomes an exported entrypoint, because nothing else crosses
+
+**What changed:** The `ASSETS` binding is now `ArtifactAssetLoopback`, a
+`WorkerEntrypoint` exported from both the API Worker and the serving Worker and
+minted per artifact version through `ctx.exports`. A Rally-authored wrapper
+inside the isolate accepts the relative string the contract promises. A
+stateless active site's module is now imported by a Rally entry module rather
+than run directly, so both modes build the same env.
+
+**Why:** The facet ran with an empty env and the loader path passed a plain
+object carrying a `fetch`. Both were broken: the first left `this.env.ASSETS`
+undefined, and the second threw `DataCloneError` on the first request, so every
+**active** site — stateless and stateful alike — failed on any path its model
+did not hand-write. Only static sites worked. The loader path had no test of any
+kind, which is why the second half went unseen; it has one now, and the facet
+fixture serves its own page through the binding instead of a hand-written
+`Response` that proved the routing and hid the binding.
+
+The repair is not obvious and the three obvious attempts all fail, so they are
+recorded rather than left for the next person: a plain `{ fetch }`, an
+`RpcTarget`, and the R2 bucket itself each fail with `DataCloneError`, because
+the loader serializes env values. Cloudflare's own `cloudflare-os` hit this and
+documents it in the same words; the `ctx.exports` loopback is their pattern.
+
+**What a future change has to respect:** the entrypoint stays exported from
+*both* entries, because `ctx.exports` is the running Worker's own exports; its
+method surface stays one `fetch`, because it executes with that Worker's full
+env and the props are the only thing scoping it to one artifact; and the
+in-isolate wrapper stays, because the string form is a published contract that a
+stub cannot satisfy on its own. The cost accepted here is a hop per asset back
+into the exporting Worker, on top of the per-request supervisor hop that
+`VISIBILITY_CACHE_MS` already implies — the alternative, serving assets in
+Rally's layer before model code, was rejected because it takes route precedence
+away from the model and deletes the server-side data read the skill teaches.
 
 ### 2026-09-01 — Review triage: drop the quota leftover, correct three claims
 
@@ -409,6 +447,28 @@ archives (the engineer's default, losing to a recipient who can double-click a
 zip); and an `<iframe>` for the rail preview (it would widen the renderer CSP to a
 wildcard artifact host and graft remote model-authored content into the
 application DOM).
+
+**`ASSETS` is an RPC stub, and it cannot be anything else.** A dynamically
+loaded worker's `env` is a plain object whose values the loader *serializes*,
+and it rejects a value carrying a function with `DataCloneError` — a plain
+`{ fetch }`, an `RpcTarget`, and an R2 bucket binding each fail, and the first
+of those shipped and threw on the first request of every active site. What
+crosses is a stub minted from `ctx.exports`, an RPC reference to a real
+exported entrypoint. `ArtifactAssetLoopback` is that entrypoint; it holds the
+bucket in the Worker that exports it and hands the isolate a reference that can
+read one version's published files and nothing else. It is exported from
+**both** entries — the API Worker mints it for a facet, the serving Worker for a
+loader isolate — because `ctx.exports` is the running Worker's own exports.
+
+**A stub's `fetch` is the runtime's Fetcher, so the string form needs a
+wrapper.** The declared contract is `fetch(request: Request | string)`, and the
+skill teaches `env.ASSETS.fetch("/signups.json")` for reading a published data
+file server-side; a stub throws `Invalid URL: /signups.json` on that, in the
+caller, before the stub is dialled. So a Rally-authored wrapper runs *inside*
+the isolate — the facet host already builds the env it hands `SiteData`, and a
+stateless active site gets a Rally entry module in front of its own that does
+the same. Both modes therefore present one contract, which is the point: a
+model writes the same asset fallback either way.
 
 **Not yet built:** the rail's site detail exists and is tested but is not yet
 *mounted* — `inspector-rail.tsx` still renders the ordinary resource card for a

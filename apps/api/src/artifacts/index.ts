@@ -51,6 +51,12 @@ import {
   splitVersionMount,
   withViewerIdentity,
 } from "./serving-policy";
+import {
+  ASSET_SHIM_MODULE,
+  ASSET_SHIM_SOURCE,
+  LOADER_ENTRY_MODULE,
+  LOADER_ENTRY_SOURCE,
+} from "./asset-shim";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
 
 /**
@@ -110,8 +116,15 @@ function readCookie(request: Request, name: string): string | null {
   return null;
 }
 
+/**
+ * Exported here as well as from the API Worker's entry, because `ctx.exports`
+ * is the running Worker's own exports: the facet is minted by the supervisor
+ * inside the API Worker, and a stateless active site's isolate is minted here.
+ */
+export { ArtifactAssetLoopback } from "./asset-loopback";
+
 export default {
-  async fetch(request: Request, env: ArtifactServingEnv): Promise<Response> {
+  async fetch(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const host = parseArtifactHost(url.host);
     // Not an artifact host at all. Answered as the neutral page rather than an
@@ -189,7 +202,7 @@ export default {
       return servePriorVersion(env, host.artifactId, mount.version, mount.path, admitted);
     }
 
-    return serveCurrent(env, artifact, host.artifactId, request, url, admitted);
+    return serveCurrent(env, ctx, artifact, host.artifactId, request, url, admitted);
   },
 };
 
@@ -231,6 +244,7 @@ async function serveAsset(
 
 async function serveCurrent(
   env: ArtifactServingEnv,
+  ctx: ExecutionContext,
   artifact: DurableObjectStub<ArtifactHostDO>,
   artifactId: string,
   request: Request,
@@ -248,7 +262,7 @@ async function serveCurrent(
     return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null);
   }
   try {
-    const response = await runArtifactModule(env, artifact, artifactId, request, admitted);
+    const response = await runArtifactModule(env, ctx, artifact, artifactId, request, admitted);
     return withSecurityHeaders(response);
   } catch (error) {
     // The viewer never sees a stack trace; the participant does, in the rail,
@@ -301,6 +315,7 @@ async function servePriorVersion(
  */
 async function runArtifactModule(
   env: ArtifactServingEnv,
+  ctx: ExecutionContext,
   artifact: DurableObjectStub<ArtifactHostDO>,
   artifactId: string,
   request: Request,
@@ -321,9 +336,16 @@ async function runArtifactModule(
     if (!module) throw new Error("artifact_server_module_missing");
     return {
       compatibilityDate: "2026-08-01",
-      mainModule: "index.js",
-      modules: { "index.js": await module.text() },
-      env: { ASSETS: assetBinding(env, artifactId, manifest) },
+      // Rally's module is the main one and imports the site's, so `env.ASSETS`
+      // is the wrapped reader by the time the site's handler runs — the same
+      // shape the facet gives a stateful site, so one contract covers both.
+      mainModule: LOADER_ENTRY_MODULE,
+      modules: {
+        [LOADER_ENTRY_MODULE]: LOADER_ENTRY_SOURCE,
+        [ASSET_SHIM_MODULE]: ASSET_SHIM_SOURCE,
+        "index.js": await module.text(),
+      },
+      env: { ASSETS: assetLoopback(ctx, artifactId, manifest) },
       globalOutbound: null,
     };
   });
@@ -348,12 +370,23 @@ function forwardable(request: Request, admitted: Admitted): Request {
   );
 }
 
-/** The one binding an artifact's module holds: its own published files. */
-function assetBinding(env: ArtifactServingEnv, artifactId: string, manifest: ArtifactManifest) {
-  return {
-    async fetch(request: Request): Promise<Response> {
-      const path = new URL(request.url).pathname;
-      return serveAsset(env, artifactId, manifest.artifactVersion, manifest, path, null);
+/**
+ * The one binding an artifact's module holds: its own published files.
+ *
+ * An RPC stub for an exported entrypoint, not an object with a method: the
+ * loader's env serializer clones what it is given and rejects a value carrying
+ * a function with `DataCloneError`. The previous shape here was that value, and
+ * it threw on the first request of every stateless active site.
+ */
+function assetLoopback(ctx: ExecutionContext, artifactId: string, manifest: ArtifactManifest) {
+  return ctx.exports.ArtifactAssetLoopback({
+    props: {
+      artifactId,
+      version: manifest.artifactVersion,
+      assets: manifest.assets.map((asset) => ({
+        path: asset.path,
+        contentType: asset.contentType,
+      })),
     },
-  };
+  });
 }
