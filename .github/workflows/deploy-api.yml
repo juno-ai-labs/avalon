@@ -291,10 +291,10 @@ jobs:
 
       # The public site and API deploy from independent workflows. A writer
       # release must not emit /app/workspaces links until Pages serves that
-      # rewrite; if the site run is still pending or failed, this API run stops
-      # before migrations or Worker upload and can be re-run after the site is
-      # healthy.
-      - name: Require the workspace-addressed public handoff
+      # rewrite and the live updater advertises a desktop that understands its
+      # native target. If either independent release is pending or failed, this
+      # run stops before migrations or Worker upload and can be re-run later.
+      - name: Require workspace-addressed link readers
         run: node scripts/check-workspace-handoff-site.mjs
 
       # All preflights run on the pinned Node but before any third-party code
