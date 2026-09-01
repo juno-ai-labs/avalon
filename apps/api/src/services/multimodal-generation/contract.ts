@@ -16,12 +16,12 @@ export const MULTIMODAL_AUDIO_PRICING_MODEL_ID = "openai/gpt-4o-mini-tts";
 export const MULTIMODAL_AUDIO_DEFAULT_VOICE = "marin";
 export const MULTIMODAL_GENERATION_TIMEOUT_MS = 300_000;
 
-export const ImageGenerationSizeSchema = deferredZodSchema(() => z.enum([
+export const ImageGenerationSizeSchema = z.enum([
   "auto",
   "1024x1024",
   "1536x1024",
   "1024x1536",
-]));
+]);
 
 export const GenerateImageArgumentsSchema = deferredZodSchema(() => z.strictObject({
   prompt: z.string().trim().min(1).max(32_000),
@@ -37,7 +37,7 @@ export const EditImageArgumentsSchema = deferredZodSchema(() => z.strictObject({
   maskResourceId: z.string().uuid().optional(),
 }));
 
-export const AudioVoiceSchema = deferredZodSchema(() => z.enum([
+export const AudioVoiceSchema = z.enum([
   "alloy",
   "ash",
   "ballad",
@@ -51,7 +51,7 @@ export const AudioVoiceSchema = deferredZodSchema(() => z.enum([
   "verse",
   "marin",
   "cedar",
-]));
+]);
 
 export const GenerateAudioArgumentsSchema = deferredZodSchema(() => z.strictObject({
   text: z.string().trim().min(1).max(4_096),

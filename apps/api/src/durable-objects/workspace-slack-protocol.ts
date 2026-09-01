@@ -29,9 +29,9 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
  * object's schema stores them as opaque TEXT.
  */
 
-const TimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
-const SlackIngressJobKindSchema = deferredZodSchema(() => z.enum(["event", "interaction", "command"]));
-const SlackIngressJobStatusSchema = deferredZodSchema(() => z.enum(["queued", "processing", "completed", "failed"]));
+const TimestampSchema = z.string().datetime({ offset: true });
+const SlackIngressJobKindSchema = z.enum(["event", "interaction", "command"]);
+const SlackIngressJobStatusSchema = z.enum(["queued", "processing", "completed", "failed"]);
 
 export const WorkspaceSlackIngressEnqueueRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
@@ -273,10 +273,10 @@ export const WorkspaceSlackThreadReleaseRequestSchema = deferredZodSchema(() => 
  * object, not a column. Its requests still take `workspaceId` so the object can
  * assert the caller reached the right one, exactly as every other method here.
  */
-const SlackInvocationKindSchema = deferredZodSchema(() => z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]));
-const SlackChannelTypeSchema = deferredZodSchema(() => z.enum(["public", "private", "im", "unknown"]));
-const SlackAssignmentMethodSchema = deferredZodSchema(() => z.enum(["verified_email", "explicit_link"]));
-const SlackFeedbackRatingSchema = deferredZodSchema(() => z.enum(["helpful", "needs_improvement"]));
+const SlackInvocationKindSchema = z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]);
+const SlackChannelTypeSchema = z.enum(["public", "private", "im", "unknown"]);
+const SlackAssignmentMethodSchema = z.enum(["verified_email", "explicit_link"]);
+const SlackFeedbackRatingSchema = z.enum(["helpful", "needs_improvement"]);
 
 /** The session as its readers consume it, in the object's own column names. */
 export const WorkspaceSlackSessionSchema = deferredZodSchema(() => z.strictObject({

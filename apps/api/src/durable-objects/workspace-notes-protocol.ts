@@ -19,7 +19,7 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
  * instead of travelling on as an anonymous 500.
  */
 
-const TimestampSchema = deferredZodSchema(() => z.string().min(1));
+const TimestampSchema = z.string().min(1);
 
 /**
  * How much of the note the caller may see or move.
@@ -30,7 +30,7 @@ const TimestampSchema = deferredZodSchema(() => z.string().min(1));
  * idempotent create endpoint needs before the read guard decides what the
  * caller is told about it.
  */
-export const WorkspaceNoteAccessSchema = deferredZodSchema(() => z.enum(["any", "view", "edit"]));
+export const WorkspaceNoteAccessSchema = z.enum(["any", "view", "edit"]);
 
 export const WorkspaceNoteRecordSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,

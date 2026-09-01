@@ -66,7 +66,7 @@ export const EngineeringSubstreamSchema = deferredZodSchema(() => z.strictObject
 }));
 export type EngineeringSubstream = z.infer<typeof EngineeringSubstreamSchema>;
 
-export const ListEngineeringWorkspacesInputSchema = deferredZodSchema(() => z.strictObject({}));
+export const ListEngineeringWorkspacesInputSchema = z.strictObject({});
 export type ListEngineeringWorkspacesInput = z.infer<typeof ListEngineeringWorkspacesInputSchema>;
 
 export const ListEngineeringWorkspacesResultSchema = deferredZodSchema(() => z.strictObject({
@@ -92,7 +92,7 @@ export const SubstreamInspectionInputSchema = deferredZodSchema(() => z.strictOb
 }));
 export type SubstreamInspectionInput = z.infer<typeof SubstreamInspectionInputSchema>;
 
-const AuthorityGenerationSchema = deferredZodSchema(() => z.number().int().positive());
+const AuthorityGenerationSchema = z.number().int().positive();
 
 export const EngineeringWorkspaceTargetSchema = deferredZodSchema(() => z.strictObject({
   region: RegionSchema,
