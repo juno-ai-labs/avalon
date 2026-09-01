@@ -41,6 +41,12 @@ Cloudflare runs a bound service on the same thread and machine by default, with
 no added service cost; each call still counts as one Worker invocation and one
 subrequest.
 
+Within the regional API graph, ordinary Rally-owned validation schemas use
+Zod's v3-compatible runtime. Bind's v4 JSON-Schema compiler stays behind a
+narrow compatibility edge, and shared helpers preserve v4's safe-integer,
+strict-UUID, provider-schema, and error-classification behavior. This is still
+one fully static graph; no schema or route is loaded on demand.
+
 Cloudflare currently rejects a default RPC entrypoint that has no named event
 handler. Each capability Worker therefore registers an inert `fetch()` handler
 that always returns 404. `workers_dev` and preview URLs remain disabled and no
@@ -90,6 +96,8 @@ locally through Wrangler's scheduled-event test route.
 
 - Production code, tests, and scripts use static imports. A dynamic `import()`
   is not a startup strategy.
+- Schema-heavy API, contract, and connector modules import `zod/v3`; bare Zod
+  v4 imports are limited to the checked Bind/JSON-Schema compatibility edge.
 - The capability Workers own compute only. D1, R2, Durable Object namespaces,
   schedules, claims, and product state remain in the regional API.
 - Service methods are explicit and typed. Do not replace them with an untyped
@@ -164,6 +172,9 @@ selected product regions.
   emitted bundles and requires the PostHog SDK, core, and adapter modules to be
   absent from both regional APIs. The provider build and production-entrypoint
   tests prove the private Worker independently without freezing its SDK internals.
+- `node --test scripts/check-api-startup-schema-runtime.test.mjs` proves the
+  schema-heavy graph cannot regain a bare Zod v4 import or lose v4-compatible
+  safe-integer and strict-UUID semantics.
 - Attachment tests run the same statically imported codec implementation behind
   an injected document-processing contract.
 - Terminal provider tests continue to prove Daytona behavior directly; RPC
@@ -219,12 +230,21 @@ both named entrypoints exist. See [`engineering-mcp.md`](engineering-mcp.md).
 The failed monolith uploaded about 12.3 MiB and had no dependable startup
 margin. With Wrangler 4.126.0, the static service split makes the API graph
 about 7.3 MiB, the document graph about 2.8 MiB, and the Terminal graph about
-2.3 MiB. A later 7.4 MiB API graph again failed production upload with error
+2.3 MiB. A later 7.16 MiB API graph again failed production upload with error
 10021; moving its Global-only PostHog graph reduced both API artifacts to about
 7.16 MiB and produced a 248 KiB telemetry-delivery Worker with a 6 ms local active-startup
 sample. Repeated local active-startup samples varied from 93–290 ms for the
 API, 7–14 ms for documents, and 18–28 ms for Terminal; these values diagnose
 graph shape and are not predictions of Cloudflare CPU time.
+
+The failed 7.16 MiB release's exact-artifact profile reported 205.4 ms of local
+active startup, including 109.9 ms of garbage collection. Moving Rally-owned
+schema construction to the compatible runtime produces a 7.34 MiB artifact—the
+v4 compiler remains present—but five repeated profiles report 72.5–76.7 ms
+active, including 23.7–28.7 ms of GC. The larger source bundle and lower active
+time are intentional: Cloudflare rejected initialization CPU, and the retained
+profile identifies schema-object construction rather than upload bytes as the
+dominant cost.
 
 Service Bindings add no monetary charge or network hop by default. A document,
 Terminal, or Global telemetry-destination operation adds a Worker invocation and subrequest,
@@ -236,6 +256,32 @@ catalog reads plus fourteen small KV writes; inference performs only the KV read
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-01 — Regional schemas stop paying Zod v4 construction cost
+
+**What changed:** Rally-owned schemas in the regional API graph now use
+`zod/v3`; Bind and JSON-Schema compilation retain Zod v4 through explicit
+compatibility files. Shared conversion and error helpers preserve provider
+schema output and recognize failures from both versions. A repository check
+blocks bare-v4 regressions and the two known semantic widenings in v3.
+
+**Why:** The telemetry service split removed PostHog but the next fully verified
+Global artifact still failed Cloudflare upload with error 10021. The retained
+CPU profile showed eager Zod v4 constructor installation and garbage collection
+dominating startup. Five repeated exact-artifact profiles fell from the failed
+artifact's 205.4 ms active sample to 72.5–76.7 ms after this change.
+
+**Considered and rejected:** A blind retry, minification alone, or an arbitrary
+millisecond gate would preserve machine-dependent success. Dynamic imports
+would move the same initialization into customer traffic. Splitting regional
+routes or Durable Object protocols would duplicate authority or require data
+movement without following a coherent stateless capability.
+
+**Consequences:** The API artifact contains both Zod runtimes and is about 7.34
+MiB uncompressed, but constructs the large Rally schema graph on the cheaper
+runtime. Integers and UUIDs retain v4 validation semantics, provider schemas
+retain required defaults and UUID formats, and error diagnostics work across
+both versions. No route, binding, resource, or data migration changes.
 
 ### 2026-09-01 — Global telemetry delivery gets one shared startup graph
 

@@ -822,6 +822,29 @@ access and no-egress symbolication.
 
 ## Changelog
 
+### 2026-09-01 — Regional validation schemas get an explicit runtime boundary
+
+**What changed:** Rally-owned API, contract, and connector schemas use Zod's
+v3-compatible runtime; Bind's v4-only JSON-Schema operations remain statically
+imported behind a small compatibility edge. Shared helpers preserve the prior
+integer, UUID, provider-schema, and error contracts.
+
+**Why:** After telemetry destinations left the regional graph, Cloudflare still
+rejected the Global API for startup CPU. The exact artifact's CPU profile showed
+schema-object construction and its garbage collection—not a remaining provider
+capability—as the dominant initialization work.
+
+**Considered and rejected:** Another Worker split has no coherent stateless
+boundary among regional route validation and Durable Object protocols. Lazy
+loading would violate the static graph and charge first traffic. Minification
+or retries would not remove the measured constructor work.
+
+**Consequences:** The public API remains one logical regional authority and all
+imports remain static. The artifact carries two Zod runtimes, but five local
+profiles hold active startup to 72.5–76.7 ms instead of the failed artifact's
+205.4 ms sample. The source guard and compatibility tests are part of the API
+startup contract. There is no data migration.
+
 ### 2026-09-01 — Telemetry destinations leave both regional startup graphs
 
 **What changed:** The PostHog SDK and destination adapter moved from the shared
