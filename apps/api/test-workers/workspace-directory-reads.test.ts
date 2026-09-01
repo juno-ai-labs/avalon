@@ -262,6 +262,11 @@ describe("what the workspace object answers about its work streams", () => {
 
       expect(result.items).toEqual([included]);
       expect(result.items).not.toContain(pinned);
+      // The note half of the same answer, empty here because this suite seeds
+      // no notes. It is asserted so that a filter resolution which stopped
+      // reporting notes at all would fail here rather than silently leave a
+      // grouping's **Archive all** counting only half of what it takes.
+      expect(result.noteIds).toEqual([]);
     });
 
     it("freezes one operation and resumes only its undispatched targets", async () => {

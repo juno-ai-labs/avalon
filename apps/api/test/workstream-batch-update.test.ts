@@ -29,13 +29,21 @@ function workstreamId(index: number): string {
   return `00000000-0000-7000-8000-${String(index).padStart(12, "0")}`;
 }
 
-function environment(targets: string[], failBatchOnce?: number) {
-  const batchUpdateTargets = vi.fn(async () => ({ items: targets }));
+function environment(targets: string[], failBatchOnce?: number, noteIds: string[] = []) {
+  const batchUpdateTargets = vi.fn(async () => ({ items: targets, noteIds }));
   const dispatched = new Set<string>();
   const beginWorkstreamBatchDispatch = vi.fn(async () => ({
     items: targets.filter((target) => !dispatched.has(target)),
     targetCount: targets.length,
   }));
+  // The object's own receipt, stood in for here: the first call archives, and
+  // every later call for the same operation answers with the count it wrote.
+  let archivedNotes: number | null = null;
+  const archiveNotesForBatch = vi.fn(async () => {
+    const replayed = archivedNotes !== null;
+    archivedNotes ??= noteIds.length;
+    return { archivedNoteCount: archivedNotes, replayed };
+  });
   const advanceWorkstreamBatchDispatch = vi.fn(async (input: { workstreamIds: string[] }) => {
     input.workstreamIds.forEach((target) => dispatched.add(target));
     return { remainingCount: targets.length - dispatched.size };
@@ -46,6 +54,7 @@ function environment(targets: string[], failBatchOnce?: number) {
     idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => ({
       advanceWorkstreamBatchDispatch,
+      archiveNotesForBatch,
       batchUpdateTargets,
       beginWorkstreamBatchDispatch,
     }),
@@ -65,6 +74,7 @@ function environment(targets: string[], failBatchOnce?: number) {
   });
   return {
     advanceWorkstreamBatchDispatch,
+    archiveNotesForBatch,
     batchUpdateTargets,
     beginWorkstreamBatchDispatch,
     env,
@@ -89,7 +99,11 @@ describe("generic work-stream batch updates", () => {
       operationId: OPERATION_ID,
       filter,
       update: { kind: "mark_read" },
-    })).resolves.toEqual({ operationId: OPERATION_ID, enqueuedCount: 205 });
+    })).resolves.toEqual({
+      operationId: OPERATION_ID,
+      enqueuedCount: 205,
+      archivedNoteCount: 0,
+    });
 
     expect(beginWorkstreamBatchDispatch).toHaveBeenCalledOnce();
     expect(beginWorkstreamBatchDispatch).toHaveBeenCalledWith(expect.objectContaining({
@@ -119,6 +133,7 @@ describe("generic work-stream batch updates", () => {
     await expect(service.enqueue(request)).resolves.toEqual({
       operationId: OPERATION_ID,
       enqueuedCount: 205,
+      archivedNoteCount: 0,
     });
 
     expect(beginWorkstreamBatchDispatch).toHaveBeenCalledTimes(2);
@@ -129,11 +144,17 @@ describe("generic work-stream batch updates", () => {
   });
 
   it("previews through the same generic filter without enqueueing", async () => {
-    const { batchUpdateTargets, env, sent } = environment([workstreamId(1), workstreamId(2)]);
+    const { batchUpdateTargets, env, sent } = environment(
+      [workstreamId(1), workstreamId(2)],
+      undefined,
+      [workstreamId(80), workstreamId(81), workstreamId(82)],
+    );
     const filter = { pinned: false, includeSystem: false };
 
+    // Counted apart, because the confirmation names them apart and only one of
+    // the two update kinds reaches the notes at all.
     await expect(new WorkstreamBatchUpdateService(env, auth).preview(filter))
-      .resolves.toEqual({ matchedCount: 2 });
+      .resolves.toEqual({ matchedCount: 2, matchedNoteCount: 3 });
 
     expect(batchUpdateTargets).toHaveBeenCalledWith({
       workspaceId: WORKSPACE_ID,
@@ -141,6 +162,94 @@ describe("generic work-stream batch updates", () => {
       filter,
     });
     expect(sent).toEqual([]);
+  });
+
+  it("archives the grouping's notes here rather than giving them Queue events", async () => {
+    // The product defect this closes: **Archive all** on a recency heading
+    // emptied the work streams under it and left the notes sitting there, so
+    // the group the reader had just cleared came back half full.
+    const targets = [workstreamId(1), workstreamId(2)];
+    const { archiveNotesForBatch, env, sent } = environment(targets, undefined, [
+      workstreamId(90),
+      workstreamId(91),
+    ]);
+    const filter = { pinned: false, includeSystem: false } as const;
+
+    await expect(new WorkstreamBatchUpdateService(env, auth).enqueue({
+      operationId: OPERATION_ID,
+      filter,
+      update: { kind: "archive" },
+    })).resolves.toEqual({
+      operationId: OPERATION_ID,
+      enqueuedCount: 2,
+      archivedNoteCount: 2,
+    });
+
+    expect(archiveNotesForBatch).toHaveBeenCalledOnce();
+    expect(archiveNotesForBatch).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      operationId: OPERATION_ID,
+      filter,
+      // The work-stream half's own fence, so a second filter cannot reuse this
+      // operation id to archive a different set of notes under its receipt.
+      requestHash: expect.stringMatching(/^fnv1a64:[0-9a-f]{16}$/u),
+    }));
+    // Nothing but work streams travels: a note has no object for an event to
+    // reach, so one would be delivered to a SubstreamAgent that is not there.
+    const events = sent.flatMap((batch) => batch.map((message) =>
+      WorkstreamBatchUpdateQueueMessageSchema.parse(message.body)));
+    expect(events.map((event) => event.workstreamId)).toEqual(targets);
+  });
+
+  it("leaves notes alone when the grouping is only being marked as read", async () => {
+    // A note has no read state to clear, so `mark_read` must not reach one —
+    // and the object must not be asked to write a receipt for work that has no
+    // meaning here.
+    const { archiveNotesForBatch, env } = environment([workstreamId(1)], undefined, [
+      workstreamId(90),
+    ]);
+
+    await expect(new WorkstreamBatchUpdateService(env, auth).enqueue({
+      operationId: OPERATION_ID,
+      filter: { pinned: false, includeSystem: false },
+      update: { kind: "mark_read" },
+    })).resolves.toEqual({
+      operationId: OPERATION_ID,
+      enqueuedCount: 1,
+      archivedNoteCount: 0,
+    });
+
+    expect(archiveNotesForBatch).not.toHaveBeenCalled();
+  });
+
+  it("reports the first count again when a failed Queue dispatch is retried", async () => {
+    // The retry exists for the Queue chunks, and it must not pull a second
+    // group of notes in behind them: an open-ended range like "Last hour" would
+    // otherwise sweep up whatever arrived while the operator was retrying.
+    const targets = Array.from({ length: 60 }, (_, index) => workstreamId(index + 1));
+    const { archiveNotesForBatch, env } = environment(targets, 1, [workstreamId(90)]);
+    const request = {
+      operationId: OPERATION_ID,
+      filter: { pinned: false, includeSystem: false },
+      update: { kind: "archive" as const },
+    };
+    const service = new WorkstreamBatchUpdateService(env, auth);
+
+    await expect(service.enqueue(request)).rejects.toThrow("queue_chunk_failed");
+    await expect(service.enqueue(request)).resolves.toEqual({
+      operationId: OPERATION_ID,
+      enqueuedCount: 60,
+      archivedNoteCount: 1,
+    });
+
+    expect(archiveNotesForBatch).toHaveBeenCalledTimes(2);
+    // The second call is the receipt answering, not a second archive.
+    await expect(Promise.all(archiveNotesForBatch.mock.results.map((result) => result.value)))
+      .resolves.toEqual([
+        { archivedNoteCount: 1, replayed: false },
+        { archivedNoteCount: 1, replayed: true },
+      ]);
   });
 
   it("delivers one queued event to the named authority and acknowledges it", async () => {

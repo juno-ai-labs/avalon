@@ -15,6 +15,7 @@ import { substreamAgentName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
+import { NoteService } from "./note-service";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { logInfo, logWarn } from "../observability/logger";
 
@@ -56,17 +57,26 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
 /**
  * Generic filtered batch mutation coordinator.
  *
- * WorkspaceDO resolves the filter in one cross-work-stream query. The Worker
- * then sends one event per target in transport-sized batches; it never reads or
- * calls each child on the request path.
+ * WorkspaceDO resolves the filter in one query. The Worker then sends one event
+ * per work stream in transport-sized batches; it never reads or calls each
+ * child on the request path.
+ *
+ * Notes take the other route on purpose. A work stream is its own authority, so
+ * reaching it means an event; a note is a row in the workspace object this
+ * request has already reached, so `archive` finishes them there in one
+ * transaction and reports the count rather than enqueueing anything. Giving
+ * notes a Queue trip would buy nothing but a second way for the two halves of
+ * one grouping to disagree about whether they happened.
  */
 export class WorkstreamBatchUpdateService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
 
-  async preview(filter: WorkstreamBatchFilter): Promise<{ matchedCount: number }> {
+  async preview(
+    filter: WorkstreamBatchFilter,
+  ): Promise<{ matchedCount: number; matchedNoteCount: number }> {
     const parsed = WorkstreamBatchFilterSchema.parse(filter);
-    const items = await new WorkstreamDirectoryService(this.env, this.auth).batchTargets(parsed);
-    return { matchedCount: items.length };
+    const targets = await new WorkstreamDirectoryService(this.env, this.auth).batchTargets(parsed);
+    return { matchedCount: targets.items.length, matchedNoteCount: targets.noteIds.length };
   }
 
   async enqueue(rawRequest: ApplyWorkstreamBatchRequest) {
@@ -83,6 +93,18 @@ export class WorkstreamBatchUpdateService {
       requestHash,
       filter: request.filter,
     });
+    // Before the Queue sends, not after: the notes are done the moment this
+    // returns, so a transport failure below leaves a retry with only the
+    // work-stream half still to do rather than a group half-archived in the
+    // direction the person cannot see. Its receipt is what makes that retry
+    // safe.
+    const archivedNoteCount = request.update.kind === "archive"
+      ? await new NoteService(this.env, this.auth).archiveForBatch({
+        operationId: request.operationId,
+        requestHash,
+        filter: request.filter,
+      })
+      : 0;
     const workstreamIds = dispatch.items;
     const events = workstreamIds.map((workstreamId) => ({
       body: WorkstreamBatchUpdateQueueMessageSchema.parse({
@@ -128,11 +150,13 @@ export class WorkstreamBatchUpdateService {
       operation_id: request.operationId,
       update_kind: request.update.kind,
       workstream_count: dispatch.targetCount,
+      note_count: archivedNoteCount,
       queue_batch_count: Math.ceil(events.length / QUEUE_SEND_BATCH_SIZE),
     });
     return WorkstreamBatchAcceptedSchema.parse({
       operationId: request.operationId,
       enqueuedCount: dispatch.targetCount,
+      archivedNoteCount,
     });
   }
 }

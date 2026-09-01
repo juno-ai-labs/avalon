@@ -1728,6 +1728,11 @@ export const UpdateWorkstreamRequestSchema = z.object({
  *
  * Both timestamps follow the ordinary half-open range convention. `pinned`
  * is viewer-specific; omitting it includes both pinned and unpinned rows.
+ *
+ * The same range selects notes for `archive`, because a sidebar recency group
+ * holds both and a person archiving one is archiving what they can see under
+ * that heading. A note has no pin and no system kind, so `pinned: true`
+ * selects none and `includeSystem` does not reach them.
  */
 export const WorkstreamBatchFilterSchema = z.strictObject({
   lastActivityAt: z.strictObject({
@@ -1762,8 +1767,18 @@ export const PreviewWorkstreamBatchRequestSchema = z.strictObject({
   filter: WorkstreamBatchFilterSchema,
 });
 
+/**
+ * What one apply of this filter would touch, counted per authority.
+ *
+ * `matchedCount` is work streams and `matchedNoteCount` is notes, because the
+ * two are separate authorities that a single count would have to add together
+ * and then be unable to explain: only `archive` reaches notes, and only the
+ * notes this viewer owns and is not recording can be archived at all. The
+ * caller shows the note half for `archive` and ignores it for `mark_read`.
+ */
 export const WorkstreamBatchPreviewSchema = z.strictObject({
   matchedCount: z.number().int().nonnegative(),
+  matchedNoteCount: z.number().int().nonnegative(),
 });
 
 export const ApplyWorkstreamBatchRequestSchema = z.strictObject({
@@ -1772,9 +1787,16 @@ export const ApplyWorkstreamBatchRequestSchema = z.strictObject({
   update: WorkstreamBatchUpdateSchema,
 });
 
+/**
+ * Work streams are *enqueued* and notes are *archived*, and the names say so:
+ * each work stream leaves as one Queue event for the object that owns it, while
+ * the notes live in the workspace object this request already reached and are
+ * done by the time it answers.
+ */
 export const WorkstreamBatchAcceptedSchema = z.strictObject({
   operationId: IdSchema,
   enqueuedCount: z.number().int().nonnegative(),
+  archivedNoteCount: z.number().int().nonnegative(),
 });
 
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({

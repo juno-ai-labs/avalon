@@ -7,8 +7,10 @@ import type {
   NoteSummary,
   NoteTranscriptSegment,
   UpdateNoteRequest,
+  WorkstreamBatchFilter,
 } from "@rally/contracts";
 import { workspaceDOName } from "../durable-objects/names";
+import { WorkspaceBatchNoteArchiveResultSchema } from "../durable-objects/workspace-directory-protocol";
 import {
   WorkspaceNoteArchiveResultSchema,
   WorkspaceNoteGenerationCommitResultSchema,
@@ -237,6 +239,37 @@ export class NoteService {
       "note_recording",
       "This note is still recording. End the recording before archiving it.",
     );
+  }
+
+  /**
+   * Archive the notes one grouping's **Archive all** selected.
+   *
+   * No per-note loop and no per-note refusal: the whole selection is one
+   * WorkspaceDO transaction, and the notes a single archive would refuse — a
+   * colleague's, or one still recording — were never selected, so there is no
+   * 404 or 409 for this to translate. The count is what actually went, which is
+   * the number the confirmation dialog promised.
+   *
+   * `operationId` and `requestHash` are the work-stream batch's own fence:
+   * this must follow the dispatch that froze them, and a retry of the same
+   * operation returns the first call's count rather than archiving again.
+   */
+  async archiveForBatch(input: {
+    operationId: string;
+    requestHash: string;
+    filter: WorkstreamBatchFilter;
+  }): Promise<number> {
+    const result = WorkspaceBatchNoteArchiveResultSchema.parse(
+      await (await this.workspace()).archiveNotesForBatch({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        operationId: input.operationId,
+        requestHash: input.requestHash,
+        filter: input.filter,
+        at: nowIso(),
+      }),
+    );
+    return result.archivedNoteCount;
   }
 
   async appendSegment(id: string, input: AppendNoteTranscriptSegmentRequest): Promise<NoteTranscriptSegment> {

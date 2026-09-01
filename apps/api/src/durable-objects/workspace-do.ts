@@ -129,6 +129,8 @@ import {
   WorkspaceBatchDispatchAdvanceResultSchema,
   WorkspaceBatchDispatchBeginRequestSchema,
   WorkspaceBatchDispatchBeginResultSchema,
+  WorkspaceBatchNoteArchiveRequestSchema,
+  WorkspaceBatchNoteArchiveResultSchema,
   WorkspaceDirectoryExistsRequestSchema,
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryDueRequestSchema,
@@ -164,6 +166,8 @@ import {
   type WorkspaceDirectoryBatchTargetsRequest,
   type WorkspaceBatchDispatchAdvanceRequest,
   type WorkspaceBatchDispatchBeginRequest,
+  type WorkspaceBatchNoteArchiveRequest,
+  type WorkspaceBatchNoteArchiveResult,
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
   type WorkspaceDirectoryExistsRequest,
@@ -451,12 +455,14 @@ import {
 import {
   appendWorkspaceNoteSegment,
   archiveWorkspaceNote,
+  archiveWorkspaceNotesInRange,
   commitWorkspaceNoteGeneration,
   markWorkspaceNotePrivacyTransitionProcessed,
   pendingWorkspaceNotePrivacyTransitions,
   retireWorkspaceNoteResourceDeletion,
   updateWorkspaceNote,
   visibleWorkspaceNoteResourceIds,
+  workspaceNoteBatchTargets,
   workspaceNoteResourceDeletionOutbox,
   workspaceNoteSidebar,
   workspaceNoteState,
@@ -2235,6 +2241,19 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "retire work-stream context suggestion feedback",
   statements: [
     `DROP TABLE workspace_workstream_suggestion_feedback`,
+  ],
+}, {
+  version: 26,
+  description: "record the note half of a generic batch so a retry cannot widen it",
+  statements: [
+    // NULL means the note archive has not been applied for this operation, and
+    // is the only reading a row from before this version can have: the batch
+    // surface reached work streams alone until now. That makes NULL both the
+    // historical truth and the state a fresh `mark_read` operation stays in,
+    // because `mark_read` has nothing to do to a note.
+    `ALTER TABLE workspace_batch_dispatches
+       ADD COLUMN archived_note_count INTEGER
+       CHECK (archived_note_count IS NULL OR archived_note_count >= 0)`,
   ],
 }];
 
@@ -5951,8 +5970,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Resolve a generic member-visible filter once, inside the object that owns
-   * the cross-work-stream index. The caller turns each returned id into one
-   * Queue event; it never probes child objects to rediscover this list.
+   * the cross-work-stream index. The caller turns each returned work-stream id
+   * into one Queue event; it never probes child objects to rediscover this
+   * list.
+   *
+   * The notes the same filter selects come back beside them because they are
+   * in this database too. They are counted here and archived here — see
+   * `archiveNotesForBatch` — rather than fanned out, since a note has no object
+   * of its own for an event to reach.
    */
   async batchUpdateTargets(input: WorkspaceDirectoryBatchTargetsRequest) {
     await this.initialized;
@@ -5960,6 +5985,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     return WorkspaceDirectoryBatchTargetsResultSchema.parse({
       items: this.batchTargetIds(request.userId, request.filter),
+      noteIds: workspaceNoteBatchTargets(
+        this.state.storage,
+        request.workspaceId,
+        request.userId,
+        request.filter,
+      ),
     });
   }
 
@@ -6090,6 +6121,72 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).one();
       return WorkspaceBatchDispatchAdvanceResultSchema.parse({ remainingCount: remaining.count });
     });
+  }
+
+  /**
+   * Archive the note half of one frozen batch, exactly once per operation.
+   *
+   * The work-stream half is frozen as rows because each id has to survive a
+   * partial Queue publication and be re-sent without re-selecting. Notes need
+   * no such list: they are archived in one statement in this database, so the
+   * only thing a retry can get wrong is *widening* — a note touched between the
+   * failed attempt and the retry entering an open-ended range like "Last hour".
+   * A single count on the dispatch row closes that, and a `NULL` there is the
+   * whole of "no note archive has run for this operation".
+   *
+   * Fenced on the same request hash and user as the dispatch it belongs to, so
+   * a second filter or a second person cannot reuse an operation id to archive
+   * somebody else's notes under a receipt that already exists.
+   */
+  async archiveNotesForBatch(
+    input: WorkspaceBatchNoteArchiveRequest,
+  ): Promise<WorkspaceBatchNoteArchiveResult> {
+    await this.initialized;
+    const request = WorkspaceBatchNoteArchiveRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = this.state.storage.transactionSync(() => {
+      const dispatch = this.state.storage.sql.exec<{
+        request_hash: string;
+        user_id: string;
+        archived_note_count: number | null;
+      }>(
+        `SELECT request_hash, user_id, archived_note_count
+           FROM workspace_batch_dispatches WHERE operation_id = ?`,
+        request.operationId,
+      ).toArray()[0];
+      if (!dispatch
+        || dispatch.request_hash !== request.requestHash
+        || dispatch.user_id !== request.userId) {
+        throw new Error("workstream_batch_dispatch_conflict");
+      }
+      if (dispatch.archived_note_count !== null) {
+        return WorkspaceBatchNoteArchiveResultSchema.parse({
+          archivedNoteCount: dispatch.archived_note_count,
+          replayed: true,
+        });
+      }
+      const archived = archiveWorkspaceNotesInRange(this.state.storage, {
+        workspaceId: request.workspaceId,
+        userId: request.userId,
+        filter: request.filter,
+        at: request.at,
+      });
+      this.state.storage.sql.exec(
+        `UPDATE workspace_batch_dispatches SET archived_note_count = ?, updated_at = ?
+          WHERE operation_id = ?`,
+        archived.length,
+        Date.now(),
+        request.operationId,
+      );
+      return WorkspaceBatchNoteArchiveResultSchema.parse({
+        archivedNoteCount: archived.length,
+        replayed: false,
+      });
+    });
+    // After the commit, and only for the call that did the archiving: the push
+    // sends the list as it stands now, which a replay has already sent.
+    if (!result.replayed && result.archivedNoteCount > 0) this.publishSidebarList("notes");
+    return result;
   }
 
   /**
