@@ -31,6 +31,31 @@ export const NOTE_SIDEBAR_SQL = `SELECT * FROM notes
   ORDER BY last_activity_at DESC, id DESC
   LIMIT ?`;
 
+/**
+ * The ids of exactly the notes the statement above can put on screen, for a
+ * bulk action that must not reach past them.
+ *
+ * The work-stream list pages, so a mass action over it deliberately counts more
+ * rows than the client is holding: the rest are one scroll away. Notes have no
+ * cursor and no load-more anywhere in the product, so past `SIDEBAR_LIST_LIMIT`
+ * they are not *unloaded*, they are unreachable — and archiving one cannot be
+ * undone. A grouping's **Archive all** is therefore fenced to this window: a
+ * workspace with more notes than the limit keeps the rest, and they become
+ * archivable when they are visible, which is the only point at which somebody
+ * could have decided about them.
+ *
+ * Its visibility fence and ordering are the sidebar's own and must stay that
+ * way — a window that ordered differently would expose a different 250 than the
+ * list it claims to mirror.
+ *
+ * Parameters: workspace id, viewer id, limit.
+ */
+export const NOTE_SIDEBAR_EXPOSABLE_IDS_SQL = `SELECT id FROM notes
+  WHERE workspace_id = ? AND archived_at IS NULL
+    AND (scope = 'workspace' OR owner_user_id = ?)
+  ORDER BY last_activity_at DESC, id DESC
+  LIMIT ?`;
+
 /** The `notes` columns the summary is built from. Rows carry more; those are ignored. */
 export const NoteSidebarRowSchema = z.object({
   id: z.string().min(1),

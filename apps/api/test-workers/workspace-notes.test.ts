@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asUserId, asWorkspaceId, type WorkstreamBatchFilter } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
+import { SIDEBAR_LIST_LIMIT } from "../src/services/sidebar-reads";
 import { WorkspaceBatchNoteArchiveResultSchema } from "../src/durable-objects/workspace-directory-protocol";
 import {
   WorkspaceNoteArchiveResultSchema,
@@ -602,6 +603,56 @@ describe("workspace notes", () => {
       await expect(archive({ operationId, requestHash, userId: OTHER_MEMBER }))
         .rejects.toThrow(/workstream_batch_dispatch_conflict/u);
       expect(await archivedTitles()).toEqual([]);
+    });
+
+    it("cannot reach a note the sidebar has no way to show", async () => {
+      // The list is capped at SIDEBAR_LIST_LIMIT and notes have no cursor
+      // anywhere in the product, so a note past the cap is unreachable rather
+      // than one scroll away — and archiving cannot be undone. A heading exists
+      // whenever any row falls under it, so without this fence **Archive all**
+      // on an old heading would retire hundreds of notes nobody has seen.
+      //
+      // Seeded newest-first so the cap falls in a known place: the reader can
+      // see the SIDEBAR_LIST_LIMIT most recent, and `beyond` is the next one.
+      const visible: string[] = [];
+      for (let index = 0; index < SIDEBAR_LIST_LIMIT; index += 1) {
+        const noteId = nextId();
+        visible.push(noteId);
+        await seedNote({
+          noteId,
+          resourceId: nextId(),
+          title: `On screen ${index}`,
+          // Descending, all inside the group.
+          lastActivityAt: new Date(Date.parse(GROUP.before) - (index + 1) * 60_000).toISOString(),
+        });
+      }
+      const beyond = nextId();
+      await seedNote({
+        noteId: beyond,
+        resourceId: nextId(),
+        title: "Past the end of the list",
+        lastActivityAt: IN_RANGE,
+      });
+
+      const targets = await workspace().batchUpdateTargets({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        filter,
+      });
+      expect(targets.noteIds).toHaveLength(SIDEBAR_LIST_LIMIT);
+      expect(targets.noteIds).not.toContain(beyond);
+
+      const operationId = "00000000-0000-7000-8000-000000000e06";
+      const requestHash = "fnv1a64:0123456789abcdef";
+      await freeze(operationId, requestHash);
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: SIDEBAR_LIST_LIMIT, replayed: false });
+
+      const survivors = await runInDurableObject(workspace(), (_instance, state) =>
+        state.storage.sql.exec<{ id: string }>(
+          `SELECT id FROM notes WHERE archived_at IS NULL`,
+        ).toArray().map((row) => row.id));
+      expect(survivors).toEqual([beyond]);
     });
 
     it("has nothing to archive for a filter that asks only for pinned rows", async () => {

@@ -109,33 +109,6 @@ export function invitationAccountMismatch(invitationEmail: string, accountEmail:
   return `This invitation is for ${invitationEmail}. Sign in with that account to continue.`;
 }
 
-/**
- * Mirror WorkspaceDO's note selection, only to decide whether this route must
- * leave.
- *
- * The three fences beyond the range are the object's, restated because the
- * answer here has to agree with what the server archived: a note somebody else
- * owns and a note still recording were not in the group, so an open one of
- * either stays open.
- */
-export function noteMatchesBatchFilter(
-  note: NoteSummary,
-  filter: WorkstreamBatchFilter,
-  viewerId: string,
-): boolean {
-  // A note is never pinned, so a filter that wants only pinned rows wants none.
-  if (filter.pinned === true) return false;
-  if (note.ownerUserId !== viewerId) return false;
-  if (note.recordingStatus === 'recording') return false;
-  const activityAt = Date.parse(note.lastActivityAt);
-  if (!Number.isFinite(activityAt)) return false;
-  const atOrAfter = filter.lastActivityAt?.atOrAfter;
-  const before = filter.lastActivityAt?.before;
-  if (atOrAfter !== undefined && activityAt < Date.parse(atOrAfter)) return false;
-  if (before !== undefined && activityAt >= Date.parse(before)) return false;
-  return true;
-}
-
 /** Mirror the generic directory predicate only to decide whether this route must leave. */
 export function workstreamMatchesBatchFilter(
   workstream: WorkstreamSummary,
@@ -605,19 +578,22 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             // and a work stream it was attached to holds it in a cache no socket
             // event reaches. The note list itself is not here — WorkspaceDO
             // pushes it off the write that archived them.
+            //
+            // `['note']` refetches rather than predicting. Archiving one note
+            // names it, so that path can leave its route knowing what went; a
+            // batch is told only how many, and reconstructing *which* from the
+            // filter and the list as it stands now gets it wrong — a note that
+            // was recording when the archive ran, and has since stopped, reads
+            // as taken when it was skipped. A note that really went answers 404
+            // on the refetch and its own screen says so, which is the treatment
+            // an archived work stream already gets; one that survived just
+            // refreshes under the reader.
             await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['note'] }),
               queryClient.invalidateQueries({ queryKey: ['workstream'] }),
               queryClient.invalidateQueries({ queryKey: ['workstream-context'] }),
               queryClient.invalidateQueries({ queryKey: ['resources'] }),
             ]);
-            // Matched the way a single note's archive matches it, against the
-            // list rather than by parsing the path: the id in the route is the
-            // one this list holds, so there is nothing to decode.
-            const openNote = notes.data?.find((note) => location.pathname === `/notes/${note.id}`);
-            if (openNote && noteMatchesBatchFilter(openNote, filter, workspace.currentUser.id)) {
-              queryClient.removeQueries({ queryKey: ['note', openNote.id] });
-              void navigate('/workstreams/new', { replace: true });
-            }
           }
           return accepted;
         }}
