@@ -4107,6 +4107,20 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
    * automation long after somebody else is running it — so a takeover writes
    * the state column and never the identity row.
    */
+  /*
+   * The `{ type: "workspace" }` arm the design also describes is deliberately
+   * not built. Producing it means knowing, synchronously, that every binding
+   * points at a workspace-scoped connection — and `runContext` cannot read the
+   * connector rows, which live in WorkspaceDO. Freezing the answer at
+   * acceptance would make it wrong the first time somebody converts a
+   * connection between scopes.
+   *
+   * What it would buy is already delivered: the only thing that treats such an
+   * automation differently is the principal-unavailable card, and that is
+   * written when a run *finds a dead binding*, which an all-workspace
+   * automation never does. The arm changes which principal a run carries and
+   * nothing a person can see, so it waits for a reader that needs it.
+   */
   private executionPrincipalUserId(): string {
     const runAs = this.state.storage.sql.exec<{ run_as_user_id: string | null }>(
       `SELECT run_as_user_id FROM automation_state WHERE id = 1`,
