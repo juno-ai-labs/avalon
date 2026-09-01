@@ -2020,6 +2020,22 @@ describe("connectors", () => {
     ]);
   });
 
+  it("does not carry prior Google grants into a preset authorization", async () => {
+    const authorization = await googleAdapter(async () => googleJson({})).beginAuthorization!({
+      state: "state-for-google-oauth-attempt",
+      codeChallenge: "challenge-for-google-oauth-attempt",
+      scopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.modify"],
+    });
+    const url = new URL(authorization.url);
+
+    expect(url.searchParams.get("include_granted_scopes")).toBe("false");
+    expect(url.searchParams.get("scope")?.split(" ")).toEqual([
+      "openid",
+      "email",
+      "https://www.googleapis.com/auth/gmail.modify",
+    ]);
+  });
+
   it("leaves the provider failure alone when Drive cannot say what the id is", async () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
