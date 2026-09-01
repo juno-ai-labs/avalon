@@ -20,6 +20,7 @@ describe('useClientFeatureFlags', () => {
       meetingRecordingEnabled: true,
       suggestedWorkEnabled: true,
       automationWorkspaceTemplatesEnabled: true,
+      multipleWorkspacesEnabled: true,
       digestsEnabled: true,
       controlTowerRefreshSeconds: 60,
     }));

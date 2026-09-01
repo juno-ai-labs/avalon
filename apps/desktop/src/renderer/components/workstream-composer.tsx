@@ -37,6 +37,7 @@ interface MentionCandidate {
 interface WorkstreamComposerProps {
   api?: Pick<RallyApi, 'getTranscriptionSocketTicket'>;
   workstream: WorkstreamDetail;
+  workspaceId?: string;
   members: WorkspaceMember[];
   fileInputRef: RefObject<HTMLInputElement | null>;
   sending: boolean;
@@ -80,6 +81,7 @@ const BASE_COMMANDS: ComposerCommand[] = [
 export function WorkstreamComposer({
   api,
   workstream,
+  workspaceId = 'test-workspace',
   members,
   fileInputRef,
   sending,
@@ -102,7 +104,7 @@ export function WorkstreamComposer({
     setText,
     mentions: selectedMentions,
     setMentions: setSelectedMentions,
-  } = useDraftText(workstreamDraftKey(workstream.id));
+  } = useDraftText(workstreamDraftKey(workspaceId, workstream.id));
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);

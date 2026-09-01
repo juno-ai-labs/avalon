@@ -2,7 +2,7 @@
 
 These choices resolve low-level ambiguity without changing the product contract.
 
-1. The prototype uses one workspace per initial Google-authenticated user. Invitations and additional memberships are supported by the schema/API, but workspace switching is deferred.
+1. One Google-authenticated Rally account may hold several explicit workspace memberships across Global and EU. The desktop selects one workspace at a time and never merges their content; each workspace keeps one immutable region.
 2. Global and EU deployments run identical code with separate bindings. Local development uses one emulated region at a time and a header-gated development identity only when `RALLY_DEV_AUTH=true`.
 3. The Hono API is the only public application backend. Electron loads a bundled renderer and never loads an arbitrary hosted page into its privileged window.
 4. UUIDv7 identifiers are generated at the service boundary for sortable uniqueness.

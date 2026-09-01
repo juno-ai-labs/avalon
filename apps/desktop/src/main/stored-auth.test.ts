@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activeStoredCredential,
+  mergeStoredSession,
+  parseStoredAuthSet,
+  parseStoredProfileSet,
   parseStoredAuth,
   parseStoredProfile,
+  removeStoredWorkspace,
+  selectStoredWorkspace,
   sessionFromStoredState,
   sessionsShareBinding,
   storedAuthFromSession,
@@ -81,5 +87,85 @@ describe('split desktop authentication storage', () => {
       ...session,
       user: { ...session.user, id: '00000000-0000-7000-8000-000000000099' },
     }, auth)).toBe(false);
+  });
+});
+
+describe('plural desktop authentication storage', () => {
+  const euSession = {
+    ...session,
+    accessToken: 'eu-access-token-with-more-than-twenty-characters',
+    refreshToken: 'eu-refresh-token-with-more-than-twenty-characters',
+    workspace: {
+      ...session.workspace,
+      id: '00000000-0000-7000-8000-000000000003',
+      name: 'Rally Europe',
+      slug: 'rally-europe',
+      region: 'eu' as const,
+    },
+    apiBaseUrl: 'https://eu.api.rallywith.ai',
+  };
+
+  it('wraps a version-one workspace credential and profile without losing it', () => {
+    const auth = storedAuthFromSession(session, 'global');
+    const profile = storedProfileFromSession(session);
+
+    expect(parseStoredAuthSet(auth)).toMatchObject({
+      version: 2,
+      account: null,
+      activeWorkspaceId: session.workspace.id,
+      workspaces: [auth],
+    });
+    expect(parseStoredProfileSet(profile)).toMatchObject({
+      version: 2,
+      account: null,
+      workspaces: [profile],
+    });
+  });
+
+  it('keeps an account credential beside independently regional workspace credentials', () => {
+    const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
+    const account = mergeStoredSession(null, null, accountSession, 'global');
+    const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
+    const eu = mergeStoredSession(global.auth, global.profiles, euSession, 'eu');
+
+    expect(eu.auth.account?.binding.workspaceId).toBeNull();
+    expect(eu.auth.workspaces.map((credential) => [
+      credential.binding.workspaceId,
+      credential.binding.region,
+    ])).toEqual([
+      [session.workspace.id, 'global'],
+      [euSession.workspace.id, 'eu'],
+    ]);
+    expect(eu.auth.activeWorkspaceId).toBe(euSession.workspace.id);
+    expect(activeStoredCredential(eu.auth)).toMatchObject({
+      binding: { workspaceId: euSession.workspace.id, region: 'eu' },
+    });
+  });
+
+  it('removes only one workspace and selects the most recent remaining credential', () => {
+    const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
+    const account = mergeStoredSession(null, null, accountSession, 'global');
+    const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
+    const eu = mergeStoredSession(global.auth, global.profiles, euSession, 'eu');
+    const removed = removeStoredWorkspace(eu.auth, eu.profiles, euSession.workspace.id);
+
+    expect(removed.auth.workspaces).toHaveLength(1);
+    expect(removed.auth.workspaces[0]?.binding.workspaceId).toBe(session.workspace.id);
+    expect(removed.auth.activeWorkspaceId).toBe(session.workspace.id);
+    expect(removed.profiles.workspaces).toHaveLength(1);
+    expect(removed.auth.account).not.toBeNull();
+  });
+
+  it('changes the active workspace without replacing either credential', () => {
+    const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
+    const account = mergeStoredSession(null, null, accountSession, 'global');
+    const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
+    const eu = mergeStoredSession(global.auth, global.profiles, euSession, 'eu');
+
+    const selected = selectStoredWorkspace(eu.auth, session.workspace.id);
+
+    expect(selected.activeWorkspaceId).toBe(session.workspace.id);
+    expect(selected.workspaceRecency).toEqual([session.workspace.id, euSession.workspace.id]);
+    expect(selected.workspaces).toEqual(eu.auth.workspaces);
   });
 });

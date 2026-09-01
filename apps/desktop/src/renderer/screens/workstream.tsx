@@ -921,7 +921,8 @@ export function WorkstreamScreen(): React.JSX.Element {
   const activeWorkstreamIdRef = useRef(id);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
-  const attachmentDraft = useFileAttachments(api, workstreamDraftKey(id));
+  const workspaceId = session?.workspace?.id ?? 'unbound';
+  const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceId, id));
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
   const railDrop = useFileDrop(attachmentDraft.addFiles);
   // The composer does not take focus when a work stream opens, so a paste that
@@ -2298,6 +2299,7 @@ export function WorkstreamScreen(): React.JSX.Element {
             uploading={attachmentDraft.uploading}
             key={displayedDetail.id}
             workstream={displayedDetail}
+            workspaceId={workspaceId}
           />
         </div>
       </div>

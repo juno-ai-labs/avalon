@@ -285,7 +285,7 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
     setActivatingWorkspaceId(workspace.id);
     setActivationError(null);
     void activateWorkspace(workspace.region, workspace.id, operationId).catch((error: unknown) => {
-      setActivationError(error instanceof Error ? error : new Error('Rally could not open this organization.'));
+      setActivationError(error instanceof Error ? error : new Error('Rally could not open this workspace.'));
     });
   }, [activateWorkspace, activatingWorkspaceId, onboarding.data?.workspace]);
 
@@ -301,7 +301,7 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   }, [onboarding.data]);
 
   if (onboarding.isLoading || (!onboarding.error && !onboarding.data)) {
-    return <LoadingState label="Checking your organizations…" />;
+    return <LoadingState label="Checking your workspaces…" />;
   }
   if (onboarding.error) {
     return <ServiceSetupState error={onboarding.error} onRetry={() => void onboarding.refetch()} />;
