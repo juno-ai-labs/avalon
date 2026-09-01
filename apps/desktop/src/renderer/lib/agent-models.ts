@@ -40,15 +40,24 @@ interface AgentModelPresentation {
 
 /**
  * How each id reads in the menu. Split into a provider and a short name rather
- * than shown as the raw OpenRouter id: nine ids from four vendors are a wall of
- * slashes, and the trigger has room for a name but not for a path.
+ * than shown as the raw OpenRouter id: a menu of them is a wall of slashes, and
+ * the trigger has room for a name but not for a path.
  *
  * Exhaustive over the contract's list by type, so adding a model there fails
  * the build here rather than shipping a selector entry labelled with its id.
+ *
+ * Kept in the contract's own order — newest first within each vendor — purely
+ * so this file does not read as an argument against the rule it serves. Object
+ * key order decides nothing here: `AGENT_MODEL_CHOICES` maps over
+ * `AGENT_MODEL_OVERRIDES` and looks each id up by key, so the menu takes its
+ * order from the contract alone and a model added here in the wrong place
+ * changes nothing but a reader's expectations.
  */
 const PRESENTATION: Readonly<Record<AgentModelOverride, AgentModelPresentation>> = {
-  'x-ai/grok-4.3': { provider: 'xAI', label: 'Grok 4.3' },
+  'x-ai/grok-4.6': { provider: 'xAI', label: 'Grok 4.6' },
   'x-ai/grok-4.5': { provider: 'xAI', label: 'Grok 4.5' },
+  'x-ai/grok-4.3': { provider: 'xAI', label: 'Grok 4.3' },
+  'google/gemini-3.7-flash': { provider: 'Google', label: 'Gemini 3.7 Flash' },
   'google/gemini-3.6-flash': { provider: 'Google', label: 'Gemini 3.6 Flash' },
   'google/gemini-3.5-flash': { provider: 'Google', label: 'Gemini 3.5 Flash' },
   'google/gemini-3-flash-preview': { provider: 'Google', label: 'Gemini 3 Flash Preview' },
@@ -94,7 +103,7 @@ export function agentModelLabel(id: AgentModelOverride | null): string {
 /**
  * The name to show for the model a work stream is *already* running on.
  *
- * That id is not necessarily one of the nine a pin may name: it is read off the
+ * That id is not necessarily one of the ids a pin may name: it is read off the
  * work stream's latest run, and an unpinned work stream runs on whatever
  * `agent-model-workstream` served it — any OpenRouter id the flag's variation
  * carries. A known id gets the same short name the menu gives it, so a pinned

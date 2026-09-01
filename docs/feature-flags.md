@@ -1098,6 +1098,62 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
 
+### 2026-09-01 — Grok 4.6 and Gemini 3.7 Flash join the pinnable set
+
+**What changed:** `x-ai/grok-4.6` and `google/gemini-3.7-flash` were added to
+`AGENT_MODEL_OVERRIDES`, and every family in that list is now ordered **newest
+first** — which moved `x-ai/grok-4.6` to the head of the list and `x-ai/grok-4.3`
+to the end of its own family. The desktop selector gained the two short names the
+menu shows in place of the raw ids.
+
+**Why the ordering:** The selector groups by vendor, so a family's order is what
+a reader sees under its heading, and the model somebody is most likely to want
+is the one they should not have to scan for. Fixing it as a rule also settles
+where the *next* model goes — the top of its family — rather than leaving each
+addition to argue the question again.
+
+**Why:** Both models were already reachable by this repository — 4.6 through the
+checked-in Monad Azure binding, and both through a flag variation naming them —
+but neither could be *pinned*, which is the only way a developer selects a model
+per work stream. The gap was in the closed list alone, not in routing.
+
+**What the reorder did break** is prose that had quietly fused two facts: that
+`x-ai/grok-4.3` was first in the list, and that it is what
+`agent-model-workstream` serves. Step 7 of the desktop model-selector acceptance
+procedure in [`e2e.md`](e2e.md) said "pin explicitly to the first listed model"
+and expected the trigger to read **Grok 4.3**, which after the reorder pins
+Grok 4.6 and waits for a label that never appears. It now names Grok 4.3 as the
+flag's default and adds Grok 4.6 as the first entry, so the step proves the
+control reads a pin rather than a position. Step 3's model count went the same
+way and is now stated as the contract rather than a number.
+
+Reordering was otherwise safe because nothing reads position 0. The contract's own comment
+claimed the first entry was what the selector showed before anything was chosen,
+and that stopped being true when the unpinned state became a row of its own: the
+menu renders `UNPINNED_AGENT_MODEL` above every group and labels it **Default**,
+precisely so the renderer never names a model for a variation it cannot see. The
+comment and the one test that pinned `AGENT_MODEL_OVERRIDES[0]` to `x-ai/grok-4.3`
+were both stale, and both are replaced by the ordering rule.
+
+**Considered and rejected:** Adding the two ids to Ace's `MODEL_CHOICES` and the
+pricing worker's `OPENROUTER_PRICING_MODEL_IDS` as well. Both derive from
+`AGENT_MODEL_OVERRIDES` and picked the models up from this one edit; writing them
+out again would create three lists that can disagree, which is what the derived
+shape exists to prevent. `x-ai/grok-4.6` is now named by both the developer list
+and `AZURE_DEPLOYED_OPENROUTER_MODEL_IDS`, and the pricing worker's `Set` union
+still prices it once.
+
+**Consequences:** The pricing cron now warms two more KV keys per run, one of
+them (`google/gemini-3.7-flash`) for a model with no Azure deployment — the
+cache covers every developer-selectable id whether or not Azure can serve it, so
+that is the list working as intended rather than a stray entry. A pin naming
+`x-ai/grok-4.6` inherits its Azure-first route from `agent-harness.md`'s
+checked-in binding, so a pinned run there is not OpenRouter-only. A model added
+to this list from now on goes at the top of its family; a test enforces that for
+every family whose ids carry comparable version numbers, which is all of them
+except `gpt-5.6-*` and `deepseek-v4-*`, whose members share a version and are
+ordered by hand.
+
 ### 2026-08-30 — The Suggested context model route was retired
 
 **What changed:** `activity_structured` and
