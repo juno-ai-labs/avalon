@@ -544,6 +544,9 @@ describe('public Rally site', () => {
   });
 
   it('removes resource identity from public handoff paths and classifies invalid targets truthfully', () => {
+    expect(normalizedTelemetryPathname(
+      '/app/workspaces/eu/00000000-0000-7000-8000-000000000009/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30',
+    )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'))
       .toBe('/app/workstreams/:id');
     expect(normalizedTelemetryPathname('/privacy/')).toBe('/privacy/');
@@ -561,6 +564,7 @@ describe('public Rally site', () => {
     const successTarget = `avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}`;
     const errorTarget = `avalon://auth/complete?error=google_oauth_denied&region=global&attempt=${attempt}`;
     const connectorSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&attempt=${attempt}&provider=linear`;
+    const targetedConnectorSuccess = `${connectorSuccessTarget}&workspace=00000000-0000-7000-8000-000000000009`;
     const connectorErrorTarget = `avalon://auth/complete?provider=linear&region=eu&attempt=${attempt}&status=denied&error=oauth_denied`;
     const granolaSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000005&status=connected&region=global&attempt=${attempt}&provider=granola`;
     const granolaErrorTarget = `avalon://auth/complete?provider=granola&region=global&attempt=${attempt}&status=failed&error=connector_oauth_failed`;
@@ -569,6 +573,7 @@ describe('public Rally site', () => {
     expect(parseDesktopTarget(asFragment(successTarget))).toBe(successTarget);
     expect(parseDesktopTarget(asFragment(errorTarget))).toBe(errorTarget);
     expect(parseDesktopTarget(asFragment(connectorSuccessTarget))).toBe(connectorSuccessTarget);
+    expect(parseDesktopTarget(asFragment(targetedConnectorSuccess))).toBe(targetedConnectorSuccess);
     expect(parseDesktopTarget(asFragment(connectorErrorTarget))).toBe(connectorErrorTarget);
     expect(parseDesktopTarget(asFragment(granolaSuccessTarget))).toBe(granolaSuccessTarget);
     expect(parseDesktopTarget(asFragment(granolaErrorTarget))).toBe(granolaErrorTarget);
@@ -611,6 +616,7 @@ describe('canonical work-stream links', () => {
     // No asset can exist per id, so the rewrite is what makes the canonical
     // path resolve at all. Losing it turns every shared link into a 404.
     expect(redirects).toContain('/app/workstreams/*  /app/workstreams/  200');
+    expect(redirects).toContain('/app/workspaces/*  /app/workstreams/  200');
     expect(config).toContain('app/workstreams/index.html');
     expect(page).toContain('id="open-rally"');
     expect(page).toContain('noindex, nofollow');

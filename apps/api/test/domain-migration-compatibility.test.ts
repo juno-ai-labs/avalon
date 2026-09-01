@@ -102,10 +102,12 @@ describe("deep links the server mints without a caller scheme", () => {
       provider: "linear",
       status: "succeeded",
       connectionId: "00000000-0000-4000-8000-000000000004",
+      workspaceId: "00000000-0000-7000-8000-000000000009",
     }));
     expect(target.protocol).toBe("avalon:");
     expect(target.searchParams.get("provider")).toBe("linear");
     expect(target.searchParams.get("status")).toBe("connected");
+    expect(target.searchParams.get("workspace")).toBe("00000000-0000-7000-8000-000000000009");
   });
 
   it("keeps the configured host and path", () => {

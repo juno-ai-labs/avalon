@@ -671,6 +671,52 @@ describe('single-platform desktop identity routing', () => {
     invalidate.mockRestore();
   });
 
+  it('activates the connector attempt workspace before applying its completion', async () => {
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000019';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: targetWorkspaceId,
+        name: 'Origin Workspace',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&workspace=${targetWorkspaceId}&attempt=${'a'.repeat(43)}&provider=granola`,
+    );
+
+    await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId: targetWorkspaceId,
+    }));
+    expect(await screen.findByText('global:Origin Workspace')).toBeVisible();
+  });
+
+  it('does not navigate when a workspace-addressed work-stream link cannot be activated', async () => {
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000020';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockRejectedValueOnce(new Error('workspace_access_denied'));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    const before = window.location.hash;
+
+    await dispatchDeepLink(
+      `rallywithai://workstreams/00000000-0000-7000-8000-000000000021?region=global&workspace=${targetWorkspaceId}`,
+    );
+
+    await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId: targetWorkspaceId,
+    }));
+    expect(window.location.hash).toBe(before);
+    expect(lastDeepLinkFailure()).toContain('access');
+  });
+
   it('accepts a regional server-owned connector result and surfaces denial', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...euSession,
