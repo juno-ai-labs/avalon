@@ -148,6 +148,30 @@ describe("deep links the server mints without a caller scheme", () => {
     expect(target.searchParams.get("region")).toBe("global");
   });
 
+  it.each([
+    {
+      name: "success without a connection",
+      input: { status: "succeeded" },
+    },
+    {
+      name: "denial without an error",
+      input: { status: "denied" },
+    },
+    {
+      name: "failure carrying a connection",
+      input: { status: "failed", errorCode: "oauth_failed", connectionId: "connection-1" },
+    },
+  ])("rejects an impossible connector callback: $name", ({ input }) => {
+    const env = contractCompleteEnv({ DESKTOP_DEEP_LINK_URI: CURRENT, AVALON_REGION: "global" });
+
+    expect(() => connectorAttemptTarget(env, {
+      provider: "google",
+      workspaceId: "00000000-0000-7000-8000-000000000009",
+      returnUri: LEGACY,
+      ...input,
+    } as never)).toThrow("connector callback result is invalid");
+  });
+
   it("uses an explicitly unaddressed failure only when OAuth state cannot be resolved", () => {
     const env = contractCompleteEnv({ DESKTOP_DEEP_LINK_URI: CURRENT, AVALON_REGION: "global" });
     const target = new URL(unknownConnectorAttemptFailureTarget(env, {
