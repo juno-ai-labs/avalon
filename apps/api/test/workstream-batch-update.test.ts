@@ -96,7 +96,7 @@ describe("generic work-stream batch updates", () => {
       operationId: OPERATION_ID,
       filter,
     }));
-    expect(sent.map((batch) => batch.length)).toEqual([100, 100, 5]);
+    expect(sent.map((batch) => batch.length)).toEqual([50, 50, 50, 50, 5]);
     const events = sent.flatMap((batch) => batch.map((message) =>
       WorkstreamBatchUpdateQueueMessageSchema.parse(message.body)));
     expect(events).toHaveLength(targets.length);

@@ -18,8 +18,8 @@ import { workstreamImportHash } from "../durable-objects/workstream-import-hash"
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { logInfo, logWarn } from "../observability/logger";
 
-/** Cloudflare Queues accepts at most 100 messages in one sendBatch call. */
-const QUEUE_SEND_BATCH_SIZE = 100;
+/** Product limit: publish at most 50 work-stream updates in one Queue call. */
+const QUEUE_SEND_BATCH_SIZE = 50;
 
 export const WorkstreamBatchUpdateQueueMessageSchema = z.object({
   kind: z.literal("workstream_batch_update"),
