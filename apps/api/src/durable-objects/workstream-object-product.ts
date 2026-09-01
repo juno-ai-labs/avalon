@@ -3186,7 +3186,7 @@ export class WorkstreamObjectProductService {
     }
     const existingPending = this.loops.inputByClientMessageId(input.clientMessageId);
     if (existingPending) return this.externalPendingMessageResult(existingPending, false);
-    const preparation = this.reserveInputPreparation({
+    const preparation = await this.reserveInputPreparation({
       root,
       inputId: input.messageId,
       clientMessageId: input.clientMessageId,
