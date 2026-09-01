@@ -521,7 +521,12 @@ None yet.
    version-immutable keys the serving Worker reads directly; there is no
    KV in this repository and this PRD does not introduce one (Cloudflare's
    own guidance prefers R2 for larger assets, and version-immutable keys
-   make long asset cache TTLs safe). The publish stores a manifest —
+   make a long *bucket-side* TTL safe — but not a browser one: the canonical
+   URL is stable across republishes, so `/style.css` from V3 would survive a
+   V4 publish and break the current-on-next-load contract. Artifact responses
+   are therefore served `private, no-store`, and immutable caching is reserved
+   for the version-addressed paths, which are the only ones whose bytes cannot
+   change). The publish stores a manifest —
    paths, content types, hashes, the resolved mode — beside the assets;
    the serving Worker's asset binding resolves requests against the
    manifest, static-site conventions included (`/` → `/index.html`).
@@ -1199,8 +1204,8 @@ The new trust surface is the point of this PRD, so it is stated in full.
   `<meta>` CSP can only further restrict, and a conflicting header
   loses to the stricter policy): `default-src 'self'`, `connect-src
   'self'`, `form-action 'self'`, `base-uri 'self'`, `object-src
-  'none'`, `frame-ancestors 'none'`, `img-src 'self' data:`, and
-  `script-src`/`style-src` of `'self' 'unsafe-inline'`. This is what
+  'none'`, `frame-ancestors 'none'`, `worker-src 'none'`, `img-src 'self'
+  data:`, and `script-src`/`style-src` of `'self' 'unsafe-inline'`. This is what
   actually makes the skill's "no network" and "carry your own assets"
   rules true rather than merely advisory, and it is why the skill
   forbids CDN links: under this policy they would not load anyway.
@@ -1310,8 +1315,10 @@ The new trust surface is the point of this PRD, so it is stated in full.
   resolved against the owning `WorkstreamDO` on a bounded cache — never
   inferred from the session's own existence, which is precisely the
   regression `access-revocation.md` records. URLs grant nothing, and no
-  access proof ever travels in one; codes are single-use, short-lived,
-  and redeemed from a fragment through a request body.
+  access proof ever travels in one; codes are single-use, live 60 seconds — a
+  transcribed round-trip bound rather than a defensive one, since single-use
+  redemption is what bounds abuse — and are redeemed from a fragment through a
+  request body.
 - **The serving Worker is a new deployment surface with a minimal
   waistline.** It holds the loader, the bucket, the DO namespace, and
   nothing else — no D1, no provider secrets, no Flagship. A compromise of
@@ -1387,8 +1394,8 @@ published by its file path, never by its folder.
   is that `filePath` may now name a directory beneath
   `AVALON_RESOURCE_DIR`. No parameter is added: the publish kind is
   resolved from the directory's root entry per key design decision 9.
-- Successful `output` becomes **a discriminated union on
-  `resourceType`, and that is a contract change worth stating as one**
+- Successful `output` becomes **a discriminated union on `publishKind`, and
+  that is a contract change worth stating as one**
   rather than a shape that quietly varies. Today the tool has one
   output; after this widening it has three, and a model reading the
   registry must be able to tell which it got without guessing. Every

@@ -49,6 +49,7 @@ import {
   refuseUnsafeVersionRequest,
   resolveAssetPath,
   splitVersionMount,
+  withViewerIdentity,
 } from "./serving-policy";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
 
@@ -312,7 +313,7 @@ async function runArtifactModule(
   // routing preference, and the hop costs nothing extra — the serving Worker
   // already consulted this object for the session check.
   if (manifest.stateful) {
-    return await artifact.fetchThroughFacet(await forwardable(request, admitted));
+    return await artifact.fetchThroughFacet(forwardable(request, admitted));
   }
   const loader = env.ARTIFACT_LOADER!;
   const worker = loader.get(`artifact:${artifactId}:v${manifest.artifactVersion}`, async () => {
@@ -326,7 +327,7 @@ async function runArtifactModule(
       globalOutbound: null,
     };
   });
-  return await worker.getEntrypoint().fetch(await forwardable(request, admitted));
+  return await worker.getEntrypoint().fetch(forwardable(request, admitted));
 }
 
 /**
@@ -337,8 +338,7 @@ async function runArtifactModule(
  * superseded spelling. A family whose readers widen and whose stripper does not
  * has a forgeable back door, and this is the entire anti-spoof mechanism.
  */
-async function forwardable(request: Request, admitted: Admitted): Promise<Request> {
-  const { withViewerIdentity } = await import("../durable-objects/artifact-host-do");
+function forwardable(request: Request, admitted: Admitted): Request {
   const headers = new Headers(request.headers);
   headers.delete("cookie");
   const stripped = new Request(request, { headers });

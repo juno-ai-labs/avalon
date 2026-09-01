@@ -92,7 +92,7 @@ function runtime(initial: Record<string, string> = {}) {
       return {
         resourceId: "resource-published",
         title: "Chart",
-        resourceType: "generated_file",
+        publishKind: "file", resourceType: "generated_file",
         provider: "avalon_generated",
         mimeType: "image/png",
         sizeBytes: 42,
@@ -163,7 +163,7 @@ describe("Terminal file and command tools", () => {
       }],
       ["publish_resource", { filePath: "chart.png" }, {
         output: {
-          resourceId: "resource-published", title: "Chart", resourceType: "generated_file",
+          resourceId: "resource-published", title: "Chart", publishKind: "file", resourceType: "generated_file",
           provider: "avalon_generated", mimeType: "image/png", sizeBytes: 42, sourceSha256: "b".repeat(64),
           attachmentKind: "image", contentMode: "view", derivativeStatus: "ready",
           createdAt: "2026-08-13T00:00:00.000Z",

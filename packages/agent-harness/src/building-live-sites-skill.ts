@@ -276,12 +276,28 @@ shape of \`index.js\`.
    single counter or setting; use SQL the moment there is a second
    column.
 
-3. **Schemas are additive, forever.** The database outlives every
-   version of your code, and a later version's class starts against the
-   tables an earlier version created. So: \`CREATE TABLE IF NOT EXISTS\`
-   and \`ALTER TABLE … ADD COLUMN\` only; never rename, drop, or rewrite
-   a table in a revision. If a revision needs a new shape, add a new
-   table and write to both until the old one is unused.
+3. **Schemas are additive, forever, and every step must be safe to run
+   twice.** The database outlives every version of your code, the
+   constructor runs on *every* start, and a later version's class starts
+   against the tables an earlier version created. \`CREATE TABLE IF NOT
+   EXISTS\` is safe to repeat. **\`ALTER TABLE … ADD COLUMN\` is not** —
+   SQLite has no \`IF NOT EXISTS\` for it, so a bare ALTER in the
+   constructor succeeds on the start that adds the column and throws
+   \`duplicate column name\` on every start after, which takes the whole
+   site down. Ask first:
+
+   \`\`\`js
+   const hasColumn = this.ctx.storage.sql
+     .exec("SELECT COUNT(*) AS n FROM pragma_table_info('rsvps') WHERE name = 'note'")
+     .one().n > 0;
+   if (!hasColumn) {
+     this.ctx.storage.sql.exec("ALTER TABLE rsvps ADD COLUMN note TEXT");
+   }
+   \`\`\`
+
+   Never rename, drop, or rewrite a table in a revision. If a revision
+   needs a new shape, add a new table and write to both until the old
+   one is unused.
 
 4. **Design the data to be read from outside.** The work stream's agent
    answers questions about this data with read-only SQL against your
