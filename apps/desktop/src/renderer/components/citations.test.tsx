@@ -266,6 +266,7 @@ describe('resource citations', () => {
     expect(thumbnail).not.toBeNull();
     expect(thumbnail).toHaveClass('citation-card-image-preview');
     expect(thumbnail).toHaveAttribute('src', 'blob:image-preview');
+    expect(thumbnail).toHaveAttribute('loading', 'lazy');
     expect(screen.getByText('Image')).toBeInTheDocument();
     expect(document.querySelector('.citation-card-badge .lucide-image')).not.toBeNull();
     expect(document.querySelector('.citation-card-badge .lucide-file')).toBeNull();
@@ -274,6 +275,30 @@ describe('resource citations', () => {
     unmount();
     expect(createObjectURL).toHaveBeenCalledOnce();
     expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:image-preview');
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+  });
+
+  it('falls back to the ordinary card when Chromium cannot decode an image preview', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:bad-image-preview');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const image = { ...DECK, title: 'Damaged scan.png', resourceType: 'uploaded_file', mimeType: 'image/png' };
+    const preview = vi.fn(async () => ({ kind: 'image' as const, blob: new Blob(['not-png'], { type: 'image/png' }) }));
+
+    const { unmount } = render(
+      <MarkdownBody citations={context({ preview, resolve: () => image })}>
+        {'![Damaged scan](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    await waitFor(() => { expect(document.querySelector('.citation-card-image-preview')).not.toBeNull(); });
+    fireEvent.error(document.querySelector('.citation-card-image-preview')!);
+
+    expect(document.querySelector('.citation-card-image-preview')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open Damaged scan.png' })).toBeInTheDocument();
+    unmount();
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:bad-image-preview');
     createObjectURL.mockRestore();
     revokeObjectURL.mockRestore();
   });

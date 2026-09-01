@@ -31,6 +31,7 @@ import {
 } from "./attachment-derivative-service";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
+import { loadBrowserCompatibleImage } from "./attachment-model-content";
 
 function resourceTelemetryConnector(value: unknown):
   'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
@@ -330,7 +331,34 @@ export class ResourceService {
     const kind = classifyAttachmentKind({ fileName, mimeType });
     const normalizedMimeType = mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 
-    if (kind === "image" || kind === "audio" || kind === "markdown" || kind === "text" || normalizedMimeType.startsWith("text/")) {
+    if (kind === "image") {
+      if (requiresBrowserImageNormalization(normalizedMimeType, fileName)) {
+        const normalized = await loadBrowserCompatibleImage(
+          this.env.PAYLOADS,
+          {
+            id: String(resource.id),
+            workspaceId: String(resource.workspace_id),
+            fileName,
+            mimeType: mimeType ?? "application/octet-stream",
+            contentRef: String(resource.content_ref),
+            contentSha256: nullableString(resource.content_sha256),
+            modelContentRef: nullableString(resource.model_content_ref),
+            modelMimeType: nullableString(resource.model_mime_type),
+            modelContentSha256: nullableString(resource.model_content_sha256),
+            modelMetadataJson: nullableString(resource.model_metadata_json),
+          },
+          { images: this.env.IMAGES, documentProcessor: this.env.DOCUMENT_PROCESSOR },
+        );
+        if (!normalized) {
+          throw new ApiError(422, "resource_preview_unsupported", "This image format cannot be previewed");
+        }
+        return resourceBytesResponse(normalized.bytes, normalized.mimeType, fileName);
+      }
+      const object = await this.env.PAYLOADS.get(resource.content_ref);
+      if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
+      return resourceObjectResponse(object, fileName);
+    }
+    if (kind === "audio" || kind === "markdown" || kind === "text" || normalizedMimeType.startsWith("text/")) {
       const object = await this.env.PAYLOADS.get(resource.content_ref);
       if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
       return resourceObjectResponse(object, fileName);
@@ -796,6 +824,25 @@ function resourceObjectResponse(object: R2ObjectBody, inlineFileName?: string): 
   headers.set("cache-control", "private, max-age=0, no-store");
   if (inlineFileName) headers.set("content-disposition", contentDisposition("inline", inlineFileName));
   return new Response(object.body, { headers });
+}
+
+function resourceBytesResponse(bytes: Uint8Array, mimeType: string, inlineFileName: string): Response {
+  return new Response(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, {
+    headers: {
+      "cache-control": "private, max-age=0, no-store",
+      "content-disposition": contentDisposition("inline", inlineFileName),
+      "content-type": mimeType,
+    },
+  });
+}
+
+/** Chromium has no native TIFF or HEIF decoder, even though Rally accepts both. */
+function requiresBrowserImageNormalization(mimeType: string, fileName: string): boolean {
+  if (/^image\/(?:heic|heif|heic-sequence|heif-sequence|tif|tiff)$/u.test(mimeType)) return true;
+  // Verified uploads have a sniffed MIME. The extension fallback also covers
+  // connector resources whose provider supplied only generic binary metadata.
+  return (!mimeType || mimeType === "application/octet-stream")
+    && /\.(?:heic|heif|tif|tiff)$/iu.test(fileName);
 }
 
 function resourceWatchMode(
