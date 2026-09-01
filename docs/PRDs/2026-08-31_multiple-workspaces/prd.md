@@ -80,8 +80,9 @@ and a working second membership is the guard and a place to put the result.
    chooses that new workspace's data region independently.
 3. A person who is already a member accepts an invitation to a second workspace —
    from the emailed link or from inside the app — and lands in it.
-4. Switching workspaces takes one action, leaves every other workspace signed in
-   and reachable, and keeps each workspace's traffic inside its own region.
+4. While online, switching workspaces takes one action, leaves every other
+   workspace credential stored and usable, and keeps each workspace's traffic
+   inside its own region.
 5. Without switching, a person can see which of their other workspaces has
    something waiting for them, and how much.
 6. A person leaves a workspace, and it disappears from their switcher for good.
@@ -124,8 +125,54 @@ and a working second membership is the guard and a place to put the result.
 8. **Joining by email domain, SSO, or one person holding two identity
    providers.** Deferred. Membership still grows only by explicit invitation to
    one address.
+9. **Switching workspaces while offline, or an offline workspace-content
+   cache.** Deferred. Rally does not persist a workspace directory or transcript
+   for offline browsing today; a saved credential and profile can identify a
+   workspace but cannot truthfully open its current product state. Going offline
+   keeps the active workspace on screen and preserves drafts, but opening another
+   workspace waits for a network connection.
 
 ## Product behavior
+
+### The mocks, and how much of them to follow
+
+The surfaces below are drawn at
+[the workspace-switcher canvas](https://claude.ai/code/artifact/1f202c7b-016f-4c92-85f1-a853ce09b9bc)
+— six artboards: the closed account button, the open switcher, a switch in
+flight beside a failed one, the loading and offline count states, the invitation
+a signed-in person sees, and leaving or closing a workspace.
+
+**Follow the anatomy, not the pixels.** What binds is the composition: which
+element sits where in a row, what each row shows and in what order, which states
+exist, and the density. What does not bind is the content — the workspace
+names, the counts, the initials, and the copy in the dialogs are examples, on the
+same footing as the product-specific labels in
+[`../../assumptions.md`](../../assumptions.md) item 9.
+
+**Never take a colour or a size out of the mock.** The artboards carry literal
+hex because they are drawn outside the app; the renderer names tokens and states
+no colour of its own, and a test fails when it does — see
+[`../../theming.md`](../../theming.md). Every value in the artboards resolves to
+an existing token, and the implementation uses the token:
+
+| In the mock | What to write |
+| --- | --- |
+| The account button and its menu | The existing `.account-trigger`, `.menu-content`, `.menu-item`, `.menu-label`, and `.menu-separator`. The switcher is rows added to the menu that is already there, not a new surface. |
+| Workspace row height, 34px | Slightly taller than `--av-cmp-row-height` because of the 18px mark. One new rule; everything else is `.menu-item`'s own padding and radius. |
+| The count pill's colour | `--av-sys-color-workstream-mentioned`, `--av-sys-color-workstream-needs-input`, or `--av-sys-color-workstream-unseen`, picked by the highest-priority reason in that workspace. |
+| The activity dot | `--av-sys-color-workstream-unread`, at `--av-cmp-marker-inline-size` and `--av-cmp-marker-radius` — the same dot the sidebar rows already draw. |
+| Section captions (`Workspaces`, `Invitations`) | `--av-ref-color-neutral-9` with `--av-sys-label-font-size`, `--av-sys-label-weight`, and `--av-sys-label-tracking` — the sidebar group heading's own treatment. |
+| The region tag | `--av-sys-color-surface-subtle` on `--av-sys-color-border-subtle`, pill radius, `--av-sys-font-size-meta`. |
+| **Join** in the invitation dialog | `.button-primary`. It is brand, not accent. |
+| **Leave** and **Leave and close** | `--av-sys-color-danger-base` and `--av-sys-color-danger-tint`, matching `.menu-item-danger`. |
+| Dialog and menu shadows | `--av-sys-elevation-shadow-lg` and `--av-sys-elevation-shadow-md`. |
+
+**One element in the mocks does not exist yet.** The rounded square holding a
+workspace's first letter has no counterpart in Rally today — there is no
+workspace avatar anywhere in the product. It is drawn because four rows of plain
+text are hard to scan, but it is a new piece of vocabulary rather than something
+lifted from the app, and it is the one part of these mocks worth arguing about
+before it is built.
 
 ### Signing in for the first time
 
@@ -142,11 +189,13 @@ The account button at the foot of the sidebar already shows the person's name
 over the current workspace name. Its menu gains a workspace list above the
 existing label:
 
-- **One row per workspace** the account belongs to, ordered by most recently
-  active, with a check against the active one. Each row shows the workspace name,
-  its attention count, and — only when the account holds workspaces in more than
-  one region — a `Global` or `European Union` tag, so the region is visible exactly
-  when it distinguishes two rows.
+- **One row per workspace** the account belongs to, ordered by this device's
+  most-recently-active history, with a check against the active one. A new device
+  has no history and uses discovery's stable membership order until the person
+  switches. Each row shows the workspace name, its attention count, and — only
+  when the account holds workspaces in more than one region — a `Global` or
+  `European Union` tag, so the region is visible exactly when it distinguishes two
+  rows.
 - **One row per pending invitation** addressed to this person's email, reading
   *Join <workspace name>*, with the inviter's name beneath it. Accepting joins
   and switches; declining removes the row.
@@ -162,21 +211,29 @@ Settings — Settings is scoped to the active workspace and stays that way.
 ### Switching
 
 Selecting another row switches to it. If the device already holds a live session
-for that workspace, the switch is immediate: the sidebar, the transcript, and the
-right rail redraw against the new workspace, and the workspace socket for the old
-one closes. If it does not, the row shows an inline spinner while the account
-session activates that workspace, which is the same call the app already makes on
-launch, and the window shows *Opening <name>…* over the shell.
+and cached profile for that workspace, the switch is immediate: the sidebar, the
+transcript, and the right rail redraw against the new workspace, and the workspace
+socket for the old one closes. If it does not, the row shows an inline spinner
+while the account session activates that workspace, which is the same call the app
+already makes on launch, and the window shows *Opening <name>…* over the shell.
 
 Switching never signs anybody out of anything. The sessions for the other
 workspaces stay valid and stay stored.
 
 While a switch is in flight the menu stays open and the other rows stay
-selectable; choosing a different one abandons the first switch rather than
-queueing behind it. If activation fails, the row keeps its place and shows the
-reason inline — *Rally could not open this workspace* for a transport failure,
-and *You are no longer a member of this workspace* for a 403, which also removes
-the row.
+selectable; choosing a different one supersedes the first switch rather than
+queueing behind it. A late successful activation is retained as that background
+workspace's credential and profile but never takes over the window; retaining it
+also means sign-out still knows which server session to revoke. If activation
+fails, the row keeps its place and shows the reason inline — *Rally could not open
+this workspace* for a transport failure, and *You are no longer a member of this
+workspace* for `workspace_access_denied`, which also removes the row.
+
+Switching while offline is refused before the active workspace is torn down. The
+selected row reads *Connect to open this workspace*, the existing active surface
+stays in place, and no credential is dropped. A cached profile is enough to name a
+workspace while offline; it is not a cache of that workspace's directory or
+content (non-goal 9).
 
 Unsent composer text survives the switch. It does not today: any session change
 that names a different workspace calls `clearAllDrafts`, which empties the whole
@@ -200,9 +257,10 @@ workspace, reports two things about the person holding the session:
 - **Waiting for you** — a number. It counts the work streams where the person is
   a participant and any of these holds: a mention of them sits above their read
   waterline, they were put in the work stream and have not opened it once, or the
-  work stream's harness has stopped in `needs_input`. All three already exist as
-  per-viewer projections in WorkspaceDO's directory, which is what makes this a
-  read rather than a new counter.
+  work stream's harness has stopped in `needs_input`. The viewer directory row
+  already carries all three inputs — personal mention and unseen projections plus
+  the shared exact run state — which is what makes this a read rather than a new
+  counter.
 - **Activity** — a dot, no number, when nothing is addressed to them but at least
   one work stream they can see has unread messages.
 
@@ -225,10 +283,13 @@ socket to a workspace nobody is looking at.
 - **Stale** — a fetch failed or the machine is offline: the last known counts stay
   on the rows, and the menu footer reads *Counts last updated <relative time>*.
   Rows are still selectable; the switch itself will report its own failure.
-- **Unauthorized** — the fetch answers 403 because the membership ended: the row
-  disappears and its credential is dropped. This only ever applies to a
-  background workspace; the active one learns it was revoked through the access
-  revocation that closes its sockets, which is unchanged.
+- **Unauthorized** — the bearer is rejected with `session_revoked`, or renewing
+  it answers `workspace_access_denied`, because the membership ended. Either code
+  removes that row and only that workspace's credential and profile; raw HTTP
+  status is not the contract, because an expired access token is also a 401 and
+  must first be renewed. The active workspace learns it was revoked through the
+  access-revocation close, drops the same local state, and switches to the most
+  recently active remaining workspace.
 
 ### Creating another workspace
 
@@ -242,6 +303,16 @@ Only one workspace creation or invitation acceptance may be in flight for an
 account at a time. A second attempt while one is running answers *Workspace setup
 is already in progress* rather than creating two workspaces, which is what the
 account's pending onboarding reservation already means today.
+
+Every create or acceptance carries a client-generated operation id that is both
+its telemetry id and its durable idempotency key. The Global coordinator records
+the action, its request fingerprint, and its chosen destination before calling a
+region. Retrying the same operation after an unknown or lost response returns a
+session for that same membership; it never allocates another workspace or consumes
+another invitation. Reusing an operation id for a different action or invitation
+is a conflict. The existing regional operation journal receives the same id, so
+the Global and regional halves agree about which write is being replayed (design
+decision 8).
 
 ### Inviting, unchanged
 
@@ -276,10 +347,13 @@ behavior, and still correct: invitations are bound to an address, not to a perso
 
 Settings → Workspace gains **Leave this workspace**, at the bottom, under a
 confirmation naming the workspace. On confirmation the membership row is deleted,
-that workspace's session is revoked and its sockets are closed by the existing
-access-revocation path, the credential for it is dropped from the device, and the
-switcher moves to the most recently active remaining workspace. Leaving the last
-one returns the person to first-run onboarding, still signed in.
+that workspace's sessions are made unusable by the membership check and its
+sockets are closed by the existing access-revocation path, the credential and
+profile for it are dropped from the device, and the switcher moves to the most
+recently active remaining workspace. Leaving the last one returns the person to
+first-run onboarding, still signed in. The next account discovery marks the
+Global route inactive; regional membership is the authority, so a stale route in
+the interval cannot activate or authorize anything (design decision 3).
 
 Two refusals:
 
@@ -294,28 +368,43 @@ Two refusals:
 
 When the person leaving is the only active member, the confirmation reads
 **Leave and close this workspace** and explains that nobody will be able to open
-it again. On confirmation the workspace is marked abandoned: it leaves every
-switcher, no session can be activated against it, its pending invitations are
-void, and its data is retained and unreachable. This is the answer to a workspace
-created by mistake, and it is the only destructive-looking action in this change —
-it destroys nothing.
+it again. One regional transaction sets `abandoned_at`, suspends rather than
+deletes the final membership so an operator can reverse the action, and revokes
+every pending invitation. The conditional write succeeds only while that person
+is still the sole active member; invitation acceptance and member addition reject
+an abandoned workspace, so neither can race a new active member in after the
+check. The membership transition publishes the ordinary workspace-wide access
+revocation, closing sockets on every device, and all authorization and refresh
+queries require both an active membership and `abandoned_at IS NULL`. The local
+credential and profile are dropped.
+
+The workspace then leaves every switcher, no existing or new session can use it,
+and its retained data is unreachable. Reversal is an operator action that clears
+`abandoned_at` and reactivates the suspended final membership together. This is
+the answer to a workspace created by mistake, and it is the only
+destructive-looking action in this change — it destroys nothing.
 
 ### Being removed from a workspace
 
-Unchanged for the workspace on screen: the removal publishes an access
-revocation, the sockets close, and the app returns to whatever it shows when a
-session stops resolving. New behavior for a background workspace: the next
-attention fetch answers 403, the row leaves the switcher, and its stored
-credential is dropped. Nothing announces it — a workspace somebody was removed
-from quietly disappearing from a menu is the right amount of noise.
+For the workspace on screen, the removal publishes an access revocation, the
+sockets close, the credential and profile are dropped, and the app opens the most
+recently active remaining workspace or first-run onboarding. For a background
+workspace, the next attention request receives `session_revoked`; if the client
+tries renewal first, refresh receives `workspace_access_denied`. Either stable
+code removes the row and its local state. Nothing announces it — a workspace
+somebody was removed from quietly disappearing from a menu is the right amount of
+noise.
 
 ### Signing out
 
-Sign-out ends every session on the device, not the active one: one revocation per
-stored credential, plus the account session, then the stored credentials are
-deleted. A revocation that fails to reach the server still deletes the local
-credential, because a device that cannot reach Rally must not be left holding
-usable ones.
+Sign-out ends local access to every workspace, not only the active one. It attempts
+one revocation per stored workspace credential plus the account session, to each
+credential's own region, and then deletes the complete local credential and
+profile sets even if one or more requests failed. Immediate server-side revocation
+is therefore best effort, as it is today: an offline request cannot be retried
+after its only local refresh token is deliberately erased, and the server session
+expires on its ordinary deadline. The hard guarantee is that sign-out leaves no
+usable local credential or draft behind.
 
 ## Impact on the product contract
 
@@ -329,14 +418,16 @@ those counts expand into a list of the underlying work streams, that *is* a
 contract change and belongs in its own conversation.
 
 The brief does not say an account belongs to one workspace — that rule lives only
-in the implementation. Two subsystem documents state it as current behavior and
-are corrected in the same change as the code:
+in the implementation. Three documents state it as current behavior and are
+corrected in the same change as the code:
 [`../../data-model.md`](../../data-model.md), whose identity section says
 `workspace_invitations` "supports explicit membership growth without introducing
-a workspace switcher in V1", and
+a workspace switcher in V1";
 [`../../regionalization.md`](../../regionalization.md), whose V1 boundary
-describes discovery resolving to a single workspace. The switcher is the thing
-both sentences said was not being built.
+describes discovery resolving to a single workspace; and
+[`../../assumptions.md`](../../assumptions.md) item 1, which says the prototype
+uses one workspace per authenticated user and that "workspace switching is
+deferred". The switcher is the thing all three said was not being built.
 
 ## Decision log
 
@@ -354,21 +445,26 @@ None yet.
    discovery and nothing else, which is already true of it today for the minutes it
    currently lives.
 
-2. **The device remembers which workspace was last active; the server does not.**
-   Rejected: a `default_workspace_id` on `users`. The device already stores the
-   selected region and workspace name in device preferences, a new device picking
-   the most recently active workspace from discovery is good enough, and a
+2. **Workspace recency is device-local; the server stores no default.** Rejected:
+   a `default_workspace_id` on `users`. The device keeps an ordered recency entry
+   per workspace, not only the last id, so it can order the whole switcher. A new
+   device has no local history and starts from discovery's stable order. A
    server-side default is a second thing that can disagree with what the person
-   last did.
+   last did on this device.
 
-3. **`platform_workspace_bindings` becomes one row per membership, and an account
-   may have at most one pending binding.** Rejected: deleting the table, which is
-   the Global registry's only record of which region an account's workspaces live
-   in and holds the opaque placement route; and rejected: keeping the single row
-   as "current workspace" with a second table for the set, which would make the
-   current row a thing every switch has to write. The single-pending rule preserves
-   what the primary key was doing that is still wanted — one setup at a time —
-   while allowing many completed bindings.
+3. **`platform_workspace_bindings` is a reconciled route registry, not membership
+   authority.** It becomes one row per account and workspace route, with
+   `pending`, `active`, and `inactive` states, and at most one pending row per
+   account. Regional `workspace_members` remains the authority. After both regions
+   answer successfully, Global discovery reconciles the active routes against the
+   complete membership lists it already receives, marking a missing route
+   inactive; a failed or partial discovery changes no route. Activation always
+   rechecks regional membership, so a stale active route between reconciliations
+   grants nothing.
+   Rejected: an EU-to-Global removal message, which adds a cross-region lifecycle
+   only to make a cache immediately tidy; deleting the registry, which loses the
+   opaque placement route; and keeping a single "current workspace" row that every
+   switch has to write.
 
 4. **Background attention is polled; only the active workspace holds a socket.**
    Rejected: a WorkspaceDO socket per workspace. Exactly one WorkspaceDO socket is
@@ -388,7 +484,9 @@ None yet.
 6. **A workspace is abandoned rather than deleted.** Rejected: building deletion
    now (non-goal 1), and rejected: no exit at all, which would make "create a
    workspace" a decision nobody can undo — a bad property for an action this
-   change puts one click away.
+   change puts one click away. Abandonment suspends the final membership and
+   fences every authorization path in the same regional transition, rather than
+   leaving a reversible row active behind an `abandoned_at` presentation filter.
 
 7. **The user-facing word is "workspace".** Rejected: keeping "organization" in
    onboarding copy while the code, the schema, the API, and Settings all say
@@ -400,37 +498,63 @@ None yet.
    vocabulary word and stays. "Terminal workspace" is a sandbox path with no
    user-facing label, so nothing collides.
 
+8. **Workspace setup is idempotent by the client operation id.** Rejected: using
+   the one-pending-binding rule alone. That serializes simultaneous attempts but
+   cannot recognize a successful create whose HTTP response was lost; after its
+   binding becomes active, a retry would be free to allocate another workspace.
+   The Global coordinator durably maps an operation id and request fingerprint to
+   one destination before the regional call, and the regional journal uses that
+   same id. A retry therefore resumes or returns the first result.
+
 ## Data model
 
 Regional D1, changed:
 
 - **`workspaces` gains `abandoned_at TEXT`** — null for every existing row.
-  Discovery, activation, and invitation acceptance all exclude non-null rows.
-- **`workspace_members` is unchanged.** Its primary key is already
+  Discovery, activation, invitation acceptance, session refresh, and ordinary
+  authenticated requests all require it to be null.
+- **`workspace_members` keeps its schema.** Its primary key is already
   `(workspace_id, user_id)`, so it has always described a many-to-many
-  relationship; only the guards above it made membership singular. This is most of
-  why the change is small.
+  relationship, and its existing `suspended` state holds the final member of an
+  abandoned workspace so reversal does not have to reconstruct their role.
 - **`sessions` is unchanged.** Its `workspace_id` is already nullable, one row per
   session, and multiple live sessions per user are already possible — that is what
-  makes two devices work.
-- **`workspace_invitations` is unchanged.**
+  makes two devices work. The identity load and request-authentication joins add
+  the workspace lifecycle check above.
+- **`workspace_invitations` keeps its schema.** Abandonment writes `revoked_at` on
+  every pending row in its transaction.
 
 Global D1, changed:
 
 - **`platform_workspace_bindings`** moves from primary key `platform_user_id` to
-  primary key `(platform_user_id, region, workspace_id)`, with a partial unique
-  index allowing at most one `pending` row per `platform_user_id`. Existing rows
-  migrate as-is.
+  primary key `(platform_user_id, region, workspace_id)`, adds `inactive` to its
+  status vocabulary, and has a partial unique index allowing at most one `pending`
+  row per `platform_user_id`. Existing rows migrate as active. The table rebuild
+  also recreates `platform_workspace_binding_placement_default` against the full
+  composite key; its current `WHERE platform_user_id = NEW.platform_user_id`
+  would otherwise rewrite every route for a multi-workspace account.
+- **`platform_workspace_operations` is new.** One row per client operation id
+  records the platform user, `create` or `accept`, a hash of the request fields,
+  the chosen region and workspace id, the invitation id when present, and whether
+  the operation is pending or complete. It contains opaque ids and a hash, not a
+  workspace name or invited address. The first request chooses the destination;
+  an exact retry reads it, and a different request under the same id conflicts.
 
 Desktop, changed:
 
 - **The stored credential file** goes from one `storedAuth` record to a versioned
-  set: the account credential, plus one workspace credential per membership, plus
-  the id of the last active one. A version-1 file migrates to a set of one. A file
-  that cannot be parsed signs the person out, which is what it already does.
+  set: the account credential plus one workspace credential per membership. The
+  disposable profile-cache file likewise becomes one profile per credential, and
+  device preferences keep a recency value per workspace plus the active id. A
+  version-1 credential and profile migrate to sets of one. A credential file that
+  cannot be parsed signs the person out, which is what it already does; a missing
+  or invalid profile drops only that cache entry and is rebuilt by refreshing its
+  credential.
 
-No backfill is needed anywhere: every existing account has zero or one membership
-and stays exactly as valid.
+No product-data backfill is needed: every existing account has zero or one
+membership and stays exactly as valid. The binding migration marks every existing
+row active, the new operation table starts empty, and the desktop wraps its one
+credential and profile as one-element sets.
 
 ## Regional impact
 
@@ -443,30 +567,42 @@ throwing away. What is new is only that the answer may hold more than one entry.
   same time. Each row's session, socket, and attention fetch address only that
   workspace's regional API base URL. There is no request that names two regions.
 - Attention counts never leave their region (design decision 5).
-- The Global registry keeps what it keeps today per binding: opaque workspace id,
-  region, and placement affinity. It gains rows, not fields.
+- The Global route registry keeps what it keeps today per binding: opaque
+  workspace id, region, and placement affinity. It gains rows and an inactive
+  lifecycle. A regional leave or removal sends no new EU-to-Global message;
+  ordinary discovery reconciles the route from the membership answer it already
+  receives.
+- Workspace setup sends the same opaque operation id over the existing regional
+  onboarding RPC. Its request hash remains in Global, and no workspace name or
+  invitation address is added to the control-plane operation row.
 - Region selection stays per workspace, at creation, and immutable.
 - The identity endpoint is still one and still Global.
 
 ## Security and trust model
 
-- **A device holds several live credentials instead of one.** They are stored in
-  the same encrypted file under the same `safeStorage` protection, and each one
-  authorizes exactly one workspace in one region. The account credential
-  authorizes discovery and onboarding only — it cannot read workspace data,
-  because the workspace-scoped routes require a workspace-bound session.
+- **A device holds several live credentials instead of one.** In Rally's default
+  mode the set uses the existing application-wide-key AES-GCM envelope; Lockdown
+  mode instead uses Electron `safeStorage` and binds the whole set to the OS
+  keystore. Holding several credentials increases the consequence of disclosure
+  in default mode from one workspace session to every workspace session saved on
+  that device. That trade is accepted for one-action switching; each credential
+  still authorizes exactly one workspace in one region, and the account credential
+  authorizes discovery and onboarding only. No refresh token enters the renderer.
 - **Lockdown mode and the credential-clearing paths must clear the whole set.**
   Anything that deletes stored credentials today deletes one record; leaving a
   background workspace's credential behind after a lockdown or a sign-out would be
   a silently retained key. This is the failure most likely to be missed, so it is
   named here and in [Acceptance](#acceptance).
 - **A background session is a credential for a workspace nobody is watching.**
-  Removal from that workspace stops it resolving immediately — every authorization
-  query joins membership, so the row disappearing is the revocation — and the
-  existing access-revocation queue closes any socket it still holds.
-- **Sign-out revokes every session.** `AuthService.logout` revokes one session per
-  call, so signing out issues one call per stored credential, to each credential's
-  own region.
+  Removal stops it resolving immediately because every authorization query joins
+  active membership and a non-abandoned workspace. `session_revoked` and
+  `workspace_access_denied` are terminal for only that credential; an HTTP status
+  alone is not. The existing access-revocation queue closes any socket it holds.
+- **Sign-out guarantees local deletion and attempts remote revocation.**
+  `AuthService.logout` revokes one session per call, so the desktop calls each
+  credential's own region before erasing the set. A failed network call is not
+  described as a revoked server session: local deletion wins, and the unreachable
+  server session expires normally.
 - **Nothing gains cross-workspace authority.** No route accepts two workspace ids,
   no object is addressed from another workspace's session, and the workspace
   membership route keeps its existing check that the path's workspace is the one
@@ -481,17 +617,23 @@ throwing away. What is new is only that the answer may hold more than one entry.
   the desktop offers the switcher, **Create a workspace**, and in-app invitation
   acceptance. It is not an authorization gate, and the API accepts a second
   membership whether or not it is on.
-- **Order.** Schema first (`abandoned_at`, the binding key change) — both are
-  inert on their own. Then the server guards: removing the five code refusals,
-  adding leave and abandon, and stopping discovery from hiding invitations once a
-  membership exists. Then the desktop credential set, which is the riskiest step
-  because it rewrites a file that holds the only thing standing between a person
-  and signing in again; it ships with the migration from version 1 and no
-  behavior change. Then the switcher behind the flag. Then attention counts.
+- **Order.** Schema first: `abandoned_at`, the rebuilt binding table and corrected
+  placement trigger, and the Global setup-operation journal. They are inert until
+  the server uses them. Then an additive onboarding response ships with both the
+  existing singular `workspace` compatibility field and the new `workspaces`
+  list; an older desktop ignores the list and activates the stable first
+  membership, while the new desktop uses all of it. Then the idempotent server
+  coordinator, leave and atomic abandonment, the removed single-membership
+  guards, and discovery reconciliation ship. Then the desktop credential/profile
+  sets, which are the riskiest step because they rewrite files that hold the only
+  thing standing between a person and signing in again; they ship with version-1
+  migrations and no behavior change. Then the switcher behind the flag. Then
+  attention counts.
 - **Turning it off.** Clearing the flag hides the switcher. An account that
-  already holds two memberships keeps them and continues to open the most recently
-  active one — the client falls back to activating one workspace, which is what it
-  does today.
+  already holds two memberships keeps them and the new client continues to open
+  its device-local active one. An older client receives the singular compatibility
+  workspace and remains usable; it does not expose the other memberships. Turning
+  the flag off never asks the server to collapse or delete membership.
 - **Documentation.** Nothing in `docs/` owns switching, the credential set, or
   cross-workspace attention, so this ships with a new module document —
   `docs/multiple-workspaces.md`, written to
@@ -520,18 +662,41 @@ Walk these in a real window, per the repository's rule on visible changes:
    account button shows a dot and workspace 1's row shows `1`. Opening it clears
    both.
 4. A removes B from workspace 1 while B is in workspace 2. Workspace 1's row
-   disappears without a dialog, and B's next visit to it is impossible.
-5. B leaves workspace 3 (sole member) and confirms **Leave and close**. It is gone
-   from the switcher, and signing in again does not surface it.
-6. B signs out with three credentials stored. Every session is revoked
-   server-side, and the stored file holds nothing.
-7. Lockdown mode is enabled with three credentials stored. All three are cleared.
-8. The machine goes offline with two workspaces open. Counts hold their last value
-   with the *last updated* line, and switching to a cached workspace still works
-   until its access token expires.
+   disappears without a dialog after the `session_revoked`/`workspace_access_denied`
+   path, B's next visit is impossible, and the following discovery marks its
+   Global route inactive.
+5. B leaves workspace 3 as its sole member and confirms **Leave and close** while
+   another device holds a live session. Both devices' sockets close, ordinary
+   requests and refresh are refused, pending invitations cannot race the close,
+   and signing in again does not surface it.
+6. A create response is lost after the regional write commits. Retrying with the
+   same client operation id returns the same workspace and membership; the
+   switcher, Global bindings, and regional operation journal each contain one.
+   Reusing that id with a different name, action, or invitation is refused.
+7. One account has a Global and an EU binding. Inserting either route leaves the
+   other's placement affinity unchanged, and migrating an existing single row
+   produces the same two valid routes after the second is added.
+8. B signs out online with three workspace credentials plus the account
+   credential stored. Every successful logout call revokes its server session,
+   and the credential, profile, and draft stores are empty.
+9. B signs out with one region unreachable. Local credential, profile, and draft
+   stores are still empty; the failed server revocation is reported as cleanup
+   failure rather than claimed as complete.
+10. Lockdown mode is enabled with three credentials stored. The whole set is
+    re-encrypted under `safeStorage`, and disabling Lockdown or clearing credentials
+    leaves none behind.
+11. The machine goes offline with two workspaces known. Counts hold their last
+    value with the *last updated* line, selecting the background workspace reads
+    *Connect to open this workspace*, the active workspace stays on screen, and no
+    credential is discarded.
+12. With the flag off, and separately from an older desktop build, an account with
+    two memberships opens one compatible workspace instead of failing onboarding.
 
-Items 1–5 belong in the manual desktop acceptance flows in
+Items 1–5 and 8–12 belong in the manual desktop acceptance flows in
 [`../../e2e.md`](../../e2e.md), which already covers signup and invitations.
+Items 6 and 7 are durable service and migration tests: each must first be proved
+red by replaying the request without the operation journal, and by leaving the
+placement trigger keyed only to `platform_user_id`, respectively.
 
 ## Open questions
 
