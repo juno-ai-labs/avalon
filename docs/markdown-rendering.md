@@ -660,7 +660,12 @@ preview route's blob as image bytes and renders it in the card. The thumbnail
 fills a fixed-height box with centered `object-fit: cover`; the card revokes its
 object URL when the resource changes or the card unmounts. Its badge uses the
 image glyph rather than the generic file glyph. Document previews remain
-markdown glances on the existing conversion-and-retry path.
+markdown glances on the existing conversion-and-retry path. Because Chromium
+cannot decode Rally's supported TIFF and HEIF/HEIC sources, the preview route
+normalizes those through the existing bounded image-conversion path before the
+card receives them. Any remaining browser decode failure falls back to the
+ordinary card instead of leaving a broken thumbnail, and off-screen thumbnails
+defer decoding with native lazy loading.
 
 **Why:** Image bytes were decoded as text by the generic document-preview path,
 so PNG data appeared as replacement characters while the card still showed a
@@ -675,7 +680,9 @@ Revoke every object URL, preserve centered cover scaling, and do not send
 non-image resources around the derivative reader that waits out conversion. A
 still does not fetch previews, so its fixed-light export stylesheet must keep an
 explicit hidden answer for the image-preview class just as it does for text and
-skeleton previews.
+skeleton previews. Formats added to Rally's image allowlist must either be
+browser-decodable or be normalized at the preview boundary; the renderer's
+decode-error fallback remains required because metadata and bytes can disagree.
 
 ### 2026-08-30 — Heading collapse belongs only to the main message feed
 
