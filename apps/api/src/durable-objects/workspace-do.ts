@@ -976,6 +976,8 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
 
 interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
   workstream_id: string;
+  /** 1 once an automation run's own work stream has been made visible. */
+  automation_exposed?: number;
   authority_generation: number;
   common_waterline: number;
   common_event_id: string;
@@ -2232,6 +2234,57 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: [
     `DROP TABLE workspace_workstream_suggestion_feedback`,
   ],
+}, {
+  version: 26,
+  description: "automations a work stream owns, and runs it has made visible",
+  statements: [
+    // A table rebuild, because SQLite cannot alter a CHECK in place and this
+    // one has to admit a third scope. Copied whole and renamed, with the index
+    // recreated after: the projection this table serves is read on every
+    // sidebar open, and a rebuild that lost it would be a silent full scan.
+    `CREATE TABLE automation_directory_v26 (
+      automation_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      author_user_id TEXT NOT NULL,
+      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+      projection_version INTEGER NOT NULL CHECK (projection_version > 0),
+      payload_hash TEXT NOT NULL,
+      lifecycle TEXT NOT NULL CHECK (lifecycle IN ('draft', 'activating', 'active', 'paused', 'deleted')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace', 'workstream')),
+      -- Set exactly when the scope is 'workstream': the room that owns the
+      -- automation, which is also the only room it can deliver into. The rail
+      -- reads it; the sidebar excludes it.
+      owning_workstream_id TEXT,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      next_run_at INTEGER,
+      attention_code TEXT,
+      projected_at INTEGER NOT NULL CHECK (projected_at >= 0),
+      CHECK ((scope = 'workstream') = (owning_workstream_id IS NOT NULL))
+    ) STRICT`,
+    `INSERT INTO automation_directory_v26
+       (automation_id, workspace_id, author_user_id, authority_generation, projection_version,
+        payload_hash, lifecycle, scope, owning_workstream_id, title, description,
+        next_run_at, attention_code, projected_at)
+     SELECT automation_id, workspace_id, author_user_id, authority_generation, projection_version,
+            payload_hash, lifecycle, scope, NULL, title, description,
+            next_run_at, attention_code, projected_at
+       FROM automation_directory`,
+    `DROP TABLE automation_directory`,
+    `ALTER TABLE automation_directory_v26 RENAME TO automation_directory`,
+    `CREATE INDEX automation_directory_sidebar_idx
+      ON automation_directory(workspace_id, lifecycle, projected_at DESC, automation_id)`,
+    // The rail's own read, which the sidebar index does not serve: it leads
+    // with the workspace, and this one leads with the room.
+    `CREATE INDEX automation_directory_workstream_idx
+      ON automation_directory(owning_workstream_id, lifecycle, projected_at DESC)
+      WHERE owning_workstream_id IS NOT NULL`,
+    // What makes a run's own work stream visible. `origin_type` is never
+    // rewritten — it is provenance, the run history still needs it, and an
+    // exposed run is still a run.
+    `ALTER TABLE workspace_workstream_directory ADD COLUMN automation_exposed INTEGER NOT NULL DEFAULT 0
+       CHECK (automation_exposed IN (0, 1))`,
+  ],
 }];
 
 function compareProjectionCoordinate(
@@ -2607,6 +2660,7 @@ const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
     directory.description, directory.scope, directory.exact_state,
     directory.system_kind, directory.last_activity_at, directory.completed_at,
     directory.archived_at, directory.email_address, directory.origin_type,
+    directory.automation_exposed,
     directory.origin_label, directory.created_by_user_id,
     directory.automation_subscription_id, directory.automation_run_id,
     directory.planned_for, directory.title_status,
@@ -3679,7 +3733,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       projectionVersion: z.number().int().positive(),
       payloadHash: z.string().min(1),
       lifecycle: z.enum(["draft", "activating", "active", "paused", "deleted"]),
-      scope: z.enum(["personal", "workspace"]),
+      scope: z.enum(["personal", "workspace", "workstream"]),
+      /**
+       * The room that owns a `workstream`-scoped automation, and nothing at all
+       * for the other two. The rail reads the directory by it and the sidebar
+       * excludes rows that have one, so a projection that omitted it would put
+       * a room's automation in everybody's sidebar.
+       */
+      owningWorkstreamId: IdSchema.nullable().default(null),
       title: z.string(),
       description: z.string(),
       nextRunAt: z.number().int().nonnegative().nullable(),
@@ -3714,9 +3775,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.state.storage.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, author_user_id, authority_generation,
-            projection_version, payload_hash, lifecycle, scope, title, description,
-            next_run_at, attention_code, projected_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            projection_version, payload_hash, lifecycle, scope, owning_workstream_id,
+            title, description, next_run_at, attention_code, projected_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(automation_id) DO UPDATE SET
            author_user_id = excluded.author_user_id,
            authority_generation = excluded.authority_generation,
@@ -3724,6 +3785,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            payload_hash = excluded.payload_hash,
            lifecycle = excluded.lifecycle,
            scope = excluded.scope,
+           owning_workstream_id = excluded.owning_workstream_id,
            title = excluded.title,
            description = excluded.description,
            next_run_at = excluded.next_run_at,
@@ -3737,6 +3799,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         request.payloadHash,
         request.lifecycle,
         request.scope,
+        request.owningWorkstreamId,
         request.title,
         request.description,
         request.nextRunAt,
@@ -3775,6 +3838,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               attention_code, projected_at
           FROM automation_directory
          WHERE workspace_id = ? AND lifecycle <> 'deleted'
+           -- A room's automation is listed in that room's rail and nowhere
+           -- else. In a personal list it would be an object somebody sees
+           -- without the context that explains it, in a list where pausing it
+           -- affects people who are not looking at that list.
+           AND owning_workstream_id IS NULL
            AND (scope = 'workspace' OR author_user_id = ?)
          ORDER BY CASE lifecycle WHEN 'draft' THEN 1 ELSE 0 END,
                   projected_at DESC, automation_id
@@ -3816,13 +3884,28 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { authorized: false };
     }
     const row = this.state.storage.sql.exec<{
-      scope: "personal" | "workspace";
+      scope: "personal" | "workspace" | "workstream";
       author_user_id: string;
-    }>(`SELECT scope, author_user_id FROM automation_directory
+      owning_workstream_id: string | null;
+    }>(`SELECT scope, author_user_id, owning_workstream_id FROM automation_directory
           WHERE workspace_id = ? AND automation_id = ? AND lifecycle <> 'deleted'`,
     request.workspaceId, request.automationId).toArray()[0];
+    if (!row) return { authorized: false };
+    // A room's automation is the room's: every active participant may read it,
+    // and participation lives in the work stream's own object rather than
+    // here. The viewer overlay this object *does* keep is the same fact the
+    // sidebar is filtered by, so it answers without a second round trip.
+    if (row.scope === "workstream" && row.owning_workstream_id) {
+      const participant = this.state.storage.sql.exec<{ is_participant: number }>(
+        `SELECT is_participant FROM workspace_workstream_viewers
+          WHERE workstream_id = ? AND user_id = ?`,
+        row.owning_workstream_id,
+        request.userId,
+      ).toArray()[0];
+      return { authorized: participant?.is_participant === 1 };
+    }
     return {
-      authorized: Boolean(row && (row.scope === "workspace" || row.author_user_id === request.userId)),
+      authorized: row.scope === "workspace" || row.author_user_id === request.userId,
     };
   }
 
@@ -8404,7 +8487,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NULL
-         AND directory.origin_type <> 'automation'
+         AND (directory.origin_type <> 'automation' OR directory.automation_exposed = 1)
          AND directory.exact_state NOT IN ('running', 'interrupting', 'preparing_context',
                                            'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
@@ -8500,7 +8583,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NOT NULL
-         AND directory.origin_type <> 'automation'
+         AND (directory.origin_type <> 'automation' OR directory.automation_exposed = 1)
          AND (? = 1 OR directory.system_kind IS NULL)
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
        ORDER BY pin.position, directory.workstream_id`,
@@ -8519,7 +8602,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL
-         AND directory.origin_type <> 'automation'
+         AND (directory.origin_type <> 'automation' OR directory.automation_exposed = 1)
          AND directory.exact_state IN ('running', 'interrupting', 'preparing_context',
                                        'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
@@ -8598,7 +8681,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray()[0];
       if (!row) continue;
       const visible = row.archived_at === null
-        && row.origin_type !== "automation"
+        && (row.origin_type !== "automation" || row.automation_exposed === 1)
         && (row.scope === "workspace" || row.is_participant === 1);
       const stateVersion = directoryStateVersion(row);
       const payload = JSON.stringify(WorkspaceWorkstreamStateEventSchema.parse({

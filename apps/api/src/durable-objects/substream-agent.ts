@@ -3,6 +3,7 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
+  AutomationActivationV1Schema,
   ClientSocketEventSchema,
   IdSchema,
   PersonalSocketEventSchema,
@@ -1290,6 +1291,75 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return {
         outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
         code: appended.outcome === "replayed" ? "resource_update_replayed" : "resource_update_appended",
+      };
+    }, true);
+  }
+
+  /**
+   * An automation's result, delivered into the work stream that owns it.
+   *
+   * Follows `appendWatchedResourceEvent` exactly: an idempotent client message
+   * ID derived from the delivery, the authority-generation fence every provider
+   * write respects, and the archive check. Storage, ordering and transport are
+   * unchanged; only the type is new, and `message_type` carries no CHECK, so
+   * nothing here is a migration.
+   *
+   * A retry after a crash lands the same row once and wakes the room once.
+   */
+  async appendAutomationActivation(input: unknown): Promise<{
+    outcome: "appended" | "replayed" | "refused";
+    code: string;
+  }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      workspaceId: z.string().min(1),
+      workstreamId: z.string().min(1),
+      authorityGeneration: z.number().int().positive(),
+      deliveryId: z.string().min(1),
+      text: z.string().min(1),
+      activation: AutomationActivationV1Schema,
+    }).strict().parse(input);
+    const clientMessageId = `automation-activation:${request.deliveryId}`;
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return { outcome: "refused", code: "workstream_destination_mismatch" };
+    }
+    if (this.messages.messageByClientId({ clientMessageId })) {
+      return { outcome: "replayed", code: "automation_activation_replayed" };
+    }
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(request.activation.occurredAt),
+      clientMessageId,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "automation_activation",
+      text: request.text,
+      structuredContentJson: JSON.stringify(request.activation),
+      producedByRunId: null,
+      now: request.activation.occurredAt,
+    });
+    return this.product.commitRuntimeMutation(() => {
+      const authority = this.ctx.storage.sql.exec<{
+        authority_generation: number;
+        archived_at: number | null;
+      }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
+      if (!authority || authority.authority_generation !== request.authorityGeneration) {
+        return { outcome: "refused" as const, code: "workstream_authority_generation_stale" };
+      }
+      if (authority.archived_at !== null) {
+        return { outcome: "refused" as const, code: "workstream_archived" };
+      }
+      const appended = this.messages.appendPreparedMessage(prepared);
+      return {
+        outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
+        code: appended.outcome === "replayed"
+          ? "automation_activation_replayed"
+          : "automation_activation_appended",
       };
     }, true);
   }

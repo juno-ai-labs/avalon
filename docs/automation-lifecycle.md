@@ -579,6 +579,45 @@ idempotent per workspace.
 
 ## Changelog
 
+### 2026-09-01 — An automation a work stream can own
+
+**What changed:** `workstream` joins the automation scope vocabulary.
+AutomationAgent schema version 9 rebuilds `automation_acceptance` to admit it
+and to carry `owning_workstream_id`, paired to the scope by a CHECK so the two
+cannot disagree; WorkspaceDO version 26 rebuilds `automation_directory` the same
+way and adds an index for the per-room read the sidebar's index does not serve.
+`automation_state` gains `paused_reason`. Nothing sets the new scope yet — the
+authoring path that would is a later change — so every existing automation
+crosses both rebuilds unchanged and owning nothing.
+
+**Why:** An automation attached to a work stream is a standing behavior of that
+work stream: authored there, managed by whoever is there now, and delivering
+there. Keying any of that to its creator makes a personnel change into a silent
+product failure, and keying it to the workspace makes a room's business
+everybody's.
+
+`paused_reason` exists because archiving a work stream will pause the
+automations it owns and unarchiving will resume them — and resuming everything
+is wrong. An automation a person paused last month must not come back to life
+because somebody unarchived the room, so only rows that say
+`workstream_archived` are resumed.
+
+**Also, and it is a loosening:** acceptance no longer requires owner-or-admin
+for `workspace` scope. `connection-service.ts` already lists workspace-scoped
+connections to every member, so a member can call that connection's tools from a
+run in their own work stream today; a workspace automation adds a *schedule* on
+something they can already do, not a capability they lacked. What the workspace
+acquires is a standing object it must manage, so editing, pausing and deleting
+one stay owner-or-admin. The residual is that it runs unattended and repeatedly
+where interactive use is attended and once, and the workspace learns of it by
+seeing it in the list rather than by being asked.
+
+**Considered and rejected:** widening the shared `ScopeSchema`. A work stream
+has no third scope, and the enum is used wherever a room's audience is chosen —
+widening it would offer `workstream` in every one of those places. Automations
+got `AutomationScopeSchema` of their own instead.
+
+
 ### 2026-09-01 — A completed run's result is judged before it is delivered
 
 **What changed:** `resolveRunDisposition` on AutomationAgent, four columns on

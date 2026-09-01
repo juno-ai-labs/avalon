@@ -14,6 +14,7 @@ import {
   ScopeSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
   AutomationSetEvaluatorRulesMutationSchema,
+  AutomationScopeSchema,
   AutomationRunContextV1Schema,
   asAutomationId,
   asHarnessRunId,
@@ -153,20 +154,45 @@ const AutomationAcceptDraftRequestSchema = z.object({
   workspaceId: z.string().uuid(),
   authorUserId: z.string().uuid(),
   definitionRevision: z.number().int().positive(),
-  scope: ScopeSchema,
+  scope: AutomationScopeSchema,
+  /**
+   * The room that owns a `workstream` automation. Supplied by the Worker from
+   * the loop the draft was submitted in, never by the model and never by the
+   * request body's author: an agent cannot claim a room it is not running in.
+   */
+  owningWorkstreamId: z.string().uuid().nullable().default(null),
   defaultPluginIds: z.array(ModelPluginIdSchema),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,
   deliveryTargets: AutomationDeliveryTargetSetSchema,
   modelOverride: AgentModelOverrideSchema.nullable(),
   /**
-   * The caller's workspace membership role, resolved by the Worker. Present
-   * because a workspace-scoped automation binds workspace connector
-   * credentials and publishes a directory entry every member sees, so only an
-   * owner or admin may create one. Optional so an import or a replayed
-   * personal acceptance parses unchanged.
+   * The caller's workspace membership role, resolved by the Worker.
+   *
+   * It no longer gates acceptance. A workspace-scoped connection is already
+   * visible and usable to every member — `connection-service.ts` lists
+   * connections `WHERE workspace_id = ? AND (scope = 'workspace' OR
+   * owner_user_id = ?)` — so a member can call that connection's tools from a
+   * run in their own work stream today, by asking. What a workspace automation
+   * adds is a *schedule* on something they can already do, not a capability
+   * they lacked, and refusing that while permitting the same call by hand is a
+   * rule that reads as governance and works as friction.
+   *
+   * What the workspace does acquire is a standing object it must manage, so
+   * editing, pausing and deleting one stay owner-or-admin. Kept on the request
+   * because the field is part of the shipped shape and a replayed acceptance
+   * must still parse.
    */
   actorRole: z.string().optional(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  // The scope names the room; the room is not a second choice beside it.
+  if ((value.scope === "workstream") !== (value.owningWorkstreamId !== null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["owningWorkstreamId"],
+      message: "A work stream-scoped automation names the work stream that owns it, and no other scope may.",
+    });
+  }
+});
 
 const AutomationSocketRevocationSchema = z.object({
   reason: z.string().min(1),
@@ -606,6 +632,56 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
     `ALTER TABLE automation_runs ADD COLUMN disposition_at INTEGER
        CHECK (disposition_at IS NULL OR disposition_at >= 0)`,
   ],
+}, {
+  version: 9,
+  description: "an automation a work stream owns, and why a paused one is paused",
+  statements: [
+    // A rebuild, because SQLite cannot alter a CHECK in place and this one has
+    // to admit a third scope. The table holds one row, so the copy is exact and
+    // cheap; what matters is that the constraint keeps saying what it said and
+    // says one more thing.
+    `CREATE TABLE automation_acceptance_v9 (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      definition_revision INTEGER NOT NULL,
+      request_hash TEXT NOT NULL,
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace', 'workstream')),
+      -- The room that owns this automation, set exactly when the scope says so.
+      -- Recorded at acceptance and never changed afterwards: the owning work
+      -- stream is identity, not configuration, and moving it would change who
+      -- may manage the automation and whose results it reaches.
+      owning_workstream_id TEXT,
+      default_plugin_ids_json TEXT NOT NULL CHECK (json_valid(default_plugin_ids_json)),
+      activity_source_plugin_ids_json TEXT NOT NULL CHECK (json_valid(activity_source_plugin_ids_json)),
+      connector_bindings_json TEXT NOT NULL CHECK (json_valid(connector_bindings_json)),
+      delivery_targets_json TEXT NOT NULL CHECK (json_valid(delivery_targets_json)),
+      model_override TEXT,
+      evaluator_projection_json TEXT NOT NULL CHECK (json_valid(evaluator_projection_json)),
+      evaluator_source_hash TEXT NOT NULL,
+      effective_after_event_sequence INTEGER,
+      accepted_at INTEGER NOT NULL,
+      activated_at INTEGER,
+      CHECK ((scope = 'workstream') = (owning_workstream_id IS NOT NULL))
+    ) STRICT`,
+    `INSERT INTO automation_acceptance_v9
+       (id, definition_revision, request_hash, scope, owning_workstream_id,
+        default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+        delivery_targets_json, model_override, evaluator_projection_json,
+        evaluator_source_hash, effective_after_event_sequence, accepted_at, activated_at)
+     SELECT id, definition_revision, request_hash, scope, NULL,
+            default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+            delivery_targets_json, model_override, evaluator_projection_json,
+            evaluator_source_hash, effective_after_event_sequence, accepted_at, activated_at
+       FROM automation_acceptance`,
+    `DROP TABLE automation_acceptance`,
+    `ALTER TABLE automation_acceptance_v9 RENAME TO automation_acceptance`,
+    // Why a paused automation is paused. Archiving a work stream pauses the
+    // automations it owns and unarchiving resumes them — but resuming
+    // everything is wrong: one a person paused last month must not come back
+    // because somebody unarchived the room. Only rows that say
+    // `workstream_archived` are resumed.
+    `ALTER TABLE automation_state ADD COLUMN paused_reason TEXT
+       CHECK (paused_reason IS NULL OR paused_reason IN ('person', 'workstream_archived'))`,
+  ],
 }];
 
 /**
@@ -637,7 +713,8 @@ interface ActiveCompilerRow extends Record<string, SqlStorageValue> {
 type AutomationAcceptanceRow = {
   definition_revision: number;
   request_hash: string;
-  scope: "personal" | "workspace";
+  scope: "personal" | "workspace" | "workstream";
+  owning_workstream_id: string | null;
   default_plugin_ids_json: string;
   activity_source_plugin_ids_json: string;
   connector_bindings_json: string;
@@ -1115,9 +1192,6 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     const input = AutomationAcceptDraftRequestSchema.parse(rawInput);
     this.assertAuthor(input.automationId, input.workspaceId, input.authorUserId);
-    if (input.scope === "workspace" && input.actorRole !== "owner" && input.actorRole !== "admin") {
-      throw new Error("automation_workspace_scope_requires_admin");
-    }
     // The role authorizes the request; it is not part of what was requested.
     // Hashing it would make an identical retry by a second admin look like a
     // changed acceptance and refuse with `automation_acceptance_conflict`.
@@ -1151,14 +1225,16 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       this.state.storage.transactionSync(() => {
         this.state.storage.sql.exec(
           `INSERT INTO automation_acceptance
-             (id, definition_revision, request_hash, scope, default_plugin_ids_json,
+             (id, definition_revision, request_hash, scope, owning_workstream_id,
+              default_plugin_ids_json,
               activity_source_plugin_ids_json, connector_bindings_json,
               delivery_targets_json, model_override, evaluator_projection_json,
               evaluator_source_hash, accepted_at)
-           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           input.definitionRevision,
           requestHash,
           input.scope,
+          input.owningWorkstreamId,
           JSON.stringify(input.defaultPluginIds),
           JSON.stringify(input.activitySourcePluginIds),
           JSON.stringify(prepared.connectorBindings),
@@ -1275,6 +1351,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       this.enqueueWorkspaceProjection({
         lifecycle: "active",
         scope: input.scope,
+        owningWorkstreamId: input.owningWorkstreamId,
         definition,
         payloadHash: acceptance.evaluator_source_hash,
         now,
@@ -3312,7 +3389,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   private async resolveDeliveryTargets(input: {
     workspaceId: string;
     authorUserId: string;
-    scope: "personal" | "workspace";
+    scope: z.infer<typeof AutomationScopeSchema>;
     deliveryTargets: z.infer<typeof AutomationDeliveryTargetSetSchema>;
   }): Promise<AutomationRunContextV1["deliveryTargets"]> {
     if (input.scope !== "personal" && input.deliveryTargets.length > 0) {
@@ -3363,7 +3440,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return resolved;
   }
 
-  private async acceptanceTimezone(scope: "personal" | "workspace", authorUserId: string): Promise<string> {
+  private async acceptanceTimezone(
+    scope: "personal" | "workspace" | "workstream",
+    authorUserId: string,
+  ): Promise<string> {
     const row = scope === "personal"
       ? await this.env.DB.prepare(`SELECT timezone FROM users WHERE id = ?`).bind(authorUserId)
           .first<{ timezone: string | null }>()
@@ -3898,7 +3978,8 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
   private enqueueWorkspaceProjection(input: {
     lifecycle: "draft" | "activating" | "active" | "paused" | "deleted";
-    scope: "personal" | "workspace";
+    scope: "personal" | "workspace" | "workstream";
+    owningWorkstreamId?: string | null;
     definition: AutomationDraft | null;
     payloadHash: string;
     now: number;
@@ -3931,6 +4012,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         payloadHash: input.payloadHash,
         lifecycle: input.lifecycle,
         scope: input.scope,
+        owningWorkstreamId: input.owningWorkstreamId ?? null,
         title: input.definition?.name ?? "New automation",
         description: input.definition?.description ?? "",
         nextRunAt,
@@ -4042,11 +4124,18 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
    * personal automation is its author's alone, and an admin role does not
    * reach into it.
    */
+  /**
+   * Who may change an automation that already exists — which is a different
+   * question from who may accept one, and the two are easy to run together.
+   * Accepting starts a standing behavior somebody asked for; managing alters
+   * one the workspace or a room has come to depend on.
+   */
   private assertManager(
     automationId: string,
     workspaceId: string,
     userId: string,
     actorRole: string | undefined,
+    participantOfOwningWorkstream = false,
   ): void {
     const identity = this.identity();
     if (
@@ -4055,8 +4144,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       || identity.region !== this.env.AVALON_REGION
     ) throw new Error("automation_authority_mismatch");
     if (identity.author_user_id === userId) return;
-    const workspaceScoped = this.acceptance()?.scope === "workspace";
-    if (workspaceScoped && (actorRole === "owner" || actorRole === "admin")) return;
+    const scope = this.acceptance()?.scope;
+    if (scope === "workspace" && (actorRole === "owner" || actorRole === "admin")) return;
+    // A room's automation belongs to the room: every active participant may
+    // pause, resume, edit and delete it, and none of that depends on who typed
+    // it. Participation lives in the work stream's own object, so the caller
+    // resolves it and this asserts on the answer.
+    if (scope === "workstream" && participantOfOwningWorkstream) return;
     throw new Error("automation_authority_mismatch");
   }
 

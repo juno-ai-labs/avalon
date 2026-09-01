@@ -6171,4 +6171,86 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(testable.nextRunAt!()).not.toBeNull();
     });
   });
+
+  describe("automation activation", () => {
+    const activation = {
+      type: "automation_activation" as const,
+      schemaVersion: 1 as const,
+      automationId: "00000000-0000-7000-8000-0000000001a1",
+      automationName: "Candidate email intake",
+      runId: "00000000-0000-7000-8000-0000000001a2",
+      runWorkstreamId: "00000000-0000-7000-8000-0000000001a3",
+      deliveryId: "delivery-1",
+      trigger: { kind: "external_event" as const },
+      occurredAt: Date.parse("2026-09-01T09:00:00.000Z"),
+    };
+
+    async function openRuntime(): Promise<DurableObjectStub<SubstreamAgent>> {
+      await seedOpenAuthority();
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      expect((await stub.bootstrapRuntime({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        generation: 1,
+      })).status).toBe(200);
+      return stub;
+    }
+
+    it("lands one row a retry cannot duplicate", async () => {
+      const stub = await openRuntime();
+      const request = {
+        schemaVersion: 1 as const,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        authorityGeneration: 1,
+        deliveryId: activation.deliveryId,
+        text: "Two candidates reached final round.",
+        activation,
+      };
+
+      expect(await stub.appendAutomationActivation(request))
+        .toEqual({ outcome: "appended", code: "automation_activation_appended" });
+      // The delivery loop retries after a crash; the room must not be told
+      // twice, and the idempotency is the delivery's own id.
+      expect(await stub.appendAutomationActivation(request))
+        .toEqual({ outcome: "replayed", code: "automation_activation_replayed" });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        const rows = state.storage.sql.exec<{ message_type: string; content: string; structured_content_json: string }>(
+          `SELECT message_type, content, structured_content_json
+             FROM canonical_conversation_turn_details WHERE message_type = 'automation_activation'`,
+        ).toArray();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.content).toBe("Two candidates reached final round.");
+        expect(JSON.parse(rows[0]!.structured_content_json).automationName)
+          .toBe("Candidate email intake");
+      });
+    });
+
+    it("refuses a run that outlived a pause, and an archived room", async () => {
+      const stub = await openRuntime();
+      const request = {
+        schemaVersion: 1 as const,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        authorityGeneration: 2,
+        deliveryId: "delivery-stale",
+        text: "Nobody should read this.",
+        activation: { ...activation, deliveryId: "delivery-stale" },
+      };
+
+      // The same fence provider writes respect: an in-flight run whose
+      // automation was paused or deleted does not get to deliver.
+      expect(await stub.appendAutomationActivation(request))
+        .toEqual({ outcome: "refused", code: "workstream_authority_generation_stale" });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        state.storage.sql.exec(`UPDATE workstream SET archived_at = ? WHERE id = 1`, Date.now());
+      });
+      expect(await stub.appendAutomationActivation({ ...request, authorityGeneration: 1 }))
+        .toEqual({ outcome: "refused", code: "workstream_archived" });
+    });
+  });
 });

@@ -112,6 +112,103 @@ describe("the WorkspaceDO context-suggestion retirement", () => {
   });
 });
 
+describe("the WorkspaceDO automation-ownership migration", () => {
+  /** A directory row and its viewer overlay, as version 25 leaves them. */
+  function seedProjectedAutomation(database: DatabaseSync): void {
+    // The workspace-identity triggers refuse a row for another workspace, so
+    // the object has to know which one it is before anything is written.
+    seedIdentity(database);
+    database.exec(`INSERT INTO automation_directory
+      (automation_id, workspace_id, author_user_id, authority_generation, projection_version,
+       payload_hash, lifecycle, scope, title, description, next_run_at, attention_code, projected_at)
+     VALUES ('automation-1', '${WORKSPACE_ID}', 'user-1', 1, 1, 'sha256:one', 'active',
+             'workspace', 'Weekly changelog', 'Posts the changelog.', NULL, NULL, 1)`);
+    database.exec(`INSERT INTO workspace_workstream_directory
+      (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title,
+       description, preview, scope, exact_state, last_activity_at, origin_type, title_status,
+       latest_attention_ordinal, unread_tracking_start_ordinal,
+       source_created_at, source_updated_at, projected_at)
+     VALUES ('workstream-1', 1, 1, 'event-1', 'sha256:two', 'A run', '', '', 'personal',
+             'idle', 1, 'automation', 'settled', 0, 0, 1, 1, 1)`);
+  }
+
+  it("carries every projected automation across the rebuild, owning nothing", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 25);
+    seedProjectedAutomation(database);
+
+    apply(database, 26, 25);
+
+    // The rebuild is create-copy-drop-rename. What matters is that the rows
+    // survive it and that the scratch name does not: a rebuild that left the
+    // temporary table behind would pass a fresh-schema test and leave every
+    // upgraded object with two directories.
+    expect(database.prepare(
+      `SELECT automation_id, scope, owning_workstream_id, title FROM automation_directory`,
+    ).all()).toEqual([{
+      automation_id: "automation-1",
+      scope: "workspace",
+      owning_workstream_id: null,
+      title: "Weekly changelog",
+    }]);
+    expect(database.prepare(
+      `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'automation_directory_v26'`,
+    ).get()).toBeUndefined();
+    // Recreated after the rename: the sidebar reads this table on every open,
+    // and a rebuild that dropped its index would be a silent full scan.
+    expect(database.prepare(
+      `SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'automation_directory'
+         AND sql IS NOT NULL
+        ORDER BY name`,
+    ).all().map((row) => (row as { name: string }).name)).toEqual([
+      "automation_directory_sidebar_idx",
+      "automation_directory_workstream_idx",
+    ]);
+  });
+
+  it("admits a room's automation and refuses one that owns a room without saying so", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 26);
+
+    database.exec(`INSERT INTO automation_directory
+      (automation_id, workspace_id, author_user_id, authority_generation, projection_version,
+       payload_hash, lifecycle, scope, owning_workstream_id, title, description,
+       next_run_at, attention_code, projected_at)
+     VALUES ('automation-2', '${WORKSPACE_ID}', 'user-1', 1, 1, 'sha256:three', 'active',
+             'workstream', 'workstream-1', 'Monday agenda', 'Builds the agenda.', NULL, NULL, 1)`);
+
+    // The scope names the room, so the two cannot disagree: a `workstream`
+    // automation without one, or any other scope with one, is not a row this
+    // table will hold.
+    expect(() => database.exec(`INSERT INTO automation_directory
+      (automation_id, workspace_id, author_user_id, authority_generation, projection_version,
+       payload_hash, lifecycle, scope, owning_workstream_id, title, description,
+       next_run_at, attention_code, projected_at)
+     VALUES ('automation-3', '${WORKSPACE_ID}', 'user-1', 1, 1, 'sha256:four', 'active',
+             'workstream', NULL, 'Nameless', '', NULL, NULL, 1)`)).toThrow();
+    expect(() => database.exec(`INSERT INTO automation_directory
+      (automation_id, workspace_id, author_user_id, authority_generation, projection_version,
+       payload_hash, lifecycle, scope, owning_workstream_id, title, description,
+       next_run_at, attention_code, projected_at)
+     VALUES ('automation-4', '${WORKSPACE_ID}', 'user-1', 1, 1, 'sha256:five', 'active',
+             'personal', 'workstream-1', 'Mine', '', NULL, NULL, 1)`)).toThrow();
+  });
+
+  it("starts every existing run's work stream hidden", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 25);
+    seedProjectedAutomation(database);
+
+    apply(database, 26, 25);
+
+    // The column exists so a run can be *made* visible; nothing that already
+    // ran becomes visible because the column arrived.
+    expect(database.prepare(
+      `SELECT automation_exposed FROM workspace_workstream_directory WHERE workstream_id = 'workstream-1'`,
+    ).get()).toEqual({ automation_exposed: 0 });
+  });
+});
+
 describe("the WorkspaceDO resource-version migration", () => {
   it("backfills history, increments semantic writes, and retains every R2 reference until deletion", () => {
     const database = new DatabaseSync(":memory:");
