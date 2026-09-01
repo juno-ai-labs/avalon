@@ -21,6 +21,7 @@ interface Fixture {
   registryRow?: Record<string, unknown> | null;
   canRead?: boolean;
   displayName?: string | null;
+  page?: { rows?: Record<string, unknown>[]; ok?: boolean };
 }
 
 /**
@@ -63,7 +64,14 @@ function fixture(input: Fixture = {}) {
     get: () => workstreamStub,
     jurisdiction: (): Env["WORKSTREAM_DOS"] => workstreams,
   });
-  const hostStub = { openForViewer, readErrors: async () => [] };
+  const hostStub = {
+    openForViewer,
+    readErrors: async () => [],
+    describeData: async () => ({ tables: [] }),
+    pageData: async () => (input.page?.ok === false
+      ? { ok: false as const, reason: "table_refused" as const, detail: "no such table" }
+      : { ok: true as const, rows: input.page?.rows ?? [] }),
+  };
   const hosts: Env["ARTIFACT_HOSTS"] = createCloudflareTestBinding<Env["ARTIFACT_HOSTS"]>({
     idFromName: (name: string) => createTestDurableObjectId(name),
     get: () => hostStub,
@@ -170,5 +178,58 @@ describe("who is refused, and how indistinguishably", () => {
     const { service } = fixture({ canRead: false });
     const error = await refusal(() => service.errors(RESOURCE));
     expect(error.status).toBe(404);
+  });
+});
+
+describe("the CSV an export hands somebody", () => {
+  it("quotes every field rather than deciding per value which needs it", async () => {
+    // Model-designed columns holding visitor-written values: deciding per field
+    // gets one case wrong, and the wrong case breaks a row apart.
+    const { service } = fixture({ page: { rows: [{ name: "Ada", note: "plain" }] } });
+    const { csv } = await service.pageData(RESOURCE, "rsvps", 0);
+    expect(csv).toBe('"name","note"\r\n"Ada","plain"');
+  });
+
+  it("keeps a value containing a comma, a quote, or a newline in one field", async () => {
+    const { service } = fixture({
+      page: { rows: [{ note: 'a,b "c"\nd' }] },
+    });
+    const { csv } = await service.pageData(RESOURCE, "rsvps", 0);
+    expect(csv).toBe('"note"\r\n"a,b ""c""\nd"');
+  });
+
+  it("defuses a value a spreadsheet would run as a formula", async () => {
+    // A visitor who types this into a sign-up sheet is writing a formula into
+    // whoever opens the export.
+    const { service } = fixture({
+      page: { rows: [{ a: "=1+1", b: "+x", c: "-y", d: "@z" }] },
+    });
+    const { csv } = await service.pageData(RESOURCE, "rsvps", 0);
+    expect(csv.split("\r\n")[1]).toBe(`"'=1+1","'+x","'-y","'@z"`);
+  });
+
+  it("writes an empty field for a null rather than the word null", async () => {
+    const { service } = fixture({ page: { rows: [{ name: null }] } });
+    const { csv } = await service.pageData(RESOURCE, "rsvps", 0);
+    expect(csv).toBe('"name"\r\n""');
+  });
+
+  it("returns nothing at all for an empty table", async () => {
+    const { service } = fixture({ page: { rows: [] } });
+    expect((await service.pageData(RESOURCE, "rsvps", 0)).csv).toBe("");
+  });
+
+  it("refuses a table the live schema does not have", async () => {
+    const { service } = fixture({ page: { ok: false } });
+    const error = await refusal(() => service.pageData(RESOURCE, "sqlite_master", 0));
+    expect(error.status).toBe(404);
+  });
+
+  it("reads nothing for a site that keeps no data", async () => {
+    const { service } = fixture({ registryRow: {
+      artifact_id: ARTIFACT, workstream_id: WORKSTREAM, mode: "static", stateful: 0,
+    } });
+    expect(await service.describeData(RESOURCE)).toEqual({ tables: [] });
+    expect(await service.pageData(RESOURCE, "rsvps", 0)).toEqual({ rows: [], csv: "" });
   });
 });
