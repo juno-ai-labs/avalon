@@ -229,6 +229,15 @@ export const AutomationRunContextV1Schema = z.strictObject({
   activitySourcePluginIds: z.record(z.string(), z.string().min(1)),
   connectorBindings: z.record(z.string(), z.unknown()),
   deliveryTargets: z.array(AutomationRunDeliveryTargetV1Schema),
+  /**
+   * The work stream that owns this automation, for a `workstream`-scoped one.
+   *
+   * Frozen here rather than resolved at delivery, and not part of
+   * `deliveryTargets`: nobody chose it. A room's automation delivers to its
+   * room because that is what it belongs to, so there is no entry to keep in
+   * agreement with the scope and no principal to record beside it.
+   */
+  owningWorkstreamId: IdSchema.nullable().default(null),
   modelOverride: z.string().min(1).nullable(),
   executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
   trigger: AutomationRunTriggerV1Schema,

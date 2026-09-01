@@ -3772,6 +3772,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       activitySourcePluginIds: JSON.parse(acceptance.activity_source_plugin_ids_json),
       connectorBindings: JSON.parse(acceptance.connector_bindings_json),
       deliveryTargets: JSON.parse(acceptance.delivery_targets_json),
+      owningWorkstreamId: acceptance.owning_workstream_id,
       modelOverride: acceptance.model_override,
       executionPrincipal: { type: "user", userId: identity.author_user_id },
       trigger,
@@ -3965,7 +3966,8 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
   private acceptance(): AutomationAcceptanceRow | null {
     return this.state.storage.sql.exec<AutomationAcceptanceRow>(
-      `SELECT definition_revision, request_hash, scope, default_plugin_ids_json,
+      `SELECT definition_revision, request_hash, scope, owning_workstream_id,
+              default_plugin_ids_json,
               activity_source_plugin_ids_json, connector_bindings_json,
               delivery_targets_json, model_override, evaluator_projection_json,
               evaluator_source_hash, effective_after_event_sequence, accepted_at, activated_at
