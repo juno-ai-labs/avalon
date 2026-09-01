@@ -1,6 +1,7 @@
 import { asUserId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
+  BUILDING_LIVE_SITES_SKILL,
   BUILT_IN_SKILLS,
   DEEP_RESEARCH_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
@@ -541,6 +542,41 @@ describe("built-in skills", () => {
       expect(skill.body.trim().length).toBeGreaterThan(200);
     }
     expect(new Set(BUILT_IN_SKILLS.map((skill) => skill.name)).size).toBe(BUILT_IN_SKILLS.length);
+  });
+
+  it("scopes the site skill to the plugin it is meaningless without", () => {
+    // The whole procedure ends in writing files in a sandbox and publishing the
+    // directory, so a run without Terminal should never be offered it.
+    expect(BUILDING_LIVE_SITES_SKILL.ownerPlugin).toBe("rally:terminal");
+  });
+
+  it("teaches the site contract the runtime actually enforces", () => {
+    const body = BUILDING_LIVE_SITES_SKILL.body;
+    // The entry names decide what a directory publishes as, so they have to be
+    // exact in the body a model reads before writing them.
+    expect(body).toContain("index.html");
+    expect(body).toContain("index.js");
+    expect(body).toContain("SiteData");
+    // The viewer headers are the product-header family's spelling, not a
+    // `Rally-…` invention beside it.
+    expect(body).toContain("x-rally-viewer-id");
+    expect(body).toContain("x-rally-viewer-name");
+    expect(body).not.toMatch(/\bRally-Viewer-Id\b/u);
+    // The three rules that keep a polling page a good citizen, and the one that
+    // makes the fence true rather than advisory.
+    expect(body).toContain("visibilitychange");
+    expect(body).toContain("401");
+    expect(body).toContain("Content-Security-Policy");
+  });
+
+  it("ships its worked examples as a bundled resource rather than in the body", () => {
+    // Tier 3: read before a first site, not on every one. Keeping them out of
+    // the body is what keeps the loaded skill affordable.
+    const examples = BUILDING_LIVE_SITES_SKILL.resources ?? [];
+    expect(examples).toHaveLength(1);
+    expect(examples[0]?.path).toBe("reference/worked-examples.md");
+    expect(examples[0]?.body).toContain("env.ASSETS.fetch");
+    expect(BUILDING_LIVE_SITES_SKILL.body).not.toContain("beta-signups/signups.json");
   });
 
   it("keeps the outbound-write skills provider-agnostic and cross-referenced", () => {
