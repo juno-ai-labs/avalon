@@ -26,6 +26,7 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000b1");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000000b2");
 const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-0000000000b3");
 const CLIENT_MESSAGE_ID = "00000000-0000-7000-8000-0000000000b4";
+const NOTION_CONNECTION_ID = "00000000-0000-7000-8000-0000000000b6";
 
 function automationStub() {
   return env.AUTOMATION_AGENTS.get(env.AUTOMATION_AGENTS.idFromName(
@@ -85,32 +86,45 @@ const TIMER_ONLY_DEFINITION = AutomationDraftSchema.parse({
   triggers: [{ type: "interval", intervalSeconds: 3_600, summary: "Every hour" }],
 });
 
-/** And with an external event trigger, which does. */
+/**
+ * And with an external event trigger, which does.
+ *
+ * Notion because the registry admits it without provider credentials, so
+ * acceptance resolves a real adapter and validates the rules against its real
+ * declared event vocabulary rather than a double.
+ */
 const ACTIVITY_DEFINITION = AutomationDraftSchema.parse({
-  ...readyDefinition("Report on new issues"),
+  ...readyDefinition("Report on new pages"),
   triggers: [{
     type: "connector_activity",
-    connectorType: "github",
-    sourceBindingKey: "github_source",
-    suggestedSourcePluginId: "plugin_github",
-    eventTypes: ["github.issue.opened"],
+    connectorType: "notion",
+    sourceBindingKey: "notion_source",
+    suggestedSourcePluginId: "plugin_notion",
+    // Two declared event types, so an evaluator can narrow to one of them
+    // without the draft itself changing by a byte.
+    eventTypes: ["notion.page.created", "notion.comment.created"],
     deterministicFilters: {},
   }],
 });
 
 /** One rule for that trigger, in the shape `automation_set_evaluator_rules` sends. */
-const ISSUE_OPENED_RULES = AutomationSetEvaluatorRulesInputV1Schema.parse({
-  schemaVersion: 1,
-  evaluators: [{
-    evaluatorKey: "issue_opened",
-    source: {
-      sourceBindingKey: "github_source",
-      suggestedSourcePluginId: "plugin_github",
-      event: { kind: "event_type", eventType: "github.issue.opened" },
-    },
-    when: { kind: "always" },
-  }],
-});
+function pageRules(evaluatorKey: string, eventType: string) {
+  return AutomationSetEvaluatorRulesInputV1Schema.parse({
+    schemaVersion: 1,
+    evaluators: [{
+      evaluatorKey,
+      source: {
+        sourceBindingKey: "notion_source",
+        suggestedSourcePluginId: "plugin_notion",
+        event: { kind: "event_type", eventType },
+      },
+      when: { kind: "always" },
+    }],
+  });
+}
+
+const PAGE_CREATED_RULES = pageRules("page_created", "notion.page.created");
+const COMMENT_CREATED_RULES = pageRules("comment_created", "notion.comment.created");
 
 /**
  * What `settleCompilerSuccess` commits when a run finishes, written directly.
@@ -436,7 +450,7 @@ describe("AutomationAgent", () => {
         compilerRunId: second.compilerRunId,
         providerCallId: "call-rules",
         inputHash: "sha256:rules",
-        evaluatorRules: ISSUE_OPENED_RULES,
+        evaluatorRules: PAGE_CREATED_RULES,
       });
       expect(await instance.stageDraftSubmission({
         automationId: AUTOMATION_ID,
@@ -463,7 +477,147 @@ describe("AutomationAgent", () => {
       expect(state.storage.sql.exec<{ json: string }>(
         `SELECT evaluator_rules_json AS json FROM automation_draft_evaluator_sets WHERE compiler_run_id = ?`,
         third.compilerRunId,
-      ).one().json).toBe(JSON.stringify(ISSUE_OPENED_RULES));
+      ).one().json).toBe(JSON.stringify(PAGE_CREATED_RULES));
+    });
+  });
+
+  it("carries an evaluator-only edit into the next turn and into acceptance", async () => {
+    // `connector_connections` is a WorkspaceDO table, reached through the
+    // workspace runtime database rather than the regional D1.
+    await pinWorkspaceIdentity();
+    await runInDurableObject(
+      env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID))),
+      (_workspace, workspaceState) => {
+        workspaceState.storage.sql.exec(
+          `INSERT INTO connector_connections
+             (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+              display_name, granted_scopes_json, status, cursor_json, config_json,
+              created_at, updated_at, model_plugin_id)
+           VALUES (?, ?, 'notion', 'personal', ?, 'acct-1', 'Juno Labs', '[]', 'healthy',
+                   '{}', '{}', 1, 1, 'plugin_notion')`,
+          NOTION_CONNECTION_ID,
+          WORKSPACE_ID,
+          AUTHOR_ID,
+        );
+      },
+    );
+
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      const patched = instance as unknown as {
+        executeCompilerRun(runId: string): Promise<void>;
+        settleCompilerSuccess(runId: string, draft: AutomationDraft): Promise<void>;
+        workspace(): unknown;
+      };
+      patched.executeCompilerRun = async () => {};
+      patched.workspace = async () => ({
+        applyExternalEventRegistrations: async () => ({ applied: true, effectiveAfterEventSequence: 7 }),
+        applyAutomationProjection: async () => ({ applied: true }),
+      });
+
+      /** One authoring turn: admit, set rules, submit the same draft, settle. */
+      async function turn(
+        clientMessageId: string,
+        content: string,
+        evaluatorRules: ReturnType<typeof pageRules> | null,
+        callIndex: number,
+      ): Promise<string> {
+        const admission = await instance.admitDraftTurn({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          authorUserId: AUTHOR_ID,
+          region: "global",
+          clientMessageId,
+          content,
+          attachmentIds: [],
+          inputMode: "typed",
+        });
+        if (!evaluatorRules) return admission.compilerRunId;
+        state.storage.sql.exec(
+          `UPDATE automation_compiler_runs SET state = 'running' WHERE run_id = ?`,
+          admission.compilerRunId,
+        );
+        await instance.setEvaluatorRules({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          authorUserId: AUTHOR_ID,
+          compilerRunId: admission.compilerRunId,
+          providerCallId: `rules-${callIndex}`,
+          inputHash: `sha256:rules-${callIndex}`,
+          evaluatorRules,
+        });
+        await instance.stageDraftSubmission({
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          authorUserId: AUTHOR_ID,
+          compilerRunId: admission.compilerRunId,
+          providerCallId: `submit-${callIndex}`,
+          inputHash: `sha256:submit-${callIndex}`,
+          draft: ACTIVITY_DEFINITION,
+        });
+        await patched.settleCompilerSuccess(admission.compilerRunId, ACTIVITY_DEFINITION);
+        return admission.compilerRunId;
+      }
+
+      const first = await turn("00000000-0000-7000-8000-0000000000c1", "Watch new pages", PAGE_CREATED_RULES, 1);
+      // The second turn narrows which event qualifies. The draft is byte-identical
+      // — same name, same instructions, same trigger — so only the rules changed.
+      const second = await turn("00000000-0000-7000-8000-0000000000c2", "Only when somebody comments", COMMENT_CREATED_RULES, 2);
+
+      // A revision reaches its rules through its own compiler run, so reusing
+      // the revision would have left it pointing at the first run's rules.
+      expect(state.storage.sql.exec<{ definition_revision: number; compiler_run_id: string }>(
+        `SELECT definition_revision, compiler_run_id FROM automation_definition_revisions
+          ORDER BY definition_revision`,
+      ).toArray()).toEqual([
+        { definition_revision: 1, compiler_run_id: first },
+        { definition_revision: 2, compiler_run_id: second },
+      ]);
+      // What `AutomationAgentService.accept` passes: the object's own current
+      // revision, not a number the test picked.
+      const currentRevision = state.storage.sql.exec<{ definition_revision: number }>(
+        `SELECT definition_revision FROM automation_state WHERE id = 1`,
+      ).one().definition_revision;
+      expect(currentRevision).toBe(2);
+
+      // The next turn inherits the rules the author actually last set...
+      const third = await turn("00000000-0000-7000-8000-0000000000c3", "Reword the summary", null, 3);
+      expect(state.storage.sql.exec<{ json: string }>(
+        `SELECT evaluator_rules_json AS json FROM automation_draft_evaluator_sets WHERE compiler_run_id = ?`,
+        third,
+      ).one().json).toBe(JSON.stringify(COMMENT_CREATED_RULES));
+      await instance.cancelCompilerRun({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: AUTHOR_ID,
+        runId: third,
+      });
+
+      // ...and so does the automation the author creates.
+      await instance.acceptDraft({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        definitionRevision: currentRevision,
+        scope: "personal",
+        defaultPluginIds: [],
+        activitySourcePluginIds: { notion_source: "plugin_notion" },
+        deliveryTargets: [],
+        modelOverride: null,
+      });
+      expect(JSON.parse(state.storage.sql.exec<{ json: string }>(
+        `SELECT evaluator_projection_json AS json FROM automation_acceptance WHERE id = 1`,
+      ).one().json)).toEqual([
+        expect.objectContaining({
+          source: expect.objectContaining({
+            connectorType: "notion",
+            connectionId: NOTION_CONNECTION_ID,
+            eventType: "notion.comment.created",
+          }),
+        }),
+      ]);
     });
   });
 

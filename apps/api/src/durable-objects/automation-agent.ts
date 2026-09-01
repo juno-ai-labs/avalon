@@ -822,28 +822,19 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       if (busy && (busy.state === "admitted" || busy.state === "running")) {
         throw new Error("automation_compiler_busy");
       }
-      // Only the newest revision's set is a candidate: an older non-empty one
-      // describes triggers the compiler has since dropped, and resurrecting it
-      // would re-register rules for a draft that no longer has the trigger.
-      const newestEvaluators = this.state.storage.sql.exec<{
-        evaluator_rules_json: string;
-        input_hash: string;
-      }>(`SELECT evaluator.evaluator_rules_json, evaluator.input_hash
-            FROM automation_definition_revisions definition
-            JOIN automation_draft_evaluator_sets evaluator
-              ON evaluator.compiler_run_id = definition.compiler_run_id
-           ORDER BY definition.definition_revision DESC LIMIT 1`).toArray()[0];
-      // An empty set is not something to carry forward. It is what a timer-only
-      // submission leaves behind, and inheriting it used to hand the next run a
-      // row that satisfied the submit-time guard without carrying a single
-      // rule — so a draft that gained an external trigger reached Create and
-      // was refused there. No row and an empty row now mean the same thing:
-      // this run has not set its rules yet.
-      const inheritedEvaluators = newestEvaluators
-        && AutomationSetEvaluatorRulesInputV1Schema
-          .parse(JSON.parse(newestEvaluators.evaluator_rules_json)).evaluators.length > 0
-        ? newestEvaluators
-        : undefined;
+      // The current revision's set, and only it. Scanning back for the newest
+      // revision that happens to have one would resurrect rules for triggers
+      // the compiler has since dropped. An empty set is not carried forward
+      // either: it is what a timer-only submission leaves behind, and
+      // inheriting it used to hand the next run a row that satisfied the
+      // submit-time guard without carrying a single rule — so a draft that
+      // gained an external trigger reached Create and was refused there. No
+      // row and an empty row mean the same thing: this run has no rules yet.
+      const inheritedEvaluators = this.evaluatorRulesForRevision(
+        this.state.storage.sql.exec<{ definition_revision: number }>(
+          `SELECT definition_revision FROM automation_state WHERE id = 1`,
+        ).one().definition_revision,
+      );
       const sequence = this.transcript().appendPreparedMessage(preparedMessage);
       const projectionVersion = this.nextProjectionVersion();
       this.state.storage.sql.exec(
@@ -893,8 +884,8 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
            VALUES (?, ?, ?, ?, ?)`,
           runId,
           `inherited:${runId}`,
-          inheritedEvaluators.input_hash,
-          inheritedEvaluators.evaluator_rules_json,
+          inheritedEvaluators.inputHash,
+          JSON.stringify(inheritedEvaluators.rules),
           now,
         );
       }
@@ -2702,7 +2693,21 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       ).toArray()[0];
       const prior = this.currentDefinition();
       const priorJson = prior ? JSON.stringify(prior) : null;
-      const revision = priorJson === definitionJson ? current!.definition_revision : current!.definition_revision + 1;
+      // Evaluator rules are part of a revision's identity, because a revision
+      // is how everything else reaches them: `evaluatorRulesForRevision` walks
+      // the revision's `compiler_run_id`, and that column is fixed when the row
+      // is inserted. A turn that changes only the rules — tightening a
+      // predicate while the draft's own text and triggers stay byte-identical —
+      // therefore used to leave the revision pointing at the earlier run, so
+      // acceptance registered the rules the person had just replaced and the
+      // next turn was told those stale rules were current. Reusing the revision
+      // is only sound when nothing a revision resolves to has changed.
+      const priorRules = this.evaluatorRulesForRevision(current!.definition_revision);
+      const priorRulesJson = priorRules ? JSON.stringify(priorRules.rules) : null;
+      const submittedRules = this.stagedEvaluatorRules(runId);
+      const submittedRulesJson = submittedRules ? JSON.stringify(submittedRules) : null;
+      const unchanged = priorJson === definitionJson && priorRulesJson === submittedRulesJson;
+      const revision = unchanged ? current!.definition_revision : current!.definition_revision + 1;
       if (revision > current!.definition_revision) {
         this.state.storage.sql.exec(
           `INSERT INTO automation_definition_revisions
@@ -2967,17 +2972,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       || trigger.type === "semantic_activity"
       || trigger.type === "webhook"
     ));
-    const staged = this.state.storage.sql.exec<{ evaluator_rules_json: string | null }>(
-      `SELECT evaluator.evaluator_rules_json
-         FROM automation_definition_revisions definition
-         LEFT JOIN automation_draft_evaluator_sets evaluator
-           ON evaluator.compiler_run_id = definition.compiler_run_id
-        WHERE definition.definition_revision = ?`,
-      input.definitionRevision,
-    ).toArray()[0];
-    const rules = staged?.evaluator_rules_json
-      ? AutomationSetEvaluatorRulesInputV1Schema.parse(JSON.parse(staged.evaluator_rules_json))
-      : AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [] });
+    // Through the same resolver the settle and the inheritance use, so the
+    // three readers of a revision's rules cannot disagree about which run's set
+    // a revision reaches or about an empty set meaning none.
+    const rules = this.evaluatorRulesForRevision(input.definitionRevision)?.rules
+      ?? AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [] });
     if (externalTriggers.length > 0 && rules.evaluators.length === 0) {
       throw new Error("automation_evaluator_rules_required");
     }
@@ -4104,6 +4103,32 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     if (!row) return null;
     const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(JSON.parse(row.evaluator_rules_json));
     return rules.evaluators.length === 0 ? null : rules;
+  }
+
+  /**
+   * The rules a definition revision resolves to, or `null`.
+   *
+   * A revision reaches its rules through the compiler run that wrote it, so
+   * this is the one place that association is read: inheritance, the settle's
+   * change comparison, and acceptance all resolve a revision the same way and
+   * normalize an empty set to `null` the same way. Revision 0 — a draft whose
+   * first run has not settled — has no row and answers `null` like any other
+   * revision without rules.
+   */
+  private evaluatorRulesForRevision(
+    revision: number,
+  ): { rules: AutomationSetEvaluatorRulesInputV1; inputHash: string } | null {
+    const row = this.state.storage.sql.exec<{ evaluator_rules_json: string; input_hash: string }>(
+      `SELECT evaluator.evaluator_rules_json, evaluator.input_hash
+         FROM automation_definition_revisions definition
+         JOIN automation_draft_evaluator_sets evaluator
+           ON evaluator.compiler_run_id = definition.compiler_run_id
+        WHERE definition.definition_revision = ?`,
+      revision,
+    ).toArray()[0];
+    if (!row) return null;
+    const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(JSON.parse(row.evaluator_rules_json));
+    return rules.evaluators.length === 0 ? null : { rules, inputHash: row.input_hash };
   }
 
   private currentDefinition(): AutomationDraft | null {

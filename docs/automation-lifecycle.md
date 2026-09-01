@@ -105,6 +105,13 @@ the draft it is revising, whether it has rules yet. A submission is the last
 point at which a missing rule set is the compiler's problem to fix; past it, the
 refusal has nowhere to land but the person's Create button.
 
+A revision reaches its rules through the compiler run that wrote it, and
+`evaluatorRulesForRevision` is the only place that association is resolved —
+by the inheritance, by the settle, and by acceptance. Evaluator rules are
+consequently part of a revision's identity: a turn that changes only the rules,
+leaving the draft byte-identical, still opens a new definition revision, because
+reusing one would leave it pointing at the run whose rules were just replaced.
+
 Deleting a draft bumps the authority generation, cancels any live compiler run,
 marks the object `deleted`, and projects that lifecycle to the directory. It is
 not archived into a second draft store.
@@ -482,7 +489,7 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an external-event submission refused when the set it inherited was empty, and admitted once real rules are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an external-event submission refused when the set it inherited was empty, and admitted once real rules are set; an evaluator-only edit opening a new revision, so the next turn and acceptance both use the rules the author last set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
 | `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
@@ -585,6 +592,37 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-01 — Evaluator rules are part of a definition revision's identity
+
+**What changed:** `settleCompilerSuccess` reused the current definition revision
+whenever the normalized draft JSON was unchanged. It now reuses it only when the
+draft *and* the run's staged evaluator rules are both unchanged, so an
+evaluator-only turn opens a new revision. The revision-to-rules lookup is now one
+helper, `evaluatorRulesForRevision`, which the settle's comparison, the
+inheritance in `admitDraftTurn`, and `prepareAcceptance` all resolve through.
+The inheritance reads the current revision rather than scanning back for the
+newest revision that happens to carry a set.
+
+**Why:** a revision reaches its rules through its own `compiler_run_id`, and that
+column is fixed when the row is inserted. A turn that tightened a predicate while
+leaving the draft's name, instructions and triggers byte-identical therefore
+stored its rules under the later run while the revision still pointed at the
+earlier one. Acceptance registered the rules the author had just replaced, and
+the next turn was told those stale rules were current — a wrong-event-filtering
+automation with nothing anywhere saying so. Found in review of the change above,
+and reproduced on real workerd: two runs, two rule sets, one revision, and the
+revision resolving to the first run's set.
+
+Bumping the revision was chosen over repointing the settled row's
+`compiler_run_id`. `definition_revision` is the coordinate acceptance and the
+client agree on, and a settled revision that silently changes what it resolves to
+is the defect itself in a smaller form; a new revision keeps history immutable
+and every reader consistent. Two revisions may now hold identical
+`definition_json`, which is why nothing constrains `definition_hash` to be
+unique. A future change must keep any state a revision resolves to inside the
+comparison that decides whether to open one — the draft alone is not the whole of
+what a revision means.
 
 ### 2026-09-01 — Enforce evaluator rules on their contents, not on a row
 
