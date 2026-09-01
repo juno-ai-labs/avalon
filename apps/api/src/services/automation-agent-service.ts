@@ -183,6 +183,15 @@ export class AutomationAgentService {
       });
       automationRefusal("automation_definition_revision_stale");
     }
+    // The room comes from where the draft was written, never from the request:
+    // a body naming one would let a caller give any room an automation, and no
+    // other room is reachable from an authoring loop anyway.
+    const owningWorkstreamId = input.scope === "workstream"
+      ? await withAutomationErrors(() => agent.authoredInWorkstreamId())
+      : null;
+    if (input.scope === "workstream" && !owningWorkstreamId) {
+      automationRefusal("automation_workstream_scope_requires_authoring_room");
+    }
     return withAutomationErrors(() => agent.acceptDraft({
       schemaVersion: 1,
       automationId,
@@ -190,6 +199,7 @@ export class AutomationAgentService {
       authorUserId: this.auth.userId,
       definitionRevision: snapshot.definitionRevision,
       scope: input.scope,
+      owningWorkstreamId,
       defaultPluginIds: input.defaultPluginIds,
       activitySourcePluginIds: input.activitySourcePluginIds,
       deliveryTargets: input.deliveryTargets,
