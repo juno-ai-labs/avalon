@@ -470,15 +470,27 @@ Two consequences worth naming because they are easy to miss:
   gone, every surface rendering the feed is a paging one, and the prop should
   stop being optional rather than sit there as an option nobody takes.
 
-**Drafts in flight when this ships** are the one migration question, and it does
-not have a comfortable answer. There is no work stream to move their turns
-into, and inventing one per abandoned draft would leave rooms nobody asked for.
-A draft that loses its conversation also loses the only surface that could
-continue or accept it — the definition survives in the AutomationAgent with
-nothing to open it with. So the realistic choices are to drain them before the
-deletion lands, or to delete them with the screen. Drafts are short-lived, so
-draining is probably days rather than a policy; open question 5 says to decide
-it from the number of open drafts at the time rather than from an argument.
+**Drafts in flight are deleted with the screen.** `automation.tsx:24` sends any
+automation whose status is `draft` to that screen and to nowhere else, so a
+draft that loses it has no surface at all: the definition survives inside the
+AutomationAgent with nothing to open it, continue it, or accept it. Three things
+could follow from that and only one is worth doing.
+
+Draining first — holding the deletion until every open draft is accepted or
+abandoned — makes the retirement wait on other people's half-finished work, for
+a surface that is being removed because it should not exist. Building a stranded
+draft a read-only definition view with an Accept button is a surface constructed
+solely to bury the dead, and it would have to be maintained until the last such
+draft went away. Deleting is the honest one: a draft *is* a conversation in
+progress, its value is that conversation, and a definition separated from the
+discussion that produced it is a half-finished thing nobody will remember asking
+for. Anyone who had one open re-authors it in a room in less time than either
+alternative takes to build.
+
+Two operational notes rather than product ones. Count the open drafts before the
+deletion ships — not as a gate, but so the decision is taken with the number in
+view — and if it is not zero, tell the people who have one, because losing work
+you started is worth a sentence even when the work was minutes old.
 
 ### Authoring from Slack
 
@@ -517,7 +529,7 @@ Two details the Slack origin settles for free:
 being plain about because it is friction on the most natural version of this
 request: an ordinary member can ask for it, and the draft waits for an admin.
 Rally says so in the thread and names what is needed rather than failing
-silently. Open question 6 asks whether that is right for an automation whose
+silently. Open question 5 asks whether that is right for an automation whose
 only effect is in a channel the requester can already post in.
 
 The classifier still runs on the occurrence, and for this automation it is
@@ -1775,9 +1787,11 @@ worth isolating.
    in a room, because until then it is the only way to author anything. Ship it
    as its own change at the end of this deploy — the screen, the flat
    `AutomationDraftMessageSchema` projection, `automationDraftFromAgentSnapshot`,
-   the synthesized rows, and the `virtualizer` prop on `MessageFeed` that only
-   the draft adapter needed. Nothing else in this deploy depends on that
-   deletion, so it can also wait a release without holding anything up.
+   the synthesized rows, the `virtualizer` prop on `MessageFeed` that only the
+   draft adapter needed, and the drafts themselves (**The draft conversation is
+   a work stream**). Count the open drafts first and tell whoever holds one.
+   Nothing else in this deploy depends on the deletion, so it can also wait a
+   release without holding anything up.
 3. **The classifier.** The only piece that changes what existing automations do:
    every result is now classified, where before every result was delivered.
    `shouldSuppressAutomationResult` was deleted ahead of this rather than with
@@ -1911,15 +1925,7 @@ switch — pointing it at another model is the lever that exists.
    explicit "hide this again" that clears the flag, which is a second control
    doing almost the same thing. Worth revisiting only if archiving an exposed
    run turns out to read wrong on the automation's own run history.
-5. **What happens to drafts in flight when the standalone surface is retired.**
-   This PRD assumes they keep their definition and lose their transcript: there
-   is no work stream to move those turns into, and creating one per abandoned
-   draft would leave rooms nobody asked for. The alternatives are holding the
-   retirement until they drain — drafts are short-lived, so that may be days
-   rather than a policy — or importing each into a work stream created for it.
-   Worth deciding from the actual number of open drafts at the time, which is a
-   query rather than an argument.
-6. **Whether a member can accept a workspace automation that only acts where
+5. **Whether a member can accept a workspace automation that only acts where
    they already can.** Acceptance for `workspace` scope is owner-or-admin, and
    this PRD keeps it. The case for relaxing it is narrow and real: an automation
    whose only effect is a message in a channel the requester can already post in
