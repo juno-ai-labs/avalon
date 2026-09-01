@@ -453,7 +453,9 @@ case where running wider locally earns its minutes.
   change crosses into it.
 - **Large changes, roughly 20 files or more: run the full package suite once**
   before calling it done, because a change that wide can break a suite you had no
-  reason to think about.
+  reason to think about. The threshold is the team's and it is approximate: a
+  diff that crosses several subsystems earns the run at fewer files than one that
+  repeats an edit across twenty.
 
 A narrow run you actually read beats a wide one you skim. If a test outside what
 you touched fails, that is a real result and it belongs to this change, whether
@@ -461,14 +463,21 @@ or not you planned to run it.
 
 ## Prove the test can fail
 
-**This applies to integration tests only.** That means rung 1 and rung 2 above:
-real workerd in `apps/api/test-workers/`, and Node tests that drive a route,
-service, or object against the checked-in migrations. It also applies to the
-local smoke and e2e lanes. Unit-level tests are exempt: rungs 3 and 4, pure
-`packages/*` logic, and desktop component tests. At that level the only break
-available is usually flipping the literal the assertion already mirrors, which
-costs a cycle and proves nothing. When writing one of those, read the catalogue
-below instead of running the check.
+**This applies to integration tests only**, and what makes a test one is what
+it runs against rather than what it calls. That means rung 1 and rung 2 above:
+real workerd in `apps/api/test-workers/`, and any Node test that exercises
+production queries, schemas, routes, services, or objects against the checked-in
+migrations — `packages/db/test/` included, where the migration itself is the
+subject and no route or service is involved. It also applies to the local smoke
+and e2e lanes.
+
+Everything else is exempt, because nothing real is underneath it to break: rung
+3 and rung 4, pure `packages/*` logic, desktop component tests, and the site and
+release-retention suites, which read config files and call pure functions. At
+that level the only break available is usually flipping the literal the
+assertion already mirrors, which costs a cycle and proves nothing. When writing
+one of those, read the list of assertions that survive a break, below, instead
+of running the check.
 
 **Break the behavior the test names, watch that test fail, then revert.** Make
 one edit in the production code. Never edit the test. Run only what you are
