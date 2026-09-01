@@ -8,6 +8,7 @@ import {
   AutomationDraftTurnAdmissionResultSchema,
   AutomationRunSchema,
   AutomationSummarySchema,
+  WorkstreamAutomationSummarySchema,
   ActivitySourceBindingKeySchema,
   CreateAutomationRequestSchema,
   IdSchema,
@@ -30,6 +31,9 @@ const SharedTemplateSchema = z.strictObject({ templateId: IdSchema });
 
 /** Envelopes this route composes; the entities inside come from the contracts. */
 const AutomationPageSchema = z.object({ items: z.array(AutomationSummarySchema) });
+const WorkstreamAutomationPageSchema = z.object({
+  items: z.array(WorkstreamAutomationSummarySchema),
+});
 const AutomationRunPageSchema = z.object({ items: z.array(AutomationRunSchema) });
 const StartedRunSchema = z.object({
   runId: IdSchema,
@@ -80,6 +84,15 @@ const TemplateVersionSchema = z.object({ id: IdSchema, versionNumber: z.number()
 export const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) =>
   c.json(AutomationPageSchema.parse(await new AutomationAgentService(c.env, getAuth(c)).list())));
+// A room's automations, for its rail. Under /automations rather than under the
+// work stream: the resource is the automation, and the work stream is which
+// ones — the same relationship the workspace list has to the workspace.
+automationRoutes.get("/workstream/:workstreamId", zValidator("param", z.object({
+  workstreamId: IdSchema,
+})), async (c) => c.json(WorkstreamAutomationPageSchema.parse(
+  await new AutomationAgentService(c.env, getAuth(c))
+    .listForWorkstream(c.req.valid("param").workstreamId),
+)));
 automationRoutes.post("/agent/draft/turn", zValidator("json", AutomationDraftTurnRequestSchema.extend({
   clientCreationKey: IdSchema,
 })), async (c) => c.json(AutomationDraftTurnAdmissionResultSchema.parse(

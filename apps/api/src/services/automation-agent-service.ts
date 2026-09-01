@@ -288,6 +288,21 @@ export class AutomationAgentService {
     }));
   }
 
+  /** What one work stream owns, for its rail. The sidebar list excludes these. */
+  async listForWorkstream(workstreamId: string): Promise<{ items: unknown[] }> {
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
+    return withAutomationErrors(() => workspace.listWorkstreamAutomations({
+      workspaceId: this.auth.workspaceId,
+      workstreamId,
+      userId: this.auth.userId,
+    }));
+  }
+
   async share(automationId: string): Promise<{ templateId: string }> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
