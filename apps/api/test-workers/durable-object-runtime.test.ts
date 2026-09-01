@@ -6655,20 +6655,21 @@ describe("Durable Objects in the Workers runtime", () => {
         // An activation is loop input, not a canonical turn: it becomes one
         // when the loop promotes it, and the run it starts is the whole point
         // of delivering into a room rather than appending to it.
-        const rows = state.storage.sql.exec<{
-          actor: string; message_type: string; mode: string; bind_payload_json: string;
-        }>(
-          `SELECT actor, message_type, mode, bind_payload_json FROM pending_loop_inputs`,
+        //
+        // Read across pending *and* delivered, because the wake this admission
+        // requests is what empties the first: the alarm fires, the loop
+        // promotes the input, and the pending row is deleted with a receipt
+        // left behind. Asserting only on `pending_loop_inputs` is a race the
+        // assertion wins when the suite is fast and loses when it is not —
+        // which is exactly how it passed alone and failed in a full run.
+        const inputId = state.storage.sql.exec<{ input_id: string }>(
+          `SELECT input_id FROM pending_loop_inputs
+           UNION ALL
+           SELECT input_id FROM delivered_loop_inputs`,
         ).toArray();
-        expect(rows).toHaveLength(1);
-        expect(rows[0]!.actor).toBe("system");
-        expect(rows[0]!.message_type).toBe("automation_activation");
-        // Never mid-run: a person watching the room is doing something.
-        expect(rows[0]!.mode).toBe("queue");
-        // What the woken agent reads. The untrusted wrapper travels with it —
-        // an activation quotes connector content and is not an instruction.
-        expect(rows[0]!.bind_payload_json).toContain("UNTRUSTED AUTOMATION RESULT");
-        expect(rows[0]!.bind_payload_json).toContain("Two candidates reached final round.");
+        // Exactly once, whichever side of promotion it is on: the retry above
+        // must not have added a second.
+        expect(inputId).toHaveLength(1);
       });
     });
 
@@ -6678,8 +6679,10 @@ describe("Durable Objects in the Workers runtime", () => {
       // Asserted at the admission itself: the activation request is what the
       // object turns into an alarm, and by the time an assertion outside could
       // look, that alarm has already fired and cleared. Without this request an
-      // activation is a row in a mailbox nothing ever drains.
-      await runInDurableObject(stub, async (instance) => {
+      // activation is a row in a mailbox nothing ever drains. The input's own
+      // content is asserted here too, for the same reason — inside the
+      // transaction that wrote it, where no drain can have run yet.
+      await runInDurableObject(stub, async (instance, state) => {
         const product = (instance as unknown as {
           product: { admitAutomationActivation: (input: unknown) => Promise<{
             activationRequest: { kind: string; cause: string } | null;
@@ -6700,6 +6703,22 @@ describe("Durable Objects in the Workers runtime", () => {
           kind: "activate_substream_loop",
           cause: "pending_input",
         });
+        const row = state.storage.sql.exec<{
+          actor: string; message_type: string; mode: string; bind_payload_json: string;
+        }>(
+          `SELECT actor, message_type, mode, bind_payload_json FROM pending_loop_inputs`,
+        ).toArray()[0];
+        expect(row).toBeDefined();
+        // Authored by nobody: not a person in this room, and not a provider
+        // account either.
+        expect(row!.actor).toBe("system");
+        expect(row!.message_type).toBe("automation_activation");
+        // Never mid-run: a person watching the room is doing something.
+        expect(row!.mode).toBe("queue");
+        // What the woken agent reads. The untrusted wrapper travels with it —
+        // an activation quotes connector content and is not an instruction.
+        expect(row!.bind_payload_json).toContain("UNTRUSTED AUTOMATION RESULT");
+        expect(row!.bind_payload_json).toContain("The board deck went out.");
       });
     });
 
