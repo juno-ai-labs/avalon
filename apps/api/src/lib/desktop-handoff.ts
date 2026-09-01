@@ -40,18 +40,27 @@ export function normalizeConnectorOAuthErrorCode(value: string): string {
   return normalized || "connector_oauth_failed";
 }
 
+type ConnectorAttemptTargetResult =
+  | { status: "succeeded"; connectionId: string; errorCode?: never }
+  | { status: "denied" | "failed"; errorCode: string; connectionId?: never };
+
+export type ConnectorAttemptTargetInput = {
+  provider: ConnectorOAuthProvider;
+  attemptId?: string;
+  workspaceId: string;
+  returnUri: string;
+} & ConnectorAttemptTargetResult;
+
 export function connectorAttemptTarget(
   env: Pick<Env, "AVALON_REGION" | "DESKTOP_DEEP_LINK_URI">,
-  input: {
-    provider: ConnectorOAuthProvider;
-    status: "succeeded" | "denied" | "failed";
-    attemptId?: string;
-    connectionId?: string;
-    errorCode?: string;
-    workspaceId: string;
-    returnUri: string;
-  },
+  input: ConnectorAttemptTargetInput,
 ): string {
+  if (
+    (input.status === "succeeded" && !input.connectionId)
+    || (input.status !== "succeeded" && (!input.errorCode || input.connectionId !== undefined))
+  ) {
+    throw new Error("The connector callback result is invalid");
+  }
   const target = new URL(input.returnUri);
   const addressed = parseWorkspaceAddressedDeepLink(target);
   const exactLegacy = isDesktopDeepLinkProtocol(target.protocol)
@@ -75,12 +84,12 @@ export function connectorAttemptTarget(
   target.searchParams.set("provider", input.provider);
   if (exactLegacy) target.searchParams.set("region", env.AVALON_REGION);
   if (input.attemptId) target.searchParams.set("attempt", input.attemptId);
-  if (input.status === "succeeded" && input.connectionId) {
+  if (input.status === "succeeded") {
     target.searchParams.set("connection", input.connectionId);
     target.searchParams.set("status", "connected");
   } else {
     target.searchParams.set("status", input.status);
-    target.searchParams.set("error", normalizeConnectorOAuthErrorCode(input.errorCode ?? "connector_oauth_failed"));
+    target.searchParams.set("error", normalizeConnectorOAuthErrorCode(input.errorCode));
   }
   return target.toString();
 }
