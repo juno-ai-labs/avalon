@@ -4,6 +4,14 @@ Rally's work-stream feed and automation draft wizard are two adapters over one
 renderer conversation family. They share presentation and interaction
 primitives, not product authority or one stateful screen component.
 
+**The second adapter is on its way out.** The
+[automations-in-a-work-stream PRD](PRDs/2026-08-29_automation-workstream-delivery/prd.md)
+moves authoring into a work stream's main feed and retires the standalone draft
+screen, which leaves one adapter and no family. Read this document as a
+description of what is, and that PRD before planning anything that would deepen
+the split — including anything that would give the draft surface more of the
+feed's behavior than it has.
+
 ## Where the code lives
 
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
