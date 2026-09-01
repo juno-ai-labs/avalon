@@ -10,7 +10,12 @@
  *
  * See `docs/live-web-artifacts.md`.
  */
-import { ARTIFACT_RESERVED_PREFIX } from "@rally/contracts";
+import {
+  ARTIFACT_RESERVED_PREFIX,
+  ARTIFACT_VIEWER_ID_HEADER,
+  ARTIFACT_VIEWER_NAME_HEADER,
+} from "@rally/contracts";
+import { rallyHeaderAliases } from "@rally/contracts/http-headers";
 
 /**
  * The Content-Security-Policy every artifact response carries.
@@ -60,6 +65,15 @@ export const ARTIFACT_CONTENT_SECURITY_POLICY = [
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
+  // Written out, like the two above, because inheriting `default-src 'self'`
+  // would *permit* a same-origin service worker — and a service worker is the
+  // one thing an artifact can install that answers requests without reaching
+  // Rally. A root-scoped one could cache authenticated responses and keep
+  // serving them after the viewer's session ended, after their work-stream
+  // visibility was revoked, and after a republish: it would silently defeat
+  // revocation, the current-version guarantee, and the offline honesty all at
+  // once. Nothing an artifact does needs one.
+  "worker-src 'none'",
 ].join("; ");
 
 /**
@@ -119,9 +133,20 @@ export function classifyFetchMetadata(
   // literal mismatch is never legitimate here.
   if (origin !== null && origin !== artifactOrigin) return "refused";
   if (site === "same-origin") return "same_origin";
-  // `none` is a genuine top-level navigation: an address bar, a bookmark, or
-  // the desktop opening the artifact itself.
-  if (site === "none" && request.method === "GET") return "top_level";
+  // A genuine top-level navigation, identified by what it *is* rather than
+  // where it came from. `Sec-Fetch-Site: none` alone is the wrong test: it
+  // covers an address bar and a bookmark, but a link click or a redirect from
+  // anywhere else sends `cross-site`, and refusing those would break the
+  // ordinary act of following a link to an artifact you can already see.
+  //
+  // `Sec-Fetch-Mode: navigate` with `Sec-Fetch-Dest: document` is the shape
+  // that matters, and it keeps the CSRF boundary intact: a document navigation
+  // cannot carry a body a page composed, and the sub-resource requests that
+  // *are* the attack — a form post, a fetch, an image — are `no-cors`, `cors`,
+  // or `same-origin` mode and never reach this branch.
+  const navigation = request.headers.get("sec-fetch-mode") === "navigate"
+    && request.headers.get("sec-fetch-dest") === "document";
+  if (navigation && request.method === "GET") return "top_level";
   return "refused";
 }
 
@@ -155,10 +180,19 @@ export function splitVersionMount(pathname: string): { version: number | null; p
  * Whether a request under a prior-version mount is allowed at all.
  *
  * `<base>` and relative paths fix well-behaved pages; they do not stop old code
- * from reaching the live artifact deliberately or by accident, and an old page
- * shares an origin — cookies, storage, service-worker scope — with the current
- * one. So "read-only" here describes what the request path *enforces*, not what
- * frozen bytes are assumed to do.
+ * from leaving the mount, and an old page shares an origin — cookies, storage —
+ * with the current one. **A root-absolute `fetch("/api/…")` from a historical
+ * render does not pass through here at all**: it is an ordinary same-origin
+ * request to the canonical path, indistinguishable from one the current page
+ * made, and `Referrer-Policy: no-referrer` on every artifact response means
+ * there is not even a `Referer` to tell them apart.
+ *
+ * That is why a prior version renders its **frozen assets only** and its module
+ * is never loaded: the escape cannot be closed at the request path, so the
+ * class of problem is removed instead. What is left is a page whose own client
+ * script may query the current version's data — a wrong reading, not an
+ * unauthorized one, since the viewer is admitted to the current version anyway.
+ * These two rules bound what such a page may *do*.
  *
  * A service worker is refused specifically because its scope would outlive the
  * view and interpose on the canonical origin: registering one from a historical
@@ -209,4 +243,38 @@ export function resolveAssetPath(pathname: string, assetPaths: ReadonlySet<strin
   // host to resolve to its own HTML file.
   const withHtml = `${trimmed}.html`;
   return assetPaths.has(withHtml) ? withHtml : null;
+}
+
+/**
+ * The two headers artifact code is allowed to trust, and the strip that earns
+ * that trust.
+ *
+ * Exported from here rather than inlined at the injection site because the
+ * strip *is* the anti-spoof mechanism and has its own test: a page or proxy
+ * that sends these names must never have them survive into the module. It
+ * removes every alias, canonical and superseded alike, because every product
+ * header reader widens to the superseded spelling — a family whose readers
+ * widen and whose stripper does not has a forgeable back door.
+ */
+export function withViewerIdentity(
+  request: Request,
+  viewer: { id: string; name: string } | null,
+): Request {
+  const headers = new Headers(request.headers);
+  for (const header of [ARTIFACT_VIEWER_ID_HEADER, ARTIFACT_VIEWER_NAME_HEADER]) {
+    headers.delete(header);
+    // `rallyHeaderAliases` is the one place the superseded prefixes live, so
+    // the strip reads them from there rather than restating the list.
+    for (const alias of rallyHeaderAliases(header)) headers.delete(alias);
+  }
+  if (viewer) {
+    headers.set(ARTIFACT_VIEWER_ID_HEADER, viewer.id);
+    // A header value is ASCII-only by RFC 7230, so a display name needs *some*
+    // encoding. This is deliberately the `decodeURIComponent` idiom rather than
+    // RFC 8187's `UTF-8''…` form — chosen for how reliably a small model
+    // decodes it, and named here so nobody mistakes a house convention for a
+    // standard header encoding.
+    headers.set(ARTIFACT_VIEWER_NAME_HEADER, encodeURIComponent(viewer.name));
+  }
+  return new Request(request, { headers });
 }

@@ -105,6 +105,7 @@ function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishe
   return {
     resourceId: row.id,
     title: row.title,
+    publishKind: "file" as const,
     resourceType: "generated_file" as const,
     provider: "avalon_generated" as const,
     mimeType: row.mime_type ?? "application/octet-stream",
@@ -616,6 +617,7 @@ export function createTerminalResourceBridge(
       return {
         resourceId,
         title,
+        publishKind: "file",
         resourceType: "generated_file",
         provider: "avalon_generated",
         mimeType,
@@ -852,6 +854,7 @@ function siteOutput(
   return {
     resourceId: row.id,
     title: row.title,
+    publishKind: "site",
     resourceType: "generated_site",
     provider: "avalon_generated",
     attachmentKind: "site",

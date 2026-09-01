@@ -16,11 +16,16 @@ function request(init: {
   method?: string;
   site?: string | null;
   origin?: string | null;
+  navigation?: boolean;
   headers?: Record<string, string>;
 }): Request {
   const headers = new Headers(init.headers ?? {});
   if (init.site !== null && init.site !== undefined) headers.set("sec-fetch-site", init.site);
   if (init.origin !== null && init.origin !== undefined) headers.set("origin", init.origin);
+  if (init.navigation) {
+    headers.set("sec-fetch-mode", "navigate");
+    headers.set("sec-fetch-dest", "document");
+  }
   return new Request(`${ORIGIN}/`, { method: init.method ?? "GET", headers });
 }
 
@@ -50,6 +55,15 @@ describe("the page fence", () => {
     expect(ARTIFACT_CONTENT_SECURITY_POLICY).not.toContain("*");
   });
 
+  it("forbids a service worker, the one thing that could answer without Rally", () => {
+    // `default-src 'self'` would *permit* a same-origin one. A root-scoped
+    // service worker could cache authenticated responses and keep serving them
+    // after the session ended, after visibility was revoked, and after a
+    // republish — defeating revocation and the current-version guarantee at
+    // once.
+    expect(ARTIFACT_CONTENT_SECURITY_POLICY).toContain("worker-src 'none'");
+  });
+
   it("forbids framing outright, because nothing Rally owns frames an artifact", () => {
     // The rail preview is a top-level WebContentsView and the pop-out is a
     // window; an allowlist would invite back the iframe both deliberately avoid.
@@ -73,8 +87,32 @@ describe("the cross-artifact request fence", () => {
       .toBe("same_origin");
   });
 
-  it("admits a genuine top-level navigation", () => {
-    expect(classifyFetchMetadata(request({ site: "none" }), ORIGIN)).toBe("top_level");
+  it("admits a genuine top-level navigation, wherever it came from", () => {
+    // `Sec-Fetch-Site: none` alone is the wrong test: an address bar sends it,
+    // but a link click or a redirect sends `cross-site`, and refusing those
+    // would break following a link to an artifact you can already see.
+    expect(classifyFetchMetadata(request({ site: "none", navigation: true }), ORIGIN)).toBe("top_level");
+    expect(classifyFetchMetadata(request({ site: "cross-site", navigation: true }), ORIGIN)).toBe("top_level");
+    expect(classifyFetchMetadata(request({ site: "same-site", navigation: true }), ORIGIN)).toBe("top_level");
+  });
+
+  it("does not treat a bare Sec-Fetch-Site: none as a navigation", () => {
+    // Without the navigate/document pair it is a sub-resource request from a
+    // client that set no mode, which is not something to admit on trust.
+    expect(classifyFetchMetadata(request({ site: "none" }), ORIGIN)).toBe("refused");
+  });
+
+  it("refuses a sub-resource request even when it carries the navigate site value", () => {
+    // The attack is a form post, a fetch, or an image — never a document
+    // navigation, which cannot carry a body a page composed.
+    expect(classifyFetchMetadata(
+      request({ site: "cross-site", navigation: true, method: "POST" }),
+      ORIGIN,
+    )).toBe("refused");
+    expect(classifyFetchMetadata(
+      request({ site: "cross-site", headers: { "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" } }),
+      ORIGIN,
+    )).toBe("refused");
   });
 
   it("refuses a credentialed simple POST from a sibling artifact, which needs no preflight", () => {
@@ -86,7 +124,7 @@ describe("the cross-artifact request fence", () => {
     )).toBe("refused");
   });
 
-  it("refuses a same-site GET too, because a model handler may treat GET as a write", () => {
+  it("refuses a same-site sub-resource GET, because a model handler may treat GET as a write", () => {
     expect(classifyFetchMetadata(request({ site: "same-site", origin: null }), ORIGIN)).toBe("refused");
     expect(classifyFetchMetadata(request({ site: "cross-site", origin: null }), ORIGIN)).toBe("refused");
   });
@@ -104,7 +142,7 @@ describe("the cross-artifact request fence", () => {
   });
 
   it("refuses a top-level navigation that is not a GET", () => {
-    expect(classifyFetchMetadata(request({ site: "none", method: "POST" }), ORIGIN)).toBe("refused");
+    expect(classifyFetchMetadata(request({ navigation: true, method: "POST" }), ORIGIN)).toBe("refused");
   });
 });
 
