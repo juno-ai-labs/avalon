@@ -280,7 +280,11 @@ async function refreshConnectionUnfurls(
 
     const blocks = workstreamUnfurlBlocks(
       external ? null : workstreamUnfurlSummary(raw),
-      workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, row.workstream_id),
+      workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
+        region: env.AVALON_REGION,
+        workspaceId: connection.workspace_id,
+        workstreamId: row.workstream_id,
+      }),
     );
     const hash = await workstreamUnfurlCardHash(blocks);
 

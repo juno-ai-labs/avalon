@@ -317,6 +317,7 @@ async function notifyInvitationResolution(
       outcome,
       recipientEmail: invitation.invited_by_email,
       workspaceName: invitation.workspace_name,
+      workspaceId: invitation.workspace_id,
       inviteeEmail: user.email,
       ...(user.name ? { inviteeName: user.name } : {}),
       role: invitation.role,

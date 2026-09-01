@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
+import { parseSlackLinkFragment } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import {
   desktopDmgUrl,
@@ -407,6 +408,14 @@ describe('public Rally site', () => {
     expect(script).toContain("new URL('rallywithai://slack/link')");
     expect(script).toContain('window.history.replaceState');
     expect(script).not.toContain('window.location.search');
+    const token = 'a'.repeat(43);
+    expect(parseSlackLinkFragment(`#token=${token}&region=eu&workspace=00000000-0000-7000-8000-000000000009`))
+      .toEqual({
+        token,
+        workspaceTarget: { region: 'eu', workspaceId: '00000000-0000-7000-8000-000000000009' },
+      });
+    expect(parseSlackLinkFragment(`#token=${token}`)).toEqual({ token, workspaceTarget: null });
+    expect(parseSlackLinkFragment(`#token=${token}&region=eu`)).toBeNull();
   });
 
   it('ships working Marketplace landing, privacy, support, and exact desktop handoff surfaces', () => {

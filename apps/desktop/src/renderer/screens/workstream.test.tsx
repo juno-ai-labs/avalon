@@ -230,8 +230,12 @@ function headerElement(
         onRename={overrides.onRename ?? (async () => undefined)}
         onToggleBlockDashboard={overrides.onToggleBlockDashboard ?? vi.fn()}
         presentUserIds={overrides.presentUserIds ?? []}
-        socketState="connected"
-        workstream={workstream}
+      socketState="connected"
+      workstream={workstream}
+      workspaceTarget={{
+        region: 'global',
+        workspaceId: '00000000-0000-7000-8000-000000000001',
+      }}
       />
     </Tooltip.Provider>
   );
@@ -306,7 +310,7 @@ describe('WorkstreamHeader origin affordances', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work-stream link' }));
 
     await waitFor(() => expect(copyText).toHaveBeenCalledWith(
-      `https://rallywith.ai/app/workstreams/${workstreamId}`,
+      `https://rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000001/workstreams/${workstreamId}`,
     ));
     expect(copyText).not.toHaveBeenCalledWith(expect.stringContaining('rallywithai://'));
   });

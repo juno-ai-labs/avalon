@@ -12,6 +12,12 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { IdSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from '@rally/contracts';
 import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
+import { parseWorkstreamLinkTarget } from '@rally/contracts/workstream-links';
+import {
+  parseWorkspaceTarget,
+  workspaceTargetsEqual,
+  type WorkspaceTarget,
+} from '@rally/contracts/workspace-target';
 import type {
   RallyDesktopBridge,
   DesktopDeepLinkNavigation,
@@ -475,6 +481,48 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         reportJavascriptError(error, 'unknown');
       });
     };
+    const activateDeepLinkWorkspace = async (target: WorkspaceTarget): Promise<RallyApi> => {
+      const activeSession = sessionRef.current;
+      if (!activeSession?.workspace) {
+        throw new Error('Sign in before opening a workspace link.');
+      }
+      if (workspaceTargetsEqual({
+        region: activeSession.workspace.region,
+        workspaceId: activeSession.workspace.id,
+      }, target)) {
+        return new RallyApi(activeSession.apiBaseUrl, activeSession);
+      }
+      const nextSession = await bridge.activateWorkspace({
+        region: target.region,
+        workspaceId: target.workspaceId,
+      });
+      if (!nextSession.workspace || !workspaceTargetsEqual({
+        region: nextSession.workspace.region,
+        workspaceId: nextSession.workspace.id,
+      }, target)) {
+        throw new Error('The requested workspace could not be activated.');
+      }
+      // React state commits later. Keep the imperative deep-link path on the
+      // session it just activated so two callbacks in the same turn cannot
+      // apply the second one to the workspace that was active before them.
+      sessionRef.current = nextSession;
+      applySession(nextSession);
+      return new RallyApi(nextSession.apiBaseUrl, nextSession);
+    };
+    const runInDeepLinkWorkspace = (
+      target: WorkspaceTarget,
+      action: (targetApi: RallyApi) => void | Promise<void>,
+    ): void => {
+      void activateDeepLinkWorkspace(target)
+        .then(action)
+        .catch((error: unknown) => {
+          reportDeepLinkFailure(
+            error instanceof Error && /sign in/iu.test(error.message)
+              ? error.message
+              : 'Rally could not access the workspace this link belongs to.',
+          );
+        });
+    };
     const handleDeepLink = (navigation: DesktopDeepLinkNavigation): void => {
       let deepLink: URL;
       try {
@@ -484,7 +532,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams' && deepLink.pathname === '/new') {
-        if (!session?.workspace) {
+        if (!sessionRef.current?.workspace) {
           reportDeepLinkFailure('Sign in before starting a work stream.');
           return;
         }
@@ -494,14 +542,18 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams') {
-        const workstreamId = deepLink.pathname.slice(1);
-        if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(workstreamId)) {
+        const target = parseWorkstreamLinkTarget(deepLink.toString(), { webBaseUrl: runtime.webBaseUrl });
+        if (!target || !sessionRef.current?.workspace) {
           reportDeepLinkFailure('Sign in before opening this work-stream link.');
           return;
         }
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        window.location.hash = `/workstreams/${workstreamId}`;
+        const openWorkstream = (): void => {
+          setDeepLinkError(null);
+          markSurfaceEntrypoint(navigation.entrypoint);
+          window.location.hash = `/workstreams/${target.workstreamId}`;
+        };
+        if (target.region === null) openWorkstream();
+        else runInDeepLinkWorkspace(target, openWorkstream);
         return;
       }
       if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'notes') {
@@ -515,7 +567,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           reportDeepLinkFailure('Rally could not open that note link.');
           return;
         }
-        if (!session?.workspace) {
+        if (!sessionRef.current?.workspace) {
           reportDeepLinkFailure('Sign in before opening this note.');
           return;
         }
@@ -529,49 +581,87 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         && deepLink.hostname === 'settings'
         && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections'
           || deepLink.pathname === '/digest')
-        && deepLink.search === ''
       ) {
-        setDeepLinkError(null);
+        const target = deepLink.search ? parseWorkspaceTarget(deepLink.searchParams) : null;
+        const exactRouting = deepLink.search === '' || (
+          target !== null
+          && [...deepLink.searchParams.keys()].length === 2
+          && [...deepLink.searchParams.keys()].every((key) => key === 'region' || key === 'workspace')
+        );
+        if (!exactRouting) {
+          reportDeepLinkFailure('Rally received an unexpected sign-in link.');
+          return;
+        }
         const section = deepLink.pathname === '/connections'
           ? 'connections'
           : deepLink.pathname === '/digest' ? 'digest' : 'workspace';
-        void bridge.openSettings(section);
+        const openSettings = (): void => {
+          setDeepLinkError(null);
+          void bridge.openSettings(section);
+        };
+        if (target) runInDeepLinkWorkspace(target, openSettings);
+        else openSettings();
         return;
       }
       if (
         isDesktopDeepLinkProtocol(deepLink.protocol)
         && deepLink.hostname === 'automations'
         && deepLink.pathname === '/new'
-        && deepLink.search === ''
       ) {
-        if (!session?.workspace) {
+        const target = deepLink.search ? parseWorkspaceTarget(deepLink.searchParams) : null;
+        const exactRouting = deepLink.search === '' || (
+          target !== null
+          && [...deepLink.searchParams.keys()].length === 2
+          && [...deepLink.searchParams.keys()].every((key) => key === 'region' || key === 'workspace')
+        );
+        if (!exactRouting) {
+          reportDeepLinkFailure('Rally received an unexpected sign-in link.');
+          return;
+        }
+        if (!sessionRef.current?.workspace) {
           reportDeepLinkFailure('Sign in before creating an automation.');
           return;
         }
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        window.location.hash = '/automations/new';
+        const openAutomation = (): void => {
+          setDeepLinkError(null);
+          markSurfaceEntrypoint(navigation.entrypoint);
+          window.location.hash = '/automations/new';
+        };
+        if (target) runInDeepLinkWorkspace(target, openAutomation);
+        else openAutomation();
         return;
       }
       if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'slack' && deepLink.pathname === '/link') {
         const token = deepLink.searchParams.get('token');
+        const target = deepLink.searchParams.has('workspace')
+          ? parseWorkspaceTarget(deepLink.searchParams)
+          : null;
+        const entries = [...deepLink.searchParams.keys()];
         const exactToken = token
           && /^[A-Za-z0-9_-]{20,500}$/u.test(token)
-          && [...deepLink.searchParams.keys()].every((key) => key === 'token')
-          && deepLink.searchParams.getAll('token').length === 1;
-        if (!exactToken || !session?.workspace || !api) {
+          && deepLink.searchParams.getAll('token').length === 1
+          && (
+            (entries.length === 1 && entries[0] === 'token')
+            || (
+              entries.length === 3
+              && entries.every((key) => key === 'token' || key === 'region' || key === 'workspace')
+              && target !== null
+            )
+          );
+        if (!exactToken || !sessionRef.current?.workspace) {
           reportDeepLinkFailure('Sign in to the matching Rally workspace before connecting your Slack account.');
           return;
         }
-        setDeepLinkError(null);
-        void api.previewSlackUserLink(token)
+        const linkSlack = (targetApi: RallyApi): void => {
+          setDeepLinkError(null);
+          void targetApi.previewSlackUserLink(token)
           .then((preview) => {
             const confirmed = window.confirm(
               `Connect Slack user ${preview.slackUserId} from ${preview.workspaceName} to your Rally account, `
               + 'and let Rally search and act in Slack as you?',
             );
             if (!confirmed) return null;
-            return api.linkSlackUser(token);
+            return targetApi.linkSlackUser(token);
           })
           .then(async (result) => {
             if (!result) return;
@@ -593,7 +683,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
               // linked" for a link that committed is the error the whole change
               // is about.
               await bridge.openSettings('connections');
-              const authorization = await api.startProviderConnection(
+              const authorization = await targetApi.startProviderConnection(
                 'slack',
                 'you',
                 [...SLACK_PERSONAL_CAPABILITIES],
@@ -612,6 +702,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           .catch((error: unknown) => {
             reportDeepLinkFailure(error instanceof Error ? error.message : 'Your Slack account could not be linked.');
           });
+        };
+        if (target) runInDeepLinkWorkspace(target, linkSlack);
+        else {
+          const activeSession = sessionRef.current;
+          if (activeSession) linkSlack(new RallyApi(activeSession.apiBaseUrl, activeSession));
+        }
         return;
       }
       if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {
@@ -668,10 +764,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const callbackRegion = deepLink.searchParams.get('region');
         const attemptId = deepLink.searchParams.get('attempt');
         const connectorError = deepLink.searchParams.get('error');
+        const callbackWorkspace = deepLink.searchParams.has('workspace')
+          ? parseWorkspaceTarget(deepLink.searchParams)
+          : null;
+        const validOptionalWorkspace = !deepLink.searchParams.has('workspace')
+          || (callbackWorkspace !== null && callbackWorkspace.region === callbackRegion);
         const validSuccess =
           entries.length >= 4
-          && entries.length <= 5
-          && entries.every(([name]) => ['connection', 'status', 'region', 'attempt', 'provider'].includes(name))
+          && entries.length <= 6
+          && entries.every(([name]) => ['connection', 'status', 'region', 'workspace', 'attempt', 'provider'].includes(name))
           && ['connection', 'status', 'region', 'provider'].every(hasSingleValue)
           && connectorStatus === 'connected'
           && connectionId !== null
@@ -680,32 +781,39 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           && connectorError === null;
         const validFailure =
           entries.length >= 4
-          && entries.length <= 5
-          && entries.every(([name]) => ['status', 'error', 'region', 'attempt', 'provider'].includes(name))
+          && entries.length <= 6
+          && entries.every(([name]) => ['status', 'error', 'region', 'workspace', 'attempt', 'provider'].includes(name))
           && ['status', 'error', 'region', 'provider'].every(hasSingleValue)
           && (connectorStatus === 'denied' || connectorStatus === 'failed')
           && connectionId === null
           && connectorError !== null
           && /^[a-z0-9_-]{1,100}$/u.test(connectorError)
           && (attemptId === null || (hasSingleValue('attempt') && /^[A-Za-z0-9_-]{43}$/u.test(attemptId)));
-        if (!activeSession?.workspace || !connectorName || callbackRegion !== activeSession.workspace.region || (!validSuccess && !validFailure)) {
+        const legacyWorkspaceMatches = callbackWorkspace !== null
+          || callbackRegion === activeSession?.workspace?.region;
+        if (!activeSession?.workspace || !connectorName || !validOptionalWorkspace
+          || !legacyWorkspaceMatches || (!validSuccess && !validFailure)) {
           reportDeepLinkFailure('Rally received an invalid connector completion link.');
           return;
         }
-        if (validSuccess) {
-          setDeepLinkError(null);
-          void Promise.all([
+        const applyConnectorResult = (): void => {
+          if (validSuccess) {
+            setDeepLinkError(null);
+            void Promise.all([
             queryClient.invalidateQueries({ queryKey: ['connections'] }),
             queryClient.invalidateQueries({ queryKey: ['workstream'] }),
             queryClient.invalidateQueries({ queryKey: ['automation'] }),
-          ]);
-        } else {
-          reportDeepLinkFailure(
-            connectorStatus === 'denied'
-              ? `${connectorName} authorization was cancelled.`
-              : `${connectorName} could not be connected. Try again from Connections.`,
-          );
-        }
+            ]);
+          } else {
+            reportDeepLinkFailure(
+              connectorStatus === 'denied'
+                ? `${connectorName} authorization was cancelled.`
+                : `${connectorName} could not be connected. Try again from Connections.`,
+            );
+          }
+        };
+        if (callbackWorkspace) runInDeepLinkWorkspace(callbackWorkspace, applyConnectorResult);
+        else applyConnectorResult();
         return;
       }
       const connectionError = deepLink.searchParams.get('error');
@@ -758,7 +866,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     const unsubscribe = bridge.onDeepLink(handleDeepLink);
     void bridge.consumePendingDeepLinks().then((deepLinks) => deepLinks.forEach(handleDeepLink));
     return unsubscribe;
-  }, [api, bridge, queryClient, runtime, session]);
+  }, [applySession, bridge, queryClient, runtime]);
 
   useEffect(() => {
     if (!session) return;

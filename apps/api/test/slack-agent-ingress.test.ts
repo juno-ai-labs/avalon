@@ -741,6 +741,7 @@ describe("work-stream link unfurl card", () => {
 describe("App Home task rows", () => {
   it("skips a row it cannot link instead of failing the whole App Home", () => {
     const webBase = "https://with-avalon.com";
+    const workspaceId = "00000000-0000-7000-8000-000000000001";
     const good = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
 
     // Minting a link throws on a non-UUID by design. In a list that must stay
@@ -755,12 +756,14 @@ describe("App Home task rows", () => {
       ],
       [],
       webBase,
+      "global",
+      workspaceId,
       null,
       null,
     );
 
     const rendered = JSON.stringify(blocks);
-    expect(rendered).toContain(`${webBase}/app/workstreams/${good}`);
+    expect(rendered).toContain(`${webBase}/app/workspaces/global/${workspaceId}/workstreams/${good}`);
     expect(rendered).toContain("Quarterly planning");
     expect(rendered).not.toContain("Unlinkable");
   });

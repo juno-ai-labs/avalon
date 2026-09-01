@@ -20,7 +20,6 @@ import {
 import {
   DESKTOP_DEEP_LINK_PROTOCOL,
   DESKTOP_DEEP_LINK_PROTOCOLS,
-  isDesktopDeepLinkProtocol,
 } from '@rally/contracts/desktop-deep-link';
 import { execFile } from 'node:child_process';
 import { existsSync, renameSync } from 'node:fs';
@@ -30,6 +29,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { WorkspaceChangeGuard } from './workspace-change-guard';
+import { acceptedDeepLink, isConnectorOAuthResult } from './deep-links';
 import {
   app,
   BrowserWindow,
@@ -252,7 +252,6 @@ const allowedExternalProtocols = new Set(['https:', 'http:']);
 const customProtocol = DESKTOP_DEEP_LINK_PROTOCOL.replace(/:$/u, '');
 const deepLinkProtocols: readonly string[] = DESKTOP_DEEP_LINK_PROTOCOLS
   .map((scheme) => scheme.replace(/:$/u, ''));
-const isDeepLinkProtocol = isDesktopDeepLinkProtocol;
 const rendererProtocol = 'app';
 /**
  * The packaged renderer's origin, `app://rallywithai`.
@@ -2595,30 +2594,10 @@ function isAllowedExternalUrl(rawUrl: string): boolean {
 
 function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): void {
   const navigation: DesktopDeepLinkNavigation = { url: rawUrl, entrypoint };
-  const connectorResult = (() => {
-    try {
-      const deepLink = new URL(rawUrl);
-      const connectionId = deepLink.searchParams.get('connection');
-      const isAuthCompletion = isDeepLinkProtocol(deepLink.protocol)
-        && deepLink.hostname === 'auth'
-        && deepLink.pathname === '/complete';
-      if (!isAuthCompletion) return false;
-      const legacySuccess = connectionId !== null
-        && IdSchema.safeParse(connectionId).success
-        && deepLink.searchParams.get('status') === 'connected';
-      const provider = deepLink.searchParams.get('provider');
-      const status = deepLink.searchParams.get('status');
-      const providerResult = ['google', 'github', 'linear', 'notion', 'slack'].includes(provider ?? '')
-        && (
-          (status === 'connected' && connectionId !== null && IdSchema.safeParse(connectionId).success)
-          || ((status === 'denied' || status === 'failed') && connectionId === null)
-        );
-      return legacySuccess || providerResult;
-    } catch {
-      return false;
-    }
-  })();
-  const connectorSettingsWindow = connectorResult && settingsWindow && !settingsWindow.isDestroyed()
+  const connectorResult = isConnectorOAuthResult(rawUrl);
+  const connectorSettingsWindow = connectorResult
+    && !new URL(rawUrl).searchParams.has('workspace')
+    && settingsWindow && !settingsWindow.isDestroyed()
     ? settingsWindow
     : null;
 
@@ -2684,49 +2663,6 @@ function revealNoteInMainWindow(noteId: string): void {
   }
   mainWindow.webContents.send('auth:deep-link', navigation);
   raise(mainWindow);
-}
-
-function acceptedDeepLink(rawUrl: string): string | null {
-  try {
-    const deepLink = new URL(rawUrl);
-    const isAuthentication = isDeepLinkProtocol(deepLink.protocol)
-      && deepLink.hostname === 'auth'
-      && deepLink.pathname === '/complete';
-    const isWorkstream = isDeepLinkProtocol(deepLink.protocol)
-      && deepLink.hostname === 'workstreams'
-      && /^\/[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(deepLink.pathname);
-    const isNewWorkstream = isDeepLinkProtocol(deepLink.protocol)
-      && deepLink.hostname === 'workstreams'
-      && deepLink.pathname === '/new'
-      && deepLink.search === '';
-    const isInvitation = isDeepLinkProtocol(deepLink.protocol)
-      && deepLink.hostname === 'invitations'
-      && deepLink.pathname === '/accept'
-      && deepLink.searchParams.get('token') !== null
-      && (deepLink.searchParams.get('region') === 'global' || deepLink.searchParams.get('region') === 'eu');
-    const isSettings = isDeepLinkProtocol(deepLink.protocol)
-      && deepLink.hostname === 'settings'
-      && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections')
-      && deepLink.search === '';
-    const isAutomation = isDeepLinkProtocol(deepLink.protocol)
-      && deepLink.hostname === 'automations'
-      && deepLink.pathname === '/new'
-      && deepLink.search === '';
-    const isSlackLink = isDeepLinkProtocol(deepLink.protocol)
-      && deepLink.hostname === 'slack'
-      && deepLink.pathname === '/link'
-      && /^[A-Za-z0-9_-]{20,500}$/u.test(deepLink.searchParams.get('token') ?? '')
-      && [...deepLink.searchParams.keys()].every((key) => key === 'token')
-      && deepLink.searchParams.getAll('token').length === 1;
-    if (
-      !isAuthentication && !isWorkstream && !isNewWorkstream && !isInvitation
-      && !isSettings && !isAutomation && !isSlackLink
-    ) return null;
-    return deepLink.toString();
-  } catch {
-    // Ignore malformed protocol payloads from the operating system.
-    return null;
-  }
 }
 
 function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {

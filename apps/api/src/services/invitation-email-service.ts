@@ -1,3 +1,4 @@
+import { addWorkspaceTarget } from "@rally/contracts";
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
 
@@ -22,6 +23,7 @@ export interface WorkspaceInvitationResolutionEmail {
   outcome: "accepted" | "declined";
   recipientEmail: string;
   workspaceName: string;
+  workspaceId: string;
   inviteeEmail: string;
   inviteeName?: string;
   role: "admin" | "member";
@@ -87,7 +89,12 @@ export async function sendWorkspaceInvitationResolutionEmail(
   const verb = invitation.outcome === "accepted" ? "accepted" : "declined";
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
   const regionLabel = invitation.region === "eu" ? "European Union" : "Global";
-  const desktopUrl = "rallywithai://settings/workspace";
+  const desktopTarget = addWorkspaceTarget(new URL("rallywithai://settings/workspace"), {
+    region: invitation.region,
+    workspaceId: invitation.workspaceId,
+  });
+  const desktopUrl = new URL("/open", env.PUBLIC_WEB_BASE_URL);
+  desktopUrl.hash = new URLSearchParams({ target: desktopTarget.toString() }).toString();
   const subject = `${actor} ${verb} your invitation to ${workspaceName}`;
   const actorWithEmail = actor.toLowerCase() === invitation.inviteeEmail.toLowerCase()
     ? actor
@@ -98,7 +105,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
     `They were invited as ${roleLabel}.`,
     `Workspace data region: ${regionLabel}.`,
     "",
-    `Open Avalon: ${desktopUrl}`,
+    `Open Rally: ${desktopUrl.toString()}`,
   ].join("\n");
   const html = invitationResolutionEmailHtml({
     ...invitation,
@@ -106,7 +113,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
     roleLabel,
     regionLabel,
     verb,
-    desktopUrl,
+    desktopUrl: desktopUrl.toString(),
   });
 
   return sendResendEmail(env, {
@@ -188,5 +195,3 @@ function invitationResolutionEmailHtml(input: WorkspaceInvitationResolutionEmail
   </body>
 </html>`;
 }
-
-

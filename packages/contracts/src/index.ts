@@ -84,14 +84,29 @@ export {
   type TelemetrySource,
 } from "./telemetry";
 export {
+  LEGACY_WORKSTREAM_LINK_PATH_PREFIX,
   LEGACY_WORKSTREAM_LINK_ORIGINS,
   WORKSTREAM_LINK_PATH_PREFIX,
   isWorkstreamId,
   parseWorkstreamLink,
+  parseWorkstreamLinkTarget,
   parseWorkstreamLinkPath,
+  parseWorkstreamLinkPathTarget,
   workstreamCanonicalUrl,
   workstreamDeepLink,
+  workstreamDeepLinkFromParsedTarget,
+  type ParsedWorkstreamLinkTarget,
+  type WorkstreamLinkTarget,
 } from "./workstream-links";
+export {
+  addWorkspaceTarget,
+  assertWorkspaceTarget,
+  isWorkspaceTarget,
+  parseWorkspaceTarget,
+  workspaceTargetsEqual,
+  type WorkspaceTarget,
+  type WorkspaceTargetRegion,
+} from "./workspace-target";
 
 export const TimestampSchema = z.string().datetime({ offset: true });
 export const RegionSchema = z.enum(["global", "eu"]);

@@ -79,7 +79,11 @@ export async function deliverFrozenAutomationResultEmail(
   const ran = runDate(recipient.timezone);
   const subject = `${OUTCOME_PREFIX[input.outcomeStatus] ?? ""}${name} · ${ran}`;
   const body = resultBody(input.text);
-  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
+  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
+    region: env.AVALON_REGION,
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+  });
   const delivery = await sendResendEmail(env, {
     recipientEmail: input.recipientEmail,
     subject,

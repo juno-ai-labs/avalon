@@ -180,6 +180,9 @@ function report<TName extends TelemetryEventName>(
 
 export function normalizedTelemetryPathname(pathname: string): string {
   const path = pathname.toLowerCase().slice(0, 160);
+  if (/^\/app\/workspaces\/(?:global|eu)\/[^/]+\/workstreams\/[^/]+\/?$/u.test(path)) {
+    return '/app/workspaces/:region/:workspace/workstreams/:id';
+  }
   if (path.startsWith('/app/workstreams/')) return '/app/workstreams/:id';
   return /^\/[a-z0-9_:/.-]*$/u.test(path) ? path : '/';
 }

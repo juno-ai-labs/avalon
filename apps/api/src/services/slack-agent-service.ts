@@ -32,8 +32,9 @@ import {
   SlackSearchAuthorizationSchema,
   asUserId,
   asWorkspaceId,
+  addWorkspaceTarget,
   isWorkstreamId,
-  parseWorkstreamLink,
+  parseWorkstreamLinkTarget,
   workstreamCanonicalUrl,
   type ExternalActor,
   type SlackOriginAttachment,
@@ -1288,7 +1289,12 @@ export class SlackAgentService {
           thread_ts: session.slack_thread_ts,
           client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:controls`),
           text: "Rally task controls",
-          blocks: responseActionBlocks(workstreamId, this.env.PUBLIC_WEB_BASE_URL),
+          blocks: responseActionBlocks(
+            workstreamId,
+            this.env.PUBLIC_WEB_BASE_URL,
+            this.env.AVALON_REGION,
+            workspaceId,
+          ),
         }, AbortSignal.timeout(10_000));
       }
       // A run that asked for something only a connected member can give, when
@@ -1430,7 +1436,13 @@ export class SlackAgentService {
       thread_ts: threadTs,
       client_msg_id: await stableUuid(`${deliveryKey}:controls`),
       text: "Open the full Rally result",
-      blocks: automationActionBlocks(title, input.workstreamId, this.env.PUBLIC_WEB_BASE_URL),
+      blocks: automationActionBlocks(
+        title,
+        input.workstreamId,
+        this.env.PUBLIC_WEB_BASE_URL,
+        this.env.AVALON_REGION,
+        input.workspaceId,
+      ),
     }, AbortSignal.timeout(10_000));
     return "delivered";
   }
@@ -2846,6 +2858,8 @@ export class SlackAgentService {
         tasks.results ?? [],
         automations.results ?? [],
         this.env.PUBLIC_WEB_BASE_URL,
+        this.env.AVALON_REGION,
+        connection.workspace_id,
         personalSlack,
         link.role === "owner" || link.role === "admin" ? { teamId, status: connection.status } : null,
       );
@@ -2874,10 +2888,14 @@ export class SlackAgentService {
       // every already-shared Avalon link would be delivered here and silently
       // dropped. The shared parser still accepts the raw deep link, and it
       // never throws on a malformed URL.
-      const workstreamId = parseWorkstreamLink(link.url, {
+      const target = parseWorkstreamLinkTarget(link.url, {
         webBaseUrl: [this.env.PUBLIC_WEB_BASE_URL, ...LEGACY_WORKSTREAM_LINK_ORIGINS],
       });
-      if (workstreamId) linkedWorkstreams.set(link.url, workstreamId);
+      const belongsToConnection = target && (
+        target.region === null
+        || (target.region === this.env.AVALON_REGION && target.workspaceId === connection.workspace_id)
+      );
+      if (belongsToConnection) linkedWorkstreams.set(link.url, target.workstreamId);
     }
     if (linkedWorkstreams.size === 0) return;
     const token = await this.botToken(connection);
@@ -2899,7 +2917,11 @@ export class SlackAgentService {
     for (const [url, workstreamId] of linkedWorkstreams) {
       const blocks = workstreamUnfurlBlocks(
         summaries.get(workstreamId) ?? null,
-        workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, workstreamId),
+        workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, {
+          region: this.env.AVALON_REGION,
+          workspaceId: connection.workspace_id,
+          workstreamId,
+        }),
       );
       rendered.set(url, blocks);
       unfurls[url] = { blocks };
@@ -3436,7 +3458,11 @@ export class SlackAgentService {
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).bind(tokenHash, connection.id, connection.provider_account_id, slackUserId, new Date(Date.now() + 15 * 60_000).toISOString(), at).run();
     const url = new URL("/slack/link", this.env.PUBLIC_WEB_BASE_URL);
-    url.hash = new URLSearchParams({ token }).toString();
+    url.hash = new URLSearchParams({
+      token,
+      region: this.env.AVALON_REGION,
+      workspace: connection.workspace_id,
+    }).toString();
     return { url: url.toString(), createdAt: at };
   }
 
@@ -3885,12 +3911,14 @@ function unlinkedHome(): Record<string, unknown>[] {
   ];
 }
 
-function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[], automations: Record<string, unknown>[], webBase: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
+function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[], automations: Record<string, unknown>[], webBase: string, region: "global" | "eu", workspaceId: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
+  const automationsTarget = addWorkspaceTarget(new URL("rallywithai://automations/new"), { region, workspaceId }).toString();
+  const connectionsTarget = addWorkspaceTarget(new URL("rallywithai://settings/connections"), { region, workspaceId }).toString();
   const blocks: Record<string, unknown>[] = [
     { type: "header", text: { type: "plain_text", text: `Welcome, ${name}`.slice(0, 150) } },
     { type: "actions", elements: [
       { type: "button", style: "primary", text: { type: "plain_text", text: "Start a task" }, action_id: "rally_start_task" },
-      { type: "button", text: { type: "plain_text", text: "Create automation" }, url: desktopHandoffUrl(webBase, "rallywithai://automations/new"), action_id: "rally_create_automation" },
+      { type: "button", text: { type: "plain_text", text: "Create automation" }, url: desktopHandoffUrl(webBase, automationsTarget), action_id: "rally_create_automation" },
       { type: "button", text: { type: "plain_text", text: "Notifications" }, action_id: "rally_preferences" },
     ] },
     { type: "divider" },
@@ -3913,19 +3941,19 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
       : task.harness_status === "running"
         ? ":large_green_circle: Running"
         : `Recent · ${escapeMrkdwn(String(task.harness_status).replaceAll("_", " "))}`;
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${workstreamCanonicalUrl(webBase, workstreamId)}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${workstreamCanonicalUrl(webBase, { region, workspaceId, workstreamId })}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
   }
   blocks.push({ type: "divider" }, { type: "header", text: { type: "plain_text", text: "Automations" } });
   if (!automations.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "Create a recurring automation—like a 9 AM stack-ranked Gmail briefing delivered to your Rally DM." } });
   for (const automation of automations) blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${escapeMrkdwn(String(automation.name))}* · ${escapeMrkdwn(String(automation.status))}\n${automation.next_run_at ? `Next run: ${escapeMrkdwn(String(automation.next_run_at))}` : "No scheduled run"}` } });
   blocks.push(
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Rally account normally does this too. Finish it to let Rally search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "rally_open_personal_tools" } },
+    { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Rally account normally does this too. Finish it to let Rally search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, connectionsTarget), action_id: "rally_open_personal_tools" } },
   );
   if (administration) blocks.push(
     { type: "divider" },
     { type: "header", text: { type: "plain_text", text: "Workspace administration" } },
-    { type: "section", text: { type: "mrkdwn", text: `Slack workspace ${escapeMrkdwn(administration.teamId)} · ${administration.status === "healthy" ? ":large_green_circle: Healthy" : ":warning: Needs attention"}` }, accessory: { type: "button", text: { type: "plain_text", text: "Manage" }, url: desktopHandoffUrl(webBase, "rallywithai://settings/connections"), action_id: "rally_open_admin" } },
+    { type: "section", text: { type: "mrkdwn", text: `Slack workspace ${escapeMrkdwn(administration.teamId)} · ${administration.status === "healthy" ? ":large_green_circle: Healthy" : ":warning: Needs attention"}` }, accessory: { type: "button", text: { type: "plain_text", text: "Manage" }, url: desktopHandoffUrl(webBase, connectionsTarget), action_id: "rally_open_admin" } },
   );
   blocks.push({ type: "divider" }, { type: "context", elements: [{ type: "mrkdwn", text: "Rally Agent features require paid Slack and Rally plans. Personal Slack tools use your own Slack permissions when connected. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/support|Support>" }] });
   return blocks;
@@ -3944,15 +3972,15 @@ function personalAutomationsForHome(items: unknown): Record<string, unknown>[] {
     }));
 }
 
-function responseActionBlocks(workstreamId: string, webBase: string): Record<string, unknown>[] {
+function responseActionBlocks(workstreamId: string, webBase: string, region: "global" | "eu", workspaceId: string): Record<string, unknown>[] {
   return [{ type: "actions", elements: [
-    { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "rally_open_task" },
+    { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, { region, workspaceId, workstreamId }), action_id: "rally_open_task" },
     { type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "rally_feedback", value: workstreamId },
   ] }, aiResponseDisclaimerBlock()];
 }
 
-function automationActionBlocks(title: string, workstreamId: string, webBase: string): Record<string, unknown>[] {
-  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "rally_open_automation_result" }] }, aiResponseDisclaimerBlock()];
+function automationActionBlocks(title: string, workstreamId: string, webBase: string, region: "global" | "eu", workspaceId: string): Record<string, unknown>[] {
+  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: workstreamCanonicalUrl(webBase, { region, workspaceId, workstreamId }), action_id: "rally_open_automation_result" }] }, aiResponseDisclaimerBlock()];
 }
 
 function aiResponseDisclaimerBlock(): Record<string, unknown> {

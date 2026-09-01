@@ -40,13 +40,17 @@ test("exercises the shapes the template has to survive", () => {
       { id: "00000000-0000-4000-8000-000000000001", title: "Prepare the Acme follow-up" },
       { id: "00000000-0000-4000-8000-000000000002", title: "Investigate ENG-142" },
     ],
+    workspaceId: "00000000-0000-7000-8000-000000000010",
     otherName: "Samantha Lee",
     highlightCount: 1,
   });
 
   // A preview that only shows plain bullets proves nothing about the template.
   assert.match(body, /^## Needs you$/mu);
-  assert.match(body, /\[Prepare the Acme follow-up\]\(https:\/\/rallywith\.ai\/app\/workstreams\//u);
+  assert.match(
+    body,
+    /\[Prepare the Acme follow-up\]\(https:\/\/rallywith\.ai\/app\/workspaces\/global\/00000000-0000-7000-8000-000000000010\/workstreams\//u,
+  );
   assert.match(body, /^> /mu);
   assert.match(body, /\*\*Owner still unassigned\.\*\*/u);
 });
@@ -54,6 +58,7 @@ test("exercises the shapes the template has to survive", () => {
 test("omits the priority section when nothing names the reader", () => {
   const body = sampleBody({
     workstreams: [{ id: null, title: "Investigate ENG-142" }],
+    workspaceId: "00000000-0000-7000-8000-000000000010",
     otherName: "Samantha Lee",
     highlightCount: 0,
   });
