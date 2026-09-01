@@ -702,6 +702,30 @@ export function planSocketReplay(
  * authoritative for its own transcript and loop state; REST is a recovery
  * surface, never a second writer.
  */
+/**
+ * The automation object's answer, re-parsed at this boundary.
+ *
+ * A Durable Object RPC return crosses a serialization boundary like any other
+ * network call, and this one decides whether people are interrupted.
+ */
+const AutomationRunDispositionSchema = z.object({
+  disposition: z.enum(["done", "deliver", "expose_workstream"]),
+  reason: z.string(),
+  source: z.enum(["classified", "default"]),
+}).strict();
+
+/**
+ * `automation_delivery_receipts.outcome_code` is 160 characters and is read by
+ * people, so the reason is carried whole where it fits and cut where it does
+ * not — a truncated sentence still says more than the bare code it replaces.
+ */
+function withheldOutcomeCode(reason: string): string {
+  const trimmed = reason.trim();
+  if (!trimmed) return "delivery_withheld";
+  const carried = `delivery_withheld: ${trimmed}`;
+  return carried.length <= 160 ? carried : `${carried.slice(0, 157)}...`;
+}
+
 export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly recentEvents: ServerSocketEvent[] = [];
@@ -3555,13 +3579,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         asAutomationId(frozen.automationId),
       ),
     );
+    // What this result was worth, decided once for the whole occurrence and
+    // before any destination is written. The automation object owns the
+    // decision — it holds the definition, the trigger and what the last few
+    // occurrences were judged to be — and keeps it, so a delivery retry after a
+    // crash reads the same answer rather than judging the run twice.
+    const disposition = text === null
+      // No saved turn, so there is nothing to judge and nothing to send. The
+      // canonical read already decided this; asking a model about an absent
+      // result would be spending an inference to agree with it.
+      ? { disposition: "done" as const, reason: "The run finished without a saved result.", source: "default" as const }
+      : AutomationRunDispositionSchema.parse(await automation.resolveRunDisposition({
+        schemaVersion: 1,
+        automationId: frozen.automationId,
+        workspaceId: input.workspaceId,
+        runId: frozen.runId,
+        result: text,
+      }));
     const failures: unknown[] = [];
     for (const target of frozen.deliveryTargets) {
       const targetKey = target.type === "email"
         ? `email:${target.emailAddress.toLocaleLowerCase()}`
         : `slack_agent_dm:${target.connectionId}:${target.slackTeamId}:${target.slackUserId}`;
       try {
-        const state = await deliverCanonicalExternalResult(text, (savedText) => target.type === "email"
+        const state = disposition.disposition === "done"
+          ? "skipped" as const
+          : await deliverCanonicalExternalResult(text, (savedText) => target.type === "email"
           ? deliverFrozenAutomationResultEmail(workspaceEnv, {
               workspaceId: input.workspaceId,
               automationSubscriptionId: frozen.automationId,
@@ -3595,7 +3638,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           targetKey,
           payloadHash,
           state: state === "skipped" ? "skipped" : "delivered",
-          outcomeCode: state === "skipped" ? "delivery_suppressed" : "delivery_completed",
+          // The reason rides on the receipt so the run history says *why* a
+          // destination got nothing, in the classifier's own words, rather than
+          // leaving a bare `skipped` to be interpreted.
+          outcomeCode: state !== "skipped"
+            ? "delivery_completed"
+            : disposition.disposition === "done"
+              ? withheldOutcomeCode(disposition.reason)
+              : "delivery_suppressed",
         });
       } catch (failure) {
         failures.push(failure);
