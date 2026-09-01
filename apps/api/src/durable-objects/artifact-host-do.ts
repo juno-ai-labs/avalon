@@ -56,6 +56,7 @@ import {
   FACET_HOST_MODULE_SOURCE,
   FACET_NAME,
 } from "../artifacts/facet-host";
+import { ASSET_SHIM_MODULE, ASSET_SHIM_SOURCE } from "../artifacts/asset-shim";
 import { admitReadOnlyStatement, admitTableName } from "../artifacts/read-only-sql";
 import {
   SocketAccessRevocationSchema,
@@ -686,6 +687,9 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
     const artifactId = state.artifact_id;
     const version = state.current_version;
     const env = this.env;
+    // Parsed rather than cast, like every other read of this column: it was
+    // written by a possibly older deployment.
+    const manifest = ArtifactManifestSchema.parse(JSON.parse(state.manifest_json));
     return this.ctx.facets.get<ArtifactFacetHost>(FACET_NAME, async () => {
       const loader = env.ARTIFACT_LOADER;
       if (!loader) throw new Error("artifact_loader_binding_missing");
@@ -698,11 +702,30 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
         mainModule: FACET_HOST_MODULE,
         modules: {
           [FACET_HOST_MODULE]: FACET_HOST_MODULE_SOURCE,
+          [ASSET_SHIM_MODULE]: ASSET_SHIM_SOURCE,
           "index.js": await module.text(),
         },
-        // No bindings and no network. A stateful artifact's class reaches its
-        // own facet storage and nothing else.
-        env: {},
+        // One binding and no network: an RPC stub that reads this version's
+        // published files, and nothing else. The skill teaches
+        // `this.env.ASSETS.fetch(request)` as the last line of `SiteData.fetch`,
+        // and with an empty env every stateful site answered the routes its
+        // model wrote and threw on its own `index.html`.
+        //
+        // A stub rather than a reader object because the loader's env
+        // serializer rejects a value carrying a function; the bucket behind it
+        // stays in the API Worker.
+        env: {
+          RALLY_ASSETS: this.ctx.exports.ArtifactAssetLoopback({
+            props: {
+              artifactId,
+              version,
+              assets: manifest.assets.map((asset) => ({
+                path: asset.path,
+                contentType: asset.contentType,
+              })),
+            },
+          }),
+        },
         globalOutbound: null,
       }));
       return { class: worker.getDurableObjectClass<ArtifactFacetHost>(FACET_HOST_CLASS) };
