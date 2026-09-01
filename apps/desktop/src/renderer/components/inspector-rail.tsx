@@ -2,6 +2,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   Archive,
   ArrowLeft,
+  Bot,
   Check,
   ChevronRight,
   CircleAlert,
@@ -24,6 +25,7 @@ import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
   AutomationRunSummary,
   ResourceVersion,
+  WorkstreamAutomationSummary,
   WorkstreamDetail,
   WorkstreamResource,
 } from '../lib/types';
@@ -45,6 +47,19 @@ interface InspectorRailProps {
    */
   loadResourceContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   workstream?: WorkstreamDetail;
+  /**
+   * The automations this work stream owns, newest first.
+   *
+   * `undefined` is still loading; `[]` is genuinely none. A room's automations
+   * are listed here and nowhere else — the sidebar excludes them — so coercing
+   * a pending fetch to `[]` tells somebody the room owns nothing while the
+   * answer is still on its way.
+   */
+  workstreamAutomations?: WorkstreamAutomationSummary[];
+  /** Set when the list could not be loaded, so absence is not read as none. */
+  workstreamAutomationsError?: string | undefined;
+  /** Opens one in the automation surface. Absent where there is nowhere to go. */
+  onOpenWorkstreamAutomation?: (automationId: string) => void;
   runs?: AutomationRunSummary[];
   onAddParticipant?: () => void;
   onAddResource?: () => void;
@@ -92,6 +107,66 @@ function Section({ title, action, children }: { title: string; action?: React.Re
       {children}
     </section>
   );
+}
+
+/**
+ * The automations this work stream owns.
+ *
+ * Three states, kept apart on purpose: still loading, failed to load, and
+ * genuinely none. A room's automations appear here and nowhere else, so "none"
+ * is a claim about the room rather than about the fetch, and saying it while a
+ * request is in flight — or after one failed — is saying something false.
+ */
+function WorkstreamAutomations({
+  automations,
+  error,
+  onOpen,
+}: {
+  automations?: WorkstreamAutomationSummary[];
+  error?: string | undefined;
+  onOpen?: (automationId: string) => void;
+}): React.JSX.Element {
+  if (error) return <p className="rail-empty-line">Could not load automations</p>;
+  if (!automations) return <p className="rail-empty-line">Loading automations…</p>;
+  if (automations.length === 0) return <p className="rail-empty-line">No automations</p>;
+  return (
+    <ul aria-label="Automations" className="rail-card-list">
+      {automations.map((automation) => (
+        <li className="rail-card" key={automation.id}>
+          <button
+            className="rail-card-main"
+            disabled={!onOpen}
+            onClick={() => onOpen?.(automation.id)}
+            type="button"
+          >
+            <span className="rail-card-icon"><Bot aria-hidden="true" size={14} /></span>
+            <span>
+              <strong>{automation.name}</strong>
+              <small>{automationStatusLine(automation)}</small>
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * What this automation is doing, in one line.
+ *
+ * The attention reason wins over the status: an automation whose trigger cannot
+ * fire still reads "Active", and that is the row somebody needs to look at.
+ */
+function automationStatusLine(automation: WorkstreamAutomationSummary): string {
+  if (automation.attention) return 'Needs attention';
+  if (automation.status === 'paused') return 'Paused';
+  if (automation.status === 'draft') return 'Draft';
+  if (automation.status === 'error') return 'Needs attention';
+  return automation.nextRunAt
+    ? `Next ${new Date(automation.nextRunAt).toLocaleString(undefined, {
+        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      })}`
+    : 'Active';
 }
 
 function ResourceCards({
@@ -145,11 +220,17 @@ function watchLabel(resource: WorkstreamResource): { text: string; name: string 
 
 function ContextContent({
   workstream,
+  workstreamAutomations,
+  workstreamAutomationsError,
+  onOpenWorkstreamAutomation,
   onAddParticipant,
   onAddResource,
   onToggleWatch,
 }: Pick<InspectorRailProps,
   | 'workstream'
+  | 'workstreamAutomations'
+  | 'workstreamAutomationsError'
+  | 'onOpenWorkstreamAutomation'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
@@ -236,6 +317,16 @@ function ContextContent({
         ) : (
           <ResourceCards resources={artifacts} />
         )}
+      </Section>
+
+      {/* Between Artifacts and Details: what the room owns sits with the rest of
+          its context, above the metadata nobody scrolls to. */}
+      <Section title="Automations">
+        <WorkstreamAutomations
+          automations={workstreamAutomations}
+          error={workstreamAutomationsError}
+          {...(onOpenWorkstreamAutomation ? { onOpen: onOpenWorkstreamAutomation } : {})}
+        />
       </Section>
 
       <Section title="Details">
