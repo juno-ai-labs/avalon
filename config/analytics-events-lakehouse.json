@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "binding": "ANALYTICS_LAKEHOUSE",
   "deploymentTokenOwner": "account",
   "namespace": "avalon",
@@ -11,6 +11,7 @@
       "sinkType": "r2_data_catalog",
       "bucket": "avalon-global-analytics-events-lakehouse",
       "stream": "avalon_global_analytics_events_lakehouse_stream",
+      "streamId": "dd57ff3bdeda4686a5ba15f547001bc6",
       "sink": "avalon_global_analytics_events_lakehouse_sink",
       "pipeline": "avalon_global_analytics_events_lakehouse"
     }

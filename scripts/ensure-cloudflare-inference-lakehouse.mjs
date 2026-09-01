@@ -1,13 +1,13 @@
 /**
- * Ensure both complete Global lakehouses exist, then materialize their Global
- * Pipeline IDs and a lakehouse-free EU deploy config.
+ * Materialize pinned Global Pipeline stream bindings without a control-plane
+ * read, or explicitly reconcile both complete Global lakehouses.
  *
- * Pipelines resources are named and idempotently discovered, but a Worker
- * binding requires the stream's generated ID. Keeping that ID in a committed
- * Wrangler file would make first deployment manual. This preflight instead
- * creates each bucket, catalog, stream, sink, and pipeline from checked-in
- * manifests, verifies immutable existing resources, and writes ignored configs
- * beside the originals so every relative Wrangler path keeps the same meaning.
+ * Worker bindings require Cloudflare-generated stream IDs. Those stable IDs
+ * are checked into the manifests so ordinary application deployments can write
+ * ignored regional Wrangler configs without depending on the Pipelines control
+ * plane. Reconciliation remains an explicit operation that creates missing
+ * resources, verifies immutable state, and rejects a stream ID that differs
+ * from the pinned deployment binding.
  */
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -24,8 +24,10 @@ const API_BASE = 'https://api.cloudflare.com/client/v4';
 const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
 const SAFE_PIPELINE_ENTITY = /^[a-z][a-z0-9_]{2,127}$/u;
 const SAFE_TOKEN_ID = /^[a-f0-9]{32}$/u;
+const SAFE_STREAM_ID = /^[a-f0-9]{32}$/u;
 const WORKER_REGIONS = ['eu', 'global'];
 const LAKEHOUSE_REGIONS = ['global'];
+const LAKEHOUSE_MODES = new Set(['--check', '--materialize-bindings', '--reconcile']);
 
 // This pre-install provisioner deliberately gets ten total attempts because the
 // affected Pipelines control plane was failing most reads during the incident.
@@ -162,7 +164,7 @@ function jurisdictionHeaders(region) {
 }
 
 function assertManifest(manifest) {
-  if (manifest.schemaVersion !== 4
+  if (manifest.schemaVersion !== 5
     || !['INFERENCE_LAKEHOUSE', 'ANALYTICS_LAKEHOUSE'].includes(manifest.binding)) {
     throw new Error('Unsupported lakehouse manifest version or binding');
   }
@@ -181,6 +183,9 @@ function assertManifest(manifest) {
     const region = manifest.regions?.[regionName];
     if (!region) throw new Error(`${label} lakehouse manifest is missing ${regionName}`);
     if (!SAFE_BUCKET.test(region.bucket)) throw new Error(`Unsafe ${regionName} lakehouse bucket`);
+    if (!SAFE_STREAM_ID.test(region.streamId ?? '')) {
+      throw new Error(`Unsafe ${regionName} lakehouse stream ID`);
+    }
     for (const [kind, name] of Object.entries({
       stream: region.stream,
       sink: region.sink,
@@ -466,6 +471,23 @@ export async function materializeLakehouseWranglerConfigs(
   return written;
 }
 
+export async function materializePinnedLakehouseWranglerConfigs(options = {}) {
+  const manifests = options.manifests ?? await Promise.all([
+    loadInferenceLakehouseManifest(),
+    loadAnalyticsLakehouseManifest(),
+  ]);
+  const pinned = manifests.map((manifest) => {
+    assertManifest(manifest);
+    const resources = Object.fromEntries(LAKEHOUSE_REGIONS.map((regionName) => [
+      regionName,
+      { stream: { id: manifest.regions[regionName].streamId } },
+    ]));
+    return { manifest, resources };
+  });
+  const configs = await materializeLakehouseWranglerConfigs(pinned, options);
+  return { manifests, configs };
+}
+
 export async function ensureInferenceLakehouse(options = {}) {
   const environment = options.environment ?? process.env;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -488,11 +510,16 @@ export async function ensureInferenceLakehouse(options = {}) {
 
   for (const regionName of LAKEHOUSE_REGIONS) {
     const region = manifest.regions[regionName];
+    const stream = await ensureStream(client, region, manifest.streamSchema, create, log);
+    if (stream.id !== region.streamId) {
+      throw new Error(
+        `${region.stream} ID drifted from pinned deployment binding: expected ${region.streamId}, got ${stream.id}`,
+      );
+    }
     await ensureBucket(client, regionName, region, create, log);
     if (region.sinkType === 'r2_data_catalog') {
       await ensureCatalog(client, regionName, region, create, log);
     }
-    const stream = await ensureStream(client, region, manifest.streamSchema, create, log);
     const sink = await ensureSink(client, region, manifest, create, log);
     const pipeline = await ensurePipeline(client, region, sink, create, log);
     resources[regionName] = { stream, sink, pipeline };
@@ -524,8 +551,18 @@ export async function ensureCloudflareLakehouses(options = {}) {
   return { provisioned, configs };
 }
 
+export function parseLakehouseMode(arguments_) {
+  if (arguments_.length !== 1 || !LAKEHOUSE_MODES.has(arguments_[0])) {
+    throw new Error('Choose exactly one lakehouse mode: --materialize-bindings, --check, or --reconcile');
+  }
+  return arguments_[0];
+}
+
 if (isEntryPoint(import.meta.url)) {
-  const check = process.argv.includes('--check');
-  const materializeBindings = process.argv.includes('--materialize-bindings');
-  await ensureCloudflareLakehouses({ create: !check, materializeBindings });
+  const mode = parseLakehouseMode(process.argv.slice(2));
+  if (mode === '--materialize-bindings') await materializePinnedLakehouseWranglerConfigs();
+  else await ensureCloudflareLakehouses({
+    create: mode === '--reconcile',
+    materializeBindings: false,
+  });
 }
