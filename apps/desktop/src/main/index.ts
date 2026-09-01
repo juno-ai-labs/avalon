@@ -2714,11 +2714,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
       const view = new WebContentsView({
         webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
       });
-      confineToArtifactOrigin(
-        view.webContents,
-        new URL(request.url).origin,
-        (url: string) => void shell.openExternal(url),
-      );
+      confineToArtifactOrigin(view.webContents, new URL(request.url).origin);
       window.contentView.addChildView(view);
       const handle: ArtifactViewHandle = {
         setBounds: (bounds) => view.setBounds(bounds),
@@ -2762,11 +2758,7 @@ function openArtifactWindow(request: { artifactId: string; url: string; title: s
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
     webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
   });
-  confineToArtifactOrigin(
-    window.webContents,
-    new URL(request.url).origin,
-    (url: string) => void shell.openExternal(url),
-  );
+  confineToArtifactOrigin(window.webContents, new URL(request.url).origin);
   window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window.show());
   void window.loadURL(request.url);

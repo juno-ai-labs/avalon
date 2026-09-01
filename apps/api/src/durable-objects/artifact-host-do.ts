@@ -33,8 +33,6 @@
  * See `docs/live-web-artifacts.md`.
  */
 import {
-  ARTIFACT_VIEWER_ID_HEADER,
-  ARTIFACT_VIEWER_NAME_HEADER,
   ArtifactManifestSchema,
   artifactAssetKey,
   artifactIsolateId,
@@ -43,7 +41,6 @@ import {
   asWorkstreamId,
   type ArtifactManifest,
 } from "@rally/contracts";
-import { rallyHeaderAliases } from "@rally/contracts/http-headers";
 import { z } from "zod";
 
 import type { Env } from "../env";
@@ -790,38 +787,4 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
     );
     return await workstream.canReadWorkstream(asUserId(userId));
   }
-}
-
-/**
- * The two headers artifact code is allowed to trust, and the strip that earns
- * that trust.
- *
- * Exported from here rather than inlined at the injection site because the
- * strip *is* the anti-spoof mechanism and has its own test: a page or proxy
- * that sends these names must never have them survive into the module. It
- * removes every alias, canonical and superseded alike, because every product
- * header reader widens to the superseded spelling — a family whose readers
- * widen and whose stripper does not has a forgeable back door.
- */
-export function withViewerIdentity(
-  request: Request,
-  viewer: { id: string; name: string } | null,
-): Request {
-  const headers = new Headers(request.headers);
-  for (const header of [ARTIFACT_VIEWER_ID_HEADER, ARTIFACT_VIEWER_NAME_HEADER]) {
-    headers.delete(header);
-    // `rallyHeaderAliases` is the one place the superseded prefixes live, so
-    // the strip reads them from there rather than restating the list.
-    for (const alias of rallyHeaderAliases(header)) headers.delete(alias);
-  }
-  if (viewer) {
-    headers.set(ARTIFACT_VIEWER_ID_HEADER, viewer.id);
-    // A header value is ASCII-only by RFC 7230, so a display name needs *some*
-    // encoding. This is deliberately the `decodeURIComponent` idiom rather than
-    // RFC 8187's `UTF-8''…` form — chosen for how reliably a small model
-    // decodes it, and named here so nobody mistakes a house convention for a
-    // standard header encoding.
-    headers.set(ARTIFACT_VIEWER_NAME_HEADER, encodeURIComponent(viewer.name));
-  }
-  return new Request(request, { headers });
 }

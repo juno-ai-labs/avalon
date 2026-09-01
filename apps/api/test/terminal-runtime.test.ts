@@ -198,7 +198,7 @@ function fixture(
     })),
     publishResource: vi.fn(async (_context, input, bytes): Promise<TerminalPublishedResourceOutput> => ({
       resourceId: "published", title: input.displayName ?? input.filePath,
-      resourceType: "generated_file", provider: "avalon_generated", mimeType: "text/plain",
+      publishKind: "file", resourceType: "generated_file", provider: "avalon_generated", mimeType: "text/plain",
       sizeBytes: bytes.byteLength, sourceSha256: "b".repeat(64), attachmentKind: "text",
       contentMode: "read", derivativeStatus: "pending", createdAt: "2026-08-13T12:00:00.000Z",
     })),
@@ -209,7 +209,7 @@ function fixture(
       site: Parameters<TerminalResourceBridge["publishSiteResource"]>[2],
     ): Promise<TerminalPublishedSiteOutput> => ({
       resourceId: "published-site", title: input.displayName ?? input.filePath,
-      resourceType: "generated_site", provider: "avalon_generated", attachmentKind: "site",
+      publishKind: "site", resourceType: "generated_site", provider: "avalon_generated", attachmentKind: "site",
       slug: "site-slug",
       url: `https://${"1".repeat(8)}-g.rallyusercontent.test`,
       mode: site.mode, stateful: site.stateful, version: 1,
@@ -1041,7 +1041,7 @@ describe("Daytona Terminal runtime", () => {
        VALUES ('command-log', ?, 'generated_file', 'rally_terminal', 'Command log', '{}', '2026-08-13', '2026-08-13')`,
     ).run(W);
     vi.mocked(resources.publishResource).mockResolvedValueOnce({
-      resourceId: "command-log", title: "Command log", resourceType: "generated_file",
+      resourceId: "command-log", title: "Command log", publishKind: "file", resourceType: "generated_file",
       provider: "avalon_generated", mimeType: "text/plain", sizeBytes: 150_000,
       sourceSha256: "d".repeat(64), attachmentKind: "text", contentMode: "read",
       derivativeStatus: "pending", createdAt: "2026-08-13T12:00:00.000Z",
@@ -1116,7 +1116,7 @@ describe("Daytona Terminal runtime", () => {
     files.set("/workspace/.rally-output/exports/a.csv", new TextEncoder().encode("a,b\n1,2"));
     files.set("/workspace/.rally-output/exports/b.csv", new TextEncoder().encode("c,d\n3,4"));
     const published = await runtime.publishResource(context, { filePath: "exports" });
-    expect(published).toMatchObject({ resourceType: "generated_file", fileCount: 2 });
+    expect(published).toMatchObject({ publishKind: "archive", resourceType: "generated_file", fileCount: 2 });
     expect(resources.publishSiteResource).not.toHaveBeenCalled();
     // It rides the ordinary document publish, so identity, replay, and version
     // capture all behave exactly as a document's do.

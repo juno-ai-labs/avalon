@@ -553,7 +553,9 @@ export function createDaytonaTerminalRuntime(
         { ...input, filePath: input.filePath },
         bundle,
       );
-      return { ...published, fileCount: files.length, totalBytes };
+      // The kind is restated rather than inherited: `publishResource` answered
+      // as a file, and what actually happened is an archive.
+      return { ...published, publishKind: "archive" as const, fileCount: files.length, totalBytes };
     }
 
     const serverModule = resolved.mode === "active"

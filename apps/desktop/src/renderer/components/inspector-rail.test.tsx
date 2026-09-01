@@ -755,11 +755,12 @@ describe('resource detail content preview', () => {
   });
 
   it('falls back to the ordinary resource card when live artifacts are off', () => {
-    // Presentation only: with the flag off a site is still listed, versioned,
-    // and removable — it just is not rendered as a page.
+    // Presentation only: with the flag off a site is still an ordinary resource
+    // in the rail — it just is not rendered as a page.
     openDetail(site);
     expect(screen.queryByRole('button', { name: /Pop out/u })).not.toBeInTheDocument();
-    expect(screen.getByText('Version')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Preview/u })).not.toBeInTheDocument();
+    expect(document.querySelector('.inspector-detail')).toBeInTheDocument();
   });
 
   it('never tries to read a site as text, which would show its manifest', () => {
