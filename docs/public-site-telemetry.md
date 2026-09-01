@@ -198,6 +198,27 @@ is allowed.
 
 ## Changelog
 
+### 2026-09-01 — Workspace-addressed paths remain identifier-free in telemetry
+
+**What changed:** Public-site path normalization recognizes the current
+`/app/workspaces/<region>/<workspace>/workstreams/<id>` handoff and reports only
+`/app/workspaces/:region/:workspace/workstreams/:id`. The older ID-only path
+retains its compatibility normalization.
+
+**Why:** Canonical links now need workspace routing coordinates, but those
+identifiers add no value to anonymous handoff measurement and must not become a
+new analytics dimension.
+
+**Considered and rejected:** Reporting region while masking only UUIDs. The
+regional route is already established by the capability handshake; duplicating
+it in a path label creates two regional signals that can disagree.
+
+**Consequences:** Dashboards see a new normalized path category for current
+links and the old category only for compatibility traffic. No raw workspace or
+work-stream identifier enters a site event.
+
+Shipped in #464.
+
 ### 2026-08-27 — The homepage is the hero alone, so landing reports fewer actions
 
 **What changed:** The homepage sections below the Convergence hero (principles

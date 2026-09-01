@@ -14,6 +14,7 @@ const input: WorkstreamMentionEmail = {
   recipientName: "Sam & Team",
   authorName: "Adam <Admin>\nInjected",
   workspaceName: "Research & Development",
+  workspaceId: "00000000-0000-7000-8000-000000000001",
   workstreamId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2",
   workstreamTitle: "Quarterly <script>alert(1)</script> planning",
   workstreamEmailAddress: "bright-calm-ready-otter@automation.with-avalon.com",
@@ -68,9 +69,9 @@ describe("work-stream mention email", () => {
       ],
     });
     // A mail client linkifies the canonical HTTPS link and ignores `avalon://`.
-    expect(String(body.text)).toContain(`https://with-avalon.com/app/workstreams/${input.workstreamId}`);
+    expect(String(body.text)).toContain(`https://with-avalon.com/app/workspaces/global/${input.workspaceId}/workstreams/${input.workstreamId}`);
     expect(String(body.text)).not.toContain("avalon://");
-    expect(String(body.html)).toContain(`https://with-avalon.com/app/workstreams/${input.workstreamId}`);
+    expect(String(body.html)).toContain(`https://with-avalon.com/app/workspaces/global/${input.workspaceId}/workstreams/${input.workstreamId}`);
     expect(String(body.text)).toContain("Reply to this email to continue the work stream.");
     expect(String(body.html)).toContain("Sam &amp; Team");
     expect(String(body.html)).toContain("Adam &lt;Admin&gt; Injected");

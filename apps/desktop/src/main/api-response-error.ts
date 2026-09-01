@@ -1,22 +1,35 @@
+import { workspaceActivationFailure } from '../common/workspace-activation-error';
+
 export class RallyApiResponseError extends Error {
   override readonly name = 'RallyApiResponseError';
 
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message);
   }
 }
 
+export function workspaceActivationBridgeError(error: unknown): Error {
+  return workspaceActivationFailure(
+    error instanceof RallyApiResponseError
+      && (error.code === 'workspace_access_denied' || error.code === 'workspace_access_revoked')
+      ? 'workspace_access_denied'
+      : 'workspace_activation_unavailable',
+  );
+}
+
 export async function responseError(response: Response): Promise<RallyApiResponseError> {
   const body: unknown = await response.json().catch(() => null);
   const nested = body && typeof body === 'object' && 'error' in body
-    ? (body as { error?: { message?: string } }).error
+    ? (body as { error?: { code?: unknown; message?: string } }).error
     : undefined;
   return new RallyApiResponseError(
     nested?.message ?? `Rally authentication failed (${response.status})`,
     response.status,
+    typeof nested?.code === 'string' ? nested.code : undefined,
   );
 }
 
@@ -37,7 +50,9 @@ export class UnusableCredentialError extends Error {
 /** True when a refresh failure can never succeed on a later attempt, and the
  * stored credential must therefore be surrendered rather than retried. */
 export function refreshFailureIsTerminal(error: unknown): boolean {
-  return definitivelyInvalidatesStoredCredential(error) || error instanceof UnusableCredentialError;
+  return definitivelyInvalidatesStoredCredential(error)
+    || (error instanceof RallyApiResponseError && error.code === 'workspace_access_denied')
+    || error instanceof UnusableCredentialError;
 }
 
 /**

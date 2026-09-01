@@ -62,7 +62,7 @@ export async function acceptAuthenticatedTelemetry(
       return { result: "route_mismatch", eventId: event.eventId } as const;
     }
     if (event.identityScope === "workspace-user" && !workspaceAnalyticsId) {
-      throw new ApiError(403, "workspace_setup_required", "Choose or join an organization to continue");
+      throw new ApiError(403, "workspace_setup_required", "Choose or join a workspace to continue");
     }
     return collector.accept(event, {
       route: env.AVALON_REGION,

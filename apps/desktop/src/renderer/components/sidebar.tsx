@@ -30,7 +30,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { WORKSTREAM_SIDEBAR_FACEPILE_LIMIT } from '@rally/contracts';
@@ -78,6 +78,7 @@ interface SidebarProps {
   onLoadMoreWorkstreams?: () => void;
   loading?: boolean;
   meetingRecordingAvailable?: boolean;
+  accountMenu?: ReactNode;
   onArchiveNote: (note: NoteSummary) => Promise<void>;
   onArchiveWorkstream: (workstream: WorkstreamSummary) => Promise<void>;
   onApplyWorkstreamBatch: (
@@ -306,11 +307,18 @@ function CopyResourceIdItem({
  * menu and its right rail. Like every other surface it emits the canonical
  * HTTPS link, never the `rallywithai://` deep link — see `docs/workstream-links.md`.
  */
-function CopyWorkstreamLinkItem({ workstreamId }: { workstreamId: string }): React.JSX.Element {
+function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
+  workstreamId: string;
+  workspace: Pick<Workspace, 'id' | 'region'>;
+}): React.JSX.Element {
   const copy = async (): Promise<void> => {
     const bridge = desktopBridge();
     const { webBaseUrl } = await bridge.getRuntimeConfig();
-    await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, workstreamId));
+    await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, {
+      region: workspace.region,
+      workspaceId: workspace.id,
+      workstreamId,
+    }));
     reportTelemetryProductIntent({
       kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstreamId,
     });
@@ -459,6 +467,7 @@ function WorkstreamRow({
   debugEnabled,
   drag,
   members,
+  workspace,
   workstream,
   pinPending,
   scopePending,
@@ -476,6 +485,7 @@ function WorkstreamRow({
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
   members: WorkspaceMember[];
+  workspace: Pick<Workspace, 'id' | 'region'>;
   workstream: WorkstreamSummary;
   pinPending: boolean;
   scopePending: boolean;
@@ -710,7 +720,7 @@ function WorkstreamRow({
                 : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
             </ContextMenu.Item>
           )}
-          {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} />}
+          {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} workspace={workspace} />}
           <ContextMenu.Separator className="menu-separator" />
           {/* Names its noun, as every other destructive item in these menus
               does — "Archive note", "Archive draft", "Delete automation". A
@@ -943,6 +953,7 @@ export function Sidebar({
   workstreams,
   loading,
   meetingRecordingAvailable = false,
+  accountMenu,
   onArchiveNote,
   onArchiveWorkstream,
   onApplyWorkstreamBatch,
@@ -1513,6 +1524,7 @@ export function Sidebar({
       currentUserId={workspace.currentUser.id}
       debugEnabled={debugEnabled}
       members={roster}
+      workspace={workspace}
       onArchive={setArchiveWorkstreamTarget}
       onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
       onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
@@ -1777,6 +1789,7 @@ export function Sidebar({
                     pinPending={pinPendingWorkstreamId === pinned.id}
                     projects={projects}
                     members={roster}
+                    workspace={workspace}
                     scopePending={scopePendingWorkstreamId === pinned.id}
                     workstream={pinned}
                   />
@@ -1875,6 +1888,7 @@ export function Sidebar({
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
                         projects={projects}
                         members={roster}
+                        workspace={workspace}
                         scopePending={scopePendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}
                       />
@@ -1912,7 +1926,7 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
-        <DropdownMenu.Root>
+        {accountMenu ?? <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button className="account-trigger window-no-drag" type="button">
               <Avatar member={workspace.currentUser} size="small" />
@@ -1940,7 +1954,7 @@ export function Sidebar({
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+        </DropdownMenu.Root>}
         <div
           aria-label="Resize navigation"
           aria-orientation="vertical"

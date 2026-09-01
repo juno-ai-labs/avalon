@@ -754,7 +754,8 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         `SELECT member.user_id FROM workspace_members member
           JOIN workspaces workspace ON workspace.id = member.workspace_id
          WHERE member.workspace_id = ? AND member.user_id = ?
-           AND member.status = 'active' AND workspace.region = ?`,
+           AND member.status = 'active' AND workspace.region = ?
+           AND workspace.abandoned_at IS NULL`,
       ).bind(identity.workspaceId, identity.userId, this.env.AVALON_REGION).first<{ user_id: string }>();
       return row !== null;
     }
@@ -766,7 +767,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         JOIN workspaces workspace ON workspace.id = session.workspace_id
        WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
          AND session.revoked_at IS NULL AND session.expires_at > ?
-         AND workspace.region = ?`,
+         AND workspace.region = ? AND workspace.abandoned_at IS NULL`,
     ).bind(
       identity.sessionId,
       identity.userId,
@@ -2497,8 +2498,49 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     logWarn(this.env, "automation_alarm_stalled", { kind: alarm.kind, attempt });
   }
 
+  /** D1 owns the terminal workspace lifecycle, including for already-live objects. */
+  private async workspaceOperationalOrFence(): Promise<boolean> {
+    const identity = this.identity();
+    const workspace = await this.env.DB.prepare(
+      `SELECT id FROM workspaces
+        WHERE id = ? AND region = ? AND abandoned_at IS NULL`,
+    ).bind(identity.workspace_id, identity.region).first<{ id: string }>();
+    if (workspace) return true;
+    const now = Date.now();
+    this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `UPDATE automation_schedules
+            SET paused = 1, next_due_at = NULL, updated_at = ?
+          WHERE paused = 0 OR next_due_at IS NOT NULL`,
+        now,
+      );
+      this.state.storage.sql.exec(
+        `UPDATE automation_compiler_runs
+            SET state = 'failed', error_code = 'workspace_abandoned',
+                error_message = 'Workspace closed', settled_at = ?, updated_at = ?
+          WHERE state IN ('admitted', 'running', 'needs_input')`,
+        now,
+        now,
+      );
+      this.state.storage.sql.exec(
+        `UPDATE automation_runs
+            SET admission_state = 'refused', execution_state = 'stopped',
+                delivery_state = 'not_requested', updated_at = ?
+          WHERE execution_state = 'pending'`,
+        now,
+      );
+      this.state.storage.sql.exec(
+        `UPDATE automation_outbox SET state = 'failed', updated_at = ?
+          WHERE state IN ('pending', 'delivering')`,
+        now,
+      );
+    });
+    return false;
+  }
+
   private async executeCompilerRun(runId: string): Promise<void> {
     await this.initialized;
+    if (!await this.workspaceOperationalOrFence()) return;
     const claimed = this.state.storage.transactionSync(() => {
       const run = this.state.storage.sql.exec<ActiveCompilerRow>(
         `SELECT run_id, state, admitted_turn_id, error_code, error_message
@@ -2752,6 +2794,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   }
 
   private async deliverNextOutboxEffect(): Promise<void> {
+    if (!await this.workspaceOperationalOrFence()) return;
     const now = Date.now();
     const claimed = this.state.storage.transactionSync(() => {
       const row = this.state.storage.sql.exec<{
@@ -3248,6 +3291,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   }
 
   private async provisionNextRun(): Promise<void> {
+    if (!await this.workspaceOperationalOrFence()) return;
     const claimed = this.state.storage.transactionSync(() => {
       const row = this.state.storage.sql.exec<{
         run_id: string;
@@ -3408,6 +3452,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   }
 
   private async executeSchedule(scheduleId: string): Promise<void> {
+    if (!await this.workspaceOperationalOrFence()) return;
     const schedule = this.state.storage.sql.exec<{
       schedule_kind: "calendar" | "interval";
       definition_json: string;

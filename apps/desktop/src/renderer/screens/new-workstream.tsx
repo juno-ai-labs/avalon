@@ -368,7 +368,8 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   // The instant the suggested-work surface started counting from, carried to
   // `onSuccess` so the seeded run continues it rather than restarting.
   const opportunityStartedAt = useRef<string | null>(null);
-  const draftKey = owningProjectId ? `${newWorkstreamDraftKey(workspace.id)}:project:${owningProjectId}` : newWorkstreamDraftKey(workspace.id);
+  const workspaceDraftKey = newWorkstreamDraftKey(workspace.region, workspace.id);
+  const draftKey = owningProjectId ? `${workspaceDraftKey}:project:${owningProjectId}` : workspaceDraftKey;
   const {
     text: message,
     setText: setMessage,

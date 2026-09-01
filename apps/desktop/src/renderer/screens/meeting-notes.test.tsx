@@ -42,6 +42,7 @@ const state = vi.hoisted(() => ({
   },
   prepareMeetingAudioPermissions: vi.fn(),
   reportTelemetryProductIntent: vi.fn(async () => undefined),
+  setMeetingRecordingState: vi.fn(async () => undefined),
   commit: vi.fn(async () => ''),
   dictationState: 'idle' as 'idle' | 'requesting' | 'connecting' | 'listening' | 'paused' | 'transcribing' | 'finalizing' | 'error',
   dictationWarning: undefined as string | undefined,
@@ -68,7 +69,10 @@ const state = vi.hoisted(() => ({
 vi.mock('../lib/app-session', () => ({
   useAppSession: () => ({
     api: state.api,
-    session: { user: { id: state.userId } },
+    session: {
+      user: { id: state.userId },
+      workspace: { id: '00000000-0000-4000-8000-000000000112', region: 'global' },
+    },
   }),
 }));
 vi.mock('../lib/platform', () => ({
@@ -79,6 +83,7 @@ vi.mock('../lib/platform', () => ({
     openMeetingAudioSettings: state.openMeetingAudioSettings,
     prepareMeetingAudioPermissions: state.prepareMeetingAudioPermissions,
     reportTelemetryProductIntent: state.reportTelemetryProductIntent,
+    setMeetingRecordingState: state.setMeetingRecordingState,
     onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => {
       state.closeRequested = listener;
       return () => {
@@ -147,6 +152,7 @@ describe('MeetingNotesScreen', () => {
     state.resume.mockResolvedValue(undefined);
     state.start.mockResolvedValue(undefined);
     state.stop.mockResolvedValue(undefined);
+    state.setMeetingRecordingState.mockResolvedValue(undefined);
     state.closeRequested = undefined;
     state.dictationOptions = undefined;
     state.dictationState = 'idle';
@@ -851,6 +857,13 @@ describe('MeetingNotesScreen', () => {
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
     expect(state.prepareMeetingAudioPermissions).toHaveBeenCalledOnce();
     expect(state.prepareMeetingAudioPermissions.mock.invocationCallOrder[0])
+      .toBeLessThan(state.start.mock.invocationCallOrder[0]!);
+    expect(state.setMeetingRecordingState).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId: '00000000-0000-4000-8000-000000000112',
+      recording: true,
+    });
+    expect(state.setMeetingRecordingState.mock.invocationCallOrder[0])
       .toBeLessThan(state.start.mock.invocationCallOrder[0]!);
     expect(screen.queryByRole('checkbox', { name: 'Computer audio' })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Type or paste notes here…')).not.toBeInTheDocument();

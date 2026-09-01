@@ -1,13 +1,13 @@
 import {
-  parseWorkstreamLinkPath,
-  workstreamDeepLink,
+  parseWorkstreamLinkPathTarget,
+  workstreamDeepLinkFromParsedTarget,
 } from '@rally/contracts/workstream-links';
 import { reportDesktopHandoff } from './telemetry';
 
 export {};
 
 /**
- * The canonical work-stream link, `/app/workstreams/<uuid>`, is served by a
+ * Current workspace-addressed and legacy ID-only work-stream paths are served by a
  * rewrite in `public/_redirects`: every id under that prefix renders this one
  * page, and the id stays in `window.location.pathname` for this script to read.
  * Nothing about the work stream is fetched or rendered here — the page only
@@ -21,8 +21,8 @@ function initializeWorkstreamHandoff(): void {
   const error = document.querySelector<HTMLElement>('#workstream-error');
   if (!button) return;
 
-  const workstreamId = parseWorkstreamLinkPath(window.location.pathname);
-  if (!workstreamId) {
+  const workstreamTarget = parseWorkstreamLinkPathTarget(window.location.pathname);
+  if (!workstreamTarget) {
     reportDesktopHandoff('workstream', 'presented', 'invalid');
     button.setAttribute('hidden', '');
     help?.setAttribute('hidden', '');
@@ -34,7 +34,7 @@ function initializeWorkstreamHandoff(): void {
 
   reportDesktopHandoff('workstream', 'presented', 'valid');
 
-  const target = workstreamDeepLink(workstreamId);
+  const target = workstreamDeepLinkFromParsedTarget(workstreamTarget);
   button.href = target;
   button.setAttribute('aria-disabled', 'false');
 

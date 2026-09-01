@@ -194,7 +194,20 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const autoStartRequestedRef = useRef(false);
   const pauseCountRef = useRef(0);
   const terminalTelemetryReportedRef = useRef(false);
+  const recordingGuardRegisteredRef = useRef(false);
   const readOnly = Boolean(note && note.ownerUserId !== session?.user.id);
+
+  const recordingWorkspaceId = session?.workspace?.id;
+  const recordingWorkspaceRegion = session?.workspace?.region;
+  const releaseRecordingGuard = useCallback(async (): Promise<void> => {
+    if (!recordingWorkspaceId || !recordingWorkspaceRegion || !recordingGuardRegisteredRef.current) return;
+    recordingGuardRegisteredRef.current = false;
+    await desktopBridge().setMeetingRecordingState({
+      region: recordingWorkspaceRegion,
+      workspaceId: recordingWorkspaceId,
+      recording: false,
+    }).catch(() => undefined);
+  }, [recordingWorkspaceId, recordingWorkspaceRegion]);
 
   const hydrateNote = useCallback((next: NoteDetail): void => {
     noteRef.current = next;
@@ -507,6 +520,13 @@ export function MeetingNotesScreen(): React.JSX.Element {
           'Microphone and computer audio access are blocked. Open System Settings, allow Rally, then retry recording.',
         );
       }
+      if (!session?.workspace) throw new Error('Open a workspace before recording a meeting.');
+      await bridge.setMeetingRecordingState({
+        region: session.workspace.region,
+        workspaceId: session.workspace.id,
+        recording: true,
+      });
+      recordingGuardRegisteredRef.current = true;
       activeRecordingStartedAtRef.current = Date.now();
       currentSegmentStartedOffsetRef.current = recordedMsRef.current;
       setRecording(true);
@@ -552,6 +572,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       stopRecordingClock();
       setRecording(false);
       await dictation.stop().catch(() => undefined);
+      await releaseRecordingGuard();
       setSaveError(error instanceof Error ? error.message : 'Rally could not start this recording.');
       reportTelemetryProductIntent({
         kind: 'recording_start_completed',
@@ -567,7 +588,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       setPermissionPreparing(false);
       setSavePending(false);
     }
-  }, [api, applyNotePatch, creationEntrypoint, dictation.start, dictation.stop, noteId, readOnly, startedAt, stopRecordingClock]);
+  }, [api, applyNotePatch, creationEntrypoint, dictation.start, dictation.stop, noteId, readOnly, releaseRecordingGuard, session?.workspace, startedAt, stopRecordingClock]);
 
   useEffect(() => {
     if (readOnly) return undefined;
@@ -622,6 +643,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           setSaveError(error instanceof Error ? error.message : 'Rally could not finalize the transcript.');
         }
       }
+      await releaseRecordingGuard();
       try {
         await commitSegment();
       } catch {
@@ -691,7 +713,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
     });
     finalizationInFlightRef.current = operation;
     return operation;
-  }, [api, applyNotePatch, commitSegment, dictation.state, dictation.stop, generateNotes, noteId, readOnly, stopRecordingClock]);
+  }, [api, applyNotePatch, commitSegment, dictation.state, dictation.stop, generateNotes, noteId, readOnly, releaseRecordingGuard, stopRecordingClock]);
 
   useEffect(() => {
     if (dictation.state !== 'error' || !recordingIntentRef.current) return;
@@ -737,7 +759,8 @@ export function MeetingNotesScreen(): React.JSX.Element {
   useEffect(() => () => {
     recordingIntentRef.current = false;
     void dictation.stop().catch(() => undefined);
-  }, [dictation.stop]);
+    void releaseRecordingGuard();
+  }, [dictation.stop, releaseRecordingGuard]);
 
   const stopRecording = async (): Promise<void> => {
     // The meeting is over and the note is the artifact, so the window's job is

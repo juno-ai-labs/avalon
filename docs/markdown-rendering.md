@@ -228,11 +228,14 @@ While a message streams, embeds in different settled segments stay separate
 cards, and the whole-body re-render at completion merges them — the same
 healing every other cross-segment construct gets.
 
-An embed card also shows a **preview** of the resource's own text between its
-badge and its title, when the host offers one: `CitationContext.preview` reads
-the same `/resources/:id/preview` derivative the rail's detail panel shows — a
-Word file's markdown, a PDF's OCR — so the card and the panel it opens onto
-cannot disagree about a document. The preview is itself a `MarkdownBody`
+An embed card also shows a **preview** of the resource between its badge and its
+title, when the host offers one. Images render from their source bytes in a
+fixed thumbnail box, centered and scaled with `object-fit: cover`; portrait and
+landscape files therefore fill the same card without distortion or changing a
+row's height. Other resources read the same `/resources/:id/preview` derivative
+the rail's detail panel shows — a Word file's markdown, a PDF's OCR — so the card
+and the panel it opens onto cannot disagree about a document. A text preview is
+itself a `MarkdownBody`
 (glance, verbatim, no citations), so `**Author:**` bolds and a heading is a
 heading rather than printed markers, a fence or a link cannot nest a control
 inside the card's button, and an external image cannot fetch from a URL the
@@ -649,6 +652,37 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-31 — Image embed cards preview the image
+
+**What changed:** An embed card whose resource classifies as an image keeps the
+preview route's blob as image bytes and renders it in the card. The thumbnail
+fills a fixed-height box with centered `object-fit: cover`; the card revokes its
+object URL when the resource changes or the card unmounts. Its badge uses the
+image glyph rather than the generic file glyph. Document previews remain
+markdown glances on the existing conversion-and-retry path. Because Chromium
+cannot decode Rally's supported TIFF and HEIF/HEIC sources, the preview route
+normalizes those through the existing bounded image-conversion path before the
+card receives them. Any remaining browser decode failure falls back to the
+ordinary card instead of leaving a broken thumbnail, and off-screen thumbnails
+defer decoding with native lazy loading.
+
+**Why:** Image bytes were decoded as text by the generic document-preview path,
+so PNG data appeared as replacement characters while the card still showed a
+generic file badge. The route already returns the source blob and the inspector
+already distinguishes images from readable documents; the embed needed the
+same classification at the shared read boundary and in the shared resource-icon
+mapping.
+
+**What a future change has to respect:** keep the image preview presentational
+so the card remains the only control and its accessible name remains the title.
+Revoke every object URL, preserve centered cover scaling, and do not send
+non-image resources around the derivative reader that waits out conversion. A
+still does not fetch previews, so its fixed-light export stylesheet must keep an
+explicit hidden answer for the image-preview class just as it does for text and
+skeleton previews. Formats added to Rally's image allowlist must either be
+browser-decodable or be normalized at the preview boundary; the renderer's
+decode-error fallback remains required because metadata and bytes can disagree.
 
 ### 2026-08-30 — Heading collapse belongs only to the main message feed
 

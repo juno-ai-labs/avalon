@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
+import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import {
   desktopDmgUrl,
@@ -8,7 +9,7 @@ import {
   parseDesktopReleaseConfig,
   renderDesktopRelease,
 } from '../src/release-config';
-import { normalizedTelemetryPathname } from '../src/telemetry';
+import { normalizedTelemetryPathname, sitePageForPath } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -407,6 +408,20 @@ describe('public Rally site', () => {
     expect(script).toContain("new URL('rallywithai://slack/link')");
     expect(script).toContain('window.history.replaceState');
     expect(script).not.toContain('window.location.search');
+    const token = 'a'.repeat(43);
+    expect(parseSlackLinkFragment(`#token=${token}&region=eu&workspace=00000000-0000-7000-8000-000000000009`))
+      .toEqual({
+        token,
+        workspaceTarget: { region: 'eu', workspaceId: '00000000-0000-7000-8000-000000000009' },
+      });
+    expect(slackDesktopTarget({
+      token,
+      workspaceTarget: { region: 'eu', workspaceId: '00000000-0000-7000-8000-000000000009' },
+    })).toBe(
+      `rallywithai://workspace/eu/00000000-0000-7000-8000-000000000009/slack/link?token=${token}`,
+    );
+    expect(parseSlackLinkFragment(`#token=${token}`)).toEqual({ token, workspaceTarget: null });
+    expect(parseSlackLinkFragment(`#token=${token}&region=eu`)).toBeNull();
   });
 
   it('ships working Marketplace landing, privacy, support, and exact desktop handoff surfaces', () => {
@@ -424,9 +439,8 @@ describe('public Rally site', () => {
     expect(support).toContain('Create new key');
     expect(support).toContain('Personal connections use Granola’s browser sign-in and do not require an API key.');
     expect(support).toContain('https://docs.granola.ai/help-center/sharing/integrations/granola-api');
-    expect(handoff).toContain("url.hostname === 'workstreams'");
-    expect(handoff).toContain("url.hostname === 'settings'");
-    expect(handoff).toContain("url.hostname === 'automations'");
+    expect(handoff).toContain('parseDesktopDeepLinkIntent');
+    expect(handoff).toContain('parseWorkspaceAddressedDeepLink');
     expect(handoff).toContain('window.location.hash');
     expect(handoff).toContain('window.history.replaceState');
     expect(handoff).not.toContain('window.location.search');
@@ -544,8 +558,16 @@ describe('public Rally site', () => {
   });
 
   it('removes resource identity from public handoff paths and classifies invalid targets truthfully', () => {
+    expect(normalizedTelemetryPathname(
+      '/app/workspaces/eu/00000000-0000-7000-8000-000000000009/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30',
+    )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'))
       .toBe('/app/workstreams/:id');
+    expect(normalizedTelemetryPathname(
+      '/app/workspaces/eu/private-workspace/workstreams/private-workstream/extra',
+    )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
+    expect(normalizedTelemetryPathname('/app/workspaces/eu/private-workspace'))
+      .toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/privacy/')).toBe('/privacy/');
     expect(classifyDesktopHandoffTarget('avalon://workstreams/not-a-uuid')).toEqual({
       handoffType: 'workstream', validity: 'invalid',
@@ -553,6 +575,16 @@ describe('public Rally site', () => {
     expect(classifyDesktopHandoffTarget(null)).toEqual({
       handoffType: 'unknown', validity: 'invalid',
     });
+
+    expect(sitePageForPath('/app/workspaces/:region/:workspace/workstreams/:id'))
+      .toBe('workstream_handoff');
+  });
+
+  it('explains that an addressed Slack handoff opens its installing workspace', () => {
+    const page = readProjectFile('slack/link/index.html');
+
+    expect(page).toContain('Rally will open the workspace that installed this Slack app');
+    expect(page).not.toContain('Sign in to the Rally workspace that installed this Slack app');
   });
 
   it('validates and launches only exact desktop OAuth handoff targets', () => {
@@ -561,6 +593,7 @@ describe('public Rally site', () => {
     const successTarget = `avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}`;
     const errorTarget = `avalon://auth/complete?error=google_oauth_denied&region=global&attempt=${attempt}`;
     const connectorSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&attempt=${attempt}&provider=linear`;
+    const targetedConnectorSuccess = `avalon://workspace/eu/00000000-0000-7000-8000-000000000009/auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&attempt=${attempt}&provider=linear`;
     const connectorErrorTarget = `avalon://auth/complete?provider=linear&region=eu&attempt=${attempt}&status=denied&error=oauth_denied`;
     const granolaSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000005&status=connected&region=global&attempt=${attempt}&provider=granola`;
     const granolaErrorTarget = `avalon://auth/complete?provider=granola&region=global&attempt=${attempt}&status=failed&error=connector_oauth_failed`;
@@ -569,6 +602,7 @@ describe('public Rally site', () => {
     expect(parseDesktopTarget(asFragment(successTarget))).toBe(successTarget);
     expect(parseDesktopTarget(asFragment(errorTarget))).toBe(errorTarget);
     expect(parseDesktopTarget(asFragment(connectorSuccessTarget))).toBe(connectorSuccessTarget);
+    expect(parseDesktopTarget(asFragment(targetedConnectorSuccess))).toBe(targetedConnectorSuccess);
     expect(parseDesktopTarget(asFragment(connectorErrorTarget))).toBe(connectorErrorTarget);
     expect(parseDesktopTarget(asFragment(granolaSuccessTarget))).toBe(granolaSuccessTarget);
     expect(parseDesktopTarget(asFragment(granolaErrorTarget))).toBe(granolaErrorTarget);
@@ -611,6 +645,7 @@ describe('canonical work-stream links', () => {
     // No asset can exist per id, so the rewrite is what makes the canonical
     // path resolve at all. Losing it turns every shared link into a 404.
     expect(redirects).toContain('/app/workstreams/*  /app/workstreams/  200');
+    expect(redirects).toContain('/app/workspaces/*  /app/workstreams/  200');
     expect(config).toContain('app/workstreams/index.html');
     expect(page).toContain('id="open-rally"');
     expect(page).toContain('noindex, nofollow');

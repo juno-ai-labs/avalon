@@ -126,6 +126,22 @@ describe('member picker controls', () => {
   });
 });
 
+describe('citation card image preview', () => {
+  it('fills its box from the center without distorting the image', () => {
+    // The shared `.markdown-body img` sets `height: auto` and a prose margin.
+    // Naming the host here is what makes the fixed cover box win inside it.
+    const image = rule('.markdown-body .citation-card-image-preview');
+
+    expect(image).not.toBeNull();
+    expect(image).toContain('height: 72px;');
+    expect(image).toContain('margin: 0;');
+    expect(image).toContain('max-width: none;');
+    expect(image).toContain('object-fit: cover;');
+    expect(image).toContain('object-position: center;');
+    expect(image).toContain('width: 100%;');
+  });
+});
+
 /**
  * Chromium's `::-webkit-scrollbar` styling (below, 9px) opts these scrollers
  * into classic space-consuming scrollbars, so the moment their content
@@ -784,5 +800,41 @@ describe('collapsed heading preview mask', () => {
     expect(body).toContain('color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent)');
     expect(body).toContain('transparent)');
     expect(body).not.toContain('18%');
+  });
+});
+
+/**
+ * A queued row renders the message through the transcript's own Markdown
+ * renderer, which emits blocks: a paragraph, a heading, a list, a fenced block.
+ * The row is one line. Nothing in a component test can see the difference —
+ * jsdom lays nothing out, so every assertion about the row's markup stays green
+ * while the composer dock grows to the height of a whole queued message — so
+ * the flattening lives here, where deleting it fails.
+ */
+describe('composer queue preview', () => {
+  it('keeps a queued message to one clipped line', () => {
+    const text = rule('.composer-queue-text');
+    expect(text).not.toBeNull();
+    expect(text).toContain('white-space: nowrap;');
+    expect(text).toContain('overflow: hidden;');
+    expect(text).toContain('text-overflow: ellipsis;');
+  });
+
+  it('flattens every Markdown block the renderer can emit into that line', () => {
+    const body = rule('.composer-queue-text .markdown-body');
+    expect(body).not.toBeNull();
+    expect(body).toContain('display: inline;');
+    // The prose type scale would otherwise set a heading in a 12px row.
+    expect(body).toContain('font-size: inherit;');
+    expect(body).toContain('line-height: inherit;');
+
+    const blocks = preludes().find((prelude) => (
+      prelude.startsWith('.composer-queue-text .markdown-body :is(')
+      && prelude.includes('p,')
+    ));
+    expect(blocks).toBeDefined();
+    for (const tag of ['p', 'h1', 'h6', 'ul', 'ol', 'li', 'pre', 'blockquote', 'table', 'tr', 'td']) {
+      expect(blocks).toMatch(new RegExp(`[(,]\\s*${tag}[,)]`, 'u'));
+    }
   });
 });
