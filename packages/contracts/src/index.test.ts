@@ -296,6 +296,12 @@ describe("boundary contracts", () => {
     // family. Only a version a machine can compare is checked: `gpt-5.6-terra`
     // and `gpt-5.6-luna` share a version, as do the two `deepseek-v4` ids, and
     // ties are ordered by hand rather than by this rule.
+    // The *first* numeric run in the model segment, which is the version in
+    // every id the list carries: `grok-4.6` and `gemini-3.7-flash` match on the
+    // version itself, `deepseek-v4-pro` on the `v`-prefixed form. An id that put
+    // a different number first — `foo-v2-3.0-bar` — would yield 2 rather than 3
+    // and compare on the wrong field, so a family whose ids are not named this
+    // way needs its own handling rather than a looser pattern here.
     const version = (id: string): number[] | null => {
       const match = /-v?(\d+(?:\.\d+)*)(?:-|$)/.exec(id.slice(id.indexOf("/") + 1));
       return match ? match[1]!.split(".").map(Number) : null;
@@ -307,11 +313,14 @@ describe("boundary contracts", () => {
     expect(version("deepseek/deepseek-v4-pro")).toEqual([4]);
     expect(AGENT_MODEL_OVERRIDES.filter((id) => version(id) === null)).toEqual([]);
 
-    const descends = (older: number[], newer: number[]): boolean => {
-      for (let index = 0; index < Math.max(older.length, newer.length); index += 1) {
-        const left = newer[index] ?? 0;
-        const right = older[index] ?? 0;
-        if (left !== right) return left > right;
+    // Takes its two versions in the order the list mentions them, so the call
+    // below reads the way the rule is stated: the id listed first must carry
+    // the newer version.
+    const listedNewestFirst = (earlier: number[], later: number[]): boolean => {
+      for (let index = 0; index < Math.max(earlier.length, later.length); index += 1) {
+        const earlierPart = earlier[index] ?? 0;
+        const laterPart = later[index] ?? 0;
+        if (earlierPart !== laterPart) return earlierPart > laterPart;
       }
       return true; // equal versions are a tie this rule does not order
     };
@@ -327,7 +336,7 @@ describe("boundary contracts", () => {
     for (const id of AGENT_MODEL_OVERRIDES) {
       const vendor = id.slice(0, id.indexOf("/"));
       const previous = newestSeen.get(vendor);
-      if (previous !== undefined && !descends(version(id)!, version(previous)!)) {
+      if (previous !== undefined && !listedNewestFirst(version(previous)!, version(id)!)) {
         offenders.push(`${previous} precedes ${id}`);
       }
       newestSeen.set(vendor, id);
