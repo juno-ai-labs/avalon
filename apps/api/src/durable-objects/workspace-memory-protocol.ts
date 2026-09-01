@@ -19,10 +19,10 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
  * idempotency keys. Only the workspace id has a uniform shape worth asserting.
  */
 
-const TimestampSchema = deferredZodSchema(() => z.string().min(1));
-const JsonTextSchema = deferredZodSchema(() => z.string().min(1));
+const TimestampSchema = z.string().min(1);
+const JsonTextSchema = z.string().min(1);
 
-export const MemoryScopeKindSchema = deferredZodSchema(() => z.enum(["workstream", "automation", "user", "workspace"]));
+export const MemoryScopeKindSchema = z.enum(["workstream", "automation", "user", "workspace"]);
 
 // -- Scopes -------------------------------------------------------------------
 
@@ -260,9 +260,9 @@ export const WorkspaceMemoryProjectionSourceResultSchema = deferredZodSchema(() 
 
 // -- Tables: reads ------------------------------------------------------------
 
-export const MemoryTableColumnTypeSchema = deferredZodSchema(() => z.enum([
+export const MemoryTableColumnTypeSchema = z.enum([
   "string", "url", "number", "integer", "boolean", "datetime", "date",
-]));
+]);
 
 export const WorkspaceMemoryTableRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
@@ -338,7 +338,7 @@ export const WorkspaceMemoryTableRowListSchema = deferredZodSchema(() => z.stric
 // already authorized, so a filter arrives here fully normalized: column ids
 // from the table's own rows, the physical cell field for each id, and values
 // already coerced. The object turns it into SQL without consulting the schema.
-const CellFieldSchema = deferredZodSchema(() => z.enum(["string_value", "number_value", "boolean_value", "temporal_value"]));
+const CellFieldSchema = z.enum(["string_value", "number_value", "boolean_value", "temporal_value"]);
 const PredicateValueSchema = deferredZodSchema(() => z.union([z.string(), z.number(), z.null()]));
 
 const NormalizedPredicateSchema = deferredZodSchema(() => z.discriminatedUnion("op", [

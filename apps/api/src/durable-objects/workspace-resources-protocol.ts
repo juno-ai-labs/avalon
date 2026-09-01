@@ -18,7 +18,7 @@ import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
  * outcome and the service maps it to its `ApiError`.
  */
 
-const TimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
+const TimestampSchema = z.string().datetime({ offset: true });
 
 /** One `resources` row, in the columns the cross-authority readers consume. */
 export const WorkspaceResourceDescriptorSchema = deferredZodSchema(() => z.strictObject({
