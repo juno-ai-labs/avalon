@@ -715,6 +715,17 @@ and fans `loop_input_upserted` to every connected viewer. Prepared content
 stays immutable. Reconnect never infers delivery mode or order from local
 composer state.
 
+An admission that has reserved its mailbox row but not yet settled it arms the
+object's alarm at the cancellation-recovery horizon *before* it awaits
+anything, and an unresolved reservation keeps deriving a wake-up at the
+keep-alive horizon for as long as it stays unresolved. Both exist because the
+head-of-line gate hides a `preparing` row and everything queued behind it from
+`pendingInputs`, so nothing else in the object derives a wake-up for it: an
+admission whose invocation the runtime cancels — which neither throws nor runs
+a `finally` — would otherwise leave the object with no alarm at all, and that
+message and every message queued after it would wait for an unrelated request
+that a work stream nobody reopens never receives.
+
 Promotion is one object-local transaction that validates the loop fence,
 creates the immutable canonical participant turn with its exact fact,
 provenance, attachments and mentions, allocates transcript and attention order,
@@ -1579,6 +1590,42 @@ the wrong group. The note list's paging is what lets the selection stay
 unbounded: a cursor-fenced `Archive all` would be naming rows the reader can no
 longer reach, and an unbounded one over an *unpaged* list would be naming rows
 they never could.
+
+### 2026-09-01 — An unsettled message admission keeps the object's wake-up
+
+**What changed:** `runInputPreparation` arms the object's alarm at
+`SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS` before it awaits the preparation
+work, instead of only in its `finally`, and `nextLoopWorkAt` derives a
+keep-alive-horizon wake-up while any mailbox row is still `preparing`. The body
+of `ScheduledDurableObject.ensureAlarmNoLaterThan` was lifted into an exported
+`ensureStorageAlarmNoLaterThan` so the product service can arm without reaching
+for a bare `setAlarm` that would push an earlier wake-up out.
+
+**Why:** A message is admitted in two durable steps — the mailbox reservation,
+then the prepared pending row — and only the second one made the message
+visible to anything that derives a wake-up. Between them the object had no
+alarm: `pendingInputs` deliberately hides a `preparing` row *and every input
+queued behind it*, and `nextRecoverableInputPreparationAt` returned `null`
+while this isolate held the in-memory claim. A runtime cancellation mid-
+admission neither throws nor runs a `finally`, so the reservation survived with
+nothing left to rediscover it, and the message — plus everything the person
+queued after it — was stranded until an unrelated request happened to touch the
+object. For a work stream nobody reopens, that is never. This is the exact
+hazard `SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS` was introduced to name for
+alarm handlers; the admission path was the one place still carrying it.
+
+**Considered and rejected:** Giving the mailbox row a durable lease with its own
+expiry would also cover a continuation cancelled inside an isolate that then
+survives, but its expiry is a defensive number nobody here can pick
+([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)),
+and a horizon short enough to matter would re-run legitimate slow preparations —
+an attachment admission routinely outlives any plausible one. The in-memory
+claim already expires the way every other claim in this object does, by not
+outliving the isolate; what was missing was only the wake-up that gets a
+replacement isolate built. Deriving the wake-up at the cancellation horizon
+rather than the keep-alive horizon for the whole time a preparation runs was
+rejected as a two-second heartbeat over work that normally settles in
+milliseconds.
 
 ### 2026-08-31 — Batch receipts fit inside the object SQLite bind ceiling
 
