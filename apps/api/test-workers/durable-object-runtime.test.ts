@@ -2,6 +2,7 @@
 
 import { env } from "cloudflare:workers";
 import {
+  asAutomationId,
   asBlockId,
   asSubstreamId,
   asUserId,
@@ -23,6 +24,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AutomationAgent } from "../src/durable-objects/automation-agent";
 import {
   BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
   BlockDashboardAgent,
@@ -49,6 +51,7 @@ import {
   holdLoopExecuting,
 } from "./helpers/substream-fixture";
 import {
+  automationAgentName,
   substreamAgentName,
   substreamLoopId,
   blockDashboardAgentName,
@@ -82,6 +85,7 @@ const CHILD_SUBSTREAM_ID = asSubstreamId("00000000-0000-7000-8000-000000000103")
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000104");
 const SESSION_ID = "runtime-test-session";
 const BLOCK_DASHBOARD_BLOCK_ID = asBlockId("00000000-0000-7000-8000-000000000109");
+const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-00000000010a");
 
 beforeEach(async () => {
   clearFlagTargetingAttributeCache();
@@ -394,6 +398,49 @@ async function provisionBootstrappedWorkstream(
 }
 
 describe("Durable Objects in the Workers runtime", () => {
+  it("refuses fresh workspace, work-stream, substream, and automation admission after abandonment", async () => {
+    await seedOpenAuthority();
+    const identity = { sessionId: SESSION_ID, userId: USER_ID, workspaceId: WORKSPACE_ID };
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    const workstream = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(
+      workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const substream = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId("0")),
+    ));
+    const automation = env.AUTOMATION_AGENTS.get(env.AUTOMATION_AGENTS.idFromName(
+      automationAgentName("global", WORKSPACE_ID, AUTOMATION_ID),
+    ));
+    const authorization = async () => ({
+      workspace: await runInDurableObject(workspace, async (instance: WorkspaceDO) => (
+        (instance as unknown as { sessionAuth(value: typeof identity): Promise<unknown> }).sessionAuth(identity)
+      )),
+      workstream: await runInDurableObject(workstream, async (instance: WorkstreamDO) => (
+        (instance as unknown as { sessionAuth(value: typeof identity): Promise<unknown> }).sessionAuth(identity)
+      )),
+      substream: await runInDurableObject(substream, async (instance: SubstreamAgent) => (
+        (instance as unknown as { socketAuth(value: typeof identity): Promise<unknown> }).socketAuth(identity)
+      )),
+      automation: await runInDurableObject(automation, async (instance: AutomationAgent) => (
+        (instance as unknown as { sessionIsActive(value: typeof identity): Promise<boolean> })
+          .sessionIsActive(identity)
+      )),
+    });
+
+    await expect(authorization()).resolves.toMatchObject({ automation: true });
+    await env.DB.prepare(`UPDATE workspaces SET abandoned_at = ? WHERE id = ?`)
+      .bind("2026-09-01T00:00:00.000Z", WORKSPACE_ID).run();
+
+    await expect(authorization()).resolves.toEqual({
+      workspace: null,
+      workstream: null,
+      substream: null,
+      automation: false,
+    });
+  });
+
   it("preserves HTTP-style success and conflict envelopes across native RPC", async () => {
     await seedOpenAuthority();
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(

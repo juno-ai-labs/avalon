@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 import type { Env, IdentityAuthContext } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import {
+  D1PlatformBindingStore,
+  D1PlatformOperationStore,
   PlatformOnboardingService,
   serializeRegionalRpcResult,
   type PlatformBindingRow,
@@ -23,6 +25,7 @@ import {
   type RegionalRpcResult,
 } from "../src/services/platform-onboarding-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const platformUserId = asUserId("00000000-0000-7000-8000-000000000001");
 const euWorkspaceId = "00000000-0000-7000-8000-000000000002";
@@ -368,6 +371,61 @@ function service(input: {
 }
 
 describe("single-platform regional onboarding", () => {
+  it("replays reservations idempotently in the migrated D1 stores", async () => {
+    const database = migratedSqliteDatabase();
+    try {
+      const d1 = sqliteD1(database);
+      const now = () => new Date(at);
+      const bindings = new D1PlatformBindingStore(d1, now);
+      const operations = new D1PlatformOperationStore(d1, now);
+      const operation: PlatformOperationRow = {
+        operation_id: operationId,
+        platform_user_id: platformUserId,
+        action: "create",
+        request_fingerprint: "sha256:same-request",
+        region: "eu",
+        workspace_id: createdWorkspaceId,
+        placement_affinity: "weur",
+        invitation_id: null,
+        status: "pending",
+      };
+
+      const [firstOperation, replayedOperation] = await Promise.all([
+        operations.begin(operation),
+        operations.begin(operation),
+      ]);
+      expect(replayedOperation).toEqual(firstOperation);
+      const [firstBinding, replayedBinding] = await Promise.all([
+        bindings.reserve(platformUserId, "eu", createdWorkspaceId, "weur", operationId),
+        bindings.reserve(platformUserId, "eu", createdWorkspaceId, "weur", operationId),
+      ]);
+      expect(replayedBinding).toEqual(firstBinding);
+
+      await Promise.all([
+        operations.complete(platformUserId, operationId),
+        operations.complete(platformUserId, operationId),
+        bindings.activate(platformUserId, operationId),
+        bindings.activate(platformUserId, operationId),
+      ]);
+      expect(await operations.get(operationId)).toMatchObject({ status: "complete" });
+      expect(await bindings.list(platformUserId)).toEqual([
+        expect.objectContaining({
+          operation_id: operationId,
+          status: "active",
+          workspace_id: createdWorkspaceId,
+        }),
+      ]);
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM platform_workspace_operations WHERE operation_id = ?`,
+      ).get(operationId)).toEqual({ count: 1 });
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM platform_workspace_bindings WHERE platform_user_id = ?`,
+      ).get(platformUserId)).toEqual({ count: 1 });
+    } finally {
+      database.close();
+    }
+  });
+
   it("serializes only expected regional business errors across the RPC boundary", async () => {
     await expect(serializeRegionalRpcResult(async () => {
       throw new ApiError(409, "expected_conflict", "Expected conflict");
