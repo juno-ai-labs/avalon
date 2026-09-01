@@ -1099,6 +1099,32 @@ function projectRegistrySql(values: readonly string[]): string {
   return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(", ");
 }
 
+/**
+ * The workspace-identity guards on `automation_directory`.
+ *
+ * Shared with the v26 rebuild, which drops the table and drops these with it.
+ * Recreating them there by hand is what left every upgraded object without the
+ * guard while a fresh one kept it — two schemas in one fleet, and the only
+ * thing standing between a cross-workspace directory row and the serving path
+ * gone on every object that had ever run.
+ *
+ * Byte-identical to what the base migration shipped, because a migration
+ * statement is hashed verbatim into `_sql_schema_migrations`: re-indenting them
+ * here would make every deployed object refuse to boot.
+ */
+function automationDirectoryWorkspaceIdentityGuards(): string[] {
+  return [
+    `CREATE TRIGGER automation_directory_workspace_identity_insert
+      BEFORE INSERT ON automation_directory
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER automation_directory_workspace_identity_update
+      BEFORE UPDATE OF workspace_id ON automation_directory
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+  ];
+}
+
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
   description: "workspace control-plane authority and realtime synchronization",
@@ -2173,14 +2199,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       BEFORE UPDATE OF workspace_id ON automation_creation_claims
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
-    `CREATE TRIGGER automation_directory_workspace_identity_insert
-      BEFORE INSERT ON automation_directory
-      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
-      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
-    `CREATE TRIGGER automation_directory_workspace_identity_update
-      BEFORE UPDATE OF workspace_id ON automation_directory
-      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
-      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    ...automationDirectoryWorkspaceIdentityGuards(),
     `CREATE TRIGGER workspace_external_event_registrations_workspace_identity_insert
       BEFORE INSERT ON workspace_external_event_registrations
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
@@ -2328,6 +2347,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE INDEX automation_directory_workstream_idx
       ON automation_directory(owning_workstream_id, lifecycle, projected_at DESC)
       WHERE owning_workstream_id IS NOT NULL`,
+    // Dropped with the table, so recreated with it. SQLite drops a table's
+    // triggers when the table goes, and a rebuild that restores only the
+    // indexes leaves the upgraded object without the one guard that stops a
+    // row from another workspace reaching this directory.
+    ...automationDirectoryWorkspaceIdentityGuards(),
     // What makes a run's own work stream visible. `origin_type` is never
     // rewritten — it is provenance, the run history still needs it, and an
     // exposed run is still a run.

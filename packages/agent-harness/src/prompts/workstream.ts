@@ -16,7 +16,10 @@ export interface WorkstreamAutomationPromptContext {
    * told so it does not send the same result a second time through a provider
    * tool of its own.
    */
-  resultDelivery: Array<{ channel: "email" | "slack_agent_dm"; destination: string }>;
+  resultDelivery: Array<{
+    channel: "email" | "slack_agent_dm" | "workstream";
+    destination: string;
+  }>;
   /**
    * Where this automation was set up, when that was somewhere it can speak.
    *
@@ -111,7 +114,8 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
     ? `# Result delivery
 - Rally sends this run's final message to every destination in the task context's automation.resultDelivery once the run ends, so that message is the delivery.
 - Before any outward send, drop every recipient — to, cc, channel, or DM target — that matches one of those destinations. Send to what remains; if nothing remains, do not send at all, and let the final message carry the result.
-- A recipient named in the authorized task context or by a person in this work stream, and matching no destination there, is unaffected by this section.`
+- A recipient named in the authorized task context or by a person in this work stream, and matching no destination there, is unaffected by this section.
+- A \`workstream\` destination is this room: Rally posts the final message here, so do not post the result here yourself. Posting elsewhere the instructions ask for is unaffected.`
     : null;
   const origin = input.automation?.authoringOrigin ?? null;
   const authoringOriginSection = origin

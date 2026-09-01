@@ -5104,7 +5104,10 @@ async function loadRunPromptContext(
         versionNumber: number;
         instructions: string;
         expectedOutputs: string[];
-        resultDelivery: Array<{ channel: "email" | "slack_agent_dm"; destination: string }>;
+        resultDelivery: Array<{
+          channel: "email" | "slack_agent_dm" | "workstream";
+          destination: string;
+        }>;
         authoringOrigin: AutomationRunContextV1["authoringOrigin"];
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
@@ -5133,8 +5136,11 @@ async function loadRunPromptContext(
     ) throw new Error("automation_run_context_not_found");
     AutomationMemoryTableSchema.array().parse(frozen.definition.memoryTables);
     const durableTables = (await readAutomationMemoryBootstrapForRun(env, input)).tables;
-    type ResultDestination = { channel: "email" | "slack_agent_dm"; destination: string };
-    const resultDelivery = frozen.deliveryTargets.flatMap<ResultDestination>((target) => {
+    type ResultDestination = {
+      channel: "email" | "slack_agent_dm" | "workstream";
+      destination: string;
+    };
+    const resultDelivery: ResultDestination[] = frozen.deliveryTargets.flatMap<ResultDestination>((target) => {
       // Match the sender's production guard. In development and tests no email
       // leaves Rally, so claiming that it will would suppress the model's own
       // requested delivery and leave the result nowhere.
@@ -5146,6 +5152,15 @@ async function loadRunPromptContext(
       return [{ channel: "slack_agent_dm", destination: target.slackUserId }];
     }).sort((left, right) => left.channel.localeCompare(right.channel)
       || left.destination.localeCompare(right.destination));
+    // The owning room is a destination Rally delivers to, and it is the one
+    // `deliveryTargets` never contains — nobody chose it, it follows from what
+    // the automation belongs to. Left out, a room-owned automation authored in
+    // a Slack channel got the origin section telling it where "here" is and no
+    // section telling it Rally already posts the result, which is the
+    // duplicate-send this section exists to prevent.
+    if (frozen.owningWorkstreamId !== null) {
+      resultDelivery.push({ channel: "workstream", destination: frozen.owningWorkstreamId });
+    }
     automationContext = {
       name: frozen.definition.name,
       versionNumber: frozen.definitionRevision,
