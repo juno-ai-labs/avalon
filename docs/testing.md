@@ -426,11 +426,14 @@ beforeEach(async () => {
 ## How much to run
 
 **Match the run to the size of the change.** A full `pnpm test` takes minutes and
-most changes do not need one locally. `ci.yml` runs on `pull_request`, so every
-revision of an open pull request gets the whole suite and a local full run buys
-confidence rather than correctness. A branch with no pull request open gets
-nothing — the other push workflows are path-scoped deploys — which is the one
-case where running wider locally earns its minutes.
+most changes do not need one locally. `ci.yml` runs the suites for every revision
+of an open pull request, so running those locally buys confidence rather than
+correctness. Two things qualify that. The gates outside the matrix have no
+backstop at all — `pnpm docs:check`, `pnpm smoke:local`, `pnpm e2e:local` are in
+no lane — and that is the distinction the bullets below draw. And `ci.yml`
+triggers on `pull_request` alone, pinned by `scripts/ci-workflow.test.mjs`, so a
+branch with no pull request open runs nothing; since a pull request here is
+opened ready for review rather than as a draft, that is most of a change's life.
 
 - **Documentation-only changes: run the documentation gates, not the suites.** No
   suite covers prose, but two things do. `pnpm docs:check` scans every file under
@@ -450,12 +453,16 @@ case where running wider locally earns its minutes.
   directives, and they decide how the file runs.
 - **Ordinary changes: run the tests that cover what you touched.** One file, one
   test name, or the one package's suite. Add a second package only when the
-  change crosses into it.
+  change crosses into it. Fixing a flake is the exception:
+  [the flaky-test rule](../AGENTS.md#flaky-tests) wants the full run, because
+  cross-file interference is what makes a flake.
 - **Large changes, roughly 20 files or more: run the full package suite once**
   before calling it done, because a change that wide can break a suite you had no
-  reason to think about. The threshold is the team's and it is approximate: a
-  diff that crosses several subsystems earns the run at fewer files than one that
-  repeats an edit across twenty.
+  reason to think about. The threshold is the team's and it is approximate,
+  because file count is a weak proxy for what it is standing in for: three files
+  in `packages/contracts` or the harness reach further than forty independent
+  route handlers. The real trigger is reach — a change to a shared package, or
+  one whose blast radius you cannot enumerate, earns the run at any size.
 
 A narrow run you actually read beats a wide one you skim. If a test outside what
 you touched fails, that is a real result and it belongs to this change, whether
@@ -472,17 +479,28 @@ subject and no route or service is involved. It also applies to the local smoke
 and e2e lanes.
 
 Everything else is exempt, because nothing real is underneath it to break: rung
-3 and rung 4, pure `packages/*` logic, desktop component tests, and the site and
-release-retention suites, which read config files and call pure functions. At
+3 and rung 4, pure `packages/*` logic, most desktop component tests, and the site
+and release-retention suites, which read config files and call pure functions. At
 that level the only break available is usually flipping the literal the
 assertion already mirrors, which costs a cycle and proves nothing. When writing
 one of those, read the list of assertions that survive a break, below, instead
 of running the check.
 
+The exemption is by the shape of the test, not the suite it sits in. A renderer
+test that drives a real reducer or store through a state transition and reads the
+result has a subject a break can teach you something about, and it is worth the
+cycle even though it lives in a unit suite. A snapshot or a label assertion in
+the same file does not.
+
 **Break the behavior the test names, watch that test fail, then revert.** Make
 one edit in the production code. Never edit the test. Run only what you are
-proving, one file or a single test name, and check that it failed for the reason
-the test is named after. Then revert.
+proving, one file or a single test name, capturing the output to a file rather
+than reading it through a truncating pipe
+([capturing command output](../AGENTS.md#capturing-command-output)) — the failure
+you are here to read is the one a pipe eats. Under `--filter … exec` the path is
+package-relative, so the repo-relative path a failure reports fails as `No test
+files found`. Check that it failed for the reason the test is named after, then
+revert.
 
 **Break it the way production would break.** Drop the write, skip the lease
 check, return the row without its fence, send the message to the wrong work
