@@ -14,6 +14,8 @@ const DIRECT_DEPLOY_PATHS = new Set([
   'apps/api/wrangler.pricing.global.jsonc',
   'apps/api/wrangler.terminal.eu.jsonc',
   'apps/api/wrangler.terminal.global.jsonc',
+  'apps/api/wrangler.artifacts.eu.jsonc',
+  'apps/api/wrangler.artifacts.global.jsonc',
 ]);
 
 export function selectApiDeployMode({ deployedShas, changedPaths }) {

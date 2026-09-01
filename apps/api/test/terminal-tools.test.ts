@@ -2,6 +2,7 @@ import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { describe, expect, it, vi } from "vitest";
 
+import { TERMINAL_TOOL_DEFINITIONS } from "../src/services/terminal/contract";
 import {
   createTerminalToolExecutors,
   sanitizeTerminalOutput,
@@ -117,6 +118,34 @@ function runtime(initial: Record<string, string> = {}) {
   };
   return { value, files };
 }
+
+function toolDefinition(name: string) {
+  const definition = TERMINAL_TOOL_DEFINITIONS.find((entry) => entry.name === name);
+  if (!definition) throw new Error(`no terminal tool named ${name}`);
+  return definition;
+}
+
+describe("what the publish tool advertises to the model", () => {
+  it("names the directory case, because the standing policy tells the model to use it", () => {
+    // The policy says "Publish the directory, not a file inside it" on every
+    // turn. While this description still said "one stable non-empty regular
+    // file", the only surface the model reads to build the call contradicted
+    // it, and the whole directory capability was undiscoverable from the tool.
+    const { description } = toolDefinition("publish_resource");
+    expect(description).toContain("directory");
+    expect(description).toContain("publishKind");
+    expect(description).not.toContain("Publish one stable non-empty regular file beneath");
+  });
+
+  it("tells the model that importing a site materializes a tree, not a file", () => {
+    // `overwrite` means something different for a site — whole-tree
+    // replacement, never a merge — and a model that reads the old wording
+    // would overwrite a directory believing it was replacing one file.
+    const schema = JSON.stringify(toolDefinition("import_resource").inputSchema);
+    expect(schema).toContain("directory root");
+    expect(schema).not.toContain("Replace an existing regular file only when intentional.");
+  });
+});
 
 describe("Terminal file and command tools", () => {
   it("freezes exact success envelopes for all nine model-facing tools", async () => {
