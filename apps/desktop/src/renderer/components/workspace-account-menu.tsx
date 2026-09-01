@@ -15,6 +15,7 @@ import { uuidV7 } from '../lib/telemetry';
 import { Avatar, Button, Modal } from './primitives';
 
 export interface WorkspaceAccountMenuProps {
+  accountReconnectRequired?: boolean;
   activeWorkspace: DesktopWorkspaceSummary;
   attention: Record<string, WorkspaceAttention | undefined>;
   currentUser: WorkspaceMember;
@@ -30,6 +31,7 @@ export interface WorkspaceAccountMenuProps {
   onCreateWorkspace: (input: { name: string; region: RallyRegion }, operationId: string) => Promise<void>;
   onDeclineInvitation: (invitation: DesktopPendingWorkspaceInvitation) => Promise<void>;
   onMenuOpen: () => void;
+  onReconnectAccount: () => Promise<void>;
   onInvitationPromptDismiss: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
@@ -48,12 +50,25 @@ function countClass(attention: WorkspaceAttention): string {
       : 'is-unseen';
 }
 
+function attentionLabel(attention: WorkspaceAttention): string | null {
+  if (attention.waitingForYou > 0) {
+    const subject = attention.waitingReason === 'mentioned'
+      ? 'mentions'
+      : attention.waitingReason === 'needs_input'
+        ? 'items needing input'
+        : 'unseen items';
+    return `${attention.waitingForYou} ${subject}`;
+  }
+  return attention.hasUnreadActivity ? 'Unread activity' : null;
+}
+
 function actionErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) return fallback;
   return error.message.replace(/^Error invoking remote method '[^']+': Error: /u, '');
 }
 
 export function WorkspaceAccountMenu({
+  accountReconnectRequired = false,
   activeWorkspace,
   attention,
   currentUser,
@@ -69,6 +84,7 @@ export function WorkspaceAccountMenu({
   onCreateWorkspace,
   onDeclineInvitation,
   onMenuOpen,
+  onReconnectAccount,
   onInvitationPromptDismiss,
   onOpenSettings,
   onSignOut,
@@ -82,10 +98,15 @@ export function WorkspaceAccountMenu({
   const [actionError, setActionError] = useState<string | null>(null);
   const creationOperation = useRef<{ fingerprint: string; id: string } | null>(null);
   const invitationOperation = useRef<{ invitationId: string; id: string } | null>(null);
-  const backgroundHasAttention = enabled && workspaces.some((workspace) => (
-    (workspace.id !== activeWorkspace.id || workspace.region !== activeWorkspace.region)
-    && (attention[desktopWorkspaceIdentityKey(workspace.region, workspace.id)]?.waitingForYou ?? 0) > 0
-  ));
+  const backgroundAttention = enabled ? workspaces.flatMap((workspace) => {
+    if (workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region) return [];
+    const value = attention[desktopWorkspaceIdentityKey(workspace.region, workspace.id)];
+    return value ? [value] : [];
+  }) : [];
+  const backgroundHasAttention = backgroundAttention.some((value) => attentionLabel(value) !== null);
+  const backgroundAttentionDescription = backgroundAttention.some((value) => value.waitingForYou > 0)
+    ? 'attention in another workspace'
+    : backgroundHasAttention ? 'unread activity in another workspace' : null;
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;
 
   useEffect(() => {
@@ -94,12 +115,35 @@ export function WorkspaceAccountMenu({
     setInvitation(promptedInvitation);
   }, [promptedInvitation]);
 
+  const submitWorkspaceCreation = (): void => {
+    if (actionPending || workspaceName.trim().length < 2) return;
+    setActionPending(true);
+    setActionError(null);
+    const input = { name: workspaceName.trim(), region: workspaceRegion };
+    const fingerprint = JSON.stringify(input);
+    const operation = creationOperation.current?.fingerprint === fingerprint
+      ? creationOperation.current
+      : { fingerprint, id: uuidV7() };
+    creationOperation.current = operation;
+    void onCreateWorkspace(input, operation.id).then(() => {
+      creationOperation.current = null;
+      setCreating(false);
+      setWorkspaceName('');
+    }, (error: unknown) => {
+      setActionError(actionErrorMessage(error, 'The workspace could not be created.'));
+    }).finally(() => setActionPending(false));
+  };
+
   return (
     <>
       <DropdownMenu.Root onOpenChange={(open) => { if (open && enabled) onMenuOpen(); }}>
         <DropdownMenu.Trigger asChild>
           <button
-            aria-label={`${currentUser.name}${backgroundHasAttention ? ', attention in another workspace' : ''}`}
+            aria-label={[
+              currentUser.name,
+              activeWorkspace.name,
+              backgroundAttentionDescription,
+            ].filter(Boolean).join(', ')}
             className="account-trigger window-no-drag"
             type="button"
           >
@@ -122,13 +166,14 @@ export function WorkspaceAccountMenu({
                   const active = workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region;
                   const workspaceAttention = active ? undefined : attention[workspaceKey];
                   const count = workspaceAttention?.waitingForYou ?? 0;
+                  const attentionDescription = workspaceAttention ? attentionLabel(workspaceAttention) : null;
                   const switching = workspaceKey === switchingWorkspaceKey;
                   const error = workspaceErrors[workspaceKey];
                   const label = [
                     workspace.name,
                     ...(multipleRegions ? [regionLabel(workspace.region)] : []),
                     ...(active ? ['Current'] : []),
-                    ...(count > 0 ? [String(count)] : []),
+                    ...(attentionDescription ? [attentionDescription] : []),
                     ...(error ? [error] : []),
                   ].join(', ');
                   return (
@@ -189,6 +234,11 @@ export function WorkspaceAccountMenu({
                   <DropdownMenu.Label className="menu-label workspace-counts-stale">
                     Counts last updated {formatRelative(staleAt)}
                   </DropdownMenu.Label>
+                )}
+                {accountReconnectRequired && (
+                  <DropdownMenu.Item className="menu-item" onSelect={() => { void onReconnectAccount(); }}>
+                    Reconnect account…
+                  </DropdownMenu.Item>
                 )}
                 <DropdownMenu.Separator className="menu-separator" />
               </>
@@ -284,23 +334,7 @@ export function WorkspaceAccountMenu({
             <Button
               className="button-primary"
               disabled={actionPending || workspaceName.trim().length < 2}
-              onClick={() => {
-                setActionPending(true);
-                setActionError(null);
-                const input = { name: workspaceName.trim(), region: workspaceRegion };
-                const fingerprint = JSON.stringify(input);
-                const operation = creationOperation.current?.fingerprint === fingerprint
-                  ? creationOperation.current
-                  : { fingerprint, id: uuidV7() };
-                creationOperation.current = operation;
-                void onCreateWorkspace(input, operation.id).then(() => {
-                  creationOperation.current = null;
-                  setCreating(false);
-                  setWorkspaceName('');
-                }, (error: unknown) => {
-                  setActionError(actionErrorMessage(error, 'The workspace could not be created.'));
-                }).finally(() => setActionPending(false));
-              }}
+              onClick={submitWorkspaceCreation}
             >Create workspace</Button>
           </>
         )}
@@ -316,7 +350,17 @@ export function WorkspaceAccountMenu({
       >
         <label className="field">
           <span>Workspace name</span>
-          <input onChange={(event) => setWorkspaceName(event.target.value)} value={workspaceName} />
+          <input
+            autoFocus
+            maxLength={120}
+            onChange={(event) => setWorkspaceName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              submitWorkspaceCreation();
+            }}
+            value={workspaceName}
+          />
         </label>
         <fieldset className="workspace-region-choice">
           <legend>Data region</legend>
@@ -328,7 +372,10 @@ export function WorkspaceAccountMenu({
                 onChange={() => setWorkspaceRegion(region)}
                 type="radio"
               />
-              {regionLabel(region)}
+              <span>
+                <strong>{regionLabel(region)}</strong>
+                <small>{region === 'eu' ? 'Data stored in the European Union' : 'Data stored in the United States'}</small>
+              </span>
             </label>
           ))}
         </fieldset>

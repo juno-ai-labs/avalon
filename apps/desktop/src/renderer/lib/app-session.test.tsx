@@ -16,7 +16,7 @@ import {
 import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
 import { newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
 import { useDraftText } from './use-draft-text';
-import type { RallyApi } from './api';
+import { RallyApi } from './api';
 import { readDevicePreferences } from './device-preferences';
 import {
   consumeSurfaceEntrypoint,
@@ -28,12 +28,15 @@ let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null =
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
 let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
+let observedReconnectAccount: (() => Promise<void>) | null = null;
+let observedSurrenderActiveWorkspace: (() => Promise<void>) | null = null;
 let observedLeaveWorkspace: ((
   workspaceId: string,
   expectedOutcome: 'left' | 'abandoned',
 ) => Promise<unknown>) | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
+  createDesktopAuthAttempt: vi.fn(),
   consumePendingDeepLinks: vi.fn(),
   acceptInvitation: vi.fn(),
   activateWorkspace: vi.fn(),
@@ -53,6 +56,7 @@ const bridge = vi.hoisted(() => ({
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
   showDeepLinkError: vi.fn<RallyDesktopBridge['showDeepLinkError']>(async () => undefined),
+  surrenderActiveWorkspace: vi.fn(),
   reportTelemetryProductIntent: vi.fn(),
 }) satisfies AppSessionDesktopBridge & Pick<RallyDesktopBridge, 'reportTelemetryProductIntent'>);
 
@@ -89,6 +93,8 @@ function SessionProbe(): React.JSX.Element {
   const { api, booting, deepLinkError, invitationApi, pendingInvitation, region, session } = context;
   observedApi = api;
   observedSignOutIfCleared = context.signOutIfCredentialCleared;
+  observedReconnectAccount = context.reconnectAccountIdentity;
+  observedSurrenderActiveWorkspace = context.surrenderActiveWorkspace;
   observedLeaveWorkspace = context.leaveWorkspace;
   return (
     <>
@@ -144,6 +150,8 @@ function resetDesktopBridge(): void {
   sessionListener = null;
   observedApi = null;
   observedSignOutIfCleared = null;
+  observedReconnectAccount = null;
+  observedSurrenderActiveWorkspace = null;
   observedLeaveWorkspace = null;
   bridge.getRuntimeConfig.mockResolvedValue({
     appVersion: 'test',
@@ -174,6 +182,11 @@ function resetDesktopBridge(): void {
     return () => { sessionListener = null; };
   });
   bridge.exchangeDesktopTicket.mockResolvedValue(globalIdentitySession);
+  bridge.createDesktopAuthAttempt.mockResolvedValue({
+    attemptId: 'a'.repeat(43),
+    codeChallenge: 'challenge',
+  });
+  bridge.surrenderActiveWorkspace.mockResolvedValue(null);
 }
 
 describe('single-platform desktop identity routing', () => {
@@ -218,6 +231,51 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
     expect(readDevicePreferences().selectedRegion).toBe('global');
     expect(window.localStorage.getItem('rally:selected-region')).toBeNull();
+  });
+
+  it('starts an in-place platform identity reconnect from an active workspace', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    const beginGoogleLogin = vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+      .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await act(async () => { await observedReconnectAccount?.(); });
+
+    expect(bridge.createDesktopAuthAttempt).toHaveBeenCalledWith({
+      apiBaseUrl: 'https://api.rallywith.ai',
+      region: 'global',
+    });
+    expect(beginGoogleLogin).toHaveBeenCalledWith(
+      'global',
+      'rallywithai://auth/complete',
+      { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'challenge' } },
+    );
+    expect(bridge.openExternal).toHaveBeenCalledWith(
+      'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
+    );
+  });
+
+  it('moves to the next stored workspace after active membership is revoked', async () => {
+    const nextSession: DesktopSession = {
+      ...euSession,
+      apiBaseUrl: 'https://api.rallywith.ai',
+      workspace: {
+        ...euSession.workspace!,
+        id: 'workspace-global',
+        name: 'Global Studio',
+        region: 'global',
+      },
+    };
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.surrenderActiveWorkspace.mockResolvedValue(nextSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await act(async () => { await observedSurrenderActiveWorkspace?.(); });
+
+    expect(bridge.surrenderActiveWorkspace).toHaveBeenCalledOnce();
+    expect(screen.getByText('global:Global Studio')).toBeVisible();
   });
 
   it('accepts a sign-in callback on the superseded avalon scheme', async () => {

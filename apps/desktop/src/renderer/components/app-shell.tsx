@@ -103,6 +103,11 @@ export function openWorkstreamId(pathname: string): string | null {
   }
 }
 
+export function invitationAccountMismatch(invitationEmail: string, accountEmail: string): string | null {
+  if (invitationEmail.toLocaleLowerCase('en-US') === accountEmail.toLocaleLowerCase('en-US')) return null;
+  return `This invitation is for ${invitationEmail}. Sign in with that account to continue.`;
+}
+
 /** Mirror the generic directory predicate only to decide whether this route must leave. */
 export function workstreamMatchesBatchFilter(
   workstream: WorkstreamSummary,
@@ -205,6 +210,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     getOnboardingState,
     invitationApi,
     pendingInvitation,
+    reconnectAccountIdentity,
     session,
     signOut,
   } = useAppSession();
@@ -272,6 +278,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryFn: getOnboardingState,
     enabled: multipleWorkspacesEnabled,
   });
+  const accountReconnectRequired = workspaceDirectory.error instanceof Error
+    && workspaceDirectory.error.message.includes('Sign in to Rally before setting up a workspace');
   const pendingInvitationPreview = useQuery({
     queryKey: ['workspace-invitation-preview', pendingInvitation?.region, pendingInvitation?.token],
     queryFn: ({ signal }) => invitationApi!.getInvitationPreview(pendingInvitation!.token, signal),
@@ -287,6 +295,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         : 'This invitation is invalid, expired, or no longer available.',
     );
   }, [clearPendingInvitation, pendingInvitationPreview.error]);
+  useEffect(() => {
+    if (!pendingInvitationPreview.data || !session) return;
+    const mismatch = invitationAccountMismatch(pendingInvitationPreview.data.email, session.user.email);
+    if (!mismatch) return;
+    clearPendingInvitation();
+    void desktopBridge().showDeepLinkError(mismatch);
+  }, [clearPendingInvitation, pendingInvitationPreview.data, session]);
   const activeWorkspace: DesktopWorkspaceSummary = workspaceDirectory.data?.workspaces
     .find((candidate) => candidate.id === workspace.id && candidate.region === workspace.region) ?? {
       id: workspace.id,
@@ -391,6 +406,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       <Sidebar
         accountMenu={(
           <WorkspaceAccountMenu
+            accountReconnectRequired={accountReconnectRequired}
             activeWorkspace={activeWorkspace}
             attention={workspaceAttention.data ?? {}}
             currentUser={workspace.currentUser}
@@ -414,6 +430,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             onMenuOpen={() => {
               void workspaceDirectory.refetch();
               if (backgroundWorkspaces.length > 0) void workspaceAttention.refetch();
+            }}
+            onReconnectAccount={async () => {
+              try {
+                await reconnectAccountIdentity();
+              } catch (error) {
+                await desktopBridge().showDeepLinkError(
+                  error instanceof Error ? error.message : 'Rally could not open the sign-in page.',
+                );
+              }
             }}
             onInvitationPromptDismiss={clearPendingInvitation}
             onOpenSettings={() => { void desktopBridge().openSettings(); }}

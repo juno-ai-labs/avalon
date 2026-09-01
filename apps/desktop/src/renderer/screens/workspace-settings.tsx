@@ -1384,7 +1384,7 @@ export function WorkspaceSettingsScreen({
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced">
                   <h2>Workspace access</h2>
-                  <p>Leaving removes this workspace from Rally on this device.</p>
+                  <p>Leaving removes this workspace from your Rally account on every device.</p>
                 </div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">

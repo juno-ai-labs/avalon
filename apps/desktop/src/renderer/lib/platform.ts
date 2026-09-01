@@ -394,6 +394,12 @@ const browserBridge: RallyDesktopBridge = {
     notifyBrowserSession();
     return departure;
   },
+  async surrenderActiveWorkspace() {
+    browserSession = null;
+    browserRefreshToken = null;
+    notifyBrowserSession();
+    return null;
+  },
   async activateWorkspace({ region, workspaceId }) {
     return browserOnboardingSession(
       '/onboarding/workspace/activate',

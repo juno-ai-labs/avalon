@@ -1643,6 +1643,18 @@ async function removeStoredCredentialUnlocked(rejected: StoredAuth): Promise<voi
   broadcastSessionChanged(inMemorySession);
 }
 
+async function surrenderActiveWorkspace(): Promise<DesktopSession | null> {
+  return withSessionMutation(async () => {
+    const auth = await loadStoredAuthSet();
+    const active = auth ? activeStoredCredential(auth) : null;
+    if (!active?.binding.workspaceId) {
+      return inMemorySession ? publicSession(inMemorySession) : null;
+    }
+    await removeStoredCredentialUnlocked(active);
+    return inMemorySession ? publicSession(inMemorySession) : null;
+  });
+}
+
 function parseRallyBaseUrl(value: string | undefined, fallback: string): string {
   const parsed = new URL(value ?? fallback);
   if (!allowedExternalProtocols.has(parsed.protocol)) {
@@ -1961,9 +1973,24 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     ) {
       throw new Error('A newer Rally sign-in attempt replaced this callback');
     }
-    if (await loadStoredAuth()) {
-      desktopAuthAttempts.discard(candidate.attemptId as string);
-      throw new Error('Another Rally sign-in completed first');
+    const currentAuth = await loadStoredAuthSet();
+    if (currentAuth) {
+      if (currentAuth.account) {
+        desktopAuthAttempts.discard(candidate.attemptId as string);
+        throw new Error('Another Rally sign-in completed first');
+      }
+      const currentSession = await loadStoredSession();
+      if (
+        !currentSession?.workspace
+        || currentSession.user.email.toLocaleLowerCase('en-US')
+          !== session.user.email.toLocaleLowerCase('en-US')
+      ) {
+        desktopAuthAttempts.discard(candidate.attemptId as string);
+        throw new Error('This Rally account does not match the active workspace');
+      }
+      desktopAuthAttempts.clear();
+      inMemoryAuthSet = await writeSplitSessionFiles(session, { activate: false });
+      return publicSession(currentSession);
     }
     // One successful PKCE attempt wins. Late callbacks from any other browser
     // tab must not replace the account that just signed in.
@@ -2956,6 +2983,10 @@ function registerIpc(): void {
   ipcMain.handle('workspace:leave', (event, input: unknown) => {
     assertTrustedIpcSender(event);
     return leaveWorkspace(input);
+  });
+  ipcMain.handle('workspace:surrender-active', (event) => {
+    assertTrustedIpcSender(event);
+    return surrenderActiveWorkspace();
   });
   ipcMain.handle('onboarding:activate-workspace', (event, input: unknown) => {
     assertTrustedIpcSender(event);

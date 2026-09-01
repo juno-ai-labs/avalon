@@ -165,6 +165,7 @@ const bridge: RallyDesktopBridge = {
   acceptInvitation: (input) => ipcRenderer.invoke('onboarding:accept-invitation', input) as Promise<DesktopSession>,
   declineInvitation: (input) => ipcRenderer.invoke('onboarding:decline-invitation', input) as Promise<void>,
   refreshSession: () => ipcRenderer.invoke('auth:refresh-session') as Promise<DesktopSession>,
+  surrenderActiveWorkspace: () => ipcRenderer.invoke('workspace:surrender-active') as Promise<DesktopSession | null>,
   hasStoredCredential: () => ipcRenderer.invoke('auth:has-stored-credential') as Promise<boolean>,
   logout: () => ipcRenderer.invoke('auth:logout') as Promise<void>,
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,

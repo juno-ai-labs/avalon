@@ -188,8 +188,13 @@ function applyDirectoryPage(
 export function WorkspaceSocketProvider({
   api,
   children,
+  onAccessRevoked,
   workspaceId,
-}: PropsWithChildren<{ api: WorkspaceSocketApi; workspaceId: string }>): React.JSX.Element {
+}: PropsWithChildren<{
+  api: WorkspaceSocketApi;
+  onAccessRevoked?: () => void;
+  workspaceId: string;
+}>): React.JSX.Element {
   const queryClient = useQueryClient();
   const [state, setState] = useState<WorkspaceSocketState>('connecting');
   const [topicWaterlines, setTopicWaterlines] = useState<Partial<Record<WorkspaceSyncTopic, number>>>({});
@@ -577,6 +582,7 @@ export function WorkspaceSocketProvider({
           if (permanentError) {
             permanentlyClosed = true;
             if (accessRevoked) {
+              onAccessRevoked?.();
               socketTelemetry.disconnected({
                 attempts: attempt,
                 retrying: false,
@@ -695,7 +701,7 @@ export function WorkspaceSocketProvider({
       clearHeartbeat();
       socket?.close();
     };
-  }, [api, queryClient, workspaceId]);
+  }, [api, onAccessRevoked, queryClient, workspaceId]);
 
   const createMessage = useCallback(
     (command: CreateMessageCommand): Promise<AcceptedWorkstreamTurn> => createMessageRef.current(command),
