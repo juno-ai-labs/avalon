@@ -1,16 +1,50 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { RallyApiResponseError } from './api-response-error';
+import { revalidateWorkspaceActivation } from './workspace-activation';
+
+const target = {
+  region: 'global' as const,
+  workspaceId: '00000000-0000-7000-8000-000000000001',
+};
 
 describe('workspace activation authorization', () => {
-  it('revalidates every selection through the control plane before committing it', () => {
-    const source = readFileSync(`${process.cwd()}/src/main/index.ts`, 'utf8');
-    const activation = source.slice(
-      source.indexOf('async function activateWorkspace('),
-      source.indexOf('async function createWorkspace('),
-    );
+  it('requests the control plane on every explicit activation, including the current workspace', async () => {
+    const beginChange = vi.fn(() => 7);
+    const finishChange = vi.fn();
+    const request = vi.fn(async () => ({ workspace: target.workspaceId }));
+    const dependencies = {
+      beginChange,
+      finishChange,
+      nextSelectionIntent: vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(11),
+      request,
+    };
 
-    expect(activation).toContain("requestOnboardingSession(\n      '/onboarding/workspace/activate'");
-    expect(activation).not.toContain('selectStoredWorkspace(');
-    expect(activation).not.toContain('storedSessionForCredential(');
+    await revalidateWorkspaceActivation(target, undefined, dependencies);
+    await revalidateWorkspaceActivation(target, undefined, dependencies);
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenNthCalledWith(2, {
+      body: target,
+      expectedRegion: 'global',
+      expectedWorkspaceId: target.workspaceId,
+      operationId: undefined,
+      path: '/onboarding/workspace/activate',
+      selectionIntent: 11,
+    });
+    expect(finishChange).toHaveBeenCalledTimes(2);
+  });
+
+  it('finishes the change and emits a stable denial when revalidation refuses membership', async () => {
+    const finishChange = vi.fn();
+
+    await expect(revalidateWorkspaceActivation(target, undefined, {
+      beginChange: () => 9,
+      finishChange,
+      nextSelectionIntent: () => 12,
+      request: async () => {
+        throw new RallyApiResponseError('mutable service prose', 403, 'workspace_access_denied');
+      },
+    })).rejects.toThrow('rally-workspace-activation:workspace_access_denied');
+    expect(finishChange).toHaveBeenCalledWith(9);
   });
 });
