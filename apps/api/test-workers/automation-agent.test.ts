@@ -226,6 +226,8 @@ describe("AutomationAgent", () => {
         applyExternalEventRegistrations: async () => ({ applied: true, effectiveAfterEventSequence: 7 }),
         applyAutomationProjection: async () => ({ applied: true }),
       });
+      // `undefined` means omit the field, so Zod's `.default(null)` supplies it;
+      // an explicit set — even an empty one — is the other path through the guard.
       const submit = (draft: unknown, evaluatorRules: unknown) => instance.admitAuthoredDraft({
         schemaVersion: 1,
         automationId: AUTOMATION_ID,
@@ -245,6 +247,20 @@ describe("AutomationAgent", () => {
       // merely having called the tool.
       await expect(submit(eventDriven(true), { schemaVersion: 1, evaluators: [] }))
         .rejects.toThrow("automation_evaluator_rules_required");
+      // The predicate covers three trigger kinds and is shared with acceptance,
+      // so it is the single place a new kind would be missed. A second kind is
+      // asserted for that reason rather than for the string comparison.
+      await expect(submit({
+        ...readyDefinition("Watch for a mention"),
+        triggers: [{
+          type: "semantic_activity" as const,
+          connectorType: "notion",
+          sourceBindingKey: "notion_source",
+          suggestedSourcePluginId: "plugin_notion",
+          deterministicPrefilter: { eventType: "notion.comment.created" },
+          condition: "The comment asks a question",
+        }],
+      }, undefined)).rejects.toThrow("automation_evaluator_rules_required");
       // Nothing was created by either refusal.
       expect(state.storage.sql.exec<{ n: number }>(
         `SELECT COUNT(*) AS n FROM automation_definition_revisions`,
