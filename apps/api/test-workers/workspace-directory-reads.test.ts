@@ -349,6 +349,7 @@ describe("what the workspace object answers about its work streams", () => {
           pinned: false,
           includeSystem: false,
         },
+        update: { kind: "mark_read" },
       } as const;
 
       await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
@@ -401,6 +402,7 @@ describe("what the workspace object answers about its work streams", () => {
           pinned: false,
           includeSystem: false,
         },
+        update: { kind: "mark_read" },
       } as const;
 
       await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({

@@ -455,7 +455,7 @@ import {
 import {
   appendWorkspaceNoteSegment,
   archiveWorkspaceNote,
-  archiveWorkspaceNotesInRange,
+  archiveWorkspaceNotesForOperation,
   commitWorkspaceNoteGeneration,
   markWorkspaceNotePrivacyTransitionProcessed,
   pendingWorkspaceNotePrivacyTransitions,
@@ -2244,16 +2244,36 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   ],
 }, {
   version: 26,
-  description: "record the note half of a generic batch so a retry cannot widen it",
+  description: "freeze and receipt the note half of a generic batch",
   statements: [
     // NULL means the note archive has not been applied for this operation, and
-    // is the only reading a row from before this version can have: the batch
-    // surface reached work streams alone until now. That makes NULL both the
-    // historical truth and the state a fresh `mark_read` operation stays in,
-    // because `mark_read` has nothing to do to a note.
+    // is the state a fresh `mark_read` operation stays in, because `mark_read`
+    // has nothing to do to a note.
     `ALTER TABLE workspace_batch_dispatches
        ADD COLUMN archived_note_count INTEGER
        CHECK (archived_note_count IS NULL OR archived_note_count >= 0)`,
+    // Every row that predates this version belongs to an operation whose
+    // confirmation named work streams and nothing else — the batch surface did
+    // not reach notes at all. Zero is therefore the *true* receipt for it, and
+    // writing it here is what stops a half-published operation that is retried
+    // across this deploy from archiving notes its reader was never told about.
+    // Left as NULL, that retry would read as "the note half has not run yet".
+    `UPDATE workspace_batch_dispatches SET archived_note_count = 0`,
+    // The note half's frozen target set, for the same reason the work-stream
+    // half has one: the selection and the mutation are separate object calls,
+    // and between them a note can enter the range — trivially so under an
+    // open-ended heading like "Last hour". Without this the archive would take
+    // rows the confirmation never counted, on the first attempt and not only on
+    // a retry.
+    //
+    // No `dispatched_at` twin to the work-stream table: these are applied in
+    // one statement here rather than published one message at a time, so there
+    // is no partial progress through them to record.
+    `CREATE TABLE workspace_batch_dispatch_note_targets (
+      operation_id TEXT NOT NULL REFERENCES workspace_batch_dispatches(operation_id) ON DELETE CASCADE,
+      note_id TEXT NOT NULL,
+      PRIMARY KEY (operation_id, note_id)
+    ) STRICT`,
   ],
 }];
 
@@ -6091,6 +6111,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           request.operationId,
           JSON.stringify(targetIds),
         );
+        // The note half is frozen in the same transaction, and for the same
+        // reason: selecting it again at archive time would let a note that
+        // entered the range in between be taken, which under an open-ended
+        // heading like "Last hour" is any note touched since the reader
+        // confirmed. The receipt alone only closes that for a *retry*.
+        if (request.update.kind === "archive") {
+          this.state.storage.sql.exec(
+            `INSERT INTO workspace_batch_dispatch_note_targets (operation_id, note_id)
+             SELECT ?, value FROM json_each(?)`,
+            request.operationId,
+            JSON.stringify(workspaceNoteBatchTargets(
+              this.state.storage,
+              request.workspaceId,
+              request.userId,
+              request.filter,
+            )),
+          );
+        }
         targetCount = targetIds.length;
       }
 
@@ -6185,10 +6223,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           replayed: true,
         });
       }
-      const archived = archiveWorkspaceNotesInRange(this.state.storage, {
+      const archived = archiveWorkspaceNotesForOperation(this.state.storage, {
         workspaceId: request.workspaceId,
         userId: request.userId,
-        filter: request.filter,
+        operationId: request.operationId,
         at: request.at,
       });
       this.state.storage.sql.exec(
