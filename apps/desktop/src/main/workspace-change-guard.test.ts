@@ -18,6 +18,13 @@ describe('WorkspaceChangeGuard', () => {
     expect(guard.blocksChangeFrom('workspace-b', 'workspace-c')).toBe(false);
   });
 
+  it('blocks switching to a same-id workspace in another region', () => {
+    const guard = new WorkspaceChangeGuard();
+    guard.recordingChanged(41, 'global:workspace-a', true);
+
+    expect(guard.blocksChangeFrom('global:workspace-a', 'eu:workspace-a')).toBe(true);
+  });
+
   it('releases the guard when recording stops or its meeting window closes', () => {
     const guard = new WorkspaceChangeGuard();
     guard.recordingChanged(41, 'workspace-a', true);

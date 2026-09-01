@@ -112,7 +112,7 @@ describe('plural desktop authentication storage', () => {
     expect(parseStoredAuthSet(auth)).toMatchObject({
       version: 2,
       account: null,
-      activeWorkspaceId: session.workspace.id,
+      activeWorkspace: { workspaceId: session.workspace.id, region: 'global' },
       workspaces: [auth],
     });
     expect(parseStoredProfileSet(profile)).toMatchObject({
@@ -136,10 +136,33 @@ describe('plural desktop authentication storage', () => {
       [session.workspace.id, 'global'],
       [euSession.workspace.id, 'eu'],
     ]);
-    expect(eu.auth.activeWorkspaceId).toBe(euSession.workspace.id);
+    expect(eu.auth.activeWorkspace).toEqual({ workspaceId: euSession.workspace.id, region: 'eu' });
     expect(activeStoredCredential(eu.auth)).toMatchObject({
       binding: { workspaceId: euSession.workspace.id, region: 'eu' },
     });
+  });
+
+  it('keeps same-id workspaces distinct when they belong to different regions', () => {
+    const regionalCollision = {
+      ...euSession,
+      workspace: { ...euSession.workspace, id: session.workspace.id },
+    };
+    const global = mergeStoredSession(null, null, session, 'global');
+    const eu = mergeStoredSession(global.auth, global.profiles, regionalCollision, 'eu');
+
+    expect(eu.auth.workspaces.map((credential) => credential.binding.region)).toEqual(['global', 'eu']);
+    expect(eu.profiles.workspaces.map((profile) => profile.workspace?.region)).toEqual(['global', 'eu']);
+    expect(activeStoredCredential(eu.auth)).toMatchObject({
+      binding: { workspaceId: session.workspace.id, region: 'eu' },
+    });
+
+    const selected = selectStoredWorkspace(eu.auth, session.workspace.id, 'global');
+    expect(activeStoredCredential(selected)).toMatchObject({
+      binding: { workspaceId: session.workspace.id, region: 'global' },
+    });
+    const removed = removeStoredWorkspace(selected, eu.profiles, session.workspace.id, 'eu');
+    expect(removed.auth.workspaces.map((credential) => credential.binding.region)).toEqual(['global']);
+    expect(removed.profiles.workspaces.map((profile) => profile.workspace?.region)).toEqual(['global']);
   });
 
   it('removes only one workspace and selects the most recent remaining credential', () => {
@@ -147,11 +170,11 @@ describe('plural desktop authentication storage', () => {
     const account = mergeStoredSession(null, null, accountSession, 'global');
     const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
     const eu = mergeStoredSession(global.auth, global.profiles, euSession, 'eu');
-    const removed = removeStoredWorkspace(eu.auth, eu.profiles, euSession.workspace.id);
+    const removed = removeStoredWorkspace(eu.auth, eu.profiles, euSession.workspace.id, 'eu');
 
     expect(removed.auth.workspaces).toHaveLength(1);
     expect(removed.auth.workspaces[0]?.binding.workspaceId).toBe(session.workspace.id);
-    expect(removed.auth.activeWorkspaceId).toBe(session.workspace.id);
+    expect(removed.auth.activeWorkspace).toEqual({ workspaceId: session.workspace.id, region: 'global' });
     expect(removed.profiles.workspaces).toHaveLength(1);
     expect(removed.auth.account).not.toBeNull();
   });
@@ -162,10 +185,13 @@ describe('plural desktop authentication storage', () => {
     const global = mergeStoredSession(account.auth, account.profiles, session, 'global');
     const eu = mergeStoredSession(global.auth, global.profiles, euSession, 'eu');
 
-    const selected = selectStoredWorkspace(eu.auth, session.workspace.id);
+    const selected = selectStoredWorkspace(eu.auth, session.workspace.id, 'global');
 
-    expect(selected.activeWorkspaceId).toBe(session.workspace.id);
-    expect(selected.workspaceRecency).toEqual([session.workspace.id, euSession.workspace.id]);
+    expect(selected.activeWorkspace).toEqual({ workspaceId: session.workspace.id, region: 'global' });
+    expect(selected.workspaceRecency).toEqual([
+      { workspaceId: session.workspace.id, region: 'global' },
+      { workspaceId: euSession.workspace.id, region: 'eu' },
+    ]);
     expect(selected.workspaces).toEqual(eu.auth.workspaces);
   });
 });

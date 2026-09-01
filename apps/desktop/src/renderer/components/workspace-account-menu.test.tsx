@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WorkspaceAccountMenu } from './workspace-account-menu';
+import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 
 const currentUser = { id: 'user-1', name: 'Ada', email: 'ada@example.com', timezone: 'America/New_York' };
 const active = {
@@ -17,7 +18,9 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
   const props: React.ComponentProps<typeof WorkspaceAccountMenu> = {
     activeWorkspace: active,
     attention: {
-      [eu.id]: { waitingForYou: 3, waitingReason: 'mentioned', hasUnreadActivity: true },
+      [desktopWorkspaceIdentityKey(eu.region, eu.id)]: {
+        waitingForYou: 3, waitingReason: 'mentioned', hasUnreadActivity: true,
+      },
     },
     currentUser,
     enabled: true,
@@ -62,6 +65,20 @@ describe('workspace account menu', () => {
     expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
   });
 
+  it('does not mark a same-id workspace in another region as current', () => {
+    const regionalCollision = { ...eu, id: active.id };
+    const props = renderMenu({ attention: {}, workspaces: [active, regionalCollision] });
+
+    openMenu();
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: /Global Studio.*Global.*Current/u })).toBeVisible();
+    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*European Union/u });
+    expect(europe).not.toHaveAccessibleName(/Current/u);
+
+    fireEvent.click(europe);
+    expect(props.onSwitchWorkspace).toHaveBeenCalledWith(regionalCollision);
+  });
+
   it('keeps stale values visible and identifies when they were last updated', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-31T20:07:00.000Z'));
@@ -103,6 +120,29 @@ describe('workspace account menu', () => {
     fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
     fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
     expect(props.onCreateWorkspace).toHaveBeenCalledWith({ name: 'New Lab', region: 'global' });
+  });
+
+  it('shows a readable action error and clears it before another create attempt', async () => {
+    renderMenu({
+      onCreateWorkspace: vi.fn(async () => {
+        throw new Error(
+          "Error invoking remote method 'onboarding:create-workspace': Error: Sign in again to create a workspace",
+        );
+      }),
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
+    let create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+
+    expect(await within(create).findByText('Sign in again to create a workspace')).toBeVisible();
+    expect(within(create).queryByText(/Error invoking remote method/u)).not.toBeInTheDocument();
+    fireEvent.click(within(create).getByRole('button', { name: 'Cancel' }));
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
+    create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    expect(within(create).queryByText('Sign in again to create a workspace')).not.toBeInTheDocument();
   });
 
   it('surfaces a signed-in invitation prompt without requiring the menu to open', async () => {

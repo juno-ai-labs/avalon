@@ -8,6 +8,7 @@ import type {
   DesktopWorkspaceSummary,
   RallyRegion,
 } from '../../common/desktop';
+import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import type { WorkspaceMember } from '../lib/types';
 import { formatRelative } from '../lib/format';
 import { Avatar, Button, Modal } from './primitives';
@@ -21,7 +22,7 @@ export interface WorkspaceAccountMenuProps {
   loadingAttention: boolean;
   promptedInvitation?: DesktopPendingWorkspaceInvitation | null;
   staleAt: string | null;
-  switchingWorkspaceId?: string | null;
+  switchingWorkspaceKey?: string | null;
   workspaceErrors?: Record<string, string | undefined>;
   workspaces: DesktopWorkspaceSummary[];
   onAcceptInvitation: (invitation: DesktopPendingWorkspaceInvitation) => Promise<void>;
@@ -46,6 +47,11 @@ function countClass(attention: WorkspaceAttention): string {
       : 'is-unseen';
 }
 
+function actionErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  return error.message.replace(/^Error invoking remote method '[^']+': Error: /u, '');
+}
+
 export function WorkspaceAccountMenu({
   activeWorkspace,
   attention,
@@ -55,7 +61,7 @@ export function WorkspaceAccountMenu({
   loadingAttention,
   promptedInvitation = null,
   staleAt,
-  switchingWorkspaceId = null,
+  switchingWorkspaceKey = null,
   workspaceErrors = {},
   workspaces,
   onAcceptInvitation,
@@ -74,7 +80,8 @@ export function WorkspaceAccountMenu({
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const backgroundHasAttention = enabled && workspaces.some((workspace) => (
-    workspace.id !== activeWorkspace.id && (attention[workspace.id]?.waitingForYou ?? 0) > 0
+    (workspace.id !== activeWorkspace.id || workspace.region !== activeWorkspace.region)
+    && (attention[desktopWorkspaceIdentityKey(workspace.region, workspace.id)]?.waitingForYou ?? 0) > 0
   ));
   const multipleRegions = new Set(workspaces.map((workspace) => workspace.region)).size > 1;
 
@@ -108,11 +115,12 @@ export function WorkspaceAccountMenu({
               <>
                 <DropdownMenu.Label className="menu-label workspace-menu-section">Workspaces</DropdownMenu.Label>
                 {workspaces.map((workspace) => {
-                  const active = workspace.id === activeWorkspace.id;
-                  const workspaceAttention = active ? undefined : attention[workspace.id];
+                  const workspaceKey = desktopWorkspaceIdentityKey(workspace.region, workspace.id);
+                  const active = workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region;
+                  const workspaceAttention = active ? undefined : attention[workspaceKey];
                   const count = workspaceAttention?.waitingForYou ?? 0;
-                  const switching = workspace.id === switchingWorkspaceId;
-                  const error = workspaceErrors[workspace.id];
+                  const switching = workspaceKey === switchingWorkspaceKey;
+                  const error = workspaceErrors[workspaceKey];
                   const label = [
                     workspace.name,
                     ...(multipleRegions ? [regionLabel(workspace.region)] : []),
@@ -124,7 +132,7 @@ export function WorkspaceAccountMenu({
                     <DropdownMenu.Item
                       aria-label={label}
                       className="menu-item workspace-menu-item"
-                      key={workspace.id}
+                      key={workspaceKey}
                       onSelect={(event) => {
                         if (active || switching) return;
                         event.preventDefault();
@@ -168,7 +176,10 @@ export function WorkspaceAccountMenu({
                     </span>
                   </DropdownMenu.Item>
                 ))}
-                <DropdownMenu.Item className="menu-item" onSelect={() => setCreating(true)}>
+                  <DropdownMenu.Item className="menu-item" onSelect={() => {
+                    setActionError(null);
+                    setCreating(true);
+                  }}>
                   <Plus size={14} /> Create a workspace
                 </DropdownMenu.Item>
                 {staleAt && (
@@ -211,9 +222,9 @@ export function WorkspaceAccountMenu({
                   setActionError(null);
                   void onDeclineInvitation(invitation).then(
                     () => setInvitation(null),
-                    (error: unknown) => setActionError(
-                      error instanceof Error ? error.message : 'This invitation could not be declined.',
-                    ),
+                    (error: unknown) => setActionError(actionErrorMessage(
+                      error, 'This invitation could not be declined.',
+                    )),
                   ).finally(() => setActionPending(false));
                 }}
               >Decline</Button>
@@ -226,7 +237,9 @@ export function WorkspaceAccountMenu({
                 setActionError(null);
                 void onAcceptInvitation(invitation).then(
                   () => setInvitation(null),
-                  (error: unknown) => setActionError(error instanceof Error ? error.message : 'This invitation could not be accepted.'),
+                  (error: unknown) => setActionError(actionErrorMessage(
+                    error, 'This invitation could not be accepted.',
+                  )),
                 ).finally(() => setActionPending(false));
               }}
             >Join</Button>
@@ -243,7 +256,10 @@ export function WorkspaceAccountMenu({
         description="Choose carefully: a workspace's region cannot be changed later."
         footer={(
           <>
-            <Button className="button-secondary" disabled={actionPending} onClick={() => setCreating(false)}>Cancel</Button>
+            <Button className="button-secondary" disabled={actionPending} onClick={() => {
+              setActionError(null);
+              setCreating(false);
+            }}>Cancel</Button>
             <Button
               className="button-primary"
               disabled={actionPending || workspaceName.trim().length < 2}
@@ -254,13 +270,18 @@ export function WorkspaceAccountMenu({
                   setCreating(false);
                   setWorkspaceName('');
                 }, (error: unknown) => {
-                  setActionError(error instanceof Error ? error.message : 'The workspace could not be created.');
+                  setActionError(actionErrorMessage(error, 'The workspace could not be created.'));
                 }).finally(() => setActionPending(false));
               }}
             >Create workspace</Button>
           </>
         )}
-        onOpenChange={(open) => { if (!open && !actionPending) setCreating(false); }}
+        onOpenChange={(open) => {
+          if (!open && !actionPending) {
+            setActionError(null);
+            setCreating(false);
+          }
+        }}
         open={creating}
         title="Create a workspace"
       >

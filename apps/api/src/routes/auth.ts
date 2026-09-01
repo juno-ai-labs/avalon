@@ -46,6 +46,10 @@ authRoutes.post("/dev/session", zValidator("json", developmentSessionBody), asyn
     await new AuthService(c.env).createDevelopmentSession(c.req.valid("json").workspaceName)), 201),
 );
 
+authRoutes.post("/dev/identity", async (c) =>
+  c.json(SessionSchema.parse(await new AuthService(c.env).createDevelopmentIdentitySession()), 201),
+);
+
 authRoutes.get("/invitations/preview", zValidator("query", invitationPreviewQuery), async (c) => {
   c.header("Cache-Control", "no-store");
   return c.json(WorkspaceInvitationPreviewSchema.parse(await previewInvitation(c.env, c.req.valid("query").token)));

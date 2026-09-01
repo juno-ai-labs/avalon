@@ -31,11 +31,15 @@ workspace. The identity credential remains stored because an EU workspace
 session cannot call the Global onboarding coordinator.
 
 The desktop stores one version-2 auth set and one matching profile set. Each
-workspace credential carries its immutable region; `activeWorkspaceId` and an
-ordered recency list are device-local presentation state. Selecting a cached
-workspace rewrites only that active selection. A network activation may finish
-after another selection; its credential and profile are retained, but an intent
-generation prevents the late response from taking over the window.
+workspace credential carries its immutable region; the active-workspace binding
+and every ordered-recency entry are `(region, workspace_id)` pairs in
+device-local presentation state. The pair matters even when UUIDs happen to
+collide across regions: credential replacement, profile lookup, attention,
+departure, React keys, and the meeting guard all use the complete binding.
+Selecting a cached workspace rewrites only that active selection. A network
+activation may finish after another selection; its credential and profile are
+retained, but an intent generation prevents the late response from taking over
+the window.
 
 The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
@@ -110,10 +114,34 @@ workspace.
 Node tests cover plural schema, setup replay, departure races, stored-set
 migration, activation intent ordering, draft scoping, and component states. The
 attention aggregation and object admission fences run in the real workerd suite.
+Local environment synchronization gives Global the local EU API route, and
+`pnpm db:open-authority` opens and seeds both regional authorities so the same-ID
+regional fixture can prove an actual Global → EU → Global desktop switch.
 The complete manual Global/EU, offline, invitation, removal, sign-out, Lockdown,
 and flag-off matrix lives in `e2e.md`.
 
 ## Changelog
+
+### 2026-08-31 — Regional binding is the desktop identity
+
+**What changed:** Desktop credential/profile sets, selection, recency,
+attention, errors, departure, and meeting capture now key workspaces by region
+and UUID together. Local environment sync routes Global onboarding to the local
+EU Worker, and the authority bootstrap now opens and seeds both regions.
+
+**Why:** Global and EU local fixtures deliberately share a workspace UUID. A
+real-window pass showed that UUID-only state replaced one credential with the
+other, marked both rows current, and made a successful EU activation impossible
+to exercise after its authority refused product traffic.
+
+**Considered and rejected:** Making fixture UUIDs globally unique would conceal
+the invariant the production design relies on. Leaving EU in `legacy_open`
+would preserve an old bootstrap convention at the cost of making cross-region
+desktop behavior unverifiable.
+
+**Consequences:** Any new desktop state keyed to a workspace must carry the
+region too. Local bootstrap takes the same authority transition in Global and
+EU and imports the product fixtures into both object namespaces.
 
 ### 2026-08-31 — One account retains several region-bound workspaces
 

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
+import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
@@ -287,7 +288,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     );
   }, [clearPendingInvitation, pendingInvitationPreview.error]);
   const activeWorkspace: DesktopWorkspaceSummary = workspaceDirectory.data?.workspaces
-    .find((candidate) => candidate.id === workspace.id) ?? {
+    .find((candidate) => candidate.id === workspace.id && candidate.region === workspace.region) ?? {
       id: workspace.id,
       name: workspace.name,
       slug: workspace.id,
@@ -304,15 +305,21 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       && candidate.region === pendingInvitationPreview.data.region
     )) ?? null
     : null;
-  const backgroundWorkspaceIds = knownWorkspaces
-    .filter((candidate) => candidate.id !== workspace.id)
-    .map((candidate) => candidate.id);
+  const backgroundWorkspaces = knownWorkspaces.filter((candidate) => (
+    candidate.id !== workspace.id || candidate.region !== workspace.region
+  ));
+  const backgroundWorkspaceKeys = backgroundWorkspaces.map((candidate) => (
+    desktopWorkspaceIdentityKey(candidate.region, candidate.id)
+  ));
   const workspaceAttention = useQuery<Record<string, WorkspaceAttention>>({
-    queryKey: ['workspace-attention', ...backgroundWorkspaceIds],
-    queryFn: async () => Object.fromEntries(await Promise.all(backgroundWorkspaceIds.map(async (workspaceId) => (
-      [workspaceId, await desktopBridge().getWorkspaceAttention({ workspaceId })] as const
+    queryKey: ['workspace-attention', ...backgroundWorkspaceKeys],
+    queryFn: async () => Object.fromEntries(await Promise.all(backgroundWorkspaces.map(async (candidate) => (
+      [
+        desktopWorkspaceIdentityKey(candidate.region, candidate.id),
+        await desktopBridge().getWorkspaceAttention({ region: candidate.region, workspaceId: candidate.id }),
+      ] as const
     )))),
-    enabled: multipleWorkspacesEnabled && backgroundWorkspaceIds.length > 0,
+    enabled: multipleWorkspacesEnabled && backgroundWorkspaces.length > 0,
     placeholderData: (previous) => previous,
     retry: false,
   });
@@ -328,14 +335,16 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     if (!multipleWorkspacesEnabled) return undefined;
     const refresh = (): void => {
       void workspaceDirectory.refetch();
-      if (backgroundWorkspaceIds.length > 0) void workspaceAttention.refetch();
+      if (backgroundWorkspaces.length > 0) void workspaceAttention.refetch();
     };
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
-  }, [backgroundWorkspaceIds.join(':'), multipleWorkspacesEnabled]);
-  const [switchingWorkspaceId, setSwitchingWorkspaceId] = useState<string | null>(null);
+  }, [backgroundWorkspaceKeys.join(':'), multipleWorkspacesEnabled]);
+  const [switchingWorkspaceKey, setSwitchingWorkspaceKey] = useState<string | null>(null);
   const [workspaceErrors, setWorkspaceErrors] = useState<Record<string, string | undefined>>({});
-  const switchingWorkspace = knownWorkspaces.find((candidate) => candidate.id === switchingWorkspaceId);
+  const switchingWorkspace = knownWorkspaces.find((candidate) => (
+    desktopWorkspaceIdentityKey(candidate.region, candidate.id) === switchingWorkspaceKey
+  ));
   const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
@@ -404,18 +413,19 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             }}
             onMenuOpen={() => {
               void workspaceDirectory.refetch();
-              if (backgroundWorkspaceIds.length > 0) void workspaceAttention.refetch();
+              if (backgroundWorkspaces.length > 0) void workspaceAttention.refetch();
             }}
             onInvitationPromptDismiss={clearPendingInvitation}
             onOpenSettings={() => { void desktopBridge().openSettings(); }}
             onSignOut={() => { void signOut().catch(() => undefined); }}
             onSwitchWorkspace={async (target) => {
+              const targetKey = desktopWorkspaceIdentityKey(target.region, target.id);
               if (!navigator.onLine) {
-                setWorkspaceErrors((current) => ({ ...current, [target.id]: 'Connect to open this workspace' }));
+                setWorkspaceErrors((current) => ({ ...current, [targetKey]: 'Connect to open this workspace' }));
                 return;
               }
-              setWorkspaceErrors((current) => ({ ...current, [target.id]: undefined }));
-              setSwitchingWorkspaceId(target.id);
+              setWorkspaceErrors((current) => ({ ...current, [targetKey]: undefined }));
+              setSwitchingWorkspaceKey(targetKey);
               try {
                 await activateWorkspace(target.region, target.id, uuidV7());
               } catch (error) {
@@ -423,7 +433,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
                 const message = error instanceof Error ? error.message : '';
                 setWorkspaceErrors((current) => ({
                   ...current,
-                  [target.id]: message === 'Finish or stop the recording before switching workspaces'
+                  [targetKey]: message === 'Finish or stop the recording before switching workspaces'
                     ? message
                     : code === 'workspace_access_denied' || message === 'Workspace access is unavailable'
                     ? 'You are no longer a member of this workspace'
@@ -433,13 +443,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
                   await workspaceDirectory.refetch();
                 }
               } finally {
-                setSwitchingWorkspaceId((current) => current === target.id ? null : current);
+                setSwitchingWorkspaceKey((current) => current === targetKey ? null : current);
               }
             }}
             staleAt={workspaceAttention.isError && workspaceAttention.dataUpdatedAt > 0
               ? new Date(workspaceAttention.dataUpdatedAt).toISOString()
               : null}
-            switchingWorkspaceId={switchingWorkspaceId}
+            switchingWorkspaceKey={switchingWorkspaceKey}
             workspaceErrors={workspaceErrors}
             workspaces={knownWorkspaces}
           />
