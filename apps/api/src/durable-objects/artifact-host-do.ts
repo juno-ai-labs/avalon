@@ -232,21 +232,21 @@ const ARTIFACT_STATE_ROW = z.object({
   manifest_json: z.string(),
 });
 
-export const ArtifactPublishSchema = z.object({
+export const ArtifactPublishSchema = z.strictObject({
   artifactId: z.string().uuid(),
   workspaceId: z.string().uuid(),
   workstreamId: z.string().uuid(),
   resourceId: z.string().uuid(),
   region: z.enum(["global", "eu"]),
   manifest: ArtifactManifestSchema,
-}).strict();
+});
 export type ArtifactPublish = z.infer<typeof ArtifactPublishSchema>;
 
-export const ArtifactOpenRequestSchema = z.object({
+export const ArtifactOpenRequestSchema = z.strictObject({
   userId: z.string().uuid(),
   appSessionId: z.string().min(1).max(200).nullable(),
   displayName: z.string().max(300),
-}).strict();
+});
 
 /**
  * A read's outcome, refusals included.

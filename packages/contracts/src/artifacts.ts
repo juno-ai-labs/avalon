@@ -98,13 +98,13 @@ export const ARTIFACT_VIEWER_NAME_HEADER = RALLY_HEADERS.VIEWER_NAME;
  * machinery, and a type that could change between requests for identical bytes
  * is a type a cache cannot be given a long TTL against.
  */
-export const ArtifactManifestEntrySchema = z.object({
+export const ArtifactManifestEntrySchema = z.strictObject({
   /** Directory-relative, `/`-separated, no leading slash. */
   path: z.string().min(1).max(1_024),
   contentType: z.string().min(1).max(160),
   sizeBytes: z.number().int().nonnegative(),
   sha256: z.string().regex(/^[0-9a-f]{64}$/u),
-}).strict();
+});
 export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>;
 
 /**
@@ -119,7 +119,7 @@ export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>;
  * nothing and 404s. No secret can be in it — the sandbox guarantees that — but
  * serving a site's source to its viewers is surface nobody asked for.
  */
-export const ArtifactManifestSchema = z.object({
+export const ArtifactManifestSchema = z.strictObject({
   version: z.literal(1),
   artifactId: ArtifactIdSchema,
   artifactVersion: z.number().int().positive(),
@@ -131,7 +131,7 @@ export const ArtifactManifestSchema = z.object({
   assets: z.array(ArtifactManifestEntrySchema).max(10_000),
   totalBytes: z.number().int().nonnegative(),
   publishedAt: z.string().datetime({ offset: true }),
-}).strict();
+});
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
 
 /**

@@ -34,33 +34,33 @@ const ResourcePageSchema = z.object({
 });
 const ResourceRevisionListSchema = z.array(ResourceRevisionSchema);
 const WatchStateSchema = z.object({ watchEnabled: z.boolean() });
-const ArtifactOpenResultSchema = z.object({
+const ArtifactOpenResultSchema = z.strictObject({
   openUrl: HttpUrlSchema,
   canonicalUrl: HttpUrlSchema,
   artifactId: IdSchema,
   mode: z.enum(["static", "active"]),
   stateful: z.boolean(),
-}).strict();
+});
 const tableParam = idParam.extend({
   // Model-designed names, so the shape is bounded but not otherwise assumed;
   // whether the table exists is answered by the live schema, not by this.
   table: z.string().min(1).max(200),
 });
 const tableQuery = z.object({ offset: z.coerce.number().int().nonnegative().default(0) });
-const ArtifactDataSchemaSchema = z.object({
+const ArtifactDataSchemaSchema = z.strictObject({
   tables: z.array(z.object({
     name: z.string(),
     columns: z.array(z.object({ name: z.string(), type: z.string() })),
     rowCount: z.number().int().nonnegative(),
   })),
-}).strict();
-const ArtifactDataPageSchema = z.object({
+});
+const ArtifactDataPageSchema = z.strictObject({
   // Visitor-written values under model-designed columns: untrusted content the
   // renderer displays as text and never as markup.
   rows: z.array(z.record(z.string(), z.unknown())),
   csv: z.string(),
-}).strict();
-const ArtifactErrorListSchema = z.array(z.object({
+});
+const ArtifactErrorListSchema = z.array(z.strictObject({
   occurredAt: z.number().int().nonnegative(),
   version: z.number().int().positive(),
   requestPath: z.string(),
@@ -68,7 +68,7 @@ const ArtifactErrorListSchema = z.array(z.object({
   // reaches a renderer that will display it.
   message: z.string().max(4_000),
   stack: z.string().max(8_000).nullable(),
-}).strict());
+}));
 
 export const resourceRoutes = new Hono<HonoAppEnv>();
 
