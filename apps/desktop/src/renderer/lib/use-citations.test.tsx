@@ -119,7 +119,7 @@ describe('useCitations', () => {
     // derivative inside the request — so a second card citing the same
     // document must join the read in flight rather than start another.
     expect(first).toBe(second);
-    expect(await first).toBe('# Q3\n\nUp 14%.');
+    expect(await first).toEqual({ kind: 'text', text: '# Q3\n\nUp 14%.' });
     expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('board-deck', expect.anything());
   });
 
@@ -151,7 +151,7 @@ describe('useCitations', () => {
     // A dropped connection says nothing about the document, so the next ask —
     // a scroll back, a re-render — asks again rather than replaying the failure
     // for as long as the reader stays in the room.
-    expect(await result.current.preview!('board-deck')).toBe('the text');
+    expect(await result.current.preview!('board-deck')).toEqual({ kind: 'text', text: 'the text' });
     expect(loadResourceContent).toHaveBeenCalledTimes(2);
 
     const refusing = vi.fn(() => Promise.reject(new ApiError('Cannot convert', 422, 'unsupported_media_type')));
@@ -179,6 +179,16 @@ describe('useCitations', () => {
     // its empty room rather than a skeleton nothing will ever settle.
     const { result: routeless } = renderHook(() => useCitations({ resources: [DECK] }));
     expect(routeless.current.preview!('board-deck')).toBeUndefined();
+  });
+
+  it('keeps image preview bytes as an image instead of decoding them as text', async () => {
+    const blob = new Blob(['not text'], { type: 'image/png' });
+    const loadResourceContent = vi.fn(async () => blob);
+    const image = { ...DECK, title: 'Fjord Kaffe Oslo.png', mimeType: 'image/png' };
+    const { result } = renderHook(() => useCitations({ loadResourceContent, resources: [image] }));
+
+    expect(await result.current.preview!('board-deck')).toEqual({ kind: 'image', blob });
+    expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('board-deck', expect.anything());
   });
 
   it('opens nothing for a target that names an identity or nothing at all', () => {

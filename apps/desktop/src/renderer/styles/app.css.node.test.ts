@@ -126,6 +126,22 @@ describe('member picker controls', () => {
   });
 });
 
+describe('citation card image preview', () => {
+  it('fills its box from the center without distorting the image', () => {
+    // The shared `.markdown-body img` sets `height: auto` and a prose margin.
+    // Naming the host here is what makes the fixed cover box win inside it.
+    const image = rule('.markdown-body .citation-card-image-preview');
+
+    expect(image).not.toBeNull();
+    expect(image).toContain('height: 72px;');
+    expect(image).toContain('margin: 0;');
+    expect(image).toContain('max-width: none;');
+    expect(image).toContain('object-fit: cover;');
+    expect(image).toContain('object-position: center;');
+    expect(image).toContain('width: 100%;');
+  });
+});
+
 /**
  * Chromium's `::-webkit-scrollbar` styling (below, 9px) opts these scrollers
  * into classic space-consuming scrollbars, so the moment their content
