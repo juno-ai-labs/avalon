@@ -33,7 +33,8 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000d7000");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000d7001");
 const OTHER_USER_ID = asUserId("00000000-0000-7000-8000-0000000d7004");
 const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-0000000d7002");
-const CLIENT_MESSAGE_ID = "00000000-0000-7000-8000-0000000d7003";
+/** The room the fixture drafts in, since a draft always has one now. */
+const AUTHORING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000d7020";
 const SLACK_CONNECTION_ID = "00000000-0000-7000-8000-0000000d7010";
 const SLACK_LINK_ID = "00000000-0000-7000-8000-0000000d7011";
 const AUTHOR_EMAIL = "author@example.com";
@@ -161,38 +162,22 @@ async function acceptAutomation(input: {
   defaultPluginIds: string[];
   deliveryTargets: Array<{ type: "email" } | { type: "slack_agent_dm"; connectionId: string }>;
 }): Promise<void> {
-  await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
-    (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
+  await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
     (instance as unknown as { workspace(): unknown }).workspace = async () => ({
       applyExternalEventRegistrations: async () => ({ applied: true, effectiveAfterEventSequence: 7 }),
       applyAutomationProjection: async () => ({ applied: true }),
     });
-    const admission = await instance.admitDraftTurn({
+    // Drafted the way a draft is made now: in a work stream, through the
+    // authoring path, rather than through the compiler loop that is gone.
+    await instance.admitAuthoredDraft({
       schemaVersion: 1,
       automationId: AUTOMATION_ID,
       workspaceId: WORKSPACE_ID,
       authorUserId: AUTHOR_ID,
       region: "global",
-      clientMessageId: CLIENT_MESSAGE_ID,
-      content: "Run when I ask",
-      attachmentIds: [],
-      inputMode: "typed",
+      authoredInWorkstreamId: AUTHORING_WORKSTREAM_ID,
+      draft: DEFINITION,
     });
-    state.storage.sql.exec(
-      `UPDATE automation_compiler_runs SET state = 'completed', settled_at = 1 WHERE run_id = ?`,
-      admission.compilerRunId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO automation_definition_revisions
-         (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
-       VALUES (1, ?, ?, 'sha256:definition', 1, 1)`,
-      admission.compilerRunId,
-      JSON.stringify(DEFINITION),
-    );
-    state.storage.sql.exec(
-      `UPDATE automation_state SET definition_revision = 1, title = ? WHERE id = 1`,
-      DEFINITION.name,
-    );
     await instance.acceptDraft({
       schemaVersion: 1,
       automationId: AUTOMATION_ID,

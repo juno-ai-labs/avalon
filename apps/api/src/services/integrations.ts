@@ -12,10 +12,7 @@ import {
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   BUILT_IN_SKILLS,
   RequestElicitationInputSchema,
-  AutomationCompilerError,
-  OpenRouterError,
   classifyAddressing,
-  compileAutomation,
   composeBeforeToolCallHooks,
   canonicalToolInputHash,
   createTextDeltaBatcher,
@@ -35,7 +32,6 @@ import {
   type BindLoopProjectionState,
   type BindLoopTransition,
   type BindCompactionCommit,
-  type AutomationCompilerStreamEvent,
   createAutomationsPlugin,
   type AutomationCreatorPluginCatalogEntry,
   type HarnessActivationInput,
@@ -45,13 +41,11 @@ import {
   type HarnessToolResult,
   type HarnessToolPolicyIdentity,
   type RunHarnessInput,
-  type RequestElicitationInput,
   type HarnessTool,
   type ModelMessage,
   type ModelMessageProvenance,
   type PluginAuthorization,
   type PluginAuthorizationOccasion,
-  type StructuredModelDiagnostic,
   toolActivityName,
 } from "@rally/agent-harness";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
@@ -112,7 +106,6 @@ import { markLoopActivationRecorded } from "../lib/loop-activation-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
-import { ApiError } from "../lib/api-error";
 import {
   contextCompactionCheckpointHash,
   type ContextCompactionCheckpointIdentity,
@@ -156,7 +149,6 @@ import {
   telemetryCountBucket,
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
-import { createAutomationDraftAttachmentTools } from "./automation-draft-attachment-tools";
 import { WorkspaceDigestDeliveryContextSchema } from "../durable-objects/workspace-digests-protocol";
 import {
   withWorkspaceRuntimeDatabase,
@@ -168,7 +160,6 @@ import {
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import {
-  buildAttachmentModelParts,
   type ModelAttachmentSource,
 } from "./attachment-model-content";
 import {
@@ -1600,264 +1591,6 @@ export async function classifyWorkstreamMessage(
       }, diagnostic);
     },
   });
-}
-
-async function loadAutomationDraftAttachmentParts(
-  env: Env,
-  workspaceId: string,
-  userId: string,
-  attachmentIds: string[],
-) {
-  const ids = [...new Set(attachmentIds)];
-  if (ids.length === 0) return { parts: [], frozenResourceIds: [] };
-  const placeholders = ids.map(() => "?").join(", ");
-  const rows = await env.DB.prepare(
-    `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json, model_content_ref, model_mime_type,
-            model_content_sha256, model_metadata_json, model_content_status, model_content_error_code
-       FROM resources
-      WHERE id IN (${placeholders}) AND workspace_id = ? AND provider = 'avalon_upload'
-        AND uploaded_by_user_id = ? AND attachment_status = 'draft'`,
-  ).bind(...ids, workspaceId, userId).all<{
-    id: string;
-    title: string;
-    mime_type: string | null;
-    content_ref: string | null;
-    content_sha256: string | null;
-    model_content_ref: string | null;
-    model_mime_type: string | null;
-    model_content_sha256: string | null;
-    model_metadata_json: string | null;
-    metadata_json: string | null;
-    model_content_status: Exclude<ModelAttachmentSource["modelContentStatus"], undefined>;
-    model_content_error_code: string | null;
-  }>();
-  const sources = new Map((rows.results ?? []).map((row) => [row.id, {
-    id: row.id,
-    workspaceId,
-    fileName: row.title,
-    mimeType: row.mime_type ?? "application/octet-stream",
-    sizeBytes: attachmentMetadataSize(row.metadata_json),
-    contentRef: row.content_ref,
-    contentSha256: row.content_sha256,
-    modelContentRef: row.model_content_ref,
-    modelMimeType: row.model_mime_type,
-    modelContentSha256: row.model_content_sha256,
-    modelMetadataJson: row.model_metadata_json,
-    modelContentStatus: row.model_content_status,
-    modelContentErrorCode: row.model_content_error_code,
-  } satisfies ModelAttachmentSource]));
-  if (sources.size !== ids.length) {
-    throw new ApiError(422, "invalid_automation_attachment", "One or more automation attachments are unavailable");
-  }
-  const parts = await buildAttachmentModelParts(
-    env.PAYLOADS,
-    ids.map((id) => sources.get(id)!),
-    { database: env.DB, images: env.IMAGES, documentProcessor: env.DOCUMENT_PROCESSOR },
-  );
-  return { parts, frozenResourceIds: ids };
-}
-
-export async function compileAutomationDraft(
-  env: Env,
-  input: {
-    draftId?: string | undefined;
-    messages: Array<{ role: "user" | "assistant"; content: string }>;
-    attachmentIds?: string[];
-    currentDraft?: AutomationDraft | null;
-    defaultTimezones: { personal: string; workspace: string };
-    requestId: string;
-    workspaceId: WorkspaceId;
-    userId: UserId;
-    onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
-    draftMutationPort?: {
-      setEvaluatorRules(
-        rules: AutomationSetEvaluatorRulesInputV1,
-        context: HarnessToolContext,
-      ): Promise<{ accepted: true }>;
-      submitDraft(
-        draft: AutomationDraft,
-        context: HarnessToolContext,
-      ): Promise<{ accepted: true }>;
-      requestElicitation(
-        elicitation: RequestElicitationInput,
-        context: HarnessToolContext,
-      ): Promise<{ accepted: true }>;
-    };
-    signal?: AbortSignal;
-  },
-): Promise<AutomationDraft> {
-  const pluginCatalog = await loadAutomationCreatorPluginCatalog(env, input.workspaceId, input.userId);
-  const draftAttachments = await loadAutomationDraftAttachmentParts(
-    env,
-    input.workspaceId,
-    input.userId,
-    input.attachmentIds ?? [],
-  );
-  const architectTools = draftAttachments.frozenResourceIds.length > 0
-    ? createAutomationDraftAttachmentTools(env, {
-        workspaceId: input.workspaceId,
-        userId: input.userId,
-        scopeId: input.draftId ?? draftAttachments.frozenResourceIds[0]!,
-        frozenResourceIds: draftAttachments.frozenResourceIds,
-      })
-    : [];
-  const draftResearchPort = {
-    searchPeople: async (query: string) => {
-      const pattern = `%${query}%`;
-      const rows = await env.DB.prepare(
-        `SELECT user.id, user.name, user.email
-           FROM workspace_members member
-           JOIN users user ON user.id = member.user_id
-          WHERE member.workspace_id = ? AND member.status = 'active'
-            AND (user.name LIKE ? OR user.email LIKE ?)
-          ORDER BY user.name, user.id`,
-      ).bind(input.workspaceId, pattern, pattern).all<{
-        id: string;
-        name: string;
-        email: string;
-      }>();
-      return { people: rows.results ?? [] };
-    },
-    searchResources: async (query: string) => {
-      // The connector-scope predicate every other resource read applies: a
-      // participant's personal connection is theirs alone, so its resources —
-      // titles included, which routinely carry customer, deal, and candidate
-      // names — must not reach another member's draft conversation. Joining the
-      // connection here rather than resolving plugins from a second, unscoped
-      // statement keeps the filter and the plugin lookup on one row.
-      const resources = await env.DB.prepare(
-        `SELECT resource.id, resource.title, resource.resource_type,
-                connection.id AS connection_id, connection.model_plugin_id
-           FROM resources resource
-           JOIN connector_connections connection ON connection.id = resource.connection_id
-          WHERE resource.workspace_id = ? AND resource.title LIKE ?
-            AND connection.workspace_id = ? AND connection.status <> 'disabled'
-            AND (connection.scope = 'workspace' OR connection.owner_user_id = ?)
-          ORDER BY resource.title, resource.id`,
-      ).bind(input.workspaceId, `%${query}%`, input.workspaceId, input.userId).all<{
-        id: string;
-        title: string;
-        resource_type: string;
-        connection_id: string;
-        model_plugin_id: string;
-      }>();
-      const bindingKeysByPlugin = new Map<string, string[]>();
-      for (const trigger of input.currentDraft?.triggers ?? []) {
-        if (
-          (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook")
-          || !trigger.suggestedSourcePluginId
-          || !trigger.sourceBindingKey
-        ) continue;
-        bindingKeysByPlugin.set(trigger.suggestedSourcePluginId, [
-          ...(bindingKeysByPlugin.get(trigger.suggestedSourcePluginId) ?? []),
-          trigger.sourceBindingKey,
-        ]);
-      }
-      return {
-        resources: (resources.results ?? []).map((resource) => ({
-          id: resource.id,
-          title: resource.title,
-          resourceType: resource.resource_type,
-          pluginId: resource.model_plugin_id,
-          sourceBindingKeys: [...new Set(bindingKeysByPlugin.get(resource.model_plugin_id) ?? [])],
-        })),
-      };
-    },
-  };
-  const webPlugin = createAvalonWebPlugin(createFirecrawlWebTools(env));
-  const routing = await resolveAgentModelRouting(env, "automation_compiler", {
-    workspaceId: input.workspaceId,
-    userId: input.userId,
-  });
-  const inferenceLogger = createAgentInferenceLogger(env, {
-    workspaceId: input.workspaceId,
-    userId: input.userId,
-    requestId: input.requestId,
-    ...(input.draftId ? { draftId: input.draftId } : {}),
-    source: "automation_compiler",
-  });
-  try {
-    return await compileAutomation({
-      apiKey: env.OPENROUTER_API_KEY,
-      model: routing.model,
-      loopId: `automation-draft:${input.draftId ?? input.userId}:loop`,
-      workspaceId: input.workspaceId,
-      userId: input.userId,
-      traceContext: {
-        source: "automation_compiler",
-        feature: AGENT_MODEL_FLAG_KEYS.automation_compiler,
-        workspaceId: input.workspaceId,
-        contextUserId: input.userId,
-        requestId: input.requestId,
-        ...(input.draftId ? { draftId: input.draftId } : {}),
-        region: env.AVALON_REGION,
-        environment: env.APP_ENV,
-        ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
-        executionPrincipalType: "user",
-        executionPrincipalId: input.userId,
-      },
-      fallbackModels: routing.fallbackModels,
-      transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
-      messages: input.messages,
-      ...(draftAttachments.parts.length > 0 ? { latestUserAttachmentParts: draftAttachments.parts } : {}),
-      ...(architectTools.length > 0 ? { architectTools } : {}),
-      ...(input.draftMutationPort ? { draftMutationPort: input.draftMutationPort } : {}),
-      draftResearchPort,
-      currentDraft: input.currentDraft ?? null,
-      defaultTimezones: input.defaultTimezones,
-      pluginCatalog,
-      ...(webPlugin ? { additionalPlugins: [webPlugin] } : {}),
-      maxResearchIterations: 20,
-      maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
-      ...(input.onStreamEvent ? { onStreamEvent: input.onStreamEvent } : {}),
-      ...(input.signal ? { signal: input.signal } : {}),
-      onInferenceRequest: inferenceLogger.onRequest,
-      onInferenceAttempt: inferenceLogger.onAttempt,
-      onDiagnostic: async (diagnostic: StructuredModelDiagnostic) => {
-        logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
-          request_id: input.requestId,
-          draft_id: input.draftId,
-          workspace_id: input.workspaceId,
-          stage: diagnostic.stage,
-          schema_name: diagnostic.schemaName,
-          provider: "openrouter",
-          model: diagnostic.model,
-          attempt: diagnostic.attempt,
-          fallback_attempt: diagnostic.fallbackAttempt,
-          repair_attempt: diagnostic.repairAttempt,
-          latency_ms: diagnostic.latencyMs,
-          response_bytes: diagnostic.responseBytes,
-          input_tokens: diagnostic.inputTokens,
-          output_tokens: diagnostic.outputTokens,
-          context_tokens: diagnostic.inputTokens === undefined || diagnostic.outputTokens === undefined
-            ? undefined
-            : diagnostic.inputTokens + diagnostic.outputTokens,
-          reasoning_tokens: diagnostic.reasoningTokens,
-          cached_input_tokens: diagnostic.cachedInputTokens,
-          success: diagnostic.success,
-          failure_kind: diagnostic.failureKind,
-          validation_issues: diagnostic.validationIssues,
-        });
-      },
-    });
-  } catch (error) {
-    const compilerFailure = error instanceof AutomationCompilerError ? error : null;
-    const providerFailure = error instanceof OpenRouterError ? error : null;
-    logStructuredEvent(env, "error", "automation_compiler", {
-      request_id: input.requestId,
-      draft_id: input.draftId,
-      workspace_id: input.workspaceId,
-      stage: "failed",
-      schema_name: "automation_draft",
-      provider: "openrouter",
-      model: routing.model,
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      failure_code: compilerFailure?.code ?? (providerFailure ? "provider_failure" : error instanceof z.ZodError ? "validation_failure" : "unknown_failure"),
-      failure_kind: compilerFailure?.kind ?? (providerFailure ? "provider" : error instanceof z.ZodError ? "validation" : "unknown"),
-      retryable: compilerFailure?.retryable ?? (providerFailure ? providerFailure.status !== 401 && providerFailure.status !== 402 && providerFailure.status !== 403 : false),
-    });
-    throw error;
-  }
 }
 
 /**
