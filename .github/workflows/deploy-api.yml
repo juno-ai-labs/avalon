@@ -1,7 +1,7 @@
 name: Deploy Avalon API
 
 # Ordinary regional release, in the order docs/runbook.md requires:
-# build and locally profile all seven static Worker artifacts, upload every
+# build and locally profile all eight static Worker artifacts, upload every
 # ordinary Worker version without traffic, apply ordinary remote D1 migrations,
 # promote EU services and API, prove EU health, promote Global, then prove both regions. The one
 # destructive product-schema retirement is detected from each region's pending
@@ -120,6 +120,8 @@ jobs:
               pnpm --filter @rally/api build:documents:eu &&
               pnpm --filter @rally/api build:terminal &&
               pnpm --filter @rally/api build:terminal:eu &&
+              pnpm --filter @rally/api build:telemetry &&
+              pnpm --filter @rally/api check:telemetry-startup-boundary &&
               pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/engineering-mcp build &&
               pnpm --filter @rally/desktop test:release
@@ -347,6 +349,10 @@ jobs:
         if: env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @rally/api build:terminal
 
+      - name: Build and profile the Global telemetry-delivery Worker
+        if: env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/api build:telemetry
+
       - name: Build and profile the Global inference-pricing Worker
         if: env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @rally/api build:pricing
@@ -398,6 +404,7 @@ jobs:
           if [ "$DEPLOY_GLOBAL" = "true" ]; then
             args+=(--deployed-sha "$(deployed_sha wrangler.documents.global.jsonc)")
             args+=(--deployed-sha "$(deployed_sha wrangler.terminal.global.jsonc)")
+            args+=(--deployed-sha "$(deployed_sha wrangler.telemetry.global.jsonc)")
             args+=(--deployed-sha "$(deployed_sha wrangler.pricing.global.jsonc)")
             args+=(--deployed-sha "$(deployed_sha .wrangler.lakehouses.global.json)")
           fi
@@ -454,6 +461,7 @@ jobs:
           }
           upload_version wrangler.documents.global.jsonc global_documents
           upload_version wrangler.terminal.global.jsonc global_terminal
+          upload_version wrangler.telemetry.global.jsonc global_telemetry
           upload_version wrangler.pricing.global.jsonc global_pricing
           upload_version .wrangler.lakehouses.global.json global_api
 
@@ -578,10 +586,11 @@ jobs:
             }
             promote_version wrangler.documents.global.jsonc "${{ steps.upload_global.outputs.global_documents }}"
             promote_version wrangler.terminal.global.jsonc "${{ steps.upload_global.outputs.global_terminal }}"
+            promote_version wrangler.telemetry.global.jsonc "${{ steps.upload_global.outputs.global_telemetry }}"
             promote_version wrangler.pricing.global.jsonc "${{ steps.upload_global.outputs.global_pricing }}"
             promote_version .wrangler.lakehouses.global.json "${{ steps.upload_global.outputs.global_api }}"
           else
-            for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc wrangler.pricing.global.jsonc .wrangler.lakehouses.global.json; do
+            for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc wrangler.telemetry.global.jsonc wrangler.pricing.global.jsonc .wrangler.lakehouses.global.json; do
               pnpm --filter @rally/api exec wrangler deploy \
                 --config "$config" \
                 --tag "$DEPLOY_SHA" \
@@ -658,6 +667,7 @@ jobs:
             apps/api/dist-documents-eu/startup.cpuprofile
             apps/api/dist-terminal/startup.cpuprofile
             apps/api/dist-terminal-eu/startup.cpuprofile
+            apps/api/dist-telemetry/startup.cpuprofile
             apps/api/dist-pricing/startup.cpuprofile
 
       - name: Record the remaining manual release gates

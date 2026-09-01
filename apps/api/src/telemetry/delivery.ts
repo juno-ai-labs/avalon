@@ -1,11 +1,10 @@
 import { TelemetryEnvelopeSchema, type TelemetryEnvelope } from "@rally/contracts/telemetry";
 import type { Env } from "../env";
 import {
-  sendPostHogBatch,
-  sendPostHogJavascriptExceptionBatch,
+  telemetryDeliveryRpcCall,
   type GlobalTelemetryDeliveryRow,
-  type PostHogDeliveryResult,
-} from "./posthog-adapter";
+  type TelemetryDestinationResult,
+} from "./telemetry-delivery-contract";
 import { processProfileOutbox } from "./profile-delivery";
 import { symbolicateJavascriptFrames } from "./javascript-symbolication";
 import { destinationCircuitAllows, recordDestinationOutcome } from "./operations";
@@ -101,7 +100,13 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
     suppressed: 0,
     expired: await reapExpiredTelemetry(env, now.toISOString()),
   };
-  if (env.AVALON_REGION !== "global" || !env.POSTHOG_HOST || !env.POSTHOG_PROJECT_TOKEN) return summary;
+  const telemetryDelivery = env.TELEMETRY_DELIVERY;
+  const postHogHost = env.POSTHOG_HOST;
+  const postHogProjectToken = env.POSTHOG_PROJECT_TOKEN;
+  if (env.AVALON_REGION !== "global"
+    || !postHogHost
+    || !postHogProjectToken
+    || !telemetryDelivery) return summary;
   await processProfileOutbox(env);
   const [captureAllowed, exceptionAllowed] = await Promise.all([
     destinationCircuitAllows(env, "posthog_capture", now),
@@ -155,19 +160,19 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
   );
   for (const [rows, result, destination] of await Promise.all([
     ordinary.length > 0
-      ? sendPostHogBatch({
-        host: env.POSTHOG_HOST,
-        projectToken: env.POSTHOG_PROJECT_TOKEN,
+      ? telemetryDeliveryRpcCall(() => telemetryDelivery.deliverTelemetryBatch({
+        host: postHogHost,
+        projectToken: postHogProjectToken,
         webBaseUrl: env.PUBLIC_WEB_BASE_URL,
         rows: ordinary.map(deliveryRow),
-      }).then((result) => [ordinary, result, "posthog_capture"] as const)
+      })).then(({ postHog }) => [ordinary, postHog, "posthog_capture"] as const)
       : Promise.resolve([ordinary, null, "posthog_capture"] as const),
     exceptions.length > 0
-      ? sendPostHogJavascriptExceptionBatch({
-        host: env.POSTHOG_HOST,
-        projectToken: env.POSTHOG_PROJECT_TOKEN,
+      ? telemetryDeliveryRpcCall(() => telemetryDelivery.deliverJavascriptExceptionBatch({
+        host: postHogHost,
+        projectToken: postHogProjectToken,
         rows: exceptionDeliveries,
-      }).then((result) => [exceptions, result, "posthog_javascript_exception"] as const)
+      })).then(({ postHog }) => [exceptions, postHog, "posthog_javascript_exception"] as const)
       : Promise.resolve([exceptions, null, "posthog_javascript_exception"] as const),
   ])) {
     if (result) {
@@ -186,7 +191,7 @@ export async function processTelemetryOutbox(env: Env): Promise<TelemetryDeliver
 async function applyDestinationResult(
   env: Env,
   rows: DeliveryDatabaseRow[],
-  result: PostHogDeliveryResult,
+  result: TelemetryDestinationResult,
   now: Date,
   summary: TelemetryDeliverySummary,
 ): Promise<void> {

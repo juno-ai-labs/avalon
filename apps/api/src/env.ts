@@ -34,6 +34,7 @@ import type { DurableObjectMigrationReport } from "@rally/contracts/durable-obje
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
 import type { TerminalProviderRpcBinding } from './services/terminal/provider-rpc-contract';
+import type { TelemetryDeliveryRpcBinding } from './telemetry/telemetry-delivery-contract';
 
 export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
 
@@ -50,6 +51,8 @@ export interface Env {
   TERMINAL_ANALYTICS: AnalyticsEngineDataset;
   DOCUMENT_PROCESSOR: DocumentProcessingRpcBinding;
   TERMINAL_PROVIDER: TerminalProviderRpcBinding;
+  /** Global-only private destination adapter; EU has neither this binding nor PostHog credentials. */
+  TELEMETRY_DELIVERY?: TelemetryDeliveryRpcBinding;
   // Optional because a Worker may run without the binding. Note that
   // `wrangler dev --local` still provides the object — it is every *call* that
   // throws `Binding FLAGS needs to be run remotely`, so readers must handle
@@ -309,6 +312,7 @@ const EnvContractSchema = z.object({
   TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
   DOCUMENT_PROCESSOR: binding<DocumentProcessingRpcBinding>().optional(),
   TERMINAL_PROVIDER: binding<TerminalProviderRpcBinding>().optional(),
+  TELEMETRY_DELIVERY: binding<TelemetryDeliveryRpcBinding>().optional(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
   AUTOMATION_AGENTS: binding<DurableObjectNamespace<AutomationAgent>>(),
   BLOCK_DASHBOARD_AGENTS: binding<DurableObjectNamespace<BlockDashboardAgent>>(),
@@ -437,6 +441,7 @@ const productionOnlySecrets = [
 const productionOnlyBindings = [
   { key: "DOCUMENT_PROCESSOR", regions: ["global", "eu"] },
   { key: "TERMINAL_PROVIDER", regions: ["global", "eu"] },
+  { key: "TELEMETRY_DELIVERY", regions: ["global"] },
   { key: "INFERENCE_LAKEHOUSE_QUEUE", regions: ["global"] },
   { key: "INFERENCE_LAKEHOUSE", regions: ["global"] },
   { key: "ANALYTICS_LAKEHOUSE_QUEUE", regions: ["global"] },

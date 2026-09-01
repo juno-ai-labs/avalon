@@ -38,7 +38,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
-| `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document and Terminal service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
+| `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document, Terminal, and Global telemetry-delivery service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
 | `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, per-block `BlockDashboardAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, and their SQL-only migration/storage layers. |
@@ -79,7 +79,8 @@ docs/                      Product, architecture, security, setup, runbooks
 2. **`apps/api`** is a Hono application deployed as three statically imported
    Cloudflare Worker graphs in each of Global and EU: the regional API plus
    private document-processing and Terminal-provider services reached through
-   typed Service Bindings. The API owns authentication, authorization,
+   typed Service Bindings. Global adds a private telemetry-delivery graph and a
+   scheduled inference-pricing graph. The API owns authentication, authorization,
    REST endpoints, WebSocket upgrades, D1 repositories, R2 objects, Queue
    production and consumption, Workflows, scheduling, connector execution, and
    the OpenRouter harness. The private services isolate heavyweight stateless
@@ -190,7 +191,8 @@ plane. Global reduces Cloudflare's country signal to an immediate Global/EU rout
 an affirmative EU result crosses only as a validated semantic projection over
 `EU_TELEMETRY_BRIDGE` and prevents pre-region crash saving. The explicit workspace
 binding controls future signals, but accepted history never moves. Global delivers
-approved rows to PostHog; EU terminates telemetry in its regional D1, dedicated
+approved rows through a Global-only typed telemetry-delivery Worker, whose first
+destination adapter is PostHog; EU terminates telemetry in its regional D1, dedicated
 EU-jurisdiction R2, and pinned crash processor. EU uses the separate
 `GLOBAL_TELEMETRY_CONTROL` binding only for opaque preference mutation and
 Global-signed journey authorization/closure; the key and destination identities
@@ -819,6 +821,38 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-09-01 — Telemetry destinations leave both regional startup graphs
+
+**What changed:** The PostHog SDK and destination adapter moved from the shared
+regional API graph into the statically imported Global-only
+`avalon-api-telemetry-delivery-global` Worker. The Global API passes approved
+rows and its existing destination credentials through explicit typed RPC
+methods; each RPC result is keyed by destination so another sink can retain an
+independent outcome. EU has no binding to the service. Deployment now treats
+eight Worker artifacts as one service-first release set.
+
+**Why:** Cloudflare rejected the workspace-handoff API release with startup CPU
+error 10021 after local builds and tests had passed. The provider graph was a
+coherent stateless boundary and had no valid EU execution path, so keeping it in
+both regional APIs spent startup budget without adding product authority.
+
+**Considered and rejected:** An upload retry or dependency-level trimming would
+preserve a probabilistic startup failure. Dynamic loading would hide part of the
+graph from build evidence and charge first customer traffic. A PostHog-named
+Worker was rejected because another telemetry destination would then encourage
+one service per vendor. Moving telemetry policy or outbox state would create a
+second authority where only destination I/O needed isolation.
+
+**Consequences:** The API remains the sole owner of telemetry admission,
+regional D1 state, retries, and receipts. Global PostHog calls add a private
+Worker invocation; provider code is absent from both API artifacts. New Global
+telemetry destination adapters extend this service rather than creating another
+destination-specific Worker. The analytics lakehouse keeps its existing
+independent Queue/Pipeline lifecycle until a focused change can move it without
+coupling failures. There is no schema or data migration.
+
+Shipped in #471.
 
 ### 2026-09-01 — Desktop identity remains plural across regions
 
