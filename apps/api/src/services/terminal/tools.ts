@@ -68,6 +68,60 @@ export interface TerminalPublishedResourceOutput {
   createdAt: string;
 }
 
+/**
+ * A directory that carried no site entry, bundled into one downloadable zip.
+ *
+ * It shares `resourceType: "generated_file"` with the file shape because it
+ * *is* a generated file — the zip Rally produced. What distinguishes it is
+ * `fileCount`, and nothing downstream needs it to be a different kind.
+ */
+export interface TerminalPublishedArchiveOutput extends TerminalPublishedResourceOutput {
+  fileCount: number;
+  totalBytes: number;
+}
+
+/**
+ * A directory that published as a live site.
+ *
+ * `sizeBytes` and `sourceSha256` from the file shape are deliberately renamed
+ * here rather than reused: `totalBytes` is the tree's total and
+ * `manifestSha256` hashes a manifest, and a caller comparing either against a
+ * file's would be comparing different things. `contentMode` and
+ * `derivativeStatus` are absent — a site has no single content body to read and
+ * no derivative to wait on, which is exactly why a content read on one
+ * redirects to the Terminal import instead.
+ */
+export interface TerminalPublishedSiteOutput {
+  resourceId: string;
+  title: string;
+  resourceType: "generated_site";
+  provider: "avalon_generated";
+  attachmentKind: "site";
+  slug: string | null;
+  url: string;
+  mode: "static" | "active";
+  stateful: boolean;
+  version: number;
+  mimeType: string;
+  fileCount: number;
+  totalBytes: number;
+  manifestSha256: string;
+  createdAt: string;
+}
+
+/**
+ * What `publish_resource` returns, discriminated by `resourceType`.
+ *
+ * Three shapes from one tool, so a model reading the registry can tell which it
+ * got without guessing. Every member carries `resourceId`, `title`, `provider`,
+ * `attachmentKind`, `resourceType`, and `createdAt`, so the discriminant and
+ * the identity are always in the same places.
+ */
+export type TerminalPublishOutput =
+  | TerminalPublishedResourceOutput
+  | TerminalPublishedArchiveOutput
+  | TerminalPublishedSiteOutput;
+
 export interface TerminalPublishedBranchAndPrOutput {
   repository: string;
   baseRef: string;
@@ -125,7 +179,7 @@ export interface TerminalRuntime {
   }): Promise<TerminalCommandOutput>;
   checkoutRepository(context: HarnessToolContext, input: CheckoutRepositoryInput): Promise<TerminalCheckoutRepositoryOutput>;
   importResource(context: HarnessToolContext, input: ImportResourceInput): Promise<TerminalImportResourceOutput>;
-  publishResource(context: HarnessToolContext, input: PublishResourceInput): Promise<TerminalPublishedResourceOutput>;
+  publishResource(context: HarnessToolContext, input: PublishResourceInput): Promise<TerminalPublishOutput>;
   publishBranchAndPr(context: HarnessToolContext, input: PublishBranchAndPrInput): Promise<TerminalPublishedBranchAndPrOutput>;
 }
 

@@ -1,0 +1,360 @@
+/**
+ * The artifact serving Worker.
+ *
+ * A **second entrypoint, deployed as its own Worker** on its own origin with
+ * its own binding set — not a route on the API. Untrusted, model-authored code
+ * executes here, so it shares nothing with the API's secrets or its blast
+ * radius. What it shares with `apps/api` is the source tree, and only because
+ * of one thing it genuinely needs from there:
+ * `durableObjectStubForArtifact`, the supported resolver that encodes the
+ * jurisdiction-before-`idFromName` rule. Reimplementing that in a second app
+ * would put a second authority on jurisdiction routing in the tree, and a
+ * divergence would surface as an artifact silently resolving to the
+ * wrong-jurisdiction object.
+ *
+ * **Its waistline is the point.** It holds the Worker Loader, the region's
+ * payload bucket, and the artifact Durable Object namespace. No D1, no provider
+ * secrets, no Flagship, no queues. A compromise of artifact code is contained by
+ * the isolate; a compromise of this Worker exposes artifact content and viewer
+ * sessions, not workspace authority.
+ *
+ * Request flow, in the order the fences apply:
+ *
+ * ```
+ * Host → artifact id ──▶ fetch-metadata fence ──▶ viewer session check
+ *                                                        │
+ *              ┌─────────────────────────────────────────┤
+ *              ▼                                         ▼
+ *      /__rally/* (Rally's own)              artifact content
+ *      open · redeem · v<n> mounts       static assets, or the loader
+ * ```
+ *
+ * See `docs/live-web-artifacts.md`.
+ */
+import {
+  ARTIFACT_RESERVED_PREFIX,
+  artifactHostLabel,
+  artifactManifestKey,
+  parseArtifactHost,
+  type ArtifactManifest,
+} from "@rally/contracts";
+
+import { artifactHostDOName } from "../durable-objects/names";
+import type { ArtifactHostDO } from "../durable-objects/artifact-host-do";
+import { durableObjectStubForArtifact } from "../lib/durable-object-namespace";
+import {
+  artifactSecurityHeaders,
+  classifyFetchMetadata,
+  injectVersionBase,
+  refuseUnsafeVersionRequest,
+  resolveAssetPath,
+  splitVersionMount,
+} from "./serving-policy";
+import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
+
+/**
+ * How stale a work-stream visibility answer may be.
+ *
+ * It is the window in which a viewer who lost access to the work stream keeps
+ * being served the artifact, so it is a security-relevant number and therefore
+ * **the team's to set, not this code's to guess**. It ships at the open value —
+ * zero, meaning every request re-asks the owning `WorkstreamDO` — because that
+ * is the value at which the guard changes nothing about correctness. What it
+ * costs at zero is a Durable Object hop per request; what a real number buys is
+ * that cost amortized, at the price of a bounded staleness window. The
+ * arithmetic the team needs: requests per artifact open × the hop's latency,
+ * against how long a removed viewer may keep reading.
+ */
+const VISIBILITY_CACHE_MS = 0;
+
+/** The cookie one artifact origin's viewer session lives in. */
+const SESSION_COOKIE = "__rally_artifact_session";
+
+export interface ArtifactServingEnv {
+  APP_ENV: "development" | "test" | "staging" | "production";
+  AVALON_REGION: "global" | "eu";
+  ARTIFACT_SERVING_DOMAIN: string;
+  ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
+  PAYLOADS: R2Bucket;
+  /** Cloudflare's Worker Loader, absent until the binding is provisioned. */
+  ARTIFACT_LOADER?: {
+    get(
+      id: string,
+      callback: () => Promise<unknown> | unknown,
+    ): { getEntrypoint(): { fetch(request: Request): Promise<Response> } };
+  };
+}
+
+function withSecurityHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(artifactSecurityHeaders())) headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function html(body: string, status: number): Response {
+  return withSecurityHeaders(new Response(body, {
+    status,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  }));
+}
+
+function readCookie(request: Request, name: string): string | null {
+  const header = request.headers.get("cookie");
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator === -1) continue;
+    if (part.slice(0, separator).trim() === name) return part.slice(separator + 1).trim();
+  }
+  return null;
+}
+
+export default {
+  async fetch(request: Request, env: ArtifactServingEnv): Promise<Response> {
+    const url = new URL(request.url);
+    const host = parseArtifactHost(url.host);
+    // Not an artifact host at all. Answered as the neutral page rather than an
+    // error naming what was expected: this is the public edge of an untrusted
+    // origin, and it owes a stranger nothing.
+    if (!host) return html(neutralPage(), 404);
+    // A region-distinct wildcard routes each region's hosts to its own Worker,
+    // so a mismatch here means a misconfigured route rather than a bad request
+    // — and serving it would move workspace content across a boundary
+    // regionalization says has no path.
+    if (host.region !== env.AVALON_REGION) return html(neutralPage(), 404);
+
+    const origin = `https://${artifactHostLabel(host.artifactId, host.region)}.${env.ARTIFACT_SERVING_DOMAIN}`;
+    const artifact = durableObjectStubForArtifact(
+      env as never,
+      env.ARTIFACT_HOSTS,
+      artifactHostDOName(env.AVALON_REGION, host.artifactId as never),
+    );
+
+    // The bootstrap page is the one path served before a session exists, and it
+    // is Rally's own HTML rather than artifact content. It reads the code from
+    // `location.hash` — which a browser never sends to a server — and POSTs it
+    // in a body, so the proof stays out of Cloudflare's invocation log, the
+    // Logpush export, and every trace span.
+    if (url.pathname === `${ARTIFACT_RESERVED_PREFIX}/open`) {
+      return html(redeemBootstrapPage(`${ARTIFACT_RESERVED_PREFIX}/redeem`), 200);
+    }
+
+    // **This endpoint never serves artifact content.** It consumes the code,
+    // sets the cookie, and redirects, so no artifact document is ever loaded at
+    // a location that held the code: nothing lands in history, in a copied URL,
+    // or in a screenshot, and same-origin model code has no `location` to read
+    // it from.
+    if (url.pathname === `${ARTIFACT_RESERVED_PREFIX}/redeem`) {
+      if (request.method !== "POST") return html(neutralPage(), 405);
+      if (classifyFetchMetadata(request, origin) === "refused") return html(neutralPage(), 403);
+      const body = await request.text().catch(() => "");
+      const code = new URLSearchParams(body).get("code") ?? "";
+      const redeemed = code ? await artifact.redeemCode(code) : null;
+      if (!redeemed) return html(neutralPage(), 403);
+      const headers = new Headers({ location: "/" });
+      headers.append("set-cookie", [
+        `${SESSION_COOKIE}=${redeemed.session}`,
+        "Path=/",
+        "HttpOnly",
+        "Secure",
+        // `Lax` rather than `Strict` so the desktop's own top-level navigation
+        // to the artifact carries the cookie it just set.
+        "SameSite=Lax",
+        `Max-Age=${Math.max(0, Math.floor((redeemed.expiresAt - Date.now()) / 1_000))}`,
+      ].join("; "));
+      return withSecurityHeaders(new Response(null, { status: 303, headers }));
+    }
+
+    // Every remaining path is artifact content, and every fence applies before
+    // any of it is read. Fetch metadata comes first because it is the cheapest
+    // and because it is the one a sibling artifact would be exercising.
+    if (classifyFetchMetadata(request, origin) === "refused") {
+      return html(neutralPage(), 403);
+    }
+
+    const session = readCookie(request, SESSION_COOKIE);
+    const admitted = session ? await artifact.checkSession(session, VISIBILITY_CACHE_MS) : null;
+    if (!admitted?.ok || !admitted.manifest) {
+      // Knowing a URL grants nothing — the house rule for every other resource
+      // identifier, and it holds here. A viewer whose visibility ended sees the
+      // same page as a stranger.
+      return html(neutralPage(), admitted?.reason === "not_visible" ? 403 : 401);
+    }
+
+    const mount = splitVersionMount(url.pathname);
+    if (mount.version !== null && mount.version !== admitted.version) {
+      const refusal = refuseUnsafeVersionRequest(request);
+      if (refusal) return html(plainErrorPage(refusal), 405);
+      return servePriorVersion(env, host.artifactId, mount.version, mount.path, admitted);
+    }
+
+    return serveCurrent(env, artifact, host.artifactId, request, url, admitted);
+  },
+};
+
+type Admitted = Awaited<ReturnType<ArtifactHostDO["checkSession"]>>;
+
+/**
+ * Serve one asset out of a version's immutable bucket prefix.
+ *
+ * The manifest is the only index: nothing resolves a path this Worker cannot
+ * find in it, which is what makes the server module's absence from `assets` a
+ * real 404 rather than a convention a bug could undo.
+ */
+async function serveAsset(
+  env: ArtifactServingEnv,
+  artifactId: string,
+  version: number,
+  manifest: ArtifactManifest,
+  path: string,
+  rewriteHtmlForVersion: number | null,
+): Promise<Response> {
+  const assetPaths = new Set(manifest.assets.map((asset) => asset.path));
+  const resolved = resolveAssetPath(path, assetPaths);
+  if (!resolved) return html(plainErrorPage("This page does not exist in the artifact."), 404);
+  const asset = manifest.assets.find((entry) => entry.path === resolved)!;
+  const object = await env.PAYLOADS.get(`artifact/${artifactId}/v${version}/assets/${resolved}`);
+  if (!object) return html(plainErrorPage("This page is temporarily unavailable."), 503);
+  if (rewriteHtmlForVersion !== null && asset.contentType.startsWith("text/html")) {
+    const source = await object.text();
+    return withSecurityHeaders(new Response(injectVersionBase(source, rewriteHtmlForVersion), {
+      status: 200,
+      headers: { "content-type": asset.contentType },
+    }));
+  }
+  return withSecurityHeaders(new Response(object.body, {
+    status: 200,
+    headers: { "content-type": asset.contentType },
+  }));
+}
+
+async function serveCurrent(
+  env: ArtifactServingEnv,
+  artifact: DurableObjectStub<ArtifactHostDO>,
+  artifactId: string,
+  request: Request,
+  url: URL,
+  admitted: Admitted,
+): Promise<Response> {
+  const manifest = admitted.manifest!;
+  if (manifest.mode === "static") {
+    return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null);
+  }
+  // An active artifact whose loader binding is not provisioned degrades to its
+  // assets rather than failing: a site's pages are still readable, and the
+  // failure is visible as routes that 404 rather than as a dead origin.
+  if (!env.ARTIFACT_LOADER) {
+    return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null);
+  }
+  try {
+    const response = await runArtifactModule(env, artifact, artifactId, request, admitted);
+    return withSecurityHeaders(response);
+  } catch (error) {
+    // The viewer never sees a stack trace; the participant does, in the rail,
+    // where it can be pasted back into chat for the model to fix.
+    await artifact.recordError({
+      version: manifest.artifactVersion,
+      requestPath: url.pathname,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? (error.stack ?? null) : null,
+    }).catch(() => undefined);
+    return html(plainErrorPage("This artifact hit an error. Ask Rally in the work stream to fix it."), 500);
+  }
+}
+
+async function servePriorVersion(
+  env: ArtifactServingEnv,
+  artifactId: string,
+  version: number,
+  path: string,
+  admitted: Admitted,
+): Promise<Response> {
+  // A prior version of a *stateful* artifact is source-only, never live: one
+  // facet runs one class, so serving old code would abort the facet under
+  // current viewers, and old code against the live schema is undefined besides.
+  if (admitted.stateful) {
+    return html(plainErrorPage("Earlier versions of this artifact open as source, not as a live page."), 409);
+  }
+  const object = await env.PAYLOADS.get(artifactManifestKey(artifactId, version));
+  if (!object) return html(plainErrorPage("That version is no longer available."), 404);
+  const manifest = JSON.parse(await object.text()) as ArtifactManifest;
+  // A prior *static* version serves its frozen assets exactly. A prior
+  // stateless-active version would run its frozen module over its frozen
+  // assets; until the loader binding exists, its assets are what render.
+  return serveAsset(env, artifactId, version, manifest, path, version);
+}
+
+/**
+ * Materialize the model's module and hand it the request.
+ *
+ * The isolate id is version-scoped, so a republish that changed content mints a
+ * new isolate while an unchanged one reuses the warm cache — the loader's own
+ * documented contract, expressed in the key rather than managed.
+ *
+ * The module receives exactly one binding and no ambient authority:
+ * `globalOutbound: null` makes `fetch()` and `connect()` throw, so a page's
+ * server half cannot reach the network at all, and the viewer cookie is
+ * stripped before the request crosses into it — artifact code never sees a
+ * credential. What it does see is the viewer's identity, as two trusted headers
+ * injected after every inbound header of those names has been stripped.
+ */
+async function runArtifactModule(
+  env: ArtifactServingEnv,
+  artifact: DurableObjectStub<ArtifactHostDO>,
+  artifactId: string,
+  request: Request,
+  admitted: Admitted,
+): Promise<Response> {
+  const manifest = admitted.manifest!;
+  // A stateful artifact's requests route through the supervisor: facet stubs
+  // cannot travel over RPC, so the object that owns the facet is the only place
+  // that can forward into it. Until that path lands, a stateful artifact serves
+  // its pages and refuses its own API routes rather than silently running its
+  // module against no database — the failure is visible in the page instead of
+  // in rows that were never written.
+  if (manifest.stateful) {
+    throw new Error("artifact_facet_hosting_not_available");
+  }
+  const loader = env.ARTIFACT_LOADER!;
+  const worker = loader.get(`artifact:${artifactId}:v${manifest.artifactVersion}`, async () => {
+    const module = await env.PAYLOADS.get(`artifact/${artifactId}/v${manifest.artifactVersion}/assets/index.js`);
+    if (!module) throw new Error("artifact_server_module_missing");
+    return {
+      compatibilityDate: "2026-08-01",
+      mainModule: "index.js",
+      modules: { "index.js": await module.text() },
+      env: { ASSETS: assetBinding(env, artifactId, manifest) },
+      globalOutbound: null,
+    };
+  });
+  return await worker.getEntrypoint().fetch(await forwardable(request, admitted));
+}
+
+/**
+ * The request as artifact code receives it: viewer identity in, credential out.
+ *
+ * The strip runs before the set, and covers every alias of both header names —
+ * canonical and superseded — because every product header reader widens to the
+ * superseded spelling. A family whose readers widen and whose stripper does not
+ * has a forgeable back door, and this is the entire anti-spoof mechanism.
+ */
+async function forwardable(request: Request, admitted: Admitted): Promise<Request> {
+  const { withViewerIdentity } = await import("../durable-objects/artifact-host-do");
+  const headers = new Headers(request.headers);
+  headers.delete("cookie");
+  const stripped = new Request(request, { headers });
+  return withViewerIdentity(
+    stripped,
+    admitted.viewerId ? { id: admitted.viewerId, name: admitted.viewerName ?? "" } : null,
+  );
+}
+
+/** The one binding an artifact's module holds: its own published files. */
+function assetBinding(env: ArtifactServingEnv, artifactId: string, manifest: ArtifactManifest) {
+  return {
+    async fetch(request: Request): Promise<Response> {
+      const path = new URL(request.url).pathname;
+      return serveAsset(env, artifactId, manifest.artifactVersion, manifest, path, null);
+    },
+  };
+}

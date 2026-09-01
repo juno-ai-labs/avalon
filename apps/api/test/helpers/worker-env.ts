@@ -38,6 +38,7 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     LOG_LEVEL: "info",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+    ARTIFACT_SERVING_DOMAIN: "rallyusercontent.test",
     ALLOWED_ORIGINS: "app://avalon",
     DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
     OPENROUTER_API_KEY: "sk-or-secret",
