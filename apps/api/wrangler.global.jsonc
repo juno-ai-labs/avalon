@@ -14,6 +14,7 @@
     "PUBLIC_API_BASE_URL": "https://api.rallywith.ai",
     "EU_PUBLIC_API_BASE_URL": "https://eu.api.rallywith.ai",
     "PUBLIC_WEB_BASE_URL": "https://rallywith.ai",
+    "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.rallywith.ai",
     "LINEAR_INGRESS_BASE_URL": "https://linear.rallywith.ai",
     "NOTION_INGRESS_BASE_URL": "https://notion.rallywith.ai",

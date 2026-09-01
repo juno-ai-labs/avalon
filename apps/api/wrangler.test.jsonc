@@ -9,6 +9,7 @@
     "AVALON_REGION": "global",
     "PUBLIC_API_BASE_URL": "https://api.test",
     "PUBLIC_WEB_BASE_URL": "https://app.test",
+    "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.test",
     "ALLOWED_ORIGINS": "app://rallywithai,app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/callback",
     "LOG_LEVEL": "error",

@@ -63,7 +63,17 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
       workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { workstreamIds, automationIds, artifactIds } = await workspace.revokeSocketAccess(revocation);
+    // Every list is defaulted, and that is about deploys rather than about
+    // tests: this consumer and WorkspaceDO are separate deployments of the same
+    // Worker, so during a rollout a consumer that knows about artifacts can
+    // reach an object that does not yet name them. Reading `undefined.map`
+    // there would throw and fail the whole revocation hop — dropping a
+    // retraction — where an empty list simply reaches nothing new.
+    const {
+      workstreamIds = [],
+      automationIds = [],
+      artifactIds = [],
+    } = await workspace.revokeSocketAccess(revocation);
     await publishDescendantRevocations(env, [
       ...workstreamIds.map((workstreamId) =>
         descendantRevocation(revocation, { scope: "workstream", workstreamId })),

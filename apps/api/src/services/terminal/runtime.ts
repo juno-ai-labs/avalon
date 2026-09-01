@@ -14,11 +14,20 @@ import type {
   TerminalPatchOutput,
   TerminalPublishedBranchAndPrOutput,
   TerminalPublishedResourceOutput,
+  TerminalPublishOutput,
+  TerminalPublishedSiteOutput,
   TerminalRuntime,
   TerminalWriteFileOutput,
   TerminalWriteFileOptions,
 } from "./tools";
 import { requireTerminalEffectIntent, sanitizeTerminalOutput, TerminalToolError } from "./tools";
+import {
+  assertKindTransitionAllowed,
+  bundleArchive,
+  declaresStorageClass,
+  resolveDirectoryPublish,
+  type DirectoryEntry,
+} from "./site-publish";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalTaskRecord } from "../../durable-objects/workstream-terminal-storage";
 import type { TerminalRepositorySelector } from "./repository-selection";
@@ -31,6 +40,17 @@ const MAX_PROVIDER_CAPTURE_BYTES = 128 * 1_024;
 const MAX_COMMAND_LOG_BYTES = 5_000_000;
 const OUTPUT_LIMIT_MARKER_RESERVE_BYTES = 256;
 const PATH_OUTSIDE_ROOT_EXIT_CODE = 43;
+
+/**
+ * The most a single publish may carry, file or directory.
+ *
+ * Transcribed from the file path's existing bound rather than chosen: a
+ * directory publish is the same operation over more files, and giving it a
+ * different ceiling would mean two numbers nobody could date. The bundle-size
+ * and file-count guards the artifact design calls for are separate, still open,
+ * and the team's to set.
+ */
+const MAXIMUM_PUBLISH_BYTES = 25_000_000;
 const FILE_NOT_FOUND_EXIT_CODE = 44;
 const FILE_NOT_REGULAR_EXIT_CODE = 45;
 const FILE_NOT_UTF8_EXIT_CODE = 49;
@@ -89,6 +109,37 @@ export interface TerminalResourceBridge {
     input: PublishInput & { providerResourceId?: string },
     bytes: Uint8Array,
   ): Promise<TerminalPublishedResourceOutput>;
+  /**
+   * Publish a directory that carried a site entry, as a served artifact.
+   *
+   * Separate from {@link publishResource} rather than a branch inside it,
+   * because almost nothing is shared: a site's stored content is a manifest
+   * rather than the thing a viewer sees, its bytes go to version-immutable keys
+   * instead of one object ref, and it has a supervisor object to point at
+   * afterwards. What *is* shared — the `(work stream, normalized path)`
+   * identity — is shared by both calling the same derivation.
+   */
+  publishSiteResource(
+    context: HarnessToolContext,
+    input: PublishInput,
+    site: {
+      mode: "static" | "active";
+      stateful: boolean;
+      files: readonly { path: string; bytes: Uint8Array; sha256: string }[];
+      serverModuleSha256: string | null;
+    },
+  ): Promise<TerminalPublishedSiteOutput>;
+  /**
+   * What this path already published as, or `null` if it never has.
+   *
+   * Asked before a directory publish writes anything, so the one asymmetric
+   * transition — site back to archive — can be refused while the artifact is
+   * still serving what it served before.
+   */
+  publishedKindForPath(
+    context: HarnessToolContext,
+    filePath: string,
+  ): Promise<"site" | "archive" | "file" | null>;
 }
 
 export interface TerminalRepositoryPublisher {
@@ -326,6 +377,200 @@ export function createDaytonaTerminalRuntime(
       throw pathOutsideRootError();
     }
     return intended;
+  }
+
+  /**
+   * Whether a published path names a file or a directory, refusing anything
+   * else — and enumerating the directory in the same pass.
+   *
+   * One command rather than a stat followed by a listing, because the two would
+   * be a TOCTOU window on a path the model's own commands may still be writing:
+   * the publish contract is that the *bytes* are verified stable afterwards, so
+   * what this must not do is let the shape change between deciding it is a
+   * directory and deciding what is in it.
+   *
+   * Symlinks are refused throughout, not followed. A published tree is served
+   * from an origin whose whole job is containment, and a link that escaped the
+   * output root would put an arbitrary sandbox file behind an HTTPS URL that
+   * every participant can open.
+   */
+  async function inspectPublishTarget(
+    context: HarnessToolContext,
+    sandbox: AcquiredTerminalSandbox,
+    path: string,
+  ): Promise<
+    | { shape: "file"; size: number; sha256: string }
+    | { shape: "directory"; entries: DirectoryEntry[] }
+  > {
+    const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
+      operation: "resource.publish.inspect_target",
+      command: [
+        `target=${shellQuote(path)}`,
+        ...containmentCommands(),
+        'if [ ! -e "$target" ]; then exit 44; fi',
+        'if [ -L "$target" ]; then exit 45; fi',
+        'if [ -f "$target" ]; then',
+        '  printf "file %s %s\\n" "$(stat -c %s -- "$target")" "$(sha256sum -- "$target" | cut -d " " -f 1)"',
+        '  exit 0',
+        'fi',
+        'if [ ! -d "$target" ]; then exit 46; fi',
+        // Any symlink anywhere beneath the tree fails the whole publish rather
+        // than being skipped: a silently omitted file is a site that renders
+        // wrongly, and the model has no way to see which one went missing.
+        'if [ -n "$(find "$target" -type l -print -quit)" ]; then exit 45; fi',
+        'printf "directory\\n"',
+        // `%P` is the path relative to the target, which is exactly the
+        // manifest's key space, and NUL-free by the path rules the family
+        // already enforces.
+        'find "$target" -type f -printf "%s %P\\n" | sort -k2 | while read -r size rest; do',
+        '  printf "%s %s %s\\n" "$size" "$(sha256sum -- "$target/$rest" | cut -d " " -f 1)" "$rest"',
+        'done',
+      ].join("\n"),
+      cwd: ROOT,
+      timeoutMs: 60_000,
+      signal: context.signal,
+    });
+    if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+    if (result.exitCode === 44) {
+      throw new TerminalToolError(
+        "not_found",
+        "No output file or directory exists there. Use a path relative to AVALON_RESOURCE_DIR, not a repository-relative or absolute path.",
+        { field: "filePath" },
+      );
+    }
+    if (result.exitCode === 45 || result.exitCode === 46) {
+      throw new TerminalToolError(
+        "resource_not_ready",
+        "The output is not a stable regular file or directory. Wait for its command to finish, then write or rename the final files beneath AVALON_RESOURCE_DIR and use a new invocation.",
+        { reason: result.exitCode === 45 ? "symbolic links cannot be published" : "the path is neither a regular file nor a directory" },
+      );
+    }
+    const lines = result.stdout.split("\n").filter((line) => line.trim().length > 0);
+    const head = lines[0] ?? "";
+    const file = /^file (\d+) ([0-9a-f]{64})$/u.exec(head);
+    if (file) return { shape: "file", size: Number(file[1]), sha256: file[2]! };
+    if (result.exitCode !== 0 || head !== "directory") {
+      throw new TerminalToolError(
+        "resource_not_ready",
+        "The output could not be verified as stable. Wait for its producer to finish, then retry publish_resource with the final files.",
+        { reason: "Wait for the producer to finish, then retry with the final stable output." },
+      );
+    }
+    const entries: DirectoryEntry[] = [];
+    for (const line of lines.slice(1)) {
+      const parsed = /^(\d+) ([0-9a-f]{64}) (.+)$/u.exec(line);
+      if (!parsed?.[3]) {
+        throw new TerminalToolError(
+          "resource_not_ready",
+          "The output directory could not be listed reliably. Wait for its producer to finish, then retry publish_resource.",
+          { reason: "Wait for the producer to finish, then retry with the final stable output." },
+        );
+      }
+      entries.push({ path: parsed[3], sizeBytes: Number(parsed[1]), sha256: parsed[2]! });
+    }
+    if (entries.length === 0) {
+      throw new TerminalToolError(
+        "resource_empty",
+        "The output directory holds no files. Write the site's files beneath it, then publish the directory again.",
+        { field: "filePath", reason: "Write at least one file beneath the directory before publishing it." },
+      );
+    }
+    return { shape: "directory", entries };
+  }
+
+  /**
+   * Read every file beneath a published directory, and publish what they add up
+   * to.
+   *
+   * The bytes come back one file at a time. That is N round trips to the
+   * sandbox for an N-file site, and it is the right shape at this size: a site
+   * is a handful of files, the provider has no batch read, and the alternative
+   * — having the sandbox tar the tree so it can be unpacked here — adds an
+   * archive format to the trust boundary to save round trips nobody has
+   * measured.
+   *
+   * Each file is verified against the digest the listing reported. A file
+   * rewritten between the listing and the read is a producer that has not
+   * finished, and publishing half of one version and half of another would be a
+   * site that renders inconsistently with nothing to point at.
+   */
+  async function publishDirectory(
+    context: HarnessToolContext,
+    input: PublishInput,
+    sandbox: AcquiredTerminalSandbox,
+    path: string,
+    entries: readonly DirectoryEntry[],
+  ): Promise<TerminalPublishOutput> {
+    const resolved = resolveDirectoryPublish(entries);
+    // Before any bytes move: a republish that would turn a live site back into
+    // an archive fails loudly rather than quietly killing a URL participants
+    // hold. The other direction — an archive that grew an entry file — is the
+    // archive fallback's own recovery and upgrades freely.
+    assertKindTransitionAllowed(
+      await resources.publishedKindForPath(context, input.filePath),
+      resolved.kind,
+    );
+    const totalBytes = entries.reduce((total, entry) => total + entry.sizeBytes, 0);
+    if (totalBytes > MAXIMUM_PUBLISH_BYTES) {
+      throw new TerminalToolError(
+        "resource_limit_exceeded",
+        `The directory holds ${totalBytes} bytes; publication allows at most ${MAXIMUM_PUBLISH_BYTES} bytes. Reduce or split it before retrying.`,
+        { field: "filePath", expected: `directory bytes at most ${MAXIMUM_PUBLISH_BYTES}` },
+      );
+    }
+    const files: { path: string; bytes: Uint8Array; sha256: string }[] = [];
+    for (const entry of entries) {
+      let bytes: Uint8Array;
+      try {
+        bytes = await provider.readFile(sandbox.providerSandboxId, `${path}/${entry.path}`);
+      } catch {
+        throw new TerminalToolError(
+          "resource_not_ready",
+          "A file in the directory changed or disappeared while Rally was reading it. Wait for its producer to finish, then retry publish_resource with the final directory.",
+          { reason: "Wait for the producer to finish, then retry with the final stable directory." },
+        );
+      }
+      const observed = await sha256Hex(bytes);
+      if (observed !== entry.sha256 || bytes.byteLength !== entry.sizeBytes) {
+        throw new TerminalToolError(
+          "resource_not_ready",
+          "A file in the directory changed while Rally was reading it. Wait for its command to finish, then retry publish_resource with the final directory.",
+          { reason: "Wait for the producer to finish, then retry with the final stable directory." },
+        );
+      }
+      files.push({ path: entry.path, bytes, sha256: observed });
+    }
+
+    if (resolved.kind === "archive") {
+      // The archive rides the ordinary document publish path unchanged: it is
+      // one file's bytes with a zip's mime type, so identity, replay, version
+      // capture, and the rail entry all behave exactly as a document's do.
+      const bundle = bundleArchive(files);
+      const published = await resources.publishResource(
+        context,
+        // The zip's own name is the directory's, so the rail entry reads as the
+        // thing the participant asked to be bundled rather than as `index`.
+        { ...input, filePath: input.filePath },
+        bundle,
+      );
+      return { ...published, fileCount: files.length, totalBytes };
+    }
+
+    const serverModule = resolved.mode === "active"
+      ? files.find((file) => file.path === resolved.entryPath)
+      : undefined;
+    return resources.publishSiteResource(context, input, {
+      mode: resolved.mode,
+      // A source-text check, because publish never executes artifact code. It
+      // is a promise about what Rally will *try* to load, not about what the
+      // module does; a module that matches and then fails to export the class
+      // is a loud serve-time error rather than a silent one.
+      stateful: serverModule
+        ? declaresStorageClass(new TextDecoder().decode(serverModule.bytes))
+        : false,
+      files,
+      serverModuleSha256: serverModule?.sha256 ?? null,
+    });
   }
 
   async function inspectGeneratedFile(
@@ -790,6 +1035,14 @@ export function createDaytonaTerminalRuntime(
       requireTerminalEffectIntent(context, "publication");
       const sandbox = await acquire(context);
       const path = absolutePath(`${OUTPUT_ROOT}/${input.filePath}`);
+      // What the path *is* decides everything downstream, and it is asked once
+      // rather than assumed: before this widening `publish_resource` refused a
+      // directory outright, so a caller that passed one got a hard error where
+      // it now gets a site or an archive.
+      const target = await inspectPublishTarget(context, sandbox, path);
+      if (target.shape === "directory") {
+        return publishDirectory(context, input, sandbox, path, target.entries);
+      }
       const before = await inspectGeneratedFile(context, sandbox, path, "before");
       if (before.size === 0) {
         throw new TerminalToolError(
