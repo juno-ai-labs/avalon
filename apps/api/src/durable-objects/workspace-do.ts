@@ -3946,20 +3946,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       throw new Error("automation_directory_access_denied");
     }
-    // Whoever may read the room may read what it owns. Answered from the
-    // viewer row rather than from the automation, which knows nothing about
-    // who is in the room.
-    const viewer = this.state.storage.sql.exec<{ listable: number }>(
-      `SELECT viewer.listable
-         FROM workspace_workstream_viewers viewer
-         JOIN workspace_workstream_directory directory
-           ON directory.workstream_id = viewer.workstream_id
-          AND directory.authority_generation = viewer.authority_generation
-        WHERE viewer.workstream_id = ? AND viewer.user_id = ?`,
-      request.workstreamId,
-      request.userId,
-    ).toArray()[0];
-    if (!viewer || viewer.listable !== 1) throw new Error("automation_directory_access_denied");
+    // Participation, not listability. A workspace-scoped room is listable to
+    // every member of the workspace, so gating on that would hand the names,
+    // descriptions and schedules of its automations to people who are not in
+    // it — while `authorizeAutomationViewer` goes on refusing them the details.
+    // The wider half of that pair is the one that leaks.
+    if (!this.isWorkstreamParticipant(request.workstreamId, request.userId)) {
+      throw new Error("automation_directory_access_denied");
+    }
     const rows = this.state.storage.sql.exec<{
       automation_id: string;
       lifecycle: "draft" | "activating" | "active" | "paused";
@@ -3993,6 +3987,91 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         updateAvailable: false,
       })),
     };
+  }
+
+  /**
+   * Which of these bindings the named principal can no longer reach.
+   *
+   * Answered here because `connector_connections` lives here: migration 0090
+   * dropped it from regional D1, so a caller reading it on `env.DB` gets
+   * `no such table` — the failure the workspace-table routing guard exists to
+   * catch, and did.
+   *
+   * Workspace-scoped bindings are never reported: they belong to the workspace
+   * rather than to whoever authorized them, so they did not break when their
+   * authorizer left.
+   */
+  async unreachablePersonalBindings(input: unknown): Promise<{ providers: string[] }> {
+    await this.initialized;
+    const request = z.object({
+      workspaceId: WorkspaceIdSchema,
+      principalUserId: UserIdSchema,
+      connectionIds: z.array(z.string().min(1)).max(100),
+    }).strict().parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (request.connectionIds.length === 0) return { providers: [] };
+    const rows = this.state.storage.sql.exec<{
+      id: string;
+      connector_type: string;
+      scope: string;
+      owner_user_id: string | null;
+      status: string;
+    }>(
+      `SELECT id, connector_type, scope, owner_user_id, status
+         FROM connector_connections
+        WHERE id IN (SELECT value FROM json_each(?))`,
+      JSON.stringify(request.connectionIds),
+    ).toArray();
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const providers = new Set<string>();
+    for (const connectionId of request.connectionIds) {
+      const row = byId.get(connectionId);
+      // A binding whose row is gone is unreachable and cannot name its
+      // provider; the ones that remain say which they were.
+      if (!row) { providers.add("a disconnected account"); continue; }
+      if (row.scope !== "personal") continue;
+      if (row.status === "disabled" || (row.owner_user_id ?? "") !== request.principalUserId) {
+        providers.add(row.connector_type);
+      }
+    }
+    return { providers: [...providers].sort() };
+  }
+  /**
+   * Whether this person is an active participant of this work stream.
+   *
+   * The one predicate every "does the room let you" decision here is built on,
+   * so the answer cannot drift between the list, the details, and acceptance.
+   */
+  private isWorkstreamParticipant(workstreamId: string, userId: string): boolean {
+    return this.state.storage.sql.exec<{ is_participant: number }>(
+      `SELECT viewer.is_participant
+         FROM workspace_workstream_viewers viewer
+         JOIN workspace_workstream_directory directory
+           ON directory.workstream_id = viewer.workstream_id
+          AND directory.authority_generation = viewer.authority_generation
+        WHERE viewer.workstream_id = ? AND viewer.user_id = ?
+          AND directory.archived_at IS NULL`,
+      workstreamId,
+      userId,
+    ).toArray()[0]?.is_participant === 1;
+  }
+
+  /**
+   * Whether somebody may still act on a work stream, asked directly.
+   *
+   * `authorizeAutomationViewer` answers the same question through the
+   * automation directory, which a draft being accepted is not yet in. This one
+   * names the room, so it works before the automation exists.
+   */
+  async workstreamParticipation(input: unknown): Promise<{ participant: boolean }> {
+    await this.initialized;
+    const request = z.object({
+      workspaceId: WorkspaceIdSchema,
+      workstreamId: IdSchema,
+      userId: UserIdSchema,
+    }).strict().parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return { participant: this.isWorkstreamParticipant(request.workstreamId, request.userId) };
   }
 
   /** Current membership plus projected scope gates direct AutomationAgent reads. */

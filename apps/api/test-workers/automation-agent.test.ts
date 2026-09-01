@@ -1240,6 +1240,7 @@ describe("AutomationAgent", () => {
 
 describe("an automation the work stream owns", () => {
   const OWNING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000c1";
+  const OTHER_USER_ID = "00000000-0000-7000-8000-0000000000c3";
   const OTHER_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000c2";
 
   /** Accepted, active, and owned by a room — the state an archive acts on. */
@@ -1316,15 +1317,52 @@ describe("an automation the work stream owns", () => {
       .toEqual({ lifecycle: "active", paused_reason: null });
   });
 
+  it("gives the author no standing once they leave the room", async () => {
+    await seedActiveOwnedAutomation();
+
+    // The scope exists to end exactly this tenure: an automation belongs to the
+    // room, so whoever typed it keeps no say after leaving. Checked before the
+    // author shortcut, because after it is indistinguishable from no check —
+    // the author would go on pausing, editing and deleting for as long as they
+    // remained anywhere in the workspace.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+      await expect(instance.pause({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: AUTHOR_ID,
+        actorRole: "member",
+        participantOfOwningWorkstream: false,
+      })).rejects.toThrow("automation_authority_mismatch");
+    });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "active", paused_reason: null });
+
+    // And a participant who never touched it has full standing.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+      await instance.pause({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: OTHER_USER_ID,
+        actorRole: "member",
+        participantOfOwningWorkstream: true,
+      });
+    });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "paused", paused_reason: "person" });
+  });
+
   it("does not start an automation a person paused before the archive", async () => {
     await seedActiveOwnedAutomation();
     const stub = automationStub();
 
+    // As a participant, which is what management of a room's automation now
+    // requires: the author shortcut no longer reaches this scope.
     await stub.pause({
       automationId: AUTOMATION_ID,
       workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID,
       actorRole: "member",
+      participantOfOwningWorkstream: true,
     });
     expect(await lifecycleAndReason())
       .toEqual({ lifecycle: "paused", paused_reason: "person" });
