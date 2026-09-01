@@ -763,7 +763,19 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     let delivery = Promise.resolve();
     const enqueue = (navigation: DesktopDeepLinkNavigation): void => {
       delivery = delivery.then(async () => {
-        if (active) await handleDeepLink(navigation);
+        if (!active) return;
+        try {
+          await handleDeepLink(navigation);
+        } catch (error: unknown) {
+          // One failed window action must not reject the queue tail: every
+          // later operating-system callback still deserves its turn. Most
+          // destination failures are handled closer to their domain; this is
+          // the final boundary for bridge/window failures that escape them.
+          reportJavascriptError(error, 'unknown');
+          reportDeepLinkFailure(
+            error instanceof Error ? error.message : 'Rally could not open that link.',
+          );
+        }
       });
     };
     const unsubscribe = bridge.onDeepLink((navigation) => {
