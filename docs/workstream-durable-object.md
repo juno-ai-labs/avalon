@@ -1215,7 +1215,7 @@ already have committed across the object boundary.
 | `workspace_workstream_pins` | User-ordered pins referencing the directory row; all pin writes and reorder operations execute in this object. |
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
-| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. The Worker publishes 50 messages per Queue call, below Cloudflare's 100-message platform maximum. WorkspaceDO records the whole chunk atomically through one JSON binding, independent of object SQLite's 100-parameter ceiling. |
+| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets`, `workspace_batch_dispatch_note_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. The Worker publishes 50 messages per Queue call, below Cloudflare's 100-message platform maximum. WorkspaceDO records the whole chunk atomically through one JSON binding, independent of object SQLite's 100-parameter ceiling. The note half is frozen alongside them in `workspace_batch_dispatch_note_targets` — same transaction, same reason: re-selecting at archive time would take whatever entered the range while the Queue chunks were publishing, which under an open-ended heading is any note touched since the reader confirmed. Notes are rows in this object rather than separate authorities, so `archive` applies the frozen set here in one statement and stores `archived_note_count` as its receipt. `NULL` means no note archive has run for the operation, which is the permanent state of a `mark_read` operation; migration 26 backfills every row that predates it to `0`, because those operations were confirmed as work-streams-only and a cross-deploy retry must not give them a note half. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
 | `workspace_activity_event_targets` | Involvement edges such as mentioned/assigned; these never grant visibility and cascade with the event. |
 | `opportunity_batch_windows`, `opportunity_batch_events` | Debounced connector/message evidence, bounded attempts, Workflow leases, and terminal admission status; both share one not-yet-started token (`pending`), and the import maps legacy `queued` window rows onto it. Repeated mutation or settlement after `completed` is a no-op; a nonterminal lease mismatch remains fenced. |
@@ -1440,6 +1440,145 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-01 — The note list pages, so nothing in it is out of reach
+
+**What changed:** The sidebar's note list is cursor-paged the way the
+work-stream list beside it is. `NOTE_SIDEBAR_SQL` takes a
+`(last_activity_at, id)` cursor and reads one row past the page to decide
+whether there is another; `listNoteSidebar`, the socket's connect payload, each
+`workspace_sidebar_list` push and `GET /notes` all carry `nextCursor`. On the
+client `useNotesQuery` replaces the socket-owned list — hand-rolled paging over
+a flat cache entry, for the same reason the work-stream query is hand-rolled:
+the versioned applier and `onChangeNoteScope` both write that entry with
+`setQueryData` and `useInfiniteQuery`'s paged shape would strand them. The
+sidebar's existing near-the-bottom handler now asks both lists. A note push
+merges when it is only the head of the list and replaces when it is the whole
+of it.
+
+**Why:** `SIDEBAR_LIST_LIMIT` was a ceiling for notes rather than a page —
+there was no cursor and no load-more anywhere in the product, so note 251 could
+not be reached at all. That was survivable while the list was only read, and
+stopped being survivable when a grouping's **Archive all** could select rows
+the reader had no way to see and could never restore. The interim fix fenced
+the archive to the visible window; paging removes the reason for the fence, so
+the batch surface goes back to naming the complete server-side total, which is
+the contract the work-stream half always had.
+
+**Considered and rejected:** Keeping the fence and leaving the list capped.
+That leaves a workspace with more than 250 notes permanently unable to see or
+manage the rest, and quietly makes 250 part of the archive's semantics.
+Also rejected: an epoch-millisecond cursor matching the work-stream one's
+spelling. `notes.last_activity_at` is an ISO string that the list orders as
+text, so a cursor in any other form has to be converted on every comparison;
+this one carries the stored value verbatim and the id breaks ties, because one
+write can stamp two notes in the same millisecond.
+
+**Consequences, and what a future change has to respect:** A push carries a
+page, not the list, so anything applying one has to decide merge or replace
+from `nextCursor` — replacing unconditionally snaps a scrolled reader back to
+one page with nothing on screen to explain it. Within the range a partial page
+spans it is authoritative, which is what removes an archived note; below that
+range it says nothing, and those rows are corrected by the refetch that walks
+every loaded page. The cursor's ordering must stay the list's ordering: a
+window ordered differently pages over a different list than the one on screen.
+
+### 2026-09-01 — A grouping's action reaches only what that grouping showed
+
+**What changed:** `batchTargetIds` now carries
+`directory.origin_type <> 'automation'`, the clause the four sidebar-facing
+directory readers — the paged recent list, the pinned rows, the running rows
+and the per-row socket push — have always carried. The client's mirror of the
+predicate refuses an automation-origin row for the same reason.
+
+**Why:** This was the fifth reader of `workspace_workstream_directory` and the
+only one without that clause, so a recency heading's **Archive all** selected
+an automation's run work streams — including a *planned* run's, which the
+scheduler then cannot find behind its own `archived_at IS NULL` lookup. Those
+rows are deliberately kept out of the sidebar and reached from the automation's
+own screen, so nobody choosing **Archive all** under a date heading was shown
+them, could see them go, or could get them back: the confirmation counted them
+among the "work streams in **This month**" and the archive is irreversible. It
+was not a decision that notes and automations should be treated differently —
+the clause was simply not restated when this fifth reader was written.
+
+**Considered and rejected:** Leaving the selection wider than the list and
+fixing the sentence in the dialog instead. There is no sentence that makes an
+irreversible archive of rows the reader cannot see acceptable, and the rows are
+not merely unloaded — no scroll reaches them.
+
+**Consequences, and what a future change has to respect:** A rule about what
+the sidebar shows now lives in five statements, and a sixth reader will have to
+restate it. The regression test asserts the batch's targets against
+`listWorkstreams`' own answer over the same range rather than restating the
+expected set, so the two cannot drift apart again without failing. What stays
+deliberately wider is pagination: the confirmation names the complete
+server-side total precisely because the client may hold only a page, so
+"hidden" and "not yet loaded" must keep being decided differently.
+
+### 2026-09-01 — A grouping's archive takes its notes too, in the object that holds them
+
+**What changed:** `Archive all` on a sidebar recency heading now archives the
+notes under that heading as well as the work streams. The same filter selects
+both: WorkspaceDO returns the note IDs beside the work-stream IDs from one
+`batchUpdateTargets` call, so the confirmation counts each half at the same
+instant, and `archiveNotesForBatch` applies the note half in one statement once
+the Queue chunks are published. Notes take three fences the range does not —
+the viewer must own the note, it must not be recording, and it must not already
+be archived — which are the same three refusals the single-note archive makes,
+so the preview's count and the archive agree. The note list pages, so the count
+names the complete server-side total the way the work-stream half always has. The dispatch row gained
+`archived_note_count` (migration 26) as that half's receipt; `NULL` is "no note
+archive has run", which is what every pre-existing row and every `mark_read`
+operation means. `mark_read` does not reach notes at all, because a note has no
+read state to clear. The apply response and the preview both report the note
+half separately, and the client's confirmation names both.
+
+**Why:** The heading is one group to the person reading it. Archiving it and
+watching the notes stay was reported as the group coming back half full, and
+no other surface clears them in bulk. Nothing about the original design
+excluded notes on purpose — the batch was built over the work-stream directory
+and notes were simply not part of that index.
+
+**Considered and rejected:** Giving notes their own Queue events, for symmetry
+with work streams. Work streams need events because each one is a separate
+authority that only its own object may mutate; a note is a row in the workspace
+object the request has already reached, so an event would buy nothing but a
+second, slower way for the two halves of one grouping to disagree about whether
+they happened. Also considered and initially rejected: freezing the note IDs
+the way work-stream IDs are frozen. The argument was that those rows exist to
+resume a *partial* Queue publication, which a single statement cannot have, and
+that a receipt closes retry widening on its own. That reasoning only covered
+the retry: review found that the *first* pass has the same window, because the
+selection and the archive are separate object calls with the Queue publication
+between them, so a note touched in that interval could be taken though the
+confirmation never counted it. The IDs are frozen.
+
+**Consequences, and what a future change has to respect:** A new update kind
+must decide explicitly whether it reaches notes, and say so in both the preview
+and the confirmation rather than letting one count stand for two authorities —
+and, if it reaches them, freeze its own target set in the dispatch transaction.
+The note archive must stay *behind* the Queue publication, so that a caller
+which sees this request fail can read that as "nothing happened": with the
+archive first, a failed chunk send threw having already taken the notes, and
+the client showed a retryable error while the reader's notes were in fact gone
+— with the caches and open routes that follow an archive never told. The
+receipt makes the retry idempotent in either order; only this one makes the
+failure honest. The object holds the frozen set, but its *receipt* to
+the Worker is a count, so nothing outside may come to depend on knowing which
+notes an operation took — the client learns what went by refetching, because
+reconstructing the set from the filter and the sidebar as it stands *now* gets
+it wrong: a note that was recording when the archive ran, and has since
+stopped, reads as taken when it was skipped. The archive re-checks the owner
+and recording fences against the frozen ids rather than trusting the freeze:
+ownership cannot change, but recording can start in between, and archiving
+under a live meeting window would break capture. The range is compared against `notes.last_activity_at`, an ISO
+string, so any timestamp reaching that comparison has to be re-spelled as
+canonical UTC first — an offset that sorts differently would silently select
+the wrong group. The note list's paging is what lets the selection stay
+unbounded: a cursor-fenced `Archive all` would be naming rows the reader can no
+longer reach, and an unbounded one over an *unpaged* list would be naming rows
+they never could.
 
 ### 2026-08-31 — Batch receipts fit inside the object SQLite bind ceiling
 

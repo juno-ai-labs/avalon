@@ -129,6 +129,8 @@ import {
   WorkspaceBatchDispatchAdvanceResultSchema,
   WorkspaceBatchDispatchBeginRequestSchema,
   WorkspaceBatchDispatchBeginResultSchema,
+  WorkspaceBatchNoteArchiveRequestSchema,
+  WorkspaceBatchNoteArchiveResultSchema,
   WorkspaceDirectoryExistsRequestSchema,
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryDueRequestSchema,
@@ -164,6 +166,8 @@ import {
   type WorkspaceDirectoryBatchTargetsRequest,
   type WorkspaceBatchDispatchAdvanceRequest,
   type WorkspaceBatchDispatchBeginRequest,
+  type WorkspaceBatchNoteArchiveRequest,
+  type WorkspaceBatchNoteArchiveResult,
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
   type WorkspaceDirectoryExistsRequest,
@@ -451,12 +455,14 @@ import {
 import {
   appendWorkspaceNoteSegment,
   archiveWorkspaceNote,
+  archiveWorkspaceNotesForOperation,
   commitWorkspaceNoteGeneration,
   markWorkspaceNotePrivacyTransitionProcessed,
   pendingWorkspaceNotePrivacyTransitions,
   retireWorkspaceNoteResourceDeletion,
   updateWorkspaceNote,
   visibleWorkspaceNoteResourceIds,
+  workspaceNoteBatchTargets,
   workspaceNoteResourceDeletionOutbox,
   workspaceNoteSidebar,
   workspaceNoteState,
@@ -2235,6 +2241,39 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "retire work-stream context suggestion feedback",
   statements: [
     `DROP TABLE workspace_workstream_suggestion_feedback`,
+  ],
+}, {
+  version: 26,
+  description: "freeze and receipt the note half of a generic batch",
+  statements: [
+    // NULL means the note archive has not been applied for this operation, and
+    // is the state a fresh `mark_read` operation stays in, because `mark_read`
+    // has nothing to do to a note.
+    `ALTER TABLE workspace_batch_dispatches
+       ADD COLUMN archived_note_count INTEGER
+       CHECK (archived_note_count IS NULL OR archived_note_count >= 0)`,
+    // Every row that predates this version belongs to an operation whose
+    // confirmation named work streams and nothing else — the batch surface did
+    // not reach notes at all. Zero is therefore the *true* receipt for it, and
+    // writing it here is what stops a half-published operation that is retried
+    // across this deploy from archiving notes its reader was never told about.
+    // Left as NULL, that retry would read as "the note half has not run yet".
+    `UPDATE workspace_batch_dispatches SET archived_note_count = 0`,
+    // The note half's frozen target set, for the same reason the work-stream
+    // half has one: the selection and the mutation are separate object calls,
+    // and between them a note can enter the range — trivially so under an
+    // open-ended heading like "Last hour". Without this the archive would take
+    // rows the confirmation never counted, on the first attempt and not only on
+    // a retry.
+    //
+    // No `dispatched_at` twin to the work-stream table: these are applied in
+    // one statement here rather than published one message at a time, so there
+    // is no partial progress through them to record.
+    `CREATE TABLE workspace_batch_dispatch_note_targets (
+      operation_id TEXT NOT NULL REFERENCES workspace_batch_dispatches(operation_id) ON DELETE CASCADE,
+      note_id TEXT NOT NULL,
+      PRIMARY KEY (operation_id, note_id)
+    ) STRICT`,
   ],
 }];
 
@@ -5951,8 +5990,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Resolve a generic member-visible filter once, inside the object that owns
-   * the cross-work-stream index. The caller turns each returned id into one
-   * Queue event; it never probes child objects to rediscover this list.
+   * the cross-work-stream index. The caller turns each returned work-stream id
+   * into one Queue event; it never probes child objects to rediscover this
+   * list.
+   *
+   * The notes the same filter selects come back beside them because they are
+   * in this database too. They are counted here and archived here — see
+   * `archiveNotesForBatch` — rather than fanned out, since a note has no object
+   * of its own for an event to reach.
    */
   async batchUpdateTargets(input: WorkspaceDirectoryBatchTargetsRequest) {
     await this.initialized;
@@ -5960,9 +6005,34 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     return WorkspaceDirectoryBatchTargetsResultSchema.parse({
       items: this.batchTargetIds(request.userId, request.filter),
+      noteIds: workspaceNoteBatchTargets(
+        this.state.storage,
+        request.workspaceId,
+        request.userId,
+        request.filter,
+      ),
     });
   }
 
+  /**
+   * The rows one grouping's action reaches, under exactly the rules the sidebar
+   * showed that grouping by.
+   *
+   * `origin_type <> 'automation'` is not a new opinion here — it is the same
+   * clause the paged recent list, the pinned rows, the running rows and the
+   * per-row socket push all carry, because an automation's run work stream is
+   * deliberately kept out of the sidebar and reached from the automation's own
+   * screen instead. This read is the fifth on that table and used to be the one
+   * that did not carry it, which meant a heading's **Archive all** irreversibly
+   * archived run history — a *planned* run's work stream included — that the
+   * reader had never been shown under that heading, while the confirmation
+   * counted it as one of the "work streams in This month".
+   *
+   * A row this omits for pagination is a different matter and stays in: the
+   * confirmation exists precisely to name the complete server-side total rather
+   * than the page the client happens to hold. Hidden is not the same as not yet
+   * loaded.
+   */
   private batchTargetIds(userId: string, filter: WorkstreamBatchFilter): string[] {
     const atOrAfter = filter.lastActivityAt?.atOrAfter;
     const before = filter.lastActivityAt?.before;
@@ -5977,6 +6047,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          LEFT JOIN workspace_workstream_pins pin
            ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
         WHERE directory.archived_at IS NULL
+          AND directory.origin_type <> 'automation'
           AND (? = 1 OR directory.system_kind IS NULL)
           AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
           AND (? IS NULL OR directory.last_activity_at >= ?)
@@ -6040,6 +6111,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           request.operationId,
           JSON.stringify(targetIds),
         );
+        // The note half is frozen in the same transaction, and for the same
+        // reason: selecting it again at archive time would let a note that
+        // entered the range in between be taken, which under an open-ended
+        // heading like "Last hour" is any note touched since the reader
+        // confirmed. The receipt alone only closes that for a *retry*.
+        if (request.update.kind === "archive") {
+          this.state.storage.sql.exec(
+            `INSERT INTO workspace_batch_dispatch_note_targets (operation_id, note_id)
+             SELECT ?, value FROM json_each(?)`,
+            request.operationId,
+            JSON.stringify(workspaceNoteBatchTargets(
+              this.state.storage,
+              request.workspaceId,
+              request.userId,
+              request.filter,
+            )),
+          );
+        }
         targetCount = targetIds.length;
       }
 
@@ -6090,6 +6179,72 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).one();
       return WorkspaceBatchDispatchAdvanceResultSchema.parse({ remainingCount: remaining.count });
     });
+  }
+
+  /**
+   * Archive the note half of one frozen batch, exactly once per operation.
+   *
+   * The work-stream half is frozen as rows because each id has to survive a
+   * partial Queue publication and be re-sent without re-selecting. Notes need
+   * no such list: they are archived in one statement in this database, so the
+   * only thing a retry can get wrong is *widening* — a note touched between the
+   * failed attempt and the retry entering an open-ended range like "Last hour".
+   * A single count on the dispatch row closes that, and a `NULL` there is the
+   * whole of "no note archive has run for this operation".
+   *
+   * Fenced on the same request hash and user as the dispatch it belongs to, so
+   * a second filter or a second person cannot reuse an operation id to archive
+   * somebody else's notes under a receipt that already exists.
+   */
+  async archiveNotesForBatch(
+    input: WorkspaceBatchNoteArchiveRequest,
+  ): Promise<WorkspaceBatchNoteArchiveResult> {
+    await this.initialized;
+    const request = WorkspaceBatchNoteArchiveRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = this.state.storage.transactionSync(() => {
+      const dispatch = this.state.storage.sql.exec<{
+        request_hash: string;
+        user_id: string;
+        archived_note_count: number | null;
+      }>(
+        `SELECT request_hash, user_id, archived_note_count
+           FROM workspace_batch_dispatches WHERE operation_id = ?`,
+        request.operationId,
+      ).toArray()[0];
+      if (!dispatch
+        || dispatch.request_hash !== request.requestHash
+        || dispatch.user_id !== request.userId) {
+        throw new Error("workstream_batch_dispatch_conflict");
+      }
+      if (dispatch.archived_note_count !== null) {
+        return WorkspaceBatchNoteArchiveResultSchema.parse({
+          archivedNoteCount: dispatch.archived_note_count,
+          replayed: true,
+        });
+      }
+      const archived = archiveWorkspaceNotesForOperation(this.state.storage, {
+        workspaceId: request.workspaceId,
+        userId: request.userId,
+        operationId: request.operationId,
+        at: request.at,
+      });
+      this.state.storage.sql.exec(
+        `UPDATE workspace_batch_dispatches SET archived_note_count = ?, updated_at = ?
+          WHERE operation_id = ?`,
+        archived.length,
+        Date.now(),
+        request.operationId,
+      );
+      return WorkspaceBatchNoteArchiveResultSchema.parse({
+        archivedNoteCount: archived.length,
+        replayed: false,
+      });
+    });
+    // After the commit, and only for the call that did the archiving: the push
+    // sends the list as it stands now, which a replay has already sent.
+    if (!result.replayed && result.archivedNoteCount > 0) this.publishSidebarList("notes");
+    return result;
   }
 
   /**
@@ -6206,14 +6361,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceNoteSidebarRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    return {
-      items: workspaceNoteSidebar(
-        this.state.storage,
-        request.workspaceId,
-        request.userId,
-        Math.min(request.limit, SIDEBAR_LIST_LIMIT),
-      ),
-    };
+    return workspaceNoteSidebar(
+      this.state.storage,
+      request.workspaceId,
+      request.userId,
+      Math.min(request.limit, SIDEBAR_LIST_LIMIT),
+      request.before,
+    );
   }
 
   /**
@@ -8555,7 +8709,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  private listSidebarNotes(workspaceId: string, userId: string): NoteSummary[] {
+  private listSidebarNotes(
+    workspaceId: string,
+    userId: string,
+  ): { items: NoteSummary[]; nextCursor: string | null } {
     return workspaceNoteSidebar(this.state.storage, workspaceId, userId, SIDEBAR_LIST_LIMIT);
   }
 
@@ -8709,7 +8866,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       },
       notes: {
         waterline: this.sidebarListWaterline("notes"),
-        items: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
+        ...this.listSidebarNotes(attachment.workspaceId, attachment.userId),
       },
       projects: this.projectSnapshot(attachment.userId),
     });
@@ -8747,8 +8904,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
-      const items = list === "automations"
-        ? this.listSidebarAutomations(attachment.workspaceId, attachment.userId)
+      // The note push carries its cursor so a reader who has paged past the
+      // first screen can tell a complete list from its head and merge rather
+      // than truncate back to one page.
+      const page = list === "automations"
+        ? { items: this.listSidebarAutomations(attachment.workspaceId, attachment.userId) }
         : this.listSidebarNotes(attachment.workspaceId, attachment.userId);
       try {
         socket.send(JSON.stringify(WorkspaceSidebarListEventSchema.parse({
@@ -8756,7 +8916,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           occurredAt,
           list,
           waterline,
-          items,
+          ...page,
         })));
       } catch {
         // Hibernation owns close cleanup, and a reconnect asks for the whole

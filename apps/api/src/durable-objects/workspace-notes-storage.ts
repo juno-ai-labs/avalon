@@ -1,4 +1,4 @@
-import type { NoteSummary } from "@rally/contracts";
+import type { NoteSummary, WorkstreamBatchFilter } from "@rally/contracts";
 
 import { uuidV7 } from "../lib/uuid-v7";
 
@@ -7,6 +7,8 @@ import { boundParameterChunks } from "./bound-parameters";
 import {
   NOTE_SIDEBAR_SQL,
   NoteSidebarRowSchema,
+  noteSidebarCursor,
+  parseNoteSidebarCursor,
   toNoteSummary,
 } from "../services/sidebar-reads";
 import {
@@ -189,19 +191,40 @@ export function workspaceNoteState(
   });
 }
 
-/** The sidebar list, from the same statement the workspace socket serves. */
+/**
+ * One page of the sidebar list, from the same statement the workspace socket
+ * serves.
+ *
+ * Reads `limit + 1` and returns `limit`: the extra row is how the page learns
+ * there is another without a second `COUNT(*)` over the same predicate, and it
+ * is dropped rather than returned. `nextCursor` is `null` exactly when the list
+ * ends here, which is what tells the client to stop asking.
+ */
 export function workspaceNoteSidebar(
   storage: DurableObjectStorage,
   workspaceId: string,
   userId: string,
   limit: number,
-): NoteSummary[] {
-  return storage.sql.exec<Record<string, SqlStorageValue>>(
+  before?: string,
+): { items: NoteSummary[]; nextCursor: string | null } {
+  const cursor = before === undefined ? null : parseNoteSidebarCursor(before);
+  const rows = storage.sql.exec<Record<string, SqlStorageValue>>(
     NOTE_SIDEBAR_SQL,
     workspaceId,
     userId,
-    limit,
+    cursor?.lastActivityAt ?? null,
+    cursor?.lastActivityAt ?? "",
+    cursor?.lastActivityAt ?? "",
+    cursor?.id ?? "",
+    limit + 1,
   ).toArray().map((row) => toNoteSummary(NoteSidebarRowSchema.parse(row)));
+  const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+  const last = items.at(-1);
+  return {
+    items,
+    nextCursor: hasMore && last ? noteSidebarCursor(last) : null,
+  };
 }
 
 /**
@@ -309,6 +332,129 @@ export function archiveWorkspaceNote(
     advanceNoteSidebar(storage);
     return WorkspaceNoteArchiveResultSchema.parse({ outcome: "archived" });
   });
+}
+
+/**
+ * The one selection a grouping's **Archive all** makes over notes.
+ *
+ * Three fences beyond the range, and each of them is a note the single-row
+ * archive would refuse rather than one this is being cautious about:
+ * `owner_user_id` because only an owner may archive a note, so a colleague's
+ * workspace note sits in the reader's sidebar under the same heading and is
+ * still not theirs to retire; `recording_status` because archiving under a
+ * live meeting window 404s the next segment save while capture keeps running;
+ * and `archived_at` because an already-archived note is not in the group.
+ *
+ * There is deliberately no fourth fence for the list's page size. The note
+ * list pages now, so a note below the fold is one scroll away rather than
+ * unreachable, and the confirmation's job is to name the complete server-side
+ * total — the same contract the work-stream half has always had.
+ *
+ * The preview counts this same selection and the dispatch freezes it, so the
+ * number in the confirmation is the number of notes that will actually go.
+ */
+const NOTE_BATCH_SELECTION_FENCE = `workspace_id = ? AND archived_at IS NULL
+      AND owner_user_id = ?
+      AND recording_status <> 'recording'
+      AND (? IS NULL OR last_activity_at >= ?)
+      AND (? IS NULL OR last_activity_at < ?)`;
+
+/**
+ * `notes.last_activity_at` is an ISO string written by the server's own clock,
+ * so the range is compared as text — and text comparison is only correct while
+ * both sides are the same canonical UTC spelling. The filter's timestamps come
+ * off the wire, where an offset is a legal way to write the same instant, so
+ * they are re-spelled here rather than trusted to sort.
+ *
+ * Deliberately without a fallback for a value that will not parse. The filter
+ * is schema-validated as a datetime before it reaches this object, so there is
+ * none; and were that ever to change, refusing is the failure to want —
+ * treating an unreadable bound as "no bound" would quietly widen an archive.
+ */
+function noteRangeBound(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  const parsed = Date.parse(value);
+  // Named rather than left to `toISOString`'s `RangeError`, so a caller that
+  // reached this object without the route's schema in front of it is
+  // distinguishable in the logs from a genuine runtime fault.
+  if (!Number.isFinite(parsed)) throw new Error("note_batch_range_bound_invalid");
+  return new Date(parsed).toISOString();
+}
+
+function noteBatchBindings(
+  workspaceId: string,
+  userId: string,
+  filter: WorkstreamBatchFilter,
+): (string | null)[] {
+  const atOrAfter = noteRangeBound(filter.lastActivityAt?.atOrAfter);
+  const before = noteRangeBound(filter.lastActivityAt?.before);
+  return [workspaceId, userId, atOrAfter, atOrAfter, before, before];
+}
+
+/**
+ * A note is never pinned, so a filter asking only for pinned rows asks for no
+ * notes at all — said once here rather than as a SQL clause that could only
+ * ever compare a constant against itself.
+ */
+function noteBatchExcluded(filter: WorkstreamBatchFilter): boolean {
+  return filter.pinned === true;
+}
+
+/** Which notes one grouping's archive would take, for the confirmation's count. */
+export function workspaceNoteBatchTargets(
+  storage: DurableObjectStorage,
+  workspaceId: string,
+  userId: string,
+  filter: WorkstreamBatchFilter,
+): string[] {
+  if (noteBatchExcluded(filter)) return [];
+  return storage.sql.exec<{ id: string }>(
+    `SELECT id FROM notes WHERE ${NOTE_BATCH_SELECTION_FENCE} ORDER BY id`,
+    ...noteBatchBindings(workspaceId, userId, filter),
+  ).toArray().map((row) => row.id);
+}
+
+/**
+ * Archive the notes one operation froze, and say which ones went.
+ *
+ * By frozen id rather than by re-running the range: the set was decided in the
+ * transaction that created the dispatch, and re-selecting here would take
+ * whatever had entered the range since — under an open-ended heading like
+ * "Last hour", any note touched while the Queue chunks were going out.
+ *
+ * One statement rather than a read followed by a loop of single-row archives:
+ * the rows are all in this database, so the whole group is one transition, and
+ * a partially applied "archive all" is a state nobody asked for. The archived
+ * ids come back from the statement itself — `rowsWritten` counts physical
+ * writes, index maintenance included, and would overstate the group the moment
+ * `notes_sidebar_idx` is touched.
+ *
+ * The owner and recording fences are re-checked rather than trusted to the
+ * freeze. Ownership cannot change, so that one is belt and braces; recording
+ * can start after the freeze, and archiving under a live meeting window 404s
+ * the next segment save. A note skipped for that reason is simply not in the
+ * count, which is the same answer the single-row archive gives.
+ */
+export function archiveWorkspaceNotesForOperation(
+  storage: DurableObjectStorage,
+  request: { workspaceId: string; userId: string; operationId: string; at: string },
+): string[] {
+  const archived = storage.sql.exec<{ id: string }>(
+    `UPDATE notes SET archived_at = ?, updated_at = ?
+      WHERE workspace_id = ? AND archived_at IS NULL
+        AND owner_user_id = ?
+        AND recording_status <> 'recording'
+        AND id IN (SELECT note_id FROM workspace_batch_dispatch_note_targets
+                    WHERE operation_id = ?)
+      RETURNING id`,
+    request.at,
+    request.at,
+    request.workspaceId,
+    request.userId,
+    request.operationId,
+  ).toArray().map((row) => row.id).sort();
+  if (archived.length > 0) advanceNoteSidebar(storage);
+  return archived;
 }
 
 /**

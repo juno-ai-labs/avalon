@@ -11,6 +11,7 @@ import { uuidV7 } from '../lib/telemetry';
 import { useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
+import { useNotesQuery } from '../lib/use-notes-query';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -114,6 +115,10 @@ export function workstreamMatchesBatchFilter(
   workstream: WorkstreamSummary,
   filter: WorkstreamBatchFilter,
 ): boolean {
+  // An automation's run work stream is kept out of the sidebar, so a grouping
+  // action never selects one — and this route, reached from the automation's
+  // own screen rather than from a heading, must not leave as though it had.
+  if (workstream.origin === 'automation') return false;
   if (!filter.includeSystem && workstream.systemKind != null) return false;
   if (filter.pinned !== undefined && (workstream.pinPosition !== null) !== filter.pinned) return false;
   const activityAt = Date.parse(workstream.lastActivityAt);
@@ -270,7 +275,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     return true;
   };
-  const notes = useSocketOwnedList<NoteSummary>(['notes']);
+  const notes = useNotesQuery();
   const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
@@ -560,7 +565,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         }}
         onApplyWorkstreamBatch={async (operationId, filter, update) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          const enqueuedCount = await api.applyWorkstreamBatch(operationId, filter, update);
+          const accepted = await api.applyWorkstreamBatch(operationId, filter, update);
           const selected = activeWorkstreamId === null
             ? undefined
             : workstreams.data?.find((workstream) => workstream.id === activeWorkstreamId);
@@ -568,7 +573,30 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             queryClient.removeQueries({ queryKey: ['workstream', selected.id], exact: true });
             void navigate('/workstreams/new', { replace: true });
           }
-          return enqueuedCount;
+          if (accepted.archivedNoteCount > 0) {
+            // The same caches a single note's archive shakes loose, for the same
+            // reason: an archived note's resource stops being served everywhere,
+            // and a work stream it was attached to holds it in a cache no socket
+            // event reaches. The note list itself is not here — WorkspaceDO
+            // pushes it off the write that archived them.
+            //
+            // `['note']` refetches rather than predicting. Archiving one note
+            // names it, so that path can leave its route knowing what went; a
+            // batch is told only how many, and reconstructing *which* from the
+            // filter and the list as it stands now gets it wrong — a note that
+            // was recording when the archive ran, and has since stopped, reads
+            // as taken when it was skipped. A note that really went answers 404
+            // on the refetch and its own screen says so, which is the treatment
+            // an archived work stream already gets; one that survived just
+            // refreshes under the reader.
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['note'] }),
+              queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+              queryClient.invalidateQueries({ queryKey: ['workstream-context'] }),
+              queryClient.invalidateQueries({ queryKey: ['resources'] }),
+            ]);
+          }
+          return accepted;
         }}
         onChangeNoteScope={async (note, scope) => {
           if (!api) return;
@@ -708,8 +736,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           void signOut().catch(() => undefined);
         }}
         hasMoreWorkstreams={workstreams.hasMore}
+        hasMoreNotes={notes.hasMore}
         loadingMoreWorkstreams={workstreams.isFetchingMore}
+        loadingMoreNotes={notes.isFetchingMore}
         onLoadMoreWorkstreams={workstreams.fetchMore}
+        onLoadMoreNotes={notes.fetchMore}
         workspace={workspace}
         workstreams={workstreams.data ?? []}
       />

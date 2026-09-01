@@ -2,6 +2,7 @@ import {
   WorkstreamSchema,
   type Workstream,
   type WorkstreamBatchFilter,
+  type WorkstreamBatchUpdate,
 } from "@rally/contracts";
 import { z } from "zod";
 
@@ -9,6 +10,7 @@ import { workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceBatchDispatchAdvanceResultSchema,
   WorkspaceBatchDispatchBeginResultSchema,
+  WorkspaceDirectoryBatchTargetsResultSchema,
   WorkspaceDirectoryPageSchema,
   WorkspaceDirectoryReadableIdsResultSchema,
 } from "../durable-objects/workspace-directory-protocol";
@@ -52,20 +54,30 @@ export class WorkstreamDirectoryService {
     })).items;
   }
 
-  async batchTargets(filter: WorkstreamBatchFilter): Promise<string[]> {
+  /**
+   * Both target sets one filter selects: work streams to fan out to, and the
+   * notes the same grouping's archive would take. One round trip, so the two
+   * counts a confirmation shows are read at the same instant.
+   */
+  async batchTargets(
+    filter: WorkstreamBatchFilter,
+  ): Promise<{ items: string[]; noteIds: string[] }> {
     const workspace = await this.workspace();
-    const result = await workspace.batchUpdateTargets({
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-      filter,
-    });
-    return result.items;
+    const result = WorkspaceDirectoryBatchTargetsResultSchema.parse(
+      await workspace.batchUpdateTargets({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        filter,
+      }),
+    );
+    return { items: result.items, noteIds: result.noteIds };
   }
 
   async beginBatchDispatch(input: {
     operationId: string;
     requestHash: string;
     filter: WorkstreamBatchFilter;
+    update: WorkstreamBatchUpdate;
   }): Promise<{ items: string[]; targetCount: number }> {
     const workspace = await this.workspace();
     return WorkspaceBatchDispatchBeginResultSchema.parse(
