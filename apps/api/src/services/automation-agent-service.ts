@@ -374,12 +374,21 @@ export class AutomationAgentService {
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
     );
-    const { participant } = await workspace.workstreamParticipation({
-      workspaceId: this.auth.workspaceId,
-      workstreamId,
-      userId: this.auth.userId,
-    });
-    return participant;
+    // False when the directory cannot answer, which is the fail-closed
+    // direction both ways this is used: it only ever *grants* a non-author the
+    // read, and the one place it refuses — a `workstream` acceptance — refuses
+    // on false. So an unreachable workspace object withholds the room's
+    // standing rather than turning an author's own acceptance into a 500.
+    try {
+      const { participant } = await workspace.workstreamParticipation({
+        workspaceId: this.auth.workspaceId,
+        workstreamId,
+        userId: this.auth.userId,
+      });
+      return participant;
+    } catch {
+      return false;
+    }
   }
 
   private async participantOfOwningWorkstream(
