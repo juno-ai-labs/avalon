@@ -103,6 +103,11 @@ also reach an already-open Settings renderer to preserve its active-relative
 cache refresh; treating a path-addressed result as legacy would run the same
 activation concurrently in both renderer processes.
 
+Each delivered item catches and reports its own terminal window or bridge
+failure before the serialization tail resolves. A Settings-window failure,
+cancel cleanup failure, or other escaped action therefore cannot poison the
+promise tail and silently suppress all later operating-system links.
+
 ID-only links already in mail, Slack history, and older clients remain readable
 against the active workspace. They are compatibility inputs only; searching
 every credential for a matching resource would create a cross-workspace directory
@@ -244,7 +249,8 @@ best-effort remote revocation.
 changes workspaces resets the main window behind Settings to the new workspace's
 landing page. Same-workspace handoffs preserve the current route, and regional
 membership denials retain access-failure wording through Electron IPC. Addressed
-connector results are main-only instead of being duplicated into Settings.
+connector results are main-only instead of being duplicated into Settings, and
+each queued link isolates its failure from later deliveries.
 
 **Why:** Real-window connector verification showed that authorization remained
 correct but closing Settings could expose the previous workspace's resource
@@ -252,7 +258,9 @@ route, which then failed to load under the newly active credential. A suspended
 local membership also proved that the server's “access is unavailable” denial
 was being mistaken for a network outage. Follow-up review found the Settings
 delivery gate still looking for the removed query-addressed workspace field,
-which made path-addressed results race activation in two renderer processes.
+which made path-addressed results race activation in two renderer processes. A
+second follow-up showed that an escaped window failure rejected the serialized
+promise tail and prevented all subsequent links from running.
 
 **Considered and rejected:** Leaving the stale route to fail closed, and always
 resetting the main window. The first turns a successful connector return into a
