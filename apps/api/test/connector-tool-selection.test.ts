@@ -665,6 +665,39 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.map((tool) => tool.definition.name)).toEqual(["drive.search"]);
   });
 
+  it("keeps the child's built-in authorization set narrower than the parent's", async () => {
+    const database = new ToolSelectionDatabase([]);
+    const parentInput = workflowInput();
+    const runtimeEnv = createTestEnv({
+      ...env(database),
+      FIRECRAWL_API_KEY: "firecrawl-test-key",
+      AZURE_INFERENCE_ENDPOINT: "https://monad-prod-resource.services.ai.azure.com",
+      AZURE_INFERENCE_API_KEY: "azure-test-key",
+    });
+    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
+    expect(__integrationTesting.builtinPluginAuthorization("rally:multimodal-generation", parentTools))
+      .toBe("authorized");
+
+    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
+      env: runtimeEnv,
+      parentInput,
+      childInput: childWorkflowInput(parentInput),
+      parentHarnessTools: parentTools,
+      selectedPluginIds: [],
+      assertChildOwned: async () => undefined,
+    });
+
+    // A sub-agent assembles its own built-ins, so authorization has to be
+    // answered from the child's set. Inheriting the parent's would activate a
+    // plugin the child never registered — and multimodal generation is the
+    // case that matters, since it is all writes.
+    expect(childTools.builtinPluginIds).toEqual(new Set(["rally:workstream", "rally:web"]));
+    expect(__integrationTesting.builtinPluginAuthorization("rally:multimodal-generation", childTools))
+      .toBe("denied");
+    expect(__integrationTesting.builtinPluginAuthorization("rally:terminal", childTools)).toBe("denied");
+    expect(__integrationTesting.builtinPluginAuthorization("rally:web", childTools)).toBe("authorized");
+  });
+
   it("does not give an inbound-email child an outbound Firecrawl channel", async () => {
     const database = new ToolSelectionDatabase([]);
     const parentInput = workflowInput();
