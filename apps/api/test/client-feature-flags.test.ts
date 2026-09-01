@@ -252,6 +252,7 @@ describe("client feature flags", () => {
         suggestedWorkEnabled: false,
         automationWorkspaceTemplatesEnabled: false,
         multipleWorkspacesEnabled: false,
+        liveArtifactsEnabled: false,
         // The one field that fails the other direction: a digest already sends
         // by default, so a missing binding must reproduce that, not hide it.
         digestsEnabled: true,
@@ -272,6 +273,7 @@ describe("client feature flags", () => {
         suggestedWorkEnabled: false,
         automationWorkspaceTemplatesEnabled: false,
         multipleWorkspacesEnabled: false,
+        liveArtifactsEnabled: false,
         // `serving(false)` is an explicit, successfully-served `false` — the
         // one value that turns digestsEnabled off too, same as every other
         // Boolean here.
@@ -365,8 +367,9 @@ describe("client feature flags", () => {
 
     // Order-independent: `digestsEnabled` resolves through `digest-flags.ts`,
     // which awaits its own attribute load before calling `getBooleanDetails`.
-    // Among the boolean-flag calls, its dispatch lands after the other five's
-    // synchronous one rather than at its position in the `Promise.all` array —
+    // Among the boolean-flag calls, its dispatch lands after the other
+    // booleans' synchronous one rather than at its position in the
+    // `Promise.all` array —
     // `controlTowerRefreshSeconds` is the same way (it awaits the same kind of
     // load before its own `getNumberDetails`), just not a boolean this test
     // collects. What this test cares about — every enabled-named key queried
@@ -377,6 +380,7 @@ describe("client feature flags", () => {
         "developer-settings",
         "digests-enabled",
         "hypersight-enabled",
+        "live-artifacts-enabled",
         "meeting-recording-enabled",
         "multiple-workspaces-enabled",
         "suggested-work-enabled",
@@ -422,6 +426,7 @@ describe("GET /feature-flags", () => {
       suggestedWorkEnabled: true,
       automationWorkspaceTemplatesEnabled: true,
       multipleWorkspacesEnabled: true,
+      liveArtifactsEnabled: true,
       digestsEnabled: true,
       controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
     });
@@ -448,6 +453,7 @@ describe("GET /feature-flags", () => {
       suggestedWorkEnabled: false,
       automationWorkspaceTemplatesEnabled: false,
       multipleWorkspacesEnabled: false,
+      liveArtifactsEnabled: false,
       // The one field that answers `true` here: an unresolvable flag must
       // reproduce delivery continuing, not stopping.
       digestsEnabled: true,
