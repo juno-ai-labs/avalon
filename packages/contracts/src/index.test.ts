@@ -286,8 +286,62 @@ describe("boundary contracts", () => {
     // An override bypasses the rollout, so the reachable set is reviewed here
     // rather than being whatever string a client sends.
     expect(CreateWorkstreamRequestSchema.safeParse({ ...base, modelOverride: "x-ai/grok-9" }).success).toBe(false);
-    expect(AGENT_MODEL_OVERRIDES[0]).toBe("x-ai/grok-4.3");
     expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
+  });
+
+  it("orders each vendor's models newest first", () => {
+    // The selector groups by vendor, so this ordering is what a reader sees
+    // under each heading — and the mistake it exists to catch is a new model
+    // appended to the end of the list rather than added to the top of its
+    // family. Only a version a machine can compare is checked: `gpt-5.6-terra`
+    // and `gpt-5.6-luna` share a version, as do the two `deepseek-v4` ids, and
+    // ties are ordered by hand rather than by this rule.
+    // The *first* numeric run in the model segment, which is the version in
+    // every id the list carries: `grok-4.6` and `gemini-3.7-flash` match on the
+    // version itself, `deepseek-v4-pro` on the `v`-prefixed form. An id that put
+    // a different number first — `foo-v2-3.0-bar` — would yield 2 rather than 3
+    // and compare on the wrong field, so a family whose ids are not named this
+    // way needs its own handling rather than a looser pattern here.
+    const version = (id: string): number[] | null => {
+      const match = /-v?(\d+(?:\.\d+)*)(?:-|$)/.exec(id.slice(id.indexOf("/") + 1));
+      return match ? match[1]!.split(".").map(Number) : null;
+    };
+    // Guards the parser itself: a regex that silently stopped matching would
+    // otherwise make every comparison below vacuous.
+    expect(version("x-ai/grok-4.6")).toEqual([4, 6]);
+    expect(version("google/gemini-3-flash-preview")).toEqual([3]);
+    expect(version("deepseek/deepseek-v4-pro")).toEqual([4]);
+    expect(AGENT_MODEL_OVERRIDES.filter((id) => version(id) === null)).toEqual([]);
+
+    // Takes its two versions in the order the list mentions them, so the call
+    // below reads the way the rule is stated: the id listed first must carry
+    // the newer version.
+    const listedNewestFirst = (earlier: number[], later: number[]): boolean => {
+      for (let index = 0; index < Math.max(earlier.length, later.length); index += 1) {
+        const earlierPart = earlier[index] ?? 0;
+        const laterPart = later[index] ?? 0;
+        if (earlierPart !== laterPart) return earlierPart > laterPart;
+      }
+      return true; // equal versions are a tie this rule does not order
+    };
+    // Compared against the last id seen *for that vendor*, not the globally
+    // preceding one. A vendor's entries are not required to be contiguous —
+    // `AGENT_MODEL_GROUPS` merges a vendor mentioned in two places into one
+    // section on purpose — so an adjacent-pair walk would skip the comparison
+    // for exactly the mistake this exists to catch: `x-ai/grok-9` appended
+    // after the DeepSeek block displays under xAI as 4.6 / 4.5 / 4.3 / 9,
+    // while its only out-of-order pair never sits adjacent in this list.
+    const newestSeen = new Map<string, string>();
+    const offenders: string[] = [];
+    for (const id of AGENT_MODEL_OVERRIDES) {
+      const vendor = id.slice(0, id.indexOf("/"));
+      const previous = newestSeen.get(vendor);
+      if (previous !== undefined && !listedNewestFirst(version(previous)!, version(id)!)) {
+        offenders.push(`${previous} precedes ${id}`);
+      }
+      newestSeen.set(vendor, id);
+    }
+    expect(offenders).toEqual([]);
   });
 
   it("owns the complete model-role, Flagship-key, and route-value contract", () => {

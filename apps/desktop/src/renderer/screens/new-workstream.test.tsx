@@ -641,9 +641,11 @@ describe('New work-stream home', () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderScreen();
 
-    // The first listed model is still a choice someone can make, and making it
-    // has to look different from never having touched the control — which it
-    // would not if unpinned borrowed that model's value.
+    // The model the flag already serves is still a choice someone can make, and
+    // making it has to look different from never having touched the control —
+    // which it would not if unpinned borrowed the flag's answer as its label.
+    // Grok 4.3 is that model; it is deliberately not the menu's first entry,
+    // since the families are ordered newest first.
     const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
     fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Grok 4.3' }));
