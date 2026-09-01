@@ -12,8 +12,8 @@ update it in the same change.
 - **Starting a session?** [`dev-environment.md`](dev-environment.md) is the one
   to read before running any setup, server, or browser-automation command.
 - **Writing a test?** [`testing.md`](testing.md) says which suite it belongs in,
-  why the real Cloudflare pipeline is the default over a mock, and how to prove
-  the test can fail.
+  why the real Cloudflare pipeline is the default over a mock, how much of the
+  suite to run, and how to prove an integration test can fail.
 - **Investigating a bug?** The owning document usually states the invariant that
   was violated, and often names the exception you are looking at.
 - **Investigating what an agent actually did in production?**

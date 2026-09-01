@@ -130,8 +130,9 @@ why the change was made. See docs/module-documents.md.
 
 ## Validation
 
-- `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:scripts`, and both
-  Wrangler dry-run builds: <outcome>
+- `pnpm lint`, `pnpm typecheck`, and the tests covering what you touched
+  (docs/testing.md#how-much-to-run): <outcome, or "none — documentation-only">
+- <`pnpm test:scripts` and the Wrangler dry-run builds, where those moved>
 - <for visible changes: the screens captured from a running window>
 - <pre-existing failures, called out as pre-existing>
 
