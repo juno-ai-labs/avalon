@@ -4,8 +4,6 @@ import {
   AutomationDeliveryTargetSetSchema,
   AutomationDetailSchema,
   AutomationDraftSchema,
-  AutomationAgentSnapshotSchema,
-  AutomationDraftTurnAdmissionResultSchema,
   AutomationRunSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationSummarySchema,
@@ -21,13 +19,11 @@ import { getAuth } from "../middleware/auth";
 import { AutomationService } from "../services/automation-service";
 import {
   AutomationAgentService,
-  AutomationDraftTurnRequestSchema,
 } from "../services/automation-agent-service";
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
-const updateBody = z.strictObject({ deliveryTargets: AutomationDeliveryTargetSetSchema });
-const AutomationSocketTicketSchema = z.strictObject({ url: z.string().min(1), ticket: z.string().min(1) });
+const updateBody = z.object({ deliveryTargets: AutomationDeliveryTargetSetSchema }).strict();
 const SharedTemplateSchema = z.strictObject({ templateId: IdSchema });
 
 /** Envelopes this route composes; the entities inside come from the contracts. */
@@ -94,44 +90,6 @@ automationRoutes.get("/workstream/:workstreamId", zValidator("param", z.object({
   await new AutomationAgentService(c.env, getAuth(c))
     .listForWorkstream(c.req.valid("param").workstreamId),
 )));
-automationRoutes.post("/agent/draft/turn", zValidator("json", AutomationDraftTurnRequestSchema.extend({
-  clientCreationKey: IdSchema,
-})), async (c) => c.json(AutomationDraftTurnAdmissionResultSchema.parse(
-  await new AutomationAgentService(c.env, getAuth(c)).admitFirstTurn(c.req.valid("json")),
-), 202));
-automationRoutes.post("/:id/agent/draft/turn", zValidator("param", idParam),
-  zValidator("json", AutomationDraftTurnRequestSchema), async (c) => c.json(
-    AutomationDraftTurnAdmissionResultSchema.parse(await new AutomationAgentService(c.env, getAuth(c)).admitTurn(
-      c.req.valid("param").id,
-      c.req.valid("json"),
-    )),
-    202,
-  ));
-automationRoutes.get("/:id/agent/draft", zValidator("param", idParam), async (c) => c.json(
-  AutomationAgentSnapshotSchema.parse(
-    await new AutomationAgentService(c.env, getAuth(c)).snapshot(c.req.valid("param").id),
-  ),
-));
-automationRoutes.post("/:id/agent/draft/:runId/stop", zValidator("param", z.strictObject({
-  id: IdSchema,
-  runId: IdSchema,
-})), async (c) => {
-  const params = c.req.valid("param");
-  await new AutomationAgentService(c.env, getAuth(c)).cancel(params.id, params.runId);
-  return c.body(null, 204);
-});
-automationRoutes.post("/:id/agent/draft/:runId/retry", zValidator("param", z.strictObject({
-  id: IdSchema,
-  runId: IdSchema,
-})), async (c) => {
-  const params = c.req.valid("param");
-  await new AutomationAgentService(c.env, getAuth(c)).retry(params.id, params.runId);
-  return c.body(null, 204);
-});
-automationRoutes.get("/:id/agent/socket", zValidator("param", idParam), async (c) =>
-  c.json(AutomationSocketTicketSchema.parse(
-    await new AutomationAgentService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id),
-  )));
 automationRoutes.post("/", zValidator("json", CreateAutomationRequestSchema), async (c) => {
   const input = c.req.valid("json");
   const detail = await new AutomationAgentService(c.env, getAuth(c)).accept(input);
