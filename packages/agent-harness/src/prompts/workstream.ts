@@ -17,6 +17,21 @@ export interface WorkstreamAutomationPromptContext {
    * tool of its own.
    */
   resultDelivery: Array<{ channel: "email" | "slack_agent_dm"; destination: string }>;
+  /**
+   * Where this automation was set up, when that was somewhere it can speak.
+   *
+   * Standing context rather than instructions: the instructions say what the
+   * automation does, and this says where this occurrence is speaking from.
+   * Putting the channel id in the instructions would freeze a literal into text
+   * a person reads and edits, and every rename, edit, or move would have to
+   * find and rewrite an id in prose.
+   */
+  authoringOrigin?: {
+    kind: "slack";
+    teamId: string;
+    channelId: string;
+    channelName: string | null;
+  } | null;
   defaultBehavior: Record<string, unknown>;
   overrides: Record<string, unknown>;
   durableTables: Array<{
@@ -98,6 +113,15 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
 - Before any outward send, drop every recipient — to, cc, channel, or DM target — that matches one of those destinations. Send to what remains; if nothing remains, do not send at all, and let the final message carry the result.
 - A recipient named in the authorized task context or by a person in this work stream, and matching no destination there, is unaffected by this section.`
     : null;
+  const origin = input.automation?.authoringOrigin ?? null;
+  const authoringOriginSection = origin
+    ? `# Where this automation was set up
+- This automation was created from ${origin.channelName
+      ? `the Slack channel ${origin.channelName} (${origin.channelId})`
+      : `Slack channel ${origin.channelId}`} in team ${origin.teamId}.
+- When the automation's instructions say to post, send, or ask "here", "this channel", or "the channel", that is the channel they mean. Pass its id to the tool call; it is not written into the instructions, so do not expect to find it there.
+- This is where the occurrence speaks from, not a restriction on where it may act. A run with a reason to post somewhere else names that destination in its own tool call.`
+    : null;
   const workspaceAuthoritySection = input.executionAuthority === "workspace"
     ? `# Workspace execution authority
 - This run is authorized by the Rally workspace, not by the Slack member who sent the request and not by the person who installed the Slack app.
@@ -108,6 +132,7 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
   const conditionalSections = [
     outputSurfaceSection,
     resultDeliverySection,
+    authoringOriginSection,
     workspaceAuthoritySection,
   ].filter((section): section is string => section !== null).join("\n\n");
   // Result delivery: only for a run Avalon actually delivers for. As a standing

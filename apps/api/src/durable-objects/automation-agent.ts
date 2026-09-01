@@ -722,6 +722,13 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
     // and the only place a `workstream` acceptance can honestly get its room —
     // the model never names one and no other room is reachable.
     `ALTER TABLE automation_state ADD COLUMN authored_in_workstream_id TEXT`,
+    // Where the conversation was, when it was somewhere an occurrence can
+    // speak. Frozen into the run context at acceptance and rendered as standing
+    // context, never into the instructions a person reads and edits.
+    `ALTER TABLE automation_state ADD COLUMN authored_origin_json TEXT CHECK (
+       authored_origin_json IS NULL
+       OR (json_valid(authored_origin_json) AND json_type(authored_origin_json) = 'object')
+     )`,
   ],
 }];
 
@@ -1237,6 +1244,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       authorUserId: z.string().uuid(),
       region: z.enum(["global", "eu"]),
       authoredInWorkstreamId: z.string().uuid(),
+      /** Supplied by the Worker from the loop, never by the model. */
+      authoredOrigin: z.object({
+        kind: z.literal("slack"),
+        teamId: z.string().min(1).max(255),
+        channelId: z.string().min(1).max(255),
+        channelName: z.string().min(1).max(255).nullable(),
+      }).strict().nullable().default(null),
       draft: AutomationDraftSchema,
     }).strict().parse(input);
     const now = Date.now();
@@ -1272,10 +1286,12 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         this.state.storage.sql.exec(
           `INSERT INTO automation_state
              (id, lifecycle, title, definition_revision, accepted_definition_revision,
-              event_sequence, authored_in_workstream_id, created_at, updated_at)
-           VALUES (1, 'draft', ?, 0, NULL, 0, ?, ?, ?)`,
+              event_sequence, authored_in_workstream_id, authored_origin_json,
+              created_at, updated_at)
+           VALUES (1, 'draft', ?, 0, NULL, 0, ?, ?, ?, ?)`,
           request.draft.name,
           request.authoredInWorkstreamId,
+          request.authoredOrigin === null ? null : JSON.stringify(request.authoredOrigin),
           now,
           now,
         );
@@ -1310,6 +1326,16 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<{ authored_in_workstream_id: string | null }>(
       `SELECT authored_in_workstream_id FROM automation_state WHERE id = 1`,
     ).toArray()[0]?.authored_in_workstream_id ?? null;
+  }
+
+  /** Where the conversation was, for a run that has to speak from somewhere. */
+  private authoredOrigin(): AutomationRunContextV1["authoringOrigin"] {
+    const raw = this.state.storage.sql.exec<{ authored_origin_json: string | null }>(
+      `SELECT authored_origin_json FROM automation_state WHERE id = 1`,
+    ).toArray()[0]?.authored_origin_json ?? null;
+    return raw === null
+      ? null
+      : AutomationRunContextV1Schema.shape.authoringOrigin.parse(JSON.parse(raw));
   }
 
   async stageDraftElicitation(input: unknown): Promise<{ accepted: true }> {
@@ -4036,6 +4062,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       deliveryTargets: JSON.parse(acceptance.delivery_targets_json),
       owningWorkstreamId: acceptance.owning_workstream_id,
       scope: acceptance.scope as "personal" | "workspace" | "workstream",
+      authoringOrigin: this.authoredOrigin(),
       modelOverride: acceptance.model_override,
       executionPrincipal: { type: "user", userId: this.executionPrincipalUserId() },
       trigger,

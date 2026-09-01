@@ -66,6 +66,7 @@ import {
   asAutomationId,
   asUserId,
   asWorkspaceId,
+  type AutomationRunContextV1,
   asWorkstreamId,
   type UserId,
   type WorkspaceId,
@@ -1916,6 +1917,18 @@ function createAvalonAutomationsPlugin(
           authorUserId,
           region: env.AVALON_REGION,
           authoredInWorkstreamId: input.workstreamId,
+          // Only a real channel. A DM is where somebody asked, not somewhere a
+          // standing automation should speak from, and a mention with no
+          // channel has nothing to record.
+          authoredOrigin: input.slackOrigin?.channelId
+            && input.slackOrigin.channelType !== "im"
+            ? {
+                kind: "slack" as const,
+                teamId: input.slackOrigin.teamId,
+                channelId: input.slackOrigin.channelId,
+                channelName: input.slackOrigin.channelName,
+              }
+            : null,
           draft,
         });
       },
@@ -5296,6 +5309,7 @@ async function loadRunPromptContext(
         instructions: string;
         expectedOutputs: string[];
         resultDelivery: Array<{ channel: "email" | "slack_agent_dm"; destination: string }>;
+        authoringOrigin: AutomationRunContextV1["authoringOrigin"];
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
         durableTables: MaterializedMemoryTable[];
@@ -5342,6 +5356,7 @@ async function loadRunPromptContext(
       instructions: frozen.definition.instructions,
       expectedOutputs: frozen.definition.expectedOutputs,
       resultDelivery,
+      authoringOrigin: frozen.authoringOrigin,
       defaultBehavior: frozen.definition.defaultBehavior,
       overrides: {},
       durableTables,

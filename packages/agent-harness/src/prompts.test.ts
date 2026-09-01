@@ -281,6 +281,48 @@ describe("prompt renderers", () => {
     expect(undelivered).not.toContain("# Result delivery");
   });
 
+  it("names the channel an automation was set up in, without it being in the instructions", () => {
+    const prompt = renderWorkstreamSystemPrompt({
+      title: "Monday shipped digest",
+      objective: "Ask what each person shipped.",
+      automation: {
+        ...workstreamAutomation,
+        instructions: "Ask what each person shipped this weekend.",
+        authoringOrigin: {
+          kind: "slack",
+          teamId: "T0ENG",
+          channelId: "C0SHIPPED",
+          channelName: "eng-shipped",
+        },
+      },
+    });
+
+    expect(prompt).toContain("# Where this automation was set up");
+    expect(prompt).toContain("eng-shipped");
+    expect(prompt).toContain("C0SHIPPED");
+    // The whole reason this is standing context: the instructions a person
+    // reads and edits carry no id, so a run told to post "here" has to be told
+    // where "here" is somewhere other than in that text.
+    expect(prompt).toContain('"instructions": "Ask what each person shipped this weekend."');
+    expect(prompt).toContain("it is not written into the instructions");
+    // Not a fence: an occurrence with a reason to post elsewhere names that
+    // destination itself.
+    expect(prompt).toContain("not a restriction on where it may act");
+  });
+
+  it("says nothing about an origin for an automation set up outside a channel", () => {
+    const prompt = renderWorkstreamSystemPrompt({
+      title: "Weekly engineering brief: 2026-08-07",
+      objective: "Produce the scheduled weekly engineering brief.",
+      automation: workstreamAutomation,
+    });
+
+    // A run with no channel behind it must not meet a section about one; a
+    // section that always rendered would have it reasoning about a "here" that
+    // does not exist.
+    expect(prompt).not.toContain("# Where this automation was set up");
+  });
+
   it("tells the automation compiler that a destination is not a send step", () => {
     const [system] = renderAutomationCompilerMessages({
       messages: [{ role: "user", content: "Email me a competitor briefing every morning." }],
