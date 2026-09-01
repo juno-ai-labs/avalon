@@ -306,7 +306,7 @@ Docs and Sheets operations use their native provider APIs. Docs reads return bou
 
 The production-approved Google scope set uses `drive.readonly` for Drive discovery and native Docs/Sheets reads, and `drive.file` for native writes. Newly created Docs and Sheets can be edited. An existing file is writable only after it has been explicitly opened or shared with Rally under Google's per-file authorization model; an arbitrary existing file discovered through Drive search remains read-only. Rally does not yet include a Google Picker flow for granting that per-file write access. Drive search and metadata results expose `isAppAuthorized`, `canEdit`, and the derived `writableByRally`; Docs/Sheets update tools preflight the same metadata and fail with `details.reason = drive_file_not_writable` without attempting a mutation when either condition is false or the file is invisible to a `drive.file`-only token. This preflight is a fail-closed model-guidance and user-experience guard, not the security boundary: Google enforces the current authorization again when it receives the mutation.
 
-Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Gmail and Calendar are digestible streams and Drive is not: a change feed reports a save, so a document written over an afternoon is one piece of news and dozens of events. `email.received`, `calendar.event_changed`, and `calendar.event_completed` are the digestible activity types; `email.updated` is a label or read-state change on mail already seen. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Operators can follow each normalized poll result into WorkspaceDO at `connector_event_authority_ingested`, before its Queue processing begins. Rally does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Rally resource watches route the normalized polled activity and must not be confused with provider push delivery.
+Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Gmail and Calendar are digestible streams and Drive is not: a change feed reports a save, so a document written over an afternoon is one piece of news and dozens of events. `email.received`, `calendar.event_changed`, and `calendar.event_completed` are the digestible activity types; `email.updated` is a label or read-state change on mail already seen. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Operators can follow each normalized poll result into WorkspaceDO at `connector_event_authority_ingested`, before its Queue processing begins. Rally does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Rally resource watches route the normalized polled activity and must not be confused with provider push delivery. Each Google activity type declares the attached resource its events are *about* — `sheets.spreadsheet_changed` a `google_sheet`, `docs.document_changed` a `google_doc`, `drive.file_changed` a `drive_file`, and both mail events a `gmail_thread` — because the registration reconciler builds an evaluator set from those relationships and a type that declares none routes nothing, however many watches exist. The relationship names the watched entity itself rather than a container it sits in, which is why `file` and `thread` exist beside Notion's `page` in `ConnectorResourceRelationshipSchema`.
 
 A revoked refresh grant marks the connection `needs_reconnect`. Production smoke tests should create a Gmail draft rather than send unsolicited mail. A personal Gmail send tool is available only to its owner; if an administrator creates a workspace-scoped Gmail connection through the backend, its granted send capability rolls down to every work stream like every other workspace capability.
 
@@ -885,6 +885,31 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-09-01 — Watching a Google resource routes events, having never routed any
+
+**What changed:** The Google manifest's activity types declare
+`resourceRelationships`: the three Drive event types name the file they are
+about, and `email.received` / `email.updated` name the mail thread.
+`ConnectorResourceRelationshipSchema` gained `file` and `thread` to say it, in
+both places the enum is written — `automation-evaluators.ts` and the duplicated
+literal in `contracts/src/index.ts`.
+
+**Why:** Google declares `supportsWatches: true` and declared no relationships,
+so watching an attached Sheet passed the UI, wrote a watch row, drove polling,
+and then routed nothing — for every Google resource anybody had ever watched.
+The registration reconciler derives its evaluator set from the relationships, so
+an empty declaration produces an empty set and no error anywhere. It is the
+failure the rule sheet names: nothing errors, nothing arrives, nobody can tell
+why.
+
+**Considered and rejected:** Shipping the Drive relationships first and deferring
+threads, on the grounds that the mail events' filter fields were not designed
+with per-thread scoping in mind. They do not need to be — a relationship is not
+a filter, it says which attached resource an event concerns — and following one
+client thread is the more common want of the two, expressible today only as a
+mailbox-wide trigger with filters that go stale when the subject line changes.
+
 
 ### 2026-08-30 — Connector activity no longer produces Suggested context
 
