@@ -164,11 +164,25 @@ describe("the WorkspaceDO automation-ownership migration", () => {
       "automation_directory_sidebar_idx",
       "automation_directory_workstream_idx",
     ]);
+    // SQLite drops a table's triggers with the table. A rebuild that restored
+    // only the indexes left every upgraded object without the one guard that
+    // refuses a row from another workspace, while a fresh object kept it —
+    // asserted here because the index assertion above passed throughout.
+    expect(database.prepare(
+      `SELECT name FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = 'automation_directory'
+        ORDER BY name`,
+    ).all().map((row) => (row as { name: string }).name)).toEqual([
+      "automation_directory_workspace_identity_insert",
+      "automation_directory_workspace_identity_update",
+    ]);
   });
 
   it("admits a room's automation and refuses one that owns a room without saying so", () => {
     const database = new DatabaseSync(":memory:");
     apply(database, 27);
+    // The rebuild recreates the workspace-identity guard, so a directory row
+    // needs an identity to belong to.
+    seedIdentity(database);
 
     database.exec(`INSERT INTO automation_directory
       (automation_id, workspace_id, author_user_id, authority_generation, projection_version,

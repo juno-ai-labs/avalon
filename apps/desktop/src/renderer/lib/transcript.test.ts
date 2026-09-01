@@ -86,6 +86,66 @@ describe('transcript messages', () => {
     ]);
   });
 
+  it('carries an automation activation through as its own kind', () => {
+    // At the mapping, not at the block. The block-level tests build a Message
+    // with this messageType directly, so they passed while this function
+    // folded the kind into 'text' — which rendered every automation result as
+    // the clamped grey system note instead of a message authored Automation.
+    const snapshot = {
+      snapshotId: 'snapshot-activation',
+      snapshotThrough: 1,
+      eventSequence: 1,
+      snapshotAtUtc: '2026-09-01T12:00:00.000Z',
+      unreadAnchorSequence: null,
+      unreadReason: 'no_unread' as const,
+      ranges: [{
+        purpose: 'latest' as const,
+        requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1,
+          turnId: 'turn-activation',
+          entryKind: 'conversation' as const,
+          actor: 'system' as const,
+          authorUserId: null,
+          authorSnapshot: null,
+          attentionOrdinal: 1,
+          clientMessageId: 'automation-activation:delivery-1',
+          externalActor: null,
+          createdAtUtc: '2026-09-01T12:00:00.000Z',
+          revision: 1,
+          blocks: [{
+            type: 'text' as const,
+            blockId: 'block-activation',
+            blockIndex: 0,
+            text: 'Two candidates reached final round.',
+            streaming: false,
+            messageType: 'automation_activation' as const,
+            structuredContent: null,
+            mentions: [],
+            attachments: [],
+          }],
+          blockCount: 1,
+          activityId: null,
+        }],
+        activities: [],
+        pluginRuns: [],
+      }],
+      activities: [],
+      activeActivities: [],
+      pluginRuns: [],
+      activeTurns: [],
+      pendingInputs: [],
+    };
+
+    expect(orderedTranscriptMessages(snapshot, 'workstream-one')).toEqual([
+      expect.objectContaining({
+        messageType: 'automation_activation',
+        text: 'Two candidates reached final round.',
+      }),
+    ]);
+  });
+
   it('creates text, tool, and elicitation messages from the same base shape', () => {
     expect(createTextMessage({ ...base, text: 'Hello' })).toMatchObject({ messageType: 'text', text: 'Hello' });
     expect(createToolEventMessage({
