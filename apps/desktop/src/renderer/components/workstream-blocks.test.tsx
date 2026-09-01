@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
 import type { ElicitationData, Message } from '../lib/types';
@@ -1821,5 +1821,69 @@ describe('the card for an automation that lost its principal', () => {
     // No API session on this surface. The room is still better off knowing.
     expect(screen.getByRole('button', { name: 'Run these as me' })).toBeDisabled();
     expect(screen.getByRole('group').textContent).toContain('Candidate intake');
+  });
+});
+
+describe('the card proposing an automation drafted in this room', () => {
+  const proposal = {
+    ...baseMessage,
+    id: 'message-draft',
+    authorType: 'system' as const,
+    author: undefined,
+    messageType: 'system' as const,
+    text: 'Proposed an automation: Weekly changelog.',
+    draftProposed: {
+      automationId: 'automation-7',
+      automationName: 'Weekly changelog',
+      description: 'Summarize what shipped each week.',
+      triggerSummaries: ['Every Monday at 9:00 AM'],
+      suggestedScope: 'workstream' as const,
+      ready: true,
+    },
+  };
+
+  it('shows what it would create rather than describing it', () => {
+    render(<MessageBlock {...actions} message={proposal} />);
+
+    const group = screen.getByRole('group');
+    expect(group.textContent).toContain('Weekly changelog');
+    expect(group.textContent).toContain('Summarize what shipped each week.');
+    // The triggers are the decision. A card that said "runs on a schedule"
+    // would leave somebody accepting a schedule they never saw.
+    expect(within(group).getByRole('list', { name: 'Triggers' }).textContent)
+      .toContain('Every Monday at 9:00 AM');
+  });
+
+  it('says who will be able to manage it, which acceptance freezes', () => {
+    render(<MessageBlock {...actions} message={proposal} />);
+    expect(screen.getByRole('group').textContent).toContain('This work stream can manage it');
+
+    const personal = { ...proposal, draftProposed: { ...proposal.draftProposed, suggestedScope: 'personal' as const } };
+    const { unmount } = render(<MessageBlock {...actions} message={personal} />);
+    expect(screen.getAllByRole('group').at(-1)?.textContent).toContain('You can manage it');
+    unmount();
+  });
+
+  it('creates the automation it names', () => {
+    const onAcceptDraft = vi.fn();
+    render(<MessageBlock {...actions} message={proposal} onAcceptDraft={onAcceptDraft} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create this automation' }));
+
+    expect(onAcceptDraft).toHaveBeenCalledExactlyOnceWith('automation-7');
+  });
+
+  it('offers no accept while the agent is still asking', () => {
+    // Accepting an unfinished draft freezes the gap the agent is asking about,
+    // so the card says what is happening and offers nothing to press.
+    render(
+      <MessageBlock
+        {...actions}
+        message={{ ...proposal, draftProposed: { ...proposal.draftProposed, ready: false } }}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Create this automation' })).toBeNull();
+    expect(screen.getByRole('group').textContent).toContain('Still being drafted');
   });
 });

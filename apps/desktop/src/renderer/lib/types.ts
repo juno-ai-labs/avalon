@@ -472,6 +472,18 @@ export interface Message {
     code: string;
   };
   /**
+   * Set on the system row proposing an automation an agent drafted here. The
+   * room decides; the row renders as a card with what it would create.
+   */
+  draftProposed?: {
+    automationId: string;
+    automationName: string;
+    description: string;
+    triggerSummaries: string[];
+    suggestedScope: 'personal' | 'workspace' | 'workstream';
+    ready: boolean;
+  };
+  /**
    * Set on the system row telling this room that the person an automation runs
    * as has lost access. The row renders as a card with one action rather than
    * as prose, because there is something to do about it.

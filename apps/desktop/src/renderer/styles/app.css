@@ -3149,6 +3149,24 @@ pre {
   padding: 4px 10px;
 }
 .principal-unavailable-card .system-message-toggle:disabled { opacity: 0.55; }
+/* The proposal card. Same system-row frame — this is still Rally noting
+   something — with the triggers listed rather than described, because what the
+   automation would do is the thing being decided. */
+.automation-draft-card .system-message-toggle {
+  border: 1px solid var(--av-sys-color-border-subtle);
+  border-radius: 6px;
+  font-size: 11.5px;
+  margin-top: 8px;
+  padding: 4px 10px;
+}
+.automation-draft-card .system-message-toggle:disabled { opacity: 0.55; }
+.automation-draft-triggers {
+  color: var(--av-sys-color-text-subtle);
+  font-size: 11.5px;
+  list-style: disc;
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
 .system-message-toggle svg { transition: transform 140ms; }
 .system-message-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
 

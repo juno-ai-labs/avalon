@@ -1677,6 +1677,16 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && inspectedResourceId && railOpen),
   });
 
+  // Creating the automation a proposal card names. Invalidates the rail so a
+  // room's new automation appears where its participants manage it.
+  const acceptProposedAutomation = useMutation({
+    mutationFn: (automationId: string) => api!.acceptProposedAutomation(automationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['workstream-automations', id] });
+      void queryClient.invalidateQueries({ queryKey: ['automations'] });
+    },
+  });
+
   // Taking over an automation whose principal lost access. Invalidates the
   // rail's list because the takeover can repair an automation the room was
   // showing as needing attention.
@@ -2242,6 +2252,13 @@ export function WorkstreamScreen(): React.JSX.Element {
                 ? claimExecutionPrincipal.variables ?? null
                 : null}
               claimExecutionPrincipalError={claimExecutionPrincipal.error?.message}
+              {...(api ? { onAcceptDraft: (automationId: string) => {
+                acceptProposedAutomation.mutate(automationId);
+              } } : {})}
+              acceptingDraftFor={acceptProposedAutomation.isPending
+                ? acceptProposedAutomation.variables ?? null
+                : null}
+              acceptDraftError={acceptProposedAutomation.error?.message}
               virtualizer={transcriptVirtualizer}
             />
           )}
