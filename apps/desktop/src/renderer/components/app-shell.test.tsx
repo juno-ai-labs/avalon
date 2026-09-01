@@ -8,6 +8,7 @@ import {
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
   backgroundRealtimeWorkstreamIds,
+  invitationAccountMismatch,
   openWorkstreamId,
   RUNNING_HARNESS_STATUSES,
   showsAutomation,
@@ -70,6 +71,15 @@ describe('openWorkstreamId', () => {
     expect(openWorkstreamId('/workstreams/new')).toBeNull();
     expect(openWorkstreamId('/automations/abc')).toBeNull();
     expect(openWorkstreamId(`/workstreams/${workstreamId}/settings`)).toBeNull();
+  });
+});
+
+describe('invitationAccountMismatch', () => {
+  it('explains which account must sign in without exposing a dead invitation prompt', () => {
+    expect(invitationAccountMismatch('invited@example.com', 'active@example.com')).toBe(
+      'This invitation is for invited@example.com. Sign in with that account to continue.',
+    );
+    expect(invitationAccountMismatch('Invited@example.com', 'invited@example.com')).toBeNull();
   });
 });
 

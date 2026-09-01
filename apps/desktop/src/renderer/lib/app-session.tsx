@@ -63,12 +63,14 @@ export interface AppSessionValue {
   activateWorkspace: (region: Region, workspaceId: string, operationId?: string) => Promise<void>;
   acceptInvitation: (region: Region, invitationId: string, operationId?: string) => Promise<void>;
   declineInvitation: (region: Region, invitationId: string) => Promise<void>;
+  reconnectAccountIdentity: () => Promise<void>;
   leaveWorkspace: (workspaceId: string, expectedOutcome: WorkspaceDepartureOutcome) => Promise<WorkspaceDeparture>;
   createDevelopmentSession: () => Promise<void>;
   finishWorkspaceSetup: (name: string, region: Region, operationId?: string) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
   signOut: () => Promise<void>;
   signOutIfCredentialCleared: () => Promise<void>;
+  surrenderActiveWorkspace: () => Promise<void>;
   clearDeepLinkError: () => void;
 }
 
@@ -80,6 +82,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'activateWorkspace'
   | 'cancelDesktopAuthAttempt'
   | 'consumePendingDeepLinks'
+  | 'createDesktopAuthAttempt'
   | 'createDevelopmentSession'
   | 'createWorkspace'
   | 'declineInvitation'
@@ -96,6 +99,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'openSettings'
   | 'refreshSession'
   | 'showDeepLinkError'
+  | 'surrenderActiveWorkspace'
 >;
 
 function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Region {
@@ -143,8 +147,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const bridge = useMemo<AppSessionDesktopBridge>(() => desktopBridge(), []);
   const queryClient = useQueryClient();
 
-  const applySession = useCallback((nextSession: DesktopSession): void => {
+  const applySession = useCallback((nextSession: DesktopSession | null): void => {
     setSession(nextSession);
+    if (!nextSession) {
+      setDeviceSelectedRegion('global');
+      setRegion('global');
+      queryClient.clear();
+      return;
+    }
     const nextRegion = nextSession.workspace?.region
       ?? (runtime?.api.eu === nextSession.apiBaseUrl ? 'eu' : 'global');
     setDeviceSelectedRegion(nextRegion);
@@ -266,6 +276,28 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     [bridge],
   );
 
+  const reconnectAccountIdentity = useCallback(async (): Promise<void> => {
+    if (!runtime) throw new Error('Rally is still loading its identity service.');
+    let attemptId: string | null = null;
+    try {
+      const authAttempt = await bridge.createDesktopAuthAttempt({
+        apiBaseUrl: runtime.api.global,
+        region: 'global',
+      });
+      attemptId = authAttempt.attemptId;
+      const identityApi = new RallyApi(runtime.api.global, null);
+      const url = await identityApi.beginGoogleLogin(
+        'global',
+        'rallywithai://auth/complete',
+        { authAttempt },
+      );
+      await bridge.openExternal(url);
+    } catch (error) {
+      if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
+      throw error;
+    }
+  }, [bridge, runtime]);
+
   const activateWorkspace = useCallback(async (selectedRegion: Region, workspaceId: string, operationId?: string): Promise<void> => {
     const nextSession = await bridge.activateWorkspace({ region: selectedRegion, workspaceId, operationId });
     applySession(nextSession);
@@ -373,6 +405,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     setRegion('global');
     queryClient.clear();
   }, [bridge, queryClient]);
+
+  const surrenderActiveWorkspace = useCallback(async (): Promise<void> => {
+    const departing = session?.workspace ?? null;
+    const nextSession = await bridge.surrenderActiveWorkspace();
+    if (departing) await clearWorkspaceDrafts(departing.region, departing.id);
+    queryClient.clear();
+    applySession(nextSession);
+  }, [applySession, bridge, queryClient, session?.workspace]);
 
   const selectRegion = useCallback((nextRegion: Region) => {
     setDeviceSelectedRegion(nextRegion);
@@ -787,8 +827,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       createDevelopmentSession,
       finishWorkspaceSetup,
       refreshSession,
+      reconnectAccountIdentity,
       signOut,
       signOutIfCredentialCleared,
+      surrenderActiveWorkspace,
       clearDeepLinkError: () => setDeepLinkError(null),
     }),
     [
@@ -808,9 +850,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       region,
       runtime,
       refreshSession,
+      reconnectAccountIdentity,
       session,
       signOut,
       signOutIfCredentialCleared,
+      surrenderActiveWorkspace,
       selectRegion,
       setWorkspaceName,
       editWorkspaceSetup,

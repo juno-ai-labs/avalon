@@ -307,6 +307,34 @@ describe('WorkspaceSocketProvider', () => {
     expect(screen.queryByText('00000000-0000-7000-8000-000000000003')).not.toBeInTheDocument();
   });
 
+  it('notifies the session owner when the active workspace revokes access', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const onAccessRevoked = vi.fn();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket: vi.fn(async () => ({
+            url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+            ticket: 'workspace-ticket',
+            protocols: socketTicketProtocols('workspace-ticket'),
+          })) }}
+          onAccessRevoked={onAccessRevoked}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div>workspace</div>
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE));
+
+    expect(onAccessRevoked).toHaveBeenCalledOnce();
+  });
+
   it.each([
     {
       closeCode: WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
