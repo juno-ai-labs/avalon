@@ -148,12 +148,13 @@ describe("connector OAuth handoff", () => {
     expect(target.pathname).toBe(`/global/${WORKSPACE_ID}/auth/complete`);
   });
 
-  it("persists the legacy return for a desktop start without a handoff capability", async () => {
+  it("persists the legacy return when the route maps an absent capability to version one", async () => {
     const { auth, env, regional } = fixture();
 
     await new ConnectionService(env, auth).beginGoogle({
       scope: "personal",
       capabilities: ["gmail.read"],
+      desktopHandoffVersion: 1,
     });
 
     expect(regional.prepare("SELECT return_uri FROM oauth_states").get()).toEqual({
