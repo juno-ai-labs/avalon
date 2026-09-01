@@ -497,7 +497,7 @@ export function WorkspaceSettingsScreen({
   standaloneWindow = false,
   workspace,
 }: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
-  const { api, runtime, session, signOut } = useAppSession();
+  const { api, runtime, session, leaveWorkspace, signOut } = useAppSession();
   const workspaceSocket = useOptionalWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   // Fails open: `digestsEnabled` defaults `true` and only an explicit `false`
@@ -551,6 +551,7 @@ export function WorkspaceSettingsScreen({
   } | null>(null);
   const [webhookCopied, setWebhookCopied] = useState<'endpoint' | 'secret' | null>(null);
   const [webhookRotationTarget, setWebhookRotationTarget] = useState<WorkstreamConnection | null>(null);
+  const [leaveConfirmationOpen, setLeaveConfirmationOpen] = useState(false);
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
     [userTimezone, workspaceTimezone],
@@ -562,6 +563,11 @@ export function WorkspaceSettingsScreen({
     enabled: Boolean(api),
     refetchOnMount: 'always',
     staleTime: 30_000,
+  });
+  const leavingClosesWorkspace = members.data?.length === 1;
+  const departWorkspace = useMutation({
+    mutationFn: () => leaveWorkspace(workspace.id),
+    onSuccess: () => setLeaveConfirmationOpen(false),
   });
   const invitations = useQuery({
     queryKey: ['workspace-invitations'],
@@ -1164,7 +1170,7 @@ export function WorkspaceSettingsScreen({
                   <div className="settings-preference-row">
                     <span className="settings-row-icon"><Building2 aria-hidden="true" size={18} /></span>
                     <span className="settings-row-copy">
-                      <strong>Organization</strong>
+                      <strong>Workspace</strong>
                       <small>The shared Rally workspace active in this desktop app.</small>
                     </span>
                     <span className="settings-row-value"><strong>{workspace.name}</strong></span>
@@ -1376,6 +1382,29 @@ export function WorkspaceSettingsScreen({
                     )}
                   </div>
                 )}
+                <div className="settings-pane-heading settings-pane-heading-spaced">
+                  <h2>Workspace access</h2>
+                  <p>Leaving removes this workspace from Rally on this device.</p>
+                </div>
+                <div className="settings-list-card">
+                  <div className="settings-preference-row">
+                    <span className="settings-row-icon"><LogOut aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-copy">
+                      <strong>{leavingClosesWorkspace ? 'Leave and close this workspace' : 'Leave this workspace'}</strong>
+                      <small>{leavingClosesWorkspace
+                        ? 'You are the last member. The workspace will become unavailable without deleting its retained data.'
+                        : 'The workspace stays available to its other members.'}</small>
+                    </span>
+                    <Button
+                      className="button-danger"
+                      disabled={members.isLoading || members.isError}
+                      onClick={() => setLeaveConfirmationOpen(true)}
+                    >
+                      {leavingClosesWorkspace ? 'Leave and close workspace' : 'Leave this workspace'}
+                    </Button>
+                  </div>
+                </div>
+                {members.isError && <InlineError>Rally could not verify whether anyone else belongs to this workspace.</InlineError>}
               </section>
             )}
 
@@ -2170,6 +2199,42 @@ export function WorkspaceSettingsScreen({
           open={Boolean(reconnectTarget)}
           title={`Refresh ${reconnectTarget?.displayName ?? 'this connection'}?`}
         />
+        <Modal
+          description={leavingClosesWorkspace
+            ? `You are the last member. ${workspace.name} will close, and nobody will be able to open it again.`
+            : `${workspace.name} stays available to its other members.`}
+          footer={(
+            <>
+              <Button
+                disabled={departWorkspace.isPending}
+                onClick={() => {
+                  setLeaveConfirmationOpen(false);
+                  departWorkspace.reset();
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="button-danger"
+                disabled={departWorkspace.isPending}
+                onClick={() => departWorkspace.mutate()}
+              >
+                {departWorkspace.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                {leavingClosesWorkspace ? 'Leave and close' : 'Leave workspace'}
+              </Button>
+            </>
+          )}
+          onOpenChange={(open) => {
+            if (!open && !departWorkspace.isPending) {
+              setLeaveConfirmationOpen(false);
+              departWorkspace.reset();
+            }
+          }}
+          open={leaveConfirmationOpen}
+          title={leavingClosesWorkspace ? `Leave and close ${workspace.name}?` : `Leave ${workspace.name}?`}
+        >
+          {departWorkspace.error && <InlineError>{departWorkspace.error.message}</InlineError>}
+        </Modal>
         <Modal
           description={disconnectTarget?.scope === 'workspace'
             ? 'This removes the connection and its tools from everyone in this workspace.'

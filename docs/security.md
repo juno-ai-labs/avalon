@@ -80,8 +80,10 @@ are canonical storage services, not authorization layers.
   frontmatter before its sanitised SVG is inserted. The application never calls
   Mermaid's binding callback, so a diagram cannot install click handlers. A
   rejected parse leaves the original source visible.
-- Refresh material is encrypted in the main process. By default the desktop uses
-  an application-wide embedded key so a saved session survives signing-identity
+- Refresh material is encrypted in the main process. One versioned envelope
+  holds the Global identity credential plus one credential/profile binding per
+  activated workspace; renderers receive only the active short-lived session.
+  By default the desktop uses an application-wide embedded key so the saved set survives signing-identity
   and keystore changes. Application → **Lockdown mode** replaces that with
   Electron `safeStorage`, binding the saved authentication state to the
   operating-system keystore. An in-app toggle re-encrypts every durable session
@@ -101,8 +103,9 @@ are canonical storage services, not authorization layers.
   login ticket or a non-secret connector result — never provider codes or tokens.
 - Unsent composer drafts — their text and the bytes of their attachments — are
   cached in the renderer's IndexedDB so a restart does not discard them. They are
-  workspace content stored unencrypted under Electron's `userData` directory, they
-  expire after 12 hours, and signing out deletes every one of them. Nothing else
+  workspace content stored unencrypted under Electron's `userData` directory,
+  keyed by workspace, they expire after 12 hours, and signing out deletes every
+  one of them. Leaving deletes only that workspace's scope. Nothing else
   is written there, and no credential ever is.
   [`composer-drafts.md`](composer-drafts.md) owns the mechanism.
 - The macOS menu bar status item is built entirely in the main process, from
@@ -706,6 +709,28 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-31 — Lockdown encrypts the complete account credential set
+
+**What changed:** The main-owned session envelope now stores a retained Global
+identity credential and independent region-bound workspace credentials with
+matching cached profiles. Version-1 values migrate losslessly into the
+version-2 set. Lockdown re-encrypts the whole set, and sign-out revokes every
+stored session before deleting every local credential/profile copy.
+
+**Why:** Switching workspaces cannot require renderer-held refresh material or
+a fresh Google sign-in, and encrypting only the active credential would leave
+background workspace authority outside the Lockdown promise.
+
+**Considered and rejected:** One rebindable refresh token and one encrypted file
+per workspace. The former cannot cross from EU to Global discovery; the latter
+creates several independently committed files whose active pointer can disagree
+after a crash.
+
+**Consequences:** Exact-credential refresh failure removes one workspace without
+touching siblings. A failed online logout is reported, but local sign-out still
+deletes the complete set and all drafts. The preload gains only scoped actions;
+it never exposes refresh tokens or the encrypted set.
 
 ### 2026-08-30 — Spoken messages keep Azure authority in the regional Worker
 

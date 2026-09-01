@@ -2,7 +2,12 @@ import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
 import type { ThemeChoice } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
-import type { ClientFeatureFlags, TelemetryEventProperties } from '@rally/contracts';
+import type {
+  ClientFeatureFlags,
+  TelemetryEventProperties,
+  WorkspaceAttention,
+  WorkspaceDeparture,
+} from '@rally/contracts';
 import type {
   DesktopRealtimeSocketCloseInput,
   DesktopRealtimeSocketEvent,
@@ -289,6 +294,7 @@ export interface DesktopPendingWorkspaceInvitation {
 
 export interface DesktopWorkspaceOnboardingState {
   workspace: DesktopWorkspaceSummary | null;
+  workspaces: DesktopWorkspaceSummary[];
   invitations: DesktopPendingWorkspaceInvitation[];
 }
 
@@ -389,6 +395,8 @@ export interface RallyDesktopBridge {
   }) => Promise<DesktopSession>;
   createDevelopmentSession: (apiBaseUrl: string, workspaceName: string) => Promise<DesktopSession>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
+  getWorkspaceAttention: (input: { workspaceId: string }) => Promise<WorkspaceAttention>;
+  leaveWorkspace: (input: { workspaceId: string }) => Promise<WorkspaceDeparture>;
   activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
   createWorkspace: (input: { region: RallyRegion; name: string; operationId?: string }) => Promise<DesktopSession>;
   acceptInvitation: (input: { region: RallyRegion; invitationId: string; operationId?: string }) => Promise<DesktopSession>;
@@ -415,6 +423,7 @@ export interface RallyDesktopBridge {
    * the thing the person is left with.
    */
   closeMeetingNotes: (noteId?: string) => Promise<void>;
+  setMeetingRecordingState: (input: { workspaceId: string; recording: boolean }) => Promise<void>;
   getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   startMeetingSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;

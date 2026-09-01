@@ -10,7 +10,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { IdSchema } from '@rally/contracts';
+import { IdSchema, type WorkspaceDeparture } from '@rally/contracts';
 import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
 import type {
   RallyDesktopBridge,
@@ -20,7 +20,7 @@ import type {
 } from '../../common/desktop';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
-import { clearAllDrafts } from './draft-cache';
+import { clearAllDrafts, clearWorkspaceDrafts } from './draft-cache';
 import {
   readDevicePreferences,
   setDeviceSelectedRegion,
@@ -63,6 +63,7 @@ export interface AppSessionValue {
   activateWorkspace: (region: Region, workspaceId: string, operationId?: string) => Promise<void>;
   acceptInvitation: (region: Region, invitationId: string, operationId?: string) => Promise<void>;
   declineInvitation: (region: Region, invitationId: string) => Promise<void>;
+  leaveWorkspace: (workspaceId: string) => Promise<WorkspaceDeparture>;
   createDevelopmentSession: () => Promise<void>;
   finishWorkspaceSetup: (name: string, region: Region, operationId?: string) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
@@ -88,6 +89,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'getSession'
   | 'hasStoredCredential'
   | 'logout'
+  | 'leaveWorkspace'
   | 'onDeepLink'
   | 'onSessionChanged'
   | 'openExternal'
@@ -282,6 +284,13 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     await bridge.declineInvitation({ region: invitationRegion, invitationId });
   }, [bridge]);
 
+  const leaveWorkspace = useCallback(async (workspaceId: string): Promise<WorkspaceDeparture> => {
+    const departure = await bridge.leaveWorkspace({ workspaceId });
+    await clearWorkspaceDrafts(workspaceId);
+    queryClient.removeQueries();
+    return departure;
+  }, [bridge, queryClient]);
+
   const refreshSession = useCallback(async (): Promise<DesktopSession> => {
     const nextSession = await bridge.refreshSession();
     setSession(nextSession);
@@ -296,7 +305,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
 
   const finishWorkspaceSetup = useCallback(async (name: string, selectedRegion: Region, operationId?: string): Promise<void> => {
     const normalized = name.trim();
-    if (normalized.length < 2) throw new Error('Enter an organization name with at least two characters.');
+    if (normalized.length < 2) throw new Error('Enter a workspace name with at least two characters.');
     setDeviceWorkspaceName(normalized);
     setWorkspaceNameState(normalized);
     const nextSession = await bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId });
@@ -324,7 +333,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // discard the draft the last run left behind.
     if (previousSession && !sessionsShareDraftScope(previousSession, session)) {
       abandonPendingWorkstreamFeedOpen();
-      void clearAllDrafts();
+      const sameAccount = session?.user.id === previousSession.user.id;
+      if (!sameAccount) void clearAllDrafts();
     }
   }, [session]);
 
@@ -556,15 +566,16 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const token = deepLink.searchParams.get('token');
         const inviteRegion = deepLink.searchParams.get('region');
         if (!token || token.length < 20 || (inviteRegion !== 'global' && inviteRegion !== 'eu')) {
-          reportDeepLinkFailure('Rally received an invalid organization invitation.');
+          reportDeepLinkFailure('Rally received an invalid workspace invitation.');
           return;
         }
         setPendingInvitation({ token, region: inviteRegion });
         setDeepLinkError(null);
         // Invitations are discovered from the verified platform identity.
         // Refresh an already-mounted empty setup gate immediately instead of
-        // leaving the user on “Create organization” until the next launch.
+        // leaving the user on “Create workspace” until the next launch.
         void queryClient.invalidateQueries({ queryKey: ['workspace-onboarding'] });
+        void queryClient.invalidateQueries({ queryKey: ['workspace-account-directory'] });
         return;
       }
       if (!isDesktopDeepLinkProtocol(deepLink.protocol) || deepLink.hostname !== 'auth' || deepLink.pathname !== '/complete') {
@@ -760,6 +771,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       activateWorkspace,
       acceptInvitation,
       declineInvitation,
+      leaveWorkspace,
       createDevelopmentSession,
       finishWorkspaceSetup,
       refreshSession,
@@ -774,6 +786,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       booting,
       createDevelopmentSession,
       declineInvitation,
+      leaveWorkspace,
       deepLinkError,
       exchangingTicket,
       finishWorkspaceSetup,

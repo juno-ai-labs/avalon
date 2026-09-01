@@ -142,7 +142,7 @@ async function browserOnboardingRequest<T>(
   path: string,
   options: { body?: unknown; method?: 'GET' | 'POST' } = {},
 ): Promise<T> {
-  if (!browserSession) throw new Error('Sign in before continuing organization setup.');
+  if (!browserSession) throw new Error('Sign in before continuing workspace setup.');
   const response = await fetch(`${browserGlobalApiBaseUrl()}${path}`, {
     method: options.method ?? 'GET',
     headers: {
@@ -154,7 +154,7 @@ async function browserOnboardingRequest<T>(
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { message?: string } | null;
-    throw new Error(payload?.message ?? `Organization setup failed (${response.status})`);
+    throw new Error(payload?.message ?? `Workspace setup failed (${response.status})`);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -181,7 +181,7 @@ async function browserOnboardingSession(
     || (expected.workspaceId !== undefined && raw.workspace.id !== expected.workspaceId)
     || (identityEmail !== undefined && raw.user.email.toLocaleLowerCase('en-US') !== identityEmail)
   ) {
-    throw new Error('Rally rejected a workspace session that did not match this organization request.');
+    throw new Error('Rally rejected a workspace session that did not match this workspace request.');
   }
   return installBrowserSession(raw, browserGlobalApiBaseUrl());
 }
@@ -354,6 +354,37 @@ const browserBridge: RallyDesktopBridge = {
   async getOnboardingState() {
     return browserOnboardingRequest<DesktopWorkspaceOnboardingState>('/onboarding');
   },
+  async getWorkspaceAttention({ workspaceId }) {
+    if (!browserSession?.workspace || browserSession.workspace.id !== workspaceId) {
+      throw new Error('The browser keeps only its active workspace session.');
+    }
+    const response = await fetch(`${browserSession.apiBaseUrl}/workspace/attention`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${browserSession.accessToken}` },
+    });
+    if (!response.ok) throw new Error(`Workspace attention failed (${response.status})`);
+    return response.json();
+  },
+  async leaveWorkspace({ workspaceId }) {
+    if (!browserSession?.workspace || browserSession.workspace.id !== workspaceId) {
+      throw new Error('The browser keeps only its active workspace session.');
+    }
+    const response = await fetch(
+      `${browserSession.apiBaseUrl}/workspaces/${encodeURIComponent(workspaceId)}/membership`,
+      {
+        method: 'DELETE',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${browserSession.accessToken}` },
+      },
+    );
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { message?: string } | null;
+      throw new Error(payload?.message ?? `Leaving the workspace failed (${response.status})`);
+    }
+    const departure = await response.json();
+    browserSession = null;
+    browserRefreshToken = null;
+    notifyBrowserSession();
+    return departure;
+  },
   async activateWorkspace({ region, workspaceId }) {
     return browserOnboardingSession(
       '/onboarding/workspace/activate',
@@ -409,6 +440,9 @@ const browserBridge: RallyDesktopBridge = {
     // not even be reachable. Closing is the whole of what this can do here.
     void noteId;
     window.close();
+  },
+  async setMeetingRecordingState() {
+    // Browser development has no main-process workspace switch coordinator.
   },
   async getMeetingAudioPermissions() {
     return { microphone: 'unknown', systemAudio: 'unknown' };

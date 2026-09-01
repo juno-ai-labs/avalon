@@ -30,7 +30,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { WORKSTREAM_SIDEBAR_FACEPILE_LIMIT } from '@rally/contracts';
@@ -78,6 +78,7 @@ interface SidebarProps {
   onLoadMoreWorkstreams?: () => void;
   loading?: boolean;
   meetingRecordingAvailable?: boolean;
+  accountMenu?: ReactNode;
   onArchiveNote: (note: NoteSummary) => Promise<void>;
   onArchiveWorkstream: (workstream: WorkstreamSummary) => Promise<void>;
   onApplyWorkstreamBatch: (
@@ -943,6 +944,7 @@ export function Sidebar({
   workstreams,
   loading,
   meetingRecordingAvailable = false,
+  accountMenu,
   onArchiveNote,
   onArchiveWorkstream,
   onApplyWorkstreamBatch,
@@ -1912,7 +1914,7 @@ export function Sidebar({
         */}
         {/* <OnboardingChecklist /> */}
 
-        <DropdownMenu.Root>
+        {accountMenu ?? <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button className="account-trigger window-no-drag" type="button">
               <Avatar member={workspace.currentUser} size="small" />
@@ -1940,7 +1942,7 @@ export function Sidebar({
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+        </DropdownMenu.Root>}
         <div
           aria-label="Resize navigation"
           aria-orientation="vertical"

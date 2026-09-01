@@ -124,7 +124,7 @@ export function SignInScreen(): React.JSX.Element {
       <section className="signin-card window-no-drag" aria-labelledby="signin-heading">
         <RallyMark className="signin-mark" />
         <h1 id="signin-heading">Welcome to Rally</h1>
-        <p>Sign in first. Rally will then open your workspace, show invitations, or help you create an organization.</p>
+        <p>Sign in first. Rally will then open your workspace, show invitations, or help you create a workspace.</p>
 
         <Button className="button-primary signin-button" disabled={starting || exchangingTicket} onClick={beginGoogleLogin}>
           {starting || exchangingTicket ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ExternalLink aria-hidden="true" size={16} />}
@@ -176,7 +176,7 @@ export function RegionOnboarding(): React.JSX.Element {
     try {
       await finishWorkspaceSetup(name, selected, operationId);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Rally could not create this organization.');
+      setError(caught instanceof Error ? caught.message : 'Rally could not create this workspace.');
     } finally {
       setWorking(false);
     }
@@ -191,13 +191,13 @@ export function RegionOnboarding(): React.JSX.Element {
         </div>
         <div className="onboarding-copy">
           <p className="eyebrow">No invitations found</p>
-          <h1 id="region-heading">Create your organization</h1>
+          <h1 id="region-heading">Create your workspace</h1>
           <p>Name your shared workspace and choose where Rally should keep its data.</p>
           {session && <p className="signed-in-identity">Signed in as {session.user.email}</p>}
         </div>
 
         <label className="onboarding-field">
-          <span>Organization name</span>
+          <span>Workspace name</span>
           <span className="onboarding-input-wrap">
             <Building2 aria-hidden="true" size={16} />
             <input
@@ -225,7 +225,7 @@ export function RegionOnboarding(): React.JSX.Element {
         {error && <InlineError>{error}</InlineError>}
         <Button className="button-primary onboarding-continue" disabled={working || name.trim().length < 2} onClick={() => void continueSetup()}>
           {working && <LoaderCircle aria-hidden="true" className="spin" size={16} />}
-          Create organization
+          Create workspace
         </Button>
         <button className="text-button onboarding-signout" onClick={() => void signOut()} type="button">Sign out</button>
       </section>

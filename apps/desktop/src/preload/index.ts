@@ -158,6 +158,8 @@ const bridge: RallyDesktopBridge = {
   exchangeDesktopTicket: (input) => ipcRenderer.invoke('auth:exchange-desktop-ticket', input) as Promise<DesktopSession>,
   createDevelopmentSession: (apiBaseUrl, workspaceName) => ipcRenderer.invoke('auth:create-development-session', { apiBaseUrl, workspaceName }) as Promise<DesktopSession>,
   getOnboardingState: () => ipcRenderer.invoke('onboarding:get-state') as Promise<DesktopWorkspaceOnboardingState>,
+  getWorkspaceAttention: (input) => ipcRenderer.invoke('workspace:get-attention', input),
+  leaveWorkspace: (input) => ipcRenderer.invoke('workspace:leave', input),
   activateWorkspace: (input) => ipcRenderer.invoke('onboarding:activate-workspace', input) as Promise<DesktopSession>,
   createWorkspace: (input) => ipcRenderer.invoke('onboarding:create-workspace', input) as Promise<DesktopSession>,
   acceptInvitation: (input) => ipcRenderer.invoke('onboarding:accept-invitation', input) as Promise<DesktopSession>,
@@ -171,6 +173,7 @@ const bridge: RallyDesktopBridge = {
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,
   closeMeetingNotes: (noteId) => ipcRenderer.invoke('system:close-meeting-notes', noteId) as Promise<void>,
+  setMeetingRecordingState: (input) => ipcRenderer.invoke('meeting:set-recording-state', input) as Promise<void>,
   getMeetingAudioPermissions: () =>
     ipcRenderer.invoke('meeting-audio:get-permissions') as Promise<DesktopMeetingAudioPermissions>,
   prepareMeetingAudioPermissions: () =>
