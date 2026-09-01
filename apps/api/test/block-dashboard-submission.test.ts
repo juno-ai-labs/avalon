@@ -47,12 +47,27 @@ const workflowInput = (): WorkstreamWorkflowInput => ({
 } as WorkstreamWorkflowInput);
 
 /**
- * The parts of the frozen surface that authorization actually reads. Every
- * lookup below goes through `toolPolicyForCall`, which searches these two
- * collections and nothing else.
+ * An empty frozen surface carrying only the core plugins each case needs.
+ *
+ * Spelled out rather than cast: receipt resolution reads `builtinPluginIds`
+ * for the loadable-built-in arm as well as the two collections the lookups
+ * here traverse, and a cast that hides a missing collection turns a future
+ * case that reaches that arm into a TypeError instead of a closed door.
  */
-function frozenSurface(corePlugins: HarnessPlugin[]) {
-  return { corePlugins, plugins: [] } as unknown as Parameters<typeof resolveHarnessToolReceiptPolicy>[1];
+function frozenSurface(corePlugins: HarnessPlugin[]): Parameters<typeof resolveHarnessToolReceiptPolicy>[1] {
+  return {
+    coreTools: [],
+    corePlugins,
+    tools: [],
+    plugins: [],
+    builtinPluginIds: new Set(),
+    frozenConnections: new Map(),
+    pluginSurfaceHashes: new Map(),
+    legacyPluginSurfaceHashes: new Map(),
+    connectionByTool: new Map(),
+    idempotencyByTool: new Map(),
+    modeByTool: new Map(),
+  };
 }
 
 function coreSurface(extra: HarnessPlugin[] = []) {
