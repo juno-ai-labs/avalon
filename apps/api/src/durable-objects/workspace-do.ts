@@ -43,6 +43,7 @@ import {
   WorkstreamSocketCommandResultSchema,
   type AutomationAttentionReason,
   type AutomationSummary,
+  type WorkstreamAutomationSummary,
   type AutomationDraftCreationClaimRequest,
   type AutomationDraftCreationClaimResult,
   type WorkspaceSidebar,
@@ -3910,6 +3911,74 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // Carried beside the status rather than folded into it. Both codes the
         // cutover writes arrive on an automation it also paused, so the status
         // alone says "paused" and nothing says why.
+        attention: automationAttention(row.attention_code),
+        nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
+        lastRunAt: null,
+        updatedAt: new Date(row.projected_at).toISOString(),
+        updateAvailable: false,
+      })),
+    };
+  }
+
+  /**
+   * The automations one work stream owns, for that work stream's rail.
+   *
+   * The counterpart to the sidebar's list, which excludes exactly these rows.
+   * A room's automation is managed by the room's participants, so the gate is
+   * participation rather than authorship: the person who created it may be
+   * gone, and the automation is still theirs to pause.
+   */
+  async listWorkstreamAutomations(input: unknown): Promise<{ items: WorkstreamAutomationSummary[] }> {
+    await this.initialized;
+    const request = z.object({
+      workspaceId: WorkspaceIdSchema,
+      workstreamId: IdSchema,
+      userId: UserIdSchema,
+    }).strict().parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      throw new Error("automation_directory_access_denied");
+    }
+    // Whoever may read the room may read what it owns. Answered from the
+    // viewer row rather than from the automation, which knows nothing about
+    // who is in the room.
+    const viewer = this.state.storage.sql.exec<{ listable: number }>(
+      `SELECT viewer.listable
+         FROM workspace_workstream_viewers viewer
+         JOIN workspace_workstream_directory directory
+           ON directory.workstream_id = viewer.workstream_id
+          AND directory.authority_generation = viewer.authority_generation
+        WHERE viewer.workstream_id = ? AND viewer.user_id = ?`,
+      request.workstreamId,
+      request.userId,
+    ).toArray()[0];
+    if (!viewer || viewer.listable !== 1) throw new Error("automation_directory_access_denied");
+    const rows = this.state.storage.sql.exec<{
+      automation_id: string;
+      lifecycle: "draft" | "activating" | "active" | "paused";
+      title: string;
+      description: string;
+      next_run_at: number | null;
+      attention_code: string | null;
+      projected_at: number;
+    }>(`SELECT automation_id, lifecycle, title, description, next_run_at,
+              attention_code, projected_at
+          FROM automation_directory
+         WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
+         ORDER BY CASE lifecycle WHEN 'draft' THEN 1 ELSE 0 END,
+                  projected_at DESC, automation_id
+         LIMIT 250`, request.workstreamId).toArray();
+    return {
+      items: rows.map((row) => ({
+        id: row.automation_id,
+        name: row.title || "New automation",
+        description: row.description,
+        emailAddress: null,
+        status: row.lifecycle === "draft"
+          ? "draft"
+          : row.lifecycle === "paused"
+            ? "paused"
+            : row.attention_code ? "error" : "active",
         attention: automationAttention(row.attention_code),
         nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
         lastRunAt: null,

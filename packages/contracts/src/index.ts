@@ -1490,6 +1490,17 @@ export const AutomationSummarySchema = z.object({
   updateAvailable: z.boolean()
 });
 
+/**
+ * One automation in a work stream's rail.
+ *
+ * The sidebar summary without its scope, because every row in that list is
+ * owned by the work stream showing it. Carrying a scope here would be a second
+ * copy of a fact the list's own identity already establishes, and the only
+ * value it could hold is the one `ScopeSchema` deliberately does not offer.
+ */
+export const WorkstreamAutomationSummarySchema = AutomationSummarySchema.omit({ scope: true });
+export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSummarySchema>;
+
 export const AutomationRunSchema = z.object({
   id: IdSchema,
   automationSubscriptionId: IdSchema,
