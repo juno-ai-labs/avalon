@@ -23,7 +23,8 @@ retired WorkspaceDO subscription-row design and is not implementation guidance.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/automation-agent.ts` | The product authority: schema, socket room, draft admission, compiler dispatch, acceptance, schedules, occurrences, run provisioning, memory RPC, delivery receipts, and the projection outbox. |
-| `apps/api/src/durable-objects/automation-agent-memory.ts` | Automation-owned memory items and tables, and the generation-fenced tool executor generated runs reach them through. |
+| `apps/api/src/durable-objects/automation-agent-memory.ts` | Automation-owned memory items and tables, and the generation-fenced tool executor generated runs reach them through. Also the single definition site of `AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS`, the bound both of its search schemas read. |
+| `apps/api/src/services/memory-service.ts` | `freezeRunMemoryContext`: the admission recall frozen with a run, and the cut that fits a generated run's query to the bound above. The non-automation branch of the same function is `hybridMemorySearch`, which is bounded by nothing. |
 | `apps/api/src/durable-objects/automation-cutover.ts` | The one-shot WorkspaceDO import: the legacy witness and its hash, the per-automation import, and `removeLegacyAutomationSchema`. |
 | `apps/api/src/durable-objects/ordered-transcript-sqlite/` | The shared ordered-transcript schema and canonical JSON the draft conversation is stored in — see [`ordered-transcript-sqlite.md`](ordered-transcript-sqlite.md). |
 | `apps/api/src/services/automation-agent-service.ts` | The single REST boundary. Claims an automation ID, addresses the named object, and wraps each RPC in `withAutomationErrors` so the object's thrown code becomes an HTTP answer. Each call site wraps itself deliberately: a `Proxy` over the stub is shorter and does not work — its `get` trap hands the stub's own method the proxy as `this`, which a brand-checking stub rejects with a `TypeError`, and an RPC returns a pipelining thenable rather than a native `Promise`, so an `instanceof Promise` branch never attaches the mapping. Both failures are invisible until a request reaches a real object. |
@@ -457,6 +458,20 @@ email is addressed and rendered
 - **A delivery is claimed twice.** The second claim is answered `busy` with the
   lease's expiry and retried after it; settlement is fenced by the lease token,
   so an expired handler cannot overwrite its successor.
+- **A generated run's recall query is longer than the authority accepts.** The
+  query `freezeRunMemoryContext` builds is Rally's own text and is bounded by
+  nothing; the authority's search schemas cap one at
+  `AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS`. The caller cuts to that bound —
+  on a surrogate-safe offset — rather than being refused, because the refusal is
+  a `ZodError`, which carries no `code` for the setup classifier to read, so the
+  run ends on the catch-all `harness_execution_failed`. The frozen row keeps the full query and hashes
+  it, so the snapshot records what was asked even though the search ran on the
+  cut. **Recall selects nothing in practice regardless**: the search is an
+  `instr()` substring match, so a composite query of a title, an objective, and
+  a serialized definition matches no stored item at any length. That is known
+  and separate — picking it up means giving the frozen recall a query worth
+  matching, or sourcing it from `readAutomationMemoryBootstrap`, which needs
+  none.
 - **Too much mail.** Each automation admits at most
   `AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR` inbound runs per clock hour, counted in
   the same transaction that writes the receipt; over it, the message is receipted
@@ -488,12 +503,14 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; a search query accepted at exactly the bound and refused one character over it; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
 | `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
 | `apps/api/test/automation-run-context.test.ts`, `automation-connector-bindings.test.ts`, `run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | The frozen run context and its destinations, connector binding validation, and the live-generation re-check before a provider write. |
+| `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | Among the scoped-memory suite: a generated run whose composite recall query exceeds the authority's bound freezes its context instead of failing, and the query it sends is inside the bound and a prefix of the full one. |
+| `apps/api/test/automation-run-context.test.ts` | `pnpm --filter @rally/api test` | Also the end-to-end shape of that bound: `loadRunPromptContext` assembling the recall query from a real run's title, objective, and automation context, and the query reaching the authority inside its bound. The suite's other cases pre-seed `run_memory_contexts` to skip this branch, which is why the outage was invisible to them. |
 | `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts` | `pnpm --filter @rally/api test` | Pre-fetch and post-sender screening, admission receipts, and the address claim. |
 | `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out reaching AutomationAgent. |
 | `apps/desktop/src/renderer/lib/use-automation-agent-socket.test.tsx`, `screens/new-automation.test.tsx`, `screens/automation-overview.test.tsx` | `pnpm --filter @rally/desktop test` | Snapshot fencing against the compiler stream, the stable route, and both adapters. |
@@ -762,7 +779,7 @@ at all.
 
 ### 2026-09-01 — A generated run's frozen recall query fits its authority's bound
 
-**What changed:** `freezeRunMemoryContext` cut the query it sends
+**What changed:** `freezeRunMemoryContext` cuts the query it sends
 `AutomationAgent.executeMemoryTool` to
 `AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS`, which
 `automation-agent-memory.ts` now exports as the single definition site its two
@@ -770,19 +787,30 @@ search schemas read. No bound moved; the caller that was exceeding one now
 respects it.
 
 **Why:** Every generated run was failing before its first model turn. The recall
-query is Rally's own text — the child work stream's title and objective plus
-`JSON.stringify` of the frozen `AutomationRunContextV1`, which carries the whole
-compiled definition — and nothing bounded it, while the authority's schema caps a
-search query at 2,000 characters because that bound was written for the
-model-facing memory tools. Any automation whose definition pushed the
-concatenation past the cap made the object throw a `ZodError`. A Durable Object
-RPC flattens the error class, so the harness could not read it as an
-argument-validation failure — the path that would have handed the model a
-`tool_failed` — and ended the run `harness_execution_failed`, whose member-facing
-sentence says retrying will not help. It did not: the query was rebuilt
-identically every occurrence. Interactive work streams never reached the schema,
-because `hybridMemorySearch` takes the same query with no length bound at all,
-which is why messages kept answering while every automation stayed broken.
+query is Rally's own text — the child work stream's title and objective plus a
+serialized projection of the run's automation context, which carries the compiled
+definition, its overrides, and the automation's *materialized memory tables*
+(read live from the authority, so it grows on its own) — and
+nothing bounded it, while the authority's schema caps a search query at 2,000
+characters because that bound was written for the model-facing memory tools. Any
+automation whose context pushed the concatenation past the cap made the object
+throw a `ZodError`, and the run ended `harness_execution_failed`, whose
+member-facing sentence says retrying will not help. It did not: the query was
+rebuilt identically every occurrence.
+
+Two things about *why that code* are worth keeping, because both are easy to get
+wrong from the outside. This runs in run setup, which is terminal on any throw:
+there is no tool dispatch yet, so no version of this failure could have become a
+model-visible `tool_failed`, and building a classifier to make it one would buy
+nothing. And the catch-all code is not the RPC hop losing the error's class —
+SubstreamAgent classifies a setup throw by reading `error.code`, an own property
+that Cloudflare *does* preserve across RPC, and a `ZodError` simply carries none.
+A refusal thrown from inside a Durable Object still reaches its caller
+recognizably if it carries a code; this one had nothing to read.
+
+Interactive work streams never reached the schema at all, because
+`hybridMemorySearch` takes the same query with no length bound, which is why
+messages kept answering while every automation stayed broken.
 
 **Considered and rejected:** Raising the schema's cap, which moves a
 model-facing product bound to accommodate one internal caller and leaves the next
@@ -790,20 +818,31 @@ unbounded caller to find it again. Swallowing a failed automation recall the way
 `hybridMemorySearch` tolerates a failed retrieval leg: the same call carries the
 authority-generation fence, and degrading to empty recall would turn a refused
 `automation_memory_authority_fenced` — a run outliving the consent it was
-provisioned under — into a silent success. Switching the frozen recall to
+provisioned under — into a silent success. It is also not the fallback it looks
+like: with `recalled` null the code falls through to `hybridMemorySearch`, whose
+`resolveMemoryAccess` refuses any run carrying an automation subscription with
+`memory_automation_scope_retired`, so the alternative trades one failure for
+another on a different path. Switching the frozen recall to
 `readAutomationMemoryBootstrap`, which needs no query at all: that changes which
 memories a run sees, and belongs to whoever owns recall rather than to an
 outage fix.
 
-**Consequences:** An automation whose definition exceeds the bound recalls
-against the first 2,000 characters of its query rather than failing. Recall
-quality there is unchanged in practice and was never better: the automation
-memory search is an `instr()` substring match, so a multi-thousand-character
-composite query matched nothing before it started throwing. The frozen row still
-records the full query, so the context hash keeps identifying the complete recall
-input. Making that recall actually select memories is a separate change.
+**Consequences:** An automation whose context exceeds the bound recalls against
+the first 2,000 characters of its query rather than failing. The cut keeps the
+*head*, and `memoryQueryParts` is ordered title, objective, automation context,
+then this occurrence's trigger — so for any automation long enough to be cut, the
+trigger is precisely what is dropped, and the affected set grows on its own as an
+automation accumulates memory tables rather than being a fixed property of its
+definition. The frozen row records the pre-truncation query and hashes that, so a
+run that recalled nothing does not distinguish itself from one whose query was
+cut. Recall quality is unchanged in practice and was never better: the search is
+an `instr()` substring match — though the frozen row and the model-visible recall
+block still label the mode `fts_only` — so a multi-thousand-character composite
+query matched nothing before it started throwing. Making that recall actually select memories is a separate change: it needs the
+frozen recall to carry a query worth matching, or to read
+`readAutomationMemoryBootstrap`, which needs no query at all.
 
-Shipped in the pull request for this change.
+Shipped in #470.
 
 ### 2026-09-01 — Abandonment fences already-addressed automations
 

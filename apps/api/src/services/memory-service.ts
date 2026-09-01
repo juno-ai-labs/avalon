@@ -21,11 +21,14 @@ import {
   type WorkspaceMemoryOutboxRow,
 } from "../durable-objects/workspace-memory-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { truncateUtf16Safe } from "../lib/text";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
-import { AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS } from "../durable-objects/automation-agent-memory";
-import { executeAutomationMemoryToolForRun } from "./automation-memory-client";
+import {
+  AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS,
+  executeAutomationMemoryToolForRun,
+} from "./automation-memory-client";
 import { MEMORY_EMBEDDING_MODEL, runEmbeddingInference } from "./structured-inference";
 
 export const MEMORY_EMBEDDING_DIMENSIONS = 1_024;
@@ -105,6 +108,9 @@ function workspaceMemoryObject(env: Env, workspaceId: string) {
  * "query"`: together, "neither key is allowed", and a model that believes it
  * retries with `{}`, which fails too.
  */
+// The *workspace* memory tool's bound, enforced by WorkspaceDO — deliberately
+// not `AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS`, which is the automation
+// authority's. The two share a number today and may diverge.
 const SearchInputSchema = z.union([
   z.strictObject({ query: z.string().trim().min(1).max(2_000) }),
   z.strictObject({ memoryItemId: z.string().uuid() }),
@@ -670,29 +676,26 @@ function parseFrozenContext(row: {
 }
 
 /**
- * The recall query an automation run sends its own memory authority.
+ * The recall query an automation run sends its own memory authority, cut to the
+ * bound that authority declares.
  *
- * `query` is Rally's text, not a model's: the caller concatenates the work
- * stream's title, its objective, and the frozen automation context, and none of
- * those is bounded. The authority caps a search query at
- * `AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS` because that bound was written for
- * the model-facing memory tools, and this call is the one place Rally reaches
- * the same schema with a string it built itself. Every automation whose
- * definition pushed the concatenation past that cap therefore failed *before*
- * its first model turn: the refusal is a `ZodError` raised inside the
- * AutomationAgent, and a Durable Object RPC flattens it to a plain `Error`, so
- * the harness could not read it as an argument-validation failure and ended the
- * run `harness_execution_failed`. Interactive work streams never reached it —
- * `hybridMemorySearch` takes the same query with no length bound at all.
+ * `query` is Rally's own text — a work stream's title, its objective, and a
+ * serialized projection of the automation context, whose materialized memory
+ * tables are read live — and nothing bounds it, while the authority
+ * caps a search query because that bound was written for the model-facing memory
+ * tools. An over-long query here took down every generated run;
+ * [`automation-lifecycle.md`](../../../../docs/automation-lifecycle.md) records
+ * why, and why the caller is the side that gives way.
  *
- * Cutting the query here rather than widening the schema keeps the model-facing
- * bound where the product set it; this caller is the one that has to fit. The
- * trim is safe: `freezeRunMemoryContext` has already replaced an all-whitespace
- * query with its default, so the first character is never whitespace and the
- * result always satisfies the schema's `min(1)`.
+ * Two properties a later change has to respect. The cut is UTF-16-safe, because
+ * the bound counts code units and a lone surrogate would satisfy `max()` and
+ * still corrupt the argument. And it keeps the *head*, whose parts are ordered
+ * title, objective, automation context, then this occurrence's trigger — so the
+ * trigger is what a cut drops. That is inert only while the authority's search
+ * is a whole-query `instr()` match, which selects nothing at any length.
  */
 function automationRecallQuery(query: string): string {
-  return query.slice(0, AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS).trim();
+  return truncateUtf16Safe(query, AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS).trim();
 }
 
 export async function freezeRunMemoryContext(

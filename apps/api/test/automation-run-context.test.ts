@@ -24,6 +24,7 @@ import {
 } from "./helpers/durable-authority";
 
 const { loadRunPromptContext } = __integrationTesting;
+import { AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS } from "../src/services/automation-memory-client";
 
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const OWNER = "00000000-0000-7000-8000-000000000002";
@@ -39,8 +40,10 @@ const ATTEMPT = "attempt-1";
 const LEASE_OWNER = "lease-owner-1";
 
 const databases: DatabaseSync[] = [];
+let memoryToolCalls: unknown[] = [];
 let objectStores = new Map<string, DatabaseSync>();
 afterEach(() => {
+  memoryToolCalls = [];
   for (const database of databases.splice(0)) database.close();
 });
 
@@ -49,7 +52,13 @@ function envFor(database: DatabaseSync, appEnv: "production" | "test" = "product
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     AUTOMATION_AGENTS: testSubstreamAgentsBinding(database, {
-      extra: { readMemoryBootstrap: async () => ({ tables: [] }) },
+      extra: {
+        readMemoryBootstrap: async () => ({ tables: [] }),
+        executeMemoryTool: async (request: { args: unknown }) => {
+          memoryToolCalls.push(request.args);
+          return { output: { results: [] }, summary: "Found 0 durable memories" };
+        },
+      },
     }),
     AVALON_REGION: "global",
     APP_ENV: appEnv,
@@ -82,7 +91,7 @@ function envFor(database: DatabaseSync, appEnv: "production" | "test" = "product
  * is exercised by the subscription read in the same function; a test that
  * proved it here would have to run against a real object, in `test-workers/`.
  */
-function seededDatabase(options: { targets?: string } = {}): DatabaseSync {
+function seededDatabase(options: { targets?: string; freezeMemoryContext?: boolean } = {}): DatabaseSync {
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   openWorkstreamAuthorityForTest(database);
@@ -154,16 +163,18 @@ function seededDatabase(options: { targets?: string } = {}): DatabaseSync {
   // view: slice 6 dropped it, so this is the real column set — no `workspace_id`
   // or `workstream_id` the object already knows, and `created_at` in unix
   // milliseconds rather than the view's ISO-8601.
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO run_memory_contexts
-       (run_id, attempt_id, memory_scope_ids_json, query_text, retrieval_mode,
-        results_json, memory_context_hash, created_at)
-     VALUES (?, ?, '[]', 'automation', 'fts_only', '[]', 'hash', ?)`,
-    RUN,
-    ATTEMPT,
-    Date.parse("2026-08-22T00:00:00.000Z"),
-  );
+  if (options.freezeMemoryContext !== false) {
+    workstreamObjectRun(
+      objectStore,
+      `INSERT INTO run_memory_contexts
+         (run_id, attempt_id, memory_scope_ids_json, query_text, retrieval_mode,
+          results_json, memory_context_hash, created_at)
+       VALUES (?, ?, '[]', 'automation', 'fts_only', '[]', 'hash', ?)`,
+      RUN,
+      ATTEMPT,
+      Date.parse("2026-08-22T00:00:00.000Z"),
+    );
+  }
   return database;
 }
 
@@ -223,6 +234,46 @@ const workstream = {
   title: "Competitor briefing · 2026-08-22",
   objective: "Produce the daily competitor briefing.",
 };
+
+describe("what an automation run recalls before its first model turn", () => {
+  it("fits the assembled recall query inside the authority's bound", async () => {
+    // The outage, through the real assembly rather than a hand-built string.
+    // `loadRunPromptContext` joins the work stream's title, its objective, and
+    // `JSON.stringify` of the run's automation context — which carries the
+    // compiled definition and the automation's materialized memory tables — and
+    // nothing bounds the result. Sending that to an authority whose schema caps
+    // a query ended every generated run before its first model turn.
+    //
+    // The other cases pre-seed `run_memory_contexts` so this branch is skipped;
+    // that pre-seeding is exactly why the suite did not catch the outage, so
+    // this case opts out of it and lets the real recall run.
+    const env = envFor(seededDatabase({ freezeMemoryContext: false }));
+    // A standing prompt of the size a real briefing automation carries. The
+    // context is serialized into the query whole, so this is what pushes the
+    // join past the bound.
+    const base = workflowInput();
+    const input: WorkstreamWorkflowInput = {
+      ...base,
+      automationRunContext: {
+        ...base.automationRunContext!,
+        definition: {
+          ...base.automationRunContext!.definition,
+          instructions: "Watch each competitor and summarize. ".repeat(200),
+        },
+      },
+    };
+
+    await expect(loadRunPromptContext(env, input, lease, workstream)).resolves.toBeDefined();
+
+    expect(memoryToolCalls).toHaveLength(1);
+    const { query } = memoryToolCalls[0] as { query: string };
+    // Inside the bound, and using essentially all of it — a bare `<=` would be
+    // satisfied by any prefix, including a one-character one. The one unit of
+    // slack is the trim: this query's cut lands on a space, which is removed.
+    expect(query.length).toBeLessThanOrEqual(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS);
+    expect(query.length).toBeGreaterThanOrEqual(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS - 1);
+  });
+});
 
 describe("what an automation run is told about its own delivery", () => {
   it("names the frozen destination Avalon will mail the result to", async () => {

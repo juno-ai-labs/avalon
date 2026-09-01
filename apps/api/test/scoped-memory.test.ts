@@ -1195,13 +1195,14 @@ describe("scoped agent memory", () => {
   it("cuts an automation's frozen recall query to the bound its authority declares", async () => {
     // The outage this pins: every generated run failed before its first model
     // turn. `freezeRunMemoryContext` builds the recall query out of Rally's own
-    // text — the work stream's title and objective plus `JSON.stringify` of the
-    // frozen automation context, which carries the whole compiled definition —
-    // and handed it to a schema whose bound was written for a model-issued
-    // argument. Any automation whose definition pushed that concatenation past
-    // the cap made the AutomationAgent throw a `ZodError`; a Durable Object RPC
-    // flattens that to a plain `Error`, so the harness could not read it as an
-    // argument-validation failure and ended the run `harness_execution_failed`.
+    // text — the work stream's title and objective plus a serialized projection
+    // of the automation context, carrying the compiled definition and the
+    // automation's materialized memory tables — and handed it to a schema whose
+    // bound was written for a model-issued argument. Any automation whose
+    // context pushed that concatenation past the cap made the AutomationAgent
+    // throw a `ZodError`; that happens in run setup, before any tool dispatch,
+    // and the setup classifier reads `error.code`, which a `ZodError` does not
+    // carry — so the run ended on the catch-all `harness_execution_failed`.
     // Interactive work streams were unaffected, which is why messages answered
     // while every automation stayed broken.
     //
@@ -1244,12 +1245,73 @@ describe("scoped agent memory", () => {
 
     expect(sent).toHaveLength(1);
     const { query } = sent[0] as { query: string };
-    expect(query.length).toBeLessThanOrEqual(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS);
+    // Exactly the bound, not merely inside it: `<=` alone is satisfied by any
+    // prefix, including a one-character one, and the point of the cut is to use
+    // as much of the query as the authority allows.
+    expect(query.length).toBe(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS);
     // Cut, not replaced: the recall still asks about this run's own subject.
     expect(rawQuery.startsWith(query)).toBe(true);
     expect(query.length).toBeGreaterThan(0);
     // The frozen row keeps the query the run was actually built from, so the
     // context hash still identifies the full recall input.
     expect(frozen.query).toBe(rawQuery);
+
+    // The other half of the contract: a query already inside the bound passes
+    // through byte-identical, so no automation that was working before the cut
+    // sees its recall — or its frozen hash — move.
+    const shortRun: WorkstreamWorkflowInput = {
+      ...runInput,
+      workstreamId: AUTOMATION_WORKSTREAM_TWO,
+      harnessRunId: AUTOMATION_RUN_TWO,
+    };
+    const short = "a short recall query";
+    await freezeRunMemoryContext(
+      routedEnv(env, shortRun), shortRun,
+      { attemptId: "attempt-auto-two", owner: "lease-auto-two" }, short,
+    );
+    expect(sent).toHaveLength(2);
+    expect((sent[1] as { query: string }).query).toBe(short);
+  });
+
+  it("cuts a recall query without splitting a surrogate pair", async () => {
+    // The bound counts UTF-16 code units, so a cut can land between the halves
+    // of an emoji. Nothing downstream refuses the lone surrogate that leaves —
+    // it satisfies `max()`, and workerd's SQLite accepts it and hands back three
+    // replacement characters — so the corruption would be silent.
+    const { env: baseEnv, database } = fixture();
+    const sent: unknown[] = [];
+    const env = createTestEnv({
+      ...baseEnv,
+      AUTOMATION_AGENTS: testSubstreamAgentsBinding(database, {
+        extra: {
+          executeMemoryTool: async (request: { args: { query?: string } }) => {
+            sent.push(request.args);
+            return { output: { results: [] }, summary: "Found 0 durable memories" };
+          },
+        },
+      }),
+    });
+    const runInput: WorkstreamWorkflowInput = {
+      ...input("owner", 2),
+      automationRunContext: automationRunContext(),
+    };
+    // The pair straddles the bound: one code unit inside it, one outside.
+    const rawQuery = "x".repeat(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS - 1) + "\u{1F600}tail";
+
+    await freezeRunMemoryContext(
+      routedEnv(env, runInput),
+      runInput,
+      { attemptId: "attempt-auto-two", owner: "lease-auto-two" },
+      rawQuery,
+    );
+
+    expect(sent).toHaveLength(1);
+    const { query } = sent[0] as { query: string };
+    // The pair is dropped whole rather than halved, so the cut lands one short
+    // of the bound. `toWellFormed()` would say this too but needs ES2024; the
+    // trailing-high-surrogate check is what `text-truncation.test.ts` uses.
+    expect(query).toBe("x".repeat(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS - 1));
+    const last = query.charCodeAt(query.length - 1);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
   });
 });

@@ -52,14 +52,11 @@ const FenceSchema = z.strictObject({
 /**
  * The longest search query this authority accepts, in characters.
  *
- * The bound is written for a *model-issued* argument, which is the only kind
- * the memory tools carry. Rally also searches this authority on its own behalf
- * when it freezes a generated run's recall context, and that query is built by
- * concatenating text — a work stream's title and objective plus the frozen
- * automation context — with no length of its own. Naming the bound here is what
- * lets that caller cut its query to fit instead of rediscovering the number:
- * a refusal on the internal call is not a model-visible tool error, it is a
- * `ZodError` that crosses the RPC hop as a plain `Error` and fails the run.
+ * Written for a model-issued argument, which is the only kind the memory tools
+ * carry — but `freezeRunMemoryContext` reaches these schemas with a query Rally
+ * builds itself, and it is not free to exceed this. Named so that caller can cut
+ * to it instead of rediscovering it the way it did once already:
+ * [`automation-lifecycle.md`](../../../../docs/automation-lifecycle.md).
  */
 export const AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS = 2_000;
 
@@ -123,7 +120,7 @@ const FilterSchema: z.ZodType<Filter> = z.lazy(() => z.union([
 const TableQuerySchema = z.strictObject({
   memoryTableId: z.string().min(1),
   memoryTableRowIds: z.array(z.string().min(1)).min(1).max(100).optional(),
-  search: z.string().trim().min(1).max(2_000).optional(),
+  search: z.string().trim().min(1).max(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS).optional(),
   filter: FilterSchema.optional(),
   orderBy: z.array(z.strictObject({ column: z.string().min(1), direction: z.enum(["asc", "desc"]) })).optional(),
   select: z.array(z.string().min(1)).optional(),
