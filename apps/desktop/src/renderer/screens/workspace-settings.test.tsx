@@ -690,6 +690,17 @@ describe('Workspace settings', () => {
     const mailCard = (await screen.findByText('Google Mail + Calendar', undefined, { timeout: 10_000 })).closest('article');
     expect(mailCard).not.toBeNull();
     expect(within(mailCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
+    // The card's name renders from the static provider list, but the button
+    // stays disabled until the connector catalog answers — `providerAvailable`
+    // is `catalog.data?.includes(...) ?? false`. Clicking before then is a
+    // no-op, and the failure it produces is the `waitFor` below timing out on
+    // "Number of calls: 0" rather than anything naming the real cause. Every
+    // other connect click in this file already waits for this; this one did
+    // not, and lost the race on a loaded machine.
+    await waitFor(
+      () => expect(within(mailCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled(),
+      { timeout: 10_000 },
+    );
     fireEvent.click(within(mailCard!).getByRole('button', { name: 'Connect for me' }));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'google',

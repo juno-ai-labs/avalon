@@ -17,9 +17,10 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, type WorkstreamBatchFilter } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
+import { WorkspaceBatchNoteArchiveResultSchema } from "../src/durable-objects/workspace-directory-protocol";
 import {
   WorkspaceNoteArchiveResultSchema,
   WorkspaceNoteDeletionOutboxSchema,
@@ -65,11 +66,17 @@ async function seedNote(overrides: {
   resourceId?: string;
   scope?: "personal" | "workspace";
   title?: string;
+  ownerUserId?: string;
+  recordingStatus?: "idle" | "recording" | "complete";
+  lastActivityAt?: string;
 } = {}): Promise<void> {
   const noteId = overrides.noteId ?? NOTE;
   const resourceId = overrides.resourceId ?? RESOURCE;
   const scope = overrides.scope ?? "personal";
   const title = overrides.title ?? "Customer interview";
+  const ownerUserId = overrides.ownerUserId ?? OWNER;
+  const recordingStatus = overrides.recordingStatus ?? "idle";
+  const lastActivityAt = overrides.lastActivityAt ?? AT;
   await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec(
       `INSERT INTO resources
@@ -85,22 +92,23 @@ async function seedNote(overrides: {
       `global/${WORKSPACE_ID}/resources/${resourceId}/versions/seed/note.md`,
       "seed-sha",
       AT,
-      OWNER,
+      ownerUserId,
       AT,
       AT,
     );
     state.storage.sql.exec(
       `INSERT INTO notes
          (id, workspace_id, owner_user_id, resource_id, scope, title,
-          last_activity_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          recording_status, last_activity_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       noteId,
       WORKSPACE_ID,
-      OWNER,
+      ownerUserId,
       resourceId,
       scope,
       title,
-      AT,
+      recordingStatus,
+      lastActivityAt,
       AT,
       AT,
     );
@@ -427,6 +435,325 @@ describe("workspace notes", () => {
     it("drops an archived note for everyone", async () => {
       expect(await visible(OWNER, [ARCHIVED_RESOURCE])).toEqual([]);
       expect(await visible(null, [ARCHIVED_RESOURCE])).toEqual([]);
+    });
+  });
+  describe("paging the sidebar list", () => {
+    /** Seed `count` notes, newest first, one minute apart. */
+    async function seedPage(count: number): Promise<string[]> {
+      const titles: string[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const title = `Note ${String(index).padStart(3, "0")}`;
+        titles.push(title);
+        await seedNote({
+          noteId: nextId(),
+          resourceId: nextId(),
+          title,
+          lastActivityAt: new Date(Date.parse(AT) - index * 60_000).toISOString(),
+        });
+      }
+      return titles;
+    }
+
+    async function page(limit: number, before?: string) {
+      return WorkspaceNoteSidebarListSchema.parse(await workspace().listNoteSidebar({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        limit,
+        ...(before ? { before } : {}),
+      }));
+    }
+
+    it("walks the whole list one page at a time without repeating or skipping", async () => {
+      // The property that matters for infinite scroll: concatenating the pages
+      // reproduces the list exactly. A boundary that repeated a row would show
+      // it twice in the sidebar; one that skipped would hide a note with no way
+      // to reach it — which is what made the cap dangerous to archive over.
+      const titles = await seedPage(7);
+
+      const walked: string[] = [];
+      let cursor: string | undefined;
+      for (let request = 0; request < 10; request += 1) {
+        const result = await page(3, cursor);
+        walked.push(...result.items.map((note) => note.title));
+        if (result.nextCursor === null) break;
+        cursor = result.nextCursor;
+      }
+
+      expect(walked).toEqual(titles);
+    });
+
+    it("ends the list rather than offering a cursor past it", async () => {
+      await seedPage(2);
+      const result = await page(250);
+      expect(result.items).toHaveLength(2);
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it("pages exactly when notes share an instant, on the id tiebreak", async () => {
+      // One write can stamp two notes in the same millisecond, so the ordering
+      // is `(last_activity_at, id)` and the cursor carries both. On the
+      // timestamp alone a page boundary landing between two equal instants
+      // would repeat one of them or drop the other.
+      const shared = "2033-02-02T02:02:02.020Z";
+      for (let index = 0; index < 4; index += 1) {
+        await seedNote({
+          noteId: nextId(),
+          resourceId: nextId(),
+          title: `Same instant ${index}`,
+          lastActivityAt: shared,
+        });
+      }
+
+      const first = await page(2);
+      const second = await page(2, first.nextCursor ?? undefined);
+      const ids = [...first.items, ...second.items].map((note) => note.id);
+
+      expect(new Set(ids).size).toBe(4);
+      expect(second.nextCursor).toBeNull();
+    });
+  });
+
+  describe("archiving a whole sidebar grouping", () => {
+    // A recency heading holds work streams and notes together, so **Archive
+    // all** under it has to reach both. The work-stream half leaves as one
+    // Queue event per object; the notes are rows in this database and go here,
+    // in one transaction, fenced by the same operation.
+    const GROUP = {
+      atOrAfter: "2033-06-01T00:00:00.000Z",
+      before: "2033-07-01T00:00:00.000Z",
+    } as const;
+    const IN_RANGE = "2033-06-15T12:00:00.000Z";
+    const filter = {
+      lastActivityAt: GROUP,
+      pinned: false,
+      includeSystem: false,
+    } as const;
+
+    /**
+     * The dispatch the note archive is fenced by *and* selected from, as the
+     * Worker opens it: this is the transaction that freezes the note set.
+     */
+    async function freeze(
+      operationId: string,
+      requestHash: string,
+      selection: WorkstreamBatchFilter = filter,
+    ): Promise<void> {
+      await workspace().beginWorkstreamBatchDispatch({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        operationId,
+        requestHash,
+        filter: selection,
+        update: { kind: "archive" },
+      });
+    }
+
+    async function archive(input: {
+      operationId: string;
+      requestHash: string;
+      userId?: string;
+    }) {
+      return WorkspaceBatchNoteArchiveResultSchema.parse(await workspace().archiveNotesForBatch({
+        workspaceId: WORKSPACE_ID,
+        userId: input.userId ?? OWNER,
+        operationId: input.operationId,
+        requestHash: input.requestHash,
+        at: LATER,
+      }));
+    }
+
+    async function archivedTitles(): Promise<string[]> {
+      return runInDurableObject(workspace(), (_instance, state) =>
+        state.storage.sql.exec<{ title: string }>(
+          `SELECT title FROM notes WHERE archived_at IS NOT NULL ORDER BY title`,
+        ).toArray().map((row) => row.title));
+    }
+
+    /** One note per thing the selection has to decide, all under one heading. */
+    async function seedTheGrouping(): Promise<void> {
+      await seedNote({
+        noteId: nextId(), resourceId: nextId(), title: "In the group", lastActivityAt: IN_RANGE,
+      });
+      await seedNote({
+        noteId: nextId(),
+        resourceId: nextId(),
+        title: "Shared, and mine",
+        scope: "workspace",
+        lastActivityAt: IN_RANGE,
+      });
+      await seedNote({
+        noteId: nextId(),
+        resourceId: nextId(),
+        title: "An older heading",
+        lastActivityAt: "2033-05-31T23:59:59.999Z",
+      });
+      await seedNote({
+        noteId: nextId(),
+        resourceId: nextId(),
+        title: "A newer heading",
+        lastActivityAt: GROUP.before,
+      });
+      await seedNote({
+        noteId: nextId(),
+        resourceId: nextId(),
+        title: "Somebody else's, shared with me",
+        scope: "workspace",
+        ownerUserId: OTHER_MEMBER,
+        lastActivityAt: IN_RANGE,
+      });
+      await seedNote({
+        noteId: nextId(),
+        resourceId: nextId(),
+        title: "Still recording",
+        recordingStatus: "recording",
+        lastActivityAt: IN_RANGE,
+      });
+    }
+
+    it("takes the reader's own idle notes in the range, and nothing else", async () => {
+      await seedTheGrouping();
+      const operationId = "00000000-0000-7000-8000-000000000e01";
+      const requestHash = "fnv1a64:aaaaaaaaaaaaaaaa";
+      await freeze(operationId, requestHash);
+
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: 2, replayed: false });
+
+      // The half-open range at both ends, the owner fence a single archive
+      // enforces, and the recording refusal that exists because archiving under
+      // a live meeting window 404s the next segment save.
+      expect(await archivedTitles()).toEqual(["In the group", "Shared, and mine"]);
+    });
+
+    it("counts for the confirmation exactly what the archive will take", async () => {
+      // The number the dialog shows and the number that goes are the same
+      // selection, or the reader is agreeing to something else.
+      await seedTheGrouping();
+      const targets = await workspace().batchUpdateTargets({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        filter,
+      });
+
+      expect(targets.noteIds).toHaveLength(2);
+
+      const operationId = "00000000-0000-7000-8000-000000000e02";
+      const requestHash = "fnv1a64:bbbbbbbbbbbbbbbb";
+      await freeze(operationId, requestHash);
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: 2, replayed: false });
+    });
+
+    it("takes only what the dispatch froze, not what arrived while it published", async () => {
+      // The window the receipt alone does not close. Selecting the notes again
+      // at archive time would take whatever entered the range in between — and
+      // under an open-ended heading like "Last hour" that is any note touched
+      // since the reader read the count and pressed Continue. The Queue chunks
+      // go out between the two calls, so the window is real work, not an
+      // instant.
+      await seedNote({
+        noteId: nextId(), resourceId: nextId(), title: "Counted", lastActivityAt: IN_RANGE,
+      });
+      const operationId = "00000000-0000-7000-8000-000000000e07";
+      const requestHash = "fnv1a64:1212121212121212";
+      await freeze(operationId, requestHash);
+
+      await seedNote({
+        noteId: nextId(),
+        resourceId: nextId(),
+        title: "Arrived after the count",
+        lastActivityAt: IN_RANGE,
+      });
+
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: 1, replayed: false });
+      expect(await archivedTitles()).toEqual(["Counted"]);
+    });
+
+    it("skips a frozen note that has started recording since", async () => {
+      // Ownership cannot change under a frozen id, but recording can start —
+      // and archiving under a live meeting window 404s the next segment save.
+      // The note simply is not in the count, which is the answer the single-row
+      // archive gives too.
+      const recorded = nextId();
+      await seedNote({
+        noteId: recorded, resourceId: nextId(), title: "Started recording", lastActivityAt: IN_RANGE,
+      });
+      await seedNote({
+        noteId: nextId(), resourceId: nextId(), title: "Idle throughout", lastActivityAt: IN_RANGE,
+      });
+      const operationId = "00000000-0000-7000-8000-000000000e08";
+      const requestHash = "fnv1a64:1313131313131313";
+      await freeze(operationId, requestHash);
+
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(
+          `UPDATE notes SET recording_status = 'recording' WHERE id = ?`,
+          recorded,
+        );
+      });
+
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: 1, replayed: false });
+      expect(await archivedTitles()).toEqual(["Idle throughout"]);
+    });
+
+    it("answers a retried operation with its receipt instead of widening", async () => {
+      // The retry exists for the work streams' Queue chunks, and it reaches
+      // here again on the way. "Last hour" has no upper bound, so re-selecting
+      // would take whatever arrived while the operator was retrying.
+      await seedNote({
+        noteId: nextId(), resourceId: nextId(), title: "First pass", lastActivityAt: IN_RANGE,
+      });
+      const operationId = "00000000-0000-7000-8000-000000000e03";
+      const requestHash = "fnv1a64:cccccccccccccccc";
+      await freeze(operationId, requestHash);
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: 1, replayed: false });
+
+      await seedNote({
+        noteId: nextId(),
+        resourceId: nextId(),
+        title: "Arrived during the retry",
+        lastActivityAt: IN_RANGE,
+      });
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: 1, replayed: true });
+
+      expect(await archivedTitles()).toEqual(["First pass"]);
+    });
+
+    it("refuses an operation id reused with another filter or another person", async () => {
+      await seedNote({
+        noteId: nextId(), resourceId: nextId(), title: "Not yours", lastActivityAt: IN_RANGE,
+      });
+      const operationId = "00000000-0000-7000-8000-000000000e04";
+      const requestHash = "fnv1a64:dddddddddddddddd";
+      await freeze(operationId, requestHash);
+
+      // The request hash covers the filter and the update, so a different
+      // selection under this operation id arrives as a different hash.
+      await expect(archive({ operationId, requestHash: "fnv1a64:eeeeeeeeeeeeeeee" }))
+        .rejects.toThrow(/workstream_batch_dispatch_conflict/u);
+      await expect(archive({ operationId, requestHash, userId: OTHER_MEMBER }))
+        .rejects.toThrow(/workstream_batch_dispatch_conflict/u);
+      expect(await archivedTitles()).toEqual([]);
+    });
+
+    it("has nothing to archive for a filter that asks only for pinned rows", async () => {
+      // A note cannot be pinned, so this asks for none — and must not answer
+      // by ignoring the field and taking every note in the range.
+      await seedNote({
+        noteId: nextId(), resourceId: nextId(), title: "Unpinnable", lastActivityAt: IN_RANGE,
+      });
+      const operationId = "00000000-0000-7000-8000-000000000e05";
+      const requestHash = "fnv1a64:ffffffffffffffff";
+      const pinnedOnly = { ...filter, pinned: true };
+      await freeze(operationId, requestHash, pinnedOnly);
+
+      await expect(archive({ operationId, requestHash }))
+        .resolves.toEqual({ archivedNoteCount: 0, replayed: false });
+      expect(await archivedTitles()).toEqual([]);
     });
   });
 });

@@ -721,13 +721,20 @@ describe('Rally API wire adapter', () => {
       includeSystem: false,
     } as const;
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json({ matchedCount: 20 }))
-      .mockResolvedValueOnce(json({ operationId, enqueuedCount: 20 }, { status: 202 }));
+      .mockResolvedValueOnce(json({ matchedCount: 20, matchedNoteCount: 3 }))
+      .mockResolvedValueOnce(json(
+        { operationId, enqueuedCount: 20, archivedNoteCount: 3 },
+        { status: 202 },
+      ));
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
 
-    await expect(api.previewWorkstreamBatch(filter)).resolves.toBe(20);
-    await expect(api.applyWorkstreamBatch(operationId, filter, { kind: 'archive' })).resolves.toBe(20);
+    // Both halves of the grouping travel: the work streams the Queue will
+    // carry, and the notes the workspace object archived before answering.
+    await expect(api.previewWorkstreamBatch(filter))
+      .resolves.toEqual({ matchedCount: 20, matchedNoteCount: 3 });
+    await expect(api.applyWorkstreamBatch(operationId, filter, { kind: 'archive' }))
+      .resolves.toEqual({ enqueuedCount: 20, archivedNoteCount: 3 });
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.rally.test/workstreams/batch/preview');
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ filter });

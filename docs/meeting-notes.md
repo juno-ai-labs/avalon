@@ -236,6 +236,10 @@ resource separately.
   is a quit.
 - **Only the owner may record, append, or generate.** Every statement binds
   `workspace_id` and `owner_user_id`; the screen is read-only for anyone else.
+- **Every archive path refuses the same notes.** A bulk archive is not a
+  shortcut past ownership or a live recording: the sidebar grouping's
+  **Archive all** selects only notes the viewer owns and is not recording, so
+  it can never take a note the single-row archive would have refused.
 
 ## Boundary
 
@@ -315,8 +319,9 @@ workspace note is an explicit, notified transition rather than a silent widening
 - `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts
   test-workers/workspace-notes.test.ts` — what the object itself decides, on
   workerd: concurrent segment appends, replay idempotency, the archive
-  classification, the privacy-transition outbox, the briefing compare-and-set,
-  and the per-viewer read fences.
+  classification, the sidebar grouping's bulk archive and its receipt, the
+  privacy-transition outbox, the briefing compare-and-set, and the per-viewer
+  read fences.
 - `pnpm --filter @rally/api exec vitest run test/client-feature-flags.test.ts` —
   the served cadence, its clamp, and the fallback shared with every other reader.
 - `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/meeting-notes.test.tsx`
@@ -406,6 +411,55 @@ already reads it, so that step is a scheduler and a budget rather than a new
 knob.
 
 ## Changelog
+
+### 2026-09-01 — The note list pages instead of stopping at 250
+
+**What changed:** The sidebar's note list is cursor-paged and its scroll loads
+the next page, so a workspace with more notes than `SIDEBAR_LIST_LIMIT` can
+reach all of them. The mechanism is in
+[`workstream-durable-object.md`](workstream-durable-object.md#changelog).
+
+**Why:** The cap was a ceiling rather than a page — no cursor, no load-more —
+so note 251 was unreachable. Harmless while the list was only read; not
+harmless once a grouping's **Archive all** could select notes the reader had no
+way to see and no way to restore.
+
+**Considered and rejected:** Fencing the archive to the visible window and
+leaving the list capped. That was the interim fix, and it makes 250 part of the
+archive's semantics while still leaving the notes beyond it unmanageable.
+
+**Consequences, and what a future change has to respect:** A note push carries
+a page rather than the list, so anything reading one has to merge when it is
+only the head — replacing unconditionally truncates a reader who has scrolled.
+
+### 2026-09-01 — A note leaves with the sidebar grouping it sits in
+
+**What changed:** Notes are now archived by a recency heading's **Archive all**,
+alongside the work streams under it. The selection is one statement in
+WorkspaceDO — `archiveWorkspaceNotesInRange` — fenced on the viewer owning the
+note and the note not recording, which are the two refusals `archiveNote`
+already makes one row at a time. The mechanism, the receipt that makes a retry
+converge, and why notes do not travel by Queue are in
+[`workstream-durable-object.md`](workstream-durable-object.md#changelog).
+
+**Why:** A heading is one group to the person reading it, and clearing it left
+the notes behind. Nothing here excluded them deliberately; the batch was built
+over the work-stream directory, which notes are not in.
+
+The set is frozen when the dispatch is, so what the
+archive takes is what the confirmation counted rather than whatever matches by
+the time it runs.
+
+**Considered and rejected:** Looping the existing single-note archive over the
+selection. That turns one group into N transactions with N chances to half
+apply, and it would have to translate a 404 or a 409 per note into something
+the confirmation dialog never promised — the fences belong in the selection, so
+that a refused note is one that was never counted.
+
+**Consequences, and what a future change has to respect:** The bulk selection
+and `archiveNote` must keep refusing the same notes. If a new reason to refuse
+an archive appears, it has to reach both, or **Archive all** becomes the way to
+get past it.
 
 ### 2026-08-31 — Live capture blocks active-workspace changes
 
