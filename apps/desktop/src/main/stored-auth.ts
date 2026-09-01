@@ -331,8 +331,8 @@ export function removeStoredWorkspace(
   })));
   const workspaceRecency = auth.workspaceRecency.filter((candidate) => workspaceKeys.has(workspaceReferenceKey(candidate)));
   const activeWorkspace = workspaceReferenceMatches(auth.activeWorkspace, workspaceId, region)
-    ? workspaceRecency[0] ?? (workspaces[0]?.binding.workspaceId
-      ? { workspaceId: workspaces[0].binding.workspaceId, region: workspaces[0].binding.region }
+    ? workspaceRecency[0] ?? (workspaces[0]
+      ? { workspaceId: workspaces[0].binding.workspaceId!, region: workspaces[0].binding.region }
       : null)
     : auth.activeWorkspace;
   return {

@@ -923,17 +923,18 @@ export class PlatformOnboardingService {
   ): Promise<Session> {
     const identity = await this.loadPlatformIdentity();
     const requestFingerprint = await sha256(JSON.stringify(["create", region, name]));
-    let operationId = requestedOperationId;
-    let existing = operationId ? await this.operations.get(operationId) : null;
+    let operationId: string;
+    let existing = requestedOperationId ? await this.operations.get(requestedOperationId) : null;
     let workspaceId: string;
     let placementAffinity: WorkspacePlacementAffinity;
     if (existing) {
+      operationId = existing.operation_id;
       this.assertPlatformOperation(existing, identity.platformUserId, "create", requestFingerprint, region, null);
       workspaceId = existing.workspace_id;
       placementAffinity = existing.placement_affinity;
     } else {
       workspaceId = this.createId();
-      operationId ??= this.createId();
+      operationId = requestedOperationId ?? this.createId();
       placementAffinity = deriveWorkspacePlacementAffinity(region, requestLocation).affinity;
       existing = await this.operations.begin({
         operation_id: operationId,
@@ -949,9 +950,6 @@ export class PlatformOnboardingService {
       this.assertPlatformOperation(existing, identity.platformUserId, "create", requestFingerprint, region, null);
       workspaceId = existing.workspace_id;
       placementAffinity = existing.placement_affinity;
-    }
-    if (!operationId) {
-      throw new ApiError(500, "onboarding_operation_failed", "The onboarding operation could not be created");
     }
     return this.completeRegionalAction(
       identity,
