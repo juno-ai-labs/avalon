@@ -1005,4 +1005,166 @@ describe("AutomationAgent", () => {
         .toBe(before[0]?.table_id);
     });
   });
+
+  describe("run disposition", () => {
+    const now = 1_800_000_000_000;
+
+    /** A settled occurrence with a frozen context, ready to be judged. */
+    function seedRun(
+      state: DurableObjectState,
+      runId: string,
+      options: { deliveryTargets?: unknown[]; disposition?: string } = {},
+    ): void {
+      const context = {
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        runId,
+        authorityGeneration: 1,
+        definitionRevision: 1,
+        definition: {
+          name: "Pipeline watch",
+          description: "Watches the pipeline sheet.",
+          overview: "Watches the pipeline sheet and reports movement.",
+          instructions: "Report what moved in the pipeline since the last run.",
+          requiredCapabilities: [],
+          expectedOutputs: [],
+          defaultBehavior: {},
+          recommendedPlugins: [],
+          memoryTables: [],
+        },
+        defaultPluginIds: [],
+        activitySourcePluginIds: {},
+        connectorBindings: {},
+        deliveryTargets: options.deliveryTargets ?? [
+          { type: "email", emailAddress: "recruiter@example.com" },
+        ],
+        modelOverride: null,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID },
+        trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
+        opening: null,
+        memoryScope: { automationId: AUTOMATION_ID, authorityGeneration: 1 },
+      };
+      state.storage.sql.exec(
+        `INSERT INTO automation_runs
+           (run_id, occurrence_key, trigger_type, workstream_id, harness_run_id,
+            admission_state, execution_state, delivery_state, context_json,
+            source_version, disposition, disposition_source, disposition_reason,
+            created_at, updated_at)
+         VALUES (?, ?, 'manual', ?, ?, 'provisioned', 'completed', 'pending', ?, 1, ?, ?, ?, ?, ?)`,
+        runId,
+        `manual:${runId}`,
+        `00000000-0000-7000-8000-0000000000${runId.slice(-2)}`,
+        `00000000-0000-7000-8000-0000000001${runId.slice(-2)}`,
+        JSON.stringify(context),
+        options.disposition ?? null,
+        options.disposition ? "classified" : null,
+        options.disposition ? "An earlier judgement." : null,
+        now,
+        now,
+      );
+    }
+
+    function seedIdentity(state: DurableObjectState): void {
+      state.storage.sql.exec(
+        `INSERT INTO automation_identity
+           (id, automation_id, workspace_id, author_user_id, region, authority_generation,
+            created_at, updated_at)
+         VALUES (1, ?, ?, ?, 'global', 1, ?, ?)`,
+        AUTOMATION_ID, WORKSPACE_ID, AUTHOR_ID, now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_state
+           (id, lifecycle, title, definition_revision, accepted_definition_revision,
+            event_sequence, created_at, updated_at)
+         VALUES (1, 'active', 'Pipeline watch', 1, 1, 0, ?, ?)`,
+        now, now,
+      );
+    }
+
+    it("keeps the first answer, so a delivery retry cannot judge one run twice", async () => {
+      const runId = "00000000-0000-7000-8000-0000000000e1";
+      await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+        seedIdentity(state);
+        seedRun(state, runId, { disposition: "done" });
+
+        const decision = await instance.resolveRunDisposition({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          runId,
+          result: "The pipeline moved: two candidates reached final round.",
+        });
+
+        // Stored, not recomputed — the result text here would plainly be
+        // delivered if this were a fresh judgement.
+        expect(decision).toEqual({
+          disposition: "done",
+          reason: "An earlier judgement.",
+          source: "classified",
+        });
+      });
+    });
+
+    it("delivers rather than withholding when the classifier cannot be reached", async () => {
+      const runId = "00000000-0000-7000-8000-0000000000e2";
+      await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+        seedIdentity(state);
+        seedRun(state, runId);
+
+        const decision = await instance.resolveRunDisposition({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          runId,
+          result: "Two candidates reached final round.",
+        });
+
+        // No provider credentials in workerd here, so the inference fails and
+        // the failure direction is what this proves: a result nobody can judge
+        // is sent, not swallowed.
+        expect(decision.disposition).toBe("deliver");
+        expect(decision.source).toBe("default");
+        expect(state.storage.sql.exec<{ disposition: string; disposition_source: string }>(
+          `SELECT disposition, disposition_source FROM automation_runs WHERE run_id = ?`,
+          runId,
+        ).one()).toEqual({ disposition: "deliver", disposition_source: "default" });
+      });
+    });
+
+    it("has nothing to decide, and spends nothing deciding it, with no destination", async () => {
+      const runId = "00000000-0000-7000-8000-0000000000e3";
+      await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+        seedIdentity(state);
+        seedRun(state, runId, { deliveryTargets: [] });
+
+        const decision = await instance.resolveRunDisposition({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          runId,
+          result: "Two candidates reached final round.",
+        });
+
+        expect(decision.disposition).toBe("done");
+        expect(decision.reason).toContain("no destination");
+      });
+    });
+
+    it("refuses a run that is not this automation's", async () => {
+      const runId = "00000000-0000-7000-8000-0000000000e4";
+      await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+        seedIdentity(state);
+        seedRun(state, runId);
+
+        await expect(instance.resolveRunDisposition({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          runId: "00000000-0000-7000-8000-0000000000ff",
+          result: "anything",
+        })).rejects.toThrow("automation_run_not_found");
+      });
+    });
+  });
 });
