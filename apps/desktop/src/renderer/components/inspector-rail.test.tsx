@@ -3,7 +3,12 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ATTACHMENT_CONVERTER_TIMEOUT_MS, ATTACHMENT_PROCESSING_LEASE_MS } from '@rally/contracts';
 import type { DesktopApplicationSettings } from '../../common/desktop';
-import type { ResourceVersion, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type {
+  ResourceVersion,
+  WorkstreamAutomationSummary,
+  WorkstreamDetail,
+  WorkstreamResource,
+} from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { ApiError } from '../lib/api';
 import { InspectorRail } from './inspector-rail';
@@ -1028,5 +1033,83 @@ describe('resource detail content preview', () => {
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Extracted' })).toBeInTheDocument());
     expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith(note.id, expect.anything());
+  });
+});
+
+describe("a work stream's own automations in the rail", () => {
+  const automation: WorkstreamAutomationSummary = {
+    id: 'automation-1',
+    name: 'Weekly changelog',
+    status: 'active',
+    updatedAt: '2026-09-01T09:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    useUiStore.setState({
+      railOpen: true,
+      railVariant: 'context',
+      railWidth: 360,
+      inspector: null,
+    });
+  });
+
+  function renderRail(props: Partial<React.ComponentProps<typeof InspectorRail>> = {}): void {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={workstream} {...props} />
+      </Tooltip.Provider>,
+    );
+  }
+
+  it('sits between Artifacts and Details, where the rest of the room context is', () => {
+    renderRail({ workstreamAutomations: [automation] });
+
+    const headings = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
+    expect(headings).toContain('Automations');
+    expect(headings.indexOf('Automations')).toBeGreaterThan(headings.indexOf('Artifacts'));
+    expect(headings.indexOf('Automations')).toBeLessThan(headings.indexOf('Details'));
+  });
+
+  it('opens the automation it names', () => {
+    const onOpenWorkstreamAutomation = vi.fn();
+    renderRail({ workstreamAutomations: [automation], onOpenWorkstreamAutomation });
+
+    fireEvent.click(screen.getByRole('button', { name: /Weekly changelog/ }));
+
+    expect(onOpenWorkstreamAutomation).toHaveBeenCalledWith('automation-1');
+  });
+
+  it('keeps loading, failed and genuinely-none apart', () => {
+    // A room's automations are listed here and nowhere else, so "No
+    // automations" is a claim about the room. Saying it while the fetch is in
+    // flight, or after one failed, tells somebody their automations are gone.
+    const { unmount } = render(
+      <Tooltip.Provider><InspectorRail workstream={workstream} /></Tooltip.Provider>,
+    );
+    expect(screen.getByText('Loading automations…')).toBeInTheDocument();
+    expect(screen.queryByText('No automations')).not.toBeInTheDocument();
+    unmount();
+
+    const failed = render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={workstream} workstreamAutomationsError="offline" />
+      </Tooltip.Provider>,
+    );
+    expect(screen.getByText('Could not load automations')).toBeInTheDocument();
+    expect(screen.queryByText('No automations')).not.toBeInTheDocument();
+    failed.unmount();
+
+    renderRail({ workstreamAutomations: [] });
+    expect(screen.getByText('No automations')).toBeInTheDocument();
+  });
+
+  it('leads with what is wrong rather than with the status that hides it', () => {
+    // An automation whose trigger cannot fire still reads "active", and that is
+    // exactly the row somebody has to look at.
+    renderRail({
+      workstreamAutomations: [{ ...automation, attention: 'unsupported_trigger' }],
+    });
+
+    expect(screen.getByText('Needs attention')).toBeInTheDocument();
   });
 });

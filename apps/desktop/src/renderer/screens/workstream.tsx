@@ -1677,6 +1677,16 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && inspectedResourceId && railOpen),
   });
 
+  // A room's automations are listed in its rail and nowhere else, so this is
+  // the only fetch that can answer "what does this work stream run". Gated on
+  // the rail being open for the same reason the versions query is: a closed
+  // panel refetching is work nobody can see.
+  const workstreamAutomations = useQuery({
+    queryKey: ['workstream-automations', id],
+    queryFn: ({ signal }) => api!.getWorkstreamAutomations(id!, signal),
+    enabled: Boolean(api && id && railOpen),
+  });
+
   const refreshResource = useMutation({
     mutationFn: (resource: WorkstreamResource) => api!.refreshResource(resource.id),
     onSuccess: (refreshed) => {
@@ -2285,12 +2295,15 @@ export function WorkstreamScreen(): React.JSX.Element {
         onDetachResource={(resource) => detachResource.mutateAsync(resource)}
         onOpenResourceVersion={openResourceVersion}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
+        onOpenWorkstreamAutomation={(automationId) => void navigate(`/automations/${automationId}`)}
         onRefreshResource={(resource) => refreshResource.mutate(resource)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data}
         resourceVersionsError={resourceVersions.error?.message}
         workstream={displayedDetail}
+        workstreamAutomations={workstreamAutomations.data}
+        workstreamAutomationsError={workstreamAutomations.error?.message}
       />
 
       <AddParticipantDialog

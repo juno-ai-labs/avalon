@@ -1569,9 +1569,20 @@ mapping in `substream-loop-storage.ts` as well as the CHECK — the mapping is
 prefix-based (`human_` → human) with `automation_activation` named explicitly,
 and a kind that matches neither silently becomes `external`. The v36 rebuild is
 a referenced-parent rebuild (`pending_loop_inputs` points at the mailbox) and so
-runs with `foreignKeys: "disabled_during_rebuild"`; the mailbox's triggers and
-ordering index now come from `pendingLoopInputMailboxGuards()` so a rebuild
-cannot recreate a subset of them.
+runs with `foreignKeys: "disabled_during_rebuild"`.
+
+**Extracting a shipped migration's SQL into a helper must not reformat it.** The
+mailbox's triggers and ordering index now come from
+`pendingLoopInputMailboxGuards()`, shared so a rebuild cannot recreate a subset
+of them — but migration statements are hashed into `_sql_schema_migrations`
+verbatim, and the first version of that helper dedented the SQL by two spaces on
+the way out of the base schema. Every deployed object would have refused to boot
+with `substream_agent_do_schema_hash_mismatch`, and no unit test noticed: a
+fresh object computes both sides from the same edited source and agrees with
+itself. A local Worker holding state from before the edit is what surfaced it.
+The helper now returns the statements at their original indentation, and any
+future extraction has to be proved byte-identical against the shipped text
+rather than merely re-indented to suit its new home.
 
 ### 2026-09-01 — The note list pages, so nothing in it is out of reach
 

@@ -5,6 +5,7 @@ import {
   AutomationDraftTurnAdmissionResultSchema as WireAutomationDraftTurnAdmissionResultSchema,
   AutomationDraftSchema as WireAutomationDraftSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
+  WorkstreamAutomationSummarySchema as WireWorkstreamAutomationSummarySchema,
   WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
   WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
@@ -85,6 +86,7 @@ import type {
   AutomationDraftResponse,
   AutomationRunSummary,
   AutomationSummary,
+  WorkstreamAutomationSummary,
   BackgroundTask,
   CreatedWorkstream,
   DigestSchedule,
@@ -219,6 +221,9 @@ const wireNotePageSchema = z.object({
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
+const wireWorkstreamAutomationPageSchema = z.object({
+  items: z.array(WireWorkstreamAutomationSummarySchema),
+});
 const wireConnectionPageSchema = z.object({ items: z.array(WireConnectionSchema) });
 const wireTemplatePageSchema = z.object({
   items: z.array(z.object({
@@ -518,6 +523,29 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     name: automation.name,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: automation.scope === 'personal' ? 'you' : 'workspace',
+    status: automation.status,
+    ...(automation.attention ? { attention: automation.attention } : {}),
+    ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
+    ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
+    updatedAt: automation.updatedAt,
+    ...(automation.updateAvailable ? { statusMessage: 'Update available' } : {}),
+  };
+}
+
+/**
+ * The rail's rows.
+ *
+ * Written out rather than delegating to {@link mapAutomationSummary} with an
+ * invented scope: the wire row has no scope, and manufacturing one to throw
+ * away would put a value in the type that no caller may trust.
+ */
+export function mapWorkstreamAutomationSummary(
+  automation: z.infer<typeof WireWorkstreamAutomationSummarySchema>,
+): WorkstreamAutomationSummary {
+  return {
+    id: automation.id,
+    name: automation.name,
+    ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     status: automation.status,
     ...(automation.attention ? { attention: automation.attention } : {}),
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
@@ -928,6 +956,18 @@ export class RallyApi {
   async getAutomations(signal?: AbortSignal): Promise<AutomationSummary[]> {
     const page = await this.request('/automations', { schema: wireAutomationPageSchema, signal });
     return page.items.map(mapAutomationSummary);
+  }
+
+  /** What one work stream owns. Its rail is the only place these are listed. */
+  async getWorkstreamAutomations(
+    workstreamId: string,
+    signal?: AbortSignal,
+  ): Promise<WorkstreamAutomationSummary[]> {
+    const page = await this.request(
+      `/automations/workstream/${encodeURIComponent(workstreamId)}`,
+      { schema: wireWorkstreamAutomationPageSchema, signal },
+    );
+    return page.items.map(mapWorkstreamAutomationSummary);
   }
 
   async getAutomation(id: string, signal?: AbortSignal): Promise<AutomationDetail> {

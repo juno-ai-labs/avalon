@@ -6288,6 +6288,116 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  describe("a work stream's own automations", () => {
+    const ROOM_ID = "00000000-0000-7000-800a-000000000001";
+    const OTHER_ROOM_ID = "00000000-0000-7000-800a-000000000002";
+    const OWNED_ID = "00000000-0000-7000-800a-000000000011";
+    const OTHER_OWNED_ID = "00000000-0000-7000-800a-000000000012";
+    const WORKSPACE_AUTOMATION_ID = "00000000-0000-7000-800a-000000000013";
+    const DELETED_ID = "00000000-0000-7000-800a-000000000014";
+    const STRANGER_ID = "00000000-0000-7000-800a-000000000021";
+
+    async function seededWorkspace(): Promise<DurableObjectStub<WorkspaceDO>> {
+      // Membership is a D1 read, and this list is gated on it.
+      await seedOpenAuthority();
+      const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+        workspaceDOName("global", WORKSPACE_ID),
+      ));
+      await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+      await env.DB.prepare(
+        `INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+         VALUES (?, ?, 'active', 'member', '2026-09-01T00:00:00.000Z')`,
+      ).bind(WORKSPACE_ID, STRANGER_ID).run();
+      await runInDurableObject(stub, (_instance, state) => {
+        const automation = (
+          id: string,
+          lifecycle: string,
+          scope: string,
+          owning: string | null,
+          title: string,
+          projectedAt: number,
+        ): void => {
+          state.storage.sql.exec(
+            `INSERT INTO automation_directory
+               (automation_id, workspace_id, author_user_id, authority_generation,
+                projection_version, payload_hash, lifecycle, scope, owning_workstream_id,
+                title, description, next_run_at, attention_code, projected_at)
+             VALUES (?, ?, ?, 1, 1, 'test', ?, ?, ?, ?, 'Runs weekly', NULL, NULL, ?)`,
+            id, WORKSPACE_ID, USER_ID, lifecycle, scope, owning, title, projectedAt,
+          );
+        };
+        automation(OWNED_ID, "active", "workstream", ROOM_ID, "Weekly changelog", 200);
+        automation(DELETED_ID, "deleted", "workstream", ROOM_ID, "Retired", 300);
+        automation(OTHER_OWNED_ID, "active", "workstream", OTHER_ROOM_ID, "Another room's", 400);
+        automation(WORKSPACE_AUTOMATION_ID, "active", "workspace", null, "Shared digest", 500);
+        for (const id of [ROOM_ID, OTHER_ROOM_ID]) {
+          state.storage.sql.exec(
+            `INSERT INTO workspace_workstream_directory
+               (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+                title, description, preview, scope, exact_state, system_kind, last_activity_at,
+                completed_at, archived_at, email_address, origin_type, origin_label,
+                created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+                title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+                next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+                source_created_at, source_updated_at, projected_at)
+             VALUES (?, 1, 1, ?, 'test', 'A room', '', '', 'workspace', 'idle', NULL, 1,
+                     NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+                     'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+            id, `00000000-0000-7000-800b-${id.slice(-12)}`, USER_ID,
+          );
+        }
+        state.storage.sql.exec(
+          `INSERT INTO workspace_workstream_viewers
+             (workstream_id, user_id, authority_generation, waterline, source_event_id,
+              payload_hash, is_participant, participant_added_at, unread_count,
+              you_are_mentioned, unseen, listable, seen_attention_ordinal,
+              manual_unread_from_ordinal, manual_unread_generation,
+              latest_mention_attention_ordinal, projected_at)
+           VALUES (?, ?, 1, 1, ?, 'test', 1, 1, 0, 0, 0, 1, 0, NULL, 0, 0, 1)`,
+          ROOM_ID, USER_ID, `00000000-0000-7000-800c-000000000001`,
+        );
+      });
+      return stub;
+    }
+
+    it("lists what this room owns, and nothing another room or the workspace owns", async () => {
+      const stub = await seededWorkspace();
+
+      const listed = await stub.listWorkstreamAutomations({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: ROOM_ID,
+        userId: USER_ID,
+      });
+
+      // Exactly the complement of the sidebar list. Another room's automation
+      // appearing here would let somebody pause it from a room it has nothing
+      // to do with, and a deleted one is a row the projection has not reaped.
+      expect(listed.items.map((item) => item.id)).toEqual([OWNED_ID]);
+      expect(listed.items[0]).toMatchObject({ name: "Weekly changelog", status: "active" });
+      // No scope: every row here is owned by the room showing it.
+      expect(listed.items[0]).not.toHaveProperty("scope");
+    });
+
+    it("answers whoever may read the room, not only whoever created the automation", async () => {
+      const stub = await seededWorkspace();
+
+      // The gate is the viewer row. A workspace member with no view of this
+      // room gets a refusal, not an empty list — an empty list would say the
+      // room owns nothing, which is a different and false statement.
+      //
+      // Asserted inside the object rather than over its stub: a rejection
+      // crossing the stub is reported a second time as an unhandled one and
+      // fails the run even though the assertion held.
+      await runInDurableObject(stub, async (instance) => {
+        await expect(instance.listWorkstreamAutomations({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: ROOM_ID,
+          userId: STRANGER_ID,
+        })).rejects.toThrow("automation_directory_access_denied");
+      });
+    });
+  });
+
   describe("exposing an automation run", () => {
     const RUN_ID = "00000000-0000-7000-8008-000000000001";
     const ARCHIVED_RUN_ID = "00000000-0000-7000-8008-000000000002";

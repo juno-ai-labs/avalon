@@ -3958,41 +3958,41 @@ function toolReceiptAuthorityPromotion(): string[] {
  */
 function pendingLoopInputMailboxGuards(): string[] {
   return [
-    `CREATE TRIGGER pending_loop_input_mailbox_identity_immutable
-     BEFORE UPDATE OF
-       input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
-       client_message_id,
-       preparation_kind, created_at
-     ON pending_loop_input_mailbox
-     WHEN NEW.input_id IS NOT OLD.input_id
-       OR NEW.loop_id IS NOT OLD.loop_id
-       OR NEW.input_sequence IS NOT OLD.input_sequence
-       OR NEW.admitted_after_transcript_sequence IS NOT OLD.admitted_after_transcript_sequence
-       OR NEW.client_message_id IS NOT OLD.client_message_id
-       OR NEW.preparation_kind IS NOT OLD.preparation_kind
-       OR NEW.created_at IS NOT OLD.created_at
-     BEGIN
-       SELECT RAISE(ABORT, 'pending_loop_input_mailbox_identity_is_immutable');
-     END`,
-    `CREATE TRIGGER pending_loop_input_mailbox_state_transition
-     BEFORE UPDATE OF state
-     ON pending_loop_input_mailbox
-     WHEN NOT (
-       OLD.state = 'preparing' AND NEW.state IN ('ready', 'failed', 'discarded')
-     )
-     BEGIN
-       SELECT RAISE(ABORT, 'pending_loop_input_mailbox_state_transition_invalid');
-     END`,
-    `CREATE TRIGGER pending_loop_input_mailbox_envelope_immutable
-     BEFORE UPDATE OF envelope_json
-     ON pending_loop_input_mailbox
-     WHEN OLD.state = 'preparing' AND NEW.state = 'preparing'
-       AND NEW.envelope_json IS NOT OLD.envelope_json
-     BEGIN
-       SELECT RAISE(ABORT, 'pending_loop_input_mailbox_envelope_is_immutable');
-     END`,
-    `CREATE INDEX pending_loop_input_mailbox_order_idx
-       ON pending_loop_input_mailbox(loop_id, state, input_sequence)`,
+      `CREATE TRIGGER pending_loop_input_mailbox_identity_immutable
+       BEFORE UPDATE OF
+         input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
+         client_message_id,
+         preparation_kind, created_at
+       ON pending_loop_input_mailbox
+       WHEN NEW.input_id IS NOT OLD.input_id
+         OR NEW.loop_id IS NOT OLD.loop_id
+         OR NEW.input_sequence IS NOT OLD.input_sequence
+         OR NEW.admitted_after_transcript_sequence IS NOT OLD.admitted_after_transcript_sequence
+         OR NEW.client_message_id IS NOT OLD.client_message_id
+         OR NEW.preparation_kind IS NOT OLD.preparation_kind
+         OR NEW.created_at IS NOT OLD.created_at
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_identity_is_immutable');
+       END`,
+      `CREATE TRIGGER pending_loop_input_mailbox_state_transition
+       BEFORE UPDATE OF state
+       ON pending_loop_input_mailbox
+       WHEN NOT (
+         OLD.state = 'preparing' AND NEW.state IN ('ready', 'failed', 'discarded')
+       )
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_state_transition_invalid');
+       END`,
+      `CREATE TRIGGER pending_loop_input_mailbox_envelope_immutable
+       BEFORE UPDATE OF envelope_json
+       ON pending_loop_input_mailbox
+       WHEN OLD.state = 'preparing' AND NEW.state = 'preparing'
+         AND NEW.envelope_json IS NOT OLD.envelope_json
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_envelope_is_immutable');
+       END`,
+      `CREATE INDEX pending_loop_input_mailbox_order_idx
+         ON pending_loop_input_mailbox(loop_id, state, input_sequence)`,
   ];
 }
 
