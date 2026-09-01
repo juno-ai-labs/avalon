@@ -27,10 +27,12 @@ link does; [`domain-migration.md`](domain-migration.md) owns the scheme.
 ### Why the message leaves the renderer
 
 Deep links are delivered to a renderer, and which renderer depends on the link.
-A connector completion goes to **both** the main window and the settings window,
-and `sendDeepLink` then raises and focuses *settings* — it is the window that
-started the OAuth run, so it is the one that should be in front when the provider
-redirect lands.
+A legacy connector completion with no workspace target goes to **both** the main
+window and the settings window, and `sendDeepLink` raises and focuses *settings*.
+A current workspace-addressed completion goes only to main: it may have to change
+the active workspace through the native guard, whose session-change broadcast
+then clears/remounts Settings. Sending it to both would run that foreground
+transition twice and could raise two meeting-change prompts.
 
 That makes any in-renderer treatment of a failure wrong in two different ways at
 once. The settings window renders `WorkspaceSettingsScreen` and no application
@@ -103,10 +105,10 @@ window stays up on the text nobody has read yet.
 - **The message is cleared when the window closes.** A message that outlives its
   window is handed to the next failure's window as though it had just happened,
   attributing the window to a link the person already dealt with.
-- **The window is a singleton and re-showing it replaces the text.** Both
-  renderers report the same connector completion, so a second report is the
-  normal case, not an error. Opening a second window per report would stack two
-  dialogs for one failure.
+- **The window is a singleton and re-showing it replaces the text.** Legacy
+  connector completions can still be reported by both renderers, so a second
+  report remains a normal compatibility case. Opening a second window per report
+  would stack two dialogs for one failure.
 - **`reportDeepLinkFailure` is the only route from the deep-link handler to a
   message.** A new `setDeepLinkError('…')` added inside `handleDeepLink` compiles
   and does nothing visible for a signed-in person, because no surface renders
@@ -214,6 +216,27 @@ links at all. The desktop trust boundary that admits these IPC calls is owned by
   and confirm the button is still on screen.
 
 ## Changelog
+
+### 2026-09-01 — A targeted connector result changes workspace once
+
+**What changed:** Main delivers current workspace-addressed connector results to
+the application renderer alone. That renderer activates the target; Settings
+follows the resulting session broadcast. Legacy unaddressed results retain the
+dual-renderer delivery they shipped with.
+
+**Why:** Delivering a targeted callback to both renderers makes two independent
+handlers race the same foreground workspace transition and can duplicate the
+meeting-change guard. One native session change already updates both windows.
+
+**Considered and rejected:** Keeping dual delivery and deduplicating in React.
+The renderers do not share memory, so the deduplicator would have to become a new
+main-process protocol around an operation main already serializes.
+
+**Consequences:** Current callback failures are reported once; legacy failures
+may still replace the singleton notice with identical text. Settings connector
+data is refreshed by its session remount and workspace-local reconciliation.
+
+Shipped in #464.
 
 ### 2026-08-29 — A refused deep link opens its own window instead of a banner in the shell
 

@@ -1643,8 +1643,9 @@ index, and `agent-inference/` request-only writer no longer exist.
 
 #### Before querying
 
-1. Copy the work-stream UUID from the canonical
-   `https://rallywith.ai/app/workstreams/<uuid>` URL. The current main
+1. Copy the work-stream and workspace UUIDs from the canonical
+   `https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>`
+   URL. The current main
    substream ID is `0`. When Rally exposes additional product substreams, copy
    the canonical substream ID from the API response or route that opened that
    substream; do not infer it from an inline child run. These opaque IDs are safe
