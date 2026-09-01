@@ -39,6 +39,7 @@ import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace
 import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { assistantMessageForDraft } from "../services/automation-service";
+import { classifyAutomationResult } from "../services/automation-result-disposition";
 import { compileAutomationDraft } from "../services/integrations";
 import { activateWorkstreamLoop } from "../services/integrations";
 import {
@@ -606,6 +607,24 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
        CHECK (disposition_at IS NULL OR disposition_at >= 0)`,
   ],
 }];
+
+/**
+ * What set an occurrence off, in one line, for the classifier to read.
+ *
+ * A schedule says nothing beyond its kind — the point of a schedule is that
+ * nothing in particular happened — while an external event names the activity
+ * type, which is most of what tells a summary of a candidate email apart from a
+ * summary of a spreadsheet save.
+ */
+function automationTriggerSummary(trigger: AutomationRunContextV1["trigger"]): string | null {
+  switch (trigger.kind) {
+    case "external_event": return trigger.eventType;
+    case "schedule": return trigger.scheduleKind;
+    case "manual":
+    case "inbound_email":
+      return null;
+  }
+}
 
 interface ActiveCompilerRow extends Record<string, SqlStorageValue> {
   run_id: string;
@@ -2262,6 +2281,97 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   }
 
   /** Record one child-owned delivery outcome without copying its result bytes. */
+  /**
+   * What this run's result is worth, decided once and kept.
+   *
+   * Here rather than in the caller because the answer belongs to the run, and
+   * everything the decision reads — the definition, the trigger, what the last
+   * few occurrences were judged to be — is this object's own state. The caller
+   * has the result text and nothing else.
+   *
+   * Idempotent by storage: a delivery retry after a crash reads the stored
+   * disposition rather than classifying again, which is what stops one
+   * occurrence being judged differently the second time and delivering what the
+   * first attempt withheld.
+   */
+  async resolveRunDisposition(input: unknown): Promise<{
+    disposition: "done" | "deliver" | "expose_workstream";
+    reason: string;
+    source: "classified" | "default";
+  }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      automationId: z.string().uuid(),
+      workspaceId: z.string().uuid(),
+      runId: z.string().uuid(),
+      result: z.string(),
+    }).strict().parse(input);
+    const identity = this.identity();
+    if (identity.automation_id !== request.automationId || identity.workspace_id !== request.workspaceId) {
+      throw new Error("automation_identity_mismatch");
+    }
+    const run = this.state.storage.sql.exec<{
+      workstream_id: string | null;
+      context_json: string;
+      disposition: string | null;
+      disposition_reason: string | null;
+      disposition_source: string | null;
+    }>(
+      `SELECT workstream_id, context_json, disposition, disposition_reason, disposition_source
+         FROM automation_runs WHERE run_id = ?`,
+      request.runId,
+    ).toArray()[0];
+    if (!run) throw new Error("automation_run_not_found");
+    if (run.disposition) {
+      return {
+        disposition: run.disposition as "done" | "deliver" | "expose_workstream",
+        reason: run.disposition_reason ?? "",
+        source: (run.disposition_source ?? "default") as "classified" | "default",
+      };
+    }
+    const context = AutomationRunContextV1Schema.parse(JSON.parse(run.context_json));
+    // Newest first, and only settled ones: an occurrence still deciding has
+    // nothing to say about whether this one is repetitive.
+    const recent = this.state.storage.sql.exec<{ disposition: string }>(
+      `SELECT disposition FROM automation_runs
+        WHERE disposition IS NOT NULL AND run_id <> ?
+        ORDER BY created_at DESC, run_id DESC LIMIT 3`,
+      request.runId,
+    ).toArray().map((row) => row.disposition as "done" | "deliver" | "expose_workstream");
+    const decision = await classifyAutomationResult(this.env, {
+      workspaceId: identity.workspace_id,
+      workstreamId: run.workstream_id ?? identity.automation_id,
+      automationName: context.definition.name,
+      automationObjective: context.definition.instructions,
+      triggerKind: context.trigger.kind,
+      triggerSummary: automationTriggerSummary(context.trigger),
+      result: request.result,
+      recentDispositions: recent,
+      reach: {
+        canDeliver: context.deliveryTargets.length > 0,
+        // Exposing a run's work stream is not built yet, so it is not offered:
+        // an arm the delivery path cannot act on would be a decision that
+        // silently does nothing. It becomes available with the directory
+        // column that makes a run visible.
+        canExpose: false,
+      },
+    });
+    this.state.storage.sql.exec(
+      `UPDATE automation_runs
+          SET disposition = ?, disposition_source = ?, disposition_reason = ?,
+              disposition_at = ?, updated_at = ?
+        WHERE run_id = ?`,
+      decision.disposition,
+      decision.source,
+      decision.reason,
+      Date.now(),
+      Date.now(),
+      request.runId,
+    );
+    return decision;
+  }
+
   async recordDeliveryReceipt(input: unknown): Promise<{ applied: boolean; outcomeCode: string }> {
     await this.initialized;
     const request = z.strictObject({

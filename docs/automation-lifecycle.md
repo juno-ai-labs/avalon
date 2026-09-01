@@ -236,7 +236,22 @@ The child receives the frozen context and returns only a terminal receipt. It
 reads and mutates parent memory over generation-fenced RPC — the parent refuses a
 call whose harness run ID does not match the run it is addressed for — delivers
 its own result to the frozen destinations, and reports each destination through
-`recordDeliveryReceipt`. Provider writes inside a generated run additionally
+`recordDeliveryReceipt`.
+
+**Whether it delivers at all is decided once, by the parent.** Before the
+delivery loop runs, the child calls `resolveRunDisposition` with the result text;
+the parent classifies it on the `automation_result_disposition` model role and
+stores the answer on the run — `disposition`, `disposition_source`,
+`disposition_reason`, `disposition_at`. The decision lives with the automation
+because everything it reads is the parent's state: the definition, the trigger,
+and what the last three occurrences were judged to be. A `done` disposition
+withholds every destination and writes the classifier's own sentence into each
+`skipped` receipt, so the run history says why nobody was told rather than
+leaving a bare code to interpret. A classifier that cannot answer **delivers**,
+recorded as `default`: a spurious delivery is noise somebody can see, and a
+swallowed result is silence nobody knows to look for. The columns are the
+idempotency — a delivery retry after a crash reads the stored answer instead of
+judging the same occurrence twice. Provider writes inside a generated run additionally
 re-check the parent's *live* lifecycle and authority generation, so a run that
 outlives a pause or a delete stops rather than finishing on stale consent.
 
@@ -576,6 +591,34 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-01 — A completed run's result is judged before it is delivered
+
+**What changed:** `resolveRunDisposition` on AutomationAgent, four columns on
+`automation_runs` (DO schema version 8), and one call from the child's
+settlement path before its delivery loop. The answer is `done` or `deliver`
+today; `expose_workstream` exists in the column's CHECK and is deliberately not
+offered until there is a code path that can act on it.
+
+**Why:** Every completed run delivered something. The only escape was
+`shouldSuppressAutomationResult`, a regex matching one English phrasing about
+emails, so "No changes in the pipeline this week" was delivered and a real
+finding whose wording happened to match was silently withheld. That is
+survivable for one person's inbox and not for a shared room, which is what the
+automations-in-a-work-stream PRD needs it to be safe for.
+
+**Considered and rejected:** letting the run decide, with a tool. It has the
+most context and costs no extra inference, and it is the loop untrusted trigger
+content steers — a disposition it chooses is one an attacker can influence in
+both directions, and a turn that went badly ends most gracefully by declaring
+there was nothing to report. The classifier reads the run's output from outside
+it, holds no tools and no credentials, and answers a schema of two or three enum
+values and a sentence.
+
+**Also:** the arms are rendered into that schema from what the automation can
+reach rather than checked afterwards, so an arm it has no use for is not a value
+the model can emit; and an automation that can reach nobody spends no inference
+at all.
 
 ### 2026-09-01 — Abandonment fences already-addressed automations
 
