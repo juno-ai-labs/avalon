@@ -55,8 +55,8 @@ describe('theme', () => {
     removeMatchMedia();
   });
 
-  it('starts on the original design following the Mac when nothing has been chosen', () => {
-    expect(readThemeChoice()).toEqual({ family: 'terra', mode: 'system' });
+  it('starts on the shipped design following the Mac when nothing has been chosen', () => {
+    expect(readThemeChoice()).toEqual({ family: 'grok', mode: 'system' });
   });
 
   it('records the resolved appearance and the choice that produced it', () => {
@@ -126,8 +126,8 @@ describe('theme', () => {
       JSON.stringify({ version: 1, theme: { family: 'sepia', mode: 'dark' } }),
     );
 
-    expect(readThemeChoice()).toEqual({ family: 'terra', mode: 'system' });
-    expect(installTheme().resolved).toBe('terra-light');
+    expect(readThemeChoice()).toEqual({ family: 'grok', mode: 'system' });
+    expect(installTheme().resolved).toBe('grok');
   });
 
   /**

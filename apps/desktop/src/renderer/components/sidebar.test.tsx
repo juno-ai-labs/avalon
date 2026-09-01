@@ -2791,3 +2791,82 @@ describe('Sidebar work-stream paging', () => {
     expect(screen.queryByText('Loading more…')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * The field narrows the three lists the navigation was handed, and every
+ * section is derived from those — so a section added later is filtered without
+ * being taught about the field. These cases pin that: a query has to reach a
+ * work stream, an automation and a note alike, and clearing it has to put the
+ * whole navigation back.
+ */
+describe('Sidebar search', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function renderSearchable(): void {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[{ ...automation, name: 'Acme renewal watch' }]}
+            notes={[note('note-1', 'Acme kickoff notes', '2026-07-31T20:00:00.000Z')]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[
+              workstream('ws-acme', 'Prepare the Acme follow-up', 'completed'),
+              workstream('ws-eng', 'Investigate ENG-142', 'completed'),
+            ]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('narrows every list to what the query names, whatever kind of row it is', () => {
+    renderSearchable();
+    const field = screen.getByRole('searchbox', { name: /Search work streams/u });
+
+    fireEvent.change(field, { target: { value: 'acme' } });
+
+    expect(screen.getByText('Prepare the Acme follow-up')).toBeInTheDocument();
+    expect(screen.getByText('Acme renewal watch')).toBeInTheDocument();
+    expect(screen.getByText('Acme kickoff notes')).toBeInTheDocument();
+    // The one row that does not match is gone from every section it appeared in.
+    expect(screen.queryByText('Investigate ENG-142')).not.toBeInTheDocument();
+  });
+
+  // Lowercasing both sides, rather than only the query. A person typing "ENG"
+  // is naming a work stream whose title carries it in capitals.
+  it('ignores case on both sides', () => {
+    renderSearchable();
+
+    fireEvent.change(screen.getByRole('searchbox', { name: /Search work streams/u }), { target: { value: 'eng-142' } });
+
+    expect(screen.getByText('Investigate ENG-142')).toBeInTheDocument();
+    expect(screen.queryByText('Prepare the Acme follow-up')).not.toBeInTheDocument();
+  });
+
+  /** A query that matches nothing has to say so, or the navigation reads as broken. */
+  it('says when nothing matches, and gives everything back when the field is cleared', () => {
+    renderSearchable();
+    const field = screen.getByRole('searchbox', { name: /Search work streams/u });
+
+    fireEvent.change(field, { target: { value: 'zzz' } });
+    expect(screen.getByText(/No matches for/u)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    expect(screen.getByText('Prepare the Acme follow-up')).toBeInTheDocument();
+    expect(screen.getByText('Investigate ENG-142')).toBeInTheDocument();
+    expect(screen.queryByText(/No matches for/u)).not.toBeInTheDocument();
+  });
+});

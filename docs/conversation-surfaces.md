@@ -46,7 +46,17 @@ local optimistic rows are reconciled by stable client turn IDs.
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in
 [`message-speech.md`](message-speech.md) and receives the complete stored
-markdown even when the shared renderer has collapsed its sections.
+markdown even when the shared renderer has collapsed its sections. The row is
+rendered *beside* the turn's block rather than inside it: it is hidden until the
+turn is hovered, and a theme that fills the block would otherwise show an empty
+strip of fill on every settled turn.
+
+Both sides of the transcript have the same two-part shape — a gutter carrying
+the speaker's mark, and a block the words sit in. Whether that block reads as a
+bubble or as plain text running the column is a *theme's* decision, made through
+`cmp.bubble.*` in [`theming.md`](theming.md); neither adapter branches on it.
+A band between two turns sent on different calendar days is derived from the two
+rows rather than stored, so a turn arriving out of order moves the band with it.
 
 ## Testing
 
@@ -57,6 +67,36 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-01 — Rally's turn gets the shape a person's turn already had
+
+**What changed:** An assistant turn renders as
+`.agent-message-content` → an aria-hidden `.agent-message-avatar` gutter and an
+`.agent-message-column` holding `.agent-message-bubble` and, under it, the
+action row. It used to be a bare header followed by prose. The action row moved
+out of the block it labels, and the block's prose takes `color: inherit` so the
+fill and the tone readable on it are one decision. A centred day band now sits
+above the first turn of each calendar day, derived from the two adjacent rows.
+
+**Why:** The reskin in [`theming.md`](theming.md) needed a transcript with a
+bubble on both sides, and the only side that could have one was the person's —
+Rally's turn had no element to fill and nowhere for a mark to sit. Adding both
+to the markup and leaving *whether they are drawn* to `cmp.bubble.*` is what
+keeps Terra and Air looking exactly as they did while Grok gets a chat
+transcript out of the same components.
+
+**Considered and rejected:** a bubble on the person's side only, which is what
+shipped before. A transcript with a bubble facing prose reads as two products,
+and it was the reason the avatar had nowhere to go. Also rejected: leaving the
+action row inside the bubble. It is `opacity: 0` until hover, so inside a fill
+it is a visible empty strip under every settled turn — cheap to see once a
+theme fills the block, and invisible until one does.
+
+**What a future change has to respect:** the action row stays a sibling of the
+bubble, for that reason. Nothing in either adapter may branch on which theme is
+active to decide the shape — the tokens are the branch. And the day band is
+derived on render rather than stored on a turn: a turn that arrives late, or one
+whose timestamp is corrected, has to be able to move it.
 
 ### 2026-09-01 — A queued row renders the transcript's Markdown, clipped to one line
 

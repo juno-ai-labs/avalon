@@ -86,6 +86,54 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
   return `${month} ${date.getFullYear()}`;
 }
 
+const dividerDay = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+/**
+ * The label on the band between two turns sent on different days.
+ *
+ * Day and clock time together, because the band answers two questions at once
+ * for a reader scrolling back: which day this stretch of the transcript belongs
+ * to, and how far into it the first turn landed. Today and yesterday are named
+ * rather than dated — a reader knows today's date — and everything older is the
+ * weekday and date, which is what makes a band worth stopping at.
+ *
+ * Returns `null` for an unreadable timestamp rather than a placeholder: a band
+ * saying "Unknown time" is worse than no band, and the caller renders nothing.
+ */
+export function formatDayDivider(value: string, now = new Date()): string | null {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const timestamp = date.getTime();
+  const day = timestamp >= startOfToday && timestamp < startOfTomorrow
+    ? 'Today'
+    : timestamp >= startOfYesterday && timestamp < startOfToday
+      ? 'Yesterday'
+      : dividerDay.format(date);
+  return `${day} ${shortTime.format(date)}`;
+}
+
+/**
+ * Whether a band belongs above this turn: the first turn in the transcript
+ * always carries one, and every turn that opens a new calendar day after it.
+ *
+ * Calendar day rather than elapsed hours, so two turns twenty minutes apart
+ * across midnight are still separated and two turns eight hours apart on one
+ * afternoon are not.
+ */
+export function opensTranscriptDay(value: string, previous: string | undefined): boolean {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return false;
+  if (previous === undefined) return true;
+  const before = new Date(previous);
+  if (!Number.isFinite(before.getTime())) return true;
+  return date.getFullYear() !== before.getFullYear()
+    || date.getMonth() !== before.getMonth()
+    || date.getDate() !== before.getDate();
+}
+
 export function formatDuration(milliseconds?: number): string | undefined {
   if (milliseconds === undefined) return undefined;
   const normalizedMilliseconds = Math.max(0, milliseconds);

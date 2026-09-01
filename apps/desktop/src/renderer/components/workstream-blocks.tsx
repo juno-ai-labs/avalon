@@ -1865,23 +1865,50 @@ export function MessageBlock({
               {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
             </div>
           ) : (
-            <>
-              {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
-                <MessageAttachments
-                  attachments={message.attachments}
-                  loadContent={loadAttachmentContent}
-                  onOpen={onOpenAttachment}
-                />
-              ) : null}
-              <AssistantMessageContent
-                citations={citations}
-                collapseHeadings={collapseHeadings}
-                mentions={message.mentions}
-                streaming={message.streaming}
-                text={message.text ?? ''}
-                telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
-              />
-            </>
+            /* The same two-part shape the person's turn has — a gutter carrying
+               the speaker's mark, and a block the words sit in — so a theme can
+               decide whether Rally's turn is a bubble beside an avatar or plain
+               text running the width of the column. Terra and Air take the
+               second by setting `cmp.bubble.agent-*` to nothing and
+               `cmp.bubble.avatar-display` to `none`; nothing here branches on
+               which. */
+            <div className="agent-message-content">
+              <span aria-hidden="true" className="agent-message-avatar">
+                <RallyMark />
+              </span>
+              <div className="agent-message-column">
+                <div className="agent-message-bubble">
+                  {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+                    <MessageAttachments
+                      attachments={message.attachments}
+                      loadContent={loadAttachmentContent}
+                      onOpen={onOpenAttachment}
+                    />
+                  ) : null}
+                  <AssistantMessageContent
+                    citations={citations}
+                    collapseHeadings={collapseHeadings}
+                    mentions={message.mentions}
+                    showCopy={false}
+                    streaming={message.streaming}
+                    text={message.text ?? ''}
+                    telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+                  />
+                </div>
+                {/* Under the bubble rather than in it. The row is hidden until
+                    the turn is hovered, and a hidden row inside a filled bubble
+                    is a strip of fill with nothing in it — visible on every
+                    turn, on every theme that draws one. */}
+                {!message.streaming && message.text && (
+                  <AssistantMessageActions
+                    citations={citations}
+                    mentions={message.mentions ?? NO_MENTIONS}
+                    telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+                    text={message.text}
+                  />
+                )}
+              </div>
+            </div>
           )}
     </article>
   );

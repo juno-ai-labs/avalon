@@ -51,15 +51,15 @@ describe('ThemePicker', () => {
     expect([...modes.querySelectorAll('[role=radio]')].map((option) => option.textContent))
       .toEqual(['System', 'Light', 'Dark']);
     expect([...families.querySelectorAll('[role=radio]')].map((option) => option.textContent))
-      .toEqual(['Terra', 'Air']);
+      .toEqual(['Grok', 'Terra', 'Air']);
   });
 
-  it('starts on the original design following the Mac, and says what that resolves to', () => {
+  it('starts on the shipped design following the Mac, and says what that resolves to', () => {
     render(<ThemePicker />);
 
     expect(screen.getByRole('radio', { name: 'System' })).toBeChecked();
-    expect(screen.getByRole('radio', { name: 'Terra' })).toBeChecked();
-    expect(screen.getByText('Terra, following this Mac, which is light right now.')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Grok' })).toBeChecked();
+    expect(screen.getByText('Grok, following this Mac, which is light right now.')).toBeInTheDocument();
   });
 
   it('applies and stores a chosen design, keeping the mode', () => {
@@ -108,12 +108,12 @@ describe('ThemePicker', () => {
       .map((swatch) => swatch.getAttribute('data-theme'));
 
     fireEvent.click(screen.getByRole('radio', { name: 'Light' }));
-    expect(shown()).toEqual(['terra-light', 'air']);
+    expect(shown()).toEqual(['grok', 'terra-light', 'air']);
 
     // Both swatches redraw, not only the selected one — which is what makes the
     // mode row legible: it shows what each design looks like under it.
     fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
-    expect(shown()).toEqual(['terra', 'air-dark']);
+    expect(shown()).toEqual(['grok-dark', 'terra', 'air-dark']);
   });
 
   /**
@@ -127,12 +127,12 @@ describe('ThemePicker', () => {
       ...container.querySelectorAll('.settings-theme-swatch, .settings-theme-swatch-alternate'),
     ].map((half) => half.getAttribute('data-theme'));
 
-    expect(halves()).toEqual(['terra-light', 'terra', 'air', 'air-dark']);
+    expect(halves()).toEqual(['grok', 'grok-dark', 'terra-light', 'terra', 'air', 'air-dark']);
 
     // Pinning the lighting removes the ambiguity, and with it the split.
     fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
     expect(container.querySelectorAll('.settings-theme-swatch-alternate')).toHaveLength(0);
-    expect(halves()).toEqual(['terra', 'air-dark']);
+    expect(halves()).toEqual(['grok-dark', 'terra', 'air-dark']);
   });
 
   /**
@@ -160,9 +160,9 @@ describe('ThemePicker', () => {
     // The lighter half is always drawn first, so the pair reads the same way
     // round whichever way the Mac is set; the status line is what says which of
     // the two is in force.
-    expect(container.querySelector('.settings-theme-swatch')?.getAttribute('data-theme')).toBe('terra-light');
-    expect(container.querySelector('.settings-theme-swatch-alternate')?.getAttribute('data-theme')).toBe('terra');
-    expect(screen.getByText('Terra, following this Mac, which is dark right now.')).toBeInTheDocument();
+    expect(container.querySelector('.settings-theme-swatch')?.getAttribute('data-theme')).toBe('grok');
+    expect(container.querySelector('.settings-theme-swatch-alternate')?.getAttribute('data-theme')).toBe('grok-dark');
+    expect(screen.getByText('Grok, following this Mac, which is dark right now.')).toBeInTheDocument();
   });
 
   /**
@@ -177,12 +177,12 @@ describe('ThemePicker', () => {
     render(<ThemePicker />);
     const stop = watchSystemAppearance();
 
-    expect(screen.getByText('Terra, following this Mac, which is light right now.')).toBeInTheDocument();
+    expect(screen.getByText('Grok, following this Mac, which is light right now.')).toBeInTheDocument();
 
     act(() => setDark(true));
 
-    expect(screen.getByText('Terra, following this Mac, which is dark right now.')).toBeInTheDocument();
-    expect(document.documentElement.dataset['theme']).toBe('terra');
+    expect(screen.getByText('Grok, following this Mac, which is dark right now.')).toBeInTheDocument();
+    expect(document.documentElement.dataset['theme']).toBe('grok-dark');
     stop();
   });
 
@@ -195,8 +195,8 @@ describe('ThemePicker', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Light' }));
     act(() => setDark(true));
 
-    expect(screen.getByText('Terra, always light.')).toBeInTheDocument();
-    expect(document.documentElement.dataset['theme']).toBe('terra-light');
+    expect(screen.getByText('Grok, always light.')).toBeInTheDocument();
+    expect(document.documentElement.dataset['theme']).toBe('grok');
     stop();
   });
 
@@ -206,8 +206,8 @@ describe('ThemePicker', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
     fireEvent.click(screen.getByRole('radio', { name: 'System' }));
 
-    expect(readThemeChoice()).toEqual({ family: 'terra', mode: 'system' });
-    expect(document.documentElement.dataset['theme']).toBe('terra-light');
+    expect(readThemeChoice()).toEqual({ family: 'grok', mode: 'system' });
+    expect(document.documentElement.dataset['theme']).toBe('grok');
     expect(document.documentElement.dataset['themeMode']).toBe('system');
   });
 });

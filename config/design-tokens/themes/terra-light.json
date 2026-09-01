@@ -181,6 +181,8 @@
     "cmp.row.background-selected": "{ref.color.neutral.4}",
     "cmp.group-label.height": "26px",
     "cmp.group-label.gap": "4px",
+    "cmp.bubble.agent-background": "transparent",
+    "cmp.bubble.agent-border": "transparent",
     "cmp.bubble.background": "{sys.color.surface.raised-hover}",
     "cmp.bubble.border": "{ref.color.line.3}",
     "cmp.bubble.padding": "9px 14px",

@@ -43,8 +43,9 @@
     "cmp.marker": "The mark at a row's leading edge. It is one element whose *shape* is a theme's decision and whose *colour* stays the row's state, so a theme can trade a dot for a line without the navigation losing what the dot was saying. It stretches between `inset-block` and the row, which is what lets one pair of values describe both a centred dot \u2014 `calc(50% - 3px)` \u2014 and a line that runs the height of the row.",
     "cmp.row": "Inside a navigation row. `height-dense` is the floor under the rows whose height comes from their content; `height` is the floor for a single-line row. `background-hover` and `background-selected` are the fills; a theme that marks selection with the marker alone sets the latter to `transparent`.",
     "cmp.group-label": "The band a group's label sits in.",
-    "cmp.bubble": "The fill behind a person's turn. A theme with one continuous ground can set all three to nothing and let the message sit on the page as plain text.",
-    "cmp.composer": "The message composer's frame. A theme builds either shape out of the same five values: a card sets a background, a border and a radius; a rule sets them to nothing and gives `rule-color` a hairline instead, so the composer reads as a line the page rests on rather than as a box floating over it. `rule-color-focus` is what that line does when the field has focus, which is the only feedback left once the border is gone. `send-background` and `send-radius` are the send control's own frame, which follows the composer: a flat composer with a raised button on it reads as two different surfaces.",
+    "cmp.search": "The navigation's filter field. A theme that wants no field at all still has to fill these in: the field is always in the markup, and hiding it is not a colour decision.",
+    "cmp.bubble": "The fill behind a turn — the person's own in the plain names, Rally's in the `agent-*` ones. A theme with one continuous ground sets a side's fill, border and padding to nothing and lets that side sit on the page as plain text, which is what Terra and Air do with `agent-*`. `avatar-display` is the same kind of decision one step further: a theme that draws Rally's turn as a bubble wants the mark beside it, and a theme that does not would be hanging an avatar off a paragraph.",
+    "cmp.composer": "The message composer's frame. A theme builds either shape out of the same five values: a card sets a background, a border and a radius; a rule sets them to nothing and gives `rule-color` a hairline instead, so the composer reads as a line the page rests on rather than as a box floating over it. `rule-color-focus` is what that line does when the field has focus, which is the only feedback left once the border is gone. `send-background`, `send-radius` and `send-size` are the send control's own frame, which follows the composer: a flat composer with a raised button on it reads as two different surfaces. `layout` is `row` for a composer whose tools, field and send control sit on one line and `stack` for one that puts its tools on a second row under the field — a one-line composer has no room for a hint or a model name, so a theme choosing it is choosing to drop them.",
     "cmp.turn": "Where a person's own turn sits. The three move together: a turn left-aligned but still capped reads as text that wraps early for no reason.",
     "cmp.feed": "The reading column, and the label over a turn in it.",
     "cmp.markdown": "Rendered markdown. Its colours were already tokens; its *measurements* were not, which is why Air's headings were smaller than the prose beneath them \u2014 `.markdown-body` scaled with `sys.font.size.prose` and the headings it contained stayed at a fixed 18/16/14.5/14. A theme that moves its prose size has to be able to move the scale above it, and the rhythm with it. The `article-*` values are the note detail's own scale: a note is read as a document rather than as a turn in a transcript, so its headings run larger than the feed's.",
@@ -620,19 +621,70 @@
     "cmp.row.background-selected": {
       "$type": "color"
     },
+    "cmp.row.radius": {
+      "$type": "dimension"
+    },
+    "cmp.row.avatar-size": {
+      "$type": "dimension"
+    },
+    "cmp.row.avatar-radius": {
+      "$type": "dimension"
+    },
     "cmp.group-label.height": {
       "$type": "dimension"
     },
     "cmp.group-label.gap": {
       "$type": "dimension"
     },
+    "cmp.search.background": {
+      "$type": "color"
+    },
+    "cmp.search.border": {
+      "$type": "color"
+    },
+    "cmp.search.radius": {
+      "$type": "dimension"
+    },
+    "cmp.search.height": {
+      "$type": "dimension"
+    },
     "cmp.bubble.background": {
+      "$type": "color"
+    },
+    "cmp.bubble.foreground": {
       "$type": "color"
     },
     "cmp.bubble.border": {
       "$type": "color"
     },
     "cmp.bubble.padding": {
+      "$type": "dimension"
+    },
+    "cmp.bubble.radius": {
+      "$type": "dimension"
+    },
+    "cmp.bubble.agent-background": {
+      "$type": "color"
+    },
+    "cmp.bubble.agent-foreground": {
+      "$type": "color"
+    },
+    "cmp.bubble.agent-border": {
+      "$type": "color"
+    },
+    "cmp.bubble.agent-padding": {
+      "$type": "dimension"
+    },
+    "cmp.bubble.agent-width": {
+      "$type": "string"
+    },
+    "cmp.bubble.avatar-display": {
+      "$type": "string"
+    },
+    "cmp.bubble.avatar-size": {
+      "$type": "dimension"
+    },
+    "cmp.bubble.gutter": {
       "$type": "dimension"
     },
     "cmp.composer.background": {
@@ -671,6 +723,12 @@
     "cmp.composer.send-foreground": {
       "$type": "color"
     },
+    "cmp.composer.send-size": {
+      "$type": "dimension"
+    },
+    "cmp.composer.layout": {
+      "$type": "string"
+    },
     "cmp.turn.align": {
       "$type": "string"
     },
@@ -692,13 +750,25 @@
     "cmp.feed.padding-x": {
       "$type": "dimension"
     },
+    "cmp.feed.author.color": {
+      "$type": "color"
+    },
     "cmp.feed.author.font-size": {
       "$type": "dimension"
     },
     "cmp.feed.author.font-weight": {
       "$type": "fontWeight"
     },
+    "cmp.feed.divider.font-size": {
+      "$type": "dimension"
+    },
     "cmp.markdown.diagram-line": {
+      "$type": "color"
+    },
+    "cmp.markdown.code-background": {
+      "$type": "color"
+    },
+    "cmp.markdown.code-foreground": {
       "$type": "color"
     },
     "cmp.markdown.heading-1": {

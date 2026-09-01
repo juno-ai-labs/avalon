@@ -27,8 +27,10 @@ import {
   PinOff,
   Play,
   Plus,
+  Search,
   Settings,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
@@ -936,11 +938,11 @@ function moveWithin(ids: string[], id: string, index: number): string[] {
 export function Sidebar({
   workspace,
   members = [],
-  automations,
-  notes = [],
+  automations: allAutomations,
+  notes: allNotes = [],
   projects = [],
   inactiveProjects = [],
-  workstreams,
+  workstreams: allWorkstreams,
   loading,
   meetingRecordingAvailable = false,
   onArchiveNote,
@@ -975,6 +977,25 @@ export function Sidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  // The filter is the navigation's own state and reaches nothing else: it
+  // narrows the three lists this component was handed, and every section below
+  // — pins, projects, recency groups, the command shortcuts — is derived from
+  // those. Filtering here rather than per section is what keeps a search from
+  // having to be taught about a section added later.
+  const [filterText, setFilterText] = useState('');
+  const filter = filterText.trim().toLowerCase();
+  const workstreams = useMemo(
+    () => (filter ? allWorkstreams.filter((workstream) => (workstream.title ?? '').toLowerCase().includes(filter)) : allWorkstreams),
+    [allWorkstreams, filter],
+  );
+  const notes = useMemo(
+    () => (filter ? allNotes.filter((note) => (note.title ?? '').toLowerCase().includes(filter)) : allNotes),
+    [allNotes, filter],
+  );
+  const automations = useMemo(
+    () => (filter ? allAutomations.filter((automation) => (automation.name ?? '').toLowerCase().includes(filter)) : allAutomations),
+    [allAutomations, filter],
+  );
   const roster = useMemo(() => {
     const byId = new Map(members.map((member) => [member.id, member]));
     byId.set(workspace.currentUser.id, workspace.currentUser);
@@ -1657,12 +1678,34 @@ export function Sidebar({
           </IconButton>
         </div>
 
+        {/* Outside the scroller: the field it filters is what scrolls, and a
+            search that leaves the top of the list is one you cannot correct
+            without scrolling back to it. */}
+        <div className="sidebar-search">
+          <Search aria-hidden="true" size={15} />
+          <input
+            aria-label="Search work streams, automations and notes"
+            onChange={(event) => setFilterText(event.target.value)}
+            placeholder="Search"
+            type="search"
+            value={filterText}
+          />
+          {filterText !== '' && (
+            <IconButton className="sidebar-search-clear" label="Clear search" onClick={() => setFilterText('')}>
+              <X size={13} />
+            </IconButton>
+          )}
+        </div>
+
         <nav
           className="sidebar-scroll"
           onClick={() => setSidebarOpen(false)}
           onScroll={loadMoreWhenNearBottom}
           ref={scrollRef}
         >
+          {filter !== '' && workstreams.length === 0 && notes.length === 0 && automations.length === 0 && (
+            <p className="sidebar-empty">No matches for “{filterText.trim()}”</p>
+          )}
           <div className="sidebar-primary-actions">
             <NavLink
               className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}

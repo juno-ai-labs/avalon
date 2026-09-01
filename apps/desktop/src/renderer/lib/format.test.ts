@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatDayDivider,
   formatDuration,
   formatSparseRelativeDate,
+  opensTranscriptDay,
   groupWorkstreams,
   nextRecencyBoundary,
   recencyGroupBatchFilter,
@@ -216,5 +218,51 @@ describe('work-stream presentation rules', () => {
     expect(formatSparseRelativeDate(localDate(2026, 6, 30, 9), now)).toBe('last week');
     expect(formatSparseRelativeDate(localDate(2026, 7, 1, 9), now)).toBe('last week');
     expect(formatSparseRelativeDate(localDate(2026, 6, 15, 9), now)).toBe('last month');
+  });
+});
+
+describe('the transcript day band', () => {
+  const at = (year: number, month: number, day: number, hour: number, minute = 0): string => (
+    new Date(year, month, day, hour, minute).toISOString()
+  );
+  const now = new Date(2026, 7, 7, 22, 30);
+
+  it('names today and yesterday and dates everything older', () => {
+    expect(formatDayDivider(at(2026, 7, 7, 20, 52), now)).toBe('Today 8:52 PM');
+    expect(formatDayDivider(at(2026, 7, 6, 9, 5), now)).toBe('Yesterday 9:05 AM');
+    // The weekday earns its place: it is what tells a reader how far back a
+    // stretch of transcript sits without their having to work out the date.
+    expect(formatDayDivider(at(2026, 7, 3, 14, 23), now)).toBe('Mon, Aug 3 2:23 PM');
+  });
+
+  /** No band at all beats a band that says "Unknown time". */
+  it('refuses a timestamp it cannot read', () => {
+    expect(formatDayDivider('not a date', now)).toBeNull();
+  });
+
+  it('opens the transcript, and every calendar day after it', () => {
+    expect(opensTranscriptDay(at(2026, 7, 7, 9), undefined)).toBe(true);
+    expect(opensTranscriptDay(at(2026, 7, 7, 18), at(2026, 7, 7, 9))).toBe(false);
+    expect(opensTranscriptDay(at(2026, 7, 8, 9), at(2026, 7, 7, 18))).toBe(true);
+  });
+
+  /**
+   * Calendar day, not elapsed hours. Twenty minutes across midnight is a new
+   * day and nine hours inside one afternoon is not — an hours-based rule gets
+   * both backwards, and the second one is the common case.
+   */
+  it('separates by the date rather than by the gap', () => {
+    expect(opensTranscriptDay(at(2026, 7, 8, 0, 5), at(2026, 7, 7, 23, 45))).toBe(true);
+    expect(opensTranscriptDay(at(2026, 7, 7, 22), at(2026, 7, 7, 8))).toBe(false);
+    // Same day number, different month and year.
+    expect(opensTranscriptDay(at(2026, 8, 7, 9), at(2026, 7, 7, 9))).toBe(true);
+    expect(opensTranscriptDay(at(2027, 7, 7, 9), at(2026, 7, 7, 9))).toBe(true);
+  });
+
+  // A row whose own stamp is unreadable cannot claim to open a day; a readable
+  // row after an unreadable one has to, or the band is lost for good.
+  it('handles an unreadable stamp on either side', () => {
+    expect(opensTranscriptDay('not a date', at(2026, 7, 7, 9))).toBe(false);
+    expect(opensTranscriptDay(at(2026, 7, 7, 9), 'not a date')).toBe(true);
   });
 });

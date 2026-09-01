@@ -616,12 +616,20 @@ describe('markdown list markers', () => {
     ]);
   });
 
-  // The preview's inherit is a nested-MarkdownBody fix. If it ever leaked onto
-  // the shared group, a note, a briefing, or a turn would recede with the
-  // glance — the failure this test exists to make red. Every `.markdown-body`
-  // rule that inherits has to name the card preview; the shared paints below
-  // are the ones the other hosts still need.
-  it('leaves shared markdown paint alone outside the embed-card preview', () => {
+  /*
+   * There are exactly two reasons a `.markdown-body` rule may inherit its
+   * colour, and a third would be a bug.
+   *
+   * The card preview's is a nested-MarkdownBody fix: if it leaked onto the
+   * shared group, a note, a briefing, or a turn would recede with the glance.
+   * A turn's is the bubble it sits in — `cmp.bubble.foreground` and its
+   * `agent-` twin are how a theme states the readable tone against a fill it
+   * chose, and a turn that named a ramp step instead would be illegible in the
+   * black bubble Grok draws. Both are enumerated here so that a rule which
+   * inherits for neither reason fails, which is what this test is for.
+   */
+  it('leaves shared markdown paint alone outside the preview and the bubbles', () => {
+    const allowed = ['.citation-card-preview', '.human-message-bubble', '.agent-message'];
     const markdownInherit = preludes().filter((prelude) => {
       if (!prelude.includes('.markdown-body')) return false;
       return /(^|;|\s)color\s*:\s*inherit/u.test(rule(prelude) ?? '');
@@ -629,7 +637,7 @@ describe('markdown list markers', () => {
 
     expect(markdownInherit.length).toBeGreaterThan(0);
     for (const prelude of markdownInherit) {
-      expect(prelude).toContain('.citation-card-preview');
+      expect(allowed.some((host) => prelude.includes(host))).toBe(true);
     }
 
     expect(rule('.markdown-body strong')).toContain('var(--av-ref-color-neutral-14)');
@@ -641,8 +649,10 @@ describe('markdown list markers', () => {
     expect(rule('.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6)')).toContain(
       'font-size: 15px',
     );
+    // A turn's prose follows the theme's own prose size rather than a fixed
+    // 14.5px, so a theme that moves its reading size moves the transcript too.
     expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body'))
-      .toContain('14.5px');
+      .toContain('var(--av-sys-font-size-prose)');
   });
 });
 

@@ -40,7 +40,7 @@ import { useAppSession } from '../lib/app-session';
 import { useAutoOpenLatestEmbeddedResource } from '../lib/use-auto-open-embedded-resource';
 import { useCitations } from '../lib/use-citations';
 import { ApiError, type MentionIdentity } from '../lib/api';
-import { formatDateTime } from '../lib/format';
+import { formatDateTime, formatDayDivider, opensTranscriptDay } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -2226,6 +2226,16 @@ export function WorkstreamScreen(): React.JSX.Element {
                       width: '100%',
                     }}
                   >
+                    {/* The band the whole transcript is read against: which
+                        day this stretch belongs to. Derived from the two rows
+                        rather than stored, so a turn arriving out of order
+                        moves the band with it. */}
+                    {opensTranscriptDay(message.createdAt, visibleTranscript[virtualRow.index - 1]?.createdAt)
+                      && formatDayDivider(message.createdAt) !== null && (
+                      <div className="transcript-day-divider" role="separator">
+                        <span>{formatDayDivider(message.createdAt)}</span>
+                      </div>
+                    )}
                     {virtualRow.index === firstUnreadIndex && (
                       <div className="unread-divider" role="separator"><span>Unread messages</span></div>
                     )}

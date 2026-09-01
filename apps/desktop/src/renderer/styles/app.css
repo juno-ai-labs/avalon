@@ -640,6 +640,43 @@ pre {
   padding: 0 10px 7px;
 }
 
+.sidebar-search {
+  align-items: center;
+  background: var(--av-cmp-search-background);
+  border: 1px solid var(--av-cmp-search-border);
+  border-radius: var(--av-cmp-search-radius);
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+  margin: 0 12px 10px;
+  min-height: var(--av-cmp-search-height);
+  padding: 0 6px 0 10px;
+}
+
+.sidebar-search:focus-within {
+  border-color: var(--av-ref-color-line-5);
+  box-shadow: var(--av-sys-focus-ring-quiet);
+}
+
+.sidebar-search > svg { flex: 0 0 auto; }
+
+.sidebar-search input {
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-default);
+  flex: 1;
+  font: inherit;
+  font-size: var(--av-sys-font-size-row);
+  min-width: 0;
+  outline: 0;
+  padding: 0;
+}
+
+.sidebar-search input::placeholder { color: var(--av-sys-color-text-muted); }
+.sidebar-search input::-webkit-search-cancel-button { display: none; }
+.sidebar-search-clear.icon-button { border: 0; height: 22px; width: 22px; }
+
 .sidebar-scroll {
   flex: 1;
   min-height: 0;
@@ -655,7 +692,7 @@ pre {
 .sidebar-action,
 .sidebar-row {
   align-items: center;
-  border-radius: var(--av-sys-size-radius-sm);
+  border-radius: var(--av-cmp-row-radius);
   color: var(--av-ref-color-neutral-11);
   display: flex;
   min-height: var(--av-cmp-row-height);
@@ -2594,6 +2631,17 @@ pre {
 .block-dashboard-prompt-field > span { color: var(--av-sys-color-text-muted); font-size: 11px; }
 .block-dashboard-prompt-field textarea { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-text-default); line-height: 1.5; min-height: 142px; outline: 0; padding: 10px 11px; resize: vertical; width: 100%; }
 .block-dashboard-prompt-field textarea:focus { border-color: var(--av-ref-color-line-6); }
+/* Centred and unruled, unlike the unread band: this one says where you are in
+   the transcript, and a rule across the column would read as a boundary the
+   conversation crossed. */
+.transcript-day-divider {
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  font-size: var(--av-cmp-feed-divider-font-size);
+  justify-content: center;
+  margin: 10px 0 18px;
+}
+
 .unread-divider { align-items: center; color: var(--av-sys-color-accent-base); display: flex; font-size: 10.5px; font-weight: 620; gap: 9px; margin: 8px 0 14px; }
 .unread-divider::before,
 .unread-divider::after { background: var(--av-sys-color-accent-tint); content: ''; flex: 1; height: 1px; }
@@ -3016,7 +3064,7 @@ pre {
 .markdown-body .contains-task-list { list-style: none; padding-left: 4px; }
 .markdown-body .task-list-item { align-items: baseline; display: flex; gap: 9px; }
 .markdown-body .task-list-item > input { accent-color: var(--av-sys-color-accent-base); flex: 0 0 auto; margin: 0; transform: translateY(1px); }
-.markdown-inline-code { background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-13); font-size: 0.88em; padding: 2px 4px; }
+.markdown-inline-code { background: var(--av-cmp-markdown-code-background); border-radius: var(--av-sys-size-radius-sm); color: var(--av-cmp-markdown-code-foreground); font-size: 0.88em; padding: 2px 4px; }
 .markdown-code-block { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-xl); margin: 17px 0 18px; overflow: hidden; }
 .markdown-code-block-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 8px; justify-content: space-between; padding: 7px 8px 7px 16px; }
 .markdown-code-language { color: var(--av-ref-color-neutral-9); font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; }
@@ -3315,8 +3363,45 @@ pre {
 .elicitation-collapsed-bar:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 6%, var(--av-sys-color-surface-raised)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 34%, var(--av-ref-color-line-5)); }
 .elicitation-collapsed-bar span { color: var(--av-sys-color-brand-ink); font-size: 9px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
 .elicitation-collapsed-bar strong { color: var(--av-ref-color-neutral-13); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workstream-composer { --composer-line-height: 1.5; --composer-text-padding: 13px 14px 4px; background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-lg); box-shadow: var(--av-sys-elevation-shadow-sm); overflow: hidden; }
-.workstream-composer:focus-within { border-color: var(--av-ref-color-line-5); }
+.workstream-composer { --composer-line-height: 1.5; --composer-text-padding: 13px 14px 4px; background: var(--av-cmp-composer-background); border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color); border-radius: var(--av-cmp-composer-radius); box-shadow: var(--av-cmp-composer-shadow); overflow: hidden; }
+.workstream-composer:focus-within { border-color: var(--av-cmp-composer-border-color-focus); }
+
+/*
+ * The one-line composer.
+ *
+ * A style query rather than a theme name: `cmp.composer.layout` is the theme's
+ * declaration that its tools, field and send control share a line, and the
+ * cascade never learns which theme said so. The toolbar becomes `display:
+ * contents` so its two halves are placed by the composer's own grid — they sit
+ * on opposite sides of the field, which no amount of styling could achieve
+ * while they were still one element's children.
+ *
+ * The hint goes with the shape. There is no room on one line for "Enter to
+ * send", and a theme that chooses this layout is choosing to drop it.
+ */
+@container style(--av-cmp-composer-layout: row) {
+  .workstream-composer {
+    --composer-text-padding: 7px 6px;
+    align-items: center;
+    column-gap: 4px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: var(--av-cmp-composer-padding);
+  }
+  .workstream-composer .composer-attachments { grid-area: 1 / 1 / 2 / 4; }
+  .workstream-composer .composer-toolbar { display: contents; }
+  .workstream-composer .composer-tools { grid-area: 2 / 1 / 3 / 2; }
+  .workstream-composer .composer-input-shell { grid-area: 2 / 2 / 3 / 3; }
+  .workstream-composer .composer-submit-area { grid-area: 2 / 3 / 3 / 4; }
+  .workstream-composer .composer-hint { display: none; }
+  .workstream-composer textarea { min-height: 24px; }
+  /* The tools read as one quiet cluster beside the field rather than as a
+     toolbar under it, which is what they were when they had a row of their own. */
+  .workstream-composer .composer-tools .icon-button {
+    border-color: transparent;
+    border-radius: var(--av-sys-size-radius-pill);
+  }
+}
 .workstream-composer.is-file-dragging,
 .transcript-scroll.is-file-dragging,
 .rail-surface.is-file-dragging { box-shadow: inset 0 0 0 2px var(--av-sys-color-brand-base); }
@@ -3454,7 +3539,7 @@ pre {
 .model-selector-item > svg { color: var(--av-sys-color-accent-base); flex: 0 0 auto; }
 .message-delivery-controls { align-items: center; display: flex; gap: 2px; }
 .stop-button { background: transparent; border-color: transparent; color: var(--av-sys-color-text-muted); font-size: 10.5px; }
-.composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
+.composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: var(--av-cmp-composer-send-size); justify-content: center; width: var(--av-cmp-composer-send-size); }
 .composer-error-slot { padding-top: 7px; }
 .composer-error-slot .inline-error { background: var(--av-sys-color-danger-wash); border: 1px solid var(--av-sys-color-danger-edge); border-radius: var(--av-sys-size-radius-sm); margin: 0; padding: 6px 8px; }
 .mention-popover { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); bottom: calc(100% + 7px); box-shadow: var(--av-sys-elevation-shadow-md); left: 0; max-height: 310px; overflow: auto; padding: 4px; position: absolute; width: min(390px, 100%); z-index: 20; }
@@ -4421,26 +4506,82 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 100%;
 }
 
+/* The identity line labels the bubble, so it starts where the bubble starts. On
+   a theme with no avatar the gutter is `0px + 0px` and the line sits flush with
+   the column, which is where it was before there was a gutter at all. */
 :is(.workstream-screen, .automation-chat-surface) .agent-message > header {
   margin-bottom: 8px;
+  margin-left: calc(var(--av-cmp-bubble-avatar-size) + var(--av-cmp-bubble-gutter));
   opacity: 0.7;
+}
+
+:is(.workstream-screen, .automation-chat-surface) .agent-message-content {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--av-cmp-bubble-gutter);
+  width: 100%;
+}
+
+/* The mark rides at the bubble's first line rather than its middle: a long turn
+   with a centred avatar reads as though the speaker moved down the page. */
+:is(.workstream-screen, .automation-chat-surface) .agent-message-avatar {
+  align-items: center;
+  background: var(--av-sys-color-brand-wash);
+  border-radius: var(--av-cmp-row-avatar-radius);
+  display: var(--av-cmp-bubble-avatar-display);
+  flex: 0 0 auto;
+  height: var(--av-cmp-bubble-avatar-size);
+  justify-content: center;
+  margin-top: 2px;
+  width: var(--av-cmp-bubble-avatar-size);
+}
+
+:is(.workstream-screen, .automation-chat-surface) .agent-message-avatar .rally-mark {
+  color: var(--av-sys-color-brand-ink);
+  height: 60%;
+  width: 60%;
+}
+
+/* The cap lives on the column, not on the bubble. A percentage max-width on a
+   flex item whose own content is sizing it resolves against a width that is
+   still being computed, and the bubble came out at roughly half the column;
+   here the percentage has `.agent-message-content` — a full-width row — to
+   resolve against. */
+:is(.workstream-screen, .automation-chat-surface) .agent-message-column {
+  display: flex;
+  flex-direction: column;
+  max-width: var(--av-cmp-bubble-agent-width);
+  min-width: 0;
+}
+
+:is(.workstream-screen, .automation-chat-surface) .agent-message-bubble {
+  background: var(--av-cmp-bubble-agent-background);
+  border: 1px solid var(--av-cmp-bubble-agent-border);
+  border-radius: var(--av-cmp-bubble-radius);
+  color: var(--av-cmp-bubble-agent-foreground);
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--av-cmp-bubble-agent-padding);
+  width: fit-content;
 }
 
 /* The label over a turn is the same kind of thing as the label over a group of
    navigation rows, so it takes the same four properties: a theme that sets
    letterspaced small capitals there gets them here without saying so twice. */
 :is(.workstream-screen, .automation-chat-surface) .agent-message .message-author {
-  color: var(--av-ref-color-neutral-11);
+  color: var(--av-cmp-feed-author-color);
   font-size: var(--av-cmp-feed-author-font-size);
   font-weight: var(--av-cmp-feed-author-font-weight);
   letter-spacing: var(--av-sys-label-tracking);
   text-transform: var(--av-sys-label-transform);
 }
 
+/* `inherit`, so the fill and the words on it are one decision: a theme that
+   makes Rally's turn a bubble states the readable tone once, on the bubble. */
 :is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body {
-  color: var(--av-ref-color-neutral-13);
-  font-size: 14.5px;
-  line-height: 1.62;
+  color: inherit;
+  font-size: var(--av-sys-font-size-prose);
+  line-height: var(--av-sys-font-leading-prose);
 }
 
 /* This is the declaration that decides which side a turn lands on. Every
@@ -4465,7 +4606,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 :is(.workstream-screen, .automation-chat-surface) .human-message-bubble {
   background: var(--av-cmp-bubble-background);
   border: 1px solid var(--av-cmp-bubble-border);
-  border-radius: calc(var(--av-sys-size-radius-xl) + 6px);
+  border-radius: var(--av-cmp-bubble-radius);
+  color: var(--av-cmp-bubble-foreground);
   max-width: 100%;
   padding: var(--av-cmp-bubble-padding);
   width: fit-content;
@@ -4549,9 +4691,28 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body {
-  color: var(--av-ref-color-neutral-14);
+  color: inherit;
   font-size: calc(var(--av-sys-font-size-prose) - 0.5px);
   line-height: calc(var(--av-sys-font-leading-prose) - 0.14);
+}
+
+/* A filled bubble carries its own contrast, so everything drawn inside it that
+   would otherwise name a ramp step has to follow the fill instead — a black
+   bubble with `neutral.14` links and bold text is unreadable on every theme
+   that has one. */
+:is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body :is(strong, a, h1, h2, h3, h4, h5, h6) {
+  color: inherit;
+}
+
+:is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body a {
+  text-decoration: underline;
+}
+
+/* Code drawn out of the fill for the same reason: the standalone pair is sized
+   for the page, and on a filled bubble it is a patch of a different theme. */
+:is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-inline-code {
+  background: color-mix(in srgb, currentColor 15%, transparent);
+  color: inherit;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body p {
@@ -5050,6 +5211,17 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .workstream-launch-screen:not(.is-launching) .launch-composer textarea {
   min-height: 84px;
+}
+
+/* The resting launcher is stacked whatever shape the theme gives the composer
+   it becomes, and that is this screen's geometry rather than the theme's: its
+   field is deliberately tall — it invites a description, not a line — and a
+   one-line layout would hold the tools column open down the left of it, so the
+   invitation starts 118px in from where the field does. Declared on the stack
+   because a style query reads the *container's* value, not the element's; the
+   composer this screen animates into is unaffected. */
+.workstream-launch-screen:not(.is-launching) .composer-stack {
+  --av-cmp-composer-layout: stack;
 }
 
 .workstream-launch-screen:not(.is-launching) .launch-composer textarea::placeholder {

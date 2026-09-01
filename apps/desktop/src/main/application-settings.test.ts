@@ -114,7 +114,7 @@ describe('desktop application settings', () => {
         productAnalyticsEnabled: true,
         productAnalyticsPreferenceVersion: 0,
         productAnalyticsPreferencePending: false,
-        themeChoice: { family: 'terra', mode: 'system' },
+        themeChoice: { family: 'grok', mode: 'system' },
       });
     expect((await stat(applicationSettingsFilePath(directory))).mode & 0o777).toBe(0o600);
   });
@@ -133,12 +133,12 @@ describe('desktop application settings', () => {
     expect(parseStoredApplicationSettings(stored({ family: 'air', mode: 'dark' })).themeChoice)
       .toEqual({ family: 'air', mode: 'dark' });
     expect(parseStoredApplicationSettings(stored({ family: 'sepia', mode: 'dark' })).themeChoice)
-      .toEqual({ family: 'terra', mode: 'system' });
+      .toEqual({ family: 'grok', mode: 'system' });
     expect(parseStoredApplicationSettings(stored(undefined)).themeChoice)
-      .toEqual({ family: 'terra', mode: 'system' });
+      .toEqual({ family: 'grok', mode: 'system' });
     // An appearance is not a choice: it cannot say which mode produced it.
     expect(parseStoredApplicationSettings(stored('air-dark')).themeChoice)
-      .toEqual({ family: 'terra', mode: 'system' });
+      .toEqual({ family: 'grok', mode: 'system' });
   });
 
   it('updates one preference without disturbing the others', async () => {

@@ -388,8 +388,15 @@ offers them as two rows rather than one list.
 
 | Family | Light | Dark |
 | --- | --- | --- |
+| **Grok** — the shipped design: white page, bubbles both sides, one black control | `grok` | `grok-dark` |
 | **Terra** — Rally's original palette | `terra-light` | `terra` |
 | **Air** — amber light on a moving field | `air` | `air-dark` |
+
+**Grok is `defaultThemeChoice`**, so it is what somebody who never opens the
+picker sees. Terra is still the theme file the others inherit from — the
+`"default": true` flag is about token inheritance, not about what ships, and the
+two are deliberately separate: a theme omitting a token falls through to Terra's
+complete set rather than to whichever design happened to ship last.
 
 `familyAppearances` in `common/themes.ts` is the whole coupling: adding a family
 is a row there and two theme files, and nothing else in either process learns a
@@ -680,6 +687,69 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-09-01 — Grok is the shipped design, and a turn is a bubble on both sides
+
+**What changed:** A third family, **Grok** (`grok` / `grok-dark`), and it is now
+`defaultThemeChoice` — a white page, grey bubbles for Rally, a black one for the
+person, a pill composer whose tools and send control share a line with the
+field, and a filter field over the navigation. Terra and Air are unchanged on
+screen and stay in the picker.
+
+Five groups of tokens carry the parts that used to be hard-coded, so the
+difference between the designs is values rather than rules:
+
+- **`cmp.bubble.agent-*`, `cmp.bubble.foreground`, `cmp.bubble.radius`.** Rally's
+  turn is now the same two-part shape a person's is — a gutter with the
+  speaker's mark, and a block the words sit in. Terra and Air set the fill,
+  border and padding to nothing and `avatar-display` to `none`, which is the
+  plain paragraph they had before; Grok sets a fill and gets a bubble. Both
+  bubbles' prose is `color: inherit`, because a filled bubble states its own
+  contrast and a turn naming a ramp step is unreadable in the black one.
+- **`cmp.composer.layout`**, queried with `@container style(…)`. `row` turns the
+  toolbar into `display: contents` so its two halves are placed by the
+  composer's own grid and land on opposite sides of the field; `stack` is the
+  two-row composer Terra and Air keep. Nothing in the cascade learns a theme's
+  name.
+- **`cmp.search.*`**, **`cmp.row.radius` / `cmp.row.avatar-*`**,
+  **`cmp.markdown.code-*`**, **`cmp.feed.author.color`**, and
+  **`cmp.feed.divider.font-size`** — the filter field, the row's pill, inline
+  code, the label over a turn, and the day band between two days' turns.
+
+**Why:** The ask was for the product to look like a particular consumer chat
+client. Two ways to do that: retune the existing families' values, or add a
+family. Retuning would have made the reskin unreviewable — Terra is what every
+existing screenshot, test and habit is against — and irreversible, since the old
+values would only exist in history. A family is additive, and the engine already
+made it a JSON file rather than an audit.
+
+What it *did* cost is the second half of this entry: three of the shapes the new
+design needs were not expressible at all, because the stylesheet had written
+them down as one answer. The agent turn was a paragraph, the composer was two
+rows, and the bubble's radius was `calc(radius.xl + 6px)` in a rule. Each became
+a token with the old answer as one of its values, which is the same move the
+engine made for colour and had not yet made for shape.
+
+**Considered and rejected:** branching the stylesheet on `data-theme-family`.
+It is the shortest path to a one-line composer and it breaks the rule the engine
+exists for — a rule written twice for two designs is two rules that drift. The
+style query costs one `@container` block and asks the *theme* what shape it
+wants. Also rejected: leaving Rally's turn as a paragraph and giving only the
+person's turn a bubble, which is what the code already did. A transcript with a
+bubble on one side and prose on the other reads as two different products, and
+the avatar has nowhere to sit.
+
+**What a future change has to respect:** the four bubble decisions —
+`cmp.bubble.background`, `foreground`, and their `agent-` twins — are one
+decision each way round: a fill and the tone that is readable on it. Changing
+one without the other is how a turn goes illegible in a theme nobody was
+looking at. `avatar-display` is not a visibility toggle to reach for elsewhere;
+it exists because a mark beside a paragraph is wrong and a bubble without one is
+bare, and it should move only with the fill it accompanies. The action row under
+a turn must stay outside the bubble — it is hidden until hover, and inside a
+fill it is a visible empty strip on every turn. And the default family is now a
+promise to people who never opened the picker: moving it again re-skins every
+one of them, which is a product decision rather than a token one.
 
 ### 2026-08-30 — Mermaid resolves the active design tokens
 

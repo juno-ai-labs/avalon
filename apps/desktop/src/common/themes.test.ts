@@ -22,8 +22,8 @@ describe('the two axes', () => {
     expect(appearanceModeDescriptions.map((mode) => mode.id)).toEqual([...appearanceModes]);
   });
 
-  it('starts on the original design, following the Mac', () => {
-    expect(defaultThemeChoice).toEqual({ family: 'terra', mode: 'system' });
+  it('starts on the shipped design, following the Mac', () => {
+    expect(defaultThemeChoice).toEqual({ family: 'grok', mode: 'system' });
   });
 
   /**

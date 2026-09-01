@@ -201,6 +201,8 @@
     "cmp.row.background-selected": "transparent",
     "cmp.group-label.height": "34px",
     "cmp.group-label.gap": "22px",
+    "cmp.bubble.agent-background": "transparent",
+    "cmp.bubble.agent-border": "transparent",
     "cmp.bubble.background": "transparent",
     "cmp.bubble.border": "transparent",
     "cmp.bubble.padding": "0",

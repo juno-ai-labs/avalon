@@ -414,6 +414,53 @@ describe('MessageBlock human identity', () => {
     expect(bubble).not.toContainElement(attachments);
     expect(attachments?.nextElementSibling).toBe(bubble);
   });
+
+  /**
+   * Rally's turn has the same two-part shape a person's does — a gutter with the
+   * speaker's mark, and a block the words sit in — so that whether it reads as a
+   * bubble beside an avatar or as plain text running the column is a theme's
+   * decision rather than a branch here.
+   */
+  it('gives Rally a marked gutter and a block of its own', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: '00000000-0000-4000-8000-000000000401',
+      authorType: 'agent',
+      author: undefined,
+      text: 'Three follow-ups, one without an owner.',
+    };
+
+    const { container } = render(<MessageBlock {...actions} message={message} />);
+    const avatar = container.querySelector('.agent-message-avatar');
+    const bubble = container.querySelector<HTMLElement>('.agent-message-bubble');
+
+    expect(avatar).toBeInTheDocument();
+    expect(avatar).toHaveAttribute('aria-hidden', 'true');
+    expect(bubble).toHaveTextContent('Three follow-ups, one without an owner.');
+  });
+
+  /**
+   * The action row is hidden until the turn is hovered, so inside a filled
+   * bubble it is a strip of fill with nothing in it — on every turn, on every
+   * theme that draws one. It sits under the bubble instead.
+   */
+  it('keeps the response actions out of the bubble', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: '00000000-0000-4000-8000-000000000402',
+      authorType: 'agent',
+      author: undefined,
+      text: 'A settled response.',
+    };
+
+    const { container } = render(<MessageBlock {...actions} message={message} />);
+    const bubble = container.querySelector<HTMLElement>('.agent-message-bubble');
+    const actionRow = container.querySelector<HTMLElement>('.agent-message-actions');
+
+    expect(actionRow).toBeInTheDocument();
+    expect(bubble).not.toContainElement(actionRow);
+    expect(bubble?.nextElementSibling).toBe(actionRow);
+  });
 });
 
 describe('MessageBlock markdown', () => {

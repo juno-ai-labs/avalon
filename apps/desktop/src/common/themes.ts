@@ -16,7 +16,7 @@
  */
 
 /** A design. Each brings a light appearance and a dark one. */
-export const themeFamilies = ['terra', 'air'] as const;
+export const themeFamilies = ['grok', 'terra', 'air'] as const;
 export type ThemeFamily = (typeof themeFamilies)[number];
 
 /** Which way round to run it. `system` is a rule, not an appearance. */
@@ -24,7 +24,7 @@ export const appearanceModes = ['system', 'light', 'dark'] as const;
 export type AppearanceMode = (typeof appearanceModes)[number];
 
 /** What is actually drawn, once family and mode have been combined. */
-export const resolvedThemes = ['terra-light', 'terra', 'air', 'air-dark'] as const;
+export const resolvedThemes = ['grok', 'grok-dark', 'terra-light', 'terra', 'air', 'air-dark'] as const;
 export type ResolvedTheme = (typeof resolvedThemes)[number];
 
 export interface ThemeChoice {
@@ -32,7 +32,7 @@ export interface ThemeChoice {
   mode: AppearanceMode;
 }
 
-export const defaultThemeChoice: ThemeChoice = { family: 'terra', mode: 'system' };
+export const defaultThemeChoice: ThemeChoice = { family: 'grok', mode: 'system' };
 
 /**
  * The two appearances each family brings.
@@ -42,6 +42,7 @@ export const defaultThemeChoice: ThemeChoice = { family: 'terra', mode: 'system'
  * new name.
  */
 export const familyAppearances: Record<ThemeFamily, Record<'light' | 'dark', ResolvedTheme>> = {
+  grok: { light: 'grok', dark: 'grok-dark' },
   terra: { light: 'terra-light', dark: 'terra' },
   air: { light: 'air', dark: 'air-dark' },
 };
@@ -53,6 +54,7 @@ export interface Described<Id> {
 }
 
 export const themeFamilyDescriptions: readonly Described<ThemeFamily>[] = [
+  { id: 'grok', label: 'Grok', description: 'A white page, grey bubbles, and one black control at a time.' },
   { id: 'terra', label: 'Terra', description: 'The original palette: dense rows and a composer that is a card.' },
   { id: 'air', label: 'Air', description: 'Amber light on a moving field, with a great deal more room.' },
 ];
@@ -73,6 +75,8 @@ export const appearanceModeDescriptions: readonly Described<AppearanceMode>[] = 
  * copies drift.
  */
 export const themeWindowBackground: Record<ResolvedTheme, string> = {
+  grok: '#ffffff',
+  'grok-dark': '#0b0b0d',
   'terra-light': '#ffffff',
   terra: '#111210',
   air: '#f7f3ec',
