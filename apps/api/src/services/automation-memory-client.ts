@@ -4,6 +4,14 @@ import {
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 
+/**
+ * The authority's own search bound, re-exported here because this module is the
+ * seam the services reach automation memory through. A caller that has to fit
+ * inside the bound should not have to import the AutomationAgent's memory
+ * implementation — its DDL and SQL handlers — to learn the number.
+ */
+export { AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS } from "../durable-objects/automation-agent-memory";
+
 import { automationAgentName } from "../durable-objects/names";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";

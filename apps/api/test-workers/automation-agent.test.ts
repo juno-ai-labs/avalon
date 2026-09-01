@@ -300,26 +300,92 @@ describe("AutomationAgent", () => {
         args: { query: "release" },
       })).rejects.toThrow("automation_memory_authority_fenced");
 
-      // The bound Rally's own recall has to fit inside. It is declared for a
-      // model-issued argument, but `freezeRunMemoryContext` reaches this same
-      // schema with a query it builds itself out of a run's title, objective,
-      // and frozen automation context — and a refusal here is not a
-      // model-visible tool error. It is a `ZodError` that a Durable Object RPC
-      // flattens into a plain `Error`, which is how an over-long recall query
-      // ended every generated run as `harness_execution_failed`. The service
-      // now cuts its query to `AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS`; this
-      // proves the number it cuts to is the one this object actually enforces,
-      // against real workerd rather than a Node double's copy of the schema.
+      // `table_search` is the only other schema reading that constant, so it is
+      // asserted at the same boundary: the two are meant to stay one bound, and
+      // nothing else would catch them drifting apart.
       await expect(instance.executeMemoryTool({
         ...fence,
-        operation: "search",
+        operation: "table_search",
         args: { query: "r".repeat(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS) },
-      })).resolves.toMatchObject({ output: { results: [] } });
+      })).resolves.toMatchObject({ output: { tables: [] } });
       await expect(instance.executeMemoryTool({
         ...fence,
-        operation: "search",
+        operation: "table_search",
         args: { query: "r".repeat(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS + 1) },
       })).rejects.toThrow(/too_big|Too big/);
+    });
+  });
+
+  it("accepts a memory search query at the bound and refuses one over it", async () => {
+    // The bound Rally's own recall has to fit inside. It is declared for a
+    // model-issued argument, but `freezeRunMemoryContext` reaches these schemas
+    // with a query it builds itself out of a run's title, objective, and frozen
+    // automation context. A refusal there is not a model-visible tool error — it
+    // happens in run setup, before any tool dispatch — and SubstreamAgent
+    // classifies a setup throw by reading `error.code`, which a `ZodError` does
+    // not carry, so an over-long recall query ended every generated run as the
+    // catch-all `harness_execution_failed`. The service now cuts to
+    // `AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS`; this proves the number it cuts
+    // to is the one this object enforces, on real workerd rather than against a
+    // Node double's copy of the schema.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      const now = Date.now();
+      const runId = "00000000-0000-7000-8000-0000000000e1";
+      const harnessRunId = "00000000-0000-7000-8000-0000000000e2";
+      state.storage.sql.exec(
+        `INSERT INTO automation_identity
+           (id, automation_id, workspace_id, author_user_id, region,
+            authority_generation, created_at, updated_at)
+         VALUES (1, ?, ?, ?, 'global', 1, ?, ?)`,
+        AUTOMATION_ID, WORKSPACE_ID, AUTHOR_ID, now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_state
+           (id, lifecycle, title, definition_revision, accepted_definition_revision,
+            event_sequence, created_at, updated_at)
+         VALUES (1, 'active', 'Bound owner', 1, 1, 0, ?, ?)`,
+        now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_runs
+           (run_id, occurrence_key, trigger_type, workstream_id, harness_run_id,
+            admission_state, execution_state, delivery_state, context_json,
+            source_version, created_at, updated_at)
+         VALUES (?, 'manual:bound-test', 'manual', ?, ?, 'provisioned', 'running',
+                 'pending', '{}', 1, ?, ?)`,
+        runId, "00000000-0000-7000-8000-0000000000e3", harnessRunId, now, now,
+      );
+      const fence = {
+        schemaVersion: 1 as const,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        runId,
+        harnessRunId,
+        authorityGeneration: 1,
+      };
+
+      for (const operation of ["search", "table_search"] as const) {
+        await expect(instance.executeMemoryTool({
+          ...fence,
+          operation,
+          args: { query: "r".repeat(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS) },
+        })).resolves.toBeDefined();
+        await expect(instance.executeMemoryTool({
+          ...fence,
+          operation,
+          args: { query: "r".repeat(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS + 1) },
+        })).rejects.toThrow(/too_big|Too big/);
+      }
+
+      // The fence is asserted before the arguments are parsed, which is what
+      // makes it safe to leave a recall refusal fatal: a run that outlived its
+      // authority is refused as fenced whatever it sends.
+      await expect(instance.executeMemoryTool({
+        ...fence,
+        authorityGeneration: 2,
+        operation: "search",
+        args: { query: "r".repeat(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS + 1) },
+      })).rejects.toThrow("automation_memory_authority_fenced");
     });
   });
 
