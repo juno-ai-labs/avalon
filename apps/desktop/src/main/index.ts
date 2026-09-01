@@ -29,6 +29,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { WorkspaceChangeGuard } from './workspace-change-guard';
+import { revalidateWorkspaceActivation } from './workspace-activation';
 import {
   acceptedDeepLink,
   shouldDeliverConnectorResultToSettings,
@@ -92,7 +93,6 @@ import {
   refreshFailureIsTerminal,
   responseError,
   UnusableCredentialError,
-  workspaceActivationBridgeError,
 } from './api-response-error';
 import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
 import { parseTelemetryProductIntent, UUID_V7_PATTERN } from './telemetry-intent';
@@ -2311,22 +2311,19 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
     throw new Error('Invalid workspace activation operation ID');
   }
-  const changeId = beginWorkspaceChange(parsed.data);
-  try {
-    const selectionIntent = ++workspaceSelectionIntent;
-    return await requestOnboardingSession(
-      '/onboarding/workspace/activate',
-      parsed.data,
-      parsed.data.region,
-      parsed.data.workspaceId,
-      operationId as string | undefined,
-      selectionIntent,
-    );
-  } catch (error) {
-    throw workspaceActivationBridgeError(error);
-  } finally {
-    workspaceChangeGuard.finishChange(changeId);
-  }
+  return revalidateWorkspaceActivation(parsed.data, operationId as string | undefined, {
+    beginChange: beginWorkspaceChange,
+    finishChange: (changeId) => workspaceChangeGuard.finishChange(changeId),
+    nextSelectionIntent: () => ++workspaceSelectionIntent,
+    request: (request) => requestOnboardingSession(
+      request.path,
+      request.body,
+      request.expectedRegion,
+      request.expectedWorkspaceId,
+      request.operationId,
+      request.selectionIntent,
+    ),
+  });
 }
 
 async function createWorkspace(input: unknown): Promise<DesktopSession> {
