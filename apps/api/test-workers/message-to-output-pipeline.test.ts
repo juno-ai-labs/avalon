@@ -1955,6 +1955,13 @@ describe("a member's message travels the whole pipeline", () => {
             && JSON.stringify(message.content).includes("and answer this next")));
       expect(asked.length).toBeGreaterThan(0);
     } finally {
+      // Before tearing the install down, and unconditionally: a failed
+      // assertion above would otherwise leave the held provider call parked in
+      // its wait loop for the rest of the file, where it outlives this test and
+      // can hang or contaminate the next one. Tolerant of a gate that was never
+      // installed, because an `installScriptedProvider` that itself threw
+      // reaches here too.
+      await openProviderGate(stub).catch(() => undefined);
       await restoreProviderFetch(stub);
     }
   });
@@ -1992,75 +1999,81 @@ describe("a member's message travels the whole pipeline", () => {
       return held;
     });
 
-    const reservedInputId = (): Promise<string | null> =>
-      runInDurableObject(stub, (_instance, state) =>
-        state.storage.sql.exec<{ input_id: string }>(
-          `SELECT input_id FROM pending_loop_input_mailbox WHERE state = 'preparing'`,
-        ).toArray()[0]?.input_id ?? null);
-    await expect.poll(reservedInputId, {
-      timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS,
-      interval: 25,
-      message: "the admission never reserved its mailbox row",
-    }).not.toBeNull();
-    const inputId = (await reservedInputId())!;
+    try {
+      const reservedInputId = (): Promise<string | null> =>
+        runInDurableObject(stub, (_instance, state) =>
+          state.storage.sql.exec<{ input_id: string }>(
+            `SELECT input_id FROM pending_loop_input_mailbox WHERE state = 'preparing'`,
+          ).toArray()[0]?.input_id ?? null);
+      await expect.poll(reservedInputId, {
+        timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the admission never reserved its mailbox row",
+      }).not.toBeNull();
+      const inputId = (await reservedInputId())!;
 
-    // Armed before the row it covers, not after: a wake-up written second
-    // leaves a window in which the reservation is durable and nothing is left
-    // to rediscover it, which is the whole failure this guards.
-    expect(armOrder.mailboxRowsAtFirstArm).toBe(0);
+      // Armed before the row it covers, not after: a wake-up written second
+      // leaves a window in which the reservation is durable and nothing is left
+      // to rediscover it, which is the whole failure this guards.
+      expect(armOrder.mailboxRowsAtFirstArm).toBe(0);
 
-    // The reservation is durable; nothing else in this object knows about it,
-    // because the head-of-line gate keeps it out of `pendingInputs` until it
-    // settles. Without a wake-up the message — and everything queued behind
-    // it — is stranded until something unrelated touches the object, which for
-    // a work stream nobody reopens is never.
-    expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()))
-      .not.toBeNull();
-    // And it has to survive the wake it just bought: the alarm re-derives from
-    // durable state on its way out, and an unresolved reservation that
-    // contributes nothing there loses the wake-up again one heartbeat later.
-    await runDurableObjectAlarm(stub);
-    expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()))
-      .not.toBeNull();
+      // The reservation is durable; nothing else in this object knows about it,
+      // because the head-of-line gate keeps it out of `pendingInputs` until it
+      // settles. Without a wake-up the message — and everything queued behind
+      // it — is stranded until something unrelated touches the object, which for
+      // a work stream nobody reopens is never.
+      expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()))
+        .not.toBeNull();
+      // And it has to survive the wake it just bought: the alarm re-derives from
+      // durable state on its way out, and an unresolved reservation that
+      // contributes nothing there loses the wake-up again one heartbeat later.
+      await runDurableObjectAlarm(stub);
+      expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()))
+        .not.toBeNull();
 
-    // Age the claim past the recovery horizon. The suite cannot wait five real
-    // minutes, and this claim is in memory rather than a row, so the instant it
-    // was taken is rewound in place — the same move a durable-lease test makes
-    // against `lease_expires_at`. Nothing else about the parked invocation
-    // changes: it is still holding the first D1 read and will never return.
-    await runInDurableObject(stub, (instance) => {
-      const claims = (instance as unknown as {
-        product: { activeInputPreparations: Map<string, { depth: number; claimedAt: number }> };
-      }).product.activeInputPreparations;
-      const claim = claims.get(inputId);
-      expect(claim).toBeDefined();
-      claims.set(inputId, { ...claim!, claimedAt: claim!.claimedAt - LOOP_EXECUTION_LEASE_MS - 1 });
-    });
+      // Age the claim past the recovery horizon. The suite cannot wait five real
+      // minutes, and this claim is in memory rather than a row, so the instant it
+      // was taken is rewound in place — the same move a durable-lease test makes
+      // against `lease_expires_at`. Nothing else about the parked invocation
+      // changes: it is still holding the first D1 read and will never return.
+      await runInDurableObject(stub, (instance) => {
+        const claims = (instance as unknown as {
+          product: { activeInputPreparations: Map<string, { depth: number; claimedAt: number }> };
+        }).product.activeInputPreparations;
+        const claim = claims.get(inputId);
+        expect(claim).toBeDefined();
+        claims.set(inputId, { ...claim!, claimedAt: claim!.claimedAt - LOOP_EXECUTION_LEASE_MS - 1 });
+      });
 
-    // Recovery has to settle the mailbox row and carry the message to a run,
-    // driven by the alarm rather than by the invocation that vanished — the
-    // gate is never opened above, so the original `createMessage` is still
-    // parked and cannot be what does this.
-    await runDurableObjectAlarm(stub);
-    await expect.poll(() => runInDurableObject(stub, (_instance, state) => {
-      const settled = state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox
-          WHERE input_id = ? AND state = 'preparing'`,
-        inputId,
-      ).one().count === 0;
-      if (!settled) return "the interrupted preparation was never resumed";
-      const minted = state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM runs
-          WHERE json_extract(execution_context_json, '$.triggerMessageId') = ?`,
-        inputId,
-      ).one().count > 0;
-      return minted ? "runnable" : "the resumed message never became runnable";
-    }), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe("runnable");
+      // Recovery has to settle the mailbox row and carry the message to a run,
+      // driven by the alarm rather than by the invocation that vanished — the
+      // gate is never opened above, so the original `createMessage` is still
+      // parked and cannot be what does this.
+      await runDurableObjectAlarm(stub);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) => {
+        const settled = state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox
+            WHERE input_id = ? AND state = 'preparing'`,
+          inputId,
+        ).one().count === 0;
+        if (!settled) return "the interrupted preparation was never resumed";
+        const minted = state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM runs
+            WHERE json_extract(execution_context_json, '$.triggerMessageId') = ?`,
+          inputId,
+        ).one().count > 0;
+        return minted ? "runnable" : "the resumed message never became runnable";
+      }), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe("runnable");
+    } finally {
+      // Unconditionally, and only here: every assertion above runs while the
+      // admission is parked in a wait loop, and one that fails without this
+      // would leave that loop spinning for the rest of the file.
+      gate.open = true;
+    }
 
-    // The vanished invocation is fenced, not raced: releasing it now makes it
-    // finish against a client message id the takeover already made canonical,
-    // and it must not admit a second copy of the same message.
-    gate.open = true;
+    // The vanished invocation is fenced, not raced: released above, it finishes
+    // against a client message id the takeover already made canonical, and it
+    // must not admit a second copy of the same message.
     await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE client_message_id = ?`,
