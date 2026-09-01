@@ -1,0 +1,18 @@
+{
+  // Stateless by design: the regional D1 outbox remains telemetry authority.
+  // New provider destinations extend this Worker rather than adding one Worker
+  // per vendor. Adding storage, Queue, Durable Object, or Workflow bindings
+  // changes that authority boundary and requires a recorded design decision.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "avalon-api-telemetry-delivery-global",
+  "main": "src/telemetry-delivery-worker.ts",
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
+}
