@@ -220,11 +220,11 @@ can tell why.
    message authored by **Automation**, carrying the result — the row a
    colleague's message gets, with a different name in the author slot. No
    distinct kind, no "3 automation updates" fold, no affordances that exist only
-   here. Rejected: a bespoke row, which would need its own empty and error
-   states and its own answer every time the feed's row family changes, to
-   present something a reader already knows how to read. Deferred, and left
-   open: the room's agent writing the visible summary in its own voice on the
-   run the activation triggers (open question 1).
+   here. Two things are rejected rather than deferred: a bespoke row, which
+   would need its own empty and error states and its own answer every time the
+   feed's row family changes, to present something a reader already knows how to
+   read; and the room's agent writing the visible summary in its own voice
+   instead, which is argued out in **Who sees it, and what runs**.
 4. **A work stream-scoped automation cannot be re-homed.** The owning work
    stream is identity, not configuration: moving it changes who may manage it,
    whose results it reaches, and which room's participants authorized it.
@@ -377,6 +377,12 @@ decides who can see the automation and who can change it, and nothing else:**
 | `workspace` | The workspace | Owners and admins | The workspace's sidebar |
 | `workstream` | The owning work stream's participants | Every active participant | That room's rail, and no sidebar |
 
+**Managing is not accepting.** That column is who may change an automation once
+it exists; anyone who can author one can accept it, whatever its scope
+(**Authoring from Slack**). The two get run together easily and they answer
+different questions — starting a standing behavior, and altering one the
+workspace has come to depend on.
+
 The agent asks which one rather than picking a default. "Just for you, for the
 workspace, or for this room" is the difference between an automation that
 follows a person, one the admins own, and one the room keeps, and it is not
@@ -525,12 +531,32 @@ Two details the Slack origin settles for free:
   calling the same `acceptDraft` the feed card calls. Two entry points, one
   authority.
 
-**Acceptance is owner-or-admin for a workspace automation**, and that is worth
-being plain about because it is friction on the most natural version of this
-request: an ordinary member can ask for it, and the draft waits for an admin.
-Rally says so in the thread and names what is needed rather than failing
-silently. Open question 5 asks whether that is right for an automation whose
-only effect is in a channel the requester can already post in.
+**Any workspace member may accept a workspace automation**, including the one
+who asked for it, and that is a deliberate loosening of what acceptance
+requires. Today `acceptDraft` asserts the author *and*, for `workspace` scope,
+that the author is an owner or admin. The second condition goes.
+
+The argument is that it was never buying what it looked like it was buying. A
+workspace-scoped connection is visible and usable to every member of the
+workspace already — `connection-service.ts:326` lists connections
+`WHERE workspace_id = ? AND (scope = 'workspace' OR owner_user_id = ?)` — so a
+member can already call `slack.send_message` on that connection from a run in
+their own work stream, today, by asking. What a workspace automation adds is a
+*schedule* on something they can do interactively, not a capability they lacked.
+Refusing that while permitting the same call by hand is a rule that reads as
+governance and functions as friction.
+
+What it does add, and what carries it: the automation is a standing object the
+workspace owns, so it appears in the workspace's automations list, and **editing,
+pausing and deleting it stay owner-or-admin** through `assertManager`. An admin
+who dislikes what a member set up can see it and stop it. The two questions are
+genuinely different — who may start a standing behavior, and who may change one
+the workspace now owns — and only the second is an administrative question.
+
+The residual, stated rather than argued away: an automation runs unattended and
+repeatedly where interactive use is attended and once. A member who would not be
+given an admin's blessing for a weekly post can now make one, and the workspace
+finds out by seeing it in the list rather than by being asked first.
 
 The classifier still runs on the occurrence, and for this automation it is
 choosing between `done` and exposing the run: there is no `deliver` arm,
@@ -681,6 +707,17 @@ full, because it is the one thing here that must not be got wrong by accident.
 The run is otherwise ordinary and holds the tools that work stream's runs always
 hold, whatever the occurrence's trigger was (**key design decision 2**).
 
+**Rejected: the room's agent writing the visible summary instead.** The
+activation would become model-only evidence and people would read the agent's
+own words, composed for this room rather than copied from an email. It is the
+better-sounding option and it costs two things this design just got rid of. The
+hidden-row machinery comes back — the audience split on the transcript's hottest
+read, the conditional attention ordinal — for one author's rows. And every
+delivery would owe a model turn before anybody saw anything, so a result that
+arrived at 09:00 appears when the room's agent gets to it. The verbatim row is
+there the moment it lands, and the agent still wakes on it and can say whatever
+it likes next.
+
 Nothing about visibility needs a mechanism, and that is worth one line because
 an earlier revision of this PRD spent two changes on the transcript's hottest
 read to hide these rows: with the classifier withholding the results nobody
@@ -721,17 +758,22 @@ The name describes what the person sees, not the mechanism. Every place that
 implements it says so plainly, because a reader who takes it literally will
 write the creation path this arm does not have.
 
-**The cap is real and its number is not ours to invent.** An automation
-classifying `expose_workstream` every occurrence puts a row in somebody's sidebar
-every occurrence, and a workspace notices that as clutter long before anything
-errors. `AUTOMATION_EXPOSED_RUNS_MAX_PER_DAY` is introduced *by* the code path
-that enforces it, spelled `Number.POSITIVE_INFINITY` with a `LIMIT UNSET`
-marker, per
-[`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md);
-no enforcement, no constant. The arithmetic: per automation per day, the
-legitimate maximum is one per triggering event, and the failure it guards is a
-misclassifying automation on a high-volume trigger — a mailbox, not a schedule.
-Open question 2 is where the number lands.
+**No cap ships, and no constant either.** An automation classifying
+`expose_workstream` on every occurrence puts a row in somebody's sidebar every
+occurrence, and a misclassifying one on a high-volume trigger — a mailbox, not a
+schedule — is the case a ceiling would be for. There is no number worth
+defending yet, and
+[`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md)
+is explicit that a constant no code path enforces is not a guard: so neither the
+enforcement nor the `AUTOMATION_EXPOSED_RUNS_MAX_PER_DAY` an earlier revision
+reserved for it are built.
+
+What stands in for it is the failure being visible. Sidebar clutter is not a
+silent failure — it is the most complained-about kind — and the room it clutters
+belongs to the people who would complain. The thing to watch is one automation
+accounting for a run of consecutive exposures; that is the shape a cap would
+have caught, it is answerable from the run history, and a number set after
+seeing it will be a better number than one set now.
 
 ### When delivery cannot land
 
@@ -1467,7 +1509,13 @@ the EU needs the answer from the same place either way.
    authoring plugin reaching every work-stream run is the largest new surface
    here, and its whole safety argument is that loading it grants nothing.
    Drafting writes a proposal; acceptance asserts a human caller and is
-   unreachable from any harness loop.
+   unreachable from any harness loop. *Which* person is a smaller question than
+   it looks: any member may accept a `workspace` automation, because a
+   workspace-scoped connection is already usable by every member interactively
+   (`connection-service.ts:326`), so what acceptance adds is a schedule rather
+   than a capability. Managing what the workspace then owns — editing, pausing,
+   deleting — stays owner-or-admin, which is where an admin's judgment actually
+   applies (**Authoring from Slack**).
 4. **Nobody's continued access gates delivery, and credentials are handled
    separately.** A room's automation keeps delivering after its creator leaves.
    What their departure takes away is credentials, and that is where it is
@@ -1569,17 +1617,20 @@ always hold. `trigger.kind` rides along as provenance a reader and the model can
 see, and narrows nothing (**key design decision 2**). The agent reads, decides,
 and answers in the room; it has no path back to the automation (non-goal 2).
 
-**One bound is left open — and it ships with its enforcement or not at all.** A
-room receiving a daily automation accumulates activations, and each occupies
-part of every later run's context window. Nothing caps them separately today.
-`WORKSTREAM_ACTIVATION_CONTEXT_MAX_ROWS` is introduced *by* the admission branch
-that slices the rows, spelled `Number.POSITIVE_INFINITY` with a `LIMIT UNSET`
-marker, per
-[`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md);
-if the slice does not ship, the constant does not either. The arithmetic for
-setting it: budget one automation result per row against the run's context
-window and the 80% compaction trigger. A daily automation puts thirty in a
-month.
+**Activations are not capped separately in the context window**, and an earlier
+revision of this PRD reserved a `WORKSTREAM_ACTIVATION_CONTEXT_MAX_ROWS` for
+exactly that. The worry was real — a room receiving a daily automation
+accumulates activations, thirty in a month, each occupying part of every later
+run's window. What changed is what an activation is: an ordinary visible message
+with a name in the author slot. The transcript window and the 80% compaction
+trigger already decide how much of any room's history a run reads, and a rule
+that applied only to rows authored by Automation would be special-casing one
+author inside a mechanism whose whole job is not to care who wrote something.
+
+So there is no slice in the admission branch and no constant beside it. If a
+room's context does start being crowded out by them, the answer is the one that
+applies to a room crowded out by any other prolific author — compaction, and the
+window — rather than a second budget that only these rows are charged against.
 
 ### 2. The automations plugin
 
@@ -1822,9 +1873,11 @@ switch — pointing it at another model is the lever that exists.
 2. **Slack authoring.** Mention Rally in a channel with "every monday at 9am
    send a message to this channel asking what each person shipped this weekend".
    The draft appears as blocks in that thread, scoped `workspace`, with the
-   origin channel frozen into its instructions and **no delivery target at all**.
-   A non-admin's accept is refused with a sentence naming what is needed; an
-   admin's accepts. The first Monday, the run posts into that channel with
+   origin channel named in the run's system prompt and **no delivery target at
+   all**.
+   The member who asked accepts it themselves, with no admin involved, and
+   assert that editing or pausing it afterwards still requires an owner or
+   admin. The first Monday, the run posts into that channel with
    `slack.send_message`, and no delivery receipt is written because there is
    nothing to deliver.
 3. **Ownership outlives the creator.** Remove the creator from the work stream
@@ -1899,38 +1952,3 @@ switch — pointing it at another model is the lever that exists.
     cannot exist — and that no scheduled occurrence of a deleted automation is
     later admitted. Both directions run as populated workerd upgrade tests over
     the rebuilt Durable Object schemas.
-
-## Open questions
-
-1. **Whether the room's agent should write the visible summary instead.** An
-   activation renders as an ordinary message authored by **Automation**, which
-   is what this PRD builds and what the acceptance list checks. The one
-   alternative still worth weighing is letting the room's own agent write what
-   people read, in its own voice, on the run the activation triggers — a person
-   would then read something composed for this room rather than a copy of an
-   email. It is reachable now that the run happens, it is additive to what is
-   being built, and it is a question about voice rather than about rows, which
-   is why it is no longer blocking anything.
-2. **`AUTOMATION_EXPOSED_RUNS_MAX_PER_DAY`.** The team's number. Per
-   automation per day; the legitimate maximum is one per triggering event, and
-   the failure it guards is a misclassifying automation on a high-volume trigger
-   filling a sidebar with rooms nobody opens.
-3. **`WORKSTREAM_ACTIVATION_CONTEXT_MAX_ROWS`.** The team's number, with the
-   arithmetic in **Agent behavior 1**. It wants answering before the first work
-   stream carries a daily automation, and it is independent of question 1
-   because it is context cost, not presentation.
-4. **Whether an exposed run should be re-hidable.** A person archives one today,
-   which removes it from the sidebar and keeps it on the run history — that is
-   probably enough, and it is what this PRD assumes. The alternative is an
-   explicit "hide this again" that clears the flag, which is a second control
-   doing almost the same thing. Worth revisiting only if archiving an exposed
-   run turns out to read wrong on the automation's own run history.
-5. **Whether a member can accept a workspace automation that only acts where
-   they already can.** Acceptance for `workspace` scope is owner-or-admin, and
-   this PRD keeps it. The case for relaxing it is narrow and real: an automation
-   whose only effect is a message in a channel the requester can already post in
-   grants no reach they do not have, and the Slack path is where that friction
-   shows up. The case against is that a workspace automation runs on workspace
-   credentials and can *read* things the requester cannot, so a harmless effect
-   does not make the automation harmless. Probably resolved by looking at what
-   those drafts actually bind to, once there are some.
