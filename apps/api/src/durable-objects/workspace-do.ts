@@ -3866,7 +3866,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
-  /** Content-free automation sidebar projection; AutomationAgent remains authority. */
+  /**
+   * Content-free automation sidebar projection; AutomationAgent remains authority.
+   *
+   * Drafts are excluded, and that follows from the builder's retirement rather
+   * than being a taste: a draft is a conversation in progress and now lives
+   * where that conversation is — a room's rail, or nowhere at all if it was
+   * written on the screen that no longer exists. Listing one here would offer a
+   * row whose only destination is an automation that has not been created yet.
+   */
   async listAutomationDirectory(input: unknown): Promise<{ items: AutomationSummary[] }> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).parse(input);
@@ -3886,15 +3894,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }>(`SELECT automation_id, lifecycle, scope, title, description, next_run_at,
               attention_code, projected_at
           FROM automation_directory
-         WHERE workspace_id = ? AND lifecycle <> 'deleted'
+         WHERE workspace_id = ? AND lifecycle NOT IN ('deleted', 'draft')
            -- A room's automation is listed in that room's rail and nowhere
            -- else. In a personal list it would be an object somebody sees
            -- without the context that explains it, in a list where pausing it
            -- affects people who are not looking at that list.
            AND owning_workstream_id IS NULL
            AND (scope = 'workspace' OR author_user_id = ?)
-         ORDER BY CASE lifecycle WHEN 'draft' THEN 1 ELSE 0 END,
-                  projected_at DESC, automation_id
+         ORDER BY projected_at DESC, automation_id
          LIMIT 250`, request.workspaceId, request.userId).toArray();
     return {
       items: rows.map((row) => ({
