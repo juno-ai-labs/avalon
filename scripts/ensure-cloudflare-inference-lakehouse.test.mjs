@@ -106,7 +106,8 @@ function accountDouble({ tokenOwner = 'account' } = {}) {
         return success(entity);
       }
       const name = url.searchParams.get('name');
-      return success([...store.values()].filter((entity) => !name || entity.name === name));
+      return success([...store.values()].filter((entity) =>
+        !name || entity.name.toLowerCase().includes(name.toLowerCase())));
     }
     assert.fail(`unexpected Cloudflare request: ${method} ${path}`);
   };
@@ -379,6 +380,79 @@ test('one deploy preflight provisions both Global catalogs and materializes both
   }
 });
 
+test('existing Pipeline resources are verified from list responses without detail reads', async () => {
+  const account = accountDouble();
+  const outputDirectory = await mkdtemp(join(tmpdir(), 'avalon-list-response-test-'));
+  try {
+    await ensureCloudflareLakehouses({
+      environment,
+      fetchImpl: account.fetchImpl,
+      log: () => {},
+    });
+    const requestCountBeforeVerification = account.requests.length;
+
+    const result = await ensureCloudflareLakehouses({
+      environment,
+      fetchImpl: account.fetchImpl,
+      log: () => {},
+      materializeBindings: true,
+      outputDirectory,
+    });
+
+    const verificationRequests = account.requests.slice(requestCountBeforeVerification);
+    const pipelineReads = verificationRequests.filter((request) =>
+      request.method === 'GET' && request.path.startsWith('/pipelines/v1/'));
+    assert.deepEqual(pipelineReads.map((request) => request.path), [
+      '/pipelines/v1/streams',
+      '/pipelines/v1/sinks',
+      '/pipelines/v1/pipelines',
+      '/pipelines/v1/streams',
+      '/pipelines/v1/sinks',
+      '/pipelines/v1/pipelines',
+    ]);
+    assert.equal(
+      pipelineReads.some((request) =>
+        /^\/pipelines\/v1\/(?:streams|sinks|pipelines)\/[^/]+$/u.test(request.path)),
+      false,
+    );
+    assert.equal(verificationRequests.some((request) => request.method === 'POST'), false);
+
+    const globalConfig = JSON.parse(await readFile(result.configs.global, 'utf8'));
+    assert.deepEqual(
+      globalConfig.pipelines,
+      result.provisioned.map(({ manifest, resources }) => ({
+        binding: manifest.binding,
+        stream: resources.global.stream.id,
+      })),
+    );
+    assert.ok(globalConfig.pipelines.every(({ stream }) => account.entities.streams.has(stream)));
+  } finally {
+    await rm(outputDirectory, { recursive: true, force: true });
+  }
+});
+
+test('Pipeline list lookup ignores partial names and rejects exact duplicates', async () => {
+  const account = accountDouble();
+  await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
+  const stream = [...account.entities.streams.values()][0];
+  account.entities.streams.set('partial-name-stream', {
+    ...stream,
+    id: 'partial-name-stream',
+    name: `${stream.name}_other`,
+  });
+
+  await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
+
+  account.entities.streams.set('duplicate-name-stream', {
+    ...stream,
+    id: 'duplicate-name-stream',
+  });
+  await assert.rejects(
+    ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
+    new RegExp(`duplicate streams named ${stream.name}`, 'u'),
+  );
+});
+
 test('--check reports missing infrastructure without creating any resource', async () => {
   const account = accountDouble();
   await assert.rejects(
@@ -494,6 +568,18 @@ test('immutable Global sink drift stops deployment', async () => {
   await assert.rejects(
     ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
     /destination or rolling policy drifted; sinks are immutable/u,
+  );
+});
+
+test('immutable Pipeline SQL drift stops deployment from the list response', async () => {
+  const account = accountDouble();
+  await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
+  const pipeline = [...account.entities.pipelines.values()][0];
+  pipeline.sql = 'INSERT INTO another_sink SELECT * FROM another_stream;';
+
+  await assert.rejects(
+    ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
+    /SQL drifted from the checked-in lakehouse manifest/u,
   );
 });
 
