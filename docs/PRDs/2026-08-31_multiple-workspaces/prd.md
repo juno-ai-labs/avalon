@@ -6,6 +6,7 @@
 > signing out, and can tell which of the ones it is not looking at has something
 > waiting. Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> Build plan: [`plan.md`](plan.md).
 > Folder conventions: [`../../prds.md`](../../prds.md).
 
 ## Summary
