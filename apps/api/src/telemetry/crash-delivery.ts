@@ -1,8 +1,8 @@
 import type { Env } from '../env';
 import {
-  postHogDeliveryRpcCall,
+  telemetryDeliveryRpcCall,
   type GlobalCrashDeliveryRow,
-} from './posthog-delivery-contract';
+} from './telemetry-delivery-contract';
 import { destinationCircuitAllows, recordDestinationOutcome } from './operations';
 
 const MAINTENANCE_BATCH_SIZE = 100;
@@ -42,13 +42,13 @@ export interface CrashDeliverySummary {
 
 export async function processCrashOutbox(env: Env): Promise<CrashDeliverySummary> {
   const summary: CrashDeliverySummary = { selected: 0, delivered: 0, retried: 0, terminal: 0, suppressed: 0 };
-  const postHogDelivery = env.POSTHOG_DELIVERY;
+  const telemetryDelivery = env.TELEMETRY_DELIVERY;
   const postHogHost = env.POSTHOG_HOST;
   const postHogProjectToken = env.POSTHOG_PROJECT_TOKEN;
   if (env.AVALON_REGION !== 'global'
     || !postHogHost
     || !postHogProjectToken
-    || !postHogDelivery) return summary;
+    || !telemetryDelivery) return summary;
   const now = new Date();
   if (!await destinationCircuitAllows(env, 'posthog_crash', now)) return summary;
   const pending = await env.DB.prepare(
@@ -93,7 +93,7 @@ export async function processCrashOutbox(env: Env): Promise<CrashDeliverySummary
       fingerprint: row.issue_fingerprint,
       report: JSON.parse(row.structured_report_json) as unknown,
     };
-    const result = await postHogDeliveryRpcCall(() => postHogDelivery.sendCrashBatch({
+    const { postHog: result } = await telemetryDeliveryRpcCall(() => telemetryDelivery.deliverCrashBatch({
       host: postHogHost,
       projectToken: postHogProjectToken,
       rows: [delivery],

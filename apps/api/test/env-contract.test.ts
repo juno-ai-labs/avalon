@@ -93,28 +93,28 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(withoutTerminal)).toThrow(/TERMINAL_PROVIDER is missing/u);
   });
 
-  it("requires PostHog delivery only in Global production and staging", () => {
-    const global = contractCompleteEnv() as Env & { POSTHOG_DELIVERY?: object };
-    delete global.POSTHOG_DELIVERY;
-    expect(() => assertEnvContract(global)).toThrow(/POSTHOG_DELIVERY is missing/u);
+  it("requires the shared telemetry delivery binding only in Global production and staging", () => {
+    const global = contractCompleteEnv() as Env & { TELEMETRY_DELIVERY?: object };
+    delete global.TELEMETRY_DELIVERY;
+    expect(() => assertEnvContract(global)).toThrow(/TELEMETRY_DELIVERY is missing/u);
 
     const staging = contractCompleteEnv({ APP_ENV: "staging" }) as Env & {
-      POSTHOG_DELIVERY?: object;
+      TELEMETRY_DELIVERY?: object;
     };
-    delete staging.POSTHOG_DELIVERY;
-    expect(() => assertEnvContract(staging)).toThrow(/POSTHOG_DELIVERY is missing/u);
+    delete staging.TELEMETRY_DELIVERY;
+    expect(() => assertEnvContract(staging)).toThrow(/TELEMETRY_DELIVERY is missing/u);
 
     const development = contractCompleteEnv({ APP_ENV: "development" }) as Env & {
-      POSTHOG_DELIVERY?: object;
+      TELEMETRY_DELIVERY?: object;
     };
-    delete development.POSTHOG_DELIVERY;
+    delete development.TELEMETRY_DELIVERY;
     expect(() => assertEnvContract(development)).not.toThrow();
 
     const eu = contractCompleteEnv({
       AVALON_REGION: "eu",
       PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com",
-    }) as Env & { POSTHOG_DELIVERY?: object };
-    delete eu.POSTHOG_DELIVERY;
+    }) as Env & { TELEMETRY_DELIVERY?: object };
+    delete eu.TELEMETRY_DELIVERY;
     delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
     delete (eu as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
     delete (eu as Partial<Env>).INFERENCE_LAKEHOUSE_QUEUE;

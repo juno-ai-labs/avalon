@@ -24,17 +24,17 @@ describe('PostHog profile job delivery', () => {
       VALUES ('job-eu-guard', NULL, 'person_profile', 'person-1', NULL,
               '{"name":"Ada"}', 1, 'pending', ?, ?)`)
       .run('2026-08-12T19:00:00.000Z', '2026-11-10T20:00:00.000Z');
-    const sendProfileBatch = vi.fn();
+    const deliverProfileBatch = vi.fn();
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'eu',
       POSTHOG_HOST: 'https://eu.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      POSTHOG_DELIVERY: { sendProfileBatch },
+      TELEMETRY_DELIVERY: { deliverProfileBatch },
     });
 
     await expect(processProfileOutbox(env)).resolves.toEqual({
       selected: 0, delivered: 0, retried: 0, terminal: 0, suppressed: 0,
     });
-    expect(sendProfileBatch).not.toHaveBeenCalled();
+    expect(deliverProfileBatch).not.toHaveBeenCalled();
     expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get())
       .toEqual({ state: 'pending' });
     database.close();
@@ -46,22 +46,24 @@ describe('PostHog profile job delivery', () => {
       (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled)
       VALUES ('00000000-0000-4000-8000-000000000001', 'google-1', 'ada@example.com', 'Ada', ?, ?, 1)`)
       .run('2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
-    const sendProfileBatch = vi.fn(async () => ({
-      result: 'delivered' as const,
-      requestId: 'posthog-profile-request-1',
-      retryAfterMs: null,
+    const deliverProfileBatch = vi.fn(async () => ({
+      postHog: {
+        result: 'delivered' as const,
+        requestId: 'posthog-profile-request-1',
+        retryAfterMs: null,
+      },
     }));
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global', SESSION_SIGNING_KEY: 'test-key',
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      POSTHOG_DELIVERY: { sendProfileBatch },
+      TELEMETRY_DELIVERY: { deliverProfileBatch },
     });
     const capability = (await new TelemetryBootstrapService(env).bootstrap(
       '018f22f2-4c22-7abc-8def-0123456789ab', 'US',
     )).capability;
     await linkAnonymousTelemetry(env, { userId: asUserId('00000000-0000-4000-8000-000000000001'), workspaceId: null, region: 'global' }, capability);
     await expect(processProfileOutbox(env)).resolves.toEqual({ selected: 1, delivered: 1, retried: 0, terminal: 0, suppressed: 0 });
-    expect(sendProfileBatch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deliverProfileBatch).toHaveBeenCalledWith(expect.objectContaining({
       rows: [expect.objectContaining({
         kind: 'epoch_transition',
         anonymousEpochId: '018f22f2-4c22-7abc-8def-0123456789ab',
@@ -70,7 +72,7 @@ describe('PostHog profile job delivery', () => {
     }));
     expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get()).toEqual({ state: 'acknowledged' });
     await processProfileOutbox(env);
-    expect(sendProfileBatch).toHaveBeenCalledTimes(1);
+    expect(deliverProfileBatch).toHaveBeenCalledTimes(1);
     database.close();
   });
 
@@ -88,7 +90,7 @@ describe('PostHog profile job delivery', () => {
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global',
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      POSTHOG_DELIVERY: { sendProfileBatch: vi.fn() },
+      TELEMETRY_DELIVERY: { deliverProfileBatch: vi.fn() },
     });
     await expect(processProfileOutbox(env)).resolves.toMatchObject({ suppressed: 1 });
     expect(database.prepare('SELECT state FROM telemetry_profile_jobs').get()).toEqual({ state: 'suppressed' });
@@ -106,8 +108,8 @@ describe('PostHog profile job delivery', () => {
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global',
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      POSTHOG_DELIVERY: {
-        sendProfileBatch: vi.fn(async () => { throw new Error('posthog_rpc_unavailable'); }),
+      TELEMETRY_DELIVERY: {
+        deliverProfileBatch: vi.fn(async () => { throw new Error('posthog_rpc_unavailable'); }),
       },
     });
 
@@ -138,15 +140,17 @@ describe('PostHog profile job delivery', () => {
       '2026-08-12T19:02:00.000Z',
       deleteAt,
     );
-    const sendProfileBatch = vi.fn(async () => ({
-      result: 'delivered' as const,
-      requestId: 'posthog-profile-request-2',
-      retryAfterMs: null,
+    const deliverProfileBatch = vi.fn(async () => ({
+      postHog: {
+        result: 'delivered' as const,
+        requestId: 'posthog-profile-request-2',
+        retryAfterMs: null,
+      },
     }));
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global',
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
-      POSTHOG_DELIVERY: { sendProfileBatch },
+      TELEMETRY_DELIVERY: { deliverProfileBatch },
     });
 
     await expect(processProfileOutbox(env)).resolves.toEqual({
@@ -158,8 +162,8 @@ describe('PostHog profile job delivery', () => {
         { id: 'job-malformed', state: 'terminal', attempt_count: 1 },
         { id: 'job-valid', state: 'acknowledged', attempt_count: 1 },
       ]);
-    expect(sendProfileBatch).toHaveBeenCalledTimes(1);
-    expect(sendProfileBatch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(deliverProfileBatch).toHaveBeenCalledTimes(1);
+    expect(deliverProfileBatch).toHaveBeenCalledWith(expect.objectContaining({
       rows: [expect.objectContaining({
         kind: 'person_profile',
         destinationAnalyticsId: 'person-valid',
