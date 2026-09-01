@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { TranscriptTurnSchema } from "@rally/contracts";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 
 describe("work-stream schema migration in workerd", () => {
@@ -432,6 +433,94 @@ describe("work-stream schema migration in workerd", () => {
       expect(pendingImmutableSql).not.toMatch(/\binput_sequence\b/);
       expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
       expect(state.storage.sql.exec(`PRAGMA foreign_keys`).one()).toEqual({ foreign_keys: 1 });
+    });
+  });
+});
+
+describe("workspace schema migration in workerd", () => {
+  it("carries a v25 dispatch and its targets into v26 with the note receipt unset", async () => {
+    // A fresh-schema test cannot prove this: it builds the whole ledger at
+    // once, so the row it inserts already has the column. What the cutover
+    // claims is about rows that existed *before* v26 — that they survive the
+    // `ALTER TABLE`, and that their `NULL` reads as "no note archive has run
+    // for this operation" rather than as missing data. Only an object actually
+    // upgraded from v25 can say so.
+    const stub = env.MIGRATION_PROBE_DO!.getByName("workspace-v25-batch-dispatch-upgrade");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 25),
+        component: "workspace_do",
+        workerVersionId: "worker-v25",
+        now: 1_000,
+      });
+      // An operation mid-flight across the deploy: one chunk published, one
+      // still pending, which is exactly the state the receipts exist to resume.
+      state.storage.sql.exec(
+        `INSERT INTO workspace_batch_dispatches
+           (operation_id, request_hash, user_id, target_count, created_at, updated_at)
+         VALUES ('operation-1', 'fnv1a64:1111111111111111', 'user-1', 2, 1, 1)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO workspace_batch_dispatch_targets
+           (operation_id, workstream_id, dispatched_at)
+         VALUES ('operation-1', 'workstream-1', 1)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO workspace_batch_dispatch_targets
+           (operation_id, workstream_id, dispatched_at)
+         VALUES ('operation-1', 'workstream-2', NULL)`,
+      );
+
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        component: "workspace_do",
+        workerVersionId: "worker-current",
+        now: 2_000,
+      });
+
+      expect(state.storage.sql.exec<{
+        operation_id: string;
+        request_hash: string;
+        user_id: string;
+        target_count: number;
+        archived_note_count: number | null;
+      }>(
+        `SELECT operation_id, request_hash, user_id, target_count, archived_note_count
+           FROM workspace_batch_dispatches`,
+      ).toArray()).toEqual([{
+        operation_id: "operation-1",
+        request_hash: "fnv1a64:1111111111111111",
+        user_id: "user-1",
+        target_count: 2,
+        archived_note_count: null,
+      }]);
+      // The pending target is what a resumed dispatch re-sends; losing it would
+      // silently drop half the operation across the deploy.
+      expect(state.storage.sql.exec<{ workstream_id: string; dispatched_at: number | null }>(
+        `SELECT workstream_id, dispatched_at FROM workspace_batch_dispatch_targets
+          ORDER BY workstream_id`,
+      ).toArray()).toEqual([
+        { workstream_id: "workstream-1", dispatched_at: 1 },
+        { workstream_id: "workstream-2", dispatched_at: null },
+      ]);
+
+      // The column arrives writable and constrained, so the receipt the note
+      // archive writes onto one of these upgraded rows still cannot go negative.
+      state.storage.sql.exec(
+        `UPDATE workspace_batch_dispatches SET archived_note_count = 3 WHERE operation_id = ?`,
+        "operation-1",
+      );
+      expect(state.storage.sql.exec<{ archived_note_count: number | null }>(
+        `SELECT archived_note_count FROM workspace_batch_dispatches`,
+      ).one()).toEqual({ archived_note_count: 3 });
+      expect(() => state.storage.sql.exec(
+        `UPDATE workspace_batch_dispatches SET archived_note_count = -1 WHERE operation_id = ?`,
+        "operation-1",
+      )).toThrow();
+      expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
     });
   });
 });

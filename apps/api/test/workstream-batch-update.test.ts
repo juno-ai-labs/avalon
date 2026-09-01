@@ -223,10 +223,12 @@ describe("generic work-stream batch updates", () => {
     expect(archiveNotesForBatch).not.toHaveBeenCalled();
   });
 
-  it("reports the first count again when a failed Queue dispatch is retried", async () => {
-    // The retry exists for the Queue chunks, and it must not pull a second
-    // group of notes in behind them: an open-ended range like "Last hour" would
-    // otherwise sweep up whatever arrived while the operator was retrying.
+  it("leaves the notes untouched when the Queue publication fails", async () => {
+    // The order this pins: a caller that sees this request fail has to be able
+    // to read it as "nothing happened". Archiving first meant a failed chunk
+    // send threw with the notes already gone, so the client showed a retryable
+    // error while the reader's notes had in fact been archived — and the cache
+    // invalidation and route handling that follow an archive never ran.
     const targets = Array.from({ length: 60 }, (_, index) => workstreamId(index + 1));
     const { archiveNotesForBatch, env } = environment(targets, 1, [workstreamId(90)]);
     const request = {
@@ -237,11 +239,35 @@ describe("generic work-stream batch updates", () => {
     const service = new WorkstreamBatchUpdateService(env, auth);
 
     await expect(service.enqueue(request)).rejects.toThrow("queue_chunk_failed");
+    expect(archiveNotesForBatch).not.toHaveBeenCalled();
+
+    // The retry publishes only the undispatched chunk and then takes the notes,
+    // exactly once.
     await expect(service.enqueue(request)).resolves.toEqual({
       operationId: OPERATION_ID,
       enqueuedCount: 60,
       archivedNoteCount: 1,
     });
+    expect(archiveNotesForBatch).toHaveBeenCalledOnce();
+  });
+
+  it("answers a replayed apply with the receipt rather than a second group", async () => {
+    // The window the receipt is actually for, now that a failed publication
+    // cannot reach the archive: the response was lost in transit and the same
+    // operation is applied again. An open-ended range like "Last hour" would
+    // otherwise sweep up whatever arrived in between.
+    const { archiveNotesForBatch, env } = environment([workstreamId(1)], undefined, [
+      workstreamId(90),
+    ]);
+    const request = {
+      operationId: OPERATION_ID,
+      filter: { pinned: false, includeSystem: false },
+      update: { kind: "archive" as const },
+    };
+    const service = new WorkstreamBatchUpdateService(env, auth);
+
+    await expect(service.enqueue(request)).resolves.toMatchObject({ archivedNoteCount: 1 });
+    await expect(service.enqueue(request)).resolves.toMatchObject({ archivedNoteCount: 1 });
 
     expect(archiveNotesForBatch).toHaveBeenCalledTimes(2);
     // The second call is the receipt answering, not a second archive.
