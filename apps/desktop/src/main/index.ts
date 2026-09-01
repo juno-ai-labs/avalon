@@ -92,6 +92,7 @@ import {
   refreshFailureIsTerminal,
   responseError,
   UnusableCredentialError,
+  workspaceActivationBridgeError,
 } from './api-response-error';
 import { ApplicationOpenObserver, initialApplicationOpenEntrypoint } from './application-open-observer';
 import { parseTelemetryProductIntent, UUID_V7_PATTERN } from './telemetry-intent';
@@ -2321,6 +2322,8 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
       operationId as string | undefined,
       selectionIntent,
     );
+  } catch (error) {
+    throw workspaceActivationBridgeError(error);
   } finally {
     workspaceChangeGuard.finishChange(changeId);
   }
