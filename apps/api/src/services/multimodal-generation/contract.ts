@@ -7,6 +7,7 @@ import {
 } from "@rally/agent-harness";
 import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
+import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
 
 export const MULTIMODAL_GENERATION_MODEL = "gpt-image-2";
 export const MULTIMODAL_GENERATION_PRICING_MODEL_ID = "openai/gpt-image-2";
@@ -15,28 +16,28 @@ export const MULTIMODAL_AUDIO_PRICING_MODEL_ID = "openai/gpt-4o-mini-tts";
 export const MULTIMODAL_AUDIO_DEFAULT_VOICE = "marin";
 export const MULTIMODAL_GENERATION_TIMEOUT_MS = 300_000;
 
-export const ImageGenerationSizeSchema = z.enum([
+export const ImageGenerationSizeSchema = deferredZodSchema(() => z.enum([
   "auto",
   "1024x1024",
   "1536x1024",
   "1024x1536",
-]);
+]));
 
-export const GenerateImageArgumentsSchema = z.strictObject({
+export const GenerateImageArgumentsSchema = deferredZodSchema(() => z.strictObject({
   prompt: z.string().trim().min(1).max(32_000),
   title: z.string().trim().min(1).max(300).optional(),
   size: ImageGenerationSizeSchema.optional(),
-});
+}));
 
-export const EditImageArgumentsSchema = z.strictObject({
+export const EditImageArgumentsSchema = deferredZodSchema(() => z.strictObject({
   resourceId: z.string().uuid(),
   prompt: z.string().trim().min(1).max(32_000),
   title: z.string().trim().min(1).max(300).optional(),
   size: ImageGenerationSizeSchema.optional(),
   maskResourceId: z.string().uuid().optional(),
-});
+}));
 
-export const AudioVoiceSchema = z.enum([
+export const AudioVoiceSchema = deferredZodSchema(() => z.enum([
   "alloy",
   "ash",
   "ballad",
@@ -50,14 +51,14 @@ export const AudioVoiceSchema = z.enum([
   "verse",
   "marin",
   "cedar",
-]);
+]));
 
-export const GenerateAudioArgumentsSchema = z.strictObject({
+export const GenerateAudioArgumentsSchema = deferredZodSchema(() => z.strictObject({
   text: z.string().trim().min(1).max(4_096),
   voice: AudioVoiceSchema.optional(),
   instructions: z.string().trim().min(1).optional(),
   title: z.string().trim().min(1).max(300).optional(),
-});
+}));
 
 export type GenerateImageArguments = z.infer<typeof GenerateImageArgumentsSchema>;
 export type EditImageArguments = z.infer<typeof EditImageArgumentsSchema>;
@@ -70,7 +71,7 @@ export type MultimodalGenerationToolExecutors = {
   generate_audio(input: GenerateAudioArguments, context: HarnessToolContext): Promise<HarnessToolResult>;
 };
 
-const definitions = {
+const definitions = memoizedValue(() => ({
   generate_image: {
     name: "generate_image",
     description: "Generate one new PNG image from a text prompt and attach it to the current workstream as a durable resource.",
@@ -98,19 +99,20 @@ const definitions = {
     timeoutMs: MULTIMODAL_GENERATION_TIMEOUT_MS,
     inputSchema: z.toJSONSchema(GenerateAudioArgumentsSchema) as Record<string, unknown>,
   },
-} as const satisfies Record<keyof MultimodalGenerationToolExecutors, ToolDefinition>;
+} as const satisfies Record<keyof MultimodalGenerationToolExecutors, ToolDefinition>));
 
 export function createMultimodalGenerationPlugin(
   executors: MultimodalGenerationToolExecutors,
 ): HarnessPlugin {
-  const tools = (Object.keys(definitions) as Array<keyof typeof definitions>).map((name): HarnessTool => {
+  const toolDefinitions = definitions();
+  const tools = (Object.keys(toolDefinitions) as Array<keyof typeof toolDefinitions>).map((name): HarnessTool => {
     const schema = name === "generate_image"
       ? GenerateImageArgumentsSchema
       : name === "edit_image"
         ? EditImageArgumentsSchema
         : GenerateAudioArgumentsSchema;
     return {
-      definition: definitions[name],
+      definition: toolDefinitions[name],
       serial: true,
       validateInput: (input) => {
         const result = schema.safeParse(input);

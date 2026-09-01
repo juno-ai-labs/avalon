@@ -1,5 +1,6 @@
 import { IdSchema, NoteCursorSchema } from "@rally/contracts";
 import { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 /**
  * The workspace's notes, transcript segments, and their two outboxes, as
@@ -18,7 +19,7 @@ import { z } from "zod";
  * instead of travelling on as an anonymous 500.
  */
 
-const TimestampSchema = z.string().min(1);
+const TimestampSchema = deferredZodSchema(() => z.string().min(1));
 
 /**
  * How much of the note the caller may see or move.
@@ -29,9 +30,9 @@ const TimestampSchema = z.string().min(1);
  * idempotent create endpoint needs before the read guard decides what the
  * caller is told about it.
  */
-export const WorkspaceNoteAccessSchema = z.enum(["any", "view", "edit"]);
+export const WorkspaceNoteAccessSchema = deferredZodSchema(() => z.enum(["any", "view", "edit"]));
 
-export const WorkspaceNoteRecordSchema = z.strictObject({
+export const WorkspaceNoteRecordSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   workspaceId: IdSchema,
   ownerUserId: IdSchema,
@@ -50,10 +51,10 @@ export const WorkspaceNoteRecordSchema = z.strictObject({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
   archivedAt: TimestampSchema.nullable(),
-});
+}));
 
 /** Field names match the `NoteTranscriptSegment` contract the routes serve. */
-export const WorkspaceNoteSegmentRecordSchema = z.strictObject({
+export const WorkspaceNoteSegmentRecordSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   noteId: IdSchema,
   sequenceNumber: z.number().int().min(1),
@@ -63,14 +64,14 @@ export const WorkspaceNoteSegmentRecordSchema = z.strictObject({
   speakerLabel: z.string().nullable(),
   text: z.string(),
   createdAt: TimestampSchema,
-});
+}));
 
-export const WorkspaceNoteStateRequestSchema = z.strictObject({
+export const WorkspaceNoteStateRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
   access: WorkspaceNoteAccessSchema,
-});
+}));
 
 /**
  * The note and its ordered transcript in one read; both empty on a miss, and
@@ -78,12 +79,12 @@ export const WorkspaceNoteStateRequestSchema = z.strictObject({
  * existence, and its caller re-reads under the view guard before showing
  * anything.
  */
-export const WorkspaceNoteStateSchema = z.strictObject({
+export const WorkspaceNoteStateSchema = deferredZodSchema(() => z.strictObject({
   note: WorkspaceNoteRecordSchema.nullable(),
   segments: z.array(WorkspaceNoteSegmentRecordSchema),
-});
+}));
 
-export const WorkspaceNoteUpdateRequestSchema = z.strictObject({
+export const WorkspaceNoteUpdateRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
@@ -97,7 +98,7 @@ export const WorkspaceNoteUpdateRequestSchema = z.strictObject({
   // the route contract's, and it survives the RPC because absence does.
   startedAt: TimestampSchema.nullable().optional(),
   endedAt: TimestampSchema.nullable().optional(),
-});
+}));
 
 /**
  * `becamePrivate` is decided inside the same transaction as the write, from
@@ -107,17 +108,17 @@ export const WorkspaceNoteUpdateRequestSchema = z.strictObject({
  * cutover — the object writes the transition row itself, atomically with the
  * scope change.
  */
-export const WorkspaceNoteUpdateResultSchema = z.strictObject({
+export const WorkspaceNoteUpdateResultSchema = deferredZodSchema(() => z.strictObject({
   outcome: z.enum(["updated", "not_found"]),
   becamePrivate: z.boolean(),
-});
+}));
 
-export const WorkspaceNoteArchiveRequestSchema = z.strictObject({
+export const WorkspaceNoteArchiveRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
   at: TimestampSchema,
-});
+}));
 
 /**
  * `recording` and `not_found` owe the caller different answers — ending the
@@ -125,11 +126,11 @@ export const WorkspaceNoteArchiveRequestSchema = z.strictObject({
  * read they were decided one round trip apart, so the classification could
  * describe a row the write never saw.
  */
-export const WorkspaceNoteArchiveResultSchema = z.strictObject({
+export const WorkspaceNoteArchiveResultSchema = deferredZodSchema(() => z.strictObject({
   outcome: z.enum(["archived", "not_found", "recording"]),
-});
+}));
 
-export const WorkspaceNoteSegmentAppendRequestSchema = z.strictObject({
+export const WorkspaceNoteSegmentAppendRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
@@ -141,7 +142,7 @@ export const WorkspaceNoteSegmentAppendRequestSchema = z.strictObject({
   speakerLabel: z.string().nullable(),
   text: z.string(),
   at: TimestampSchema,
-});
+}));
 
 /**
  * `duplicate` returns the stored segment for the same `clientSegmentId`, so a
@@ -150,12 +151,12 @@ export const WorkspaceNoteSegmentAppendRequestSchema = z.strictObject({
  * trips: a replay racing itself burned a sequence number and fell into the
  * unique constraint, and the service carried a compensating re-read for it.
  */
-export const WorkspaceNoteSegmentAppendResultSchema = z.strictObject({
+export const WorkspaceNoteSegmentAppendResultSchema = deferredZodSchema(() => z.strictObject({
   outcome: z.enum(["appended", "duplicate", "note_not_found"]),
   segment: WorkspaceNoteSegmentRecordSchema.nullable(),
-});
+}));
 
-export const WorkspaceNoteGenerationCommitRequestSchema = z.strictObject({
+export const WorkspaceNoteGenerationCommitRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema,
   userId: IdSchema,
@@ -165,26 +166,26 @@ export const WorkspaceNoteGenerationCommitRequestSchema = z.strictObject({
   /** The cursor pair the caller read before inference; the commit lands only if both still hold. */
   expectedThroughSequence: z.number().int().nonnegative(),
   expectedGeneratedAt: TimestampSchema.nullable(),
-});
+}));
 
-export const WorkspaceNoteGenerationCommitResultSchema = z.strictObject({
+export const WorkspaceNoteGenerationCommitResultSchema = deferredZodSchema(() => z.strictObject({
   outcome: z.enum(["committed", "stale"]),
-});
+}));
 
-export const WorkspaceNoteSidebarRequestSchema = z.strictObject({
+export const WorkspaceNoteSidebarRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   limit: z.number().int().min(1),
   /** Resume after this row; absent asks for the newest page. */
   before: NoteCursorSchema.optional(),
-});
+}));
 
 /**
  * Loose mirror of the `NoteSummary` contract: the object already validated
  * each row against `NoteSidebarRowSchema`, and the summary contract's tighter
  * bounds belong to the route that serves it.
  */
-export const WorkspaceNoteSidebarListSchema = z.strictObject({
+export const WorkspaceNoteSidebarListSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(z.strictObject({
     id: IdSchema,
     workspaceId: IdSchema,
@@ -203,25 +204,25 @@ export const WorkspaceNoteSidebarListSchema = z.strictObject({
     archivedAt: TimestampSchema.nullable(),
   })),
   nextCursor: NoteCursorSchema.nullable(),
-});
+}));
 
-export const WorkspaceNoteVisibilityRequestSchema = z.strictObject({
+export const WorkspaceNoteVisibilityRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   /** Null for a non-user principal, which sees only workspace-scoped notes. */
   userId: IdSchema.nullable(),
   resourceIds: z.array(IdSchema).min(1),
-});
+}));
 
-export const WorkspaceNoteVisibilityResultSchema = z.strictObject({
+export const WorkspaceNoteVisibilityResultSchema = deferredZodSchema(() => z.strictObject({
   resourceIds: z.array(IdSchema),
-});
+}));
 
-export const WorkspaceNotePrivacyPendingRequestSchema = z.strictObject({
+export const WorkspaceNotePrivacyPendingRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   noteId: IdSchema.optional(),
-});
+}));
 
-export const WorkspaceNotePrivacyTransitionSchema = z.strictObject({
+export const WorkspaceNotePrivacyTransitionSchema = deferredZodSchema(() => z.strictObject({
   id: z.string().min(1),
   workspaceId: IdSchema,
   noteId: IdSchema,
@@ -229,42 +230,42 @@ export const WorkspaceNotePrivacyTransitionSchema = z.strictObject({
   noteTitle: z.string(),
   actorUserId: IdSchema,
   createdAt: TimestampSchema,
-});
+}));
 
-export const WorkspaceNotePrivacyPendingResultSchema = z.strictObject({
+export const WorkspaceNotePrivacyPendingResultSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(WorkspaceNotePrivacyTransitionSchema),
-});
+}));
 
-export const WorkspaceNotePrivacyMarkRequestSchema = z.strictObject({
+export const WorkspaceNotePrivacyMarkRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   transitionId: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceNotePrivacyMarkResultSchema = z.strictObject({
+export const WorkspaceNotePrivacyMarkResultSchema = deferredZodSchema(() => z.strictObject({
   outcome: z.enum(["processed", "not_pending"]),
-});
+}));
 
-export const WorkspaceNoteDeletionOutboxRequestSchema = z.strictObject({
+export const WorkspaceNoteDeletionOutboxRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
-});
+}));
 
-export const WorkspaceNoteDeletionOutboxSchema = z.strictObject({
+export const WorkspaceNoteDeletionOutboxSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(z.strictObject({
     resourceId: IdSchema,
     contentRef: z.string().nullable(),
     modelContentRef: z.string().nullable(),
   })),
-});
+}));
 
-export const WorkspaceNoteDeletionRetireRequestSchema = z.strictObject({
+export const WorkspaceNoteDeletionRetireRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
-});
+}));
 
-export const WorkspaceNoteDeletionRetireResultSchema = z.strictObject({
+export const WorkspaceNoteDeletionRetireResultSchema = deferredZodSchema(() => z.strictObject({
   outcome: z.enum(["retired", "not_found"]),
-});
+}));
 
 export type WorkspaceNoteAccess = z.infer<typeof WorkspaceNoteAccessSchema>;
 export type WorkspaceNoteRecord = z.infer<typeof WorkspaceNoteRecordSchema>;

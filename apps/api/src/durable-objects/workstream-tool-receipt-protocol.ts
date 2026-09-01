@@ -6,6 +6,7 @@ import {
 } from "./object-port-protocol";
 import type { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
 import type { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 /**
  * The wire contract for one work stream's durable tool receipts.
@@ -43,9 +44,9 @@ export const TOOL_RECEIPT_OPERATIONS:
 
 export const isToolReceiptOperation = operationGuard(TOOL_RECEIPT_OPERATIONS);
 
-export const ToolReceiptOperationRequestSchema = objectPortRequestSchema(
+export const ToolReceiptOperationRequestSchema = deferredZodSchema(() => objectPortRequestSchema(
   isToolReceiptOperation,
   "unknown_tool_receipt_operation",
-);
+));
 
 export type ToolReceiptOperationRequest = z.infer<typeof ToolReceiptOperationRequestSchema>;
