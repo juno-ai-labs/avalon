@@ -32,6 +32,8 @@ exists.
 | `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, and reaching the supervisor through the one supported resolver. |
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
+| `apps/api/src/services/artifact-open-service.ts` | The only door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. |
+| `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp, the shared isolation contract, and the overlay rule. |
 
 ## How it works
 
@@ -91,8 +93,11 @@ active one, or the facet for a stateful one.
 
 ### Access
 
-Opening an artifact mints a single-use code against current work-stream
-visibility. **The code never travels in a request URL.** The desktop lands on
+`POST /resources/:id/artifact/open` mints a single-use code against current
+work-stream visibility — asked of `WorkstreamDO` rather than inferred, because
+that fact lives in its own SQL. A resource that does not exist and one the
+caller cannot see produce the same 404, so the endpoint is not an existence
+oracle. **The code never travels in a request URL.** The desktop lands on
 `/__rally/open#<code>`, where a Rally-served bootstrap page reads
 `location.hash` — which a browser never sends to a server — clears it from the
 address bar, and `POST`s the code in a request body. The redeem endpoint never
@@ -142,6 +147,20 @@ is the only place that can forward into it.
   superseded spellings alike. That strip is the entire anti-spoof mechanism; a
   header family whose readers widen to a legacy prefix and whose stripper does
   not has a forgeable back door.
+- **The renderer never embeds, fetches, or parses artifact content.** An
+  `<iframe>` would widen the renderer's CSP to a wildcard artifact host and graft
+  remote model-authored content into the application DOM as a navigable,
+  `postMessage`-reachable child. The main process owns both viewing surfaces and
+  composites the preview over the rail; the renderer can only *ask for an
+  artifact*, and the URL it supplies is checked here against the serving domain
+  on a label boundary before anything loads.
+- **Everything the renderer measures is a request, not an instruction.** The
+  preview rectangle is clamped to the window, because a wrong or hostile one
+  would paint artifact content over the chrome a person needs to escape it. And
+  a `WebContentsView` composites *above* the renderer's DOM, so any app surface
+  that can overlap the rail — a dialog, the command palette, a lightbox — must
+  collapse the view to nothing while it is open, or artifact content paints over
+  it.
 - **The asset manifest is the only index.** Nothing resolves a path the manifest
   does not name, which is what makes the server module's absence from `assets` a
   real 404 rather than a convention.
@@ -221,6 +240,8 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/artifact-serving-policy.test.ts` | The three fences: CSP directives, cross-artifact request admission including the credentialed simple `POST`, version-mount parsing, and asset resolution. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-site-publish.test.ts` | Kind resolution, the one-file refusal, the storage-class check, content types, the zip, and the asymmetric transition. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
+| `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, and the overlay collapse. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. |
@@ -311,7 +332,10 @@ zip); and an `<iframe>` for the rail preview (it would widen the renderer CSP to
 wildcard artifact host and graft remote model-authored content into the
 application DOM).
 
-**Not yet built:** the desktop surfaces — the rail's site detail and preview
-pane, the Data view and its CSV export, and the pop-out artifact window. The
-`live-artifacts-enabled` flag exists and gates them; nothing that protects data
-is scoped by it, so an artifact's authorization holds with the flag off.
+**Not yet built:** the renderer half of the desktop surfaces — the rail's site
+resource detail, the region it reports for the preview, the Data view and its
+CSV export, and the pop-out window's chrome. The main process's side of all of
+them is here and tested, as are the API routes they call; what is missing is the
+React that calls them. The `live-artifacts-enabled` flag exists and gates them;
+nothing that protects data is scoped by it, so an artifact's authorization holds
+with the flag off.

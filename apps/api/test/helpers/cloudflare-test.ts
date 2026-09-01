@@ -54,6 +54,7 @@ type CloudflareBinding =
   | Env["WORKSPACE_DOS"]
   | Env["AUTOMATION_AGENTS"]
   | Env["CRASH_SYMBOLICATOR"]
+  | Env["ARTIFACT_HOSTS"]
   | DurableObjectState
   | DurableObjectStorage
   | Flagship
