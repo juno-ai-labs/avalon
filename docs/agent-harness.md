@@ -1170,7 +1170,7 @@ authorizing it the same edit.
 **Considered and rejected:** Adding the one missing ID and keeping the literal.
 That fixes this instance and leaves the trap armed for the next built-in, with
 the same silent, production-only failure. Also rejected: removing the classifier
-altogether — its `toolPolicyForCall` use is a branch that mints the built-in
+altogether — its `resolveHarnessToolReceiptPolicy` use is a branch that mints the built-in
 receipt identity (`connectionId: null` plus the surface hash), so deleting it
 sends every built-in into the connector arm and throws
 `Connector identity is outside this run scope`, breaking web, workstream and
