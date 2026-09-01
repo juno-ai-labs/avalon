@@ -210,7 +210,8 @@ export class AuthService {
       this.env.DB.prepare(
         `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
          VALUES (?, ?, 'avalon-development', ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name, updated_at = excluded.updated_at, abandoned_at = NULL`,
       ).bind(
         DEVELOPMENT_WORKSPACE_ID,
         workspaceName.trim(),

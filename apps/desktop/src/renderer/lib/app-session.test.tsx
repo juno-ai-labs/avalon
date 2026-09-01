@@ -28,7 +28,10 @@ let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null =
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
 let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
-let observedLeaveWorkspace: ((workspaceId: string) => Promise<unknown>) | null = null;
+let observedLeaveWorkspace: ((
+  workspaceId: string,
+  expectedOutcome: 'left' | 'abandoned',
+) => Promise<unknown>) | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   consumePendingDeepLinks: vi.fn(),
@@ -1033,10 +1036,14 @@ describe('draft cache lifetime across a session', () => {
     await waitFor(() => expect(observedLeaveWorkspace).not.toBeNull());
 
     await act(async () => {
-      await observedLeaveWorkspace?.('workspace-eu');
+      await observedLeaveWorkspace?.('workspace-eu', 'left');
     });
 
-    expect(bridge.leaveWorkspace).toHaveBeenCalledWith({ region: 'eu', workspaceId: 'workspace-eu' });
+    expect(bridge.leaveWorkspace).toHaveBeenCalledWith({
+      expectedOutcome: 'left',
+      region: 'eu',
+      workspaceId: 'workspace-eu',
+    });
     expect(await readDraftText(euDraft)).toBeNull();
     expect((await readDraftText(globalDraft))?.text).toBe('global thought');
   });

@@ -111,7 +111,7 @@ describe('workspace account menu', () => {
 
     const invitation = await screen.findByRole('dialog', { name: 'Join Invited Studio' });
     fireEvent.click(within(invitation).getByRole('button', { name: 'Join' }));
-    await waitFor(() => expect(props.onAcceptInvitation).toHaveBeenCalledWith(invite));
+    await waitFor(() => expect(props.onAcceptInvitation).toHaveBeenCalledWith(invite, expect.any(String)));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Join Invited Studio' })).not.toBeInTheDocument());
 
     openMenu();
@@ -119,7 +119,27 @@ describe('workspace account menu', () => {
     const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
     fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
     fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
-    expect(props.onCreateWorkspace).toHaveBeenCalledWith({ name: 'New Lab', region: 'global' });
+    expect(props.onCreateWorkspace).toHaveBeenCalledWith(
+      { name: 'New Lab', region: 'global' }, expect.any(String),
+    );
+  });
+
+  it('reuses an operation id while retrying the same creation intent', async () => {
+    const onCreateWorkspace = vi.fn()
+      .mockRejectedValueOnce(new Error('response lost'))
+      .mockResolvedValueOnce(undefined);
+    renderMenu({ onCreateWorkspace });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
+    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+    expect(await within(create).findByText('response lost')).toBeVisible();
+
+    fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
+
+    await waitFor(() => expect(onCreateWorkspace).toHaveBeenCalledTimes(2));
+    expect(onCreateWorkspace.mock.calls[1]?.[1]).toBe(onCreateWorkspace.mock.calls[0]?.[1]);
   });
 
   it('shows a readable action error and clears it before another create attempt', async () => {

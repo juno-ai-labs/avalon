@@ -398,13 +398,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             invitations={workspaceDirectory.data?.invitations ?? []}
             loadingAttention={workspaceAttention.isLoading}
             promptedInvitation={promptedInvitation}
-            onAcceptInvitation={async (invitation) => {
-              await acceptInvitation(invitation.region, invitation.id, uuidV7());
+            onAcceptInvitation={async (invitation, operationId) => {
+              await acceptInvitation(invitation.region, invitation.id, operationId);
               clearPendingInvitation();
               await workspaceDirectory.refetch();
             }}
-            onCreateWorkspace={async (input) => {
-              await finishWorkspaceSetup(input.name, input.region, uuidV7());
+            onCreateWorkspace={async (input, operationId) => {
+              await finishWorkspaceSetup(input.name, input.region, operationId);
               await workspaceDirectory.refetch();
             }}
             onDeclineInvitation={async (invitation) => {

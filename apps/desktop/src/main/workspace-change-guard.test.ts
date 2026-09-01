@@ -35,4 +35,15 @@ describe('WorkspaceChangeGuard', () => {
     guard.windowClosed(42);
     expect(guard.blocksChangeFrom('workspace-a', 'workspace-b')).toBe(false);
   });
+
+  it('refuses a recording that starts while a workspace change is in flight', () => {
+    const guard = new WorkspaceChangeGuard();
+    const pending = guard.beginChange('global:workspace-a', 'eu:workspace-b');
+
+    expect(() => guard.recordingChanged(41, 'global:workspace-a', true))
+      .toThrow('Wait for Rally to finish changing workspaces before starting the recording');
+
+    guard.finishChange(pending);
+    expect(() => guard.recordingChanged(41, 'global:workspace-a', true)).not.toThrow();
+  });
 });

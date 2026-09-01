@@ -505,9 +505,10 @@ export class WorkspaceService {
    * a live invitation/member state. If another member exists, the conditional
    * delete below permits an ordinary leave while refusing the last owner.
    */
-  async leaveWorkspace(): Promise<{ outcome: "left" | "abandoned" }> {
-    const at = nowIso();
-    const abandonment = await this.env.DB.batch([
+  async leaveWorkspace(expectedOutcome: "left" | "abandoned"): Promise<{ outcome: "left" | "abandoned" }> {
+    if (expectedOutcome === "abandoned") {
+      const at = nowIso();
+      const abandonment = await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE workspaces SET abandoned_at = ?, updated_at = ?
          WHERE id = ? AND abandoned_at IS NULL
@@ -538,11 +539,17 @@ export class WorkspaceService {
              WHERE id = ? AND abandoned_at = ?
            )`,
       ).bind(at, this.auth.workspaceId, this.auth.workspaceId, at),
-    ]);
-    const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
-    if (abandoned) {
-      await this.publishOwnMembershipRevocation();
-      return { outcome: "abandoned" };
+      ]);
+      const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
+      if (abandoned) {
+        await this.publishOwnMembershipRevocation();
+        return { outcome: "abandoned" };
+      }
+      throw new ApiError(
+        409,
+        "membership_changed",
+        "The workspace membership changed while closing it. Check it and try again.",
+      );
     }
 
     const departure = await this.env.DB.prepare(

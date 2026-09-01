@@ -346,8 +346,12 @@ export const CreateWorkspaceInvitationResponseSchema = z.object({
 export const AcceptWorkspaceInvitationRequestSchema = z.object({
   token: z.string().min(20).max(500)
 });
+export const WorkspaceDepartureOutcomeSchema = z.enum(["left", "abandoned"]);
+export const WorkspaceDepartureRequestSchema = z.object({
+  expectedOutcome: WorkspaceDepartureOutcomeSchema,
+});
 export const WorkspaceDepartureSchema = z.object({
-  outcome: z.enum(["left", "abandoned"]),
+  outcome: WorkspaceDepartureOutcomeSchema,
 });
 export const WorkspaceAttentionSchema = z.object({
   waitingForYou: z.number().int().nonnegative(),
@@ -3279,6 +3283,7 @@ export type WorkspaceInvitationPreview = z.infer<typeof WorkspaceInvitationPrevi
 export type PendingWorkspaceInvitation = z.infer<typeof PendingWorkspaceInvitationSchema>;
 export type WorkspaceOnboardingState = z.infer<typeof WorkspaceOnboardingStateSchema>;
 export type WorkspaceDeparture = z.infer<typeof WorkspaceDepartureSchema>;
+export type WorkspaceDepartureOutcome = z.infer<typeof WorkspaceDepartureOutcomeSchema>;
 export type WorkspaceAttention = z.infer<typeof WorkspaceAttentionSchema>;
 export type OnboardingRegionRequest = z.infer<typeof OnboardingRegionRequestSchema>;
 export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSchema>;
