@@ -1,4 +1,5 @@
 import { IdSchema, RegionSchema } from "@rally/contracts";
+import { OffsetDateTimeSchema, RequiredUnknownSchema } from "@rally/contracts/schema-runtime";
 import { z } from "zod/v3";
 
 import { ApiError } from "./api-error";
@@ -105,7 +106,7 @@ export const SlackRouteStatusInputSchema = SlackRouteInputSchema.extend({ status
  * is the hand-off's own shape — that a payload and its body hash both arrived.
  */
 export const SlackEventRpcInputSchema = z.object({
-  payload: z.unknown(),
+  payload: RequiredUnknownSchema,
   bodyHash: z.string().min(1).max(200),
 });
 export const SlackInteractionRpcInputSchema = z.object({
@@ -120,7 +121,7 @@ export const SlackCommandRpcInputSchema = z.object({
 export const ResendRegionalEmailInputSchema = z.object({
   resendEmailId: z.string().min(1).max(200),
   svixId: z.string().min(1).max(200),
-  receivedAt: z.string().datetime({ offset: true }),
+  receivedAt: OffsetDateTimeSchema,
   region: RegionSchema,
   workspaceId: IdSchema,
   targetType: z.enum(["workstream", "automation"]).optional(),

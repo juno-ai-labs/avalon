@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -13,11 +14,11 @@ const StoredRowSchema = z.object({
   accountEpochId: z.string().regex(UUID_V7),
   installationId: z.string().regex(UUID_V7).optional(),
   event: TelemetryEnvelopeSchema,
-  acceptedAt: z.string().datetime({ offset: true }),
-  deleteAfter: z.string().datetime({ offset: true }),
-  firstSentAt: z.string().datetime({ offset: true }).nullable().default(null),
+  acceptedAt: OffsetDateTimeSchema,
+  deleteAfter: OffsetDateTimeSchema,
+  firstSentAt: OffsetDateTimeSchema.nullable().default(null),
   attempts: z.number().int().safe().nonnegative(),
-  nextAttemptAt: z.string().datetime({ offset: true }),
+  nextAttemptAt: OffsetDateTimeSchema,
 }).strict().superRefine((row, context) => {
   if (Date.parse(row.deleteAfter) !== Date.parse(row.acceptedAt) + LOCAL_RETENTION_MS) {
     context.addIssue({ code: 'custom', message: 'telemetry_deadline_invalid', path: ['deleteAfter'] });

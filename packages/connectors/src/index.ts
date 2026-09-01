@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
@@ -909,8 +910,8 @@ const CalendarEventCreateArgsSchema = z.object({
   summary: z.string().min(1).max(1_000),
   description: z.string().max(20_000).optional(),
   location: z.string().max(2_000).optional(),
-  start: z.string().datetime({ offset: true }),
-  end: z.string().datetime({ offset: true }),
+  start: OffsetDateTimeSchema,
+  end: OffsetDateTimeSchema,
   timeZone: z.string().min(1).max(100).optional(),
   attendeeEmails: z.array(z.string().email()).max(50).default([])
 }).strict().refine((value) => Date.parse(value.end) > Date.parse(value.start), {
@@ -934,8 +935,8 @@ const CalendarEventUpdateArgsSchema = z.object({
   summary: z.string().min(1).max(1_000).optional(),
   description: z.string().max(20_000).optional(),
   location: z.string().max(2_000).optional(),
-  start: z.string().datetime({ offset: true }).optional(),
-  end: z.string().datetime({ offset: true }).optional(),
+  start: OffsetDateTimeSchema.optional(),
+  end: OffsetDateTimeSchema.optional(),
   timeZone: z.string().min(1).max(100).optional(),
   addAttendeeEmails: z.array(z.string().email()).max(50).optional(),
   removeAttendeeEmails: z.array(z.string().email()).max(50).optional(),
@@ -2270,8 +2271,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z
           .object({
             calendarId: z.string().min(1).max(1_024).optional(),
-            timeMin: z.string().datetime({ offset: true }),
-            timeMax: z.string().datetime({ offset: true }),
+            timeMin: OffsetDateTimeSchema,
+            timeMax: OffsetDateTimeSchema,
             query: z.string().max(2_000).optional(),
             maxResults: z.number().int().safe().min(1).max(100).default(25),
             pageToken: z.string().min(1).max(2_000).optional()
@@ -2593,7 +2594,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z.object({
           query: z.string().min(1).max(1_000).optional(),
           fileType: z.enum(GOOGLE_DRIVE_FILE_TYPES).optional(),
-          modifiedAfter: z.string().datetime({ offset: true }).optional(),
+          modifiedAfter: OffsetDateTimeSchema.optional(),
           orderBy: z.enum(["relevance", "modified"]).default("relevance"),
           maxResults: z.number().int().safe().min(1).max(100).default(25),
           pageToken: z.string().min(1).max(2_000).optional()
@@ -4185,7 +4186,7 @@ const GenericWebhookEventSchema = z.object({
   provider_resource_id: z.string().trim().min(1).max(500).nullable().optional(),
   actor: z.record(z.string(), z.unknown()).optional(),
   subject: z.record(z.string(), z.unknown()).optional(),
-  occurred_at: z.string().datetime({ offset: true }).optional(),
+  occurred_at: OffsetDateTimeSchema.optional(),
   title: z.string().trim().min(1).max(500).optional(),
   summary: z.string().max(4_000).optional(),
   text: z.string().max(50_000).optional(),

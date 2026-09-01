@@ -222,9 +222,9 @@ const wireTemplatePageSchema = z.object({
     name: z.string(),
     author: z.string(),
     description: z.string(),
-    usedBy: z.number(),
+    usedBy: z.number().finite(),
     requiredCapabilities: z.array(z.string()),
-    latestVersion: z.number(),
+    latestVersion: z.number().finite(),
     activitySources: z.array(z.object({
       bindingKey: z.string(),
       connectorType: z.string(),

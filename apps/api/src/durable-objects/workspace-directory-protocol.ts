@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import {
   IdSchema,
   WorkspaceAttentionSchema,
@@ -10,7 +11,7 @@ import { z } from "zod/v3";
 
 import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = OffsetDateTimeSchema;
 const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
 
 export const WorkspaceAttentionRequestSchema = z.object({

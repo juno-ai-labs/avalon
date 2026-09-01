@@ -1,4 +1,5 @@
 import { asAutomationId, asWorkspaceId, type Region } from "@rally/contracts";
+import { OffsetDateTimeSchema, RequiredUnknownSchema } from "@rally/contracts/schema-runtime";
 import { newId } from "@rally/db";
 import { z } from "zod/v3";
 import type { Env } from "../env";
@@ -33,13 +34,13 @@ const MIGRATION_0097_PLATFORM_DOMAINS = new Set([
 
 const ResendEnvelopeSchema = z.object({
   type: z.string().min(1).max(120),
-  created_at: z.string().datetime({ offset: true }).optional(),
-  data: z.unknown(),
+  created_at: OffsetDateTimeSchema.optional(),
+  data: RequiredUnknownSchema,
 });
 
 const ResendReceivedEventDataSchema = z.object({
   email_id: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/u),
-  created_at: z.string().datetime({ offset: true }).optional(),
+  created_at: OffsetDateTimeSchema.optional(),
   from: z.string().min(1).max(1_000),
   to: z.array(z.string().min(1).max(1_000)).max(100),
   cc: z.array(z.string().min(1).max(1_000)).max(100).optional(),
@@ -50,7 +51,7 @@ const ResendReceivedEventDataSchema = z.object({
 
 const ResendReceivedEmailSchema = z.object({
   id: z.string().min(1).max(200),
-  created_at: z.string().datetime({ offset: true }).optional(),
+  created_at: OffsetDateTimeSchema.optional(),
   from: z.string().min(1).max(1_000),
   to: z.array(z.string().min(1).max(1_000)).max(100),
   cc: z.array(z.string().min(1).max(1_000)).max(100).optional(),
@@ -71,7 +72,7 @@ const ResendReceivedEmailSchema = z.object({
 const RegionalEmailInputSchema = z.object({
   resendEmailId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/u),
   svixId: z.string().min(1).max(200),
-  receivedAt: z.string().datetime({ offset: true }),
+  receivedAt: OffsetDateTimeSchema,
   region: z.enum(["global", "eu"]),
   workspaceId: z.string().min(1).max(200),
   targetType: z.enum(["workstream", "automation"]).optional(),

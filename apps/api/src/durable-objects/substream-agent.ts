@@ -1,6 +1,7 @@
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { pendingBindToolBatch } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
+import { OffsetDateTimeSchema, RequiredUnknownSchema } from "@rally/contracts/schema-runtime";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
@@ -259,7 +260,7 @@ const SocketAttachmentSchema = z.object({
   // Absent only on a socket accepted by a pre-command-gateway deployment. A
   // command on that socket triggers a normal reconnect for a fresh ticket.
   sessionId: z.string().min(1).max(200).optional(),
-  connectedAt: z.string().datetime({ offset: true }),
+  connectedAt: OffsetDateTimeSchema,
   afterSequence: z.number().int().safe().nonnegative(),
   subscribed: z.boolean().default(false),
   // Missing means a legacy client whose feed subscription still represented
@@ -270,12 +271,12 @@ const SocketAttachmentSchema = z.object({
   transcriptSnapshot: z.object({
     snapshotId: z.string().min(1),
     snapshotThrough: z.number().int().safe().nonnegative(),
-    snapshotAtUtc: z.string().datetime({ offset: true }),
+    snapshotAtUtc: OffsetDateTimeSchema,
   }).nullable().default(null),
 });
 
 const BroadcastRequestSchema = z.object({
-  event: z.unknown(),
+  event: RequiredUnknownSchema,
   audienceUserId: IdSchema.optional(),
 }).strict();
 const RuntimeResourceRequestSchema = z.object({
@@ -2533,7 +2534,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const projection = this.transcript.readBindProjection(loop.loop_id);
       if (!identity) throw new Error("substream_loop_identity_unavailable");
       const authorization = z.object({
-        executionPrincipal: z.unknown(),
+        executionPrincipal: WorkstreamWorkflowInputSchema.shape.executionPrincipal,
         reason: z.string().min(1).max(500),
         telemetryOperationId: z.string().nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),

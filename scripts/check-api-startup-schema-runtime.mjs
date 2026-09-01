@@ -10,8 +10,10 @@ const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..
 
 export const schemaHeavyWorkerRoots = [
   'apps/api/src',
-  'packages/contracts/src',
+  'packages/agent-harness/src',
   'packages/connectors/src',
+  'packages/contracts/src',
+  'packages/db/src',
 ];
 
 export const sharedSchemaConsumerRoots = [
@@ -22,7 +24,6 @@ export const sharedSchemaConsumerRoots = [
 
 export const schemaCompatibilityRoots = [
   ...sharedSchemaConsumerRoots,
-  'packages/agent-harness/src',
 ];
 
 /**
@@ -32,22 +33,25 @@ export const schemaCompatibilityRoots = [
  */
 export const zodV4WorkerAllowlist = new Set([
   'packages/agent-harness/src/bind-runtime.ts',
-  'packages/agent-harness/src/index.ts',
   'packages/agent-harness/src/tool-arguments.ts',
   'packages/contracts/src/zod-error.ts',
 ]);
 
 const BARE_ZOD_IMPORT = /\b(?:from\s+|import\s*)["']zod["']/u;
+const ZOD_V3_IMPORT = /\bfrom\s+["']zod\/v3["']/u;
 // These lexical checks deliberately keep the repository rule cheap and
 // dependency-free. A comment or string that spells a governed call may need to
 // be reworded; parsing TypeScript just to distinguish that rare case is not
 // justified until one occurs in production source.
 const UNSAFE_V3_INTEGER = /\.int\((?:[^()]|\([^()]*\))*\)(?!\.safe\(\))/u;
 const LOOSE_V3_UUID = /\.uuid\(\)/u;
+const NONFINITE_V3_NUMBER = /\b(?:z|z3)(?:\.coerce)?\.number\(\)(?!\.(?:int|finite)\()/u;
+const LOOSE_V3_OFFSET_DATETIME = /\.datetime\(\{\s*offset:\s*true\s*\}\)/u;
+const OPTIONAL_V3_UNKNOWN_FIELD = /:\s*z(?:3)?\.unknown\(\)(?!(?:\.nullable\(\))?(?:\.optional\(\)|\.default\())/u;
 
 export async function findBareWorkerZodImports({
   rootDirectory = repositoryDirectory,
-  roots = [...sharedSchemaConsumerRoots, 'packages/agent-harness/src'],
+  roots = sharedSchemaConsumerRoots,
   allowlist = zodV4WorkerAllowlist,
 } = {}) {
   const violations = [];
@@ -65,6 +69,7 @@ export async function findBareWorkerZodImports({
 export async function findWorkerSchemaCompatibilityViolations({
   rootDirectory = repositoryDirectory,
   roots = schemaCompatibilityRoots,
+  v4Allowlist = zodV4WorkerAllowlist,
 } = {}) {
   const violations = [];
   for (const root of roots) {
@@ -72,8 +77,22 @@ export async function findWorkerSchemaCompatibilityViolations({
       const repositoryPath = relative(rootDirectory, file).replaceAll('\\', '/');
       if (repositoryPath.includes('.test.')) continue;
       const source = await readFile(file, 'utf8');
+      if (v4Allowlist.has(repositoryPath)) {
+        // Adapter modules own only v4 schemas. The error classifier is the one
+        // exception: it imports both error classes but constructs no schema.
+        if (repositoryPath !== 'packages/contracts/src/zod-error.ts' && ZOD_V3_IMPORT.test(source)) {
+          violations.push(`${repositoryPath}: mixed schema runtimes`);
+        }
+        continue;
+      }
       if (UNSAFE_V3_INTEGER.test(source)) violations.push(`${repositoryPath}: unsafe integer`);
       if (LOOSE_V3_UUID.test(source)) violations.push(`${repositoryPath}: loose UUID`);
+      if (OPTIONAL_V3_UNKNOWN_FIELD.test(source)) violations.push(`${repositoryPath}: optional unknown field`);
+      if (NONFINITE_V3_NUMBER.test(source)) violations.push(`${repositoryPath}: non-finite number`);
+      if (repositoryPath !== 'packages/contracts/src/schema-runtime.ts'
+        && LOOSE_V3_OFFSET_DATETIME.test(source)) {
+        violations.push(`${repositoryPath}: loose offset datetime`);
+      }
     }
   }
   return violations.sort();

@@ -827,7 +827,8 @@ access and no-egress symbolication.
 **What changed:** Rally-owned API, contract, and connector schemas use Zod's
 v3-compatible runtime; Bind's v4-only JSON-Schema operations remain statically
 imported behind a small compatibility edge. Shared helpers preserve the prior
-integer, UUID, provider-schema, and error contracts.
+required-field, finite-number, offset-datetime, integer, UUID, nested-provider-schema,
+and error contracts.
 
 **Why:** After telemetry destinations left the regional graph, Cloudflare still
 rejected the Global API for startup CPU. The exact artifact's CPU profile showed

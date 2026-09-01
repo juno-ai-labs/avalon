@@ -113,7 +113,10 @@ const sqlInputSchema = {
 // in a transform so the callback still receives Rally's branded identifiers.
 const workspaceIdInputSchema = z.string().uuid().transform((value) => WorkspaceIdSchema.parse(value));
 const workstreamIdInputSchema = z.string().uuid().transform((value) => WorkstreamIdSchema.parse(value));
-const substreamIdInputSchema = z.string().min(1).transform((value) => SubstreamIdSchema.parse(value));
+const substreamIdInputSchema = z.union([
+  z.literal("0"),
+  z.string().uuid(),
+]).transform((value) => SubstreamIdSchema.parse(value));
 
 export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal): McpServer {
   const server = new McpServer({ name: "Rally engineering", version: "1.0.0" });

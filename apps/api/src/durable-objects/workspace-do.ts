@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
@@ -2288,7 +2289,7 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
   try {
     const parsed = SocketIdentitySchema.extend({
       connectionId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
-      connectedAt: z.string().datetime({ offset: true }),
+      connectedAt: OffsetDateTimeSchema,
       subscribed: z.boolean(),
       lastWaterline: z.number().int().safe().nonnegative(),
       // Sockets accepted by the previous deployment carry none of these fields. They

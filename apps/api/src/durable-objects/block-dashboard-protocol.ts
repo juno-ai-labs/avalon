@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import {
   BlockDashboardBlockRunSchema,
   BlockIdSchema,
@@ -38,14 +39,14 @@ export const BlockDashboardControlRequestSchema = z.discriminatedUnion("operatio
     operation: z.literal("update_preference"),
     userId: IdSchema,
     visible: z.boolean(),
-    updatedAt: z.string().datetime({ offset: true }),
+    updatedAt: OffsetDateTimeSchema,
   }).strict(),
   CoordinatesSchema.extend({
     operation: z.literal("update_configuration"),
     userId: IdSchema,
     input: UpdateBlockDashboardRequestSchema,
     configurationVersionId: IdSchema,
-    createdAt: z.string().datetime({ offset: true }),
+    createdAt: OffsetDateTimeSchema,
   }).strict(),
   CoordinatesSchema.extend({
     operation: z.literal("schedule_refresh"),
@@ -105,7 +106,7 @@ export const BlockDashboardBlockDispatchSchema = z.object({
   prompt: z.string().min(1).max(12_000),
   triggerSequence: z.number().int().safe().nonnegative(),
   contextFence: BlockDashboardContextFenceSchema,
-  createdAt: z.string().datetime({ offset: true }),
+  createdAt: OffsetDateTimeSchema,
 }).strict();
 
 export const BlockDashboardViewerAuthorizationRequestSchema = CoordinatesSchema.extend({

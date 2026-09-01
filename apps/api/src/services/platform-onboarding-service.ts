@@ -12,6 +12,7 @@ import {
   type WorkspaceOnboardingState,
 } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
+import { OffsetDateTimeSchema, RequiredUnknownSchema } from "@rally/contracts/schema-runtime";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod/v3";
 import type { Env, IdentityAuthContext } from "../env";
@@ -39,7 +40,7 @@ export const platformIdentitySchema = z.object({
   name: z.string().min(1).max(255),
   avatarUrl: HttpUrlSchema.nullable(),
   timezone: IanaTimezoneSchema,
-  createdAt: z.string().datetime({ offset: true }),
+  createdAt: OffsetDateTimeSchema,
 });
 
 const WorkspacePlacementAffinitySchema = z.enum(["wnam", "enam", "weur", "eeur"]);
@@ -101,7 +102,7 @@ const regionalRpcBusinessErrorSchema = z.object({
   message: z.string().min(1).max(1_000),
 });
 const regionalRpcEnvelopeSchema = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), value: z.unknown() }),
+  z.object({ ok: z.literal(true), value: RequiredUnknownSchema }),
   z.object({ ok: z.literal(false), error: regionalRpcBusinessErrorSchema }),
 ]);
 

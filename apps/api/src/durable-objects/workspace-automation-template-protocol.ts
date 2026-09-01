@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { IdSchema } from "@rally/contracts";
 import { z } from "zod/v3";
 
@@ -11,7 +12,7 @@ import { z } from "zod/v3";
  * to the regional database.
  */
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = OffsetDateTimeSchema;
 const JsonArraySchema = z.string().min(2);
 
 export const WorkspaceAutomationTemplateVersionInputSchema = z.object({

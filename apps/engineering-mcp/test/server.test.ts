@@ -87,7 +87,13 @@ describe("Rally engineering MCP tools", () => {
     };
 
     const response = await rpc(env, "tools/list");
-    const result = response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> };
+    const result = response.result as {
+      tools: Array<{
+        name: string;
+        annotations?: Record<string, boolean>;
+        inputSchema: { properties?: Record<string, unknown> };
+      }>;
+    };
     expect(result.tools.map((tool) => tool.name)).toEqual([
       "list_workspaces",
       "list_workstreams",
@@ -99,6 +105,35 @@ describe("Rally engineering MCP tools", () => {
     for (const tool of result.tools.filter((item) => item.name.startsWith("run_"))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     }
+    const runSubstreamSql = result.tools.find((tool) => tool.name === "run_substream_sql");
+    expect(runSubstreamSql?.inputSchema.properties?.substreamId).toMatchObject({
+      anyOf: [{ const: "0" }, { format: "uuid" }],
+    });
+  });
+
+  it("rejects an invalid substream ID before consulting either region", async () => {
+    const global = regionalBinding("global");
+    const eu = regionalBinding("eu");
+    const response = await rpc(
+      { GLOBAL_INSPECTION: global, EU_INSPECTION: eu },
+      "tools/call",
+      {
+        name: "run_substream_sql",
+        arguments: {
+          workspaceId: "00000000-0000-7000-8000-000000000eb3",
+          workstreamId: "00000000-0000-7000-8000-000000000eb4",
+          substreamId: "not-a-substream",
+          sql: "SELECT 1",
+        },
+      },
+    );
+
+    expect(response.result).toMatchObject({
+      isError: true,
+      content: [{ text: expect.stringContaining("substreamId: Invalid UUID") }],
+    });
+    expect(global.resolveSubstream).not.toHaveBeenCalled();
+    expect(eu.resolveSubstream).not.toHaveBeenCalled();
   });
 
   it("combines both regional workspace inventories", async () => {

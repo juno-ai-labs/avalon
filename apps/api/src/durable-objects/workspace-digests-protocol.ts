@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { IdSchema } from "@rally/contracts";
 import { z } from "zod/v3";
 
@@ -18,7 +19,7 @@ import { z } from "zod/v3";
  * names what happened and the service maps it to its own `ApiError`.
  */
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = OffsetDateTimeSchema;
 const MinuteOfDaySchema = z.number().int().safe().min(0).max(1439);
 const DayMaskSchema = z.number().int().safe().min(0).max(127);
 

@@ -1,7 +1,8 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { IdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@rally/contracts";
 import { z } from "zod/v3";
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = OffsetDateTimeSchema;
 const JsonStringSchema = z.string().refine((value) => {
   try {
     JSON.parse(value);

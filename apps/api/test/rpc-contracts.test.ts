@@ -83,6 +83,21 @@ describe("internal RPC contracts", () => {
       .toMatchObject({ issues: [{ path: "headers.x-count" }] });
   });
 
+  it.each([
+    "2026-08-11T00:00:00+0100",
+    "2026-08-11T00:00:00+99:99",
+  ])("rejects a datetime offset that Zod v4 rejected: %s", (receivedAt) => {
+    expect(refusal(ResendRegionalEmailInputSchema, {
+      resendEmailId: "email_1",
+      svixId: "msg_1",
+      receivedAt,
+      region: "global",
+      workspaceId,
+      localPart: "granular-misty",
+      emailAddress: "granular-misty@automation.with-avalon.com",
+    }).details).toMatchObject({ issues: [{ path: "receivedAt" }] });
+  });
+
   it("bounds a batch so one regional caller cannot hold a Global invocation open", () => {
     const route = { region: "eu" as const, workspaceId, automationSubscriptionId: connectionId };
     const schema = rpcBatch(AutomationEmailRouteInputSchema);

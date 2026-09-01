@@ -1,6 +1,6 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { z } from "zod/v3";
-import { STRICT_UUID_PATTERN } from "./uuid-validation";
+import { STRICT_UUID_JSON_SCHEMA_PATTERN, STRICT_UUID_PATTERN } from "./uuid-validation";
 
 /** Convert a startup-efficient Zod v3 schema into the provider-facing contract. */
 export function providerJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
@@ -19,17 +19,25 @@ export function providerJsonSchema(schema: z.ZodTypeAny): Record<string, unknown
 }
 
 function restoreUuidFormats(value: unknown): void {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const nested of value) restoreUuidFormats(nested);
+    return;
+  }
   const schema = value as Record<string, unknown>;
   if (schema.pattern === STRICT_UUID_PATTERN.source) {
-    delete schema.pattern;
+    schema.pattern = STRICT_UUID_JSON_SCHEMA_PATTERN;
     schema.format = "uuid";
   }
   for (const nested of Object.values(schema)) restoreUuidFormats(nested);
 }
 
 function requireDefaultedProperties(value: unknown): void {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const nested of value) requireDefaultedProperties(nested);
+    return;
+  }
   const schema = value as Record<string, unknown>;
   if (schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)) {
     const properties = schema.properties as Record<string, unknown>;

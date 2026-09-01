@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { isZodValidationError } from "@rally/contracts/zod-error";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type { ToolDefinition } from "@rally/contracts";
@@ -214,7 +215,7 @@ export const GranolaAgentPluginDescriptor = defineConnectorAgentPlugin({
   tools: granolaTools,
 });
 
-const granolaDateFilter = z.union([z.string().date(), z.string().datetime({ offset: true })]);
+const granolaDateFilter = z.union([z.string().date(), OffsetDateTimeSchema]);
 const listNotesInput = z.object({
   createdBefore: granolaDateFilter.nullable().optional(),
   createdAfter: granolaDateFilter.nullable().optional(),
@@ -244,7 +245,7 @@ const GranolaWebhookEventSchema = z.object({
   event_id: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   event_type: z.enum(["note.access_granted", "note.edited", "note.generated", "note.regenerated"]),
   note_id: z.string().regex(/^not_[A-Za-z0-9]{14}$/u),
-  occurred_at: z.string().datetime({ offset: true }),
+  occurred_at: OffsetDateTimeSchema,
   data: z.object({ changed_fields: z.array(z.string()).max(20).optional() }).passthrough().optional(),
 }).passthrough();
 

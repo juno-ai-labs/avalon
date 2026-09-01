@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { IdSchema } from "@rally/contracts";
 import { z } from "zod/v3";
 
@@ -13,7 +14,7 @@ import { z } from "zod/v3";
  * need compensating writes when a claim half-succeeded.
  */
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = OffsetDateTimeSchema;
 const TerminalNetworkModeSchema = z.enum(["trusted_only", "full_internet"]);
 const VerificationStateSchema = z.enum(["pending", "verified", "failed"]);
 

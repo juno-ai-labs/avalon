@@ -54,7 +54,7 @@ const ClientRegistrationSchema = z.object({
 const TokenResponseSchema = z.object({
   access_token: z.string().min(1),
   token_type: z.string().min(1).default("Bearer"),
-  expires_in: z.number().positive().optional(),
+  expires_in: z.number().finite().positive().optional(),
   refresh_token: z.string().min(1).optional(),
   scope: z.string().optional(),
   user_id: z.string().min(1).optional(),
@@ -91,9 +91,9 @@ const ToolCallResultSchema = z.object({
 
 const JsonRpcResponseSchema = z.object({
   jsonrpc: z.literal("2.0"),
-  id: z.union([z.string(), z.number()]),
+  id: z.union([z.string(), z.number().finite()]),
   result: z.unknown().optional(),
-  error: z.object({ code: z.number(), message: z.string(), data: z.unknown().optional() }).optional(),
+  error: z.object({ code: z.number().finite(), message: z.string(), data: z.unknown().optional() }).optional(),
 });
 
 export type HostedMcpTool = z.infer<typeof McpToolSchema>;

@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type { HarnessTool, HarnessToolContext, ModelMessageContentPart } from "@rally/agent-harness";
 import {
@@ -82,9 +83,9 @@ const ListCursorStateSchema = z.discriminatedUnion("mode", [
     fingerprint: z.string().min(1).max(100),
     attachmentKind: AttachmentKindSchema.nullable(),
     limit: z.number().int().safe().min(1).max(50),
-    afterAttachedAt: z.string().datetime({ offset: true }),
+    afterAttachedAt: OffsetDateTimeSchema,
     afterResourceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
-    asOf: z.string().datetime({ offset: true }),
+    asOf: OffsetDateTimeSchema,
   }).strict(),
   z.object({
     mode: z.literal("in_memory"),
@@ -92,7 +93,7 @@ const ListCursorStateSchema = z.discriminatedUnion("mode", [
     attachmentKind: AttachmentKindSchema.nullable(),
     limit: z.number().int().safe().min(1).max(50),
     nextIndex: z.number().int().safe().nonnegative(),
-    asOf: z.string().datetime({ offset: true }),
+    asOf: OffsetDateTimeSchema,
   }).strict(),
 ]);
 

@@ -43,7 +43,7 @@ type LocalStatementExecutor = (
 const responseSchema = z.object({
   results: z.array(z.object({
     columns: z.array(z.string()),
-    rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.null()]))),
+    rows: z.array(z.record(z.string(), z.union([z.string(), z.number().finite(), z.null()]))),
     changes: z.number().int().safe().nonnegative(),
   })),
 });

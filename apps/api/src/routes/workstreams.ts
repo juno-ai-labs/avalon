@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
@@ -53,7 +54,7 @@ const listQuery = z.object({
   // WorkspaceDO emits an opaque `(last_activity_at, workstream_id)` cursor so
   // tied timestamps cannot skip.
   before: z.union([
-    z.string().datetime({ offset: true }),
+    OffsetDateTimeSchema,
     WorkspaceWorkstreamCursorSchema,
   ]).optional(),
   // Opt-in, because these are machinery. It widens what is shown, never who may

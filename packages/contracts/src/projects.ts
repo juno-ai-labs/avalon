@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "./schema-runtime";
 import { STRICT_UUID_PATTERN } from "./uuid-validation";
 import { z } from "zod/v3";
 
@@ -84,8 +85,8 @@ export const ProjectSummarySchema = z.object({
   participants: z.array(ProjectParticipantSchema),
   workstreamIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).default([]),
   defaultResourceIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).default([]),
-  createdAt: z.string().datetime({ offset: true }),
-  updatedAt: z.string().datetime({ offset: true }),
+  createdAt: OffsetDateTimeSchema,
+  updatedAt: OffsetDateTimeSchema,
 }).strict();
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 

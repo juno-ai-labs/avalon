@@ -295,9 +295,15 @@ function sameJsonValue(left: unknown, right: unknown, depth = 0): boolean {
 function selectActionableIssues(issues: readonly unknown[]): JsonObject[] {
   return issues.flatMap((issue) => {
     if (!isObject(issue)) return [];
-    if (issue.code !== "invalid_union" || !Array.isArray(issue.errors)) return [issue];
-    const branches = issue.errors
-      .filter(Array.isArray)
+    if (issue.code !== "invalid_union") return [issue];
+    const v4Branches = Array.isArray(issue.errors)
+      ? issue.errors.filter(Array.isArray)
+      : [];
+    const v3Branches = Array.isArray(issue.unionErrors)
+      ? issue.unionErrors.flatMap((error) =>
+          isObject(error) && Array.isArray(error.issues) ? [error.issues] : [])
+      : [];
+    const branches = [...v4Branches, ...v3Branches]
       .map((branch) => selectActionableIssues(branch));
     branches.sort((left, right) => issueWeight(left) - issueWeight(right));
     return branches[0] ?? [issue];

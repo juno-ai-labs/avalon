@@ -34,7 +34,6 @@ import type { ChatResult } from "@openrouter/sdk/models/chatresult.js";
 import type { ChatStreamChunk } from "@openrouter/sdk/models/chatstreamchunk.js";
 import type { ChatUsage } from "@openrouter/sdk/models/chatusage.js";
 import type { OpenRouterMetadata } from "@openrouter/sdk/models/openroutermetadata.js";
-import { z } from "zod";
 import { z as z3 } from "zod/v3";
 // Cycle: `bind-runtime` imports back from this module. Sound because every
 // value it takes is read inside a function body — see `runHarness` below.
@@ -2422,7 +2421,7 @@ export async function compileAutomation(input: {
       context: HarnessToolContext,
     ): Promise<{ accepted: true }>;
     requestElicitation(
-      elicitation: z.infer<typeof RequestElicitationInputSchema>,
+      elicitation: RequestElicitationInput,
       context: HarnessToolContext,
     ): Promise<{ accepted: true }>;
   };
@@ -2570,12 +2569,12 @@ export async function compileAutomation(input: {
     {
       definition: creatorDefinition("people_search"),
       validateInput: (raw) => {
-        const parsed = z.object({ query: z.string().min(1) }).strict().safeParse(raw);
+        const parsed = z3.object({ query: z3.string().min(1) }).strict().safeParse(raw);
         return parsed.success ? null : parsed.error;
       },
       execute: async (raw) => {
         if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
-        const { query } = z.object({ query: z.string().min(1) }).strict().parse(raw);
+        const { query } = z3.object({ query: z3.string().min(1) }).strict().parse(raw);
         const output = await input.draftResearchPort.searchPeople(query);
         const people = asRecord(output).people;
         if (Array.isArray(people)) {
@@ -2593,12 +2592,12 @@ export async function compileAutomation(input: {
     {
       definition: creatorDefinition("resources_search"),
       validateInput: (raw) => {
-        const parsed = z.object({ query: z.string().min(1) }).strict().safeParse(raw);
+        const parsed = z3.object({ query: z3.string().min(1) }).strict().safeParse(raw);
         return parsed.success ? null : parsed.error;
       },
       execute: async (raw) => {
         if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
-        const { query } = z.object({ query: z.string().min(1) }).strict().parse(raw);
+        const { query } = z3.object({ query: z3.string().min(1) }).strict().parse(raw);
         const output = await input.draftResearchPort.searchResources(query);
         const resources = asRecord(output).resources;
         if (Array.isArray(resources)) {
@@ -3221,7 +3220,7 @@ function automationCurrentTimeTool(
   return {
     definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
     execute: async (raw) => {
-      const args = z.object({ timezone: z.string().min(1).max(100).optional() }).parse(raw);
+      const args = z3.object({ timezone: z3.string().min(1).max(100).optional() }).parse(raw);
       const workspaceTimezone = canonicalIanaTimezone(defaultTimezones?.workspace ?? "UTC");
       const timezone = canonicalIanaTimezone(
         args.timezone ?? defaultTimezones?.personal ?? workspaceTimezone,

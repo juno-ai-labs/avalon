@@ -29,7 +29,7 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type { PersistedRunStatus } from "../durable-objects/workstream-harness-run-storage";
 
-const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
+const row = z.record(z.string(), z.union([z.string(), z.number().finite(), z.null()]));
 
 /**
  * Seed tool receipts through the work stream's typed receipt authority.
@@ -127,14 +127,14 @@ const seedBody = z.object({
 /** The route owns this shape; dev tooling has no member-facing contract. */
 const SeedProductResultSchema = z.object({
   seeded: z.boolean(),
-  workspaceTables: z.record(z.string(), z.number()),
+  workspaceTables: z.record(z.string(), z.number().finite()),
   automations: z.array(z.object({
     automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
     lifecycle: z.enum(["active", "paused"]),
   }).strict()),
   workstreams: z.array(z.object({
     workstreamId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
-    copied: z.record(z.string(), z.number()),
+    copied: z.record(z.string(), z.number().finite()),
   })),
 }).strict();
 

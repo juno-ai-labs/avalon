@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { IdSchema } from "@rally/contracts";
 import { z } from "zod/v3";
 
@@ -28,7 +29,7 @@ import { z } from "zod/v3";
  * object's schema stores them as opaque TEXT.
  */
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = OffsetDateTimeSchema;
 const SlackIngressJobKindSchema = z.enum(["event", "interaction", "command"]);
 const SlackIngressJobStatusSchema = z.enum(["queued", "processing", "completed", "failed"]);
 

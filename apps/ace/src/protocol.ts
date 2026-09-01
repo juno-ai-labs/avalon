@@ -194,8 +194,8 @@ export const MAX_FLAG_DESCRIPTION_LENGTH = 512;
 
 export const ConditionSchema: z.ZodType<AceCondition> = z.lazy(() => z.union([
   z.object({ attribute: AttributeSchema, operator: OperatorSchema, value: z.union([
-    z.string().min(1).max(MAX_CONDITION_STRING_LENGTH), z.number(),
-    z.array(z.union([z.string().min(1).max(MAX_CONDITION_STRING_LENGTH), z.number()])).min(1),
+    z.string().min(1).max(MAX_CONDITION_STRING_LENGTH), z.number().finite(),
+    z.array(z.union([z.string().min(1).max(MAX_CONDITION_STRING_LENGTH), z.number().finite()])).min(1),
   ]) }).strict(),
   z.object({
     logical_operator: z.enum(['AND', 'OR']),
@@ -207,7 +207,7 @@ export const FlagRuleSchema = z.object({
   priority: z.number().int().safe().min(1),
   conditions: z.array(ConditionSchema),
   serve_variation: z.enum(['on', 'off']),
-  rollout: z.object({ percentage: z.number().min(0).max(100), attribute: AttributeSchema.optional() }).optional(),
+  rollout: z.object({ percentage: z.number().finite().min(0).max(100), attribute: AttributeSchema.optional() }).optional(),
 }).strict();
 
 export const ManagedFlagUpdateSchema = z.object({

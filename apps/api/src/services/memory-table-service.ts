@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import type {
   MemoryTableColumnType,
   WorkstreamWorkflowInput,
@@ -346,7 +347,7 @@ function normalizeValue(column: WorkspaceMemoryTableColumn, value: unknown): unk
       if (typeof value !== "boolean") throw new Error(`memory_table_value_type:${column.name}:boolean`);
       return value;
     case "datetime": {
-      if (typeof value !== "string" || !z.string().datetime({ offset: true }).safeParse(value).success) {
+      if (typeof value !== "string" || !OffsetDateTimeSchema.safeParse(value).success) {
         throw new Error(`memory_table_value_type:${column.name}:datetime`);
       }
       return new Date(value).toISOString();
