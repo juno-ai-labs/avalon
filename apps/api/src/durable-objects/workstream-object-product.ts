@@ -74,6 +74,10 @@ import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "../services/workspace-runtime-database";
+import {
+  SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
+  ensureStorageAlarmNoLaterThan,
+} from "./scheduled-alarms";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
 import { substreamLoopId, workspaceDOName } from "./names";
 import { WorkspaceAutomationOriginLabelSchema } from "./workspace-directory-protocol";
@@ -459,6 +463,21 @@ export class WorkstreamObjectProductService {
     }
     this.beginInputPreparation(preparation.input_id);
     try {
+      // Before the work, not only in the `finally`. The reservation is already
+      // durable and this invocation is the only thing that can settle it, but a
+      // cancelled invocation neither throws nor runs a `finally` — so arming
+      // only below leaves the object with no wake-up at all while an admitted
+      // message sits `preparing`, and the head-of-line gate then hides that
+      // message *and every message queued behind it* from the loop until
+      // something unrelated happens to touch the object. Same hazard, same
+      // horizon, and the same arm-before-you-await answer as
+      // `ScheduledDurableObject.armAlarmBeforeDueWork`. Inside the `try` so a
+      // storage failure here terminalizes the admission the way any other
+      // failure does, rather than stranding its claim.
+      await ensureStorageAlarmNoLaterThan(
+        this.storage,
+        Date.now() + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
+      );
       return await work();
     } catch (error) {
       this.loops.failInputPreparation({
@@ -648,6 +667,22 @@ export class WorkstreamObjectProductService {
     const preparation = this.loops.oldestPreparingInput();
     if (!preparation || this.activeInputPreparations.has(preparation.input_id)) return null;
     return now;
+  }
+
+  /**
+   * Whether an admitted message is still waiting on its preparation to settle,
+   * including one this isolate believes it is still running.
+   *
+   * Deliberately not folded into {@link nextRecoverableInputPreparationAt},
+   * which answers *may I resume it now* and must keep saying no while this
+   * isolate owns it. This answers the different question the alarm needs — is
+   * there durable admission work outstanding — because a mailbox row is hidden
+   * from `pendingInputs` until it settles, so nothing else derives a wake-up
+   * for it and the re-arm at the end of a handler would delete the object's
+   * only one.
+   */
+  hasUnresolvedInputPreparation(): boolean {
+    return this.loops.oldestPreparingInput() !== undefined;
   }
 
   async resumeOldestInputPreparation(): Promise<"none" | "active" | "settled"> {
