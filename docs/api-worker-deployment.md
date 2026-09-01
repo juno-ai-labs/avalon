@@ -240,7 +240,7 @@ at 183.6 ms versus 162.7 ms, and mean garbage collection at 83.0 ms versus
 61.6 ms. The paired result supports the allocation mechanism; like the broader
 ranges above, it is diagnostic evidence rather than a platform-time promise.
 
-Service Bindings add no monetary charge or network hop by default. A document
+Service Bindings add no monetary charge or network hop by default. A document,
 Terminal, or Global telemetry-destination operation adds a Worker invocation
 and subrequest, while ordinary API requests no longer initialize those provider
 libraries. That cost is bounded to the capability that uses it and is visible
@@ -253,7 +253,7 @@ for Azure-bound models in its route plan.
 
 ### 2026-09-01 — Remove intermediate Zod object schemas from API startup
 
-**What changed:** The 1,131 direct strict and loose object constructions in the
+**What changed:** The 1,132 direct strict and loose object constructions in the
 API Worker's production source scope now use Zod's mode-specific constructors,
 and an autofixable lint rule preserves the invariant.
 
@@ -269,12 +269,13 @@ the bundle. Dynamic imports would move startup work into requests and violate
 the static-dependency rule. A machine-specific timing assertion was rejected in
 favor of Wrangler's profile of each deployable Worker artifact.
 
-**Consequences:** Direct chained object-mode construction is a lint error in the
-API startup graph. Existing-schema and further-derived mode changes remain
-explicit and untouched. Startup profiles remain the evidence for whether the
-whole deployable graph has adequate platform margin. Six alternating local
-samples reduced mean active startup by 20.9 ms and mean garbage collection by
-21.4 ms on the implementing machine; those values are not a deployment limit.
+**Consequences:** Direct chained object-mode construction, including Zod 4's
+`.loose()`, is a lint error in the API startup graph. Existing-schema and
+further-derived mode changes remain explicit and untouched. Startup profiles
+remain the evidence for whether the whole deployable graph has adequate
+platform margin. Six alternating local samples reduced mean active startup by
+20.9 ms and mean garbage collection by 21.4 ms on the implementing machine;
+those values are not a deployment limit.
 
 ### 2026-09-01 — Global telemetry delivery gets one shared startup graph
 

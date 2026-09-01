@@ -1,7 +1,7 @@
 /** Prefer Zod's direct object-mode constructors over constructing and cloning an object schema. */
 export const preferZodDirectObjectRule = {
   meta: {
-    type: "suggestion",
+    type: "problem",
     docs: { description: "Prefer z.strictObject() and z.looseObject() over chained object-mode methods." },
     fixable: "code",
     schema: [],
@@ -52,7 +52,11 @@ export const preferZodDirectObjectRule = {
       CallExpression(node) {
         if (node.arguments.length !== 0 || node.callee.type !== "MemberExpression") return;
         const method = propertyName(node.callee);
-        const constructor = method === "strict" ? "strictObject" : method === "passthrough" ? "looseObject" : null;
+        const constructor = method === "strict"
+          ? "strictObject"
+          : method === "passthrough" || method === "loose"
+            ? "looseObject"
+            : null;
         if (!constructor) return;
 
         const objectCall = node.callee.object;
@@ -69,13 +73,26 @@ export const preferZodDirectObjectRule = {
           data: { constructor, method },
           fix(fixer) {
             const directCallee = `${sourceCode.getText(objectCall.callee.object)}.${constructor}`;
-            const chainedMethodTokens = sourceCode
-              .getTokens(node)
-              .filter((token) => token.range[0] >= objectCall.range[1]);
-            return [
+            const property = node.callee.property;
+            const accessTokens = node.callee.computed
+              ? [
+                  sourceCode.getTokenBefore(property),
+                  property,
+                  sourceCode.getTokenAfter(property),
+                ]
+              : [sourceCode.getTokenBefore(property), property];
+            const callOpen = sourceCode.getTokenAfter(node.callee);
+            const callClose = sourceCode.getLastToken(node);
+            const fixes = [
               fixer.replaceText(objectCall.callee, directCallee),
-              ...chainedMethodTokens.map((token) => fixer.remove(token)),
+              ...accessTokens.map((token) => fixer.remove(token)),
+              fixer.remove(callOpen),
+              fixer.remove(callClose),
             ];
+            if (objectCall.arguments.length === 0) {
+              fixes.push(fixer.insertTextBefore(sourceCode.getLastToken(objectCall), "{}"));
+            }
+            return fixes;
           },
         });
       },

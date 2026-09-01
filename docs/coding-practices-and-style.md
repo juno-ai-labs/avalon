@@ -46,7 +46,8 @@ In production source reachable from the API Worker, construct an object's
 unknown-key mode directly:
 
 - use `z.strictObject(shape)`, not `z.object(shape).strict()`;
-- use `z.looseObject(shape)`, not `z.object(shape).passthrough()`.
+- use `z.looseObject(shape)`, not `z.object(shape).passthrough()` or
+  `z.object(shape).loose()`.
 
 The direct constructors preserve the corresponding validation behavior without
 first constructing a default object schema and then deriving a second schema.
@@ -83,9 +84,11 @@ the same AST or necessarily the same construction. A startup-time lint
 threshold was rejected because local timing varies by machine and Wrangler
 already profiles the deployable artifact.
 
-**Consequences:** New direct `z.object().strict()` and
-`z.object().passthrough()` chains in the startup graph fail lint and can be
-autofixed. Other schema chains remain available when their semantics require
+**Consequences:** New direct `z.object().strict()`,
+`z.object().passthrough()`, and `z.object().loose()` chains in the startup graph
+fail lint and can be autofixed. The fixer preserves grouping parentheses and
+supplies the empty shape required by direct constructors when `z.object()`
+omits it. Other schema chains remain available when their semantics require
 them.
 
 ### 2026-08-30 — Module imports are always static
