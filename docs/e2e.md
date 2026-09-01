@@ -491,7 +491,7 @@ Pass evidence: one initial manual run, one scheduled recurrence, authoritative s
 
 ## PRD flow 3 — Google activity
 
-Run this only in provider test accounts after enabling the five Google APIs and registering the OAuth callback URLs in `docs/provider-apps.md`. If the OAuth client already has grants for the test account, revoke the old test grant or inspect the authorization request directly; Google's incremental-consent screen may summarize scopes granted during an earlier connection.
+Run this only in provider test accounts after enabling the five Google APIs and registering the OAuth callback URLs in `docs/provider-apps.md`. Keep an existing grant on the test account while exercising the second preset: the authorization request must send `include_granted_scopes=false`, and neither the consent screen nor the returned token may inherit scopes from that earlier connection.
 
 ### Mail + Calendar preset
 
@@ -503,7 +503,7 @@ Run this only in provider test accounts after enabling the five Google APIs and 
 
 ### Drive + Docs + Sheets preset
 
-1. In Settings, choose **Google Drive + Docs + Sheets** and confirm the Rally authorization request contains only `drive.readonly` and `drive.file` plus identity scopes. It must not request Gmail or Calendar scopes.
+1. With the Mail + Calendar grant from the preceding flow still present, choose **Google Drive + Docs + Sheets** and confirm the Rally authorization request contains only `drive.readonly` and `drive.file` plus identity scopes. It must send `include_granted_scopes=false`; the returned token and stored grant must not contain Gmail or Calendar scopes.
 2. Exercise `google_drive_search` and `google_drive_get_metadata` against both a Rally-created file and an arbitrary existing file. Confirm `isAppAuthorized`, `canEdit`, and `writableByRally` distinguish per-file write access correctly; also verify one bounded `google_drive_download` or `google_drive_export` result.
 3. Exercise the native Docs tools against a Rally-created file: create a document with `google_docs_create_document`, read it with `google_docs_read_document`, append text with `google_docs_append_text`, and replace an exact fixture string with `google_docs_replace_text`. Confirm an arbitrary existing Doc found only through Drive search is readable but not writable without a separate per-file grant.
 4. Exercise the native Sheets tools against a Rally-created file: create a spreadsheet with `google_sheets_create_spreadsheet`, inspect it with `google_sheets_read_spreadsheet`, write an explicit A1 range with `google_sheets_update_values`, append rows with `google_sheets_append_values`, and read the result with `google_sheets_read_values`. Confirm an arbitrary existing Sheet found only through Drive search is readable but not writable without a separate per-file grant.
