@@ -1164,7 +1164,21 @@ effect idempotency, streaming checkpoints, and renderer socket switching.
 `test-workers/message-to-output-pipeline.test.ts` asserts the exact public
 canonical/pending admission envelope across first admission, pending replay,
 promotion, and external elicitation delivery while separately inspecting the
-private activation state. `test/slack-workspace-assignment.test.ts` proves a
+private activation state. `test-workers/substream-message-queue.test.ts` takes
+the queue itself: three messages admitted during one run each get their own
+cycle in admission order and none of them appears in the running turn's model
+array; a drag reorders promotion rather than only the composer's list; a
+duplicate client message id admits one input and one run; and a queued message
+survives the run it waited on failing mid-stream, being stopped, and the object
+being replaced before its activation runs. Its last two cases are the
+head-of-line gate from both sides — a message admitted behind an unsettled one
+is *hidden rather than dropped* and both are delivered in order, and a
+preparation that fails terminally releases the queue behind it instead of
+holding the substream. Both suites share one deterministic OpenRouter boundary
+in `test-workers/helpers/scripted-provider.ts`; the queue suite's first shape
+used a scripted *refusal* to fail a run and quietly poisoned every later test in
+the file, because a refusal opens the provider circuit for that model across the
+isolate. Fail a run mid-stream instead when what follows it matters. `test/slack-workspace-assignment.test.ts` proves a
 connector replay returns the same pending turn and creates one deterministic
 audit row. `packages/contracts/src/index.test.ts` rejects the retired
 execution-shaped socket receipt, and
@@ -1602,6 +1616,37 @@ the wrong group. The note list's paging is what lets the selection stay
 unbounded: a cursor-fenced `Archive all` would be naming rows the reader can no
 longer reach, and an unbounded one over an *unpaged* list would be naming rows
 they never could.
+
+### 2026-09-01 — The queue's lifecycle is covered end to end on real workerd
+
+**What changed:** Added `test-workers/substream-message-queue.test.ts`, eight
+real-workerd cases over what happens to a message that waits: multi-message
+promotion order across successive cycles, the queue-versus-steer boundary at the
+running turn's model array, reorder as promotion authority, duplicate-admission
+dedupe, fall-forward past a mid-stream failure and past a stop, survival of an
+eviction before activation, and the head-of-line gate from both sides — hidden
+rather than dropped, and released when the admission ahead of it fails. The
+OpenRouter boundary and the admission-parking fixture moved into
+`test-workers/helpers/scripted-provider.ts` and `helpers/substream-fixture.ts`
+so both suites drive the same one, and the scripted provider gained a terminal
+refusal turn.
+
+**Why:** The wake-up bug fixed above was found by reading, not by a failing
+test, and the suite that should have caught it only ever put *one* message in
+the queue. One message cannot show promotion order, cannot show that a queued
+input stays out of the running turn, and cannot show the head-of-line gate at
+all — which is the property that turns one stranded message into a silent
+substream. Each case here fails under a targeted break of the thing it names:
+reversing `pendingInputs`' order, dropping the `mode = 'steer'` filter so a
+queued input is promoted mid-run, removing the gate's `NOT EXISTS`, letting a
+terminal mailbox row keep blocking, and disabling pending pickup entirely.
+
+**Considered and rejected:** Growing the pipeline suite instead of adding a file
+would have put the queue's lifecycle behind a name about the provider path, and
+that file was already the largest in the suite. Keeping a private copy of the
+provider mock in each file was rejected for the usual reason and one specific
+one: the circuit-breaker interference below is invisible until two suites share
+a model, and one shared helper is where that lesson can live.
 
 ### 2026-09-01 — An unsettled message admission keeps the object's wake-up
 

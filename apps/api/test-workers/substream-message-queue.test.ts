@@ -1,0 +1,637 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
+/**
+ * What happens to a message that is queued rather than answered immediately.
+ *
+ * A substream admits a message in two durable steps and delivers it in a third,
+ * and between them the queue is the only thing holding it. The failure this
+ * suite exists to catch is always the same shape: a message reaches
+ * `pending_loop_inputs` (or the mailbox row before it) and never reaches the
+ * model — and because the head-of-line gate hides every input behind an
+ * unsettled one, that is rarely one lost message. It is the whole queue.
+ *
+ * So each case here drives the real object through a real run and then asks the
+ * same two questions of the durable state: did *this* message get its own
+ * execution receipt, and did the model actually see its text. `settledRun` and
+ * friends deliberately do not force an alarm where the loop is supposed to
+ * carry the work itself — forcing one would supply the wake-up whose absence is
+ * the bug.
+ *
+ * `message-to-output-pipeline.test.ts` owns the single-message happy path and
+ * the interrupted-admission recovery; this owns what happens when more than one
+ * message is waiting, and when the run they are waiting on does not simply
+ * succeed.
+ */
+
+import { env } from "cloudflare:workers";
+import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+
+import type { AuthContext } from "../src/env";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
+import { substreamAgentName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
+import {
+  capturedProviderRequests,
+  installScriptedProvider,
+  openProviderGate,
+  restoreProviderFetch,
+} from "./helpers/scripted-provider";
+import {
+  holdFirstWorkspaceRead,
+  holdLoopExecuting,
+  releaseHeldLoop,
+  seedWorkspaceControlPlane,
+} from "./helpers/substream-fixture";
+import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
+import type { Env } from "../src/env";
+
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
+/**
+ * Reassigned per test, for the reason the pipeline suite reassigns its own: a
+ * finished test's persistent-loop drain can outlast `reset()`, and giving each
+ * test its own work-stream id sends that zombie work to its own object instead
+ * of the next test's queue — which is exactly the state these tests assert on.
+ */
+let WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
+let workstreamOrdinal = 0;
+const USER_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
+const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
+const MODEL = "queue-suite/primary";
+
+/** Wall-clock budgets, sized for a contended multi-suite run. See the pipeline suite. */
+const RUN_SETTLE_TIMEOUT_MS = 15_000;
+const LOOP_RELEASE_TIMEOUT_MS = 10_000;
+const ADMISSION_SETTLE_TIMEOUT_MS = 5_000;
+
+const AUTH: AuthContext = {
+  sessionId: SESSION_ID,
+  userId: USER_ID,
+  workspaceId: WORKSPACE_ID,
+  region: "global" as const,
+  role: "member" as const,
+};
+
+beforeEach(async () => {
+  workstreamOrdinal += 1;
+  WORKSTREAM_ID = asWorkstreamId(
+    `00000000-0000-7000-8000-${String(workstreamOrdinal).padStart(4, "0")}000006a2`,
+  );
+  await reset();
+  await seedWorkspaceControlPlane(env.DB, {
+    workspaceId: WORKSPACE_ID,
+    userId: USER_ID,
+    sessionId: SESSION_ID,
+  });
+  const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+    workspaceDOName("global", WORKSPACE_ID),
+  ));
+  await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+}, 30_000);
+
+function agentStub(): DurableObjectStub {
+  return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+    substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+  ));
+}
+
+async function product(stub: DurableObjectStub, body: unknown): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+}> {
+  const response = await stub.fetch("https://object.test/internal/product", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+async function initializeWorkstream(
+  stub: DurableObjectStub,
+  openingMessage: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  return product(stub, {
+    operation: "initialize",
+    auth: AUTH,
+    input: {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+      title: "Queue",
+      objective: "",
+      descriptionSource: "derived",
+      titleStatus: "settled",
+      emailAddress: null,
+      creatorUserId: USER_ID,
+      openingMessage,
+      clientMessageId: "queue-open-1",
+      participantUserIds: [],
+      attachmentIds: [],
+      modelOverride: MODEL,
+      executionPrincipal: { type: "user", userId: USER_ID },
+      reason: "user_message",
+    },
+  });
+}
+
+/** Admit one member message through the same endpoint the workspace socket calls. */
+async function sendMessage(
+  stub: DurableObjectStub,
+  input: { text: string; clientMessageId: string },
+): Promise<{ turnId: string; deliveryState: string }> {
+  const result = await product(stub, {
+    operation: "create_message",
+    auth: AUTH,
+    input: {
+      text: input.text,
+      clientMessageId: input.clientMessageId,
+      mentions: [],
+      confirmedParticipantUserIds: [],
+      attachmentIds: [],
+    },
+  });
+  expect(result.status).toBe(200);
+  return {
+    turnId: (result.body.turn as { turnId: string }).turnId,
+    deliveryState: String(result.body.deliveryState),
+  };
+}
+
+interface QueueRunRow extends Record<string, SqlStorageValue> {
+  run_id: string;
+  status: string;
+  terminalized_at: number | null;
+  created_at: number;
+  trigger: string | null;
+}
+
+/** Every execution receipt this object holds, oldest first, with its trigger. */
+async function executionReceipts(stub: DurableObjectStub): Promise<QueueRunRow[]> {
+  return runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql.exec<QueueRunRow>(
+      `SELECT run_id, status, terminalized_at, created_at,
+              json_extract(execution_context_json, '$.triggerMessageId') AS trigger
+         FROM runs WHERE execution_context_json IS NOT NULL
+        ORDER BY created_at, run_id`,
+    ).toArray());
+}
+
+/** The user text of every streaming request this object's provider has seen, per call. */
+async function providerUserTurns(stub: DurableObjectStub): Promise<string[][]> {
+  const requests = await capturedProviderRequests(stub);
+  return requests.map((request) =>
+    (request.body.messages as Array<{ role?: unknown; content?: unknown }>)
+      .filter((message) => message.role === "user")
+      .map((message) => JSON.stringify(message.content)));
+}
+
+/** Poll until every named turn owns a terminal execution receipt, in this order. */
+async function settledInOrder(
+  stub: DurableObjectStub,
+  triggers: readonly string[],
+): Promise<void> {
+  await expect.poll(async () => {
+    const receipts = await executionReceipts(stub);
+    const ordered = receipts
+      .filter((run) => run.trigger !== null && triggers.includes(String(run.trigger)))
+      .map((run) => ({ trigger: String(run.trigger), settled: run.terminalized_at !== null }));
+    if (ordered.length !== triggers.length) {
+      return `minted ${ordered.length} of ${triggers.length} receipts: `
+        + `${JSON.stringify(ordered)}`;
+    }
+    if (ordered.some((run) => !run.settled)) return `not every receipt settled: ${JSON.stringify(ordered)}`;
+    return ordered.map((run) => run.trigger).join(",");
+  }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe(triggers.join(","));
+}
+
+/** Poll until the loop owns no execution. */
+async function waitForLoopRelease(stub: DurableObjectStub): Promise<void> {
+  await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM substream_loops WHERE status = 'executing'`,
+    ).one().count), {
+    timeout: LOOP_RELEASE_TIMEOUT_MS,
+    interval: 50,
+    message: "the singleton loop never released its execution",
+  }).toBe(0);
+}
+
+/**
+ * Poll until the gated run is actually held at the provider boundary.
+ *
+ * The loop's status flips to `executing` at activation, which is before the
+ * execution environment is assembled — so waiting on that would let a send race
+ * ahead of the run it is supposed to queue behind. The captured request is the
+ * only evidence the run has reached the gate and is going to sit there.
+ */
+async function waitForGatedProviderCall(stub: DurableObjectStub): Promise<void> {
+  await expect.poll(async () => (await capturedProviderRequests(stub)).length, {
+    timeout: RUN_SETTLE_TIMEOUT_MS,
+    interval: 25,
+    message: "the opening run never reached the held provider call",
+  }).toBe(1);
+}
+
+function assistantTurn(text: string): readonly unknown[] {
+  return [{ choices: [{ delta: { content: text }, finish_reason: "stop" }] }];
+}
+
+describe("a message queued behind a live run", () => {
+  it("delivers every message queued during one run, in admission order, one run each", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          assistantTurn("answering the opening message"),
+          assistantTurn("answering the first queued message"),
+          assistantTurn("answering the second queued message"),
+          assistantTurn("answering the third queued message"),
+        ],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      await initializeWorkstream(stub, "opening message");
+      await waitForGatedProviderCall(stub);
+
+      const first = await sendMessage(stub, { text: "queued first", clientMessageId: "queue-1" });
+      const second = await sendMessage(stub, { text: "queued second", clientMessageId: "queue-2" });
+      const third = await sendMessage(stub, { text: "queued third", clientMessageId: "queue-3" });
+      expect([first, second, third].map((turn) => turn.deliveryState))
+        .toEqual(["pending", "pending", "pending"]);
+
+      await openProviderGate(stub);
+      // One receipt each, in admission order, and every one of them terminal.
+      // A queue that delivers only its head — the shape a single-message test
+      // cannot see — fails here rather than silently dropping two messages.
+      await settledInOrder(stub, [first.turnId, second.turnId, third.turnId]);
+
+      const turns = await providerUserTurns(stub);
+      expect(turns).toHaveLength(4);
+      // The opening request must not carry a message admitted after it started:
+      // `queue` means *after this run*, and a queued input promoted into the
+      // running turn would be a steer wearing the wrong mode.
+      expect(turns[0]!.join(" ")).not.toContain("queued first");
+      expect(turns[1]!.join(" ")).toContain("queued first");
+      expect(turns[2]!.join(" ")).toContain("queued second");
+      expect(turns[3]!.join(" ")).toContain("queued third");
+      // Each run sees everything said before it, so the array only ever grows.
+      expect(turns.map((request) => request.length)).toEqual([1, 2, 3, 4]);
+
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_inputs`,
+        ).one().count)).toBe(0);
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("carries a queued message forward when the run it waited on fails", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          // Broken mid-stream rather than refused outright: a refusal opens the
+          // provider circuit, and then the queued message's own run fails
+          // `provider_circuit_open` without ever being offered to the model —
+          // correct behaviour, but it would hide whether the queue delivered.
+          [
+            { choices: [{ delta: { content: "partial before the break" }, finish_reason: null }] },
+            { error: { message: "provider stream broke" } },
+          ],
+          assistantTurn("answering the queued message"),
+        ],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      const opened = await initializeWorkstream(stub, "opening message");
+      await waitForGatedProviderCall(stub);
+      const queued = await sendMessage(stub, {
+        text: "queued behind a failure",
+        clientMessageId: "queue-failure-1",
+      });
+
+      await openProviderGate(stub);
+      // The opening run dies at the provider boundary. A failure releases the
+      // loop without a safe step boundary, so the queued input has to fall
+      // forward to the next idle activation rather than die with the run.
+      await settledInOrder(stub, [queued.turnId]);
+      expect((await executionReceipts(stub))
+        .find((run) => run.run_id === opened.body.harnessRunId)?.status).toBe("failed");
+
+      const turns = await providerUserTurns(stub);
+      expect(turns.at(-1)!.join(" ")).toContain("queued behind a failure");
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("carries a queued message forward when the run it waited on is stopped", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("interrupted"), assistantTurn("answering the queued message")],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      await initializeWorkstream(stub, "opening message");
+      await waitForGatedProviderCall(stub);
+      const queued = await sendMessage(stub, {
+        text: "queued behind a stop",
+        clientMessageId: "queue-stop-1",
+      });
+      expect((await product(stub, { operation: "stop", auth: AUTH })).status).toBe(200);
+
+      await openProviderGate(stub);
+      // A durable stop consumes no pending input. The person stopped the run,
+      // not the message they had already queued behind it.
+      await settledInOrder(stub, [queued.turnId]);
+      expect((await providerUserTurns(stub)).at(-1)!.join(" "))
+        .toContain("queued behind a stop");
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("keeps a queued message when the object is replaced before its activation runs", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering the opening message")],
+        { primaryModel: MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "opening message");
+      await expect.poll(async () => (await executionReceipts(stub))
+        .find((run) => run.run_id === opened.body.harnessRunId)?.terminalized_at !== null,
+      { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe(true);
+      await waitForLoopRelease(stub);
+
+      // Pin the loop so admission cannot activate: this is the state where the
+      // queue's only claim on the object is its rows. The hold is durable, so
+      // it survives the eviction below and still gates the replacement.
+      await runInDurableObject(stub, (_instance, state) => {
+        holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+      });
+      const queued = await sendMessage(stub, {
+        text: "queued across an eviction",
+        clientMessageId: "queue-evict-1",
+      });
+      expect(queued.deliveryState).toBe("pending");
+
+      // Everything in memory goes: the drain, the claim on the preparation, and
+      // the owner of whatever alarm was armed. What is left is the durable
+      // queue, and the replacement object has to rediscover the message from
+      // that alone.
+      await evictDurableObject(stub);
+      // The provider boundary lives on the instance's `env`, so the replacement
+      // needs it installed again — the eviction under test is of Rally's
+      // in-memory state, not of the external system this stands in for.
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering after the eviction")],
+        { primaryModel: MODEL, fallbackModels: [] },
+      );
+      await runInDurableObject(stub, (_instance, state) => { releaseHeldLoop(state); });
+
+      await runDurableObjectAlarm(stub);
+      await settledInOrder(stub, [queued.turnId]);
+      expect((await providerUserTurns(stub)).at(-1)!.join(" "))
+        .toContain("queued across an eviction");
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("delivers the queue in the order a reorder left it, not the order it arrived", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          assistantTurn("answering the opening message"),
+          assistantTurn("answering the dragged message"),
+          assistantTurn("answering the message it passed"),
+        ],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      await initializeWorkstream(stub, "opening message");
+      await waitForGatedProviderCall(stub);
+      const first = await sendMessage(stub, { text: "arrived first", clientMessageId: "queue-order-1" });
+      const second = await sendMessage(stub, { text: "arrived second", clientMessageId: "queue-order-2" });
+
+      const reordered = await product(stub, {
+        operation: "reorder_pending_inputs",
+        auth: AUTH,
+        inputIds: [second.turnId, first.turnId],
+      });
+      expect(reordered.status).toBe(200);
+      expect((reordered.body.pendingInputs as Array<{ inputId: string }>).map((input) => input.inputId))
+        .toEqual([second.turnId, first.turnId]);
+
+      await openProviderGate(stub);
+      // The drag is authority over promotion order, not just over a list the
+      // composer paints: the model has to be asked the second message first.
+      await settledInOrder(stub, [second.turnId, first.turnId]);
+      const turns = await providerUserTurns(stub);
+      expect(turns[1]!.join(" ")).toContain("arrived second");
+      expect(turns[2]!.join(" ")).toContain("arrived first");
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("admits one input and one run for a client message id sent twice while queued", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering the opening message"), assistantTurn("answering the queued message")],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      await initializeWorkstream(stub, "opening message");
+      await waitForGatedProviderCall(stub);
+
+      const first = await sendMessage(stub, { text: "sent twice", clientMessageId: "queue-dup-1" });
+      const replay = await sendMessage(stub, { text: "sent twice", clientMessageId: "queue-dup-1" });
+      expect(replay.turnId).toBe(first.turnId);
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_inputs`,
+        ).one().count)).toBe(1);
+
+      await openProviderGate(stub);
+      await settledInOrder(stub, [first.turnId]);
+      // A retry that admitted a second input would show up as a second run and
+      // a second copy of the same sentence in the model's array.
+      expect((await providerUserTurns(stub)).at(-1)!
+        .filter((content) => content.includes("sent twice"))).toHaveLength(1);
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE client_message_id = ?`,
+          "queue-dup-1",
+        ).one().count)).toBe(1);
+    } finally {
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+});
+
+describe("a message queued behind an unsettled admission", () => {
+  /**
+   * Park one admission mid-preparation and return its gate.
+   *
+   * The parked `createMessage` never returns, which is the point: while its
+   * mailbox row says `preparing`, the head-of-line gate hides every input
+   * admitted after it from `pendingInputs`, from the loop, and from every
+   * viewer's snapshot. That is the difference between one message not sending
+   * and a whole substream going quiet.
+   */
+  async function parkAdmission(
+    stub: DurableObjectStub,
+    input: { text: string; clientMessageId: string; mentions?: unknown[] },
+  ): Promise<{ gate: { open: boolean }; inputId: string }> {
+    const gate = await runInDurableObject(stub, (instance) => {
+      const service = (instance as unknown as {
+        product: WorkstreamObjectProductService;
+      }).product;
+      // `env` is a constructor parameter property: private to the compiler, an
+      // ordinary writable field to the runtime this test replaces it in.
+      const held = holdFirstWorkspaceRead(service as unknown as { env: Env });
+      void service.createMessage(AUTH, {
+        text: input.text,
+        clientMessageId: input.clientMessageId,
+        mentions: (input.mentions ?? []) as never,
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      }).catch(() => undefined);
+      return held;
+    });
+    const reserved = (): Promise<string | null> => runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ input_id: string }>(
+        `SELECT input_id FROM pending_loop_input_mailbox
+          WHERE client_message_id = ? AND state = 'preparing'`,
+        input.clientMessageId,
+      ).toArray()[0]?.input_id ?? null);
+    await expect.poll(reserved, {
+      timeout: ADMISSION_SETTLE_TIMEOUT_MS,
+      interval: 25,
+      message: "the parked admission never reserved its mailbox row",
+    }).not.toBeNull();
+    return { gate, inputId: (await reserved())! };
+  }
+
+  it("keeps a message admitted behind an unsettled one hidden, then delivers both in order", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          assistantTurn("answering the opening message"),
+          assistantTurn("answering the parked message"),
+          assistantTurn("answering the message behind it"),
+        ],
+        { primaryModel: MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "opening message");
+      await expect.poll(async () => (await executionReceipts(stub))
+        .find((run) => run.run_id === opened.body.harnessRunId)?.terminalized_at !== null,
+      { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe(true);
+      await waitForLoopRelease(stub);
+
+      const parked = await parkAdmission(stub, {
+        text: "admitted first, still preparing",
+        clientMessageId: "queue-headline-1",
+      });
+      const behind = await sendMessage(stub, {
+        text: "admitted second, waiting behind it",
+        clientMessageId: "queue-headline-2",
+      });
+
+      // Ordering is the whole reason the gate exists, so the later message is
+      // written but must not be *visible* while the earlier one is unsettled.
+      // Hidden rather than missing: a queue that dropped it would look the same
+      // from `pendingInputs` alone, and the two are opposite bugs.
+      expect(await runInDurableObject(stub, (_instance, state) => ({
+        stored: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_inputs`,
+        ).one().count,
+        visible: new SubstreamLoopStorage(state.storage).pendingInputs().length,
+      }))).toEqual({ stored: 1, visible: 0 });
+
+      parked.gate.open = true;
+      // Both, in admission order, and neither promoted ahead of the other.
+      await settledInOrder(stub, [parked.inputId, behind.turnId]);
+      const turns = await providerUserTurns(stub);
+      expect(turns[1]!.join(" ")).toContain("admitted first, still preparing");
+      expect(turns[2]!.join(" ")).toContain("admitted second, waiting behind it");
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("releases the queue when the admission ahead of it fails instead of settling", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering the opening message"), assistantTurn("answering the survivor")],
+        { primaryModel: MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "opening message");
+      await expect.poll(async () => (await executionReceipts(stub))
+        .find((run) => run.run_id === opened.body.harnessRunId)?.terminalized_at !== null,
+      { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe(true);
+      await waitForLoopRelease(stub);
+
+      // Mentions someone who is not a member of this workspace, so preparation
+      // refuses it once the held read is released. A refusal is a terminal
+      // state for that row, and the queue behind it has to move on.
+      const doomed = await parkAdmission(stub, {
+        text: "mentions a stranger",
+        clientMessageId: "queue-doomed-1",
+        mentions: [{
+          type: "person",
+          label: "Stranger",
+          userId: "00000000-0000-7000-8000-00000000beef",
+          connectorType: null,
+          startOffset: 0,
+          endOffset: 8,
+        }],
+      });
+      const survivor = await sendMessage(stub, {
+        text: "queued behind a doomed admission",
+        clientMessageId: "queue-survivor-1",
+      });
+
+      doomed.gate.open = true;
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ state: string }>(
+          `SELECT state FROM pending_loop_input_mailbox WHERE input_id = ?`,
+          doomed.inputId,
+        ).toArray()[0]?.state ?? "absent"), {
+        timeout: ADMISSION_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the doomed admission never reached a terminal state",
+      }).toBe("failed");
+
+      // The refusal belongs to one message. Everything queued behind it was
+      // admitted successfully and has to reach the model anyway — a terminal
+      // row that kept blocking would be the same outage with a different cause.
+      await settledInOrder(stub, [survivor.turnId]);
+      expect((await providerUserTurns(stub)).at(-1)!.join(" "))
+        .toContain("queued behind a doomed admission");
+      expect((await providerUserTurns(stub)).at(-1)!.join(" "))
+        .not.toContain("mentions a stranger");
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+});
