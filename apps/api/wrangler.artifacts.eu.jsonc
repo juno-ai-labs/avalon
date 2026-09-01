@@ -34,7 +34,7 @@
     { "pattern": "*-eu.rallyusercontent.com/*", "zone_name": "rallyusercontent.com" }
   ],
   "r2_buckets": [
-    { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads" }
+    { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" }
   ],
   // Cross-script: the class is declared and migrated by the API Worker, which
   // is the only Worker that may own a Durable Object's schema. This Worker
