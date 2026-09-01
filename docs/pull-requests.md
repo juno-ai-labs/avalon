@@ -96,12 +96,16 @@ they do not.
   should ask for them.
 - **Reviewer notes** — What the reviewer needs that is not part of the change:
   a merge-time migration collision, deferred work, a known-failing check.
-- **Validation** — How it was verified. Name the commands and their outcome:
-  `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:scripts`, both Wrangler
-  dry-run builds, and — for anything visible — the screens captured from a real
-  window per
+- **Validation** — How it was verified. Name the commands you actually ran and
+  their outcome: `pnpm lint` and `pnpm typecheck`, the tests that cover what you
+  touched per
+  [how much to run](testing.md#how-much-to-run), `pnpm test:scripts` and the
+  Wrangler dry-run builds where those surfaces moved, and — for anything visible
+  — the screens captured from a real window per
   [the development environment guide](dev-environment.md#driving-and-screenshotting-it).
-  Call out pre-existing failures as pre-existing.
+  `pnpm test` in full is CI's gate: never write an outcome for a run you did not
+  produce, and "none — documentation-only" is a complete answer where it is the
+  true one. Call out pre-existing failures as pre-existing.
 
 ## Never open a draft pull request
 
