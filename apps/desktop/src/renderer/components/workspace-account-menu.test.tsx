@@ -140,6 +140,7 @@ describe('workspace account menu', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
     const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
     const workspaceName = within(create).getByLabelText('Workspace name');
+    expect(workspaceName).toHaveFocus();
     expect(workspaceName).toHaveAttribute('maxlength', '120');
     fireEvent.change(workspaceName, { target: { value: 'New Lab' } });
     fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
