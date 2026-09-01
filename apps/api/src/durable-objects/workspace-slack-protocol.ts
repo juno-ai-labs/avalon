@@ -1,5 +1,6 @@
 import { IdSchema } from "@rally/contracts";
 import { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 /**
  * The Slack ingress spine — jobs, thread claims, and pending prompts — as
@@ -28,11 +29,11 @@ import { z } from "zod";
  * object's schema stores them as opaque TEXT.
  */
 
-const TimestampSchema = z.string().datetime({ offset: true });
-const SlackIngressJobKindSchema = z.enum(["event", "interaction", "command"]);
-const SlackIngressJobStatusSchema = z.enum(["queued", "processing", "completed", "failed"]);
+const TimestampSchema = deferredZodSchema(() => z.string().datetime({ offset: true }));
+const SlackIngressJobKindSchema = deferredZodSchema(() => z.enum(["event", "interaction", "command"]));
+const SlackIngressJobStatusSchema = deferredZodSchema(() => z.enum(["queued", "processing", "completed", "failed"]));
 
-export const WorkspaceSlackIngressEnqueueRequestSchema = z.strictObject({
+export const WorkspaceSlackIngressEnqueueRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   jobId: z.string().min(1),
   connectionId: z.string().min(1),
@@ -42,7 +43,7 @@ export const WorkspaceSlackIngressEnqueueRequestSchema = z.strictObject({
   /** Serialized by the caller; the object stores it verbatim. */
   payloadJson: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
 /**
  * What the insert found: a fresh row, a replay, or Slack reusing an identity.
@@ -70,19 +71,19 @@ export const WorkspaceSlackIngressEnqueueRequestSchema = z.strictObject({
  */
 export const SLACK_INGRESS_ATTEMPT_LIMIT = 20;
 
-export const WorkspaceSlackIngressEnqueueResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceSlackIngressEnqueueResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("queued") }),
   /** The same id with the same body: an idempotent retry, safe to re-announce. */
   z.strictObject({ outcome: z.literal("replayed"), status: SlackIngressJobStatusSchema }),
   /** The same id with different content — Slack reused an event identity. */
   z.strictObject({ outcome: z.literal("conflict") }),
-]);
+]));
 
-export const WorkspaceSlackIngressClaimRequestSchema = z.strictObject({
+export const WorkspaceSlackIngressClaimRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   jobId: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
 /**
  * The claimed job travels with the lease that fenced it.
@@ -94,7 +95,7 @@ export const WorkspaceSlackIngressClaimRequestSchema = z.strictObject({
  * check it — a completed job's payload is cleared, and a claim that raced one
  * reports what it found rather than inventing a payload.
  */
-export const WorkspaceSlackIngressClaimResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceSlackIngressClaimResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({
     outcome: z.literal("claimed"),
     leaseId: z.string().min(1),
@@ -109,20 +110,20 @@ export const WorkspaceSlackIngressClaimResultSchema = z.discriminatedUnion("outc
   }),
   /** Terminal, at the attempt ceiling, or another worker's live lease. */
   z.strictObject({ outcome: z.literal("unavailable") }),
-]);
+]));
 
-export const WorkspaceSlackIngressCompleteRequestSchema = z.strictObject({
+export const WorkspaceSlackIngressCompleteRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   jobId: z.string().min(1),
   leaseId: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceSlackIngressSettleResultSchema = z.strictObject({
+export const WorkspaceSlackIngressSettleResultSchema = deferredZodSchema(() => z.strictObject({
   outcome: z.enum(["settled", "stale"]),
-});
+}));
 
-export const WorkspaceSlackIngressFailRequestSchema = z.strictObject({
+export const WorkspaceSlackIngressFailRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   jobId: z.string().min(1),
   leaseId: z.string().min(1),
@@ -135,7 +136,7 @@ export const WorkspaceSlackIngressFailRequestSchema = z.strictObject({
    */
   exhaustionEpisodeStartedAt: TimestampSchema,
   at: TimestampSchema,
-});
+}));
 
 /**
  * The failure and the exhaustion-notice decision, taken together.
@@ -145,7 +146,7 @@ export const WorkspaceSlackIngressFailRequestSchema = z.strictObject({
  * sibling and both notify. One transaction answers "is this the episode's
  * first report" from the same state the write produced.
  */
-export const WorkspaceSlackIngressFailResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceSlackIngressFailResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({
     outcome: z.literal("failed"),
     attemptCount: z.number().int().nonnegative(),
@@ -154,21 +155,21 @@ export const WorkspaceSlackIngressFailResultSchema = z.discriminatedUnion("outco
     firstExhaustionReport: z.boolean(),
   }),
   z.strictObject({ outcome: z.literal("stale") }),
-]);
+]));
 
-export const WorkspaceSlackIngressRecoverableRequestSchema = z.strictObject({
+export const WorkspaceSlackIngressRecoverableRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   /** Queued or failed jobs untouched since this instant are worth re-announcing. */
   staleBefore: TimestampSchema,
   at: TimestampSchema,
   limit: z.number().int().positive(),
-});
+}));
 
-export const WorkspaceSlackIngressRecoverableResultSchema = z.strictObject({
+export const WorkspaceSlackIngressRecoverableResultSchema = deferredZodSchema(() => z.strictObject({
   jobIds: z.array(z.string().min(1)),
-});
+}));
 
-export const WorkspaceSlackIngressSweepRequestSchema = z.strictObject({
+export const WorkspaceSlackIngressSweepRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   at: TimestampSchema,
   /** Completed and permanently failed jobs older than this are removed. */
@@ -177,43 +178,43 @@ export const WorkspaceSlackIngressSweepRequestSchema = z.strictObject({
   spentBefore: TimestampSchema,
   /** How many exhausted jobs the standing report names. */
   exhaustedReportLimit: z.number().int().positive(),
-});
+}));
 
-export const WorkspaceSlackIngressSweepResultSchema = z.strictObject({
+export const WorkspaceSlackIngressSweepResultSchema = deferredZodSchema(() => z.strictObject({
   /** The standing exhausted set after the sweep, newest first. */
   exhausted: z.array(z.strictObject({
     jobId: z.string().min(1),
     errorCode: z.string().nullable(),
   })),
-});
+}));
 
-export const WorkspaceSlackThreadRoutableRequestSchema = z.strictObject({
+export const WorkspaceSlackThreadRoutableRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   slackUserId: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceSlackThreadRoutableResultSchema = z.strictObject({
+export const WorkspaceSlackThreadRoutableResultSchema = deferredZodSchema(() => z.strictObject({
   routable: z.boolean(),
-});
+}));
 
-export const WorkspaceSlackPendingPromptRequestSchema = z.strictObject({
+export const WorkspaceSlackPendingPromptRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   slackUserId: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceSlackPendingPromptResultSchema = z.strictObject({
+export const WorkspaceSlackPendingPromptResultSchema = deferredZodSchema(() => z.strictObject({
   prompt: z.string().nullable(),
-});
+}));
 
-export const WorkspaceSlackPendingPromptStoreRequestSchema = z.strictObject({
+export const WorkspaceSlackPendingPromptStoreRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
@@ -225,23 +226,23 @@ export const WorkspaceSlackPendingPromptStoreRequestSchema = z.strictObject({
   /** The retention decision stays the service's; the object stores its answer. */
   expiresAt: TimestampSchema,
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceSlackPendingPromptClearRequestSchema = z.strictObject({
+export const WorkspaceSlackPendingPromptClearRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   slackUserId: z.string().min(1),
-});
+}));
 
-export const WorkspaceSlackThreadClaimRequestSchema = z.strictObject({
+export const WorkspaceSlackThreadClaimRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
 /**
  * Either this caller now initializes the thread, or somebody else already is.
@@ -250,18 +251,18 @@ export const WorkspaceSlackThreadClaimRequestSchema = z.strictObject({
  * won, so a loser cannot hold a lease id at all — the shape that let a
  * `rowsWritten` comparison masquerade as a claim elsewhere.
  */
-export const WorkspaceSlackThreadClaimResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceSlackThreadClaimResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("claimed"), leaseId: z.string().min(1) }),
   z.strictObject({ outcome: z.literal("held") }),
-]);
+]));
 
-export const WorkspaceSlackThreadReleaseRequestSchema = z.strictObject({
+export const WorkspaceSlackThreadReleaseRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
   leaseId: z.string().min(1),
-});
+}));
 
 /**
  * The agent-session lifecycle: the thread's Rally identity, its delivery
@@ -272,13 +273,13 @@ export const WorkspaceSlackThreadReleaseRequestSchema = z.strictObject({
  * object, not a column. Its requests still take `workspaceId` so the object can
  * assert the caller reached the right one, exactly as every other method here.
  */
-const SlackInvocationKindSchema = z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]);
-const SlackChannelTypeSchema = z.enum(["public", "private", "im", "unknown"]);
-const SlackAssignmentMethodSchema = z.enum(["verified_email", "explicit_link"]);
-const SlackFeedbackRatingSchema = z.enum(["helpful", "needs_improvement"]);
+const SlackInvocationKindSchema = deferredZodSchema(() => z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]));
+const SlackChannelTypeSchema = deferredZodSchema(() => z.enum(["public", "private", "im", "unknown"]));
+const SlackAssignmentMethodSchema = deferredZodSchema(() => z.enum(["verified_email", "explicit_link"]));
+const SlackFeedbackRatingSchema = deferredZodSchema(() => z.enum(["helpful", "needs_improvement"]));
 
 /** The session as its readers consume it, in the object's own column names. */
-export const WorkspaceSlackSessionSchema = z.strictObject({
+export const WorkspaceSlackSessionSchema = deferredZodSchema(() => z.strictObject({
   id: z.string().min(1),
   workspace_id: z.string().min(1),
   connection_id: z.string().min(1),
@@ -299,40 +300,40 @@ export const WorkspaceSlackSessionSchema = z.strictObject({
   /** Only what Rally placed itself, so a transition never takes a member's. */
   reaction_current: z.string().nullable(),
   reaction_cursor: z.number().int().nonnegative(),
-});
+}));
 
-export const WorkspaceSlackSessionResultSchema = z.strictObject({
+export const WorkspaceSlackSessionResultSchema = deferredZodSchema(() => z.strictObject({
   session: WorkspaceSlackSessionSchema.nullable(),
-});
+}));
 
-export const WorkspaceSlackSessionByIdRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionByIdRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
-});
+}));
 
-export const WorkspaceSlackSessionByThreadRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionByThreadRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   channelId: z.string().min(1),
   threadTs: z.string().min(1),
-});
+}));
 
-export const WorkspaceSlackSessionByWorkstreamRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionByWorkstreamRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
-});
+}));
 
-export const WorkspaceSlackSessionExistsRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionExistsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   connectionId: z.string().min(1),
-});
+}));
 
-export const WorkspaceSlackSessionExistsResultSchema = z.strictObject({
+export const WorkspaceSlackSessionExistsResultSchema = deferredZodSchema(() => z.strictObject({
   sessionId: z.string().nullable(),
-});
+}));
 
-export const WorkspaceSlackSessionCreateRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionCreateRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   connectionId: z.string().min(1),
@@ -351,9 +352,9 @@ export const WorkspaceSlackSessionCreateRequestSchema = z.strictObject({
   claimedAt: TimestampSchema.nullable(),
   contextJson: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceSlackSessionAssignRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionAssignRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   teamId: z.string().min(1),
@@ -361,7 +362,7 @@ export const WorkspaceSlackSessionAssignRequestSchema = z.strictObject({
   assignedUserId: z.string().min(1),
   assignmentMethod: SlackAssignmentMethodSchema,
   at: TimestampSchema,
-});
+}));
 
 /**
  * The sessions this assignment moved, with the values it moved them *from*.
@@ -377,7 +378,7 @@ export const WorkspaceSlackSessionAssignRequestSchema = z.strictObject({
  * The count the service used to take from `meta.changes` is this array's
  * length, decided by which rows the update actually returned.
  */
-export const WorkspaceSlackSessionAssignResultSchema = z.strictObject({
+export const WorkspaceSlackSessionAssignResultSchema = deferredZodSchema(() => z.strictObject({
   sessions: z.array(z.strictObject({
     id: z.string().min(1),
     workspaceId: z.string().min(1),
@@ -385,22 +386,22 @@ export const WorkspaceSlackSessionAssignResultSchema = z.strictObject({
     previousAssignedUserId: z.string().nullable(),
     previousAssignmentMethod: SlackAssignmentMethodSchema.nullable(),
   })),
-});
+}));
 
-export const WorkspaceSlackSessionDeliveryKeyRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionDeliveryKeyRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   deliveryKey: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceSlackSessionStreamRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionStreamRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   /** Legacy compatibility pointer may only be cleared; new streams are forbidden. */
   streamTs: z.null(),
   at: TimestampSchema,
-});
+}));
 
 /**
  * Settle the status reaction, conditional on the emoji this transition removed.
@@ -419,19 +420,19 @@ export const WorkspaceSlackSessionStreamRequestSchema = z.strictObject({
  * forward from the statement this replaced, which already had it right; what
  * moved is only how the outcome is decided.
  */
-export const WorkspaceSlackSessionReactionRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionReactionRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   expected: z.string().nullable(),
   reaction: z.string().nullable(),
   cursor: z.number().int().nonnegative().optional(),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceSlackSessionReactionResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceSlackSessionReactionResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("settled") }),
   z.strictObject({ outcome: z.literal("raced") }),
-]);
+]));
 
 /**
  * Move the status reaction onto the message that made the newest prompt.
@@ -441,32 +442,32 @@ export const WorkspaceSlackSessionReactionResultSchema = z.discriminatedUnion("o
  * unlike {@link WorkspaceSlackSessionReactionRequestSchema}: this is the run
  * declaring where its status now lives, not a transition racing another.
  */
-export const WorkspaceSlackSessionReactionAnchorRequestSchema = z.strictObject({
+export const WorkspaceSlackSessionReactionAnchorRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
   channelId: z.string().min(1),
   messageTs: z.string().min(1),
   reaction: z.string().nullable(),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceSlackContextRequestSchema = z.strictObject({
+export const WorkspaceSlackContextRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   slackUserId: z.string().min(1),
-});
+}));
 
-export const WorkspaceSlackContextResultSchema = z.strictObject({
+export const WorkspaceSlackContextResultSchema = deferredZodSchema(() => z.strictObject({
   contextJson: z.string().nullable(),
-});
+}));
 
-export const WorkspaceSlackContextStoreRequestSchema = z.strictObject({
+export const WorkspaceSlackContextStoreRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
   slackUserId: z.string().min(1),
   contextJson: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
 /**
  * One feedback row per ingress job.
@@ -477,7 +478,7 @@ export const WorkspaceSlackContextStoreRequestSchema = z.strictObject({
  * discarded the result. The witness makes the replay reportable, which is the
  * only thing a caller can usefully do with it.
  */
-export const WorkspaceSlackFeedbackRequestSchema = z.strictObject({
+export const WorkspaceSlackFeedbackRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   feedbackId: z.string().min(1),
   ingressJobId: z.string().min(1),
@@ -487,12 +488,12 @@ export const WorkspaceSlackFeedbackRequestSchema = z.strictObject({
   rating: SlackFeedbackRatingSchema,
   comment: z.string().nullable(),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceSlackFeedbackResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceSlackFeedbackResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("recorded") }),
   z.strictObject({ outcome: z.literal("replayed") }),
-]);
+]));
 
 export type WorkspaceSlackIngressEnqueueRequest = z.infer<typeof WorkspaceSlackIngressEnqueueRequestSchema>;
 export type WorkspaceSlackIngressEnqueueResult = z.infer<typeof WorkspaceSlackIngressEnqueueResultSchema>;

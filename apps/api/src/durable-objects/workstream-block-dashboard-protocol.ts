@@ -6,6 +6,7 @@ import {
 } from "./object-port-protocol";
 import type { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
 import type { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 /**
  * The wire contract for one work stream's HyperSight block state.
@@ -39,9 +40,9 @@ export const BLOCK_DASHBOARD_OPERATIONS:
 
 export const isBlockDashboardOperation = operationGuard(BLOCK_DASHBOARD_OPERATIONS);
 
-export const BlockDashboardOperationRequestSchema = objectPortRequestSchema(
+export const BlockDashboardOperationRequestSchema = deferredZodSchema(() => objectPortRequestSchema(
   isBlockDashboardOperation,
   "unknown_block_dashboard_operation",
-);
+));
 
 export type BlockDashboardOperationRequest = z.infer<typeof BlockDashboardOperationRequestSchema>;

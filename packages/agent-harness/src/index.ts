@@ -31,6 +31,7 @@ import type { ChatStreamChunk } from "@openrouter/sdk/models/chatstreamchunk.js"
 import type { ChatUsage } from "@openrouter/sdk/models/chatusage.js";
 import type { OpenRouterMetadata } from "@openrouter/sdk/models/openroutermetadata.js";
 import { z } from "zod";
+import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
 // Cycle: `bind-runtime` imports back from this module. Sound because every
 // value it takes is read inside a function body — see `runHarness` below.
 import { runHarnessWithBind } from "./bind-runtime";
@@ -2652,7 +2653,7 @@ export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
   },
 } as const satisfies ToolDefinition;
 
-export const RequestElicitationInputSchema = z.strictObject({
+export const RequestElicitationInputSchema = deferredZodSchema(() => z.strictObject({
   prompt: z.string().min(1).max(4_000),
   responseType: z.enum(["text", "radio", "single_select", "multi_select"]),
   options: z.array(z.strictObject({
@@ -2677,9 +2678,16 @@ export const RequestElicitationInputSchema = z.strictObject({
       message: "Maximum selections must be at least the minimum selections",
     });
   }
-});
+}));
 
 export type RequestElicitationInput = z.infer<typeof RequestElicitationInputSchema>;
+
+const requestElicitationInputJsonSchema = memoizedValue(
+  () => z.toJSONSchema(RequestElicitationInputSchema) as Record<string, unknown>,
+);
+const automationEvaluatorRulesJsonSchema = memoizedValue(
+  () => z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema) as Record<string, unknown>,
+);
 
 export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   name: "request_elicitation",
@@ -2688,7 +2696,9 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   capability: "elicitation.write",
   mode: "write",
   idempotency: "record_before_execute",
-  inputSchema: z.toJSONSchema(RequestElicitationInputSchema) as Record<string, unknown>,
+  get inputSchema() {
+    return requestElicitationInputJsonSchema();
+  },
 } as const satisfies ToolDefinition;
 
 /**
@@ -2767,7 +2777,9 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     capability: "rally.automation.evaluators.set",
     mode: "write",
     idempotency: "record_before_execute",
-    inputSchema: z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema) as Record<string, unknown>,
+    get inputSchema() {
+      return automationEvaluatorRulesJsonSchema();
+    },
   },
   {
     name: "submit_draft",

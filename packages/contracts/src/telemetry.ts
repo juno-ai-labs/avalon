@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deferredZodSchema, memoizedValue } from "./deferred-zod-schema";
 
 export const TELEMETRY_SOURCES = [
   "desktop-main",
@@ -66,7 +67,7 @@ interface TelemetryRegistryEntry {
   authoritativeSource: TelemetrySource;
   category: TelemetryCategory;
   identityScopes: readonly TelemetryIdentityScope[];
-  properties: z.ZodObject<z.ZodRawShape>;
+  properties: z.ZodType;
   propertyClassifications: Readonly<Record<string, TelemetryPropertyClassification>>;
   sampleRate: number;
   priority: "critical" | "high" | "normal" | "low";
@@ -95,8 +96,8 @@ function event<T extends RegistryInput>(input: T): T & {
   };
 }
 
-const lifecycleState = z.enum(["launch_started", "ready", "foreground", "background", "graceful_exit"]);
-const applicationVersionProperties = z.strictObject({
+const lifecycleState = deferredZodSchema(() => z.enum(["launch_started", "ready", "foreground", "background", "graceful_exit"]));
+const applicationVersionProperties = deferredZodSchema(() => z.strictObject({
   state: z.enum(["installed", "updated"]),
   previousVersion: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u).optional(),
   previousBuild: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u).optional(),
@@ -106,14 +107,14 @@ const applicationVersionProperties = z.strictObject({
     || (value.state === "updated" && previousCount !== 2)) {
     context.addIssue({ code: "custom", message: "application_version_transition_invalid" });
   }
-});
-const durationBucket = z.enum(["lt_100ms", "100ms_1s", "1s_5s", "5s_30s", "gte_30s"]);
-const journeyDurationBucket = z.enum(["unknown", "lt_1s", "1s_5s", "5s_30s", "30s_2m", "2m_10m", "gte_10m"]);
-const countBucket = z.enum(["zero", "one", "two_to_five", "six_to_twenty", "twenty_one_to_one_hundred", "over_one_hundred"]);
-const resultClass = z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed"]);
-const region = z.enum(["global", "eu"]);
-const entrypoint = z.enum(["first_run", "settings", "invitation", "workspace_switcher", "composer"]);
-const screen = z.enum([
+}));
+const durationBucket = deferredZodSchema(() => z.enum(["lt_100ms", "100ms_1s", "1s_5s", "5s_30s", "gte_30s"]));
+const journeyDurationBucket = deferredZodSchema(() => z.enum(["unknown", "lt_1s", "1s_5s", "5s_30s", "30s_2m", "2m_10m", "gte_10m"]));
+const countBucket = deferredZodSchema(() => z.enum(["zero", "one", "two_to_five", "six_to_twenty", "twenty_one_to_one_hundred", "over_one_hundred"]));
+const resultClass = deferredZodSchema(() => z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed"]));
+const region = deferredZodSchema(() => z.enum(["global", "eu"]));
+const entrypoint = deferredZodSchema(() => z.enum(["first_run", "settings", "invitation", "workspace_switcher", "composer"]));
+const screen = deferredZodSchema(() => z.enum([
   "onboarding_welcome",
   "onboarding_region",
   "onboarding_workspace",
@@ -121,33 +122,33 @@ const screen = z.enum([
   "workstream",
   "application_settings",
   "developer_settings",
-]);
-const applicationIcon = z.enum(TELEMETRY_APPLICATION_ICON_IDS);
-const resourceId = z.string().uuid();
-const uuidV7Id = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
-const visibility = z.enum(["private", "public"]);
-const resourceCount = z.number().int().min(0).max(100);
-const connectorType = z.enum(TELEMETRY_CONNECTOR_TYPES);
-const safeTelemetryTaxonomyValue = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/u);
-const safeModelRoute = z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/u);
-const telemetrySurface = z.enum([
+]));
+const applicationIcon = deferredZodSchema(() => z.enum(TELEMETRY_APPLICATION_ICON_IDS));
+const resourceId = deferredZodSchema(() => z.string().uuid());
+const uuidV7Id = deferredZodSchema(() => z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7"));
+const visibility = deferredZodSchema(() => z.enum(["private", "public"]));
+const resourceCount = deferredZodSchema(() => z.number().int().min(0).max(100));
+const connectorType = deferredZodSchema(() => z.enum(TELEMETRY_CONNECTOR_TYPES));
+const safeTelemetryTaxonomyValue = deferredZodSchema(() => z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/u));
+const safeModelRoute = deferredZodSchema(() => z.string().min(1).max(160).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/u));
+const telemetrySurface = deferredZodSchema(() => z.enum([
   "onboarding_welcome", "onboarding_region", "onboarding_workspace", "workspace_home",
   "workstream", "note_detail", "meeting_capture", "automation_builder", "automation_detail",
   "settings_account", "settings_digest", "settings_workspace", "settings_connections",
   "settings_application", "settings_developer", "resource_inspector", "hypersight", "terminal",
-]);
-const surfaceEntrypoint = z.enum([
+]));
+const surfaceEntrypoint = deferredZodSchema(() => z.enum([
   "direct", "sidebar_new", "sidebar_pinned", "sidebar_recent", "sidebar_note", "sidebar_automation",
   "home_waiting", "home_suggested", "menu_bar", "command_shortcut", "deep_link", "notification",
   "automation_run_list", "in_app_link", "settings", "unknown",
-]);
-const automationTriggerType = z.enum([
+]));
+const automationTriggerType = deferredZodSchema(() => z.enum([
   "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "inbound_email",
-]);
-const automationDeliveryTargetType = z.enum(["email", "slack_agent_dm"]);
-const connectorScope = z.enum(["personal", "workspace"]);
-const connectorSetupMethod = z.enum(["oauth", "api_key", "direct", "webhook"]);
-const connectorHealth = z.enum(["healthy", "needs_reconnect", "error", "disabled", "unknown"]);
+]));
+const automationDeliveryTargetType = deferredZodSchema(() => z.enum(["email", "slack_agent_dm"]));
+const connectorScope = deferredZodSchema(() => z.enum(["personal", "workspace"]));
+const connectorSetupMethod = deferredZodSchema(() => z.enum(["oauth", "api_key", "direct", "webhook"]));
+const connectorHealth = deferredZodSchema(() => z.enum(["healthy", "needs_reconnect", "error", "disabled", "unknown"]));
 export const TELEMETRY_REALTIME_SOCKETS = [
   "workspace",
   "workstream_control",
@@ -167,7 +168,7 @@ export const TELEMETRY_REALTIME_SOCKET_CAUSES = [
 ] as const;
 export type TelemetryRealtimeSocketCause = typeof TELEMETRY_REALTIME_SOCKET_CAUSES[number];
 
-const realtimeSocketProperties = z.strictObject({
+const realtimeSocketProperties = deferredZodSchema(() => z.strictObject({
   socket: z.enum(TELEMETRY_REALTIME_SOCKETS),
   state: z.enum(["connected", "retrying", "stopped"]),
   cause: z.enum(TELEMETRY_REALTIME_SOCKET_CAUSES),
@@ -180,11 +181,11 @@ const realtimeSocketProperties = z.strictObject({
   if ((value.state === "connected") !== (value.cause === "opened")) {
     context.addIssue({ code: "custom", message: "realtime_socket_state_cause_invalid" });
   }
-});
+}));
 
-const generatedJavascriptFrame = z.string().min(1).max(192)
+const generatedJavascriptFrame = deferredZodSchema(() => z.string().min(1).max(192)
   .regex(/^[a-zA-Z0-9_-][a-zA-Z0-9._/-]{0,159}\.(?:c?js):\d{1,7}:\d{1,5}$/u)
-  .refine((value) => !value.startsWith("/") && !value.includes(".."));
+  .refine((value) => !value.startsWith("/") && !value.includes("..")));
 
 const common = {
   owner: "product-analytics",
@@ -198,7 +199,7 @@ function productEvent<
   const TName extends string,
   const TSources extends readonly TelemetrySource[],
   const TScopes extends readonly TelemetryIdentityScope[],
-  TProperties extends z.ZodObject<z.ZodRawShape>,
+  TProperties extends z.ZodLazy<z.ZodObject<z.ZodRawShape>>,
 >(input: {
   name: TName;
   definition: string;
@@ -209,16 +210,23 @@ function productEvent<
   properties: TProperties;
   priority?: "critical" | "high" | "normal" | "low";
 }) {
-  return event({
+  const propertyClassifications = memoizedValue(() => Object.fromEntries(
+    Object.keys(input.properties.unwrap().shape).map((key) => [key, "product" as const]),
+  ));
+  const registryEntry = event({
     ...common,
     ...input,
     category: "product" as const,
-    propertyClassifications: Object.fromEntries(
-      Object.keys(input.properties.shape).map((key) => [key, "product" as const]),
-    ),
+    propertyClassifications: {} as Readonly<Record<string, TelemetryPropertyClassification>>,
     priority: input.priority ?? "normal",
     regionalRetention: "13-months" as const,
   });
+  Object.defineProperty(registryEntry, "propertyClassifications", {
+    configurable: false,
+    enumerable: true,
+    get: propertyClassifications,
+  });
+  return registryEntry;
 }
 
 export const TELEMETRY_EVENTS = {
@@ -231,7 +239,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "essential",
     identityScopes: ["installation"],
-    properties: z.strictObject({ state: lifecycleState, crashReportingEligible: z.boolean() }),
+    properties: deferredZodSchema(() => z.strictObject({ state: lifecycleState, crashReportingEligible: z.boolean() })),
     propertyClassifications: { state: "operational", crashReportingEligible: "operational" },
     priority: "critical",
     regionalRetention: "90-days",
@@ -263,7 +271,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "essential",
     identityScopes: ["installation", "platform-user", "workspace-user"],
-    properties: z.strictObject({ state: z.enum(["started", "ended"]), continuouslyEligible: z.boolean() }),
+    properties: deferredZodSchema(() => z.strictObject({ state: z.enum(["started", "ended"]), continuouslyEligible: z.boolean() })),
     propertyClassifications: { state: "operational", continuouslyEligible: "operational" },
     priority: "critical",
     regionalRetention: "90-days",
@@ -277,11 +285,11 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "essential",
     identityScopes: ["installation", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       process: z.enum(["main", "preload", "renderer", "utility", "gpu"]),
       state: z.enum(["gone", "unresponsive", "responsive", "exception", "rejection", "unclean_exit"]),
       reasonClass: z.enum(["crashed", "killed", "oom", "launch_failure", "unknown"]),
-    }),
+    })),
     propertyClassifications: { process: "operational", state: "operational", reasonClass: "operational" },
     priority: "high",
     regionalRetention: "90-days",
@@ -295,11 +303,11 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "essential",
     identityScopes: ["installation"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       phase: z.enum(["check", "download", "apply", "rollback"]),
       result: z.enum(["available", "current", "success", "failed", "cancelled"]),
       duration: durationBucket,
-    }),
+    })),
     propertyClassifications: { phase: "operational", result: "operational", duration: "operational" },
     priority: "high",
     regionalRetention: "90-days",
@@ -313,11 +321,11 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "essential",
     identityScopes: ["platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       operation: z.enum(["onboarding_bootstrap", "workspace_create", "workspace_activate", "workstream_create", "run_start"]),
       result: resultClass,
       duration: durationBucket,
-    }),
+    })),
     propertyClassifications: { operation: "operational", result: "operational", duration: "operational" },
     priority: "normal",
     regionalRetention: "90-days",
@@ -347,14 +355,14 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       socketLeaseId: uuidV7Id,
       openAttemptId: uuidV7Id.optional(),
       socket: z.enum(["workstream_control", "substream_feed"]),
       reason: z.enum(["hover_warmup", "active_workstream", "background_workstream", "retained_workstream", "reconnect"]),
       attempts: countBucket,
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product",
       socketLeaseId: "operational",
@@ -375,10 +383,10 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "essential",
     identityScopes: ["installation"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       state: z.enum(["accepted", "rejected", "evicted", "expired", "quarantined", "pressure", "delivered"]),
       count: z.enum(["one", "two_to_ten", "eleven_to_one_hundred", "over_one_hundred"]),
-    }),
+    })),
     propertyClassifications: { state: "operational", count: "operational" },
     priority: "high",
     regionalRetention: "90-days",
@@ -392,12 +400,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "essential",
     identityScopes: ["installation"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       state: z.enum([
         "awaiting_restart", "rotated", "queued", "uploading", "accepted", "rejected",
         "retrying", "expired", "invalidated", "evicted", "corrupt", "lost",
       ]),
-    }),
+    })),
     propertyClassifications: { state: "operational" },
     priority: "critical",
     regionalRetention: "90-days",
@@ -411,7 +419,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({ screen }),
+    properties: deferredZodSchema(() => z.strictObject({ screen })),
     propertyClassifications: { screen: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -423,12 +431,12 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       surface: telemetrySurface,
       entrypoint: surfaceEntrypoint,
       resourceType: z.enum(["workstream", "note", "automation"]).optional(),
       resourceId: z.string().uuid().optional(),
-    }),
+    })),
   }),
   application_settings_state: event({
     ...common,
@@ -439,7 +447,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       launchAtLoginEnabled: z.boolean(),
       launchAtLoginAvailable: z.boolean(),
       lockdownModeEnabled: z.boolean(),
@@ -447,7 +455,7 @@ export const TELEMETRY_EVENTS = {
       applicationIcon,
       applicationIconAutomatic: z.boolean(),
       applicationIconAvailable: z.boolean(),
-    }),
+    })),
     propertyClassifications: {
       launchAtLoginEnabled: "product",
       launchAtLoginAvailable: "product",
@@ -469,12 +477,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       setting: z.enum(["launch_at_login", "lockdown_mode"]),
       previousEnabled: z.boolean(),
       requestedEnabled: z.boolean(),
       appliedEnabled: z.boolean(),
-    }),
+    })),
     propertyClassifications: {
       setting: "product",
       previousEnabled: "product",
@@ -493,12 +501,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       previousIcon: applicationIcon,
       previousAutomatic: z.boolean(),
       selectedIcon: applicationIcon,
       automatic: z.boolean(),
-    }),
+    })),
     propertyClassifications: {
       previousIcon: "product",
       previousAutomatic: "product",
@@ -517,12 +525,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       entrypoint: z.enum([
         "system_start", "user_launch", "dock", "deep_link", "menu_bar", "push_notification",
       ]),
       phase: z.enum(["cold_start", "activation"]),
-    }),
+    })),
     propertyClassifications: { entrypoint: "product", phase: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -536,12 +544,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       signedIn: z.boolean(),
       suggestionCount: z.number().int().min(0).max(4),
       recentCount: z.number().int().min(0).max(5),
       pinnedCount: z.number().int().min(0).max(5),
-    }),
+    })),
     propertyClassifications: {
       signedIn: "product",
       suggestionCount: "product",
@@ -560,12 +568,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       action: z.enum([
         "new_meeting_note", "new_workstream", "new_automation", "suggested_work",
         "recent_workstream", "pinned_workstream", "open_avalon", "quit_avalon",
       ]),
-    }),
+    })),
     propertyClassifications: { action: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -579,7 +587,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({ availableCount: z.number().int().min(0).max(9) }),
+    properties: deferredZodSchema(() => z.strictObject({ availableCount: z.number().int().min(0).max(9) })),
     propertyClassifications: { availableCount: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -593,10 +601,10 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       shortcutNumber: z.number().int().min(1).max(9),
       destinationType: z.enum(["pinned_workstream", "recent_workstream", "recent_note"]),
-    }),
+    })),
     propertyClassifications: { shortcutNumber: "product", destinationType: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -610,7 +618,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({ surface: z.enum(["menu_bar", "workspace_home"]) }),
+    properties: deferredZodSchema(() => z.strictObject({ surface: z.enum(["menu_bar", "workspace_home"]) })),
     propertyClassifications: { surface: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -622,7 +630,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       opportunityId: resourceId,
       version: z.number().int().positive(),
       surface: z.enum(["menu_bar", "workspace_home"]),
@@ -631,7 +639,7 @@ export const TELEMETRY_EVENTS = {
       connectorTypes: z.array(connectorType).max(TELEMETRY_CONNECTOR_TYPES.length),
       freshness: z.enum(["lt_1h", "1h_24h", "1d_7d", "gte_7d"]),
       priorImpressionCount: countBucket,
-    }),
+    })),
   }),
   suggested_work_dismissed: productEvent({
     name: "suggested_work_dismissed",
@@ -640,7 +648,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       opportunityId: resourceId,
       version: z.number().int().positive(),
       surface: z.enum(["menu_bar", "workspace_home"]),
@@ -648,7 +656,7 @@ export const TELEMETRY_EVENTS = {
       audienceScope: z.enum(["personal", "workspace"]),
       connectorTypes: z.array(connectorType).max(TELEMETRY_CONNECTOR_TYPES.length),
       timeSinceFirstImpression: journeyDurationBucket,
-    }),
+    })),
   }),
   suggested_work_started_v2: productEvent({
     name: "suggested_work_started_v2",
@@ -657,7 +665,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       opportunityId: resourceId,
       workstreamId: resourceId,
       version: z.number().int().positive(),
@@ -666,7 +674,7 @@ export const TELEMETRY_EVENTS = {
       audienceScope: z.enum(["personal", "workspace"]),
       connectorTypes: z.array(connectorType).max(TELEMETRY_CONNECTOR_TYPES.length),
       priorImpressionCount: countBucket,
-    }),
+    })),
   }),
   workstream_opened: event({
     ...common,
@@ -677,13 +685,13 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       visibility,
       navigation: z.enum(["opened", "switched", "reopened"]),
       origin: z.enum(["ad_hoc", "automation", "system"]),
       pinned: z.boolean(),
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product", visibility: "product", navigation: "product", origin: "product", pinned: "product",
     },
@@ -699,7 +707,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       socketLeaseId: uuidV7Id.optional(),
       durationMs: z.number().int().nonnegative(),
@@ -713,7 +721,7 @@ export const TELEMETRY_EVENTS = {
       if (properties.dataReadyDurationMs > properties.durationMs) {
         context.addIssue({ code: "custom", message: "data-ready duration cannot exceed painted duration" });
       }
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product",
       socketLeaseId: "operational",
@@ -737,11 +745,11 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       durationMs: z.number().int().nonnegative(),
       workspaceSocketState: z.enum(["connecting", "connected", "reconnecting"]),
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product",
       durationMs: "operational",
@@ -759,7 +767,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "diagnostic",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       flow: z.enum(["workstream_create", "workstream_open", "workstream_message_send"]),
       workstreamId: resourceId.optional(),
       outcome: z.enum([
@@ -786,7 +794,7 @@ export const TELEMETRY_EVENTS = {
       mentionCount: countBucket.optional(),
       messageLength: countBucket.optional(),
       messageCount: countBucket.optional(),
-    }),
+    })),
     propertyClassifications: {
       flow: "diagnostic",
       workstreamId: "product",
@@ -824,12 +832,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       sidebarSection: z.enum(["pinned", "recent"]),
       socketPoolState: z.enum(["retained_pair", "control_warmup", "cold"]),
       socketLeaseId: uuidV7Id.optional(),
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product",
       sidebarSection: "product",
@@ -848,7 +856,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       outcome: z.enum(["visible", "superseded", "abandoned", "load_failed"]),
       durationMs: z.number().int().nonnegative(),
@@ -858,7 +866,7 @@ export const TELEMETRY_EVENTS = {
       if ((properties.outcome === "superseded") !== (properties.supersedingWorkstreamId !== undefined)) {
         context.addIssue({ code: "custom", message: "superseding work stream must appear only for a superseded opening" });
       }
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product",
       outcome: "operational",
@@ -878,7 +886,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "product",
     identityScopes: ["workspace-user", "workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       visibility,
       creationSource: z.enum(TELEMETRY_WORKSTREAM_CREATION_SOURCES),
@@ -889,7 +897,7 @@ export const TELEMETRY_EVENTS = {
       participantCount: resourceCount,
       attachmentCount: resourceCount,
       modelOverride: z.boolean(),
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product", visibility: "product", creationSource: "product", origin: "product",
       connectorType: "product", connectorTypes: "product", connectorTypeCount: "product",
@@ -907,13 +915,13 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       action: z.enum(["pin", "unpin", "make_public", "make_private", "mark_unread", "rename", "archive"]),
       visibility,
       origin: z.enum(["ad_hoc", "automation", "system"]),
       pinned: z.boolean(),
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product", action: "product", visibility: "product", origin: "product", pinned: "product",
     },
@@ -927,13 +935,13 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       action: z.enum(["added", "removed"]),
       method: z.enum(["picker", "mention", "server"]),
       participantCount: countBucket,
       result: resultClass,
-    }),
+    })),
   }),
   workstream_resource_action_completed: productEvent({
     name: "workstream_resource_action_completed",
@@ -942,7 +950,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api", "desktop-renderer"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       resourceId,
       resourceType: safeTelemetryTaxonomyValue,
@@ -951,7 +959,7 @@ export const TELEMETRY_EVENTS = {
       action: z.enum(["attach", "detach", "watch", "unwatch", "preview", "open_source"]),
       result: resultClass,
       surface: z.enum(["workstream", "resource_inspector", "terminal"]),
-    }),
+    })),
   }),
   run_action_completed: productEvent({
     name: "run_action_completed",
@@ -960,12 +968,12 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       harnessRunId: resourceId,
       action: z.enum(["stop", "retry"]),
       result: resultClass,
-    }),
+    })),
   }),
   hypersight_opened: productEvent({
     name: "hypersight_opened",
@@ -974,7 +982,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({ workstreamId: resourceId, blockCount: countBucket }),
+    properties: deferredZodSchema(() => z.strictObject({ workstreamId: resourceId, blockCount: countBucket })),
   }),
   hypersight_configuration_changed: productEvent({
     name: "hypersight_configuration_changed",
@@ -983,12 +991,12 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       action: z.enum(["add", "edit", "reorder", "delete"]),
       blockCount: countBucket,
       result: resultClass,
-    }),
+    })),
   }),
   hypersight_run_terminal: productEvent({
     name: "hypersight_run_terminal",
@@ -997,13 +1005,13 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user", "workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       harnessRunId: resourceId,
       result: z.enum(["success", "validation_error", "conflict", "denied", "unavailable", "failed", "cancelled"]),
       duration: journeyDurationBucket,
       staleAtCompletion: z.boolean(),
-    }),
+    })),
   }),
   terminal_workspace_terminal: productEvent({
     name: "terminal_workspace_terminal",
@@ -1012,7 +1020,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user", "workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       action: z.enum(["start", "restore", "expire", "fail", "start_fresh", "repository_select", "repository_replace"]),
       result: resultClass,
@@ -1020,7 +1028,7 @@ export const TELEMETRY_EVENTS = {
       repositorySelected: z.boolean(),
       connectorType: z.union([connectorType, z.literal("none")]),
       localFilesRetained: z.boolean(),
-    }),
+    })),
   }),
   attention_consumed: productEvent({
     name: "attention_consumed",
@@ -1029,14 +1037,14 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       unreadCount: countBucket,
       hadMention: z.boolean(),
       neededInput: z.boolean(),
       entrypoint: surfaceEntrypoint,
       timeToRead: journeyDurationBucket,
-    }),
+    })),
   }),
   automation_created: event({
     ...common,
@@ -1047,14 +1055,14 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       automationId: resourceId,
       visibility,
       creationMethod: z.enum(["custom", "template"]),
       pluginCount: resourceCount,
       activityTriggerEnabled: z.boolean(),
       deliveryEnabled: z.boolean(),
-    }),
+    })),
     propertyClassifications: {
       automationId: "product", visibility: "product", creationMethod: "product", pluginCount: "product",
       activityTriggerEnabled: "product", deliveryEnabled: "product",
@@ -1071,12 +1079,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       automationId: resourceId,
       action: z.enum(["run_now", "archive_draft", "delete"]),
       visibility,
       status: z.enum(["draft", "active", "paused", "error"]),
-    }),
+    })),
     propertyClassifications: {
       automationId: "product", action: "product", visibility: "product", status: "product",
     },
@@ -1090,7 +1098,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({ entrypoint: surfaceEntrypoint, resumedDraft: z.boolean() }),
+    properties: deferredZodSchema(() => z.strictObject({ entrypoint: surfaceEntrypoint, resumedDraft: z.boolean() })),
   }),
   automation_draft_turn_completed: productEvent({
     name: "automation_draft_turn_completed",
@@ -1099,7 +1107,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       draftId: resourceId.optional(),
       turnNumber: countBucket,
       result: z.enum(["success", "failed", "cancelled"]),
@@ -1108,7 +1116,7 @@ export const TELEMETRY_EVENTS = {
       attachmentCount: resourceCount,
       connectorMentionCount: resourceCount,
       readyToCreate: z.boolean(),
-    }),
+    })),
   }),
   automation_draft_ready: productEvent({
     name: "automation_draft_ready",
@@ -1117,7 +1125,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       draftId: resourceId,
       turnsToReady: countBucket,
       visibility,
@@ -1125,7 +1133,7 @@ export const TELEMETRY_EVENTS = {
       connectorTypes: z.array(connectorType).max(TELEMETRY_CONNECTOR_TYPES.length),
       pluginCount: resourceCount,
       deliveryTargetTypes: z.array(automationDeliveryTargetType).max(2),
-    }),
+    })),
   }),
   automation_created_v2: productEvent({
     name: "automation_created_v2",
@@ -1134,7 +1142,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       automationId: resourceId,
       draftId: resourceId.optional(),
       templateId: resourceId.optional(),
@@ -1145,7 +1153,7 @@ export const TELEMETRY_EVENTS = {
       pluginCount: resourceCount,
       deliveryTargetTypes: z.array(automationDeliveryTargetType).max(2),
       modelOverride: z.boolean(),
-    }),
+    })),
     priority: "high",
   }),
   automation_opened: productEvent({
@@ -1155,13 +1163,13 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       automationId: resourceId,
       visibility,
       status: z.enum(["draft", "active", "paused", "error"]),
       entrypoint: surfaceEntrypoint,
       runCount: countBucket,
-    }),
+    })),
   }),
   automation_action_completed_v2: productEvent({
     name: "automation_action_completed_v2",
@@ -1170,14 +1178,14 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       automationId: resourceId,
       action: z.enum(["pause", "resume", "edit", "publish_template", "adopt_template_version", "run_now", "archive_draft", "delete"]),
       visibility,
       previousStatus: z.enum(["draft", "active", "paused", "error"]),
       appliedStatus: z.enum(["draft", "active", "paused", "error", "deleted", "archived"]),
       result: resultClass,
-    }),
+    })),
   }),
   message_sent: event({
     ...common,
@@ -1188,7 +1196,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       messageId: resourceId.optional(),
       visibility,
@@ -1197,7 +1205,7 @@ export const TELEMETRY_EVENTS = {
       attachmentCount: resourceCount,
       mentionCount: resourceCount,
       participantAddedCount: resourceCount,
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product", messageId: "product", visibility: "product", workstreamOrigin: "product",
       messageKind: "product", attachmentCount: "product", mentionCount: "product", participantAddedCount: "product",
@@ -1212,7 +1220,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user", "workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       messageId: resourceId,
       channel: z.enum(["desktop", "slack", "email"]),
@@ -1221,7 +1229,7 @@ export const TELEMETRY_EVENTS = {
       attachmentCount: resourceCount,
       mentionCount: resourceCount,
       participantAddedCount: resourceCount,
-    }),
+    })),
     priority: "high",
   }),
   elicitation_presented: productEvent({
@@ -1231,7 +1239,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user", "workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       elicitationId: resourceId,
       runId: resourceId,
       workstreamId: resourceId.optional(),
@@ -1239,7 +1247,7 @@ export const TELEMETRY_EVENTS = {
       responseType: z.enum(["text", "free_text", "radio", "single_select", "multi_select"]),
       optionCount: countBucket,
       surface: z.enum(["workstream", "automation_builder"]),
-    }),
+    })),
   }),
   elicitation_resolved: productEvent({
     name: "elicitation_resolved",
@@ -1248,7 +1256,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       elicitationId: resourceId,
       runId: resourceId,
       workstreamId: resourceId.optional(),
@@ -1258,7 +1266,7 @@ export const TELEMETRY_EVENTS = {
       customResponseUsed: z.boolean(),
       responseLatency: journeyDurationBucket,
       surface: z.enum(["workstream", "automation_builder"]),
-    }),
+    })),
   }),
   content_copied: event({
     ...common,
@@ -1269,7 +1277,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       contentType: z.enum([
         "workstream_link", "workstream_email", "workstream_id", "message_response", "code_block",
         "note_summary", "note_transcript", "note_id", "automation_email", "automation_id",
@@ -1277,7 +1285,7 @@ export const TELEMETRY_EVENTS = {
       resourceType: z.enum(["workstream", "message", "note", "automation"]),
       resourceId,
       workstreamId: resourceId.optional(),
-    }),
+    })),
     propertyClassifications: {
       contentType: "product", resourceType: "product", resourceId: "product", workstreamId: "product",
     },
@@ -1293,12 +1301,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       noteId: resourceId,
       visibility,
       recordingState: z.enum(["idle", "recording", "complete"]),
       navigation: z.enum(["opened", "reopened"]),
-    }),
+    })),
     propertyClassifications: { noteId: "product", visibility: "product", recordingState: "product", navigation: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1312,12 +1320,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       noteId: resourceId,
       visibility,
       noteType: z.literal("meeting_or_voice"),
       entrypoint: z.enum(["sidebar", "menu_bar", "unknown"]),
-    }),
+    })),
     propertyClassifications: { noteId: "product", visibility: "product", noteType: "product", entrypoint: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1331,12 +1339,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       noteId: resourceId,
       action: z.enum(["make_public", "make_private", "archive"]),
       visibility,
       recordingState: z.enum(["idle", "recording", "complete"]),
-    }),
+    })),
     propertyClassifications: { noteId: "product", action: "product", visibility: "product", recordingState: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1350,12 +1358,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       noteId: resourceId,
       state: z.enum(["started", "paused", "resumed", "completed"]),
       visibility,
       audioSource: z.enum(["microphone_and_system", "microphone_only", "system_only", "unknown"]),
-    }),
+    })),
     propertyClassifications: { noteId: "product", state: "product", visibility: "product", audioSource: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1367,13 +1375,13 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       noteId: resourceId,
       result: z.enum(["success", "permission_denied", "capture_failed", "persistence_failed"]),
       permissionClass: z.enum(["both_granted", "microphone_only", "system_only", "both_blocked", "unknown"]),
       audioSource: z.enum(["microphone_and_system", "microphone_only", "system_only", "unknown"]),
       entrypoint: z.enum(["sidebar", "menu_bar", "unknown"]),
-    }),
+    })),
     priority: "high",
   }),
   recording_terminal: productEvent({
@@ -1383,7 +1391,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       noteId: resourceId,
       result: z.enum(["complete", "partial_transcript", "summary_failed", "persistence_failed", "capture_failed"]),
       duration: journeyDurationBucket,
@@ -1391,7 +1399,7 @@ export const TELEMETRY_EVENTS = {
       pauseCount: countBucket,
       finalSummaryResult: z.enum(["success", "failed", "not_attempted"]),
       audioSource: z.enum(["microphone_and_system", "microphone_only", "system_only", "unknown"]),
-    }),
+    })),
     priority: "high",
   }),
   note_summary_generation_completed: productEvent({
@@ -1401,7 +1409,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       noteId: resourceId,
       mode: z.enum(["live", "final"]),
       result: resultClass,
@@ -1409,7 +1417,7 @@ export const TELEMETRY_EVENTS = {
       transcriptStatus: z.enum(["complete", "partial"]),
       segmentCount: countBucket,
       refreshCadence: z.enum(["disabled", "one_minute", "two_minutes", "five_minutes", "custom"]),
-    }),
+    })),
   }),
   note_opened_v2: productEvent({
     name: "note_opened_v2",
@@ -1418,7 +1426,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       noteId: resourceId,
       visibility,
       entrypoint: surfaceEntrypoint,
@@ -1428,7 +1436,7 @@ export const TELEMETRY_EVENTS = {
       hasTranscript: z.boolean(),
       duration: journeyDurationBucket,
       segmentCount: countBucket,
-    }),
+    })),
   }),
   agent_tool_started: event({
     ...common,
@@ -1439,7 +1447,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "product",
     identityScopes: ["workspace-user", "workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       harnessRunId: resourceId,
       automationId: resourceId.optional(),
@@ -1449,7 +1457,7 @@ export const TELEMETRY_EVENTS = {
       mode: z.enum(["read", "write"]),
       runKind: z.enum(["workstream", "automation", "hypersight", "subagent", "system"]),
       executionScope: z.enum(["user", "workspace"]),
-    }),
+    })),
     propertyClassifications: {
       workstreamId: "product", harnessRunId: "product", automationId: "product", toolName: "product",
       pluginId: "product", capability: "product", mode: "product", runKind: "product", executionScope: "product",
@@ -1464,7 +1472,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user", "workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       harnessRunId: resourceId,
       automationId: resourceId.optional(),
@@ -1478,7 +1486,7 @@ export const TELEMETRY_EVENTS = {
       writeToolCallCount: countBucket,
       modelRoute: safeModelRoute.optional(),
       fallbackUsed: z.boolean(),
-    }),
+    })),
     priority: "high",
   }),
   agent_tool_terminal: productEvent({
@@ -1488,7 +1496,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user", "workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       workstreamId: resourceId,
       harnessRunId: resourceId,
       automationId: resourceId.optional(),
@@ -1501,7 +1509,7 @@ export const TELEMETRY_EVENTS = {
       result: z.enum(["success", "validation_error", "authorization_denied", "provider_error", "ambiguous", "cancelled"]),
       duration: journeyDurationBucket,
       replayed: z.boolean(),
-    }),
+    })),
     priority: "high",
   }),
   onboarding_region_selected: event({
@@ -1513,7 +1521,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user"],
-    properties: z.strictObject({ selectedRegion: region, entrypoint }),
+    properties: deferredZodSchema(() => z.strictObject({ selectedRegion: region, entrypoint })),
     propertyClassifications: { selectedRegion: "product", entrypoint: "product" },
     priority: "high",
     regionalRetention: "13-months",
@@ -1527,7 +1535,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user"],
-    properties: z.strictObject({ selectedRegion: region, entrypoint }),
+    properties: deferredZodSchema(() => z.strictObject({ selectedRegion: region, entrypoint })),
     propertyClassifications: { selectedRegion: "product", entrypoint: "product" },
     priority: "high",
     regionalRetention: "13-months",
@@ -1541,7 +1549,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "product",
     identityScopes: ["platform-user"],
-    properties: z.strictObject({ selectedRegion: region, result: resultClass }),
+    properties: deferredZodSchema(() => z.strictObject({ selectedRegion: region, result: resultClass })),
     propertyClassifications: { selectedRegion: "product", result: "product" },
     priority: "high",
     regionalRetention: "13-months",
@@ -1555,7 +1563,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({ selectedRegion: region, entrypoint }),
+    properties: deferredZodSchema(() => z.strictObject({ selectedRegion: region, entrypoint })),
     propertyClassifications: { selectedRegion: "product", entrypoint: "product" },
     priority: "high",
     regionalRetention: "13-months",
@@ -1569,7 +1577,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "product",
     identityScopes: ["platform-user", "workspace-user"],
-    properties: z.strictObject({ selectedRegion: region, result: resultClass }),
+    properties: deferredZodSchema(() => z.strictObject({ selectedRegion: region, result: resultClass })),
     propertyClassifications: { selectedRegion: "product", result: "product" },
     priority: "high",
     regionalRetention: "13-months",
@@ -1583,7 +1591,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({ entrypoint }),
+    properties: deferredZodSchema(() => z.strictObject({ entrypoint })),
     propertyClassifications: { entrypoint: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1597,7 +1605,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({ result: resultClass }),
+    properties: deferredZodSchema(() => z.strictObject({ result: resultClass })),
     propertyClassifications: { result: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1611,7 +1619,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({ entrypoint }),
+    properties: deferredZodSchema(() => z.strictObject({ entrypoint })),
     propertyClassifications: { entrypoint: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1625,7 +1633,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({ result: resultClass, duration: durationBucket }),
+    properties: deferredZodSchema(() => z.strictObject({ result: resultClass, duration: durationBucket })),
     propertyClassifications: { result: "product", duration: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1639,7 +1647,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-renderer",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({ connector: z.enum(["github", "google", "linear", "notion", "slack"]) }),
+    properties: deferredZodSchema(() => z.strictObject({ connector: z.enum(["github", "google", "linear", "notion", "slack"]) })),
     propertyClassifications: { connector: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1653,10 +1661,10 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "product",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       connector: z.enum(["github", "google", "linear", "notion", "slack"]),
       result: resultClass,
-    }),
+    })),
     propertyClassifications: { connector: "product", result: "product" },
     priority: "normal",
     regionalRetention: "13-months",
@@ -1668,12 +1676,12 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       connector: connectorType,
       scope: connectorScope,
       method: connectorSetupMethod,
       capabilityCount: countBucket,
-    }),
+    })),
   }),
   connector_setup_completed_v2: productEvent({
     name: "connector_setup_completed_v2",
@@ -1682,7 +1690,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       connector: connectorType,
       scope: connectorScope,
       method: connectorSetupMethod,
@@ -1690,7 +1698,7 @@ export const TELEMETRY_EVENTS = {
       duration: journeyDurationBucket,
       capabilityCount: countBucket,
       reconnect: z.boolean(),
-    }),
+    })),
     priority: "high",
   }),
   connector_action_completed: productEvent({
@@ -1700,7 +1708,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       connectorId: resourceId,
       connector: connectorType,
       scope: connectorScope,
@@ -1708,7 +1716,7 @@ export const TELEMETRY_EVENTS = {
       previousHealth: connectorHealth,
       appliedHealth: connectorHealth,
       result: resultClass,
-    }),
+    })),
   }),
   connector_health_changed: productEvent({
     name: "connector_health_changed",
@@ -1717,14 +1725,14 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user", "workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       connectorId: resourceId,
       connector: connectorType,
       scope: connectorScope,
       previousHealth: connectorHealth,
       appliedHealth: connectorHealth,
       cause: z.enum(["provider_auth", "provider_error", "user_action", "reconnect", "unknown"]),
-    }),
+    })),
   }),
   connector_activity_ingested: productEvent({
     name: "connector_activity_ingested",
@@ -1733,12 +1741,12 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       connector: connectorType,
       activityType: safeTelemetryTaxonomyValue,
       result: z.enum(["accepted", "duplicate", "filtered", "failed"]),
       itemCount: countBucket,
-    }),
+    })),
   }),
   application_settings_state_v2: productEvent({
     name: "application_settings_state_v2",
@@ -1747,7 +1755,7 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-main"],
     authoritativeSource: "desktop-main",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       launchAtLoginEnabled: z.boolean(),
       launchAtLoginAvailable: z.boolean(),
       lockdownModeEnabled: z.boolean(),
@@ -1758,7 +1766,7 @@ export const TELEMETRY_EVENTS = {
       applicationIcon,
       applicationIconAutomatic: z.boolean(),
       applicationIconAvailable: z.boolean(),
-    }),
+    })),
   }),
   application_setting_change_completed_v2: productEvent({
     name: "application_setting_change_completed_v2",
@@ -1767,13 +1775,13 @@ export const TELEMETRY_EVENTS = {
     sources: ["desktop-main"],
     authoritativeSource: "desktop-main",
     identityScopes: ["anonymous-epoch", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       setting: z.enum(["launch_at_login", "lockdown_mode", "menu_bar"]),
       previousEnabled: z.boolean(),
       requestedEnabled: z.boolean(),
       appliedEnabled: z.boolean(),
       result: z.enum(["success", "not_applied", "failed"]),
-    }),
+    })),
   }),
   digest_schedule_updated: productEvent({
     name: "digest_schedule_updated",
@@ -1782,14 +1790,14 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       enabled: z.boolean(),
       dayCount: countBucket,
       timeCount: countBucket,
       cadence: z.enum(["disabled", "daily", "multiple_daily", "weekly", "multiple_weekly"]),
       deliveryTargetTypes: z.array(automationDeliveryTargetType).max(2),
       result: resultClass,
-    }),
+    })),
   }),
   digest_delivery_terminal: productEvent({
     name: "digest_delivery_terminal",
@@ -1798,13 +1806,13 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       deliveryId: resourceId,
       result: resultClass,
       activityCount: countBucket,
       targetTypes: z.array(automationDeliveryTargetType).max(2),
       firstDelivery: z.boolean(),
-    }),
+    })),
     priority: "high",
   }),
   workspace_invitation_terminal: productEvent({
@@ -1814,13 +1822,13 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       invitationId: resourceId,
       action: z.enum(["created", "revoked", "accepted", "declined"]),
       role: z.enum(["admin", "member"]),
       deliveryResult: z.enum(["success", "failed", "not_applicable"]),
       timeToTerminal: journeyDurationBucket,
-    }),
+    })),
   }),
   terminal_policy_changed: productEvent({
     name: "terminal_policy_changed",
@@ -1829,13 +1837,13 @@ export const TELEMETRY_EVENTS = {
     sources: ["api"],
     authoritativeSource: "api",
     identityScopes: ["workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       previousMode: z.enum(["restricted", "unrestricted", "custom"]),
       appliedMode: z.enum(["restricted", "unrestricted", "custom"]),
       customDomainCount: countBucket,
       activeSandboxCount: countBucket,
       result: resultClass,
-    }),
+    })),
   }),
   site_page_viewed: productEvent({
     name: "site_page_viewed",
@@ -1844,14 +1852,14 @@ export const TELEMETRY_EVENTS = {
     sources: ["site"],
     authoritativeSource: "site",
     identityScopes: ["anonymous-epoch"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       page: z.enum(["landing", "download", "support", "legal", "auth_handoff", "invite_handoff", "workstream_handoff", "slack_handoff", "desktop_handoff", "not_found"]),
       pathname: z.string().min(1).max(160).regex(/^\/[a-z0-9_:/.-]*$/u),
       referringDomain: z.string().min(1).max(253).regex(/^[a-z0-9.-]+$/u).optional(),
       campaignSource: safeTelemetryTaxonomyValue.optional(),
       campaignMedium: safeTelemetryTaxonomyValue.optional(),
       campaignName: safeTelemetryTaxonomyValue.optional(),
-    }),
+    })),
   }),
   site_page_left: productEvent({
     name: "site_page_left",
@@ -1860,11 +1868,11 @@ export const TELEMETRY_EVENTS = {
     sources: ["site"],
     authoritativeSource: "site",
     identityScopes: ["anonymous-epoch"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       page: z.enum(["landing", "download", "support", "legal", "auth_handoff", "invite_handoff", "workstream_handoff", "slack_handoff", "desktop_handoff", "not_found"]),
       pathname: z.string().min(1).max(160).regex(/^\/[a-z0-9_:/.-]*$/u),
       duration: journeyDurationBucket,
-    }),
+    })),
   }),
   site_action_selected: productEvent({
     name: "site_action_selected",
@@ -1873,11 +1881,11 @@ export const TELEMETRY_EVENTS = {
     sources: ["site"],
     authoritativeSource: "site",
     identityScopes: ["anonymous-epoch"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       page: z.enum(["landing", "download", "support"]),
       action: z.enum(["download", "primary_cta", "secondary_cta", "faq_opened", "connector_setup", "support_contact"]),
       placement: z.enum(["header", "hero", "body", "footer", "faq", "connector", "unknown"]),
-    }),
+    })),
   }),
   desktop_handoff_attempted: productEvent({
     name: "desktop_handoff_attempted",
@@ -1886,11 +1894,11 @@ export const TELEMETRY_EVENTS = {
     sources: ["site"],
     authoritativeSource: "site",
     identityScopes: ["anonymous-epoch"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       handoffType: z.enum(["auth", "invite", "workstream", "slack", "settings", "automation", "unknown"]),
       method: z.enum(["presented", "automatic", "manual"]),
       validity: z.enum(["valid", "invalid"]),
-    }),
+    })),
   }),
   javascript_exception: event({
     ...common,
@@ -1901,13 +1909,13 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "desktop-main",
     category: "diagnostic",
     identityScopes: ["platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       process: z.enum(["main", "preload", "renderer"]),
       errorCode: z.enum(["type_error", "range_error", "unhandled_rejection", "react_boundary", "network_error", "unknown"]),
       breadcrumbStatus: z.enum(["available", "stale", "unavailable"]),
       fingerprint: z.string().regex(/^[a-f0-9]{32,64}$/u),
       generatedFrames: z.array(generatedJavascriptFrame).min(1).max(20),
-    }),
+    })),
     propertyClassifications: {
       process: "diagnostic",
       errorCode: "diagnostic",
@@ -1928,12 +1936,12 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "api",
     category: "diagnostic",
     identityScopes: ["installation", "platform-user", "workspace-user"],
-    properties: z.strictObject({
+    properties: deferredZodSchema(() => z.strictObject({
       process: z.enum(["main", "renderer", "utility", "gpu", "unknown"]),
       parserState: z.enum(["symbolicated", "unsymbolicated", "malformed"]),
       breadcrumbStatus: z.enum(["available", "stale", "unavailable"]),
       fingerprint: z.string().regex(/^[a-f0-9]{32,64}$/u),
-    }),
+    })),
     propertyClassifications: {
       process: "diagnostic",
       parserState: "diagnostic",
@@ -1951,10 +1959,10 @@ export type TelemetryEventProperties<TName extends TelemetryEventName> = z.infer
 >;
 export const telemetryEventNames = Object.keys(TELEMETRY_EVENTS) as TelemetryEventName[];
 
-const UuidV7Schema = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
-const SafeReleaseSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u);
+const UuidV7Schema = deferredZodSchema(() => z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7"));
+const SafeReleaseSchema = deferredZodSchema(() => z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u));
 
-export const TelemetryBreadcrumbSchema = z.discriminatedUnion("kind", [
+export const TelemetryBreadcrumbSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   z.strictObject({
     sequence: z.number().int().positive(),
     at: z.string().datetime({ offset: true }),
@@ -1976,10 +1984,10 @@ export const TelemetryBreadcrumbSchema = z.discriminatedUnion("kind", [
     ]),
     state: z.enum(["requested", "succeeded", "failed"]),
   }),
-]);
+]));
 export type TelemetryBreadcrumb = z.infer<typeof TelemetryBreadcrumbSchema>;
 
-export const TelemetryBreadcrumbSidecarSchema = z.strictObject({
+export const TelemetryBreadcrumbSidecarSchema = deferredZodSchema(() => z.strictObject({
   version: z.literal(1),
   launchId: UuidV7Schema,
   updatedAt: z.string().datetime({ offset: true }),
@@ -1990,9 +1998,9 @@ export const TelemetryBreadcrumbSidecarSchema = z.strictObject({
       context.addIssue({ code: "custom", message: "breadcrumb_sequence_invalid", path: ["entries", index, "sequence"] });
     }
   }
-});
+}));
 export type TelemetryBreadcrumbSidecar = z.infer<typeof TelemetryBreadcrumbSidecarSchema>;
-const telemetryContextCommon = {
+const telemetryContextCommon = memoizedValue(() => ({
   environment: z.enum(["development", "staging", "production"]),
   region: z.enum(["global", "eu"]).optional(),
   release: SafeReleaseSchema,
@@ -2007,9 +2015,9 @@ const telemetryContextCommon = {
   requestId: UuidV7Schema.optional(),
   traceId: z.string().regex(/^[a-f0-9]{32}$/u).optional(),
   spanId: z.string().regex(/^[a-f0-9]{16}$/u).optional(),
-};
+}));
 
-const telemetryNativeDesktopContext = {
+const telemetryNativeDesktopContext = memoizedValue(() => ({
   deviceId: UuidV7Schema.optional(),
   osVersion: z.string().trim().min(1).max(128).regex(/^\P{Cc}+$/u).optional(),
   locale: z.string().min(2).max(35).regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/u).optional(),
@@ -2019,10 +2027,10 @@ const telemetryNativeDesktopContext = {
   viewportWidth: z.number().int().positive().max(100_000).optional(),
   viewportHeight: z.number().int().positive().max(100_000).optional(),
   windowId: UuidV7Schema.optional(),
-};
+}));
 
-const TelemetryContextV1Schema = z.strictObject({
-  ...telemetryContextCommon,
+const TelemetryContextV1Schema = deferredZodSchema(() => z.strictObject({
+  ...telemetryContextCommon(),
   deviceId: z.never().optional(),
   osVersion: z.never().optional(),
   locale: z.never().optional(),
@@ -2032,12 +2040,12 @@ const TelemetryContextV1Schema = z.strictObject({
   viewportWidth: z.never().optional(),
   viewportHeight: z.never().optional(),
   windowId: z.never().optional(),
-});
+}));
 
-const TelemetryContextV2Schema = z.strictObject({
-  ...telemetryContextCommon,
-  ...telemetryNativeDesktopContext,
-});
+const TelemetryContextV2Schema = deferredZodSchema(() => z.strictObject({
+  ...telemetryContextCommon(),
+  ...telemetryNativeDesktopContext(),
+}));
 
 /**
  * The envelope schema identifier this build mints.
@@ -2061,7 +2069,7 @@ export const SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS = [
   "com.avalon.telemetry.event",
 ] as const;
 
-const envelopeCommon = {
+const envelopeCommon = memoizedValue(() => ({
   schema: z.union([
     z.literal(TELEMETRY_ENVELOPE_SCHEMA),
     ...SUPERSEDED_TELEMETRY_ENVELOPE_SCHEMAS.map((value) => z.literal(value)),
@@ -2075,18 +2083,18 @@ const envelopeCommon = {
   originalTimestamp: z.string().datetime({ offset: true }),
   sentAt: z.string().datetime({ offset: true }),
   properties: z.record(z.string(), z.unknown()),
-};
+}));
 
-const EnvelopeBaseSchema = z.union([
-  z.strictObject({ ...envelopeCommon, context: TelemetryContextV1Schema }),
+const EnvelopeBaseSchema = deferredZodSchema(() => z.union([
+  z.strictObject({ ...envelopeCommon(), context: TelemetryContextV1Schema }),
   z.strictObject({
-    ...envelopeCommon,
+    ...envelopeCommon(),
     contextSchemaVersion: z.literal(2),
     context: TelemetryContextV2Schema,
   }),
-]);
+]));
 
-export const TelemetryEnvelopeSchema = EnvelopeBaseSchema.superRefine((value, context) => {
+export const TelemetryEnvelopeSchema = deferredZodSchema(() => EnvelopeBaseSchema.superRefine((value, context) => {
   const entry = TELEMETRY_EVENTS[value.name as TelemetryEventName];
   if (!entry) {
     context.addIssue({ code: "custom", message: "telemetry_event_unregistered", path: ["name"] });
@@ -2108,7 +2116,7 @@ export const TelemetryEnvelopeSchema = EnvelopeBaseSchema.superRefine((value, co
   if (!properties.success) {
     context.addIssue({ code: "custom", message: "telemetry_properties_invalid", path: ["properties"] });
   }
-});
+}));
 
 export type TelemetryEnvelope = z.infer<typeof TelemetryEnvelopeSchema>;
 
@@ -2127,78 +2135,78 @@ function validateBatchDeviceBinding(
   });
 }
 
-export const TelemetryBatchSchema = z.strictObject({
+export const TelemetryBatchSchema = deferredZodSchema(() => z.strictObject({
   installationId: UuidV7Schema.optional(),
   events: z.array(TelemetryEnvelopeSchema).min(1).max(50),
-}).superRefine(validateBatchDeviceBinding);
+}).superRefine(validateBatchDeviceBinding));
 export type TelemetryBatch = z.infer<typeof TelemetryBatchSchema>;
 
 export const TELEMETRY_BATCH_MAX_BYTES = 256 * 1024;
 
-export const TelemetryBootstrapRequestSchema = z.strictObject({
+export const TelemetryBootstrapRequestSchema = deferredZodSchema(() => z.strictObject({
   anonymousEpochId: UuidV7Schema,
   routeToken: z.string().min(32).max(2_048).optional(),
-});
+}));
 export type TelemetryBootstrapRequest = z.infer<typeof TelemetryBootstrapRequestSchema>;
 
-export const TelemetryRouteResponseSchema = z.strictObject({
+export const TelemetryRouteResponseSchema = deferredZodSchema(() => z.strictObject({
   route: z.enum(["global", "eu"]),
   routingBasis: z.enum(["ip_geolocation", "geolocation_fallback"]),
   routeToken: z.string().min(32).max(2_048),
-});
+}));
 export type TelemetryRouteResponse = z.infer<typeof TelemetryRouteResponseSchema>;
 
-export const TelemetryBootstrapResponseSchema = z.strictObject({
+export const TelemetryBootstrapResponseSchema = deferredZodSchema(() => z.strictObject({
   journeyId: UuidV7Schema,
   route: z.enum(["global", "eu"]),
   routingBasis: z.enum(["ip_geolocation", "geolocation_fallback"]),
   capability: z.string().min(32).max(2_048),
   expiresAt: z.string().datetime({ offset: true }),
-});
+}));
 export type TelemetryBootstrapResponse = z.infer<typeof TelemetryBootstrapResponseSchema>;
 
-export const AnonymousTelemetryBatchSchema = z.strictObject({
+export const AnonymousTelemetryBatchSchema = deferredZodSchema(() => z.strictObject({
   capability: z.string().min(32).max(2_048),
   installationId: UuidV7Schema.optional(),
   events: z.array(TelemetryEnvelopeSchema).min(1).max(50),
-}).superRefine(validateBatchDeviceBinding);
+}).superRefine(validateBatchDeviceBinding));
 export type AnonymousTelemetryBatch = z.infer<typeof AnonymousTelemetryBatchSchema>;
 
-export const LinkAnonymousTelemetrySchema = z.strictObject({
+export const LinkAnonymousTelemetrySchema = deferredZodSchema(() => z.strictObject({
   capability: z.string().min(32).max(2_048),
-});
+}));
 export type LinkAnonymousTelemetry = z.infer<typeof LinkAnonymousTelemetrySchema>;
 
-export const TelemetryAcceptanceResultSchema = z.strictObject({
+export const TelemetryAcceptanceResultSchema = deferredZodSchema(() => z.strictObject({
   result: z.enum(["accepted", "duplicate", "conflict", "suppressed", "route_mismatch"]),
   eventId: UuidV7Schema,
-});
+}));
 export type TelemetryAcceptanceResult = z.infer<typeof TelemetryAcceptanceResultSchema>;
 
-export const TelemetryAcceptanceBatchResponseSchema = z.strictObject({
+export const TelemetryAcceptanceBatchResponseSchema = deferredZodSchema(() => z.strictObject({
   results: z.array(TelemetryAcceptanceResultSchema).max(50),
-});
+}));
 export type TelemetryAcceptanceBatchResponse = z.infer<typeof TelemetryAcceptanceBatchResponseSchema>;
 
-export const LinkAnonymousTelemetryResponseSchema = z.strictObject({
+export const LinkAnonymousTelemetryResponseSchema = deferredZodSchema(() => z.strictObject({
   result: z.enum(["linked", "duplicate", "suppressed"]),
-});
+}));
 export type LinkAnonymousTelemetryResponse = z.infer<typeof LinkAnonymousTelemetryResponseSchema>;
 
-export const CrashIngestResponseSchema = z.strictObject({
+export const CrashIngestResponseSchema = deferredZodSchema(() => z.strictObject({
   result: z.enum(["accepted", "duplicate", "suppressed"]),
   uploadId: UuidV7Schema,
   crashId: UuidV7Schema.optional(),
-});
+}));
 export type CrashIngestResponse = z.infer<typeof CrashIngestResponseSchema>;
 
-export const ProductAnalyticsPreferenceSchema = z.strictObject({
+export const ProductAnalyticsPreferenceSchema = deferredZodSchema(() => z.strictObject({
   enabled: z.boolean(),
   version: z.number().int().positive(),
-});
+}));
 export type ProductAnalyticsPreference = z.infer<typeof ProductAnalyticsPreferenceSchema>;
 
-export const UpdateProductAnalyticsPreferenceSchema = z.strictObject({
+export const UpdateProductAnalyticsPreferenceSchema = deferredZodSchema(() => z.strictObject({
   enabled: z.boolean(),
   expectedVersion: z.number().int().nonnegative(),
-});
+}));

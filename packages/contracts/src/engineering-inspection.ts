@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deferredZodSchema } from "./deferred-zod-schema";
 
 import { RegionSchema } from "./index";
 import {
@@ -7,44 +8,44 @@ import {
   WorkstreamIdSchema,
 } from "./identifiers";
 
-export const InspectionSqlBindingSchema = z.union([
+export const InspectionSqlBindingSchema = deferredZodSchema(() => z.union([
   z.string(),
   z.number().finite(),
   z.null(),
-]);
+]));
 export type InspectionSqlBinding = z.infer<typeof InspectionSqlBindingSchema>;
 
-export const InspectionSqlRequestSchema = z.strictObject({
+export const InspectionSqlRequestSchema = deferredZodSchema(() => z.strictObject({
   sql: z.string().min(1),
   bindings: z.array(InspectionSqlBindingSchema).default([]),
-});
+}));
 export type InspectionSqlRequest = z.infer<typeof InspectionSqlRequestSchema>;
 
-export const InspectionSqlValueSchema = z.union([
+export const InspectionSqlValueSchema = deferredZodSchema(() => z.union([
   InspectionSqlBindingSchema,
   z.strictObject({ type: z.literal("blob"), base64: z.string() }),
-]);
+]));
 export type InspectionSqlValue = z.infer<typeof InspectionSqlValueSchema>;
 
-export const InspectionSqlResultSchema = z.strictObject({
+export const InspectionSqlResultSchema = deferredZodSchema(() => z.strictObject({
   columns: z.array(z.string()),
   rows: z.array(z.record(z.string(), InspectionSqlValueSchema)),
   rowsRead: z.number().int().nonnegative(),
   rowsWritten: z.number().int().nonnegative(),
-});
+}));
 export type InspectionSqlResult = z.infer<typeof InspectionSqlResultSchema>;
 
-export const EngineeringWorkspaceSchema = z.strictObject({
+export const EngineeringWorkspaceSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
   name: z.string(),
   slug: z.string(),
   region: RegionSchema,
   placementAffinity: z.string(),
   authorityState: z.string().nullable(),
-});
+}));
 export type EngineeringWorkspace = z.infer<typeof EngineeringWorkspaceSchema>;
 
-export const EngineeringWorkstreamSchema = z.strictObject({
+export const EngineeringWorkstreamSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   region: RegionSchema,
@@ -54,78 +55,78 @@ export const EngineeringWorkstreamSchema = z.strictObject({
   systemKind: z.string().nullable(),
   lastActivityAt: z.number().int().nonnegative(),
   archivedAt: z.number().int().nonnegative().nullable(),
-});
+}));
 export type EngineeringWorkstream = z.infer<typeof EngineeringWorkstreamSchema>;
 
-export const EngineeringSubstreamSchema = z.strictObject({
+export const EngineeringSubstreamSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   substreamId: SubstreamIdSchema,
   region: RegionSchema,
-});
+}));
 export type EngineeringSubstream = z.infer<typeof EngineeringSubstreamSchema>;
 
-export const ListEngineeringWorkspacesInputSchema = z.strictObject({});
+export const ListEngineeringWorkspacesInputSchema = deferredZodSchema(() => z.strictObject({}));
 export type ListEngineeringWorkspacesInput = z.infer<typeof ListEngineeringWorkspacesInputSchema>;
 
-export const ListEngineeringWorkspacesResultSchema = z.strictObject({
+export const ListEngineeringWorkspacesResultSchema = deferredZodSchema(() => z.strictObject({
   region: RegionSchema,
   items: z.array(EngineeringWorkspaceSchema),
-});
+}));
 export type ListEngineeringWorkspacesResult = z.infer<typeof ListEngineeringWorkspacesResultSchema>;
 
-export const WorkspaceInspectionInputSchema = z.strictObject({
+export const WorkspaceInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
-});
+}));
 export type WorkspaceInspectionInput = z.infer<typeof WorkspaceInspectionInputSchema>;
 
-export const WorkstreamInspectionInputSchema = z.strictObject({
+export const WorkstreamInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workstreamId: WorkstreamIdSchema,
-});
+}));
 export type WorkstreamInspectionInput = z.infer<typeof WorkstreamInspectionInputSchema>;
 
-export const SubstreamInspectionInputSchema = z.strictObject({
+export const SubstreamInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   substreamId: SubstreamIdSchema,
-});
+}));
 export type SubstreamInspectionInput = z.infer<typeof SubstreamInspectionInputSchema>;
 
-const AuthorityGenerationSchema = z.number().int().positive();
+const AuthorityGenerationSchema = deferredZodSchema(() => z.number().int().positive());
 
-export const EngineeringWorkspaceTargetSchema = z.strictObject({
+export const EngineeringWorkspaceTargetSchema = deferredZodSchema(() => z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   authorityGeneration: AuthorityGenerationSchema,
-});
+}));
 export type EngineeringWorkspaceTarget = z.infer<typeof EngineeringWorkspaceTargetSchema>;
 
-export const EngineeringWorkstreamTargetSchema = EngineeringWorkspaceTargetSchema.extend({
+export const EngineeringWorkstreamTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
   workstreamId: WorkstreamIdSchema,
-}).strict();
+}).strict());
 export type EngineeringWorkstreamTarget = z.infer<typeof EngineeringWorkstreamTargetSchema>;
 
-export const EngineeringSubstreamTargetSchema = EngineeringWorkstreamTargetSchema.extend({
+export const EngineeringSubstreamTargetSchema = deferredZodSchema(() => EngineeringWorkstreamTargetSchema.unwrap().extend({
   substreamId: SubstreamIdSchema,
-}).strict();
+}).strict());
 export type EngineeringSubstreamTarget = z.infer<typeof EngineeringSubstreamTargetSchema>;
 
-export const WorkspaceSqlInspectionInputSchema = WorkspaceInspectionInputSchema.extend({
+export const WorkspaceSqlInspectionInputSchema = deferredZodSchema(() => WorkspaceInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
-}).strict();
+}).strict());
 export type WorkspaceSqlInspectionInput = z.infer<typeof WorkspaceSqlInspectionInputSchema>;
 
-export const WorkstreamSqlInspectionInputSchema = WorkstreamInspectionInputSchema.extend({
+export const WorkstreamSqlInspectionInputSchema = deferredZodSchema(() => WorkstreamInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
-}).strict();
+}).strict());
 export type WorkstreamSqlInspectionInput = z.infer<typeof WorkstreamSqlInspectionInputSchema>;
 
-export const SubstreamSqlInspectionInputSchema = SubstreamInspectionInputSchema.extend({
+export const SubstreamSqlInspectionInputSchema = deferredZodSchema(() => SubstreamInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
-}).strict();
+}).strict());
 export type SubstreamSqlInspectionInput = z.infer<typeof SubstreamSqlInspectionInputSchema>;
 
 function lookupResultSchema<T extends z.ZodType>(value: T) {
@@ -135,49 +136,49 @@ function lookupResultSchema<T extends z.ZodType>(value: T) {
   ]);
 }
 
-export const EngineeringWorkstreamListLookupSchema = lookupResultSchema(z.strictObject({
+export const EngineeringWorkstreamListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   items: z.array(EngineeringWorkstreamSchema),
-}));
+})));
 export type EngineeringWorkstreamListLookup = z.infer<typeof EngineeringWorkstreamListLookupSchema>;
 
-export const EngineeringSubstreamListLookupSchema = lookupResultSchema(z.strictObject({
+export const EngineeringSubstreamListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   items: z.array(EngineeringSubstreamSchema),
-}));
+})));
 export type EngineeringSubstreamListLookup = z.infer<typeof EngineeringSubstreamListLookupSchema>;
 
-export const EngineeringWorkspaceTargetLookupSchema = lookupResultSchema(
+export const EngineeringWorkspaceTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
   EngineeringWorkspaceTargetSchema,
-);
+));
 export type EngineeringWorkspaceTargetLookup = z.infer<
   typeof EngineeringWorkspaceTargetLookupSchema
 >;
 
-export const EngineeringWorkstreamTargetLookupSchema = lookupResultSchema(
+export const EngineeringWorkstreamTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
   EngineeringWorkstreamTargetSchema,
-);
+));
 export type EngineeringWorkstreamTargetLookup = z.infer<
   typeof EngineeringWorkstreamTargetLookupSchema
 >;
 
-export const EngineeringSubstreamTargetLookupSchema = lookupResultSchema(
+export const EngineeringSubstreamTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
   EngineeringSubstreamTargetSchema,
-);
+));
 export type EngineeringSubstreamTargetLookup = z.infer<
   typeof EngineeringSubstreamTargetLookupSchema
 >;
 
-export const EngineeringSqlLookupSchema = lookupResultSchema(z.strictObject({
+export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema.nullable(),
   substreamId: SubstreamIdSchema.nullable(),
   result: InspectionSqlResultSchema,
-}));
+})));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
 
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
