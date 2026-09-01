@@ -51,6 +51,7 @@ test('post-build update feed is ZIP-primary and contains all final artifact meta
   });
   assert.match(yaml, /^path: "Rally-1\.2\.3-mac-arm64\.zip"$/mu);
   assert.match(yaml, /^releaseDate: "2026-08-02T00:00:00\.000Z"$/mu);
+  assert.match(yaml, /^# rally-workspace-handoff-version: 2$/mu);
 });
 
 test('final feed rewrite replaces electron-builder metadata after its process exits', async () => {

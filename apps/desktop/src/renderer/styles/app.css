@@ -1069,6 +1069,80 @@ pre {
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .account-copy strong { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-attention-dot,
+.workspace-activity-dot {
+  background: var(--av-sys-color-workstream-unread);
+  border-radius: var(--av-cmp-marker-radius);
+  flex: 0 0 var(--av-cmp-marker-inline-size);
+  height: var(--av-cmp-marker-inline-size);
+  width: var(--av-cmp-marker-inline-size);
+}
+.workspace-menu {
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  min-width: 270px;
+  overflow-y: auto;
+}
+.workspace-menu-section {
+  color: var(--av-ref-color-neutral-9);
+  font-size: var(--av-sys-label-font-size);
+  font-weight: var(--av-sys-label-weight);
+  letter-spacing: var(--av-sys-label-tracking);
+  text-transform: uppercase;
+}
+.workspace-menu-item { min-height: 34px; }
+.workspace-mark {
+  align-items: center;
+  background: var(--av-sys-color-surface-subtle);
+  border: 1px solid var(--av-sys-color-border-subtle);
+  border-radius: var(--av-sys-size-radius-sm);
+  color: var(--av-sys-color-text-default);
+  display: inline-flex;
+  flex: 0 0 18px;
+  font-size: var(--av-sys-font-size-meta);
+  height: 18px;
+  justify-content: center;
+}
+.workspace-menu-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.workspace-menu-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
+.workspace-region-tag {
+  background: var(--av-sys-color-surface-subtle);
+  border: 1px solid var(--av-sys-color-border-subtle);
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--av-sys-color-text-muted);
+  font-size: var(--av-sys-font-size-meta);
+  padding: 1px 5px;
+}
+.workspace-attention-count {
+  background: var(--av-sys-color-surface-subtle);
+  border-radius: var(--av-sys-size-radius-pill);
+  font-size: var(--av-sys-font-size-meta);
+  font-variant-numeric: tabular-nums;
+  min-width: 18px;
+  padding: 1px 5px;
+  text-align: center;
+}
+.workspace-attention-count.is-mentioned { color: var(--av-sys-color-workstream-mentioned); }
+.workspace-attention-count.is-needs-input { color: var(--av-sys-color-workstream-needs-input); }
+.workspace-attention-count.is-unseen { color: var(--av-sys-color-workstream-unseen); }
+.workspace-counts-stale { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
+.workspace-region-choice { border: 0; display: flex; gap: 12px; margin: 12px 0 0; padding: 0; }
+.workspace-region-choice legend { color: var(--av-sys-color-text-subtle); font-size: var(--av-sys-font-size-meta); margin-bottom: 6px; }
+.workspace-region-choice label { align-items: center; display: flex; gap: 5px; }
+.workspace-region-choice label > span { display: flex; flex-direction: column; }
+.workspace-region-choice label small { color: var(--av-sys-color-text-muted); font-weight: 400; }
+.workspace-opening-overlay {
+  align-items: center;
+  background: var(--av-sys-color-scrim-subtle);
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  font-size: var(--av-sys-font-size-base);
+  inset: 0;
+  justify-content: center;
+  position: absolute;
+  z-index: 30;
+}
 .mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
 .sidebar-scrim { display: none; }
 .mobile-only { display: none; }
@@ -2859,6 +2933,10 @@ pre {
 .citation-card { background: var(--av-sys-color-surface-elevated); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-text-default); cursor: pointer; display: flex; flex-direction: column; font: inherit; gap: 9px; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; min-height: 170px; overflow: hidden; padding: 11px; text-align: left; width: 176px; }
 .citation-card:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-strong); }
 .citation-card-badge { align-items: center; align-self: flex-start; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-muted); display: inline-flex; height: 27px; justify-content: center; width: 27px; }
+/* An image is the card's glance at an image resource. A fixed preview box keeps
+   portrait and landscape files from changing the row's height; `cover` fills
+   it without distortion, and the explicit center keeps the crop balanced. */
+.markdown-body .citation-card-image-preview { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-sm); display: block; height: 72px; margin: 0; max-width: none; object-fit: cover; object-position: center; width: 100%; }
 /* The opening lines of the resource's own text, filling the room between the
    badge and the title. It is a *glance*, not a reader: the clamp cuts it at
    four lines, and nothing here scrolls in either axis — a scrollable box
@@ -3223,6 +3301,48 @@ pre {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A queued row is one clipped line of the transcript's own Markdown renderer.
+   Flattening it here rather than in a second renderer is deliberate: the row
+   then draws the same chips, the same emphasis, and the same code spans the
+   turn will draw once it lands, and there is no parallel implementation to keep
+   in step with this one. Every block becomes inline so `nowrap` and the
+   ellipsis on the row apply to the whole message, and the prose type scale
+   gives way to the row's. */
+.composer-queue-text .markdown-body {
+  /* Restated rather than inherited: `.markdown-body` paints its own prose ink,
+     and a queued row is deliberately quieter than a turn that has landed. */
+  color: var(--av-sys-color-text-subtle);
+  display: inline;
+  font-size: inherit;
+  line-height: inherit;
+}
+.composer-queue-text .markdown-body :is(
+  p, h1, h2, h3, h4, h5, h6, ul, ol, li, pre, blockquote, table, thead, tbody, tr, th, td, hr
+) {
+  border: 0;
+  display: inline;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  margin: 0;
+  padding: 0;
+}
+/* A block's neighbours would otherwise run together into one word. */
+.composer-queue-text .markdown-body :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, tr)::after {
+  content: ' ';
+  white-space: pre;
+}
+.composer-queue-text .markdown-body :is(li, ul, ol) { list-style: none; }
+/* The transcript's mention chip, in a line a little over half its usual size. */
+.composer-queue-text .mention-chip {
+  height: 1.45em;
+  padding: 1px 5px 1px 2px;
+}
+.composer-queue-text .mention-chip-avatar {
+  font-size: 5.5px;
+  height: 13px;
+  width: 13px;
 }
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }

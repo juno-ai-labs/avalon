@@ -2,7 +2,13 @@ import type { DesktopSettingsSection } from './settings';
 import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
 import type { ThemeChoice } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
-import type { ClientFeatureFlags, TelemetryEventProperties } from '@rally/contracts';
+import type {
+  ClientFeatureFlags,
+  TelemetryEventProperties,
+  WorkspaceAttention,
+  WorkspaceDeparture,
+  WorkspaceDepartureOutcome,
+} from '@rally/contracts';
 import type {
   DesktopRealtimeSocketCloseInput,
   DesktopRealtimeSocketEvent,
@@ -11,6 +17,12 @@ import type {
 } from './realtime-socket';
 
 export type RallyRegion = 'global' | 'eu';
+
+/** Stable UI/cache identity for a workspace. Workspace UUIDs are only unique
+ * within a region, so desktop state must never key one without its region. */
+export function desktopWorkspaceIdentityKey(region: RallyRegion, workspaceId: string): string {
+  return `${region}:${workspaceId}`;
+}
 
 export type DesktopDeepLinkEntrypoint = 'deep_link' | 'menu_bar' | 'notification' | 'in_app_link';
 
@@ -289,6 +301,7 @@ export interface DesktopPendingWorkspaceInvitation {
 
 export interface DesktopWorkspaceOnboardingState {
   workspace: DesktopWorkspaceSummary | null;
+  workspaces: DesktopWorkspaceSummary[];
   invitations: DesktopPendingWorkspaceInvitation[];
 }
 
@@ -389,11 +402,18 @@ export interface RallyDesktopBridge {
   }) => Promise<DesktopSession>;
   createDevelopmentSession: (apiBaseUrl: string, workspaceName: string) => Promise<DesktopSession>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
+  getWorkspaceAttention: (input: { region: RallyRegion; workspaceId: string }) => Promise<WorkspaceAttention>;
+  leaveWorkspace: (input: {
+    expectedOutcome: WorkspaceDepartureOutcome;
+    region: RallyRegion;
+    workspaceId: string;
+  }) => Promise<WorkspaceDeparture>;
   activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
   createWorkspace: (input: { region: RallyRegion; name: string; operationId?: string }) => Promise<DesktopSession>;
   acceptInvitation: (input: { region: RallyRegion; invitationId: string; operationId?: string }) => Promise<DesktopSession>;
   declineInvitation: (input: { region: RallyRegion; invitationId: string }) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
+  surrenderActiveWorkspace: () => Promise<DesktopSession | null>;
   /** Pure read of whether a durable credential is still stored. Unlike
    * `getSession`, this never reaches the network, so it can answer "was the
    * credential surrendered?" without a refresh of its own failing the probe. */
@@ -415,6 +435,11 @@ export interface RallyDesktopBridge {
    * the thing the person is left with.
    */
   closeMeetingNotes: (noteId?: string) => Promise<void>;
+  setMeetingRecordingState: (input: {
+    region: RallyRegion;
+    workspaceId: string;
+    recording: boolean;
+  }) => Promise<void>;
   getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   startMeetingSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;

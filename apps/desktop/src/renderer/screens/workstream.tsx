@@ -35,6 +35,7 @@ import {
   type WorkstreamTranscriptSnapshot,
 } from '@rally/contracts';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { useAutoOpenLatestEmbeddedResource } from '../lib/use-auto-open-embedded-resource';
@@ -455,6 +456,7 @@ export function WorkstreamHeader({
   onToggleBlockDashboard,
   presentUserIds = [],
   currentUserId = null,
+  workspaceTarget,
 }: {
   workstream: WorkstreamDetail;
   socketState: SocketState;
@@ -466,6 +468,7 @@ export function WorkstreamHeader({
   onToggleBlockDashboard: () => void;
   presentUserIds?: readonly string[];
   currentUserId?: string | null;
+  workspaceTarget: WorkspaceTarget | null;
 }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
   const railVariant = useUiStore((state) => state.railVariant);
@@ -560,9 +563,14 @@ export function WorkstreamHeader({
   // has not installed Rally. The canonical link ends at the same work stream.
   const copyLink = (): void => {
     void (async () => {
+      if (!workspaceTarget) return;
       const bridge = desktopBridge();
       const { webBaseUrl } = await bridge.getRuntimeConfig();
-      await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, workstream.id));
+      await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, {
+        region: workspaceTarget.region,
+        workspaceId: workspaceTarget.workspaceId,
+        workstreamId: workstream.id,
+      }));
       reportTelemetryProductIntent({
         kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstream.id,
       });
@@ -921,7 +929,9 @@ export function WorkstreamScreen(): React.JSX.Element {
   const activeWorkstreamIdRef = useRef(id);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
-  const attachmentDraft = useFileAttachments(api, workstreamDraftKey(id));
+  const workspaceId = session?.workspace?.id ?? 'unbound';
+  const workspaceRegion = session?.workspace?.region ?? 'global';
+  const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceRegion, workspaceId, id));
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
   const railDrop = useFileDrop(attachmentDraft.addFiles);
   // The composer does not take focus when a work stream opens, so a paste that
@@ -1225,6 +1235,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       key: transcriptOverlayIdentityKey(overlay.identity),
       inputId: pendingOverlayInputId(overlay) ?? null,
       text: overlay.message.text ?? '',
+      mentions: overlay.message.mentions ?? [],
       member: queueAuthorMember(overlay.message, members.data ?? []),
       sending: overlay.message.deliveryState === 'sending',
     })),
@@ -2096,6 +2107,10 @@ export function WorkstreamScreen(): React.JSX.Element {
         onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
         onToggleBlockDashboard={() => setBlockDashboardVisible(!blockDashboardOpen)}
         currentUserId={session?.user.id ?? null}
+        workspaceTarget={session?.workspace ? {
+          region: session.workspace.region,
+          workspaceId: session.workspace.id,
+        } : null}
         presentUserIds={presenceUserIdsByWorkstream[id] ?? []}
         socketState={socketState}
         workstream={displayedDetail}
@@ -2297,6 +2312,8 @@ export function WorkstreamScreen(): React.JSX.Element {
             uploading={attachmentDraft.uploading}
             key={displayedDetail.id}
             workstream={displayedDetail}
+            workspaceId={workspaceId}
+            workspaceRegion={workspaceRegion}
           />
         </div>
       </div>

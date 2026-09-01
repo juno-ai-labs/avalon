@@ -174,8 +174,13 @@ connected in EU. `WorkstreamEmailRoutingBridge` reserves globally unique,
 immutable friendly addresses, while `InboundEmailRegionalBridge` passes only one
 verified Resend event to the owning data plane so the body is fetched and stored
 there. A successful activate, create, or accept operation mints a session in the
-workspace's owning region, commits the Global opaque workspace binding, and
-revokes the bootstrap session. The desktop then pins that regional API base URL.
+workspace's owning region and commits the Global opaque workspace binding. The
+Global identity session remains a narrow discovery credential; it is not valid
+for regional product traffic. Electron stores it beside one independent
+credential/profile binding per activated regional workspace, keeps exactly one
+binding active, and opens a product socket only for that selection. Regional
+user UUIDs may differ for the same verified Google account, so discovery links
+them by verified email and never treats one regional UUID as account-wide.
 Both deployments retain separate D1, R2, Durable Object namespaces,
 session-signing and credential-encryption keys, and Worker secrets. Cross-region
 workspace-content access is not implemented.
@@ -814,6 +819,28 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-09-01 — Desktop identity remains plural across regions
+
+**What changed:** Successful workspace activation retains the narrow Global
+identity session while Electron stores independent regional workspace sessions
+and selects exactly one. Discovery links regional accounts by verified email
+rather than assuming their user UUIDs match.
+
+**Why:** An EU workspace credential cannot call Global discovery, and regional
+identity rows are deliberately separate authorities. Revoking the bootstrap
+after each activation made returning to setup or discovering another region
+require a new Google sign-in.
+
+**Considered and rejected:** Rebinding one refresh token between regions and
+making the platform user UUID universal. Both collapse authorities that are
+kept separate in storage, signing keys, and deployment.
+
+**Consequences:** The encrypted desktop envelope is an account credential set;
+only its active workspace credential crosses the renderer session bridge, and
+Global identity retains no workspace-content authority.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-30 — Add a dedicated operator path to Durable Object authority
 

@@ -160,7 +160,7 @@ beforeEach(async () => {
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
     env.DB.prepare(`CREATE TABLE workspaces (
-      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT,
+      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT,
       timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'
     )`),
     env.DB.prepare(`CREATE TABLE audit_events (

@@ -29,14 +29,15 @@ Three surfaces cache a draft, and they are the only ones that do:
 
 | Surface | Component | Cache key |
 | --- | --- | --- |
-| A work stream's composer | `WorkstreamComposer` | `workstream:<workstreamId>` |
-| **New work stream** | `NewWorkstreamScreen` | `new-workstream:<workspaceId>` |
-| **New automation** | `NewAutomationScreen` | `new-automation:<workspaceId>`, and `new-automation:<workspaceId>:<draftAutomationId>` once the conversation has a draft automation |
+| A work stream's composer | `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<workstreamId>` |
+| **New work stream** | `NewWorkstreamScreen` | `workspace:<region>:<workspaceId>:new-workstream` |
+| **New automation** | `NewAutomationScreen` | `workspace:<region>:<workspaceId>:new-automation`, and `workspace:<region>:<workspaceId>:new-automation:<draftAutomationId>` once the conversation has a draft automation |
 
 `lib/draft-keys.ts` is the single place those strings are built. A draft's text and
 its attachments share one key, so the two halves of a composer can never drift
-apart, and the launchers are scoped per workspace so switching workspaces does not
-surface another workspace's words.
+apart, and the launchers are scoped by regional workspace identity so switching
+workspaces does not surface another workspace's words even if Global and EU hold
+the same workspace UUID.
 
 **New automation** is one screen serving many conversations, so its key gains the
 draft automation being written the moment a turn names one — otherwise an unsent
@@ -84,13 +85,14 @@ before the API is ready leaves the sweep for the next one.
 Nothing else evicts. The TTL is the bound: the cache holds at most the attachments
 added in the last twelve hours, across every composer visited in that window.
 
-Leaving a session drops every draft. `AppSessionProvider` watches the session and
-calls `clearAllDrafts` on any transition that changes the draft scope — the API
-host, the user, or the workspace — which covers a deliberate sign-out, main
-surrendering a terminally expired credential, and one account replacing another on
-the device. A role change is not a scope change: being promoted does not cost
-anyone their unsent message. The first session of a run is an arrival rather than a
-departure, so launching Rally keeps what the last run left behind.
+Switching workspaces preserves both scopes. `AppSessionProvider` clears every
+draft only when the account leaves the device — deliberate sign-out, main
+surrendering its final credential, or another account taking over. Leaving one
+workspace calls `clearWorkspaceDrafts` after the server commits departure and
+removes only keys under that workspace prefix. A role change is not a scope
+change: being promoted does not cost anyone their unsent message. The first
+session of a run is an arrival rather than a departure, so launching Rally keeps
+what the last run left behind.
 
 A wipe has to beat work that was already in flight when it started — a debounced
 save, a file still being fingerprinted, an upload about to record its resource — or
@@ -251,6 +253,29 @@ signing out deletes all of them. [`security.md`](security.md) owns the boundary 
 sits inside.
 
 ## Changelog
+
+### 2026-08-31 — Every draft key begins with its workspace
+
+**What changed:** Work-stream and launcher keys now share the
+`workspace:<region>:<workspaceId>:` prefix. Switching within one account retains
+all scopes; successful self-leave clears exactly the departed regional
+workspace; sign-out or account replacement still clears the whole database.
+
+**Why:** A session change used to imply sign-out or another account, so a global
+wipe was safe. Workspace switching makes that transition routine, and clearing
+all drafts would discard unsent work every time somebody moved between rows.
+
+**Considered and rejected:** Keeping the old work-stream key because its UUID is
+globally unique. Uniqueness prevents collision but cannot enumerate every text
+and attachment row belonging to one workspace when that membership ends.
+
+**Consequences:** New composer surfaces must use the common regional-workspace
+prefix or they cannot participate in exact leave cleanup. On the first active
+regional session, released single-workspace draft keys are migrated into that
+session's scope; only recognized legacy shapes move, and a newer regional row
+wins an interrupted rewrite.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-28 — New automation hands its local draft to a durable route
 

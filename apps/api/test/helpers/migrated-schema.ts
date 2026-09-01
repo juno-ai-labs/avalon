@@ -23,6 +23,11 @@ function migrateSqliteDatabase(through?: string): DatabaseSync {
   return database;
 }
 
+/** Slow historical replay used only when a migration test must seed the immediately prior shape. */
+export function databaseThroughMigration(fileName: string): DatabaseSync {
+  return migrateSqliteDatabase(fileName);
+}
+
 /**
  * The finished shape of a migrated database: the DDL every surviving object was
  * left with, plus whatever rows the migrations themselves seeded.

@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../common/desktop';
 import { SessionGate } from './App';
+import { ApiError } from './lib/api';
 import {
   abandonPendingWorkstreamFeedOpen,
   markWorkstreamFeedOpenStarted,
@@ -22,6 +23,8 @@ const sessionState = vi.hoisted(() => ({
   runtime: null,
   session: null as DesktopSession | null,
   signOut: vi.fn(),
+  signOutIfCredentialCleared: vi.fn(),
+  surrenderActiveWorkspace: vi.fn(),
 }));
 
 vi.mock('./lib/app-session', () => ({
@@ -153,6 +156,23 @@ describe('SessionGate identity-first ordering', () => {
 
     const retryAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 60_100);
     expect(retryAttempt).not.toBe(firstAttempt);
+  });
+
+  it('surrenders the active workspace credential after a membership revocation', async () => {
+    sessionState.session = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
+    };
+    sessionState.api.getWorkspace.mockRejectedValueOnce(new ApiError(
+      'Workspace access is unavailable',
+      403,
+      'workspace_access_denied',
+    ));
+
+    renderGate();
+
+    await vi.waitFor(() => expect(sessionState.surrenderActiveWorkspace).toHaveBeenCalledOnce());
+    expect(sessionState.signOut).not.toHaveBeenCalled();
   });
 
   it('shows authenticated invitations before workspace setup', async () => {

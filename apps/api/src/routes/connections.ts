@@ -18,7 +18,7 @@ import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
 import { classifyConnectorOAuthCallbackFailure } from "../lib/connector-oauth-error";
-import { connectorAttemptTarget, desktopHandoffUrl } from "../lib/desktop-handoff";
+import { desktopHandoffUrl, unknownConnectorAttemptFailureTarget } from "../lib/desktop-handoff";
 import { logEvent } from "../observability/logger";
 import { ConnectionService } from "../services/connection-service";
 import {
@@ -180,6 +180,10 @@ async function bindConnectorTelemetry(
   return result;
 }
 
+function desktopHandoffVersion(c: Context<HonoAppEnv>): 1 | 2 {
+  return c.req.query('desktopHandoffVersion') === '2' ? 2 : 1;
+}
+
 connectionRoutes.get("/", async (c) =>
   c.json(ConnectionPageSchema.parse({ items: await new ConnectionService(c.env, getAuth(c)).list() })));
 connectionRoutes.get("/catalog", async (c) => c.json(ConnectorCatalogSchema.parse({
@@ -188,31 +192,41 @@ connectionRoutes.get("/catalog", async (c) => c.json(ConnectorCatalogSchema.pars
 connectionRoutes.post("/google/start", zValidator("json", googleStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
-    c, service, await service.beginGoogle(c.req.valid("json")),
+    c, service, await service.beginGoogle({
+      ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
+    }),
   )));
 });
 connectionRoutes.post("/linear/start", zValidator("json", linearStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
-    c, service, await service.beginProvider("linear", c.req.valid("json")),
+    c, service, await service.beginProvider("linear", {
+      ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
+    }),
   )));
 });
 connectionRoutes.post("/github/start", zValidator("json", githubStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
-    c, service, await service.beginGitHub(c.req.valid("json")),
+    c, service, await service.beginGitHub({
+      ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
+    }),
   )));
 });
 connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
-    c, service, await service.beginProvider("notion", c.req.valid("json")),
+    c, service, await service.beginProvider("notion", {
+      ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
+    }),
   )));
 });
 connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
-    c, service, await service.beginProvider("granola", c.req.valid("json")),
+    c, service, await service.beginProvider("granola", {
+      ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
+    }),
   )));
 });
 connectionRoutes.post("/granola/workspace", zValidator("json", granolaWorkspace), async (c) =>
@@ -222,7 +236,9 @@ connectionRoutes.post("/granola/workspace", zValidator("json", granolaWorkspace)
 connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
-    c, service, await service.beginProvider("slack", c.req.valid("json")),
+    c, service, await service.beginProvider("slack", {
+      ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c),
+    }),
   )));
 });
 connectionRoutes.post("/x", zValidator("json", xCreate), async (c) =>
@@ -241,7 +257,7 @@ connectionRoutes.get("/oauth-attempts/:attemptId", zValidator("param", oauthAtte
 connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
-    c, service, await service.reconnect(c.req.valid("param").id),
+    c, service, await service.reconnect(c.req.valid("param").id, desktopHandoffVersion(c)),
   )));
 });
 connectionRoutes.post("/:id/test", zValidator("param", idParam), async (c) =>
@@ -292,9 +308,8 @@ async function recoverConnectorCallback(
       provider,
       code: recoveryError instanceof ApiError ? recoveryError.code : "connector_oauth_recovery_failed",
     });
-    return connectorAttemptTarget(c.env, {
+    return unknownConnectorAttemptFailureTarget(c.env, {
       provider,
-      status: "failed",
       errorCode,
     });
   }

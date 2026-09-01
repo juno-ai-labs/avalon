@@ -51,6 +51,10 @@ pnpm env:sync
 material, so the API runs without an `.env.local` at all. Copy the example file
 when you want provider keys, or when you are running the desktop client — the
 renderer reads `VITE_API_GLOBAL_URL` and `VITE_API_EU_URL` from it.
+The desktop's “Use local development account” action stores both the seeded
+workspace credential and a separate Global identity credential. That mirrors a
+real signed-in account closely enough for the workspace menu to discover,
+activate, and create workspaces without returning to sign-in.
 
 ## 2. Create and seed the local database
 
@@ -87,15 +91,18 @@ seed before product fixtures reach the Durable Objects.
 storage API. It does not recreate the retired message tables or their runtime
 views merely to import development fixtures.
 
-This walks the **Global** authority to `durable_object_open`, so the local
-stack serves the same post-cutover Durable-Object model production runs, and
-seeds the product fixtures from `packages/db/seed-product.json` into their
-Durable Objects through the Worker's dev-only seed route — which is why the Workers must be up first; run without
-them, the walk completes and the script says to re-run for the import. Local
-EU deliberately stays `legacy_open`. Skipping this step leaves local
-development on the legacy path, where none of the object-authority code
-executes — the gap that once hid a defect failing every production harness
-run. The script is idempotent and re-runs repair partial imports.
+This walks both **Global and EU** authorities to `durable_object_open`, so the
+local stack serves the same post-cutover Durable-Object model production runs,
+and seeds the product fixtures from `packages/db/seed-product.json` into both
+regions' Durable Objects through their Worker dev-only seed routes — which is
+why the Workers must be up first; run without them, the walk completes and the
+script says to re-run for the import. Opening both is required to exercise a
+real cross-region desktop switch; leaving EU at `legacy_open` makes its product
+preflight honestly return maintenance after activation. Skipping this step
+leaves local development on the unsupported legacy path, where none of the
+object-authority code executes — the gap that once hid a defect failing every
+production harness run. The script is idempotent and re-runs repair partial
+imports.
 
 ## 3. Start the API Workers
 
@@ -110,6 +117,9 @@ container-flag note below before debugging anything else.
 
 `scripts/dev-regional-api.mjs` starts Global first and waits for Wrangler's
 ready signal before starting EU. The Workers then run concurrently as before.
+`pnpm env:sync` writes the EU Worker's local URL into Global's
+`EU_PUBLIC_API_BASE_URL`; the control plane uses it to validate the route in an
+EU session instead of comparing that local session with the production host.
 Each regional command supplies the API, document-processing, and Terminal
 provider configs to one Wrangler multi-Worker session, so local calls use the
 same typed Service Bindings as production without loading provider modules from

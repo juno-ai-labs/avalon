@@ -246,12 +246,9 @@ describe("workspace invitation lifecycle", () => {
     ]);
   });
 
-  it("rejects another active workspace before changing invitation state", async () => {
+  it("accepts an invitation while another workspace membership remains active", async () => {
     const database = new StubDatabase(({ sql }) => {
       if (sql.includes("WHERE i.id = ?")) return invitationRow;
-      if (sql.includes("FROM workspace_members") && sql.includes("workspace_id != ?")) {
-        return { workspace_id: "another-workspace" };
-      }
       return undefined;
     });
 
@@ -259,16 +256,8 @@ describe("workspace invitation lifecycle", () => {
       environment(database),
       invitationRow.id,
       { id: ownerAuth.userId, email: invitationRow.email },
-    )).rejects.toMatchObject({
-      status: 409,
-      code: "workspace_membership_conflict",
-      // Rendered verbatim by the desktop invitation screen, and the literal is
-      // asserted rather than compared to the source constant: the point is that
-      // this copy says Rally and matches the platform-onboarding path word for
-      // word, which a comparison against the constant it guards cannot show.
-      message: "This Rally account already belongs to another organization",
-    });
-    expect(database.batches).toHaveLength(0);
+    )).resolves.toBe(invitationRow.workspace_id);
+    expect(database.batches).toHaveLength(1);
   });
 
   it("emails the original inviter once after an invitation is accepted", async () => {

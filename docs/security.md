@@ -80,8 +80,14 @@ are canonical storage services, not authorization layers.
   frontmatter before its sanitised SVG is inserted. The application never calls
   Mermaid's binding callback, so a diagram cannot install click handlers. A
   rejected parse leaves the original source visible.
-- Refresh material is encrypted in the main process. By default the desktop uses
-  an application-wide embedded key so a saved session survives signing-identity
+- Refresh material is encrypted in the main process. One versioned envelope
+  holds the Global identity credential plus one credential/profile binding per
+  activated workspace; renderers receive only the active short-lived session.
+  Sign-out snapshots that set, deletes every local credential/profile and draft,
+  and closes authenticated windows before attempting remote logout for the
+  identity and each regional workspace. Remote cleanup failures are reported but
+  cannot restore local authority.
+  By default the desktop uses an application-wide embedded key so the saved set survives signing-identity
   and keystore changes. Application → **Lockdown mode** replaces that with
   Electron `safeStorage`, binding the saved authentication state to the
   operating-system keystore. An in-app toggle re-encrypts every durable session
@@ -101,8 +107,9 @@ are canonical storage services, not authorization layers.
   login ticket or a non-secret connector result — never provider codes or tokens.
 - Unsent composer drafts — their text and the bytes of their attachments — are
   cached in the renderer's IndexedDB so a restart does not discard them. They are
-  workspace content stored unencrypted under Electron's `userData` directory, they
-  expire after 12 hours, and signing out deletes every one of them. Nothing else
+  workspace content stored unencrypted under Electron's `userData` directory,
+  keyed by workspace, they expire after 12 hours, and signing out deletes every
+  one of them. Leaving deletes only that workspace's scope. Nothing else
   is written there, and no credential ever is.
   [`composer-drafts.md`](composer-drafts.md) owns the mechanism.
 - The macOS menu bar status item is built entirely in the main process, from
@@ -221,6 +228,23 @@ incremental flow whose durable attempt result lets the desktop reconcile success
 denial, failure, or expiry even if the custom-protocol notification is lost. OAuth
 states and desktop tickets are expiring and atomically consumed. Refresh tokens
 are hashed for sessions or AES-GCM encrypted for providers.
+
+Every resolvable connector callback and every newly emitted workspace-scoped
+external link carries `(region, workspace_id)` as routing context. Those values
+are public identifiers, not bearer authority. The renderer must activate the
+target through Electron main, verify the returned session names the exact pair,
+and only then use the destination. Explicit activation always reaches the
+platform membership path, including when a matching credential is already
+selected; cached credentials remain an optimization for ordinary workspace
+selection, never proof for an external link. The regional middleware still resolves active
+membership and workspace scope on every request. A failed activation cannot fall
+back to the currently active workspace or search other stored credentials.
+
+Addressed native links use the distinct `workspace` host rather than routing
+query parameters. A pre-addressing desktop therefore rejects them instead of
+ignoring the target. Connector OAuth records whether its initiating desktop
+advertised this version and returns the stored legacy or addressed URI unchanged;
+deployment timing cannot silently reinterpret a callback.
 
 Every API resource query includes `workspace_id`. Mutations additionally resolve
 membership role. A connector ingress may assert a member's own authority by
@@ -706,6 +730,73 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-01 — External workspace targets cannot rely on local authority
+
+**What changed:** Addressed links use an old-client-rejected `workspace` host,
+always revalidate their exact target through the platform service, and verify
+renewed credentials stay on that target. Connector callbacks persist the
+initiating desktop's supported grammar.
+
+**Why:** Review found three ways local or stale state could weaken the boundary:
+an old parser ignored query targets, main accepted a cached credential without a
+membership round trip, and a one-off target API could not renew an expired bearer.
+
+**Considered and rejected:** Treating stored credentials or target identifiers as
+authority. Both can outlive membership; only the owning services can admit the
+session.
+
+**Consequences:** Explicit links fail closed during outages and tell the member
+to reconnect and reopen the link. The current workspace and route remain intact
+on denial or transport failure.
+
+Shipped in #464.
+
+### 2026-09-01 — Link routing context never becomes authorization
+
+**What changed:** Workspace-scoped connector, Slack, settings, automation, and
+work-stream handoffs carry a region/workspace target. Native activation and an
+exact returned-session check precede navigation or mutation; a refusal leaves
+the current workspace untouched.
+
+**Why:** The server already authorized connector state against its originating
+workspace, but an under-addressed desktop callback could be applied after the
+person switched elsewhere. ID-only resource links had the same ambiguity.
+
+**Considered and rejected:** Treating the target as a capability or resolving a
+resource across stored sessions. Both bypass the existing regional membership
+boundary and turn public identifiers into authority.
+
+**Consequences:** Every target remains safe to expose in paths/query strings;
+tokens remain in fragments. Regional membership and resource authorization are
+still mandatory, and link-open failures never retry against another workspace.
+
+Shipped in #464.
+
+### 2026-08-31 — Lockdown encrypts the complete account credential set
+
+**What changed:** The main-owned session envelope now stores a retained Global
+identity credential and independent region-bound workspace credentials with
+matching cached profiles. Version-1 values migrate losslessly into the
+version-2 set. Lockdown re-encrypts the whole set, and sign-out revokes every
+locally stored credential/profile copy before attempting best-effort server
+revocation for the captured sessions.
+
+**Why:** Switching workspaces cannot require renderer-held refresh material or
+a fresh Google sign-in, and encrypting only the active credential would leave
+background workspace authority outside the Lockdown promise.
+
+**Considered and rejected:** One rebindable refresh token and one encrypted file
+per workspace. The former cannot cross from EU to Global discovery; the latter
+creates several independently committed files whose active pointer can disagree
+after a crash.
+
+**Consequences:** Exact-credential refresh failure removes one workspace without
+touching siblings. A failed online logout is reported, but local sign-out still
+deletes the complete set and all drafts. The preload gains only scoped actions;
+it never exposes refresh tokens or the encrypted set.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-30 — Spoken messages keep Azure authority in the regional Worker
 

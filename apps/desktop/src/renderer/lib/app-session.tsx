@@ -10,17 +10,22 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { IdSchema } from '@rally/contracts';
-import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
+import type { ConnectorOAuthProvider, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
+import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
+import {
+  workspaceTargetsEqual,
+  type WorkspaceTarget,
+} from '@rally/contracts/workspace-target';
 import type {
   RallyDesktopBridge,
   DesktopDeepLinkNavigation,
   DesktopSession,
   RuntimeConfig,
 } from '../../common/desktop';
+import { workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
-import { clearAllDrafts } from './draft-cache';
+import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
 import {
   readDevicePreferences,
   setDeviceSelectedRegion,
@@ -44,6 +49,13 @@ export interface PendingInvitation {
   region: Region;
 }
 
+export interface PendingConnectorOAuth {
+  attemptId: string;
+  provider: ConnectorOAuthProvider;
+  region: Region;
+  workspaceId: string;
+}
+
 export interface AppSessionValue {
   booting: boolean;
   runtime: RuntimeConfig | null;
@@ -58,16 +70,21 @@ export interface AppSessionValue {
   setWorkspaceName: (name: string) => void;
   editWorkspaceSetup: () => void;
   pendingInvitation: PendingInvitation | null;
+  pendingConnectorOAuth: PendingConnectorOAuth | null;
+  setPendingConnectorOAuth: (attempt: PendingConnectorOAuth | null) => void;
   clearPendingInvitation: () => void;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
   activateWorkspace: (region: Region, workspaceId: string, operationId?: string) => Promise<void>;
   acceptInvitation: (region: Region, invitationId: string, operationId?: string) => Promise<void>;
   declineInvitation: (region: Region, invitationId: string) => Promise<void>;
+  reconnectAccountIdentity: () => Promise<void>;
+  leaveWorkspace: (workspaceId: string, expectedOutcome: WorkspaceDepartureOutcome) => Promise<WorkspaceDeparture>;
   createDevelopmentSession: () => Promise<void>;
   finishWorkspaceSetup: (name: string, region: Region, operationId?: string) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
   signOut: () => Promise<void>;
   signOutIfCredentialCleared: () => Promise<void>;
+  surrenderActiveWorkspace: () => Promise<void>;
   clearDeepLinkError: () => void;
 }
 
@@ -79,6 +96,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'activateWorkspace'
   | 'cancelDesktopAuthAttempt'
   | 'consumePendingDeepLinks'
+  | 'createDesktopAuthAttempt'
   | 'createDevelopmentSession'
   | 'createWorkspace'
   | 'declineInvitation'
@@ -88,12 +106,14 @@ export type AppSessionDesktopBridge = Pick<
   | 'getSession'
   | 'hasStoredCredential'
   | 'logout'
+  | 'leaveWorkspace'
   | 'onDeepLink'
   | 'onSessionChanged'
   | 'openExternal'
   | 'openSettings'
   | 'refreshSession'
   | 'showDeepLinkError'
+  | 'surrenderActiveWorkspace'
 >;
 
 function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Region {
@@ -123,7 +143,7 @@ function sessionsShareDraftScope(
 ): boolean {
   if (!previousSession || !nextSession) return previousSession === nextSession;
   return previousSession.apiBaseUrl === nextSession.apiBaseUrl
-    && previousSession.user.id === nextSession.user.id
+    && previousSession.user.email.toLocaleLowerCase('en-US') === nextSession.user.email.toLocaleLowerCase('en-US')
     && (previousSession.workspace?.id ?? null) === (nextSession.workspace?.id ?? null);
 }
 
@@ -133,6 +153,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const [workspaceName, setWorkspaceNameState] = useState(() => readDevicePreferences().workspaceName ?? '');
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [pendingInvitation, setPendingInvitation] = useState<PendingInvitation | null>(null);
+  const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [booting, setBooting] = useState(true);
   const [exchangingTicket, setExchangingTicket] = useState(false);
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
@@ -141,8 +162,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const bridge = useMemo<AppSessionDesktopBridge>(() => desktopBridge(), []);
   const queryClient = useQueryClient();
 
-  const applySession = useCallback((nextSession: DesktopSession): void => {
+  const applySession = useCallback((nextSession: DesktopSession | null): void => {
     setSession(nextSession);
+    if (!nextSession) {
+      setDeviceSelectedRegion('global');
+      setRegion('global');
+      queryClient.clear();
+      return;
+    }
     const nextRegion = nextSession.workspace?.region
       ?? (runtime?.api.eu === nextSession.apiBaseUrl ? 'eu' : 'global');
     setDeviceSelectedRegion(nextRegion);
@@ -264,6 +291,28 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     [bridge],
   );
 
+  const reconnectAccountIdentity = useCallback(async (): Promise<void> => {
+    if (!runtime) throw new Error('Rally is still loading its identity service.');
+    let attemptId: string | null = null;
+    try {
+      const authAttempt = await bridge.createDesktopAuthAttempt({
+        apiBaseUrl: runtime.api.global,
+        region: 'global',
+      });
+      attemptId = authAttempt.attemptId;
+      const identityApi = new RallyApi(runtime.api.global, null);
+      const url = await identityApi.beginGoogleLogin(
+        'global',
+        'rallywithai://auth/complete',
+        { authAttempt },
+      );
+      await bridge.openExternal(url);
+    } catch (error) {
+      if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
+      throw error;
+    }
+  }, [bridge, runtime]);
+
   const activateWorkspace = useCallback(async (selectedRegion: Region, workspaceId: string, operationId?: string): Promise<void> => {
     const nextSession = await bridge.activateWorkspace({ region: selectedRegion, workspaceId, operationId });
     applySession(nextSession);
@@ -282,6 +331,19 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     await bridge.declineInvitation({ region: invitationRegion, invitationId });
   }, [bridge]);
 
+  const leaveWorkspace = useCallback(async (
+    workspaceId: string,
+    expectedOutcome: WorkspaceDepartureOutcome,
+  ): Promise<WorkspaceDeparture> => {
+    if (!session?.workspace || session.workspace.id !== workspaceId) {
+      throw new Error('The workspace is no longer active');
+    }
+    const departure = await bridge.leaveWorkspace({ expectedOutcome, region: session.workspace.region, workspaceId });
+    await clearWorkspaceDrafts(session.workspace.region, workspaceId);
+    queryClient.removeQueries();
+    return departure;
+  }, [bridge, queryClient, session?.workspace]);
+
   const refreshSession = useCallback(async (): Promise<DesktopSession> => {
     const nextSession = await bridge.refreshSession();
     setSession(nextSession);
@@ -296,7 +358,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
 
   const finishWorkspaceSetup = useCallback(async (name: string, selectedRegion: Region, operationId?: string): Promise<void> => {
     const normalized = name.trim();
-    if (normalized.length < 2) throw new Error('Enter an organization name with at least two characters.');
+    if (normalized.length < 2) throw new Error('Enter a workspace name with at least two characters.');
     setDeviceWorkspaceName(normalized);
     setWorkspaceNameState(normalized);
     const nextSession = await bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId });
@@ -317,6 +379,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
    * and nothing types its way back onto a signed-out device.
    */
   const draftScopeRef = useRef<DesktopSession | null>(null);
+  const legacyDraftMigrationStarted = useRef(false);
   useEffect(() => {
     const previousSession = draftScopeRef.current;
     draftScopeRef.current = session;
@@ -324,7 +387,13 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // discard the draft the last run left behind.
     if (previousSession && !sessionsShareDraftScope(previousSession, session)) {
       abandonPendingWorkstreamFeedOpen();
-      void clearAllDrafts();
+      const sameAccount = session?.user.email.toLocaleLowerCase('en-US')
+        === previousSession.user.email.toLocaleLowerCase('en-US');
+      if (!sameAccount) void clearAllDrafts();
+    }
+    if (!legacyDraftMigrationStarted.current && session?.workspace) {
+      legacyDraftMigrationStarted.current = true;
+      void migrateLegacyDrafts(session.workspace.region, session.workspace.id);
     }
   }, [session]);
 
@@ -351,6 +420,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     setRegion('global');
     queryClient.clear();
   }, [bridge, queryClient]);
+
+  const surrenderActiveWorkspace = useCallback(async (): Promise<void> => {
+    const departing = session?.workspace ?? null;
+    const nextSession = await bridge.surrenderActiveWorkspace();
+    if (departing) await clearWorkspaceDrafts(departing.region, departing.id);
+    queryClient.clear();
+    applySession(nextSession);
+  }, [applySession, bridge, queryClient, session?.workspace]);
 
   const selectRegion = useCallback((nextRegion: Region) => {
     setDeviceSelectedRegion(nextRegion);
@@ -413,289 +490,314 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         reportJavascriptError(error, 'unknown');
       });
     };
-    const handleDeepLink = (navigation: DesktopDeepLinkNavigation): void => {
-      let deepLink: URL;
+    const apiForSession = (apiSession: DesktopSession, target?: WorkspaceTarget): RallyApi => {
+      const targetApi = new RallyApi(apiSession.apiBaseUrl, apiSession);
+      targetApi.setCredentialRenewal(async () => {
+        const renewedSession = await bridge.refreshSession();
+        if (target && (!renewedSession.workspace || !workspaceTargetsEqual({
+          region: renewedSession.workspace.region,
+          workspaceId: renewedSession.workspace.id,
+        }, target))) {
+          throw new Error('The requested workspace could not be renewed.');
+        }
+        sessionRef.current = renewedSession;
+        applySession(renewedSession);
+        return renewedSession;
+      });
+      return targetApi;
+    };
+    const activateDeepLinkWorkspace = async (
+      target: WorkspaceTarget,
+    ): Promise<{ api: RallyApi; workspaceChanged: boolean }> => {
+      if (!sessionRef.current) throw new Error('Sign in before opening a workspace link.');
+      const previousWorkspace = sessionRef.current.workspace;
+      // An explicit target is an authorization request, even when it names the
+      // workspace currently drawn. Main asks the platform to rediscover the
+      // membership on every addressed link so a stale cached credential can
+      // never turn a removed membership into access.
+      const nextSession = await bridge.activateWorkspace({
+        region: target.region,
+        workspaceId: target.workspaceId,
+      });
+      if (!nextSession.workspace || !workspaceTargetsEqual({
+        region: nextSession.workspace.region,
+        workspaceId: nextSession.workspace.id,
+      }, target)) {
+        throw new Error('The requested workspace could not be activated.');
+      }
+      // React state commits later. Keep the imperative deep-link path on the
+      // session it just activated so two callbacks in the same turn cannot
+      // apply the second one to the workspace that was active before them.
+      sessionRef.current = nextSession;
+      applySession(nextSession);
+      return {
+        api: apiForSession(nextSession, target),
+        workspaceChanged: !previousWorkspace || !workspaceTargetsEqual({
+          region: previousWorkspace.region,
+          workspaceId: previousWorkspace.id,
+        }, target),
+      };
+    };
+    const runInDeepLinkWorkspace = async (
+      target: WorkspaceTarget,
+      action: (targetApi: RallyApi) => void | Promise<void>,
+    ): Promise<void> => {
       try {
-        deepLink = new URL(navigation.url);
-      } catch {
-        reportDeepLinkFailure('Rally received an invalid sign-in link.');
+        const activated = await activateDeepLinkWorkspace(target);
+        // A changed workspace must never leave a resource route from the old
+        // workspace behind it. Resource actions below immediately replace this
+        // safe landing; separate-window actions leave it ready when they close.
+        if (activated.workspaceChanged) {
+          window.location.hash = '/workstreams/new';
+        }
+        await action(activated.api);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : '';
+        const activationFailure = workspaceActivationFailureCode(error);
+        reportDeepLinkFailure(
+          /sign in/iu.test(message)
+            ? message
+            : activationFailure === 'workspace_access_denied'
+              ? 'Rally could not access the workspace this link belongs to.'
+            : activationFailure === 'workspace_activation_unavailable'
+              || /reach|network|offline|timeout|unavailable/iu.test(message)
+              ? 'Rally could not reach that workspace. Check your connection, then reopen this link.'
+              : 'Rally could not access the workspace this link belongs to.',
+        );
+      }
+    };
+    const handleDeepLink = async (navigation: DesktopDeepLinkNavigation): Promise<void> => {
+      const intent = parseDesktopDeepLinkIntent(navigation.url);
+      if (!intent) {
+        let deepLink: URL | null = null;
+        try {
+          deepLink = new URL(navigation.url);
+        } catch {
+          // The generic error below is the only safe interpretation.
+        }
+        reportDeepLinkFailure(
+          deepLink?.hostname === 'notes'
+            ? 'Rally could not open that note link.'
+            : deepLink?.hostname === 'auth'
+            && deepLink.pathname === '/complete'
+            && (deepLink.searchParams.has('connection')
+              || deepLink.searchParams.has('provider')
+              || deepLink.searchParams.has('status'))
+            ? 'Rally received an invalid connector completion link.'
+            : deepLink?.hostname === 'auth'
+              && deepLink.pathname === '/complete'
+              && deepLink.searchParams.has('ticket')
+              ? 'The sign-in link did not match Rally’s identity service.'
+            : 'Rally received an unexpected sign-in link.',
+        );
         return;
       }
-      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams' && deepLink.pathname === '/new') {
-        if (!session?.workspace) {
-          reportDeepLinkFailure('Sign in before starting a work stream.');
-          return;
+      const requireActiveWorkspace = (message: string): DesktopSession | null => {
+        const activeSession = sessionRef.current;
+        if (!activeSession?.workspace) {
+          reportDeepLinkFailure(message);
+          return null;
         }
+        return activeSession;
+      };
+      if (intent.kind === 'new-workstream') {
+        if (!requireActiveWorkspace('Sign in before starting a work stream.')) return;
         setDeepLinkError(null);
         markSurfaceEntrypoint(navigation.entrypoint);
         window.location.hash = '/workstreams/new';
         return;
       }
-      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams') {
-        const workstreamId = deepLink.pathname.slice(1);
-        if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(workstreamId)) {
-          reportDeepLinkFailure('Sign in before opening this work-stream link.');
-          return;
-        }
+      if (intent.kind === 'workstream') {
+        const openWorkstream = (): void => {
+          setDeepLinkError(null);
+          markSurfaceEntrypoint(navigation.entrypoint);
+          window.location.hash = `/workstreams/${intent.workstreamId}`;
+        };
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
+        else if (requireActiveWorkspace('Sign in before opening this work-stream link.')) openWorkstream();
+        return;
+      }
+      if (intent.kind === 'note') {
+        if (!requireActiveWorkspace('Sign in before opening this note.')) return;
         setDeepLinkError(null);
         markSurfaceEntrypoint(navigation.entrypoint);
-        window.location.hash = `/workstreams/${workstreamId}`;
+        window.location.hash = `/notes/${intent.noteId}`;
         return;
       }
-      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'notes') {
-        // Sent by the main process when a meeting window closes, so that the
-        // recording a person just ended hands them to the note it produced.
-        const noteId = deepLink.pathname.slice(1);
-        // Two different problems, and telling them apart is the difference
-        // between an instruction someone can act on and one that cannot help:
-        // signing in again does nothing about a link that names no note.
-        if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(noteId)) {
-          reportDeepLinkFailure('Rally could not open that note link.');
-          return;
-        }
-        if (!session?.workspace) {
-          reportDeepLinkFailure('Sign in before opening this note.');
-          return;
-        }
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        window.location.hash = `/notes/${noteId}`;
+      if (intent.kind === 'settings') {
+        const openSettings = async (): Promise<void> => {
+          setDeepLinkError(null);
+          await bridge.openSettings(intent.section);
+        };
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openSettings);
+        else await openSettings();
         return;
       }
-      if (
-        isDesktopDeepLinkProtocol(deepLink.protocol)
-        && deepLink.hostname === 'settings'
-        && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections'
-          || deepLink.pathname === '/digest')
-        && deepLink.search === ''
-      ) {
-        setDeepLinkError(null);
-        const section = deepLink.pathname === '/connections'
-          ? 'connections'
-          : deepLink.pathname === '/digest' ? 'digest' : 'workspace';
-        void bridge.openSettings(section);
+      if (intent.kind === 'new-automation') {
+        const openAutomation = (): void => {
+          setDeepLinkError(null);
+          markSurfaceEntrypoint(navigation.entrypoint);
+          window.location.hash = '/automations/new';
+        };
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openAutomation);
+        else if (requireActiveWorkspace('Sign in before creating an automation.')) openAutomation();
         return;
       }
-      if (
-        isDesktopDeepLinkProtocol(deepLink.protocol)
-        && deepLink.hostname === 'automations'
-        && deepLink.pathname === '/new'
-        && deepLink.search === ''
-      ) {
-        if (!session?.workspace) {
-          reportDeepLinkFailure('Sign in before creating an automation.');
-          return;
-        }
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        window.location.hash = '/automations/new';
-        return;
-      }
-      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'slack' && deepLink.pathname === '/link') {
-        const token = deepLink.searchParams.get('token');
-        const exactToken = token
-          && /^[A-Za-z0-9_-]{20,500}$/u.test(token)
-          && [...deepLink.searchParams.keys()].every((key) => key === 'token')
-          && deepLink.searchParams.getAll('token').length === 1;
-        if (!exactToken || !session?.workspace || !api) {
-          reportDeepLinkFailure('Sign in to the matching Rally workspace before connecting your Slack account.');
-          return;
-        }
-        setDeepLinkError(null);
-        void api.previewSlackUserLink(token)
-          .then((preview) => {
+      if (intent.kind === 'slack-link') {
+        const linkSlack = async (targetApi: RallyApi): Promise<void> => {
+          setDeepLinkError(null);
+          try {
+            const preview = await targetApi.previewSlackUserLink(intent.token);
             const confirmed = window.confirm(
               `Connect Slack user ${preview.slackUserId} from ${preview.workspaceName} to your Rally account, `
               + 'and let Rally search and act in Slack as you?',
             );
-            if (!confirmed) return null;
-            return api.linkSlackUser(token);
-          })
-          .then(async (result) => {
-            if (!result) return;
+            if (!confirmed) return;
+            await targetApi.linkSlackUser(intent.token);
             await Promise.all([
               queryClient.invalidateQueries({ queryKey: ['connections'] }),
               queryClient.invalidateQueries({ queryKey: ['automation'] }),
             ]);
-            // One button, both halves. Linking records who this Slack person is;
-            // the personal connection is what lets Rally act as them. Split
-            // across two buttons that both said "Connect", members reasonably
-            // believed the first had done the second — App Home said
-            // "Welcome, <name>" while personal tools stayed unconnected. The
-            // authorization is continued into here rather than left as a second
-            // errand. Its own callback re-establishes the link, so whichever
-            // half a member reaches first, both end up done.
             try {
-              // Inside the same try as the authorization: this rejecting is not
-              // the link failing, and reporting "your Slack account could not be
-              // linked" for a link that committed is the error the whole change
-              // is about.
               await bridge.openSettings('connections');
-              const authorization = await api.startProviderConnection(
+              const authorization = await targetApi.startProviderConnection(
                 'slack',
                 'you',
                 [...SLACK_PERSONAL_CAPABILITIES],
               );
               await bridge.openExternal(authorization.url);
             } catch (error: unknown) {
-              // The link committed and is useful on its own. Surface the
-              // failure without retracting what already succeeded.
               reportDeepLinkFailure(
                 error instanceof Error
                   ? `Slack was linked, but personal Slack tools could not be connected: ${error.message}`
                   : 'Slack was linked, but personal Slack tools could not be connected.',
               );
             }
-          })
-          .catch((error: unknown) => {
+          } catch (error: unknown) {
             reportDeepLinkFailure(error instanceof Error ? error.message : 'Your Slack account could not be linked.');
-          });
+          }
+        };
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, linkSlack);
+        else {
+          const activeSession = requireActiveWorkspace(
+            'Sign in to the matching Rally workspace before connecting your Slack account.',
+          );
+          if (activeSession) await linkSlack(apiForSession(activeSession));
+        }
         return;
       }
-      if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {
-        const token = deepLink.searchParams.get('token');
-        const inviteRegion = deepLink.searchParams.get('region');
-        if (!token || token.length < 20 || (inviteRegion !== 'global' && inviteRegion !== 'eu')) {
-          reportDeepLinkFailure('Rally received an invalid organization invitation.');
+      if (intent.kind === 'invitation') {
+        setPendingInvitation({ token: intent.token, region: intent.region });
+        setDeepLinkError(null);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['workspace-onboarding'] }),
+          queryClient.invalidateQueries({ queryKey: ['workspace-account-directory'] }),
+        ]);
+        return;
+      }
+      if (intent.kind === 'connector-result') {
+        const connectorName = intent.provider ? connectorProviderNames[intent.provider] : null;
+        const applyConnectorResult = async (): Promise<void> => {
+          if (intent.status === 'connected') {
+            setDeepLinkError(null);
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['connections'] }),
+              queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+              queryClient.invalidateQueries({ queryKey: ['automation'] }),
+            ]);
+            if (intent.target) await bridge.openSettings('connections');
+          } else {
+            reportDeepLinkFailure(
+              intent.status === 'denied'
+                ? `${connectorName ?? 'Connector'} authorization was cancelled.`
+                : `${connectorName ?? 'Connector'} could not be connected. Try again from Connections.`,
+            );
+          }
+        };
+        if (intent.target) {
+          await runInDeepLinkWorkspace(intent.target, applyConnectorResult);
           return;
         }
-        setPendingInvitation({ token, region: inviteRegion });
-        setDeepLinkError(null);
-        // Invitations are discovered from the verified platform identity.
-        // Refresh an already-mounted empty setup gate immediately instead of
-        // leaving the user on “Create organization” until the next launch.
-        void queryClient.invalidateQueries({ queryKey: ['workspace-onboarding'] });
-        return;
-      }
-      if (!isDesktopDeepLinkProtocol(deepLink.protocol) || deepLink.hostname !== 'auth' || deepLink.pathname !== '/complete') {
-        reportDeepLinkFailure('Rally received an unexpected sign-in link.');
-        return;
-      }
-      const connectionId = deepLink.searchParams.get('connection');
-      const connectorProvider = deepLink.searchParams.get('provider');
-      const activeSession = sessionRef.current;
-      if (connectionId && deepLink.searchParams.get('status') === 'connected' && connectorProvider === null) {
-        const legacyEntries = [...deepLink.searchParams.entries()];
+        const activeSession = requireActiveWorkspace('Rally received an invalid connector completion link.');
+        if (!activeSession) return;
         if (
-          !activeSession?.workspace
-          || !IdSchema.safeParse(connectionId).success
-          || legacyEntries.length !== 2
-          || legacyEntries.some(([name]) => name !== 'connection' && name !== 'status')
-          || deepLink.searchParams.getAll('connection').length !== 1
-          || deepLink.searchParams.getAll('status').length !== 1
+          intent.callbackRegion !== null
+          && intent.callbackRegion !== activeSession.workspace!.region
         ) {
           reportDeepLinkFailure('Rally received an invalid connector completion link.');
           return;
         }
-        setDeepLinkError(null);
-        void Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['connections'] }),
-          queryClient.invalidateQueries({ queryKey: ['workstream'] }),
-          queryClient.invalidateQueries({ queryKey: ['automation'] }),
-        ]);
+        await applyConnectorResult();
         return;
       }
-      const connectorName = connectorProvider && connectorProvider in connectorProviderNames
-        ? connectorProviderNames[connectorProvider as keyof typeof connectorProviderNames]
-        : null;
-      const connectorStatus = deepLink.searchParams.get('status');
-      if (connectionId || connectorProvider || connectorStatus) {
-        const entries = [...deepLink.searchParams.entries()];
-        const hasSingleValue = (name: string): boolean => deepLink.searchParams.getAll(name).length === 1;
-        const callbackRegion = deepLink.searchParams.get('region');
-        const attemptId = deepLink.searchParams.get('attempt');
-        const connectorError = deepLink.searchParams.get('error');
-        const validSuccess =
-          entries.length >= 4
-          && entries.length <= 5
-          && entries.every(([name]) => ['connection', 'status', 'region', 'attempt', 'provider'].includes(name))
-          && ['connection', 'status', 'region', 'provider'].every(hasSingleValue)
-          && connectorStatus === 'connected'
-          && connectionId !== null
-          && IdSchema.safeParse(connectionId).success
-          && (attemptId === null || (hasSingleValue('attempt') && /^[A-Za-z0-9_-]{43}$/u.test(attemptId)))
-          && connectorError === null;
-        const validFailure =
-          entries.length >= 4
-          && entries.length <= 5
-          && entries.every(([name]) => ['status', 'error', 'region', 'attempt', 'provider'].includes(name))
-          && ['status', 'error', 'region', 'provider'].every(hasSingleValue)
-          && (connectorStatus === 'denied' || connectorStatus === 'failed')
-          && connectionId === null
-          && connectorError !== null
-          && /^[a-z0-9_-]{1,100}$/u.test(connectorError)
-          && (attemptId === null || (hasSingleValue('attempt') && /^[A-Za-z0-9_-]{43}$/u.test(attemptId)));
-        if (!activeSession?.workspace || !connectorName || callbackRegion !== activeSession.workspace.region || (!validSuccess && !validFailure)) {
-          reportDeepLinkFailure('Rally received an invalid connector completion link.');
-          return;
-        }
-        if (validSuccess) {
-          setDeepLinkError(null);
-          void Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['connections'] }),
-            queryClient.invalidateQueries({ queryKey: ['workstream'] }),
-            queryClient.invalidateQueries({ queryKey: ['automation'] }),
-          ]);
-        } else {
-          reportDeepLinkFailure(
-            connectorStatus === 'denied'
-              ? `${connectorName} authorization was cancelled.`
-              : `${connectorName} could not be connected. Try again from Connections.`,
-          );
-        }
+      if (intent.status === 'failed') {
+        if (intent.attemptId) await bridge.cancelDesktopAuthAttempt(intent.attemptId);
+        reportDeepLinkFailure(
+          `Sign in could not be completed: ${intent.errorCode?.replace(/[_-]+/gu, ' ') ?? 'unknown error'}`,
+        );
         return;
       }
-      const connectionError = deepLink.searchParams.get('error');
-      if (connectionError) {
-        const failedAttemptId = deepLink.searchParams.get('attempt');
-        if (failedAttemptId && /^[A-Za-z0-9_-]{43}$/u.test(failedAttemptId)) {
-          void bridge.cancelDesktopAuthAttempt(failedAttemptId);
-        }
-        reportDeepLinkFailure(`Sign in could not be completed: ${connectionError.replace(/[_-]+/gu, ' ')}`);
-        return;
-      }
-      const ticket = deepLink.searchParams.get('ticket');
-      if (!ticket) {
-        reportDeepLinkFailure('The sign-in link did not contain a desktop ticket.');
-        return;
-      }
-      const callbackRegion = deepLink.searchParams.get('region');
-      if (callbackRegion !== 'global') {
-        reportDeepLinkFailure('The sign-in link did not match Rally’s identity service.');
-        return;
-      }
-      const attemptId = deepLink.searchParams.get('attempt');
-      if (!attemptId || !/^[A-Za-z0-9_-]{43}$/u.test(attemptId)) {
-        reportDeepLinkFailure('The sign-in link did not match a native authentication attempt.');
-        return;
-      }
-      setDeviceSelectedRegion(callbackRegion);
-      setRegion(callbackRegion);
+      setDeviceSelectedRegion('global');
+      setRegion('global');
       setExchangingTicket(true);
       setDeepLinkError(null);
-      void bridge
-        .exchangeDesktopTicket({
-          apiBaseUrl: runtime.api[callbackRegion],
-          region: callbackRegion,
-          ticket,
-          attemptId,
-        })
-        .then((nextSession) => {
-          if (nextSession.workspace) {
-            setDeviceWorkspaceName(nextSession.workspace.name);
-            setWorkspaceNameState(nextSession.workspace.name);
-          }
-          setSession(nextSession);
-        })
-        .catch((error: unknown) => {
-          reportDeepLinkFailure(error instanceof Error ? error.message : 'Sign in could not be completed.');
-        })
-        .finally(() => setExchangingTicket(false));
+      try {
+        const nextSession = await bridge.exchangeDesktopTicket({
+          apiBaseUrl: runtime.api.global,
+          region: 'global',
+          ticket: intent.ticket!,
+          attemptId: intent.attemptId!,
+        });
+        sessionRef.current = nextSession;
+        applySession(nextSession);
+      } catch (error: unknown) {
+        reportDeepLinkFailure(error instanceof Error ? error.message : 'Sign in could not be completed.');
+      } finally {
+        setExchangingTicket(false);
+      }
     };
-    const unsubscribe = bridge.onDeepLink(handleDeepLink);
-    void bridge.consumePendingDeepLinks().then((deepLinks) => deepLinks.forEach(handleDeepLink));
-    return unsubscribe;
-  }, [api, bridge, queryClient, runtime, session]);
+    let active = true;
+    let pendingDrained = false;
+    const liveDeepLinks: DesktopDeepLinkNavigation[] = [];
+    let delivery = Promise.resolve();
+    const enqueue = (navigation: DesktopDeepLinkNavigation): void => {
+      delivery = delivery.then(async () => {
+        if (!active) return;
+        try {
+          await handleDeepLink(navigation);
+        } catch (error: unknown) {
+          // One failed window action must not reject the queue tail: every
+          // later operating-system callback still deserves its turn. Most
+          // destination failures are handled closer to their domain; this is
+          // the final boundary for bridge/window failures that escape them.
+          reportJavascriptError(error, 'unknown');
+          reportDeepLinkFailure(
+            error instanceof Error ? error.message : 'Rally could not open that link.',
+          );
+        }
+      });
+    };
+    const unsubscribe = bridge.onDeepLink((navigation) => {
+      if (pendingDrained) enqueue(navigation);
+      else liveDeepLinks.push(navigation);
+    });
+    void bridge.consumePendingDeepLinks()
+      .then((deepLinks) => {
+        if (!active) return;
+        deepLinks.forEach(enqueue);
+        pendingDrained = true;
+        liveDeepLinks.splice(0).forEach(enqueue);
+      })
+      .catch((error: unknown) => {
+        reportJavascriptError(error, 'unknown');
+        pendingDrained = true;
+        liveDeepLinks.splice(0).forEach(enqueue);
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [applySession, bridge, queryClient, runtime]);
 
   useEffect(() => {
     if (!session) return;
@@ -749,6 +851,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       setWorkspaceName,
       editWorkspaceSetup,
       pendingInvitation,
+      pendingConnectorOAuth,
+      setPendingConnectorOAuth,
       clearPendingInvitation: () => {
         setPendingInvitation(null);
         if (session?.workspace) {
@@ -760,11 +864,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       activateWorkspace,
       acceptInvitation,
       declineInvitation,
+      leaveWorkspace,
       createDevelopmentSession,
       finishWorkspaceSetup,
       refreshSession,
+      reconnectAccountIdentity,
       signOut,
       signOutIfCredentialCleared,
+      surrenderActiveWorkspace,
       clearDeepLinkError: () => setDeepLinkError(null),
     }),
     [
@@ -774,18 +881,22 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       booting,
       createDevelopmentSession,
       declineInvitation,
+      leaveWorkspace,
       deepLinkError,
       exchangingTicket,
       finishWorkspaceSetup,
       getOnboardingState,
       pendingInvitation,
+      pendingConnectorOAuth,
       invitationApi,
       region,
       runtime,
       refreshSession,
+      reconnectAccountIdentity,
       session,
       signOut,
       signOutIfCredentialCleared,
+      surrenderActiveWorkspace,
       selectRegion,
       setWorkspaceName,
       editWorkspaceSetup,

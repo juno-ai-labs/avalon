@@ -15,6 +15,7 @@ const workerKeys = [
   "AVALON_REGION",
   "RALLY_DEV_AUTH",
   "PUBLIC_API_BASE_URL",
+  "EU_PUBLIC_API_BASE_URL",
   "PUBLIC_WEB_BASE_URL",
   "ALLOWED_ORIGINS",
   "DESKTOP_DEEP_LINK_URI",
@@ -137,6 +138,7 @@ const regionalizableKeys = [
 ];
 
 const globalOnlyKeys = new Set([
+  "EU_PUBLIC_API_BASE_URL",
   "GOOGLE_OAUTH_CLIENT_ID",
   "GOOGLE_OAUTH_CLIENT_SECRET",
   "RESEND_WEBHOOK_SIGNING_SECRET",
@@ -267,6 +269,12 @@ for (const region of ["global", "eu"]) {
     }
   }
   Object.assign(regional, sharedPublicAppValues);
+  // The Global Worker validates and returns sessions minted by EU. Production
+  // gets this route from Wrangler vars; local development must point at the
+  // sibling Worker or every cross-region activation looks like a forged route.
+  regional.EU_PUBLIC_API_BASE_URL = local.EU_PUBLIC_API_BASE_URL
+    || local.PUBLIC_API_BASE_URL_EU
+    || "http://127.0.0.1:8788";
   // A single GitHub App may issue independent private keys to each regional
   // Worker. An unsuffixed key remains the convenient development default.
   regional.GITHUB_APP_PRIVATE_KEY = local.GITHUB_APP_PRIVATE_KEY

@@ -53,6 +53,7 @@ function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   database.exec(`
+    ALTER TABLE workspaces ADD COLUMN abandoned_at TEXT;
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('${PARTICIPANT}', 'g-1', 'one@example.com', 'One', '${at}', '${at}'),
            ('${MEMBER}', 'g-2', 'two@example.com', 'Two', '${at}', '${at}'),

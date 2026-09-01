@@ -1,6 +1,7 @@
+import { classifyAttachmentKind } from '@rally/contracts';
 import type { CitationTarget } from '@rally/contracts/citations';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import type { CitationContext, CitationResource } from '../components/markdown-citations';
+import type { CitationContext, CitationPreview, CitationResource } from '../components/markdown-citations';
 import { ApiError } from './api';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from './resource-preview';
 import { desktopBridge } from './platform';
@@ -131,7 +132,7 @@ export function useCitations({ loadResourceContent, resources }: {
   const reads = useRef<{
     loader: unknown;
     controller: AbortController;
-    inFlight: Map<string, Promise<string>>;
+    inFlight: Map<string, Promise<CitationPreview>>;
   } | null>(null);
   // Built on the first ask rather than in an effect of this hook's own, because
   // the asks come from effects *below* it: React runs a child's effect before
@@ -145,7 +146,7 @@ export function useCitations({ loadResourceContent, resources }: {
     // cards still mounted ask again through the new one: their effect depends
     // on this callback, whose identity changes with the loader.
     current?.controller.abort();
-    const next = { loader, controller: new AbortController(), inFlight: new Map<string, Promise<string>>() };
+    const next = { loader, controller: new AbortController(), inFlight: new Map<string, Promise<CitationPreview>>() };
     reads.current = next;
     return next;
   };
@@ -155,19 +156,26 @@ export function useCitations({ loadResourceContent, resources }: {
     reads.current = null;
   }, []);
 
-  const preview = useCallback((resourceId: string): Promise<string> | undefined => {
+  const preview = useCallback((resourceId: string): Promise<CitationPreview> | undefined => {
     const entry = local.get(resourceId);
     if (!loadResourceContent || !entry) return undefined;
     const state = previewReads(loadResourceContent);
     const key = `${entry.citation.id}@${entry.version}`;
     const cached = state.inFlight.get(key);
     if (cached) return cached;
-    const read = readResourcePreviewText(
-      loadResourceContent,
-      entry.citation.id,
-      state.controller.signal,
-      MAX_RESOURCE_PREVIEW_WAIT_MS,
-    );
+    const image = classifyAttachmentKind({
+      fileName: entry.citation.title,
+      mimeType: entry.citation.mimeType,
+    }) === 'image';
+    const read: Promise<CitationPreview> = image
+      ? loadResourceContent(entry.citation.id, state.controller.signal)
+        .then((blob) => ({ kind: 'image', blob }))
+      : readResourcePreviewText(
+          loadResourceContent,
+          entry.citation.id,
+          state.controller.signal,
+          MAX_RESOURCE_PREVIEW_WAIT_MS,
+        ).then((text) => ({ kind: 'text', text }));
     // Nothing else awaits this copy, and an unhandled rejection on a cached
     // promise is reported even though every consumer handles its own. The
     // eviction is guarded on identity because a later ask may already have

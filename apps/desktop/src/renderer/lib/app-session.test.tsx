@@ -8,14 +8,17 @@ import type {
   DesktopSession,
   RuntimeConfig,
 } from '../../common/desktop';
+import { workspaceActivationFailure } from '../../common/workspace-activation-error';
 import {
   AppSessionProvider,
   useAppSession,
   type AppSessionDesktopBridge,
+  type AppSessionValue,
 } from './app-session';
 import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
+import { newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
 import { useDraftText } from './use-draft-text';
-import type { RallyApi } from './api';
+import { RallyApi } from './api';
 import { readDevicePreferences } from './device-preferences';
 import {
   consumeSurfaceEntrypoint,
@@ -27,8 +30,17 @@ let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null =
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
 let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
+let observedReconnectAccount: (() => Promise<void>) | null = null;
+let observedSurrenderActiveWorkspace: (() => Promise<void>) | null = null;
+let observedLeaveWorkspace: ((
+  workspaceId: string,
+  expectedOutcome: 'left' | 'abandoned',
+) => Promise<unknown>) | null = null;
+let observedPendingConnectorOAuth: AppSessionValue['pendingConnectorOAuth'] = null;
+let observedSetPendingConnectorOAuth: AppSessionValue['setPendingConnectorOAuth'] | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
+  createDesktopAuthAttempt: vi.fn(),
   consumePendingDeepLinks: vi.fn(),
   acceptInvitation: vi.fn(),
   activateWorkspace: vi.fn(),
@@ -40,6 +52,7 @@ const bridge = vi.hoisted(() => ({
   getRuntimeConfig: vi.fn(),
   getSession: vi.fn(),
   hasStoredCredential: vi.fn(),
+  leaveWorkspace: vi.fn(),
   logout: vi.fn(),
   onDeepLink: vi.fn(),
   onSessionChanged: vi.fn(),
@@ -47,6 +60,7 @@ const bridge = vi.hoisted(() => ({
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
   showDeepLinkError: vi.fn<RallyDesktopBridge['showDeepLinkError']>(async () => undefined),
+  surrenderActiveWorkspace: vi.fn(),
   reportTelemetryProductIntent: vi.fn(),
 }) satisfies AppSessionDesktopBridge & Pick<RallyDesktopBridge, 'reportTelemetryProductIntent'>);
 
@@ -83,6 +97,11 @@ function SessionProbe(): React.JSX.Element {
   const { api, booting, deepLinkError, invitationApi, pendingInvitation, region, session } = context;
   observedApi = api;
   observedSignOutIfCleared = context.signOutIfCredentialCleared;
+  observedReconnectAccount = context.reconnectAccountIdentity;
+  observedSurrenderActiveWorkspace = context.surrenderActiveWorkspace;
+  observedLeaveWorkspace = context.leaveWorkspace;
+  observedPendingConnectorOAuth = context.pendingConnectorOAuth;
+  observedSetPendingConnectorOAuth = context.setPendingConnectorOAuth;
   return (
     <>
       <output>
@@ -92,6 +111,7 @@ function SessionProbe(): React.JSX.Element {
       <output data-testid="session-email">{session?.user.email ?? 'none'}</output>
       <output data-testid="session-token">{session?.accessToken ?? 'none'}</output>
       <output data-testid="session-role">{session?.workspace?.role ?? 'none'}</output>
+      <output data-testid="pending-connector-attempt">{context.pendingConnectorOAuth?.attemptId ?? 'none'}</output>
       <output data-testid="deep-link-error">{deepLinkError ?? 'none'}</output>
     </>
   );
@@ -137,6 +157,11 @@ function resetDesktopBridge(): void {
   sessionListener = null;
   observedApi = null;
   observedSignOutIfCleared = null;
+  observedReconnectAccount = null;
+  observedSurrenderActiveWorkspace = null;
+  observedLeaveWorkspace = null;
+  observedPendingConnectorOAuth = null;
+  observedSetPendingConnectorOAuth = null;
   bridge.getRuntimeConfig.mockResolvedValue({
     appVersion: 'test',
     isPackaged: true,
@@ -166,6 +191,11 @@ function resetDesktopBridge(): void {
     return () => { sessionListener = null; };
   });
   bridge.exchangeDesktopTicket.mockResolvedValue(globalIdentitySession);
+  bridge.createDesktopAuthAttempt.mockResolvedValue({
+    attemptId: 'a'.repeat(43),
+    codeChallenge: 'challenge',
+  });
+  bridge.surrenderActiveWorkspace.mockResolvedValue(null);
 }
 
 describe('single-platform desktop identity routing', () => {
@@ -186,7 +216,11 @@ describe('single-platform desktop identity routing', () => {
     entrypoint: DesktopDeepLinkEntrypoint = 'deep_link',
   ): Promise<void> {
     await waitFor(() => expect(deepLinkListener).not.toBeNull());
-    act(() => deepLinkListener!({ url, entrypoint }));
+    await act(async () => {
+      deepLinkListener!({ url, entrypoint });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
   }
 
   afterEach(() => {
@@ -210,6 +244,51 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
     expect(readDevicePreferences().selectedRegion).toBe('global');
     expect(window.localStorage.getItem('rally:selected-region')).toBeNull();
+  });
+
+  it('starts an in-place platform identity reconnect from an active workspace', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    const beginGoogleLogin = vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+      .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await act(async () => { await observedReconnectAccount?.(); });
+
+    expect(bridge.createDesktopAuthAttempt).toHaveBeenCalledWith({
+      apiBaseUrl: 'https://api.rallywith.ai',
+      region: 'global',
+    });
+    expect(beginGoogleLogin).toHaveBeenCalledWith(
+      'global',
+      'rallywithai://auth/complete',
+      { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'challenge' } },
+    );
+    expect(bridge.openExternal).toHaveBeenCalledWith(
+      'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
+    );
+  });
+
+  it('moves to the next stored workspace after active membership is revoked', async () => {
+    const nextSession: DesktopSession = {
+      ...euSession,
+      apiBaseUrl: 'https://api.rallywith.ai',
+      workspace: {
+        ...euSession.workspace!,
+        id: 'workspace-global',
+        name: 'Global Studio',
+        region: 'global',
+      },
+    };
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.surrenderActiveWorkspace.mockResolvedValue(nextSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await act(async () => { await observedSurrenderActiveWorkspace?.(); });
+
+    expect(bridge.surrenderActiveWorkspace).toHaveBeenCalledOnce();
+    expect(screen.getByText('global:Global Studio')).toBeVisible();
   });
 
   it('accepts a sign-in callback on the superseded avalon scheme', async () => {
@@ -605,6 +684,193 @@ describe('single-platform desktop identity routing', () => {
     invalidate.mockRestore();
   });
 
+  it('activates the connector attempt workspace before applying its completion', async () => {
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000019';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: targetWorkspaceId,
+        name: 'Origin Workspace',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${targetWorkspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=granola`,
+    );
+
+    await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId: targetWorkspaceId,
+    }));
+    expect(await screen.findByText('global:Origin Workspace')).toBeVisible();
+  });
+
+  it('returns from workspace B to same-region workspace A for connector completion', async () => {
+    const workspaceA = '00000000-0000-7000-8000-000000000023';
+    window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000026';
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: '00000000-0000-7000-8000-000000000024',
+        name: 'Workspace B',
+        region: 'global',
+        role: 'member',
+      },
+    });
+    bridge.activateWorkspace.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: workspaceA, name: 'Workspace A', region: 'global', role: 'owner' },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Workspace B')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${workspaceA}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=slack`,
+    );
+
+    await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId: workspaceA,
+    }));
+    expect(await screen.findByText('global:Workspace A')).toBeVisible();
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
+    expect(window.location.hash).toBe('#/workstreams/new');
+  });
+
+  it.each([
+    {
+      name: 'work-stream',
+      url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/workstreams/00000000-0000-7000-8000-000000000031',
+      assertDestination: async () => expect(window.location.hash)
+        .toBe('#/workstreams/00000000-0000-7000-8000-000000000031'),
+    },
+    {
+      name: 'settings',
+      url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/settings/connections',
+      assertDestination: async () => waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections')),
+    },
+    {
+      name: 'automation',
+      url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/automations/new',
+      assertDestination: async () => expect(window.location.hash).toBe('#/automations/new'),
+    },
+    {
+      name: 'connector result',
+      url: `rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/auth/complete?connection=00000000-0000-7000-8000-000000000032&status=connected&attempt=${'a'.repeat(43)}&provider=google`,
+      assertDestination: async () => waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections')),
+    },
+  ])('activates an addressed $name link from an identity-only session', async ({ url, assertDestination }) => {
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000030';
+    bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockResolvedValue({
+      ...euSession,
+      expiresAt: futureExpiry,
+      workspace: {
+        id: targetWorkspaceId,
+        name: 'Addressed Workspace',
+        region: 'eu',
+        role: 'member',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:signed-out')).toBeVisible();
+
+    await dispatchDeepLink(url);
+
+    await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'eu',
+      workspaceId: targetWorkspaceId,
+    }));
+    await assertDestination();
+    expect(lastDeepLinkFailure()).toBeNull();
+  });
+
+  it('serializes addressed resource links in delivery order', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000033';
+    const firstWorkstreamId = '00000000-0000-7000-8000-000000000034';
+    const secondWorkstreamId = '00000000-0000-7000-8000-000000000035';
+    const activations: Array<{ resolve: (session: DesktopSession) => void }> = [];
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockImplementation(() => new Promise<DesktopSession>((resolve) => {
+      activations.push({ resolve });
+    }));
+    const activated: DesktopSession = {
+      ...globalIdentitySession,
+      workspace: { id: workspaceId, name: 'Ordered Workspace', region: 'global', role: 'member' },
+    };
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${workspaceId}/workstreams/${firstWorkstreamId}`,
+    );
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${workspaceId}/workstreams/${secondWorkstreamId}`,
+    );
+
+    await waitFor(() => expect(activations).toHaveLength(1));
+    activations[0]!.resolve(activated);
+    await waitFor(() => expect(activations).toHaveLength(2));
+    activations[1]!.resolve(activated);
+    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${secondWorkstreamId}`));
+  });
+
+  it('continues serialized deep-link delivery after one action rejects', async () => {
+    const workstreamId = '00000000-0000-7000-8000-000000000036';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.openSettings.mockRejectedValueOnce(new Error('Settings could not be opened'));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink('rallywithai://settings/connections');
+    await dispatchDeepLink(`rallywithai://workstreams/${workstreamId}`);
+
+    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${workstreamId}`));
+  });
+
+  it('does not apply a connector result when its workspace cannot be activated', async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000025';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${targetWorkspaceId}/auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&attempt=${'a'.repeat(43)}&provider=notion`,
+    );
+
+    await waitFor(() => expect(lastDeepLinkFailure()).toContain('access'));
+    expect(screen.getByText('eu:European Research')).toBeVisible();
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['connections'] });
+    invalidate.mockRestore();
+  });
+
+  it('does not navigate when a workspace-addressed work-stream link cannot be activated', async () => {
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000020';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    const before = window.location.hash;
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000021`,
+    );
+
+    await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId: targetWorkspaceId,
+    }));
+    expect(window.location.hash).toBe(before);
+    expect(lastDeepLinkFailure()).toContain('access');
+  });
+
   it('accepts a regional server-owned connector result and surfaces denial', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...euSession,
@@ -693,7 +959,9 @@ describe('single-platform desktop identity routing', () => {
     const [startUrl, startInit] = fetchRequest.mock.calls[2]!;
     expect(previewUrl).toBe('https://eu.api.rallywith.ai/connections/slack/link/preview');
     expect(linkUrl).toBe('https://eu.api.rallywith.ai/connections/slack/link');
-    expect(startUrl).toBe('https://eu.api.rallywith.ai/connections/slack/start?telemetryVersion=2');
+    expect(startUrl).toBe(
+      'https://eu.api.rallywith.ai/connections/slack/start?telemetryVersion=2&desktopHandoffVersion=2',
+    );
     expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${euSession.accessToken}`);
     expect(previewInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
     expect(linkInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
@@ -707,6 +975,50 @@ describe('single-platform desktop identity routing', () => {
       'https://slack.com/oauth/v2_user/authorize?state=abc',
     ));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+    fetchRequest.mockRestore();
+    confirm.mockRestore();
+  });
+
+  it('renews a rejected bearer while consuming a workspace-addressed Slack link', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000036';
+    const staleSession: DesktopSession = {
+      ...globalIdentitySession,
+      expiresAt: futureExpiry,
+      workspace: { id: workspaceId, name: 'Slack Workspace', region: 'global', role: 'member' },
+    };
+    const renewedSession = {
+      ...staleSession,
+      accessToken: 'renewed-target-token-longer-than-twenty-characters',
+    };
+    bridge.getSession.mockResolvedValueOnce(staleSession);
+    bridge.activateWorkspace.mockResolvedValue(staleSession);
+    bridge.refreshSession.mockResolvedValue(renewedSession);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const fetchRequest = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { code: 'invalid_session', message: 'expired' },
+      }), { status: 401, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        teamId: 'T01234567',
+        slackUserId: 'U01234567',
+        workspaceName: 'Acme',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    renderProvider();
+    expect(await screen.findByText('global:Slack Workspace')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${workspaceId}/slack/link?token=${'a'.repeat(43)}`,
+    );
+
+    await waitFor(() => expect(fetchRequest).toHaveBeenCalledTimes(2));
+    expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId,
+    });
+    expect(bridge.refreshSession).toHaveBeenCalledOnce();
+    expect(new Headers(fetchRequest.mock.calls[1]?.[1]?.headers).get('authorization'))
+      .toBe(`Bearer ${renewedSession.accessToken}`);
+    expect(confirm).toHaveBeenCalledOnce();
     fetchRequest.mockRestore();
     confirm.mockRestore();
   });
@@ -808,6 +1120,81 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink('rallywithai://automations/new');
     await waitFor(() => expect(window.location.hash).toBe('#/automations/new'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
+  it('activates a workspace-addressed settings destination before opening it', async () => {
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000026';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: targetWorkspaceId,
+        name: 'Notification Workspace',
+        region: 'global',
+        role: 'member',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${targetWorkspaceId}/settings/digest`,
+    );
+
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('digest'));
+    expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId: targetWorkspaceId,
+    });
+  });
+
+  it('preserves a pending connector attempt while another workspace is active', async () => {
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await waitFor(() => expect(observedSetPendingConnectorOAuth).not.toBeNull());
+
+    act(() => observedSetPendingConnectorOAuth?.({
+      attemptId: 'a'.repeat(43),
+      provider: 'slack',
+      region: 'eu',
+      workspaceId: euSession.workspace!.id,
+    }));
+    expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent('a'.repeat(43));
+
+    act(() => sessionListener?.({
+      ...globalIdentitySession,
+      workspace: {
+        id: '00000000-0000-7000-8000-000000000037',
+        name: 'Workspace B',
+        region: 'global',
+        role: 'member',
+      },
+    }));
+
+    expect(await screen.findByText('global:Workspace B')).toBeVisible();
+    expect(observedPendingConnectorOAuth?.workspaceId).toBe(euSession.workspace!.id);
+    expect(screen.getByTestId('pending-connector-attempt')).toHaveTextContent('a'.repeat(43));
+  });
+
+  it('distinguishes a retryable workspace activation outage from denied access', async () => {
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000038';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockRejectedValueOnce(
+      new Error('Rally could not reach the selected regional service.'),
+    );
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    const before = window.location.hash;
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000039`,
+    );
+
+    await waitFor(() => expect(lastDeepLinkFailure()).toContain('Check your connection'));
+    expect(lastDeepLinkFailure()).toContain('reopen this link');
+    expect(window.location.hash).toBe(before);
+    expect(screen.getByText('eu:European Research')).toBeVisible();
   });
 
   it('opens the note a closing meeting window hands back', async () => {
@@ -938,20 +1325,23 @@ describe('draft cache lifetime across a session', () => {
 
     expect(await screen.findByText('eu:European Research')).toBeVisible();
     await waitFor(() => expect(observedApi).not.toBeNull());
-    expect((await readDraftText('new-workstream:workspace-eu'))?.text).toBe('written before the last quit');
+    await waitFor(async () => expect((await readDraftText(
+      newWorkstreamDraftKey('eu', 'workspace-eu'),
+    ))?.text).toBe('written before the last quit'));
   });
 
   it('drops every draft when the session ends without going through signOut', async () => {
     bridge.getSession.mockResolvedValue(euSession);
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
-    await writeDraftText('workstream:1', 'half a thought');
+    const draftKey = workstreamDraftKey('eu', 'workspace-eu', '1');
+    await writeDraftText(draftKey, 'half a thought');
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
     // Main surrendering a terminally expired credential, not a button press.
     act(() => sessionListener?.(null));
 
-    await waitFor(async () => expect(await readDraftText('workstream:1')).toBeNull());
+    await waitFor(async () => expect(await readDraftText(draftKey)).toBeNull());
   });
 
   it('abandons an opening attempt when the session that owns it ends', async () => {
@@ -979,12 +1369,62 @@ describe('draft cache lifetime across a session', () => {
     bridge.getSession.mockResolvedValue(euSession);
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
-    await writeDraftText('workstream:1', 'half a thought');
+    const draftKey = workstreamDraftKey('eu', 'workspace-eu', '1');
+    await writeDraftText(draftKey, 'half a thought');
     await waitFor(() => expect(sessionListener).not.toBeNull());
 
-    act(() => sessionListener?.({ ...euSession, user: { ...euSession.user, id: 'user-2' } }));
+    act(() => sessionListener?.({
+      ...euSession,
+      user: { ...euSession.user, id: 'user-2', email: 'another@example.com' },
+    }));
 
-    await waitFor(async () => expect(await readDraftText('workstream:1')).toBeNull());
+    await waitFor(async () => expect(await readDraftText(draftKey)).toBeNull());
+  });
+
+  it('preserves both workspace draft scopes while switching within one account', async () => {
+    const globalSession: DesktopSession = {
+      ...euSession,
+      apiBaseUrl: 'https://api.rallywith.ai',
+      workspace: { ...euSession.workspace!, id: 'workspace-global', name: 'Global Research', region: 'global' },
+    };
+    bridge.getSession.mockResolvedValue(euSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    const euDraft = workstreamDraftKey('eu', 'workspace-eu', '1');
+    const globalDraft = workstreamDraftKey('global', 'workspace-global', '2');
+    await writeDraftText(euDraft, 'eu thought');
+    await writeDraftText(globalDraft, 'global thought');
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+
+    act(() => sessionListener?.(globalSession));
+
+    expect(await screen.findByText('global:Global Research')).toBeVisible();
+    expect((await readDraftText(euDraft))?.text).toBe('eu thought');
+    expect((await readDraftText(globalDraft))?.text).toBe('global thought');
+  });
+
+  it('clears only the departed workspace draft scope after leave succeeds', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.leaveWorkspace.mockResolvedValue({ outcome: 'left' });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    const euDraft = workstreamDraftKey('eu', 'workspace-eu', '1');
+    const globalDraft = workstreamDraftKey('global', 'workspace-eu', '2');
+    await writeDraftText(euDraft, 'eu thought');
+    await writeDraftText(globalDraft, 'global thought');
+    await waitFor(() => expect(observedLeaveWorkspace).not.toBeNull());
+
+    await act(async () => {
+      await observedLeaveWorkspace?.('workspace-eu', 'left');
+    });
+
+    expect(bridge.leaveWorkspace).toHaveBeenCalledWith({
+      expectedOutcome: 'left',
+      region: 'eu',
+      workspaceId: 'workspace-eu',
+    });
+    expect(await readDraftText(euDraft)).toBeNull();
+    expect((await readDraftText(globalDraft))?.text).toBe('global thought');
   });
 
   it('cannot be repopulated by a composer flushing its draft on the way out', async () => {

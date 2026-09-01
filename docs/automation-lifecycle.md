@@ -151,6 +151,14 @@ generated child work stream.
 behavior, pause/resume reconciliation, and missed-occurrence policy are local to
 the object; WorkspaceDO's `schedules` table no longer carries automations at all.
 
+Before compiler or provider dispatch, schedule work, child-run provisioning, or
+outbox delivery, AutomationAgent reads its regional workspace row. A non-null
+`abandoned_at` is a terminal authority fence: schedules pause, live compiler
+runs fail, claimed occurrences and pending outbox effects fail, and no provider
+or collaborator call begins. Route admission alone is insufficient because an
+already-addressed Durable Object can wake from its own alarm after membership
+has ended.
+
 **Connector events** follow one regional path:
 
 1. A connector adapter validates and normalizes a provider event against its
@@ -426,6 +434,11 @@ email is addressed and rendered
 - **An outbox effect fails.** It returns to `pending` with an incremented attempt
   and the shared exponential delay. An effect kind nothing can deliver is marked
   `failed` rather than retried forever ahead of the effects behind it.
+- **The regional workspace is abandoned.** The operational fence retires every
+  local execution lane before external work starts. If D1 cannot answer, the
+  object fails closed and leaves the alarm retryable; it does not infer that the
+  workspace is operational. Once abandonment is observed, pending local work is
+  terminalized rather than retried into a workspace that admission has closed.
 - **A delivery is claimed twice.** The second claim is answered `busy` with the
   lease's expiry and retried after it; settlement is fenced by the lease token,
   so an expired handler cannot overwrite its successor.
@@ -460,7 +473,7 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, and an `ApiError` raised inside the object surviving the RPC hop with its own status. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
 | `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
@@ -563,6 +576,28 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-01 — Abandonment fences already-addressed automations
+
+**What changed:** AutomationAgent now reads the regional workspace lifecycle
+before compiler/provider dispatch, schedule handling, run provisioning, and
+outbox delivery. Observed abandonment pauses schedules and terminalizes the
+object's pending work; an unavailable lifecycle read fails closed.
+
+**Why:** Closing route and socket admission does not stop an AutomationAgent
+whose own alarm was already stored. Without a local operational check it could
+call a provider or provision a child after the final member abandoned the
+workspace.
+
+**Considered and rejected:** Relying on membership revocation fan-out or adding
+a second pushed lifecycle projection. The former does not own every alarm lane;
+the latter creates another value whose delivery must race the D1 authority.
+
+**Consequences:** Each execution lane pays one regional D1 read before external
+work. D1 failure delays work visibly through the existing alarm retry, while
+abandonment is terminal for pending local operations.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-31 — The create boundary's own refusals stop answering 500
 

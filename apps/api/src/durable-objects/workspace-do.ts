@@ -26,6 +26,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   workstreamParticipantPreview,
   WorkspaceIdSchema,
+  WorkspaceAttentionSchema,
   WorkspaceProjectSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceSidebarSchema,
@@ -121,6 +122,7 @@ import {
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   WorkspaceDirectoryApplyRequestSchema,
+  WorkspaceAttentionRequestSchema,
   WorkspaceDirectoryBatchTargetsRequestSchema,
   WorkspaceDirectoryBatchTargetsResultSchema,
   WorkspaceBatchDispatchAdvanceRequestSchema,
@@ -157,6 +159,8 @@ import {
   WorkspaceRegionalEffectApplyRequestSchema,
   WorkspaceRegionalEffectApplyResultSchema,
   type WorkspaceDirectoryApplyRequest,
+  type WorkspaceAttentionRequest,
+  type WorkspaceAttentionResult,
   type WorkspaceDirectoryBatchTargetsRequest,
   type WorkspaceBatchDispatchAdvanceRequest,
   type WorkspaceBatchDispatchBeginRequest,
@@ -5887,6 +5891,65 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Summarize member attention from the authoritative workspace directory.
+   * Each work stream contributes at most once even when several reasons apply.
+   */
+  async attention(input: WorkspaceAttentionRequest): Promise<WorkspaceAttentionResult> {
+    await this.initialized;
+    const request = WorkspaceAttentionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{
+      waiting_for_you: number;
+      waiting_priority: number;
+      has_unread_activity: number;
+    }>(
+      `SELECT
+         COALESCE(SUM(CASE
+           WHEN viewer.is_participant = 1 AND (
+             viewer.latest_mention_attention_ordinal > viewer.seen_attention_ordinal
+             OR viewer.unseen = 1
+             OR directory.exact_state = 'needs_input'
+           ) THEN 1 ELSE 0 END), 0) AS waiting_for_you,
+         COALESCE(MAX(CASE
+           WHEN viewer.is_participant = 1
+            AND viewer.latest_mention_attention_ordinal > viewer.seen_attention_ordinal THEN 3
+           WHEN viewer.is_participant = 1 AND directory.exact_state = 'needs_input' THEN 2
+           WHEN viewer.is_participant = 1 AND viewer.unseen = 1 THEN 1
+           ELSE 0 END), 0) AS waiting_priority,
+         COALESCE(MAX(CASE
+           WHEN (directory.scope = 'workspace' OR viewer.is_participant = 1) AND (
+             directory.latest_attention_ordinal > COALESCE(
+               viewer.seen_attention_ordinal,
+               directory.unread_tracking_start_ordinal
+             )
+             OR viewer.manual_unread_from_ordinal IS NOT NULL
+             OR viewer.unseen = 1
+           ) THEN 1 ELSE 0 END), 0) AS has_unread_activity
+       FROM workspace_workstream_directory directory
+       LEFT JOIN workspace_workstream_viewers viewer
+         ON viewer.workstream_id = directory.workstream_id
+        AND viewer.user_id = ?
+        AND viewer.authority_generation = directory.authority_generation
+       WHERE directory.archived_at IS NULL
+         AND directory.origin_type <> 'automation'
+         AND directory.system_kind IS NULL`,
+      request.userId,
+    ).one();
+    const waitingReason = row.waiting_priority === 3
+      ? "mentioned"
+      : row.waiting_priority === 2
+        ? "needs_input"
+        : row.waiting_priority === 1
+          ? "unseen"
+          : null;
+    return WorkspaceAttentionSchema.parse({
+      waitingForYou: row.waiting_for_you,
+      waitingReason,
+      hasUnreadActivity: row.has_unread_activity === 1,
+    });
+  }
+
+  /**
    * Resolve a generic member-visible filter once, inside the object that owns
    * the cross-work-stream index. The caller turns each returned id into one
    * Queue event; it never probes child objects to rediscover this list.
@@ -9003,7 +9066,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            FROM workspace_members member
            JOIN workspaces workspace ON workspace.id = member.workspace_id
           WHERE member.workspace_id = ? AND member.user_id = ?
-            AND member.status = 'active' AND workspace.region = ?`,
+            AND member.status = 'active' AND workspace.region = ?
+            AND workspace.abandoned_at IS NULL`,
       ).bind(identity.workspaceId, identity.userId, this.env.AVALON_REGION)
         .first<WorkspaceAuthRoleRow>()
       : await this.env.DB.prepare(
@@ -9020,7 +9084,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            JOIN workspaces workspace ON workspace.id = session.workspace_id
           WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
             AND session.region = ? AND session.revoked_at IS NULL
-            AND session.expires_at > ? AND workspace.region = ?`,
+            AND session.expires_at > ? AND workspace.region = ?
+            AND workspace.abandoned_at IS NULL`,
       ).bind(
         identity.sessionId,
         identity.userId,

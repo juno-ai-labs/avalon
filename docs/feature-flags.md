@@ -465,7 +465,7 @@ guarantee. The inference ledger records what each attempt actually used.
 ### Client-visible flags
 
 A client flag decides what the desktop is allowed to *offer*, or how it should
-behave. There are seven today:
+behave. There are eight today:
 
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
@@ -475,21 +475,23 @@ behave. There are seven today:
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
 | `automation-workspace-templates-enabled` | boolean | `false` | Whether Electron shows workspace-template surfaces |
 | `digests-enabled` | boolean | `true` | Whether Electron shows the Digest settings section — resolved through `digest-flags.ts`, the same function that gates delivery; see [`digests.md`](digests.md#the-run) |
+| `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 | `control-tower-refresh-seconds` | number | `60` | How often a recording meeting commits a transcript segment and rewrites its Control Tower briefing |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
 false, "hypersightEnabled": false, "meetingRecordingEnabled": false,
 "suggestedWorkEnabled": false, "automationWorkspaceTemplatesEnabled": false,
-"digestsEnabled": true, "controlTowerRefreshSeconds": 60 }` — resolved for the
+"digestsEnabled": true, "multipleWorkspacesEnabled": false,
+"controlTowerRefreshSeconds": 60 }` — resolved for the
 signed-in person. It answers under *identity* auth rather than workspace auth:
 eligibility belongs to the account, and a device that has not chosen an
-organization yet still has to be told the feature is off rather than read a
+workspace yet still has to be told the feature is off rather than read a
 403 as an outage. `digestsEnabled` is the exception to "not chosen yet reads
 as off": with no workspace to evaluate against, it reads `true`, the same gap
 every other absence in this flag's evaluation resolves to.
 
 The fields are not all the same kind of answer, and the response schema says
-so. Five of the six Boolean features default to off; `digestsEnabled` is the
+so. Six of the seven Boolean features default to off; `digestsEnabled` is the
 one exception, for the same reason it is discussed on its own below.
 `controlTowerRefreshSeconds` is a setting with no off: it defaults to the
 cadence the client would have used anyway, and both ends read that number
@@ -512,17 +514,19 @@ camel-case response fields. `true` therefore always means the surface may be
 shown and `false` means it is hidden; no caller has to infer whether a bare name
 means disabled, hidden, or selected.
 
-The four original managed product Booleans are presentation-only. Only
+The managed product Booleans other than digests are presentation-only. Only
 Electron consumes them to show or hide product surfaces; the API routes and
 underlying product capabilities do not evaluate them. They are rollout
 controls for discovery and visibility, not authorization, entitlements, or
 server-side kill switches. A hidden Suggested Work surface may skip its own
 fetch and impressions because nothing was drawn, but the Suggested Work API
 remains available. The same rule applies to workspace-template,
-meeting-recording, and HyperSight operations.
+meeting-recording, HyperSight, and multiple-workspace operations. Turning the
+multiple-workspaces flag off hides the account-menu affordances; it does not
+collapse memberships or discard stored workspace credentials.
 
 **`digestsEnabled` breaks that pattern on purpose.** As a client field it is
-presentation-only exactly like the other five — Electron shows or hides a
+presentation-only exactly like the other six — Electron shows or hides a
 settings section, nothing else changes. But the Flagship flag behind it,
 `digests-enabled`, is not merely a rollout control: `fireDigestSchedule`
 reads the identical flag to decide whether to actually send. A hidden
@@ -555,7 +559,7 @@ statement about which rules are worth writing, not a guarantee that a given
 attribute was sent: the usual omissions still apply below, so a rule on
 `userEmailDomain` is a rule the client flags can express, not one that always
 matches. `workstreamId` is never known here, so no `workstream*` attribute ever
-appears. `workspaceId` is present only once an organization has been chosen.
+appears. `workspaceId` is present only once a workspace has been chosen.
 
 Everything that is not an explicit `true` resolves to off: no binding, a binding
 that throws, a flag that does not resolve, a non-boolean value.
@@ -1097,6 +1101,82 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-09-01 — Grok 4.6 and Gemini 3.7 Flash join the pinnable set
+
+**What changed:** `x-ai/grok-4.6` and `google/gemini-3.7-flash` were added to
+`AGENT_MODEL_OVERRIDES`, and every family in that list is now ordered **newest
+first** — which moved `x-ai/grok-4.6` to the head of the list and `x-ai/grok-4.3`
+to the end of its own family. The desktop selector gained the two short names the
+menu shows in place of the raw ids.
+
+**Why the ordering:** The selector groups by vendor, so a family's order is what
+a reader sees under its heading, and the model somebody is most likely to want
+is the one they should not have to scan for. Fixing it as a rule also settles
+where the *next* model goes — the top of its family — rather than leaving each
+addition to argue the question again.
+
+**Why:** Both models were already reachable by this repository — 4.6 through the
+checked-in Monad Azure binding, and both through a flag variation naming them —
+but neither could be *pinned*, which is the only way a developer selects a model
+per work stream. The gap was in the closed list alone, not in routing.
+
+**What the reorder did break** is prose that had quietly fused two facts: that
+`x-ai/grok-4.3` was first in the list, and that it is what
+`agent-model-workstream` serves. Step 7 of the desktop model-selector acceptance
+procedure in [`e2e.md`](e2e.md) said "pin explicitly to the first listed model"
+and expected the trigger to read **Grok 4.3**, which after the reorder pins
+Grok 4.6 and waits for a label that never appears. It now names Grok 4.3 as the
+flag's default and adds Grok 4.6 as the first entry, so the step proves the
+control reads a pin rather than a position. Step 3's model count went the same
+way and is now stated as the contract rather than a number.
+
+Reordering was otherwise safe because nothing reads position 0. The contract's own comment
+claimed the first entry was what the selector showed before anything was chosen,
+and that stopped being true when the unpinned state became a row of its own: the
+menu renders `UNPINNED_AGENT_MODEL` above every group and labels it **Default**,
+precisely so the renderer never names a model for a variation it cannot see. The
+comment and the one test that pinned `AGENT_MODEL_OVERRIDES[0]` to `x-ai/grok-4.3`
+were both stale, and both are replaced by the ordering rule.
+
+**Considered and rejected:** Adding the two ids to Ace's `MODEL_CHOICES` and the
+pricing worker's `OPENROUTER_PRICING_MODEL_IDS` as well. Both derive from
+`AGENT_MODEL_OVERRIDES` and picked the models up from this one edit; writing them
+out again would create three lists that can disagree, which is what the derived
+shape exists to prevent. `x-ai/grok-4.6` is now named by both the developer list
+and `AZURE_DEPLOYED_OPENROUTER_MODEL_IDS`, and the pricing worker's `Set` union
+still prices it once.
+
+**Consequences:** The pricing cron now warms two more KV keys per run, one of
+them (`google/gemini-3.7-flash`) for a model with no Azure deployment — the
+cache covers every developer-selectable id whether or not Azure can serve it, so
+that is the list working as intended rather than a stray entry. A pin naming
+`x-ai/grok-4.6` inherits its Azure-first route from `agent-harness.md`'s
+checked-in binding, so a pinned run there is not OpenRouter-only. A model added
+to this list from now on goes at the top of its family; a test enforces that for
+every family whose ids carry comparable version numbers, which is all of them
+except `gpt-5.6-*` and `deepseek-v4-*`, whose members share a version and are
+ordered by hand.
+### 2026-08-31 — Multiple-workspace rollout is presentation-only and defaults off
+
+**What changed:** `multiple-workspaces-enabled` is served as
+`multipleWorkspacesEnabled`, defaulting to `false`. Electron uses it to expose
+the switcher, invitation and creation affordances, and background attention;
+the plural server contracts and stored credential set remain active either way.
+
+**Why:** Rollout needs a reversible presentation control without making a flag
+an authorization boundary or destroying memberships already created by a newer
+client.
+
+**Considered and rejected:** Gating plural onboarding and membership lifecycle
+on the same flag. That would make turning presentation off mutate account state
+and could strand a credential whose workspace still exists.
+
+**Consequences:** Older clients keep using the singular compatibility workspace,
+and newer clients with the flag off open their device-local active workspace.
+Server routes must never treat this flag as entitlement.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-30 — The Suggested context model route was retired
 

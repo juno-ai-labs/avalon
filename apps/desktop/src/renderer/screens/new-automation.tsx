@@ -705,7 +705,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   );
   const agentFeed = useAutomationAgentSocket(api, automationId);
   const carriedInput = useRef<string | null>(null);
-  const draftKey = newAutomationDraftKey(workspace.id, composerDraftId);
+  const draftKey = newAutomationDraftKey(workspace.region, workspace.id, composerDraftId);
   const { text: input, setText: setInput, releaseDraft } = useDraftText(draftKey);
   useEffect(() => {
     const carried = carriedInput.current;
