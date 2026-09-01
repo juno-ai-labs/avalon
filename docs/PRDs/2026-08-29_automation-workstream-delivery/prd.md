@@ -40,10 +40,10 @@ one idea:
    room ending ends it.
 2. **Any work-stream agent can author one**, in the room's main feed, through a
    deferred `rally:automations` plugin — including the agent behind a Slack
-   mention, so "@Rally every Monday at 9am ask this channel what shipped" is a
-   workspace automation posting into that channel. You say it where the work is.
-   The agent drafts and a person accepts — acceptance stays human, because an
-   automation is a standing credential grant and a model must never mint one.
+   mention, so "@Rally every Monday at 9am ask this channel what shipped" is
+   something you set up where the work is. The agent drafts and a person accepts
+   — acceptance stays human, because an automation is a standing credential
+   grant and a model must never mint one.
 3. **A classifier decides what each result was worth.** One structured-output
    call on its own Flagship model role returns `done` (nothing worth anyone's
    attention), `deliver` (send it to the automation's destination), or
@@ -64,10 +64,15 @@ stream to deliver into: an automation delivers to the room that owns it or to no
 room at all. One work stream never posts into another. The only agent-facing
 change is that `automation_submit_draft` accepts the new scope.
 
-Destinations also stop being person-shaped for everybody. A `workspace`
-automation can deliver into a Slack channel, which is the first destination it
-has ever had — today the guard in `resolveDeliveryTargets` refuses it one, so
-its results reach nobody.
+Two words in this document mean different things and are easy to run together.
+**Scope** is who can see and manage an automation. **Delivery** is where its
+result goes when the classifier says it is worth sending, and that follows from
+what the automation belongs to rather than from its scope: a personal
+automation's result goes to its person, a room's goes to the room. A workspace
+automation has no recipient at all, and reaches people the way it always has —
+by *doing* something with its connector tools. **Delivery is not how a run acts**
+covers the difference, because getting it wrong is how this PRD acquired a
+destination kind it did not need.
 
 The PRD also closes a silent gap in resource watching. The Google connector
 declares `supportsWatches: true`, but none of its activity types declare
@@ -155,10 +160,11 @@ can tell why.
    channel — scoped to themselves, to the workspace, or to that work stream —
    and a person accepts it where they asked for it. No model, on any loop, can
    activate an automation by itself.
-4. Every automation has a destination whose shape matches its scope: a person's
-   inbox or DM for `personal`, a shared destination such as a Slack channel for
-   `workspace`, and the owning room for `workstream`. No automation delivers
-   into a work stream other than the one that owns it.
+4. A `deliver` disposition sends the result to whoever the automation belongs
+   to — its person, or the room that owns it — and no automation delivers into a
+   work stream other than the one that owns it. Where a run needs to *act*
+   somewhere, it uses the connector tools it is already bound to, which is a
+   different thing from delivery and stays that way.
 5. Each completed run's result is routed by a classified disposition — `done`,
    `deliver`, or `new_workstream` — decided once per run by a structured-output
    classifier reading the result, never by a regex over the model's prose and
@@ -194,8 +200,8 @@ can tell why.
    into the room that owns it and no other; no tool, picker, or field can name a
    different one. A room's transcript is the room's, and a standing behavior
    that writes into it is something that room owns rather than something pointed
-   at it from outside. Output meant for elsewhere has three destination kinds
-   for elsewhere: a person's inbox, a person's DM, and a shared channel.
+   at it from outside. A run that needs to put something somewhere else does it with a
+   connector tool, which is not delivery (**Delivery is not how a run acts**).
    Rejected.
 2. **The woken run is not a reply channel.** A run started by an activation
    reads it like any other untrusted evidence, and has no way to answer the
@@ -265,11 +271,10 @@ What ownership means, concretely:
   person's access.
 - **It ends when the room ends.** Archiving the owning work stream pauses its
   automations — an archive is reversible and so is the pause. Deleting the work
-  stream deletes them, through the foreign key in **Data model**. There is no
-  orphan and no re-homing (non-goal 4).
+  stream deletes them (**Deletion and archival are effects, not foreign keys**).
+  There is no orphan and no re-homing (non-goal 4).
 
-`personal` and `workspace` automations keep their own scopes and gain a
-destination shape that fits them (**Authoring from inside the room**). Neither
+`personal` and `workspace` automations are unchanged by any of this, and neither
 can deliver into a work stream: the only automation that writes into a room is
 the one that room owns (non-goal 1).
 
@@ -348,78 +353,103 @@ from there**: the card's action calls the same `acceptDraft`, with the same
 acceptance authority, a second entry point to it, never a second
 implementation.
 
-Scope is part of the draft, and all three are authorable from a room:
+Scope is part of the draft, and all three are authorable from a room. **Scope
+decides who can see the automation and who can change it, and nothing else:**
 
-| Scope | Whose it is | Who may manage it | Where its results go |
+| Scope | Who sees it | Who may manage it | Where it is listed |
 | --- | --- | --- | --- |
-| `personal` | The person whose message started this run, and nobody else | Its author | Their email, their Slack Agent DM |
-| `workspace` | The workspace | Owners and admins | A Slack channel — the one it was asked in, or one picked at acceptance |
-| `workstream` | This work stream | Every active participant | The owning work stream, and nowhere else |
+| `personal` | The person whose message started this run, and nobody else | Its author | Their sidebar |
+| `workspace` | The workspace | Owners and admins | The workspace's sidebar |
+| `workstream` | The owning work stream's participants | Every active participant | That room's rail, and no sidebar |
 
 The agent asks which one rather than picking a default. "Just for you, for the
 workspace, or for this room" is the difference between an automation that
 follows a person, one the admins own, and one the room keeps, and it is not
 recoverable later by anything cheaper than authoring it again (non-goal 4). A
 `personal` automation drafted in a room stays that one person's: invisible to
-the other participants, delivered to their own destinations, listed in their
-sidebar.
+the other participants, listed in their sidebar.
 
-**A destination has a shape, and it has to match the scope.** Person-shaped for
-`personal` (unchanged), workspace-shaped for `workspace` — a Slack channel,
-which is the first destination a workspace automation has ever had — and
-room-shaped for `workstream`, where the scope *is* the destination: the draft
-does not request one, and cannot request a different one, so "which room owns
-this" and "which room receives this" never become two fields that must agree.
+### Delivery is not how a run acts
 
-A `workstream` automation therefore delivers to its room and nothing else. A
-person-shaped destination on it would have to resolve to somebody, and picking
-the accepting author would rebuild inside the destination set exactly the
-dependency on one individual that this scope exists to remove. Whoever wants the
-Monday agenda in their inbox reads it in the room or keeps a personal automation
-of their own; "copy me on this room's automations" is a notification preference
-and belongs with the rest of them (non-goal 9).
+An automation reaches people in two entirely different ways, and an earlier
+revision of this PRD spent a whole destination kind on confusing them.
 
-It is listed in its room's rail and nowhere else — not in the sidebar, for its
-creator or anyone (non-goal 8). One home means no second list to keep in
-agreement.
+**Delivery is Rally sending the run's result to whoever the automation belongs
+to.** It is frozen, receipted, idempotent, and gated by the classifier, and the
+model has no say in where it goes:
+
+| Belongs to | A `deliver` disposition means |
+| --- | --- |
+| A person (`personal`) | Their own destinations: their email, and the connector-declared personal-delivery channels — a DM, for Slack |
+| A work stream (`workstream`) | An activation in the owning room, which also wakes it |
+| The workspace (`workspace`) | Nothing. A workspace has no inbox and no transcript; there is nobody for a result to be *sent* to |
+
+That last row is not a gap to fill. `resolveDeliveryTargets` already refuses a
+delivery set on a non-personal automation
+(`automation_personal_delivery_required`, `automation-agent.ts:3156`), and it is
+right to: every destination it can resolve names a person, and a workspace is
+not one. An earlier revision of this PRD read that guard as a mistake and added
+a Slack-channel destination to fix it. That was the wrong end of the problem.
+
+**Acting is the run using the connector tools it was bound to at acceptance.**
+Posting into `#eng` is `slack.send_message`; updating a Linear project is
+`linear.create_comment` or `linear.update_issue`. Automations have always had
+this — it is what a run's frozen `connectorBindings` are for — and it is how a
+workspace automation gets anything in front of anybody. "Every Monday, post the
+release summary in #eng" and "every Friday, update the Linear project" are both
+*actions*, written into the automation's instructions and performed by the run.
+
+Which one a draft should use, when either could work:
+
+- If the thing you want people to see **is the run's result**, it is delivery —
+  for a person, or for the room that owns the automation.
+- If the thing you want is **a change somewhere else** — a message in a channel,
+  a comment on an issue, a row in a sheet — it is an action, and the run does it
+  with a tool.
+
+The distinction is not stylistic. A delivery destination cannot be redirected by
+anything that steers the run, because it is resolved from what the automation
+belongs to. A tool call's arguments come from the run, which is why
+email-triggered runs lose connector write tools entirely and why this PRD adds
+no tool that could pick an audience (non-goal 1).
 
 ### Authoring from Slack
 
 A Slack mention already creates or continues a work stream, so nothing about the
-previous section stops being true when the conversation happens there:
+previous sections stops being true when the conversation happens there:
 
 > **@Rally** every monday at 9am send a message to this channel asking what each
 > person shipped this weekend
 
-That is a workspace automation whose destination is the channel it was asked in,
-and it is authorable exactly as the in-room case is, with two details the Slack
-origin settles for free:
+That is a `workspace` automation — the team should be able to see and change it
+— whose run *acts*: every Monday at 09:00 it calls `slack.send_message` on the
+channel it was set up in. Nothing is delivered, because a workspace automation
+has nobody to deliver to, and nothing needs to be: the message in the channel is
+the point, and the run put it there.
 
-- **The channel is host-supplied, not model-parsed.** The run holds its Slack
-  origin, so "this channel" resolves to the channel ID the mention arrived on.
-  The draft asks for `{kind: "channel"}` and acceptance materializes the origin
-  channel from it — the same discipline the owning work stream gets, and the
-  reason no tool exists for a model to name a channel. An automation authored
-  *outside* Slack instead gets a picker at acceptance, over the channels the
-  workspace connection can already post into.
+Two details the Slack origin settles for free:
+
+- **The channel comes from the origin, not from the model.** The run holds its
+  Slack origin, so "this channel" is the channel the mention arrived on, and
+  that ID is frozen into the automation's instructions at acceptance rather than
+  re-derived on each occurrence. A run does not go looking for a channel to post
+  in.
 - **The person sees the draft in the thread.** The draft card renders as Slack
-  blocks in the thread the mention started, alongside the run's reply, and
-  accepting is a block action calling the same `acceptDraft` the feed card and
-  `/automations/:id` call. Three entry points, one authority.
+  blocks in the thread the mention started, and accepting is a block action
+  calling the same `acceptDraft` the feed card and `/automations/:id` call.
+  Three entry points, one authority.
 
-**Acceptance is still owner-or-admin for a workspace automation**, and that is
-worth being plain about because it is friction on the most natural version of
-this request: an ordinary member can ask for it, and the draft waits for an
-admin. Rally says so in the thread and names what is needed rather than failing
-silently. Open question 6 asks whether a member should be able to accept a
-workspace automation whose only destination is a channel they can already post
-in, which is the case where the standing grant reaches no further than the
-person asking for it already does.
+**Acceptance is owner-or-admin for a workspace automation**, and that is worth
+being plain about because it is friction on the most natural version of this
+request: an ordinary member can ask for it, and the draft waits for an admin.
+Rally says so in the thread and names what is needed rather than failing
+silently. Open question 5 asks whether that is right for an automation whose
+only effect is in a channel the requester can already post in.
 
-The run itself is unremarkable: it fires on the schedule, posts through
-`postSlackTextChunks` into the frozen channel, and its result is classified like
-any other — a Monday where the automation has nothing to say is a `done`, and
-the channel is not interrupted.
+The classifier still runs on the occurrence, and for this automation it is
+choosing between `done` and surfacing the run: there is no `deliver` arm,
+because there is no recipient. What that decides is whether anybody is told the
+occurrence happened *besides* the channel message the run already posted.
 
 ### The rail's Automations section
 
@@ -452,7 +482,7 @@ rather than recomputing it:
 | Disposition | What happens |
 | --- | --- |
 | `done` | Nothing is delivered. Every destination gets a `skipped` receipt carrying the reason. |
-| `deliver` | The result goes to the automation's destination — an inbox, a DM, a channel, or the owning work stream, which also wakes (**What lands in the work stream**). |
+| `deliver` | The result goes to whoever the automation belongs to — a person's own destinations, or the owning work stream, which also wakes (**What lands in the work stream**). |
 | `new_workstream` | The work stream the run already executed in is surfaced at the automation's scope (**When the run's own work stream is surfaced**). |
 
 **One classifier decides it, and nothing else gets a vote.** A structured-output
@@ -471,27 +501,34 @@ schema after the gateway's repair attempts, a timeout — the disposition is
 can see and complain about; a swallowed result is silence nobody knows to look
 for.
 
-**The arms come from the scope**, rendered into the JSON schema the classifier
-answers against rather than checked afterwards, so a model cannot reach an arm
-it was not offered:
+**The arms come from what the automation can reach** — not from its scope,
+which decides something else entirely (**Delivery is not how a run acts**). They
+are rendered into the JSON schema the classifier answers against rather than
+checked afterwards, so a model cannot reach an arm it was not offered:
 
-| Scope | Arms |
+| The automation belongs to | Arms |
 | --- | --- |
-| `personal`, `workspace` | `done`, `deliver`, `new_workstream` |
-| `workstream` | `done`, `deliver` |
+| A person | `done`, `deliver`, `new_workstream` |
+| A work stream | `done`, `deliver` |
+| The workspace | `done`, `new_workstream` |
 
-A `workstream` automation is not offered `new_workstream` because there is
-nothing for it to do: surfacing means "go and look at the run", and the room
-already has the result in its own transcript, from an agent that woke on it and
-can be asked about it in place.
+A room's automation is not offered `new_workstream` because there is nothing for
+it to do: surfacing means "go and look at the run", and the room already has the
+result in its transcript, from an agent that woke on it and can be asked about
+it in place. A workspace automation is not offered `deliver` because it has no
+recipient — for it, the question is only whether this occurrence is worth
+anybody opening.
 
-**`shouldSuppressAutomationResult` is deleted**, with every call site: the
-predicate at `slack-agent-service.ts:3954`, the Slack DM check at `:1354`, and
-the email check at `automation-email-service.ts:61`. Its empty-text half goes
-too, so the delivery paths must handle an empty final message rather than
-relying on a regex to have filtered it — an empty result is a `done` from the
-classifier, and anything the classifier says to deliver is delivered whatever it
-looks like.
+**`shouldSuppressAutomationResult` is deleted**, with both call sites — the
+Slack DM check in `deliverFrozenAutomationResult` and the email check in
+`deliverFrozenAutomationResultEmail`. Its empty-text half needs no replacement:
+both are reached only through `deliverCanonicalExternalResult`, which is handed
+`canonicalExternalResultText(message)`, and that returns `null` for text that
+trims empty — the wrapper skips the provider call without invoking either
+deliverer. Blank results were already skipped a layer up, so that branch was
+dead at both call sites. Shipped ahead of the classifier, which means an
+occurrence that finds nothing says so to its person until the classifier lands;
+that is the failure direction to be on.
 
 ### What lands in the work stream
 
@@ -618,11 +655,12 @@ steady state. Since the only automation delivering into a work stream is the one
 that room owns (non-goal 1), that is the whole of it; there is no automation
 elsewhere holding a destination that quietly went away.
 
-A channel destination has its own two: the connection is disabled or revoked,
-and the channel is gone or the connection was removed from it. Both are the
-connector's own errors, both skip with the reason in the receipt, and neither
-substitutes anything. An admin repairs them the way they repair any other
-connection.
+A person's destinations have their own failures — a revoked connection, an
+address that no longer matches the one frozen at acceptance — and those are
+unchanged by this PRD. A run that fails at a *tool* rather than at delivery is
+not a delivery failure at all: it is a step of the occurrence that errored, it
+appears on the run history as one, and the classifier still runs on whatever the
+run managed to conclude.
 
 A `new_workstream` disposition has one failure of its own, and it is a small
 one: the day's cap is spent. The run's work stream stays hidden, the receipt
@@ -717,7 +755,8 @@ accepted by the recruiter in the room, and listed in its rail:
 
 A fourth automation in the same workspace is not the room's at all: an admin
 keeps a `workspace`-scoped one that summarizes the week's search activity into
-`#recruiting`. It delivers to that channel, and on the week the summary turns up
+`#recruiting`. Its run posts there with `slack.send_message` — that is an
+action, not a delivery — and on the week the summary turns up
 something worth reading properly — a client's terms changed mid-search — the
 classifier returns `new_workstream` and the run's own work stream appears in the
 workspace's sidebar, holding the summary and every step that produced it. No
@@ -816,17 +855,24 @@ None yet.
    never agreed to. Consent has to be the act, not a notification about it. The
    cost is an automation sitting unclaimed while everybody assumes somebody else
    will take it; the card sits in the room where those people already are.
-5. **A destination's shape has to match the scope.** `resolveDeliveryTargets`
-   refuses any destination on a non-personal automation today
-   (`automation_personal_delivery_required`, `automation-agent.ts:3156`), which
-   reads like a rule about scope and is really a consequence of both existing
-   destinations resolving to a person. The effect is that a workspace automation
-   produces results reaching nobody, which is most of why nobody uses one. The
-   rule becomes the shape rule — person-shaped, workspace-shaped, room-shaped —
-   and a Slack channel is the workspace-shaped destination that exists today.
-   Rejected: resolving a workspace automation's person-shaped destinations
-   against whoever accepted it, which hands a shared object one individual's
-   inbox and breaks the day they leave.
+5. **Scope is visibility; it is not a destination.** An earlier revision of this
+   PRD built a rule out of running the two together — person-shaped destinations
+   for `personal`, a Slack channel for `workspace`, the room for `workstream` —
+   and read `resolveDeliveryTargets`' refusal of non-personal automations
+   (`automation_personal_delivery_required`, `automation-agent.ts:3156`) as a
+   bug to fix, on the grounds that a workspace automation's results reached
+   nobody. The refusal is correct: every destination it resolves names a person,
+   and a workspace is not one. What was actually missing was nothing — a
+   workspace automation reaches people by *acting*, with the connector tools its
+   run is bound to, which is how "post the release summary in #eng" has always
+   worked. So scope decides who sees and manages an automation, delivery
+   follows from what it belongs to, and the channel destination, the shape rule,
+   the acceptance-time picker, the `channel` request kind and the
+   `automation_delivery_target_scope_mismatch` refusal that revision introduced
+   are all deleted rather than built. Rejected along with them: resolving a
+   workspace automation's person-shaped destinations against whoever accepted
+   it, which hands a shared object one individual's inbox and breaks the day
+   they leave.
 6. **`new_workstream` surfaces a room that exists; it does not create one.** An
    earlier revision had the arm create a work stream, seat it with the owning
    room's participants, seed it with the result, and key it to the run for
@@ -1049,63 +1095,44 @@ kind, with the single action calling the route above.
 
 ### Delivery targets
 
-`AutomationRunDeliveryTargetV1` (in
-`packages/contracts/src/automation-agent.ts`) gains two arms:
+**The frozen destination set does not change**, and neither does
+`resolveDeliveryTargets`. Its refusal of a non-personal automation
+(`automation_personal_delivery_required`, `automation-agent.ts:3156`) is correct
+and stays: every target it resolves names a person — an address from
+`users.email`, an identity from `slack_user_links` — and a workspace does not
+have one. An earlier revision of this PRD read that guard as a bug and added a
+`connector_channel` arm, a scope-shape rule, an acceptance-time channel picker,
+a `channel` value on `requestedDelivery`, and a
+`automation_delivery_target_scope_mismatch` refusal. All of it is deleted:
+posting into a channel is something a run *does* with `slack.send_message`
+(**Delivery is not how a run acts**), and none of that machinery has anything to
+do with delivery.
 
-```
-{ type: "workstream",        workstreamId }                         // workstream scope only
-{ type: "connector_channel", connectionId, channelId, channelName }  // workspace scope only
-```
+**The work stream is not in that set either.** A room's automation delivers to
+its room because that is what it belongs to, so the delivery loop derives the
+target from `owning_workstream_id` rather than reading a frozen entry somebody
+chose. Nothing is configured, so there is nothing to keep in agreement with the
+owning work stream, and nobody's participation is recorded beside it because
+nobody picked it (**key design decision 1**).
 
-`workstreamId` is copied from `owning_workstream_id` at acceptance rather than
-chosen, and carries no principal beside it — nobody picks it, so there is nobody
-to record and nothing for delivery to re-test (**key design decision 1**).
-`channelName` is denormalized the way `automationName` is on the activation
-object: a receipt and a picker both want to say *which* channel without a Slack
-round trip, and a rename should not rewrite the record of where a past result
-went. `channelId` comes from the run's Slack origin when the automation was
-asked for in a channel, and from the acceptance-time picker otherwise. A model
-never supplies one — the same rule that keeps a work-stream ID out of a
-submission (**Authoring from Slack**).
-
-**`resolveDeliveryTargets` stops refusing non-personal automations.** Today it
-throws `automation_personal_delivery_required` whenever `scope !== "personal"`
-and any target is present (`automation-agent.ts:3156`). It becomes the shape
-rule: each arm declares which scopes may carry it, and a mismatch is refused
-with `automation_delivery_target_scope_mismatch`. A workspace automation
-delivering to a channel becomes ordinary; one trying to deliver to somebody's
-inbox is still refused, which is what the original guard was protecting.
-
-Channel delivery is not new machinery — `postSlackTextChunks`
-(`slack-agent-service.ts`) already posts chunked text into a channel with a
-stable dedupe key, and that is what the new delivery branch calls. Acceptance
-lists the channels the workspace connection can already post into; Rally neither
-joins channels nor widens scopes to reach one.
-
-The delivery loop in `substream-agent.ts` gains a branch per arm, with target
-keys `workstream:<workstreamId>` and `channel:<connectionId>:<channelId>`;
+So the whole contracts surface for this is: the delivery loop in
+`substream-agent.ts` gains one branch, keyed `workstream:<workstreamId>`, and
 receipts reuse the existing `automation_delivery_receipts` row per run and
-target, including its `skipped` state. Existing frozen delivery sets stay valid
-— no backfill.
+target, including its `skipped` state. `AutomationRunDeliveryTargetV1`,
+`AutomationDeliveryTargetSetSchema`, and `requestedDelivery` are all untouched —
+another earlier revision turned `requestedDelivery` into a discriminated union
+with a `z.preprocess` to upgrade legacy bare strings on read, and that
+migration-on-read is not written either. Existing frozen delivery sets stay
+valid; no backfill.
 
-`requestedDelivery` **does not change shape.** An earlier revision made it a
-discriminated union carrying a work-stream ID, with a `z.preprocess` to upgrade
-legacy bare strings on read; a draft can no longer request a room, so the
-existing enum array still says everything a draft has to say and that
-migration-on-read is not written. The enum gains `channel`.
-
-`AutomationDeliveryTargetTypeSchema` gains neither arm. It reads
+`AutomationDeliveryTargetTypeSchema` is likewise untouched. It reads
 `["slack_agent_dm", "email"]` and is shared with `DigestDeliveryTargetTypeSchema`
 and `ConnectorUserDeliverySchema` — the enum a *connector* draws from when it
-declares it can deliver **to a person**. A work stream is Rally's own surface, so
-adding it there would let a manifest declare something it cannot do. A channel
-is connector-provided and still does not belong there, because a manifest saying
-"I can deliver to a channel" would then satisfy every caller asking "can you
-reach this user"; that declaration is a sibling of this enum, and open
-question 5 is where it gets designed. The comment above the enum needs a word
-either way: "Every run is always delivered to its Avalon work stream. These are
-the additional destinations…" has "its" doing load-bearing work it was never
-asked to do, once a run can also deliver to another work stream or a channel.
+declares it can deliver **to a person**, which is exactly what it should stay.
+Its comment needs a word, though: "Every run is always delivered to its Avalon
+work stream. These are the additional destinations…" has "its" doing
+load-bearing work it was never asked to do, once a run can also deliver into the
+work stream that owns it.
 
 ### Surfacing a run's work stream
 
@@ -1328,14 +1355,19 @@ the EU needs the answer from the same place either way.
    with. See [`access-revocation.md`](../../access-revocation.md).
    The repair is a person volunteering their own credentials, never receiving
    somebody else's: the claim route takes no user ID.
-5. **A channel destination reaches people who are not in Rally.** A Slack
-   channel's membership is Slack's, so a workspace automation delivering into
-   one publishes to whoever is in it, including guests and anyone who joins
-   later. An admin picks it at acceptance from the channels the workspace
-   connection can already post into, and that is the whole authorization: Rally
-   never joins a channel to reach it and never widens the connection's scopes.
-   The new reach belongs to the *automation*, granted by the person Slack
-   already trusted with that connection.
+5. **A run that acts reaches further than a run that delivers, and that is not
+   new.** An automation posting into a Slack channel or commenting on a Linear
+   issue does it with a connector write tool, publishing to whoever is in that
+   channel or watching that issue — including people who are not in Rally. That
+   capability predates this change: it is what a run's frozen
+   `connectorBindings` have always allowed, authorized by whoever connected the
+   connection and bounded by its scopes, with email-triggered runs losing write
+   tools entirely. What this PRD adds is *delivery*, which reaches only the
+   person or the room the automation belongs to and cannot be pointed anywhere
+   by anything that steers the run. Keeping the two apart is the point of
+   **Delivery is not how a run acts**; a reader who thinks of a channel post as
+   a delivery will reason about its trust properties wrongly in both
+   directions.
 6. **Authority generation fences delivery** exactly as it fences provider
    writes: a run outliving a pause or delete does not deliver, wake, or surface
    anything.
@@ -1621,22 +1653,22 @@ worth isolating.
    `foreign_key_check` on commit, and
    [`durable-object-sqlite.md`](../../durable-object-sqlite.md) throughout.
 2. **The feature.** The scope, the rail, the plugin, the mutable execution
-   principal and its card, the message type and its projection, the destination
-   arms, the wake, and the surfacing. All of it is inert until somebody accepts
-   an automation into the new scope or gives one a destination it could not have
-   before, so there is no ordering *within* this deploy to get wrong, and every
-   piece is revertible by removing the surface that reaches it.
-3. **The classifier, and the deletion of `shouldSuppressAutomationResult`.** The
-   only piece that changes what existing automations do: a result the regex
-   would have swallowed is now delivered unless the classifier says otherwise.
-   The two must ship together — the regex wins every disagreement, so leaving it
-   in beside the classifier is worse than either alone — and the classifier's
-   evaluation set must be green first, because after this it is the only thing
-   deciding whether anything is delivered at all.
+   principal and its card, the message type and its projection, the delivery
+   branch for a room, the wake, and the surfacing. All of it is inert until
+   somebody accepts an automation into the new scope, so there is no ordering
+   *within* this deploy to get wrong, and every piece is revertible by removing
+   the surface that reaches it.
+3. **The classifier.** The only piece that changes what existing automations do:
+   every result is now classified, where before every result was delivered.
+   `shouldSuppressAutomationResult` was deleted ahead of this rather than with
+   it — the two only had to ship together while both existed, because the regex
+   wins every disagreement, and with the predicate already gone that constraint
+   is spent. The classifier's evaluation set must be green first, because after
+   this it is the only thing deciding whether anything is delivered at all.
 
-Reverting deploy 3 is restoring the predicate and defaulting every disposition
-to `deliver`, which is what the classifier already does when it fails; no stored
-state unwinds, because the disposition is per run. Reverting deploy 2 is
+Reverting deploy 3 is defaulting every disposition to `deliver`, which is what
+the classifier already does when it fails; no stored state unwinds, because the
+disposition is per run. Reverting deploy 2 is
 removing the surfaces. Deploy 1 is not reverted — a Durable Object that has
 migrated does not migrate back — which is why it ships first and alone.
 
@@ -1655,10 +1687,12 @@ switch — pointing it at another model is the lever that exists.
    sidebar, in no rail, invisible to the others.
 2. **Slack authoring.** Mention Rally in a channel with "every monday at 9am
    send a message to this channel asking what each person shipped this weekend".
-   The draft appears as blocks in that thread, with the origin channel as its
-   destination and no channel ID anywhere in the submission. A non-admin's
-   accept is refused with a sentence naming what is needed; an admin's accepts.
-   The first Monday, the message posts into that channel.
+   The draft appears as blocks in that thread, scoped `workspace`, with the
+   origin channel frozen into its instructions and **no delivery target at all**.
+   A non-admin's accept is refused with a sentence naming what is needed; an
+   admin's accepts. The first Monday, the run posts into that channel with
+   `slack.send_message`, and no delivery receipt is written because there is
+   nothing to deliver.
 3. **Ownership outlives the creator.** Remove the creator from the work stream
    and fire the automation: it runs, delivers, and no participation check
    appears in the receipt.
@@ -1682,12 +1716,12 @@ switch — pointing it at another model is the lever that exists.
    is "no changes this week" classifies `done`: nothing in the room, a `skipped`
    receipt, the run still inspectable. Assert the schema it was given had no
    `new_workstream` arm at all.
-7. **Surfacing.** A `workspace` automation delivering to a channel: `deliver`
-   posts there, and a `new_workstream` on the next occurrence surfaces the run's
-   *own* work stream — nothing created, the same ID, now `scope: "workspace"`
-   and visible in a second member's sidebar. Replay the delivery: nothing
-   changes. Set the daily cap to zero and fire again: the run stays hidden, the
-   receipt says why, and nothing is substituted.
+7. **Surfacing.** Fire the `workspace` automation from check 2 on an occurrence
+   worth reading in full. Assert the schema it was given had no `deliver` arm,
+   that `new_workstream` surfaces the run's *own* work stream — nothing created,
+   the same ID, now `scope: "workspace"` and visible in a second member's
+   sidebar — and that replaying changes nothing. Set the daily cap to zero and
+   fire again: the run stays hidden and the receipt says why.
 8. **The failure direction.** Break the classifier with an unroutable model. The
    result delivers and the run records `disposition_source: "default"`. This is
    the one direction that must never invert.
@@ -1699,9 +1733,10 @@ switch — pointing it at another model is the lever that exists.
 10. **Delivery that cannot land.** Pause an automation mid-run: it completes,
     delivers nothing, wakes nothing, receipt says why. Archive the owning work
     stream: the next receipt reads skipped-archived with nothing substituted.
-    Assert `resolveDeliveryTargets` refuses a person-shaped destination on a
-    `workspace` automation and a channel on a `personal` one, both with
-    `automation_delivery_target_scope_mismatch`.
+    Assert `resolveDeliveryTargets` still refuses a destination on a
+    non-personal automation with `automation_personal_delivery_required`, and
+    that a `workstream` automation delivers to its room without any entry in its
+    frozen destination set.
 11. **The regex is gone.** Assert `shouldSuppressAutomationResult` exists
     nowhere in the tree — a grep-level assertion, because a predicate left
     exported and unused is one somebody re-wires — and that a run whose final
@@ -1745,22 +1780,16 @@ switch — pointing it at another model is the lever that exists.
    an explicit "hide this again" that clears the flag, which is a second control
    doing almost the same thing. Worth revisiting only if archiving a surfaced
    run turns out to read wrong on the automation's own run history.
-5. **Which workspace-shaped destinations exist beyond a Slack channel.** A
-   channel is the one Rally can deliver to today with machinery it already has.
-   A shared mailbox, a Notion database row, and a Linear issue are all plausible
-   and all need a connector to declare that it can deliver to a *place* rather
-   than to a person — the sibling declaration **Data model** describes but does
-   not design.
-6. **Whether a member can accept a channel-only workspace automation.**
-   Acceptance for `workspace` scope is owner-or-admin today, and this PRD keeps
-   it. The case for relaxing it is narrow and real: an automation whose only
-   destination is a channel the requester can already post in grants no reach
-   they do not have, and the Slack path above is where the friction shows up
-   most. The case against is that a workspace automation runs on workspace
-   credentials and can *read* things the requester cannot, so the destination
-   being harmless does not make the automation harmless. Probably resolved by
-   asking what those drafts actually bind to once there are some.
-7. **Gmail-thread watching.** Whether to declare `resourceRelationships` for
+5. **Whether a member can accept a workspace automation that only acts where
+   they already can.** Acceptance for `workspace` scope is owner-or-admin, and
+   this PRD keeps it. The case for relaxing it is narrow and real: an automation
+   whose only effect is a message in a channel the requester can already post in
+   grants no reach they do not have, and the Slack path is where that friction
+   shows up. The case against is that a workspace automation runs on workspace
+   credentials and can *read* things the requester cannot, so a harmless effect
+   does not make the automation harmless. Probably resolved by looking at what
+   those drafts actually bind to, once there are some.
+6. **Gmail-thread watching.** Whether to declare `resourceRelationships` for
    `gmail_thread` on the email event types in this pass, or ship
    Sheets/Docs/Drive first. Watching one email thread is a plausible want,
    but the email events' filter fields were not designed with per-thread
