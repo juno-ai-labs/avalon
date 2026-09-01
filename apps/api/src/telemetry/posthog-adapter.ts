@@ -4,15 +4,15 @@ import type {
   GlobalCrashDeliveryRow,
   GlobalProfileDeliveryRow,
   GlobalTelemetryDeliveryRow,
-  PostHogDeliveryResult,
-} from "./posthog-delivery-contract";
+  TelemetryDestinationResult,
+} from "./telemetry-delivery-contract";
 
 export type {
   GlobalCrashDeliveryRow,
   GlobalProfileDeliveryRow,
   GlobalTelemetryDeliveryRow,
-  PostHogDeliveryResult,
-} from "./posthog-delivery-contract";
+  TelemetryDestinationResult,
+} from "./telemetry-delivery-contract";
 
 const APPROVED_POSTHOG_ORIGINS = new Set([
   "https://us.i.posthog.com",
@@ -408,7 +408,7 @@ export async function sendPostHogBatch(input: {
   projectToken: string;
   webBaseUrl: string;
   rows: GlobalTelemetryDeliveryRow[];
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   return sendPostHogCaptures({
     host: input.host,
     projectToken: input.projectToken,
@@ -421,7 +421,7 @@ export async function sendPostHogCrashBatch(input: {
   projectToken: string;
   rows: GlobalCrashDeliveryRow[];
   clientFactory?: (projectToken: string, host: string) => PostHogExceptionClient;
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   const origin = new URL(input.host).origin;
   if (!APPROVED_POSTHOG_ORIGINS.has(origin)) throw new Error("posthog_host_forbidden");
   const client = (input.clientFactory ?? createExceptionClient)(input.projectToken, origin);
@@ -466,7 +466,7 @@ export async function sendPostHogJavascriptExceptionBatch(input: {
   projectToken: string;
   rows: GlobalTelemetryDeliveryRow[];
   clientFactory?: (projectToken: string, host: string) => PostHogExceptionClient;
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   const origin = new URL(input.host).origin;
   if (!APPROVED_POSTHOG_ORIGINS.has(origin)) throw new Error("posthog_host_forbidden");
   const client = (input.clientFactory ?? createExceptionClient)(input.projectToken, origin);
@@ -538,7 +538,7 @@ export async function sendPostHogProfileBatch(input: {
   host: string;
   projectToken: string;
   rows: GlobalProfileDeliveryRow[];
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   return sendPostHogCaptures({
     host: input.host,
     projectToken: input.projectToken,
@@ -550,7 +550,7 @@ async function sendPostHogCaptures(input: {
   host: string;
   projectToken: string;
   captures: PostHogCapture[];
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   const origin = new URL(input.host).origin;
   if (!APPROVED_POSTHOG_ORIGINS.has(origin)) throw new Error("posthog_host_forbidden");
   let response: Response;

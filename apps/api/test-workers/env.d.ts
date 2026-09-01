@@ -4,7 +4,7 @@ import type {
   TerminalProviderRpcCallbackResult,
   TerminalProviderRpcResult,
 } from "../src/services/terminal/provider-rpc-contract";
-import type { PostHogDeliveryRpcBinding } from "../src/telemetry/posthog-delivery-contract";
+import type { TelemetryDeliveryRpcBinding } from "../src/telemetry/telemetry-delivery-contract";
 
 interface TerminalRpcTestBinding {
   throwNotFound(): Promise<never>;
@@ -27,7 +27,7 @@ declare global {
     // The Workers test pool discovers bindings only through this ambient name.
     interface Env extends AvalonEnv {
       MIGRATION_PROBE_DO?: DurableObjectNamespace<MigrationProbeDO>;
-      POSTHOG_RPC_TEST?: PostHogDeliveryRpcBinding;
+      TELEMETRY_RPC_TEST?: TelemetryDeliveryRpcBinding;
       TERMINAL_RPC_TEST?: TerminalRpcTestBinding;
     }
   }

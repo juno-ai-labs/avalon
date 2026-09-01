@@ -7,13 +7,13 @@ export default defineConfig({
       wrangler: { configPath: "./wrangler.test.jsonc" },
       miniflare: {
         serviceBindings: {
-          POSTHOG_RPC_TEST: { name: "posthog-rpc-test-service" },
+          TELEMETRY_RPC_TEST: { name: "telemetry-rpc-test-service" },
           TERMINAL_RPC_TEST: { name: "terminal-rpc-test-service" },
         },
         workers: [
           {
-            name: "posthog-rpc-test-service",
-            scriptPath: "./test-workers/fixtures/posthog-rpc-service.mjs",
+            name: "telemetry-rpc-test-service",
+            scriptPath: "./test-workers/fixtures/telemetry-rpc-service.mjs",
             modules: true,
           },
           {

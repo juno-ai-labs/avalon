@@ -12,7 +12,7 @@ const MODULE_MARKERS = [
 ];
 
 /** Proves the regional startup exclusion against Wrangler's exact emitted artifacts. */
-export function assertPostHogStartupBoundary({ globalBundle, euBundle }) {
+export function assertTelemetryStartupBoundary({ globalBundle, euBundle }) {
   for (const [label, bundle] of [
     ['Global API', globalBundle],
     ['EU API', euBundle],
@@ -30,8 +30,8 @@ async function run() {
     readFile(join(repositoryDirectory, 'apps/api/dist/worker.bundle'), 'utf8'),
     readFile(join(repositoryDirectory, 'apps/api/dist-eu/worker.bundle'), 'utf8'),
   ]);
-  assertPostHogStartupBoundary({ globalBundle, euBundle });
-  process.stdout.write('PostHog startup boundary verified\n');
+  assertTelemetryStartupBoundary({ globalBundle, euBundle });
+  process.stdout.write('Telemetry destination startup boundary verified\n');
 }
 
 if (isEntryPoint(import.meta.url)) {
