@@ -217,6 +217,25 @@ export async function loadModelImageForTool(
   };
 }
 
+/**
+ * Return the browser-safe representation produced by the established image
+ * normalization pipeline.
+ *
+ * Resource previews use this only when Chromium cannot decode the source
+ * format itself (currently HEIF/HEIC and TIFF). Keeping that conversion here
+ * means the preview route and model attachment path agree on byte validation,
+ * regional Images use, and the bounded TIFF codec instead of growing a second
+ * decoder with different safety rules.
+ */
+export async function loadBrowserCompatibleImage(
+  payloads: R2Bucket,
+  attachment: ModelAttachmentSource,
+  options: AttachmentModelContentOptions = {},
+): Promise<NormalizedModelImage | null> {
+  return await loadPersistedModelImage(payloads, attachment)
+    ?? await loadAndCreateModelImage(payloads, attachment, options);
+}
+
 export function modelImageDataUri(
   bytes: Uint8Array,
   mimeType: NormalizedModelImage["mimeType"],
