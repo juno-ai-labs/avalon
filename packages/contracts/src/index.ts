@@ -1501,6 +1501,24 @@ export const AutomationSummarySchema = z.object({
 export const WorkstreamAutomationSummarySchema = AutomationSummarySchema.omit({ scope: true });
 export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSummarySchema>;
 
+/**
+ * What a takeover did.
+ *
+ * `unboundProviders` is why this is not a bare acknowledgement: the claimant may
+ * have no connection for one of the providers the last principal took with
+ * them, and the card that prompted the claim stays up naming only those. The
+ * rest of the automation moves regardless — most of it working beats none.
+ */
+export const AutomationExecutionPrincipalClaimSchema = z.object({
+  principalUserId: IdSchema,
+  reboundPluginIds: z.array(z.string().min(1)),
+  unboundProviders: z.array(z.string().min(1)),
+  /** False when the caller already ran it and nothing needed rebinding. */
+  changed: z.boolean(),
+}).strict();
+export type AutomationExecutionPrincipalClaim =
+  z.infer<typeof AutomationExecutionPrincipalClaimSchema>;
+
 export const AutomationRunSchema = z.object({
   id: IdSchema,
   automationSubscriptionId: IdSchema,

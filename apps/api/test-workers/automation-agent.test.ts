@@ -1195,7 +1195,7 @@ describe("AutomationAgent", () => {
       });
     });
 
-    it("has nothing to decide, and spends nothing deciding it, with no destination", async () => {
+    it("can still open the run when there is nobody to deliver to", async () => {
       const runId = "00000000-0000-7000-8000-0000000000e3";
       await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
         seedIdentity(state);
@@ -1209,8 +1209,14 @@ describe("AutomationAgent", () => {
           result: "Two candidates reached final round.",
         });
 
-        expect(decision.disposition).toBe("done");
-        expect(decision.reason).toContain("no destination");
+        // Having no destination is not having nothing to decide. An automation
+        // no work stream owns can expose the run it executed in, which is the
+        // whole of what a workspace automation reaches people with — it acts
+        // with its tools rather than delivering. So the question is still live,
+        // and with no provider credentials here the fallback is the reachable
+        // arm rather than `deliver`, which this automation cannot do.
+        expect(decision.disposition).toBe("expose_workstream");
+        expect(decision.source).toBe("default");
       });
     });
 
@@ -1349,5 +1355,174 @@ describe("an automation the work stream owns", () => {
     })).toEqual({ paused: false, outcomeCode: "automation_not_owned_by_workstream" });
     expect(await lifecycleAndReason())
       .toEqual({ lifecycle: "active", paused_reason: null });
+  });
+});
+
+describe("taking over who an automation runs as", () => {
+  const OWNING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000d1";
+  const LEAVER_ID = "00000000-0000-7000-8000-0000000000d2";
+  const CLAIMANT_ID = "00000000-0000-7000-8000-0000000000d3";
+  const LEAVER_GMAIL = "00000000-0000-7000-8000-0000000000d4";
+  const CLAIMANT_GMAIL = "00000000-0000-7000-8000-0000000000d5";
+  const SHARED_SLACK = "00000000-0000-7000-8000-0000000000d6";
+
+  /**
+   * A room's automation bound to two connections: the leaver's personal Gmail
+   * and a workspace-scoped Slack. Only the first is at risk.
+   */
+  async function seedOwnedAutomation(): Promise<void> {
+    await seedReadyDraft(readyDefinition("Candidate intake"));
+    await pinWorkspaceIdentity();
+    const workspace = env.WORKSPACE_DOS
+      .get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+    await runInDurableObject(workspace, (_instance, state) => {
+      const connection = (
+        id: string, scope: string, owner: string | null, plugin: string,
+      ): void => {
+        state.storage.sql.exec(
+          `INSERT OR REPLACE INTO connector_connections
+             (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+              display_name, granted_scopes_json, status, cursor_json, config_json,
+              created_at, updated_at, model_plugin_id)
+           VALUES (?, ?, 'google', ?, ?, 'acct', 'A connection', '[]', 'healthy',
+                   '{}', '{}', 1, 1, ?)`,
+          id, WORKSPACE_ID, scope, owner, plugin,
+        );
+      };
+      connection(LEAVER_GMAIL, "personal", LEAVER_ID, "plugin_gmail");
+      connection(CLAIMANT_GMAIL, "personal", CLAIMANT_ID, "plugin_gmail");
+      connection(SHARED_SLACK, "workspace", null, "plugin_slack");
+    });
+    await runInDurableObject(automationStub(), (_instance: AutomationAgent, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_acceptance
+           (id, definition_revision, request_hash, scope, owning_workstream_id,
+            default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+            delivery_targets_json, model_override, evaluator_projection_json,
+            evaluator_source_hash, accepted_at, activated_at)
+         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', ?, '[]', NULL, '[]',
+                 'sha256:evaluators', 100, 101)`,
+        OWNING_WORKSTREAM_ID,
+        JSON.stringify({ plugin_gmail: LEAVER_GMAIL, plugin_slack: SHARED_SLACK }),
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_state
+            SET lifecycle = 'active', accepted_definition_revision = 1, run_as_user_id = ?
+          WHERE id = 1`,
+        LEAVER_ID,
+      );
+    });
+  }
+
+  function principalState(): Promise<{ run_as_user_id: string | null }> {
+    return runInDurableObject(automationStub(), (_instance: AutomationAgent, state) =>
+      state.storage.sql.exec<{ run_as_user_id: string | null }>(
+        `SELECT run_as_user_id FROM automation_state WHERE id = 1`,
+      ).one());
+  }
+
+  function bindings(): Promise<Record<string, string>> {
+    return runInDurableObject(automationStub(), (_instance: AutomationAgent, state) =>
+      JSON.parse(state.storage.sql.exec<{ connector_bindings_json: string }>(
+        `SELECT connector_bindings_json FROM automation_acceptance WHERE id = 1`,
+      ).one().connector_bindings_json) as Record<string, string>);
+  }
+
+  it("moves the dead personal binding and leaves the workspace one alone", async () => {
+    await seedOwnedAutomation();
+
+    const claim = await automationStub().claimExecutionPrincipal({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: CLAIMANT_ID,
+      participantOfOwningWorkstream: true,
+    });
+
+    expect(claim).toEqual({
+      principalUserId: CLAIMANT_ID,
+      reboundPluginIds: ["plugin_gmail"],
+      unboundProviders: [],
+      changed: true,
+    });
+    expect(await principalState()).toEqual({ run_as_user_id: CLAIMANT_ID });
+    // The workspace connection belongs to the workspace, not to whoever
+    // authorized it: it never broke, and rewriting it would be a write on the
+    // one thing that still worked.
+    expect(await bindings()).toEqual({
+      plugin_gmail: CLAIMANT_GMAIL,
+      plugin_slack: SHARED_SLACK,
+    });
+  });
+
+  it("moves what it can and names what it cannot", async () => {
+    await seedOwnedAutomation();
+    // The claimant has no Gmail of their own.
+    await runInDurableObject(
+      env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID))),
+      (_instance, state) => {
+        state.storage.sql.exec(`DELETE FROM connector_connections WHERE id = ?`, CLAIMANT_GMAIL);
+      },
+    );
+
+    const claim = await automationStub().claimExecutionPrincipal({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: CLAIMANT_ID,
+      participantOfOwningWorkstream: true,
+    });
+
+    // The room would rather have most of its automation back than none, so the
+    // takeover still happens and the gap is reported rather than refused.
+    expect(claim.unboundProviders).toEqual(["plugin_gmail"]);
+    expect(claim.reboundPluginIds).toEqual([]);
+    expect(claim.changed).toBe(true);
+    expect(await principalState()).toEqual({ run_as_user_id: CLAIMANT_ID });
+    expect((await bindings()).plugin_gmail).toBe(LEAVER_GMAIL);
+  });
+
+  it("is a no-op for whoever already runs it", async () => {
+    await seedOwnedAutomation();
+    await automationStub().claimExecutionPrincipal({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: CLAIMANT_ID,
+      participantOfOwningWorkstream: true,
+    });
+
+    const again = await automationStub().claimExecutionPrincipal({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: CLAIMANT_ID,
+      participantOfOwningWorkstream: true,
+    });
+
+    // A retry after a lost response must not write a second audit row.
+    expect(again.changed).toBe(false);
+    expect(await runInDurableObject(automationStub(), (_i: AutomationAgent, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM automation_principal_claims`,
+      ).one())).toEqual({ count: 1 });
+  });
+
+  it("refuses somebody who is not in the room that owns it", async () => {
+    await seedOwnedAutomation();
+
+    // Ownership is the whole authorization for a room's automation. Without
+    // participation there is nothing else to fall back on: the claimant is not
+    // the author, and the scope is not workspace.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+      await expect(instance.claimExecutionPrincipal({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: CLAIMANT_ID,
+        participantOfOwningWorkstream: false,
+      })).rejects.toThrow("automation_authority_mismatch");
+    });
+    expect(await principalState()).toEqual({ run_as_user_id: LEAVER_ID });
   });
 });

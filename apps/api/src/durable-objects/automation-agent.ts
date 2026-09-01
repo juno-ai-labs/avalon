@@ -682,6 +682,36 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
     `ALTER TABLE automation_state ADD COLUMN paused_reason TEXT
        CHECK (paused_reason IS NULL OR paused_reason IN ('person', 'workstream_archived'))`,
   ],
+}, {
+  version: 10,
+  description: "who an automation runs as becomes state, separate from who wrote it",
+  statements: [
+    // The execution principal was derived from the identity row's
+    // `author_user_id`, which is immutable and was always meant to be: the
+    // author *was* the answer. An automation a work stream owns outlives its
+    // author, so "who it runs as" has to be state somebody can take over,
+    // while "who wrote it" stays provenance the run history keeps saying.
+    // NULL means nobody has taken it over and the author still answers.
+    `ALTER TABLE automation_state ADD COLUMN run_as_user_id TEXT`,
+    // What a takeover did, kept because the claim moves somebody's own
+    // credentials onto a standing automation. The run history shows it beside
+    // the runs it repaired, and `unbound_providers_json` is why a card can stay
+    // up naming only what is still missing.
+    `CREATE TABLE automation_principal_claims (
+      claim_id TEXT PRIMARY KEY,
+      claimed_by_user_id TEXT NOT NULL,
+      previous_user_id TEXT,
+      rebound_plugin_ids_json TEXT NOT NULL CHECK (
+        json_valid(rebound_plugin_ids_json) AND json_type(rebound_plugin_ids_json) = 'array'
+      ),
+      unbound_providers_json TEXT NOT NULL CHECK (
+        json_valid(unbound_providers_json) AND json_type(unbound_providers_json) = 'array'
+      ),
+      claimed_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE INDEX automation_principal_claims_recent_idx
+       ON automation_principal_claims(claimed_at DESC, claim_id)`,
+  ],
 }];
 
 /**
@@ -1595,9 +1625,22 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return { sourceHash: input.sourceHash, lifecycle, authorityGeneration: 1 };
   }
 
-  async pause(input: { automationId: string; workspaceId: string; userId: string; actorRole?: string }): Promise<void> {
+  async pause(input: {
+    automationId: string;
+    workspaceId: string;
+    userId: string;
+    actorRole?: string;
+    /** Resolved by the caller: participation lives in the work stream's object. */
+    participantOfOwningWorkstream?: boolean;
+  }): Promise<void> {
     await this.initialized;
-    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
+    this.assertManager(
+      input.automationId,
+      input.workspaceId,
+      input.userId,
+      input.actorRole,
+      input.participantOfOwningWorkstream ?? false,
+    );
     await this.pauseWithReason("person");
   }
 
@@ -1726,9 +1769,22 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     this.broadcastLatestEvents();
   }
 
-  async resume(input: { automationId: string; workspaceId: string; userId: string; actorRole?: string }): Promise<void> {
+  async resume(input: {
+    automationId: string;
+    workspaceId: string;
+    userId: string;
+    actorRole?: string;
+    /** Resolved by the caller: participation lives in the work stream's object. */
+    participantOfOwningWorkstream?: boolean;
+  }): Promise<void> {
     await this.initialized;
-    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
+    this.assertManager(
+      input.automationId,
+      input.workspaceId,
+      input.userId,
+      input.actorRole,
+      input.participantOfOwningWorkstream ?? false,
+    );
     await this.resumeFromPause();
   }
 
@@ -3860,7 +3916,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       owningWorkstreamId: acceptance.owning_workstream_id,
       scope: acceptance.scope as "personal" | "workspace" | "workstream",
       modelOverride: acceptance.model_override,
-      executionPrincipal: { type: "user", userId: identity.author_user_id },
+      executionPrincipal: { type: "user", userId: this.executionPrincipalUserId() },
       trigger,
       opening: null,
       memoryScope: {
@@ -4043,6 +4099,21 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     }>(`SELECT lifecycle FROM automation_state WHERE id = 1`).one().lifecycle;
   }
 
+  /**
+   * Who this automation runs as.
+   *
+   * `run_as_user_id` when somebody has taken it over, and the author otherwise.
+   * The author is provenance — the run history goes on saying who wrote the
+   * automation long after somebody else is running it — so a takeover writes
+   * the state column and never the identity row.
+   */
+  private executionPrincipalUserId(): string {
+    const runAs = this.state.storage.sql.exec<{ run_as_user_id: string | null }>(
+      `SELECT run_as_user_id FROM automation_state WHERE id = 1`,
+    ).toArray()[0]?.run_as_user_id ?? null;
+    return runAs ?? this.identity().author_user_id;
+  }
+
   /** Why this automation needs a person, or `null` when it does not. */
   private attentionCode(): string | null {
     return this.state.storage.sql.exec<{ attention_code: string | null }>(
@@ -4207,7 +4278,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       triggers: definition.triggers,
       requiredCapabilities: definition.requiredCapabilities,
       expectedOutputs: definition.expectedOutputs,
-      executionPrincipal: { type: "user", userId: identity.author_user_id },
+      executionPrincipal: { type: "user", userId: this.executionPrincipalUserId() },
       recommendedPlugins: definition.recommendedPlugins,
       memoryTables: definition.memoryTables,
       defaultPluginIds: JSON.parse(acceptance.default_plugin_ids_json),
@@ -4286,6 +4357,116 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     // resolves it and this asserts on the answer.
     if (scope === "workstream" && participantOfOwningWorkstream) return;
     throw new Error("automation_authority_mismatch");
+  }
+
+  /**
+   * Take over who this automation runs as, and rebind what the last principal
+   * took with them.
+   *
+   * The claimant is always the caller. There is no user ID to pass, because a
+   * field naming somebody else would let one person lend a colleague's Gmail to
+   * a standing automation — an agreement the person themselves has to make.
+   *
+   * Bindings to workspace-scoped connections are left alone: they belong to the
+   * workspace rather than to whoever authorized them, so they never broke, and
+   * rewriting them would be a write on the one thing that still worked. A
+   * provider the claimant has no connection for stays unbound and is reported,
+   * because the room would rather have most of its automation back than none.
+   */
+  async claimExecutionPrincipal(input: unknown): Promise<{
+    principalUserId: string;
+    reboundPluginIds: string[];
+    unboundProviders: string[];
+    changed: boolean;
+  }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      automationId: z.string().uuid(),
+      workspaceId: z.string().uuid(),
+      userId: z.string().uuid(),
+      actorRole: z.string().optional(),
+      participantOfOwningWorkstream: z.boolean().default(false),
+    }).strict().parse(input);
+    this.assertManager(
+      request.automationId,
+      request.workspaceId,
+      request.userId,
+      request.actorRole,
+      request.participantOfOwningWorkstream,
+    );
+    const acceptance = this.acceptance();
+    if (!acceptance) throw new Error("automation_acceptance_missing");
+    const current = this.executionPrincipalUserId();
+    const bindings = JSON.parse(acceptance.connector_bindings_json) as Record<string, string>;
+    const connections = await this.workspaceDatabase(request.workspaceId).prepare(
+      `SELECT id, scope, owner_user_id, model_plugin_id, status
+         FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
+    ).bind(request.workspaceId).all<{
+      id: string;
+      scope: string;
+      owner_user_id: string | null;
+      model_plugin_id: string;
+      status: string;
+    }>();
+    const rows = connections.results ?? [];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const claimantByPlugin = new Map(rows
+      .filter((row) => row.scope === "workspace"
+        || row.owner_user_id === request.userId)
+      .map((row) => [row.model_plugin_id, row]));
+    const rebound: string[] = [];
+    const unbound: string[] = [];
+    const next = { ...bindings };
+    for (const [pluginId, connectionId] of Object.entries(bindings)) {
+      const bound = byId.get(connectionId);
+      // Still live, or workspace-scoped and therefore never at risk.
+      if (bound && (bound.scope === "workspace" || bound.owner_user_id === request.userId)) continue;
+      const replacement = claimantByPlugin.get(pluginId);
+      if (!replacement) {
+        unbound.push(pluginId);
+        continue;
+      }
+      next[pluginId] = replacement.id;
+      rebound.push(pluginId);
+    }
+    // Idempotent: claiming an automation you already run, with nothing to move,
+    // reports the current state rather than writing a second audit row.
+    const changed = current !== request.userId || rebound.length > 0;
+    if (changed) {
+      const now = Date.now();
+      this.state.storage.transactionSync(() => {
+        this.state.storage.sql.exec(
+          `UPDATE automation_state SET run_as_user_id = ?, updated_at = ? WHERE id = 1`,
+          request.userId,
+          now,
+        );
+        if (rebound.length > 0) {
+          this.state.storage.sql.exec(
+            `UPDATE automation_acceptance SET connector_bindings_json = ? WHERE id = 1`,
+            JSON.stringify(next),
+          );
+        }
+        this.state.storage.sql.exec(
+          `INSERT INTO automation_principal_claims
+             (claim_id, claimed_by_user_id, previous_user_id, rebound_plugin_ids_json,
+              unbound_providers_json, claimed_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          uuidV7(now),
+          request.userId,
+          current === request.userId ? null : current,
+          JSON.stringify(rebound),
+          JSON.stringify(unbound),
+          now,
+        );
+      });
+    }
+    return {
+      principalUserId: request.userId,
+      reboundPluginIds: rebound,
+      unboundProviders: unbound,
+      changed,
+    };
   }
 
   private assertAuthor(automationId: string, workspaceId: string, userId: string): void {

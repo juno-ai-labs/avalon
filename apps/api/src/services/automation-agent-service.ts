@@ -211,22 +211,32 @@ export class AutomationAgentService {
   async pause(automationId: string): Promise<void> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
+    // A room's automation is managed by the room's participants. Resolved here
+    // because participation lives in WorkspaceDO, which the automation object
+    // cannot read for itself.
+    const participant = await this.participantOfOwningWorkstream(id);
     await withAutomationErrors(() => agent.pause({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       actorRole: this.auth.role,
+      participantOfOwningWorkstream: participant,
     }));
   }
 
   async resume(automationId: string): Promise<void> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
+    // A room's automation is managed by the room's participants. Resolved here
+    // because participation lives in WorkspaceDO, which the automation object
+    // cannot read for itself.
+    const participant = await this.participantOfOwningWorkstream(id);
     await withAutomationErrors(() => agent.resume({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       actorRole: this.auth.role,
+      participantOfOwningWorkstream: participant,
     }));
   }
 
@@ -303,6 +313,26 @@ export class AutomationAgentService {
     }));
   }
 
+  /** Take over who an automation runs as. The claimant is always the caller. */
+  async claimExecutionPrincipal(automationId: string): Promise<{
+    principalUserId: string;
+    reboundPluginIds: string[];
+    unboundProviders: string[];
+    changed: boolean;
+  }> {
+    const id = asAutomationId(automationId);
+    const agent = await this.agent(id);
+    const participant = await this.participantOfOwningWorkstream(id);
+    return withAutomationErrors(() => agent.claimExecutionPrincipal({
+      schemaVersion: 1,
+      automationId: id,
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      actorRole: this.auth.role,
+      participantOfOwningWorkstream: participant,
+    }));
+  }
+
   async share(automationId: string): Promise<{ templateId: string }> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
@@ -351,6 +381,32 @@ export class AutomationAgentService {
    * ran. Both failures are invisible until a request reaches a real object.
    * Explicit wrapping at each call site is longer and is actually true.
    */
+  /**
+   * Whether this caller is an active participant of the room that owns this
+   * automation — the fact that lets a room's automation be managed by the room
+   * rather than by whoever typed it.
+   *
+   * Answered by WorkspaceDO, which keeps the same viewer overlay the sidebar is
+   * filtered by. False for every other scope, where it means nothing: the
+   * automation object's own author and admin checks decide those.
+   */
+  private async participantOfOwningWorkstream(
+    automationId: ReturnType<typeof asAutomationId>,
+  ): Promise<boolean> {
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
+    const { authorized } = await workspace.authorizeAutomationViewer({
+      workspaceId: this.auth.workspaceId,
+      automationId,
+      userId: this.auth.userId,
+    });
+    return authorized;
+  }
+
   private async agent(automationId: ReturnType<typeof asAutomationId>) {
     const stub = await durableObjectStubForWorkspace(
       this.env,

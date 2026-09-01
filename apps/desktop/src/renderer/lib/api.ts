@@ -4,6 +4,7 @@ import {
   AutomationAgentSnapshotSchema as WireAutomationAgentSnapshotSchema,
   AutomationDraftTurnAdmissionResultSchema as WireAutomationDraftTurnAdmissionResultSchema,
   AutomationDraftSchema as WireAutomationDraftSchema,
+  AutomationExecutionPrincipalClaimSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
   WorkstreamAutomationSummarySchema as WireWorkstreamAutomationSummarySchema,
   WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
@@ -221,6 +222,7 @@ const wireNotePageSchema = z.object({
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
+const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
 const wireWorkstreamAutomationPageSchema = z.object({
   items: z.array(WireWorkstreamAutomationSummarySchema),
 });
@@ -968,6 +970,21 @@ export class RallyApi {
       { schema: wireWorkstreamAutomationPageSchema, signal },
     );
     return page.items.map(mapWorkstreamAutomationSummary);
+  }
+
+  /**
+   * Take over an automation whose principal lost access.
+   *
+   * No body: the claimant is the caller. A field naming somebody else would let
+   * one person lend a colleague's credentials to a standing automation.
+   */
+  async claimAutomationExecutionPrincipal(
+    id: string,
+  ): Promise<z.infer<typeof wireExecutionPrincipalClaimSchema>> {
+    return this.request(`/automations/${encodeURIComponent(id)}/execution-principal`, {
+      method: 'POST',
+      schema: wireExecutionPrincipalClaimSchema,
+    });
   }
 
   async getAutomation(id: string, signal?: AbortSignal): Promise<AutomationDetail> {

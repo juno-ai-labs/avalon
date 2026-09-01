@@ -99,6 +99,49 @@ describe("the AutomationAgent ownership migration", () => {
       .toEqual({ scope: "workstream", owning_workstream_id: WORKSTREAM_ID });
   });
 
+  it("separates who an automation runs as from who wrote it", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 9);
+    seedAcceptedAutomation(database);
+
+    apply(database, 10, 9);
+
+    // NULL means nobody has taken it over. The author still answers, and the
+    // identity row is untouched — it is provenance, and the run history goes on
+    // saying who wrote this long after somebody else is running it.
+    expect(database.prepare(`SELECT run_as_user_id FROM automation_state`).get())
+      .toEqual({ run_as_user_id: null });
+    expect(database.prepare(`SELECT author_user_id FROM automation_identity`).get())
+      .toEqual({ author_user_id: AUTHOR_ID });
+
+    database.exec(`UPDATE automation_state SET run_as_user_id = '${WORKSTREAM_ID}' WHERE id = 1`);
+    expect(database.prepare(`SELECT author_user_id FROM automation_identity`).get())
+      .toEqual({ author_user_id: AUTHOR_ID });
+  });
+
+  it("keeps what a takeover moved, and what it could not", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 10);
+
+    database.exec(`INSERT INTO automation_principal_claims
+      (claim_id, claimed_by_user_id, previous_user_id, rebound_plugin_ids_json,
+       unbound_providers_json, claimed_at)
+     VALUES ('claim-1', '${AUTHOR_ID}', '${WORKSTREAM_ID}', '["plugin_gmail"]', '[]', 1)`);
+    expect(database.prepare(
+      `SELECT claimed_by_user_id, rebound_plugin_ids_json FROM automation_principal_claims`,
+    ).get()).toEqual({
+      claimed_by_user_id: AUTHOR_ID,
+      rebound_plugin_ids_json: '["plugin_gmail"]',
+    });
+
+    // Both lists are arrays or the audit cannot be read back: a claim that
+    // recorded a bare string would say nothing about which bindings moved.
+    expect(() => database.exec(`INSERT INTO automation_principal_claims
+      (claim_id, claimed_by_user_id, previous_user_id, rebound_plugin_ids_json,
+       unbound_providers_json, claimed_at)
+     VALUES ('claim-2', '${AUTHOR_ID}', NULL, '"plugin_gmail"', '[]', 2)`)).toThrow();
+  });
+
   it("records why a paused automation is paused, and admits only the two reasons", () => {
     const database = new DatabaseSync(":memory:");
     apply(database, 9);

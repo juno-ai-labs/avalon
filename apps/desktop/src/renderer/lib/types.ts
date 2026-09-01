@@ -472,6 +472,17 @@ export interface Message {
     code: string;
   };
   /**
+   * Set on the system row telling this room that the person an automation runs
+   * as has lost access. The row renders as a card with one action rather than
+   * as prose, because there is something to do about it.
+   */
+  principalUnavailable?: {
+    automationId: string;
+    automationName: string;
+    outgoingUserName: string | null;
+    unreachableProviders: string[];
+  };
+  /**
    * Durable Object events and D1 transcript rows have independent sequence
    * counters. Realtime-only blocks use this anchor so their observed order can
    * be retained without treating an event sequence as a persisted message
