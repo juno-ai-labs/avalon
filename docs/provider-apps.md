@@ -102,6 +102,15 @@ through Drive remain read-only. Google granular consent is checked at callback
 time, and Rally refuses to mark a connection healthy when any selected capability
 was not actually granted.
 
+Every authorization sends `include_granted_scopes=false`. The two presets create
+separate Rally connections, so a new token must contain only that connection's
+requested scopes rather than the union of permissions the Google account has ever
+granted to the shared connector client. This also prevents a legacy, no-longer-
+approved scope from being carried into an otherwise approved request and making
+Google show the unverified-app warning. Removing a scope from production still
+requires revoking tokens that retain it; this request boundary prevents a later
+connection from inheriting it.
+
 ### GitHub App
 
 Register `github.json` as one public GitHub App installable on any account. Upload
@@ -432,6 +441,31 @@ repository. What can be:
   what this document says. A change here that is not exercised there is unverified.
 
 ## Changelog
+
+### 2026-09-01 — Google preset grants stopped inheriting earlier scopes
+
+**What changed:** Google connector authorization now explicitly disables
+`include_granted_scopes`. Each Mail + Calendar or Drive + Docs + Sheets token is
+limited to the identity and provider scopes requested for that Rally connection.
+
+**Why:** The shared connector client previously asked Google to union every prior
+grant for the account into a new preset authorization. Accounts that had used the
+older Monad scope set could therefore receive Google's unverified-app warning even
+after the current production scopes were approved. The same union could also give
+a Drive connection Gmail authority, or the reverse, despite the product presenting
+them as independent connections.
+
+**Considered and rejected:** Keeping incremental authorization and asking affected
+people to revoke access manually. Revocation clears one account's history but does
+not preserve the product's preset boundary for future authorizations. Separate
+Google Cloud clients per preset would preserve that boundary too, but would add
+provider registrations, credentials, redirect configuration, and verification
+surface when the authorization parameter already expresses the required token.
+
+**Consequences:** Existing stored Google tokens are unchanged and may still contain
+historical scopes until their connection is reauthorized or revoked. Every new or
+reauthorized connection receives only its requested preset scopes; people with a
+legacy token should remove the old Google grant once, then reconnect.
 
 ### 2026-08-25 — Linear and Notion registrations moved without new app identities
 
