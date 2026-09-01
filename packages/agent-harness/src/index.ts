@@ -2006,8 +2006,8 @@ const automationDraftSubmissionJsonSchema = {
     expectedOutputs: { type: "array", items: { type: "string" } },
     requestedDelivery: {
       type: "array",
-      description: "The destinations the owner asked to receive the result themselves: \"email\" for their own email address, \"slack_agent_dm\" for their Rally Slack Agent DM. Use [] when they asked for neither, or when they asked for it to be sent to somebody else. Rally does the sending; this only records what was asked for.",
-      items: { type: "string", enum: ["email", "slack_agent_dm"] }
+      description: "The destinations the owner asked to receive the result themselves: \"email\" for their own email address, \"slack_agent_dm\" for their Rally Slack Agent DM, \"channel\" when they asked for it to go to a channel rather than to them. Name no channel: which one is decided from where this was written. Use [] when they asked for none, and always when suggestedScope is \"workstream\" — that automation's results land in this work stream, which is what its scope means. Rally does the sending; this only records what was asked for.",
+      items: { type: "string", enum: ["email", "slack_agent_dm", "channel"] }
     },
     defaultBehavior: {
       type: "string",
@@ -2057,7 +2057,11 @@ const automationDraftSubmissionJsonSchema = {
         required: ["name", "description", "usageInstructions", "columns", "keyColumns"]
       }
     },
-    suggestedScope: { type: "string", enum: ["personal", "workspace"] },
+    suggestedScope: {
+      type: "string",
+      enum: ["personal", "workspace", "workstream"],
+      description: "Who can see and change this automation, which cannot be changed after it is accepted: \"personal\" belongs to the person who asked and delivers to them, \"workspace\" belongs to the admins and acts with the workspace's own connections, \"workstream\" belongs to this work stream — everyone in the room can manage it, its results land here, and it outlives whoever asked for it. Ask which one before submitting. There is no work stream to name: an automation can only ever belong to the one it was written in."
+    },
     ready: {
       type: "boolean",
       description: "True only when no blocking human input remains; false means request_elicitation must be called after this draft is submitted."
@@ -3300,7 +3304,7 @@ function normalizeAutomationDraft(value: unknown): unknown {
     // order decide those bytes costs a prompt-cache hit per turn for nothing.
     requestedDelivery: Array.isArray(draft.requestedDelivery)
       ? [...new Set(draft.requestedDelivery.filter((entry) =>
-        entry === "email" || entry === "slack_agent_dm"))].sort()
+        entry === "email" || entry === "slack_agent_dm" || entry === "channel"))].sort()
       : [],
     ready,
     followUpQuestion: null,
