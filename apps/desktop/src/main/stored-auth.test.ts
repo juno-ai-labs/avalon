@@ -143,6 +143,25 @@ describe('plural desktop authentication storage', () => {
     });
   });
 
+  it('attaches a missing account credential without changing the active legacy workspace', () => {
+    const legacy = mergeStoredSession(null, null, euSession, 'eu');
+    const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
+
+    const attached = mergeStoredSession(
+      legacy.auth,
+      legacy.profiles,
+      accountSession,
+      'global',
+      { activate: false },
+    );
+
+    expect(attached.auth.account?.binding.workspaceId).toBeNull();
+    expect(attached.auth.activeWorkspace).toEqual({ workspaceId: euSession.workspace.id, region: 'eu' });
+    expect(activeStoredCredential(attached.auth)).toMatchObject({
+      binding: { workspaceId: euSession.workspace.id, region: 'eu' },
+    });
+  });
+
   it('restores one platform account whose regional sessions use different local user ids', () => {
     const accountSession = { ...session, workspace: null, apiBaseUrl: 'https://api.rallywith.ai' };
     const regionalEuSession = {

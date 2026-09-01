@@ -31,6 +31,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     onDeclineInvitation: vi.fn(async () => undefined),
     onInvitationPromptDismiss: vi.fn(),
     onMenuOpen: vi.fn(),
+    onReconnectAccount: vi.fn(async () => undefined),
     onOpenSettings: vi.fn(),
     onSignOut: vi.fn(),
     onSwitchWorkspace: vi.fn(async () => undefined),
@@ -63,6 +64,19 @@ describe('workspace account menu', () => {
 
     fireEvent.click(europe);
     expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
+  });
+
+  it('marks unread-only activity on the account trigger', () => {
+    renderMenu({
+      attention: {
+        [desktopWorkspaceIdentityKey(eu.region, eu.id)]: {
+          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true,
+        },
+      },
+    });
+
+    expect(screen.getByRole('button', { name: /Ada.*Global Studio.*unread activity in another workspace/u }))
+      .toBeVisible();
   });
 
   it('does not mark a same-id workspace in another region as current', () => {
@@ -99,6 +113,14 @@ describe('workspace account menu', () => {
     expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
   });
 
+  it('offers an in-place account reconnect when a migrated session lacks platform identity', () => {
+    const props = renderMenu({ accountReconnectRequired: true });
+    openMenu();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect account…' }));
+    expect(props.onReconnectAccount).toHaveBeenCalledOnce();
+  });
+
   it('confirms an invitation and creates a workspace from the same menu', async () => {
     const invite = {
       id: 'invite-1', workspaceId: 'workspace-invited', workspaceName: 'Invited Studio',
@@ -117,11 +139,30 @@ describe('workspace account menu', () => {
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
     const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
-    fireEvent.change(within(create).getByLabelText('Workspace name'), { target: { value: 'New Lab' } });
+    const workspaceName = within(create).getByLabelText('Workspace name');
+    expect(workspaceName).toHaveAttribute('maxlength', '120');
+    fireEvent.change(workspaceName, { target: { value: 'New Lab' } });
     fireEvent.click(within(create).getByRole('button', { name: 'Create workspace' }));
     expect(props.onCreateWorkspace).toHaveBeenCalledWith(
       { name: 'New Lab', region: 'global' }, expect.any(String),
     );
+  });
+
+  it('submits workspace creation with Enter but leaves an IME composition alone', async () => {
+    const props = renderMenu();
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create a workspace' }));
+    const create = await screen.findByRole('dialog', { name: 'Create a workspace' });
+    const workspaceName = within(create).getByLabelText('Workspace name');
+    fireEvent.change(workspaceName, { target: { value: 'New Lab' } });
+
+    fireEvent.keyDown(workspaceName, { key: 'Enter', isComposing: true });
+    expect(props.onCreateWorkspace).not.toHaveBeenCalled();
+    fireEvent.keyDown(workspaceName, { key: 'Enter' });
+
+    await waitFor(() => expect(props.onCreateWorkspace).toHaveBeenCalledWith(
+      { name: 'New Lab', region: 'global' }, expect.any(String),
+    ));
   });
 
   it('reuses an operation id while retrying the same creation intent', async () => {
