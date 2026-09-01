@@ -202,7 +202,7 @@ export async function acceptInvitationForUser(
     throw new ApiError(
       409,
       "workspace_membership_conflict",
-      "This Avalon account already belongs to another organization",
+      "This Rally account already belongs to another organization",
     );
   }
 
