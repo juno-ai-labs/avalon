@@ -272,6 +272,23 @@ export const AutomationRunContextV1Schema = z.strictObject({
    * wrong in the other direction shares somebody's run with the workspace.
    */
   scope: AutomationScopeSchema.nullable().default(null),
+  /**
+   * Where the conversation that produced this automation was happening, when
+   * that place is somewhere an occurrence can speak.
+   *
+   * Standing context, not instructions. "Ask what each person shipped" is what
+   * the automation does and belongs in text a person reads and edits; which
+   * channel this occurrence is speaking from is where it is authorized to act,
+   * and belongs where the run learns the rest of what it may work with.
+   * Writing the id into the instructions instead would freeze a literal into
+   * prose that every later edit, rename, or move would have to find and rewrite.
+   */
+  authoringOrigin: z.object({
+    kind: z.literal("slack"),
+    teamId: z.string().min(1).max(255),
+    channelId: z.string().min(1).max(255),
+    channelName: z.string().min(1).max(255).nullable(),
+  }).strict().nullable().default(null),
   modelOverride: z.string().min(1).nullable(),
   executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
   trigger: AutomationRunTriggerV1Schema,
