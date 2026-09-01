@@ -36,6 +36,8 @@ import {
   ARTIFACT_VIEWER_ID_HEADER,
   ARTIFACT_VIEWER_NAME_HEADER,
   ArtifactManifestSchema,
+  artifactAssetKey,
+  artifactIsolateId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -51,6 +53,13 @@ import {
 } from "../lib/durable-object-namespace";
 import { sha256Hex } from "../lib/crypto";
 import { workstreamDOName } from "./names";
+import {
+  FACET_HOST_CLASS,
+  FACET_HOST_MODULE,
+  FACET_HOST_MODULE_SOURCE,
+  FACET_NAME,
+} from "../artifacts/facet-host";
+import { admitReadOnlyStatement, admitTableName } from "../artifacts/read-only-sql";
 import {
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
@@ -161,6 +170,44 @@ export const ARTIFACT_OPEN_CODE_LIFETIME_MS = 60_000;
 const ERROR_LOG_ENTRIES = 50;
 
 /**
+ * The compatibility date model-authored artifact code runs under.
+ *
+ * Pinned rather than tracking the platform's newest, because an artifact is
+ * published once and served for as long as anyone opens it: a date that moved
+ * underneath it would change the runtime semantics of code nobody is going to
+ * revisit. Advancing it is a deliberate change with its own reason.
+ */
+const ARTIFACT_COMPATIBILITY_DATE = "2026-08-01";
+
+/**
+ * The Rally-authored methods the facet answers, which the model's class never
+ * defined and cannot reach.
+ *
+ * Branded as a Durable Object so `ctx.facets.get<T>()` returns a typed stub
+ * rather than something a cast has to rescue. The class this describes is
+ * authored as source in `artifacts/facet-host.ts` and compiled into the
+ * artifact's own isolate, so there is no TypeScript class to point at — this
+ * interface is the contract between the two sides, and it is the only place
+ * either can be changed without the other noticing.
+ */
+interface ArtifactFacetHost extends Rpc.DurableObjectBranded {
+  rallyDescribe(): Promise<{
+    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
+  }>;
+  rallyTableNames(): Promise<string[]>;
+  rallyQuery(sql: string, params: (string | number | null)[], maxRows: number): Promise<{
+    columns: string[];
+    rows: ArtifactRow[];
+    rowCount: number;
+    truncated: boolean;
+  }>;
+  rallyPage(quotedTable: string, offset: number, limit: number): Promise<{
+    rows: ArtifactRow[];
+  }>;
+  rallySize(): Promise<{ bytes: number }>;
+}
+
+/**
  * A 256-bit random token, hex-encoded.
  *
  * `getRandomValues` rather than a UUID of either kind, because these are
@@ -204,6 +251,34 @@ export const ArtifactOpenRequestSchema = z.object({
   appSessionId: z.string().min(1).max(200).nullable(),
   displayName: z.string().max(300),
 }).strict();
+
+/**
+ * A read's outcome, refusals included.
+ *
+ * Discriminated rather than thrown for the reason `agent-tools.md` separates
+ * the two: a caller-supplied statement that is not a read is a normal domain
+ * outcome the model repairs from, while an exception is Rally's own fault, and
+ * collapsing them makes both harder to find.
+ */
+/**
+ * One row as it crosses the RPC boundary.
+ *
+ * Narrow on purpose: `unknown` is not in the runtime's serializable set, so a
+ * row typed that way maps to `never` on the stub and the compiler stops being
+ * able to say anything useful about it. SQLite's own value domain is exactly
+ * these five, so nothing is lost by naming them.
+ */
+export type ArtifactRow = Record<string, string | number | boolean | null | ArrayBuffer>;
+
+export type ArtifactQueryResult =
+  | { ok: true; columns: string[]; rows: ArtifactRow[]; rowCount: number; truncated: boolean }
+  | { ok: false; reason: "no_artifact_data" }
+  | { ok: false; reason: "sql_refused"; detail: string };
+
+export type ArtifactPageResult =
+  | { ok: true; rows: ArtifactRow[] }
+  | { ok: false; reason: "no_artifact_data" }
+  | { ok: false; reason: "table_refused"; detail: string };
 
 export interface ArtifactSessionCheck {
   ok: boolean;
@@ -518,9 +593,134 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
     return {};
   }
 
+  /**
+   * Serve one request through the model's class, inside the facet.
+   *
+   * **Requests to a stateful artifact route through this object rather than
+   * being served in the loader's own isolate**, and that is forced rather than
+   * chosen: facet stubs cannot travel over RPC, so the object that owns the
+   * facet is the only place that can forward into it. The serving Worker
+   * already consults this object per request for the session check, so the hop
+   * is one it was making anyway.
+   */
+  async fetchThroughFacet(request: Request): Promise<Response> {
+    await this.initialized;
+    const state = this.stateRow();
+    if (!state) return new Response("artifact_not_published", { status: 404 });
+    const facet = await this.facetFor(state);
+    return await facet.fetch(request);
+  }
+
+  /** The artifact's stored shape, for the rail and the describe tool. */
+  async describeData(): Promise<{
+    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
+  }> {
+    await this.initialized;
+    const state = this.stateRow();
+    if (!state || state.stateful !== 1) return { tables: [] };
+    return await (await this.facetFor(state)).rallyDescribe();
+  }
+
+  /**
+   * Run one read against the artifact's database.
+   *
+   * The statement is admitted *before* it reaches the facet, by the supervisor
+   * rather than by the code that runs it: an always-rollback transaction is not
+   * an authorization boundary, and the rollback inside the facet is the second
+   * line of defence rather than the first.
+   */
+  async queryData(
+    sql: string,
+    params: (string | number | null)[],
+    maxRows: number,
+  ): Promise<ArtifactQueryResult> {
+    await this.initialized;
+    const state = this.stateRow();
+    if (!state || state.stateful !== 1) return { ok: false, reason: "no_artifact_data" };
+    // A refusal is a **domain outcome, not an exception**: a model writing the
+    // wrong SQL is the ordinary case this contract exists to repair, and
+    // throwing would log an uncaught rejection inside this object on every one
+    // of them — burying the failures that are actually Rally's fault. The tool
+    // layer turns this into the model-visible error.
+    const admission = admitReadOnlyStatement(sql);
+    if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
+    const host = await this.facetFor(state);
+    const read = await host.rallyQuery(admission.sql, params, maxRows);
+    return { ok: true, columns: read.columns, rows: read.rows, rowCount: read.rowCount, truncated: read.truncated };
+  }
+
+  /** One page of one table, for the Data view and the CSV export. */
+  async pageData(table: string, offset: number, limit: number): Promise<ArtifactPageResult> {
+    await this.initialized;
+    const state = this.stateRow();
+    if (!state || state.stateful !== 1) return { ok: false, reason: "no_artifact_data" };
+    const host = await this.facetFor(state);
+    // The allowlist is the *database's*, not the caller's: a name that is not a
+    // real table in this facet never reaches SQL at all.
+    const admitted = admitTableName(table, await host.rallyTableNames());
+    if (!admitted.admitted) return { ok: false, reason: "table_refused", detail: admitted.reason };
+    const page = await host.rallyPage(admitted.quoted, offset, limit);
+    return { ok: true, rows: page.rows };
+  }
+
+  /**
+   * Get the facet, aborting first whenever the running code cannot be confirmed.
+   *
+   * **The abort is defensive on purpose, and its necessity is not observable
+   * locally.** `facets.abort` on a facet that is not running is a no-op, so
+   * aborting when this object's in-memory tracking is cold — after
+   * hibernation, or after a republish this process did not see — costs nothing,
+   * while assuming costs a stale class serving live requests against a schema
+   * that has moved. Storage survives the abort; only the code is reloaded.
+   *
+   * Removing this call leaves the workerd proofs passing, because the runtime
+   * evidently reloads a facet whose class identity changed on its own. It stays
+   * anyway: it is the reference platform's documented update lifecycle, the
+   * behavior it guards against is a *cold-tracking* case a single-process test
+   * does not reach, and the cost of keeping it is a no-op call. That it cannot
+   * be shown load-bearing here is recorded rather than papered over.
+   */
+  private async facetFor(
+    state: z.infer<typeof ARTIFACT_STATE_ROW>,
+  ): Promise<Fetcher<ArtifactFacetHost>> {
+    if (this.facetVersion !== state.current_version) {
+      this.ctx.facets.abort(FACET_NAME, "artifact_version_changed");
+      this.facetVersion = state.current_version;
+    }
+    const artifactId = state.artifact_id;
+    const version = state.current_version;
+    const env = this.env;
+    return this.ctx.facets.get<ArtifactFacetHost>(FACET_NAME, async () => {
+      const loader = env.ARTIFACT_LOADER;
+      if (!loader) throw new Error("artifact_loader_binding_missing");
+      const module = await env.PAYLOADS.get(artifactAssetKey(artifactId, version, "index.js"));
+      if (!module) throw new Error("artifact_server_module_missing");
+      const worker = loader.get(artifactIsolateId(artifactId, version), async () => ({
+        compatibilityDate: ARTIFACT_COMPATIBILITY_DATE,
+        // Rally's own module is the main one and imports the model's, so the
+        // facet never loads the model's class directly.
+        mainModule: FACET_HOST_MODULE,
+        modules: {
+          [FACET_HOST_MODULE]: FACET_HOST_MODULE_SOURCE,
+          "index.js": await module.text(),
+        },
+        // No bindings and no network. A stateful artifact's class reaches its
+        // own facet storage and nothing else.
+        env: {},
+        globalOutbound: null,
+      }));
+      return { class: worker.getDurableObjectClass<ArtifactFacetHost>(FACET_HOST_CLASS) };
+    });
+  }
+
   /** Remove every session, for an artifact whose resource was deleted. */
   async purge(): Promise<void> {
     await this.initialized;
+    // `facets.delete` permanently removes the facet's database. It rides the
+    // same lifecycle that deletes the resource, so an artifact's data does not
+    // outlive the artifact.
+    this.ctx.facets.delete(FACET_NAME);
+    this.facetVersion = null;
     this.state.storage.sql.exec(`DELETE FROM viewer_sessions`);
     this.state.storage.sql.exec(`DELETE FROM error_log`);
     this.state.storage.sql.exec(`DELETE FROM artifact_state`);

@@ -25,6 +25,10 @@
       "database_id": "00000000-0000-0000-0000-000000000001"
     }
   ],
+  // The facet proofs need a real loader: a stateful artifact's class is loaded
+  // into the facet through it, and a double would prove nothing about the
+  // mechanism the whole stateful design rests on.
+  "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }],
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },

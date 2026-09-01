@@ -68,6 +68,14 @@ export interface Env {
   SLACK_REACTION_TICKERS: DurableObjectNamespace;
   /** One supervisor per live web artifact, named by the artifact's own id. */
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
+  /**
+   * Cloudflare's Worker Loader, which materializes model-authored code.
+   *
+   * Optional because it is account-level configuration this repository does not
+   * create: without it a static artifact still serves and an active one degrades
+   * to its assets, which is a visible partial failure rather than a dead origin.
+   */
+  ARTIFACT_LOADER?: WorkerLoader;
   ACTIVITY_QUEUE: Queue;
   /** Regional durable hand-off from inference capture to Pipeline ingestion. */
   INFERENCE_LAKEHOUSE_QUEUE?: Queue;
@@ -337,6 +345,7 @@ const EnvContractSchema = z.object({
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   SLACK_REACTION_TICKERS: binding<DurableObjectNamespace>(),
   ARTIFACT_HOSTS: binding<DurableObjectNamespace<ArtifactHostDO>>(),
+  ARTIFACT_LOADER: binding<WorkerLoader>().optional(),
   ACTIVITY_QUEUE: binding<Queue>(),
   INFERENCE_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
   ANALYTICS_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
