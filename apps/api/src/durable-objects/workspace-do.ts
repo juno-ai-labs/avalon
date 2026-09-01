@@ -5994,6 +5994,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /**
+   * The rows one grouping's action reaches, under exactly the rules the sidebar
+   * showed that grouping by.
+   *
+   * `origin_type <> 'automation'` is not a new opinion here — it is the same
+   * clause the paged recent list, the pinned rows, the running rows and the
+   * per-row socket push all carry, because an automation's run work stream is
+   * deliberately kept out of the sidebar and reached from the automation's own
+   * screen instead. This read is the fifth on that table and used to be the one
+   * that did not carry it, which meant a heading's **Archive all** irreversibly
+   * archived run history — a *planned* run's work stream included — that the
+   * reader had never been shown under that heading, while the confirmation
+   * counted it as one of the "work streams in This month".
+   *
+   * A row this omits for pagination is a different matter and stays in: the
+   * confirmation exists precisely to name the complete server-side total rather
+   * than the page the client happens to hold. Hidden is not the same as not yet
+   * loaded.
+   */
   private batchTargetIds(userId: string, filter: WorkstreamBatchFilter): string[] {
     const atOrAfter = filter.lastActivityAt?.atOrAfter;
     const before = filter.lastActivityAt?.before;
@@ -6008,6 +6027,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          LEFT JOIN workspace_workstream_pins pin
            ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
         WHERE directory.archived_at IS NULL
+          AND directory.origin_type <> 'automation'
           AND (? = 1 OR directory.system_kind IS NULL)
           AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
           AND (? IS NULL OR directory.last_activity_at >= ?)

@@ -269,6 +269,68 @@ describe("what the workspace object answers about its work streams", () => {
       expect(result.noteIds).toEqual([]);
     });
 
+    it("reaches nothing the sidebar keeps out of the grouping it named", async () => {
+      // The defect: this was the fifth reader of the directory and the only one
+      // without `origin_type <> 'automation'`, which the paged list, the pinned
+      // rows, the running rows and the socket push all carry. A heading's
+      // **Archive all** therefore archived run history the reader had never
+      // been shown under that heading — irreversibly, and counted in the
+      // confirmation as one of the "work streams in This month".
+      const visible = await seedWorkstream({
+        title: "In the heading",
+        lastActivityAt: "2021-03-12T12:00:00.000Z",
+      });
+      const run = await seedWorkstream({
+        title: "An automation's run",
+        lastActivityAt: "2021-03-12T13:00:00.000Z",
+        originType: "automation",
+        automationSubscriptionId: AUTOMATION,
+      });
+      // The worse half: a run that has not happened yet. Archiving takes it out
+      // of the scheduler's own `archived_at IS NULL` idempotency lookup.
+      const planned = await seedWorkstream({
+        title: "A run that has not happened yet",
+        lastActivityAt: "2021-03-12T14:00:00.000Z",
+        originType: "automation",
+        automationSubscriptionId: AUTOMATION,
+        plannedFor: PLANNED_FOR,
+      });
+      const filter = {
+        lastActivityAt: {
+          atOrAfter: "2021-03-10T00:00:00.000Z",
+          before: "2021-03-20T00:00:00.000Z",
+        },
+        pinned: false,
+        includeSystem: false,
+      } as const;
+
+      const targets = await workspace().batchUpdateTargets({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        filter,
+      });
+
+      expect(targets.items).toEqual([visible]);
+      expect(targets.items).not.toContain(run);
+      expect(targets.items).not.toContain(planned);
+
+      // Asserted against the sidebar's own answer rather than restated, so the
+      // two cannot drift apart again without this failing: whatever the list
+      // shows in that range is what the action reaches.
+      const page = await workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        limit: 250,
+        includeSystem: false,
+      });
+      const listedInRange = page.items
+        .filter((item) => item.lastActivityAt >= filter.lastActivityAt.atOrAfter
+          && item.lastActivityAt < filter.lastActivityAt.before)
+        .map((item) => item.id)
+        .sort();
+      expect([...targets.items].sort()).toEqual(listedInRange);
+    });
+
     it("freezes one operation and resumes only its undispatched targets", async () => {
       const included = await seedWorkstream({
         title: "Frozen target",
