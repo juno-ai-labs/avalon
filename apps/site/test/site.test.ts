@@ -9,7 +9,7 @@ import {
   parseDesktopReleaseConfig,
   renderDesktopRelease,
 } from '../src/release-config';
-import { normalizedTelemetryPathname } from '../src/telemetry';
+import { currentSitePage, normalizedTelemetryPathname } from '../src/telemetry';
 
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -558,6 +558,11 @@ describe('public Rally site', () => {
     )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'))
       .toBe('/app/workstreams/:id');
+    expect(normalizedTelemetryPathname(
+      '/app/workspaces/eu/private-workspace/workstreams/private-workstream/extra',
+    )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
+    expect(normalizedTelemetryPathname('/app/workspaces/eu/private-workspace'))
+      .toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/privacy/')).toBe('/privacy/');
     expect(classifyDesktopHandoffTarget('avalon://workstreams/not-a-uuid')).toEqual({
       handoffType: 'workstream', validity: 'invalid',
@@ -565,6 +570,17 @@ describe('public Rally site', () => {
     expect(classifyDesktopHandoffTarget(null)).toEqual({
       handoffType: 'unknown', validity: 'invalid',
     });
+
+    window.history.replaceState({}, '', '/app/workspaces/eu/workspace/workstreams/workstream');
+    expect(currentSitePage()).toBe('workstream_handoff');
+    window.history.replaceState({}, '', '/');
+  });
+
+  it('explains that an addressed Slack handoff opens its installing workspace', () => {
+    const page = readProjectFile('slack/link/index.html');
+
+    expect(page).toContain('Rally will open the workspace that installed this Slack app');
+    expect(page).not.toContain('Sign in to the Rally workspace that installed this Slack app');
   });
 
   it('validates and launches only exact desktop OAuth handoff targets', () => {
