@@ -4300,6 +4300,10 @@ async function createInlineChildHarnessSurface(options: {
     corePlugins: childCorePlugins,
     tools: [
       ...childCoreTools,
+      // Deduplication, not authorization: both plugins are built by filtering
+      // `childCoreTools`, so this array already carries their tools and
+      // flattening them again would list each one twice. The authorization
+      // question these two ids used to answer is `builtinPluginIds` below.
       ...childPlugins
         .filter((plugin) =>
           ![AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID].includes(plugin.canonicalId))
