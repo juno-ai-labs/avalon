@@ -592,6 +592,37 @@ idempotent per workspace.
 
 ## Changelog
 
+### 2026-09-01 — The disposition classifier gets a corpus, and it is a gate
+
+**What changed:** A fixed corpus of real-shaped results, each with the
+disposition a person would have chosen and the reasoning for it, lives in
+`packages/agent-harness/src/prompts/automation-result-disposition-corpus.ts`.
+`scripts/score-automation-disposition-corpus.mjs` scores it against a live
+model and exits non-zero on any miss; a unit test keeps the corpus itself
+honest.
+
+**Why:** This classifier is the only thing between every automation in the
+fleet and every destination it has. Nothing about a disposition raises an
+error, retries, or reaches a dead-letter queue — a result judged `done` simply
+never arrives, and the person waiting for it has no way to know it existed. A
+regression is silent in exactly the direction nobody checks, which is what
+makes this a release gate rather than a nice-to-have.
+
+**Considered and rejected:** Scoring in the ordinary test suite. It needs a
+real model, and a suite that cannot run without provider credentials is a suite
+people learn to skip. Also rejected: one pass rate. A swallowed result and a
+spurious exposure are not interchangeable — the first is invisible, the second
+is a row somebody ignores — and a single number lets a release trade one for
+the other unnoticed, so they are counted and reported separately.
+
+**Consequences:** The unit test guards the corpus, not the model: it refuses a
+case expecting an arm that case's own reach never offers, and it requires all
+three arms to appear, because a classifier that answered `done` to everything
+would pass a corpus of nothing but `done` — and that is precisely the broken
+model this exists to catch. Every case carries a `why`, because when one starts
+failing the question is whether the model drifted or the case was wrong, and
+only a recorded reason answers it later without re-arguing the corpus.
+
 ### 2026-09-01 — Who an automation runs as becomes state somebody can take over
 
 **What changed:** `automation_state` gains `run_as_user_id`, and the two sites
