@@ -109,6 +109,9 @@ describe("generic work-stream batch updates", () => {
     expect(beginWorkstreamBatchDispatch).toHaveBeenCalledWith(expect.objectContaining({
       operationId: OPERATION_ID,
       filter,
+      // The freeze needs the update kind: only `archive` has a note half to
+      // select, and it has to be selected in that same transaction.
+      update: { kind: "mark_read" },
     }));
     expect(sent.map((batch) => batch.length)).toEqual([50, 50, 50, 50, 5]);
     const events = sent.flatMap((batch) => batch.map((message) =>
@@ -189,10 +192,9 @@ describe("generic work-stream batch updates", () => {
     expect(archiveNotesForBatch).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
+      // No filter: the dispatch froze the note set, so the operation id *is*
+      // the selection and re-deriving it here could only widen it.
       operationId: OPERATION_ID,
-      filter,
-      // The work-stream half's own fence, so a second filter cannot reuse this
-      // operation id to archive a different set of notes under its receipt.
       requestHash: expect.stringMatching(/^fnv1a64:[0-9a-f]{16}$/u),
     }));
     // Nothing but work streams travels: a note has no object for an event to

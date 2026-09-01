@@ -7,7 +7,6 @@ import type {
   NoteSummary,
   NoteTranscriptSegment,
   UpdateNoteRequest,
-  WorkstreamBatchFilter,
 } from "@rally/contracts";
 import { workspaceDOName } from "../durable-objects/names";
 import { WorkspaceBatchNoteArchiveResultSchema } from "../durable-objects/workspace-directory-protocol";
@@ -260,22 +259,19 @@ export class NoteService {
    * 404 or 409 for this to translate. The count is what actually went, which is
    * the number the confirmation dialog promised.
    *
-   * `operationId` and `requestHash` are the work-stream batch's own fence:
-   * this must follow the dispatch that froze them, and a retry of the same
-   * operation returns the first call's count rather than archiving again.
+   * `operationId` and `requestHash` are the work-stream batch's own fence, and
+   * the operation is also *what* is archived: the dispatch froze the note set
+   * in the same transaction that froze the work streams, so nothing that
+   * entered the range since can be taken. A retry returns the first call's
+   * count rather than archiving again.
    */
-  async archiveForBatch(input: {
-    operationId: string;
-    requestHash: string;
-    filter: WorkstreamBatchFilter;
-  }): Promise<number> {
+  async archiveForBatch(input: { operationId: string; requestHash: string }): Promise<number> {
     const result = WorkspaceBatchNoteArchiveResultSchema.parse(
       await (await this.workspace()).archiveNotesForBatch({
         workspaceId: this.auth.workspaceId,
         userId: this.auth.userId,
         operationId: input.operationId,
         requestHash: input.requestHash,
-        filter: input.filter,
         at: nowIso(),
       }),
     );

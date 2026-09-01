@@ -92,6 +92,7 @@ export class WorkstreamBatchUpdateService {
       operationId: request.operationId,
       requestHash,
       filter: request.filter,
+      update: request.update,
     });
     const workstreamIds = dispatch.items;
     const events = workstreamIds.map((workstreamId) => ({
@@ -149,7 +150,6 @@ export class WorkstreamBatchUpdateService {
       ? await new NoteService(this.env, this.auth).archiveForBatch({
         operationId: request.operationId,
         requestHash,
-        filter: request.filter,
       })
       : 0;
 

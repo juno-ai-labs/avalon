@@ -350,12 +350,12 @@ export function archiveWorkspaceNote(
  * unreachable, and the confirmation's job is to name the complete server-side
  * total — the same contract the work-stream half has always had.
  *
- * The preview counts this same selection, so the number in the confirmation is
- * the number of notes that will actually go.
+ * The preview counts this same selection and the dispatch freezes it, so the
+ * number in the confirmation is the number of notes that will actually go.
  */
 const NOTE_BATCH_SELECTION_FENCE = `workspace_id = ? AND archived_at IS NULL
       AND owner_user_id = ?
-      AND recording_status != 'recording'
+      AND recording_status <> 'recording'
       AND (? IS NULL OR last_activity_at >= ?)
       AND (? IS NULL OR last_activity_at < ?)`;
 
@@ -368,12 +368,17 @@ const NOTE_BATCH_SELECTION_FENCE = `workspace_id = ? AND archived_at IS NULL
  *
  * Deliberately without a fallback for a value that will not parse. The filter
  * is schema-validated as a datetime before it reaches this object, so there is
- * none; and were that ever to change, `toISOString` throwing is the failure to
- * want — treating an unreadable bound as "no bound" would quietly widen an
- * archive rather than refuse it.
+ * none; and were that ever to change, refusing is the failure to want —
+ * treating an unreadable bound as "no bound" would quietly widen an archive.
  */
 function noteRangeBound(value: string | undefined): string | null {
-  return value === undefined ? null : new Date(Date.parse(value)).toISOString();
+  if (value === undefined) return null;
+  const parsed = Date.parse(value);
+  // Named rather than left to `toISOString`'s `RangeError`, so a caller that
+  // reached this object without the route's schema in front of it is
+  // distinguishable in the logs from a genuine runtime fault.
+  if (!Number.isFinite(parsed)) throw new Error("note_batch_range_bound_invalid");
+  return new Date(parsed).toISOString();
 }
 
 function noteBatchBindings(
@@ -410,7 +415,12 @@ export function workspaceNoteBatchTargets(
 }
 
 /**
- * Archive every note the filter selects, and say which ones went.
+ * Archive the notes one operation froze, and say which ones went.
+ *
+ * By frozen id rather than by re-running the range: the set was decided in the
+ * transaction that created the dispatch, and re-selecting here would take
+ * whatever had entered the range since — under an open-ended heading like
+ * "Last hour", any note touched while the Queue chunks were going out.
  *
  * One statement rather than a read followed by a loop of single-row archives:
  * the rows are all in this database, so the whole group is one transition, and
@@ -418,19 +428,30 @@ export function workspaceNoteBatchTargets(
  * ids come back from the statement itself — `rowsWritten` counts physical
  * writes, index maintenance included, and would overstate the group the moment
  * `notes_sidebar_idx` is touched.
+ *
+ * The owner and recording fences are re-checked rather than trusted to the
+ * freeze. Ownership cannot change, so that one is belt and braces; recording
+ * can start after the freeze, and archiving under a live meeting window 404s
+ * the next segment save. A note skipped for that reason is simply not in the
+ * count, which is the same answer the single-row archive gives.
  */
-export function archiveWorkspaceNotesInRange(
+export function archiveWorkspaceNotesForOperation(
   storage: DurableObjectStorage,
-  request: { workspaceId: string; userId: string; filter: WorkstreamBatchFilter; at: string },
+  request: { workspaceId: string; userId: string; operationId: string; at: string },
 ): string[] {
-  if (noteBatchExcluded(request.filter)) return [];
   const archived = storage.sql.exec<{ id: string }>(
     `UPDATE notes SET archived_at = ?, updated_at = ?
-      WHERE ${NOTE_BATCH_SELECTION_FENCE}
+      WHERE workspace_id = ? AND archived_at IS NULL
+        AND owner_user_id = ?
+        AND recording_status <> 'recording'
+        AND id IN (SELECT note_id FROM workspace_batch_dispatch_note_targets
+                    WHERE operation_id = ?)
       RETURNING id`,
     request.at,
     request.at,
-    ...noteBatchBindings(request.workspaceId, request.userId, request.filter),
+    request.workspaceId,
+    request.userId,
+    request.operationId,
   ).toArray().map((row) => row.id).sort();
   if (archived.length > 0) advanceNoteSidebar(storage);
   return archived;

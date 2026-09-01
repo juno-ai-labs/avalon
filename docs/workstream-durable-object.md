@@ -1215,7 +1215,7 @@ already have committed across the object boundary.
 | `workspace_workstream_pins` | User-ordered pins referencing the directory row; all pin writes and reorder operations execute in this object. |
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
-| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. The Worker publishes 50 messages per Queue call, below Cloudflare's 100-message platform maximum. WorkspaceDO records the whole chunk atomically through one JSON binding, independent of object SQLite's 100-parameter ceiling. `archived_note_count` is the same operation's note half: notes are rows in this object rather than separate authorities, so `archive` applies them here in one statement and stores the count as its own receipt. `NULL` means no note archive has run for the operation, which is both the pre-migration-26 reading and the permanent state of a `mark_read` operation. |
+| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets`, `workspace_batch_dispatch_note_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. The Worker publishes 50 messages per Queue call, below Cloudflare's 100-message platform maximum. WorkspaceDO records the whole chunk atomically through one JSON binding, independent of object SQLite's 100-parameter ceiling. The note half is frozen alongside them in `workspace_batch_dispatch_note_targets` — same transaction, same reason: re-selecting at archive time would take whatever entered the range while the Queue chunks were publishing, which under an open-ended heading is any note touched since the reader confirmed. Notes are rows in this object rather than separate authorities, so `archive` applies the frozen set here in one statement and stores `archived_note_count` as its receipt. `NULL` means no note archive has run for the operation, which is the permanent state of a `mark_read` operation; migration 26 backfills every row that predates it to `0`, because those operations were confirmed as work-streams-only and a cross-deploy retry must not give them a note half. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
 | `workspace_activity_event_targets` | Involvement edges such as mentioned/assigned; these never grant visibility and cascade with the event. |
 | `opportunity_batch_windows`, `opportunity_batch_events` | Debounced connector/message evidence, bounded attempts, Workflow leases, and terminal admission status; both share one not-yet-started token (`pending`), and the import maps legacy `queued` window rows onto it. Repeated mutation or settlement after `completed` is a no-op; a nonterminal lease mismatch remains fenced. |
@@ -1545,27 +1545,34 @@ with work streams. Work streams need events because each one is a separate
 authority that only its own object may mutate; a note is a row in the workspace
 object the request has already reached, so an event would buy nothing but a
 second, slower way for the two halves of one grouping to disagree about whether
-they happened. Also rejected: freezing note IDs into
-`workspace_batch_dispatch_targets` the way work-stream IDs are frozen. Those
-rows exist to resume a *partial* Queue publication, which a single statement
-cannot have; the only thing a retry can get wrong here is widening the
-selection, and one count closes that.
+they happened. Also considered and initially rejected: freezing the note IDs
+the way work-stream IDs are frozen. The argument was that those rows exist to
+resume a *partial* Queue publication, which a single statement cannot have, and
+that a receipt closes retry widening on its own. That reasoning only covered
+the retry: review found that the *first* pass has the same window, because the
+selection and the archive are separate object calls with the Queue publication
+between them, so a note touched in that interval could be taken though the
+confirmation never counted it. The IDs are frozen.
 
 **Consequences, and what a future change has to respect:** A new update kind
 must decide explicitly whether it reaches notes, and say so in both the preview
-and the confirmation rather than letting one count stand for two authorities.
+and the confirmation rather than letting one count stand for two authorities —
+and, if it reaches them, freeze its own target set in the dispatch transaction.
 The note archive must stay *behind* the Queue publication, so that a caller
 which sees this request fail can read that as "nothing happened": with the
 archive first, a failed chunk send threw having already taken the notes, and
 the client showed a retryable error while the reader's notes were in fact gone
 — with the caches and open routes that follow an archive never told. The
 receipt makes the retry idempotent in either order; only this one makes the
-failure honest. Its receipt is a count and not a set, so
-nothing may come to depend on knowing *which* notes an operation took — the
-client learns what went by refetching, because reconstructing the set from the
-filter and the sidebar as it stands *now* gets it wrong: a note that was
-recording when the archive ran, and has since stopped, reads as taken when it
-was skipped. The range is compared against `notes.last_activity_at`, an ISO
+failure honest. The object holds the frozen set, but its *receipt* to
+the Worker is a count, so nothing outside may come to depend on knowing which
+notes an operation took — the client learns what went by refetching, because
+reconstructing the set from the filter and the sidebar as it stands *now* gets
+it wrong: a note that was recording when the archive ran, and has since
+stopped, reads as taken when it was skipped. The archive re-checks the owner
+and recording fences against the frozen ids rather than trusting the freeze:
+ownership cannot change, but recording can start in between, and archiving
+under a live meeting window would break capture. The range is compared against `notes.last_activity_at`, an ISO
 string, so any timestamp reaching that comparison has to be re-spelled as
 canonical UTC first — an offset that sorts differently would silently select
 the wrong group. The note list's paging is what lets the selection stay
