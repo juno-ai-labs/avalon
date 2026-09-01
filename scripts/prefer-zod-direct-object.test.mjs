@@ -18,11 +18,17 @@ test("reports direct chained Zod object modes", () => {
     'import { z } from "zod"; const schema = z.object({ value: z.string() }).strict();',
     'import { z as schema } from "zod"; const value = schema.object({}).passthrough();',
     'import * as z from "zod"; const value = z.object({})["strict"]();',
+    'import z from "zod"; const value = z.object({}).strict();',
+    'import { z } from "zod"; const value = z.object({}).loose();',
   ]) {
     const messages = lint(source);
     assert.equal(messages.length, 1, source);
     assert.equal(messages[0].ruleId, "rally/prefer-zod-direct-object");
   }
+});
+
+test("classifies the enforced startup-allocation guard as a problem", () => {
+  assert.equal(preferZodDirectObjectRule.meta.type, "problem");
 });
 
 test("autofixes direct chained Zod object modes without disturbing later chains", () => {
@@ -52,6 +58,38 @@ test("autofixes direct chained Zod object modes without disturbing later chains"
     commented.output,
     'import { z } from "zod"; const value = z.strictObject({}) /* keep this rationale */ ;',
   );
+
+  for (const [source, expected] of [
+    [
+      'import { z } from "zod"; const value = (z.object({})).strict();',
+      'import { z } from "zod"; const value = (z.strictObject({}));',
+    ],
+    [
+      'import { z } from "zod"; const value = (z.object({})).passthrough();',
+      'import { z } from "zod"; const value = (z.looseObject({}));',
+    ],
+    [
+      'import { z } from "zod"; const value = z.object({}).loose();',
+      'import { z } from "zod"; const value = z.looseObject({});',
+    ],
+    [
+      'import { z } from "zod"; const value = z.object().strict();',
+      'import { z } from "zod"; const value = z.strictObject({});',
+    ],
+    [
+      'import { z } from "zod"; const value = z.object().passthrough();',
+      'import { z } from "zod"; const value = z.looseObject({});',
+    ],
+    [
+      'import z from "zod"; const value = z.object({}).strict();',
+      'import z from "zod"; const value = z.strictObject({});',
+    ],
+  ]) {
+    const result = lint(source, true);
+    assert.equal(result.fixed, true, source);
+    assert.equal(result.output, expected, source);
+    assert.deepEqual(result.messages, [], source);
+  }
 });
 
 test("leaves non-Zod and non-direct object-mode chains alone", () => {

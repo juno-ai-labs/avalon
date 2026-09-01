@@ -75,7 +75,7 @@ interface SlackUnfurlConnection {
   credential_key_version?: number;
 }
 
-const SlackCredentialsSchema = z.object({ botAccessToken: z.string().min(1) }).loose();
+const SlackCredentialsSchema = z.looseObject({ botAccessToken: z.string().min(1) });
 
 export async function refreshSlackWorkstreamUnfurls(env: Env, workspaceId?: string): Promise<void> {
   if (!workspaceId && env.WORKSPACE_DOS) throw new Error("slack_unfurl_workspace_required");
