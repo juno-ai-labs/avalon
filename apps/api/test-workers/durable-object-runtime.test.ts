@@ -6220,6 +6220,74 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  describe("delivery authority for a work stream", () => {
+    const OWNING_ID = "00000000-0000-7000-8006-000000000001";
+    const ARCHIVED_ID = "00000000-0000-7000-8006-000000000002";
+
+    async function seededWorkspace(): Promise<DurableObjectStub<WorkspaceDO>> {
+      const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+        workspaceDOName("global", WORKSPACE_ID),
+      ));
+      await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+      await runInDurableObject(stub, (_instance, state) => {
+        const insert = (id: string, generation: number, archivedAt: number | null): void => {
+          state.storage.sql.exec(
+            `INSERT INTO workspace_workstream_directory
+               (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+                title, description, preview, scope, exact_state, system_kind, last_activity_at,
+                completed_at, archived_at, email_address, origin_type, origin_label,
+                created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+                title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+                next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+                source_created_at, source_updated_at, projected_at)
+             VALUES (?, ?, 1, ?, 'test', 'Owning room', '', '', 'workspace', 'idle', NULL, 1,
+                     NULL, ?, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+                     'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+            id,
+            generation,
+            `00000000-0000-7000-8007-${id.slice(-12)}`,
+            archivedAt,
+            USER_ID,
+          );
+        };
+        insert(OWNING_ID, 4, null);
+        insert(ARCHIVED_ID, 1, 1);
+      });
+      return stub;
+    }
+
+    it("answers the current fence, and refuses to name one for a room it does not have", async () => {
+      const stub = await seededWorkspace();
+
+      // The generation, not a default: an automation delivering behind a stale
+      // fence is the case the fence exists for, so reading one that was never
+      // bumped would make every delivery look current.
+      expect(await stub.workstreamDeliveryAuthority({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: OWNING_ID,
+      })).toEqual({ authorityGeneration: 4, archived: false });
+
+      // An automation can outlive the room it belongs to. Null rather than a
+      // generation, so a caller cannot mistake "gone" for "generation 1".
+      expect(await stub.workstreamDeliveryAuthority({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: "00000000-0000-7000-8006-000000000009",
+      })).toBeNull();
+    });
+
+    it("reports an archived room as archived rather than as absent", async () => {
+      const stub = await seededWorkspace();
+
+      // Archived is not the same as gone: unarchiving restores the room and its
+      // automations, so the caller declines to write without concluding the
+      // work stream no longer exists.
+      expect(await stub.workstreamDeliveryAuthority({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: ARCHIVED_ID,
+      })).toEqual({ authorityGeneration: 1, archived: true });
+    });
+  });
+
   describe("automation activation", () => {
     const activation = {
       type: "automation_activation" as const,
@@ -6255,6 +6323,7 @@ describe("Durable Objects in the Workers runtime", () => {
         authorityGeneration: 1,
         deliveryId: activation.deliveryId,
         text: "Two candidates reached final round.",
+        executionPrincipal: { type: "workspace" as const, workspaceId: WORKSPACE_ID },
         activation,
       };
 
@@ -6266,14 +6335,54 @@ describe("Durable Objects in the Workers runtime", () => {
         .toEqual({ outcome: "replayed", code: "automation_activation_replayed" });
 
       await runInDurableObject(stub, async (_instance, state) => {
-        const rows = state.storage.sql.exec<{ message_type: string; content: string; structured_content_json: string }>(
-          `SELECT message_type, content, structured_content_json
-             FROM canonical_conversation_turn_details WHERE message_type = 'automation_activation'`,
+        // An activation is loop input, not a canonical turn: it becomes one
+        // when the loop promotes it, and the run it starts is the whole point
+        // of delivering into a room rather than appending to it.
+        const rows = state.storage.sql.exec<{
+          actor: string; message_type: string; mode: string; bind_payload_json: string;
+        }>(
+          `SELECT actor, message_type, mode, bind_payload_json FROM pending_loop_inputs`,
         ).toArray();
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.content).toBe("Two candidates reached final round.");
-        expect(JSON.parse(rows[0]!.structured_content_json).automationName)
-          .toBe("Candidate email intake");
+        expect(rows[0]!.actor).toBe("system");
+        expect(rows[0]!.message_type).toBe("automation_activation");
+        // Never mid-run: a person watching the room is doing something.
+        expect(rows[0]!.mode).toBe("queue");
+        // What the woken agent reads. The untrusted wrapper travels with it —
+        // an activation quotes connector content and is not an instruction.
+        expect(rows[0]!.bind_payload_json).toContain("UNTRUSTED AUTOMATION RESULT");
+        expect(rows[0]!.bind_payload_json).toContain("Two candidates reached final round.");
+      });
+    });
+
+    it("wakes the room rather than leaving the input for somebody else to find", async () => {
+      const stub = await openRuntime();
+
+      // Asserted at the admission itself: the activation request is what the
+      // object turns into an alarm, and by the time an assertion outside could
+      // look, that alarm has already fired and cleared. Without this request an
+      // activation is a row in a mailbox nothing ever drains.
+      await runInDurableObject(stub, async (instance) => {
+        const product = (instance as unknown as {
+          product: { admitAutomationActivation: (input: unknown) => Promise<{
+            activationRequest: { kind: string; cause: string } | null;
+          }> };
+        }).product;
+        const result = await product.admitAutomationActivation({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          messageId: "00000000-0000-7000-8000-0000000001b1",
+          clientMessageId: "automation-activation:delivery-wake",
+          text: "The board deck went out.",
+          activation: { ...activation, deliveryId: "delivery-wake" },
+          executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+          origin: "automation_activation",
+          now: activation.occurredAt,
+        });
+        expect(result.activationRequest).toMatchObject({
+          kind: "activate_substream_loop",
+          cause: "pending_input",
+        });
       });
     });
 
@@ -6286,6 +6395,7 @@ describe("Durable Objects in the Workers runtime", () => {
         authorityGeneration: 2,
         deliveryId: "delivery-stale",
         text: "Nobody should read this.",
+        executionPrincipal: { type: "workspace" as const, workspaceId: WORKSPACE_ID },
         activation: { ...activation, deliveryId: "delivery-stale" },
       };
 

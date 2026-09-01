@@ -4,6 +4,8 @@ import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
   AutomationActivationV1Schema,
+  type AutomationRunContextV1,
+  ExecutionPrincipalSchema,
   ClientSocketEventSchema,
   IdSchema,
   PersonalSocketEventSchema,
@@ -131,7 +133,7 @@ import {
   WorkstreamRegionalEffectAckSchema,
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
-import { automationAgentName, substreamAgentName, substreamLoopId, workstreamDOName } from "./names";
+import { automationAgentName, substreamAgentName, substreamLoopId, workspaceDOName, workstreamDOName } from "./names";
 import {
   BlockDashboardSourceRefreshRequestSchema,
   type BlockDashboardContextFence,
@@ -1296,20 +1298,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * An automation's result, delivered into the work stream that owns it.
    *
-   * Follows `appendWatchedResourceEvent` exactly: an idempotent client message
-   * ID derived from the delivery, the authority-generation fence every provider
-   * write respects, and the archive check. Storage, ordering and transport are
-   * unchanged; only the type is new, and `message_type` carries no CHECK, so
-   * nothing here is a migration.
+   * Delivery here means a run, not a row. The result is admitted as loop input
+   * exactly as an external message is — the mailbox is what turns an arrival
+   * into an `activate_substream_loop` request — because a room that receives
+   * something nobody acts on has received nothing. A canonical append would
+   * have landed text that sits unread until something unrelated happens to
+   * start a run, which for a room nobody is watching is never.
    *
-   * A retry after a crash lands the same row once.
-   *
-   * **It does not yet wake the room.** Waking is the pending-input path — an
-   * admitted input produces an `activate_substream_loop` request when the loop
-   * is idle, which is how an external Slack message starts a run — and this
-   * appends canonically instead. The row lands, the room reads it, and the
-   * agent sees it the next time it runs for its own reasons; starting a run on
-   * arrival is the other half and is not written here rather than half-written.
+   * The idempotent client message ID derived from the delivery, the
+   * authority-generation fence every provider write respects, and the archive
+   * check are unchanged from `appendWatchedResourceEvent`: a retry after a
+   * crash wakes the room once, and a run that outlived its automation's pause
+   * or its room's archive wakes it not at all.
    */
   async appendAutomationActivation(input: unknown): Promise<{
     outcome: "appended" | "replayed" | "refused";
@@ -1323,9 +1323,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       authorityGeneration: z.number().int().positive(),
       deliveryId: z.string().min(1),
       text: z.string().min(1),
+      executionPrincipal: ExecutionPrincipalSchema,
       activation: AutomationActivationV1Schema,
     }).strict().parse(input);
-    const clientMessageId = `automation-activation:${request.deliveryId}`;
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
@@ -1333,40 +1333,51 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.externalSubstreamId() !== "0") {
       return { outcome: "refused", code: "workstream_destination_mismatch" };
     }
-    if (this.messages.messageByClientId({ clientMessageId })) {
-      return { outcome: "replayed", code: "automation_activation_replayed" };
+    // Checked here rather than inside the admission: an automation whose room
+    // was archived or re-authorized between the decision to deliver and the
+    // delivery itself must not wake it, and the mailbox has no opinion about
+    // either fact.
+    const authority = this.ctx.storage.sql.exec<{
+      authority_generation: number;
+      archived_at: number | null;
+    }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
+    if (!authority || authority.authority_generation !== request.authorityGeneration) {
+      return { outcome: "refused", code: "workstream_authority_generation_stale" };
     }
-    const prepared = await this.messages.prepareMessage({
-      messageId: uuidV7(request.activation.occurredAt),
-      clientMessageId,
-      authorType: "system",
-      authorUserId: null,
-      externalActorJson: null,
-      messageType: "automation_activation",
-      text: request.text,
-      structuredContentJson: JSON.stringify(request.activation),
-      producedByRunId: null,
-      now: request.activation.occurredAt,
-    });
-    return this.product.commitRuntimeMutation(() => {
-      const authority = this.ctx.storage.sql.exec<{
-        authority_generation: number;
-        archived_at: number | null;
-      }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
-      if (!authority || authority.authority_generation !== request.authorityGeneration) {
-        return { outcome: "refused" as const, code: "workstream_authority_generation_stale" };
+    if (authority.archived_at !== null) {
+      return { outcome: "refused", code: "workstream_archived" };
+    }
+    try {
+      const result = await this.product.admitAutomationActivation({
+        workspaceId: asWorkspaceId(request.workspaceId),
+        workstreamId: asWorkstreamId(request.workstreamId),
+        messageId: uuidV7(request.activation.occurredAt),
+        clientMessageId: `automation-activation:${request.deliveryId}`,
+        text: request.text,
+        activation: request.activation,
+        executionPrincipal: request.executionPrincipal,
+        origin: "automation_activation",
+        now: request.activation.occurredAt,
+      });
+      // The activation request is the wake: without it the row sits in the
+      // mailbox until something else happens to start a run, which for a room
+      // nobody is looking at is never.
+      if (result.activationRequest) {
+        await this.requestPersistentLoopActivation(result.activationRequest);
       }
-      if (authority.archived_at !== null) {
-        return { outcome: "refused" as const, code: "workstream_archived" };
-      }
-      const appended = this.messages.appendPreparedMessage(prepared);
+      if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
       return {
-        outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
-        code: appended.outcome === "replayed"
-          ? "automation_activation_replayed"
-          : "automation_activation_appended",
+        outcome: result.inserted ? "appended" : "replayed",
+        code: result.inserted
+          ? "automation_activation_appended"
+          : "automation_activation_replayed",
       };
-    }, true);
+    } catch (error) {
+      return {
+        outcome: "refused",
+        code: error instanceof Error ? error.message : "automation_activation_failed",
+      };
+    }
   }
 
   /** Authoritative current readers for privacy decisions made outside this object. */
@@ -3586,6 +3597,72 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return settlementDiagnosticCode;
   }
 
+  /**
+   * Post the result into the owning work stream and start a run on it.
+   *
+   * The fence comes from the workspace directory rather than from the room,
+   * because a re-authorization bumps the directory first; reading the room
+   * would mean learning about the change only after writing into it. A room the
+   * directory does not have, or one it has archived, is not written to at all —
+   * an automation outliving its owner is the case this exists for, and silence
+   * there is the correct outcome.
+   */
+  private async wakeOwningWorkstream(input: {
+    region: Region;
+    workspaceId: string;
+    owningWorkstreamId: string;
+    /** The run's own work stream, which an "open the run" affordance needs. */
+    runWorkstreamId: string;
+    frozen: AutomationRunContextV1;
+    text: string;
+  }): Promise<"delivered" | "authority_unavailable" | "workstream_archived"> {
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(input.workspaceId),
+      workspaceDOName(input.region, asWorkspaceId(input.workspaceId)),
+    );
+    const authority = await workspace.workstreamDeliveryAuthority({
+      workspaceId: input.workspaceId,
+      workstreamId: input.owningWorkstreamId,
+    });
+    if (!authority) return "authority_unavailable";
+    if (authority.archived) return "workstream_archived";
+    const substream = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.SUBSTREAM_AGENTS,
+      asWorkspaceId(input.workspaceId),
+      substreamAgentName(
+        input.region,
+        asWorkspaceId(input.workspaceId),
+        asWorkstreamId(input.owningWorkstreamId),
+        asSubstreamId("0"),
+      ),
+    );
+    const result = await substream.appendAutomationActivation({
+      schemaVersion: 1,
+      workspaceId: input.workspaceId,
+      workstreamId: input.owningWorkstreamId,
+      authorityGeneration: authority.authorityGeneration,
+      deliveryId: `${input.frozen.runId}:${input.owningWorkstreamId}`,
+      text: input.text,
+      executionPrincipal: input.frozen.executionPrincipal,
+      activation: {
+        type: "automation_activation",
+        schemaVersion: 1,
+        automationId: input.frozen.automationId,
+        automationName: input.frozen.definition.name,
+        runId: input.frozen.runId,
+        runWorkstreamId: input.runWorkstreamId,
+        deliveryId: `${input.frozen.runId}:${input.owningWorkstreamId}`,
+        trigger: { kind: input.frozen.trigger.kind },
+        occurredAt: Date.now(),
+      },
+    });
+    if (result.outcome === "refused") throw new Error(result.code);
+    return "delivered";
+  }
+
   private async deliverAgentRunResult(
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
@@ -3723,6 +3800,54 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             : disposition.disposition === "done"
               ? withheldOutcomeCode(disposition.reason)
               : "delivery_suppressed",
+        });
+      } catch (failure) {
+        failures.push(failure);
+        await automation.recordDeliveryReceipt({
+          schemaVersion: 1,
+          automationId: frozen.automationId,
+          workspaceId: input.workspaceId,
+          runId: frozen.runId,
+          workstreamId: input.workstreamId,
+          targetKey,
+          payloadHash,
+          state: "failed",
+          outcomeCode: "delivery_failed",
+        }).catch(() => undefined);
+      }
+    }
+    // The room that owns this automation, woken with the result as a message.
+    // Not one of `deliveryTargets`: those are destinations somebody chose, and
+    // this one follows from ownership. It is also the only "delivery" that
+    // starts a run rather than writing to somewhere outside Rally.
+    if (frozen.owningWorkstreamId !== null && text !== null) {
+      const owningWorkstreamId = frozen.owningWorkstreamId;
+      const targetKey = `workstream:${owningWorkstreamId}`;
+      try {
+        const state = disposition.disposition === "deliver"
+          ? await this.wakeOwningWorkstream({
+              region: input.region,
+              workspaceId: input.workspaceId,
+              owningWorkstreamId,
+              runWorkstreamId: input.workstreamId,
+              frozen,
+              text,
+            })
+          : "skipped" as const;
+        await automation.recordDeliveryReceipt({
+          schemaVersion: 1,
+          automationId: frozen.automationId,
+          workspaceId: input.workspaceId,
+          runId: frozen.runId,
+          workstreamId: input.workstreamId,
+          targetKey,
+          payloadHash,
+          state: state === "delivered" ? "delivered" : "skipped",
+          outcomeCode: state === "delivered"
+            ? "delivery_completed"
+            : disposition.disposition === "done"
+              ? withheldOutcomeCode(disposition.reason)
+              : state,
         });
       } catch (failure) {
         failures.push(failure);

@@ -1478,6 +1478,69 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-01 — A delivery reads its fence from the directory, not from the room
+
+**What changed:** WorkspaceDO answers `workstreamDeliveryAuthority`, returning a
+work stream's current authority generation and whether it is archived, or null
+for one the workspace does not have. SubstreamAgent's automation settlement uses
+it to fence the activation it posts into the work stream that owns the
+automation.
+
+**Why:** An automation owned by a work stream keeps running when the person who
+created it is removed, so the room is the thing that can change underneath a
+delivery — re-authorized, or archived — between the decision to deliver and the
+write. The directory is what a re-authorization bumps first; a delivery that
+read the generation from the room itself would learn about the change only after
+writing into it.
+
+**Considered and rejected:** Returning the whole directory row. A caller holding
+this is answering "may I still write here", and a wider shape invites it to
+answer "what does this room look like" from a read that is not the serving path
+and will be staler than one.
+
+**Consequences:** Null means do not write; a caller that reads it as generation 1
+delivers behind a fence that was never checked. Archived is distinct from
+absent on purpose — unarchiving restores the room and its automations — so
+neither is inferred from the other.
+
+### 2026-09-01 — An automation activation is loop input, not a transcript row
+
+**What changed:** `pending_loop_input_mailbox` admits a fifth preparation kind,
+`automation_activation`, and SubstreamAgent's `appendAutomationActivation`
+admits through the mailbox — reserve, prepare, complete, then request the loop
+activation — instead of appending a canonical turn. Its pending input carries
+`actor = 'system'` and `mode = 'queue'`, and its Bind payload is the untrusted
+automation-result wrapper rather than a participant projection.
+
+**Why:** An automation owned by a work stream delivers its result *into* that
+work stream, and a room that receives a row nobody acts on has received
+nothing. Waking is a property of the mailbox: a pending input yields an
+`activate_substream_loop` request when the loop is idle, which is how an
+external Slack message starts a run. A canonical append reaches no loop at all,
+so the first implementation landed a row that would sit unread until something
+unrelated happened to start a run — which, for a room nobody is watching, is
+never.
+
+**Considered and rejected:** Reusing `admitExternalMessage` by giving the
+automation a synthetic `ExternalActor`. The base schema requires a provider, a
+provider account, and a provider user ID, and an automation has none of them;
+filling them with placeholders would put invented provider identity in the
+column every downstream reader trusts to name a real account, and
+`projectParticipantModelMessage` would have rendered the result as an
+"EXTERNALLY ATTRIBUTED WORKSPACE MEMBER REQUEST" — attributing connector-quoted
+text to a person who does not exist. Also rejected: `steer` mode. A room mid-run
+has somebody watching it, and a scheduled result is not more urgent than what
+they are already doing.
+
+**Consequences:** A future preparation kind must extend the `expectedActor`
+mapping in `substream-loop-storage.ts` as well as the CHECK — the mapping is
+prefix-based (`human_` → human) with `automation_activation` named explicitly,
+and a kind that matches neither silently becomes `external`. The v36 rebuild is
+a referenced-parent rebuild (`pending_loop_inputs` points at the mailbox) and so
+runs with `foreignKeys: "disabled_during_rebuild"`; the mailbox's triggers and
+ordering index now come from `pendingLoopInputMailboxGuards()` so a rebuild
+cannot recreate a subset of them.
+
 ### 2026-09-01 — The note list pages, so nothing in it is out of reach
 
 **What changed:** The sidebar's note list is cursor-paged the way the
