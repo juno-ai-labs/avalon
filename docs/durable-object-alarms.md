@@ -268,9 +268,10 @@ that a particular target was interrupted.
   uses the base with an explicit candidate override described under *Firing*:
   the run lane is the one derived reason whose worker is this alarm. Two kinds
   of call site still arm directly, and both are deliberate. A SubstreamAgent
-  arms immediately after committing a pending loop input or an unlinked
-  execution receipt, and `WorkstreamObjectStore.enqueueRegionalEffect` does the
-  same after committing an effect. An isolate that dies before the full re-arm
+  arms immediately after committing a pending loop input, an unlinked execution
+  receipt, or the mailbox reservation that precedes a prepared input, and
+  `WorkstreamObjectStore.enqueueRegionalEffect` does the same after committing
+  an effect. An isolate that dies before the full re-arm
   therefore cannot strand either durable row. Both paths can only pull the alarm
   in, never push it out, and the next `armNextAlarm` corrects the instant.
   Anything that would arm for a *future* time belongs in the base.
@@ -499,6 +500,34 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-01 — An unsettled message admission is a SubstreamAgent wake reason
+
+**What changed:** `SubstreamAgent`'s run lane derives a keep-alive-horizon
+instant while any `pending_loop_input_mailbox` row is still `preparing`, and the
+product service arms directly at the cancellation-recovery horizon the moment it
+reserves one — a third deliberate direct-arm call site alongside the pending
+loop input and the unlinked execution receipt, and, like both of those, one that
+can only pull the alarm in.
+
+**Why:** A message is admitted in two durable steps, and only the second made it
+visible to the run lane: `pendingInputs` deliberately hides a `preparing` row
+and everything queued behind it, and `nextRecoverableInputPreparationAt`
+returned `null` while the isolate held the in-memory claim. So between the two
+steps the object derived no wake reason at all, and an admission the runtime
+cancelled — no throw, no `finally` — left a durable reservation with nothing to
+rediscover it. The message and every message queued after it then waited for an
+unrelated request, which for a work stream nobody reopens never comes. This is
+the same hazard the pre-work arm exists for, reaching the one durable row that
+was not yet a wake reason.
+
+**Considered and rejected:** A stored `_internal_durable_alarms` kind per
+reservation would have survived the same way, with retry gating and a stall
+report for free, but it makes an admission write and cancel an index entry on a
+path whose whole point is to commit fast, and the entry would outlive nothing
+the derived instant does not already cover. The keep-alive horizon rather than
+the cancellation horizon for the ongoing derivation keeps a preparation that
+normally settles in milliseconds from heartbeating every two seconds.
 
 ### 2026-08-28 — AutomationAgent adopts the base, with two stored kinds and two derived lanes
 

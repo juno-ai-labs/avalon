@@ -5015,6 +5015,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (loop && this.loop.pendingInputs().length > 0) return now;
     const preparation = this.product.nextRecoverableInputPreparationAt(now);
     if (preparation !== null) return preparation;
+    // A preparation this isolate is still running is in-memory work standing
+    // over a durable reservation, so it derives a wake-up exactly the way a
+    // live run drain does: the claim cannot outlive the isolate, and the
+    // replacement is what resumes it. Returning `null` here instead is what
+    // let the re-arm at the end of the very alarm that found it delete the
+    // object's only wake-up, stranding that message — and, behind the
+    // head-of-line gate, every message queued after it.
+    if (this.product.hasUnresolvedInputPreparation()) return now + KEEP_ALIVE_INTERVAL_MS;
     const receipt = this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(COALESCE(execution_available_at, created_at)) AS due_at FROM runs
         WHERE execution_context_json IS NOT NULL
