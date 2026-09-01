@@ -7,9 +7,10 @@ Two rules run through everything below. **Default to the real Cloudflare
 pipeline**: real workerd and a real Durable Object for anything the runtime
 decides, and the checked-in migrations against real SQLite for anything a query
 decides — a double stands in for something that *cannot* be run here, never for
-setup that was inconvenient. And **prove the test can fail**: a test that
-stays green when the code under it is broken is not covering that code, and the
-suite is worse off for it because the name says otherwise.
+setup that was inconvenient. And **prove the test can fail**, at the integration
+rungs: an integration test that stays green while the behavior under it is broken
+is not covering that behavior, and the suite is worse off for it because the name
+says otherwise.
 
 [`e2e.md`](e2e.md) owns the manual acceptance flows and the live-Worker smoke
 check; [`type-safety-boundaries.md`](type-safety-boundaries.md) owns how a test
@@ -422,19 +423,112 @@ beforeEach(async () => {
 - **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 
+## How much to run
+
+**Match the run to the size of the change.** A full `pnpm test` takes minutes and
+most changes do not need one locally. `ci.yml` runs the suites for every revision
+of an open pull request, so running those locally buys confidence rather than
+correctness. Two things qualify that. The gates outside the matrix have no
+backstop at all — `pnpm docs:check`, `pnpm smoke:local`, `pnpm e2e:local` are in
+no lane — and that is the distinction the bullets below draw. And `ci.yml`
+triggers on `pull_request` alone, pinned by `scripts/ci-workflow.test.mjs`, so a
+branch with no pull request open runs nothing; since a pull request here is
+opened ready for review rather than as a draft, that is most of a change's life.
+
+- **Documentation-only changes: run the documentation gates, not the suites.** No
+  suite covers prose, but two things do. `pnpm docs:check` scans every file under
+  `docs/` for a heading a rebase truncated, and it runs nowhere in CI, so a
+  documentation change that skips it is a documentation change nothing checked.
+  And three documents are executable contracts, read off disk and asserted on:
+  `docs/connector-digestibility.md` by
+  `packages/connectors/src/digestibility-doc.test.ts`,
+  `docs/workstream-email-addresses.md` by
+  `apps/api/test/workstream-email-address.test.ts`, and
+  `docs/domain-migration.md` by `apps/site/test/site.test.ts`. Editing one of
+  those runs its test too. For a document not on that list,
+  `grep -rn 'docs/<file>.md' --include='*.test.*' .` finds the tests that name
+  it; most hits only cite a document in a comment, and those need nothing.
+  A change inside a source file is not a documentation change even when it
+  touches only comments: `// @vitest-environment jsdom` and its neighbours are
+  directives, and they decide how the file runs.
+- **Ordinary changes: run the tests that cover what you touched.** One file, one
+  test name, or the one package's suite. Add a second package only when the
+  change crosses into it. Fixing a flake is the exception:
+  [the flaky-test rule](../AGENTS.md#flaky-tests) wants the full run, because
+  cross-file interference is what makes a flake.
+- **Large changes: run `pnpm test` once** before calling it done — every package,
+  not the whole suite of the one package you were in, which the bullet above
+  already allows. It catches a suite you had no reason to think about.
+
+  The trigger is roughly 20 files, and files in `docs/` do not count toward it.
+  The number is the team's and it is approximate, because a file count is a weak
+  proxy for what it stands in for: three files in `packages/contracts` or the
+  harness reach further than forty independent route handlers. Reach is the real
+  trigger — a change to a shared package, or one whose blast radius you cannot
+  enumerate, earns the run at any size.
+
+A narrow run you actually read beats a wide one you skim. If a test outside what
+you touched fails, that is a real result and it belongs to this change, whether
+or not you planned to run it.
+
 ## Prove the test can fail
 
-**Break the code the test covers, watch that test fail, then revert.** Do it
-before the change is called done, for every test written or substantially
-changed:
+**This applies to integration tests only**, and what makes a test one is what
+it runs against rather than what it calls. That means rung 1 and rung 2 above:
+real workerd in `apps/api/test-workers/`, and any Node test that exercises
+production queries, schemas, routes, services, or objects against the checked-in
+migrations — `packages/db/test/` included, where the migration itself is the
+subject and no route or service is involved. It also applies to the local smoke
+and e2e lanes.
 
-```bash
-# 1. Make the production code wrong: invert the condition, delete the write,
-#    return the wrong constant. One edit, in the code — never in the test.
-# 2. Run only that file, and read the failure.
-pnpm --filter @rally/api exec vitest run test/<file>.test.ts &> /tmp/proof.log
-# 3. Confirm it failed *for the reason the test is named after*, then revert.
-```
+Everything else is exempt, because nothing real is underneath it to break: rung
+3 and rung 4, pure `packages/*` logic, most desktop component tests, and the site
+and release-retention suites, which read config files and call pure functions. At
+that level the only break available is usually flipping the literal the
+assertion already mirrors, which costs a cycle and proves nothing. When writing
+one of those, read the list of assertions that survive a break, below, instead
+of running the check.
+
+The exemption is by the shape of the test, not the suite it sits in. A renderer
+test that drives a real reducer or store through a state transition and reads the
+result has a subject a break can teach you something about, and it is worth the
+cycle even though it lives in a unit suite. A snapshot or a label assertion in
+the same file does not.
+
+**Break the behavior the test names, watch that test fail, then revert.** Make
+one edit in the production code. Never edit the test. Run only what you are
+proving, one file or a single test name, capturing the output to a file rather
+than reading it through a truncating pipe
+([capturing command output](../AGENTS.md#capturing-command-output)) — the failure
+you are here to read is the one a pipe eats. Under `--filter … exec` the path is
+package-relative, so the repo-relative path a failure reports fails as `No test
+files found`. Check that it failed for the reason the test is named after, then
+revert.
+
+**Break it the way production would break.** Drop the write, skip the lease
+check, return the row without its fence, send the message to the wrong work
+stream, serve the stale value. What you want to learn is whether the test notices
+a defect a member could feel. Flipping a `true` into a `false` on the one line
+the assertion mirrors teaches you nothing: it is the same statement written
+twice. If that flip is the only break you can find, the test is pinned to a
+literal rather than to behavior. At rung 1 there is no rung above it to move to,
+so the fix is a better assertion — read the row back, the message the socket
+delivered, the status a refused request returned — rather than a promotion.
+
+**Prove each behavior once, not each `it()`.** If one break turns several tests
+in the file red, that single run proves all of them. Ten cases covering one
+decision need one cycle.
+
+**Keep the run narrow.** This costs two runs of that one file: one with the
+break, and one after reverting it, which is the pass that shows the restored code
+is green. Confirm the revert by reading the diff for the mutation specifically,
+since `git diff` also carries the rest of the change you have not committed. Never
+widen the confirmation to the package suite or `pnpm test`.
+
+**The smoke and e2e lanes are not on that budget.** They need a running
+`pnpm dev:api:local`, a migrated database, and — for e2e — an OpenRouter key, so
+two cycles is a chunk of a session rather than a minute
+([`e2e.md`](e2e.md)). Break one production path, run that one lane, revert.
 
 A failure that names something else — a fixture that threw, a schema parse, a
 timeout — proves the test runs, not that it observes the behavior. An assertion
