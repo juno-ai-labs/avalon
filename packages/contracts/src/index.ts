@@ -213,6 +213,7 @@ export const AGENT_MODEL_ROLES = [
   "work_opportunity_admission",
   "work_opportunity_ranking",
   "workstream_description",
+  "automation_result_disposition",
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
@@ -228,6 +229,7 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
   workstream_description: "agent-model-workstream-description",
+  automation_result_disposition: "agent-model-automation-result-disposition",
 };
 
 /** One task's primary OpenRouter model and its ordered fallback route. */

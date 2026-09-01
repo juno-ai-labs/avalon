@@ -76,6 +76,7 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "work_opportunity_admission":
     case "work_opportunity_ranking":
     case "workstream_description":
+    case "automation_result_disposition":
       return { model: modelId(env.OPENROUTER_STRUCTURED_MODEL), fallbackModels };
     case "block_dashboard":
       // No fallbacks by default: a block that routes onward mid-configuration

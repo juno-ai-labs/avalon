@@ -89,6 +89,7 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Automation result disposition | `agent-model-automation-result-disposition` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
 The first five names match the `AgentInferenceSource` values written to the
 inference ledger, so a ledger row and a flag key name the same agent. The rest
