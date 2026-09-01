@@ -82,6 +82,12 @@ route remain unchanged and the deep-link failure window explains that the target
 could not be accessed. The target pair never substitutes for the regional API's
 membership check.
 
+Settings opens in a separate window. When an addressed Settings, connector, or
+Slack handoff changes workspaces, the main window behind it moves to that
+workspace's new-work-stream landing page; closing Settings can therefore never
+reveal a resource route retained from the previous workspace. A handoff to the
+already-active workspace preserves the main window's route.
+
 Addressed links can start from an identity-only session because the platform
 identity, not a current regional workspace, authorizes discovery. Delivery is
 serialized across main's cold-start queue and live operating-system callbacks,
@@ -223,6 +229,27 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-01 — Targeted Settings leaves a safe workspace landing page
+
+**What changed:** An addressed Settings, connector-result, or Slack handoff that
+changes workspaces resets the main window behind Settings to the new workspace's
+landing page. Same-workspace handoffs preserve the current route.
+
+**Why:** Real-window connector verification showed that authorization remained
+correct but closing Settings could expose the previous workspace's resource
+route, which then failed to load under the newly active credential.
+
+**Considered and rejected:** Leaving the stale route to fail closed, and always
+resetting the main window. The first turns a successful connector return into a
+confusing access error; the second discards a person's place when no workspace
+change occurred.
+
+**Consequences:** A cross-workspace handoff has an unambiguous background screen
+as well as an unambiguous credential. Resource and automation destinations still
+navigate directly to their addressed route.
+
+Shipped in #464.
 
 ### 2026-09-01 — Addressed links revalidate membership and fail closed on old builds
 
