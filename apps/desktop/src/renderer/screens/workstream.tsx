@@ -1225,6 +1225,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       key: transcriptOverlayIdentityKey(overlay.identity),
       inputId: pendingOverlayInputId(overlay) ?? null,
       text: overlay.message.text ?? '',
+      mentions: overlay.message.mentions ?? [],
       member: queueAuthorMember(overlay.message, members.data ?? []),
       sending: overlay.message.deliveryState === 'sending',
     })),
