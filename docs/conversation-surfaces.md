@@ -1,16 +1,16 @@
 # Shared conversation surfaces
 
-Rally's work-stream feed and automation draft wizard are two adapters over one
-renderer conversation family. They share presentation and interaction
-primitives, not product authority or one stateful screen component.
+Rally has one conversation surface: the work-stream feed. Its presentation and
+interaction primitives live in a renderer family that a second adapter — the
+standalone automation draft wizard — used to share.
 
-**The second adapter is on its way out.** The
+**That second adapter is gone.** The
 [automations-in-a-work-stream PRD](PRDs/2026-08-29_automation-workstream-delivery/prd.md)
-moves authoring into a work stream's main feed and retires the standalone draft
-screen, which leaves one adapter and no family. Read this document as a
-description of what is, and that PRD before planning anything that would deepen
-the split — including anything that would give the draft surface more of the
-feed's behavior than it has.
+moved authoring into a work stream's main feed and retired the standalone draft
+screen, so there is one adapter and nothing to keep in step with it. The
+extracted pieces below are still worth their seams — they are what a feed is
+made of — but a change to them now has one caller, and a second surface is a
+thing to argue for rather than a thing to preserve.
 
 ## Where the code lives
 
@@ -204,6 +204,7 @@ different streaming and scrolling behavior.
 automation draft pretend to have participants, unread state, resources, and a
 SubstreamAgent identity. A second wizard-only feed would preserve divergence.
 
-**Consequences:** Shared interaction changes need coverage in both adapters,
+**Consequences:** Written when two adapters shared this family. Shared
+interaction changes needed coverage in both adapters,
 while product-specific controls remain locally typed and visibly absent from
 the other surface.

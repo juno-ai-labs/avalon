@@ -73,6 +73,7 @@ import {
   type AddressingClassification,
   type AutomationDraft,
   type AutomationSetEvaluatorRulesInputV1,
+  AutomationSetEvaluatorRulesInputV1Schema,
   type HarnessFailureCode,
   type AutomationPluginActivity,
   type AutomationPluginIcon,
@@ -1902,6 +1903,11 @@ function createAvalonAutomationsPlugin(
     ? input.executionPrincipal.userId
     : null;
   const draftState: { submitted: AutomationDraft | null } = { submitted: null };
+  /**
+   * The evaluator rules the model set, waiting for a submission to attach them
+   * to. Null until it sets any; a draft with no event trigger never needs them.
+   */
+  let stagedEvaluatorRules: AutomationSetEvaluatorRulesInputV1 | null = null;
   // One automation per authoring loop. Held here so a second submission
   // refines the first rather than creating another: an agent that asked a
   // clarifying question and submitted again has one proposal, not two.
@@ -1940,6 +1946,7 @@ function createAvalonAutomationsPlugin(
           // Only a real channel. A DM is where somebody asked, not somewhere a
           // standing automation should speak from, and a mention with no
           // channel has nothing to record.
+          evaluatorRules: stagedEvaluatorRules,
           authoredOrigin: input.slackOrigin?.channelId
             && input.slackOrigin.channelType !== "im"
             ? {
@@ -1984,11 +1991,15 @@ function createAvalonAutomationsPlugin(
         });
         return admitted;
       },
-      // Evaluator rules belong to an automation that exists. A draft written
-      // here has one only after its first submission, so this refuses rather
-      // than creating an automation as a side effect of setting rules on it.
-      setEvaluatorRules: async () => {
-        throw new Error("automation_evaluator_rules_unavailable_in_workstream");
+      // Held until the submission that has somewhere to put them. A draft
+      // written here has no automation until its first submission, and the
+      // model may set rules before or after that — buffering removes the
+      // ordering question rather than answering it, and refusing outright made
+      // every event-driven draft authored in a room impossible to accept:
+      // `prepareAcceptance` requires evaluators for exactly those triggers.
+      setEvaluatorRules: async (rules) => {
+        stagedEvaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse(rules);
+        return { accepted: true as const };
       },
     },
   });

@@ -1767,9 +1767,13 @@ export function Sidebar({
             </NavLink>
             {/* Drafting happens by asking for it in a work stream, so this
                 starts one. The affordance stays because people look for it
-                here; what it opens is the conversation the agent drafts in. */}
+                here; what it opens is the conversation the agent drafts in.
+
+                Never active: it shares a destination with "New work stream"
+                now, and deriving active state from the route would light both
+                rows at once for one screen. */}
             <NavLink
-              className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
+              className="sidebar-action"
               onClick={() => markSurfaceEntrypoint('sidebar_new')}
               to="/workstreams/new"
             >
