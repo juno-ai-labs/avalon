@@ -712,6 +712,17 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
     `CREATE INDEX automation_principal_claims_recent_idx
        ON automation_principal_claims(claimed_at DESC, claim_id)`,
   ],
+}, {
+  version: 11,
+  description: "a draft remembers the work stream it was written in",
+  statements: [
+    // Where the conversation happened, held until somebody accepts. Ownership
+    // is `automation_acceptance.owning_workstream_id`, which exists only once
+    // there is an acceptance; before that the room is a fact about the draft,
+    // and the only place a `workstream` acceptance can honestly get its room —
+    // the model never names one and no other room is reachable.
+    `ALTER TABLE automation_state ADD COLUMN authored_in_workstream_id TEXT`,
+  ],
 }];
 
 /**
@@ -1194,6 +1205,111 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       json: JSON.stringify(request.draft),
       evaluatorDisposition: hasExternalTrigger ? "require" : "clear",
     });
+  }
+
+  /**
+   * Admit a draft an agent wrote inside a work stream.
+   *
+   * The compiler's own path cannot serve this: it stages a submission against
+   * an automation that already exists, created by a person opening the draft
+   * screen. Here the conversation *is* the authoring loop, so the first
+   * submission is what brings the automation into being.
+   *
+   * `authoredInWorkstreamId` is supplied by the Worker from the loop the
+   * submission was made in, never by the model. It is remembered rather than
+   * acted on: ownership is a fact about an acceptance, and nobody has accepted
+   * anything yet. When somebody does, it is the only place a `workstream`
+   * acceptance can honestly get its room.
+   *
+   * Re-submitting refines the same draft — an agent that asked a clarifying
+   * question and submitted again must not create a second automation.
+   */
+  async admitAuthoredDraft(input: unknown): Promise<{
+    automationId: string;
+    definitionRevision: number;
+    created: boolean;
+  }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      automationId: z.string().uuid(),
+      workspaceId: z.string().uuid(),
+      authorUserId: z.string().uuid(),
+      region: z.enum(["global", "eu"]),
+      authoredInWorkstreamId: z.string().uuid(),
+      draft: AutomationDraftSchema,
+    }).strict().parse(input);
+    const now = Date.now();
+    const existing = this.state.storage.sql.exec<{
+      automation_id: string;
+      workspace_id: string;
+    }>(`SELECT automation_id, workspace_id FROM automation_identity WHERE id = 1`).toArray()[0];
+    if (existing
+      && (existing.automation_id !== request.automationId
+        || existing.workspace_id !== request.workspaceId)) {
+      throw new Error("automation_authority_mismatch");
+    }
+    // Only a draft is refinable. An accepted automation is changed through the
+    // definition-update path, which re-validates its bindings; letting a
+    // submission overwrite one would edit a running automation from a
+    // conversation.
+    if (existing && this.lifecycle() !== "draft") throw new Error("automation_not_draft");
+    const created = !existing;
+    const revision = this.state.storage.transactionSync(() => {
+      if (created) {
+        this.state.storage.sql.exec(
+          `INSERT INTO automation_identity
+             (id, automation_id, workspace_id, author_user_id, region,
+              authority_generation, created_at, updated_at)
+           VALUES (1, ?, ?, ?, ?, 1, ?, ?)`,
+          request.automationId,
+          request.workspaceId,
+          request.authorUserId,
+          request.region,
+          now,
+          now,
+        );
+        this.state.storage.sql.exec(
+          `INSERT INTO automation_state
+             (id, lifecycle, title, definition_revision, accepted_definition_revision,
+              event_sequence, authored_in_workstream_id, created_at, updated_at)
+           VALUES (1, 'draft', ?, 0, NULL, 0, ?, ?, ?)`,
+          request.draft.name,
+          request.authoredInWorkstreamId,
+          now,
+          now,
+        );
+      }
+      const next = Number(this.state.storage.sql.exec<{ definition_revision: number }>(
+        `SELECT definition_revision FROM automation_state WHERE id = 1`,
+      ).one().definition_revision) + 1;
+      this.state.storage.sql.exec(
+        `INSERT INTO automation_definition_revisions
+           (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
+         VALUES (?, NULL, ?, ?, ?, ?)`,
+        next,
+        JSON.stringify(request.draft),
+        `authored:${request.automationId}:${next}`,
+        request.draft.ready ? 1 : 0,
+        now,
+      );
+      this.state.storage.sql.exec(
+        `UPDATE automation_state
+            SET definition_revision = ?, title = ?, updated_at = ? WHERE id = 1`,
+        next,
+        request.draft.name,
+        now,
+      );
+      return next;
+    });
+    return { automationId: request.automationId, definitionRevision: revision, created };
+  }
+
+  /** The room a draft was written in, for an acceptance that needs to name one. */
+  authoredInWorkstreamId(): string | null {
+    return this.state.storage.sql.exec<{ authored_in_workstream_id: string | null }>(
+      `SELECT authored_in_workstream_id FROM automation_state WHERE id = 1`,
+    ).toArray()[0]?.authored_in_workstream_id ?? null;
   }
 
   async stageDraftElicitation(input: unknown): Promise<{ accepted: true }> {

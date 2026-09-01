@@ -36,6 +36,7 @@ import {
   type BindLoopTransition,
   type BindCompactionCommit,
   type AutomationCompilerStreamEvent,
+  createAutomationsPlugin,
   type AutomationCreatorPluginCatalogEntry,
   type HarnessActivationInput,
   type HarnessEvent,
@@ -63,6 +64,7 @@ import {
   readStructuredFailure,
   asSubstreamId,
   asAutomationId,
+  asUserId,
   asWorkspaceId,
   asWorkstreamId,
   type UserId,
@@ -1854,6 +1856,88 @@ export async function compileAutomationDraft(
     });
     throw error;
   }
+}
+
+/**
+ * The drafting tools, for a work-stream run.
+ *
+ * The catalog is filled on activation rather than at assembly: this plugin is
+ * deferred, most runs never load it, and a connector read on every run to
+ * populate tools nobody called is work for nothing. The tools read the array by
+ * reference when they execute, so filling it in place is what "loaded" means
+ * here.
+ *
+ * A draft submitted from this loop creates its automation on first submission —
+ * the conversation *is* the authoring loop, so there is no earlier moment when
+ * one could have been created — and remembers the room it was written in for an
+ * acceptance to use.
+ */
+function createAvalonAutomationsPlugin(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+): HarnessPlugin {
+  const catalog: AutomationCreatorPluginCatalogEntry[] = [];
+  const authorUserId = input.executionPrincipal?.type === "user"
+    ? input.executionPrincipal.userId
+    : null;
+  const draftState: { submitted: AutomationDraft | null } = { submitted: null };
+  // One automation per authoring loop. Held here so a second submission
+  // refines the first rather than creating another: an agent that asked a
+  // clarifying question and submitted again has one proposal, not two.
+  let authoredAutomationId: string | null = null;
+  const plugin = createAutomationsPlugin({
+    catalog,
+    inspectedPluginIds: new Set<string>(),
+    resolvedResources: new Map(),
+    loadedPluginIds: new Set<string>(),
+    resolvedPersonIds: new Set<string>(),
+    draftState,
+    // Telemetry only: the diagnostics these tools emit name the model that
+    // produced the arguments, and a work-stream run does not fix one here.
+    model: "",
+    draftMutationPort: {
+      submitDraft: async (draft: AutomationDraft) => {
+        if (!authorUserId) throw new Error("automation_draft_author_unavailable");
+        authoredAutomationId ??= crypto.randomUUID();
+        const agent = await durableObjectStubForWorkspace(
+          env,
+          env.AUTOMATION_AGENTS,
+          asWorkspaceId(input.workspaceId),
+          automationAgentName(
+            env.AVALON_REGION,
+            asWorkspaceId(input.workspaceId),
+            asAutomationId(authoredAutomationId),
+          ),
+        );
+        return agent.admitAuthoredDraft({
+          schemaVersion: 1,
+          automationId: authoredAutomationId,
+          workspaceId: input.workspaceId,
+          authorUserId,
+          region: env.AVALON_REGION,
+          authoredInWorkstreamId: input.workstreamId,
+          draft,
+        });
+      },
+      // Evaluator rules belong to an automation that exists. A draft written
+      // here has one only after its first submission, so this refuses rather
+      // than creating an automation as a side effect of setting rules on it.
+      setEvaluatorRules: async () => {
+        throw new Error("automation_evaluator_rules_unavailable_in_workstream");
+      },
+    },
+  });
+  return {
+    ...plugin,
+    onActivate: async () => {
+      if (!authorUserId || catalog.length > 0) return;
+      catalog.push(...await loadAutomationCreatorPluginCatalog(
+        env,
+        asWorkspaceId(input.workspaceId),
+        asUserId(authorUserId),
+      ));
+    },
+  };
 }
 
 async function loadAutomationCreatorPluginCatalog(
@@ -5788,11 +5872,25 @@ async function loadHarnessTools(
     input,
     inObjectResourceAttacher,
   );
+  // Withheld from an automation occurrence, and this is where that call is
+  // made: a run carrying a frozen context is an automation doing its work, and
+  // one that could draft automations from the email it just read is a spam
+  // engine with a human approval step in front of it. It does its work, writes
+  // its result, and what happens to that result is decided outside it.
+  const automationsPlugin = input.automationRunContext
+    ? null
+    : createAvalonAutomationsPlugin(env, input);
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
-  const builtinPlugins = [workstreamPlugin, webPlugin, terminalPlugin, multimodalGenerationPlugin].filter(
+  const builtinPlugins = [
+    workstreamPlugin,
+    webPlugin,
+    terminalPlugin,
+    multimodalGenerationPlugin,
+    automationsPlugin,
+  ].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
   const plugins: HarnessPlugin[] = [...builtinPlugins];

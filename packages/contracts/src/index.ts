@@ -1945,7 +1945,13 @@ export const CreateAutomationRequestSchema = z.object({
    */
   draftId: IdSchema.optional(),
   draft: AutomationDraftSchema,
-  scope: ScopeSchema,
+  /**
+   * `workstream` carries no room: the request cannot name one, because a body
+   * that could would let a caller give any room an automation. The room comes
+   * from where the draft was written, which is the only one reachable from an
+   * authoring loop anyway.
+   */
+  scope: AutomationScopeSchema,
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
   resourceIds: z.array(IdSchema).max(20).default([]),

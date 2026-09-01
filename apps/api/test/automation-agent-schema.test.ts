@@ -142,6 +142,30 @@ describe("the AutomationAgent ownership migration", () => {
      VALUES ('claim-2', '${AUTHOR_ID}', NULL, '"plugin_gmail"', '[]', 2)`)).toThrow();
   });
 
+  it("remembers the room a draft was written in, before anybody owns it", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, 10);
+    seedAcceptedAutomation(database);
+
+    apply(database, 11, 10);
+
+    // Null until an agent authors one inside a room. Ownership is the
+    // acceptance's column; this is a fact about the draft, and the only place a
+    // workstream acceptance can honestly get its room — the model never names
+    // one, and no other room is reachable from an authoring loop.
+    expect(database.prepare(`SELECT authored_in_workstream_id FROM automation_state`).get())
+      .toEqual({ authored_in_workstream_id: null });
+
+    database.exec(
+      `UPDATE automation_state SET authored_in_workstream_id = '${WORKSTREAM_ID}' WHERE id = 1`,
+    );
+    // Independent of the acceptance: a draft can name its room long before
+    // anybody decides whether it belongs to one.
+    expect(database.prepare(
+      `SELECT scope, owning_workstream_id FROM automation_acceptance`,
+    ).get()).toEqual({ scope: "workspace", owning_workstream_id: null });
+  });
+
   it("records why a paused automation is paused, and admits only the two reasons", () => {
     const database = new DatabaseSync(":memory:");
     apply(database, 9);
