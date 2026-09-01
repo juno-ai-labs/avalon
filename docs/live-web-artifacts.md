@@ -19,6 +19,7 @@ exists.
 | --- | --- |
 | `packages/contracts/src/artifacts.ts` | The shapes both sides agree on: the manifest schema, the site MIME type, the hostname derivation, the asset and isolate keys, the viewer header names. Parsed on both sides rather than trusted across. |
 | `apps/api/src/services/terminal/site-publish.ts` | What a published directory *becomes* — the entry-file rule, the stateful-class check, the content-type table, the zip bundler, and the one asymmetric kind transition. |
+| `apps/api/src/services/terminal/site-import.ts` | Reading a version's files back out of the bucket, and the whole-tree replacement that writes them — never a merge. |
 | `apps/api/src/services/terminal/site-resource-bridge.ts` | Writing one version: assets and manifest into the bucket, the registry row, the supervisor's pointer. The order is the contract. |
 | `apps/api/src/services/terminal/runtime.ts` | `inspectPublishTarget` (what a path is) and `publishDirectory` (reading the tree and dispatching). |
 | `apps/api/src/durable-objects/artifact-host-do.ts` | One supervisor object per artifact: version pointer, viewer sessions, error log, and the facet that runs the model's storage class. |
@@ -66,6 +67,20 @@ the rail entry behave exactly as a document's do. A **site** takes its own path,
 because almost nothing is shared — its stored content is a manifest rather than
 the thing a viewer sees, its bytes go to version-immutable keys, and it has a
 supervisor object to point at afterwards.
+
+### Revising
+
+A run asked to change a site it did not build — or built in a session that has
+since ended — brings the files back first. The manifest is the index, and
+`index.js` is materialized alongside the assets even though a viewer's request
+for it 404s: "module, not asset" is a rule about the *serving* path, and a model
+that could not see its own server could not revise it.
+
+`overwrite` is **whole-tree replacement, never a merge**. Merging would leave
+behind files a later version deleted, and the next publish would ship them back
+as though somebody had restored them on purpose. The tree is staged beside the
+destination and moved into place, so a failure partway leaves the previous tree
+intact.
 
 ### Serving
 
