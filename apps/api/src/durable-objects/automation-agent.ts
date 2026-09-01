@@ -3284,8 +3284,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       if (input.scope === "workspace" && connection.scope !== "workspace") {
         throw new Error("automation_workspace_connection_required");
       }
+      // Every scope but `workspace` is held to this: you may bind a workspace
+      // connection or your own personal one, never somebody else's. A room's
+      // automation is managed by everyone in the room and outlives whoever
+      // wrote it, so binding a colleague's personal connection to one would
+      // lend their credentials to a standing automation they never agreed to.
       if (
-        input.scope === "personal"
+        input.scope !== "workspace"
         && connection.scope === "personal"
         && connection.owner_user_id !== input.authorUserId
       ) throw new Error("automation_personal_connection_access_denied");

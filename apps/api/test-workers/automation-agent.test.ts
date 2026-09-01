@@ -1526,3 +1526,46 @@ describe("taking over who an automation runs as", () => {
     expect(await principalState()).toEqual({ run_as_user_id: LEAVER_ID });
   });
 });
+
+describe("whose connections a draft may bind", () => {
+  const OWNER_ID = "00000000-0000-7000-8000-0000000000f1";
+  const OTHER_ID = "00000000-0000-7000-8000-0000000000f2";
+  const OTHER_GMAIL = "00000000-0000-7000-8000-0000000000f3";
+
+  it("refuses another member's personal connection at every scope but workspace", async () => {
+    await pinWorkspaceIdentity();
+    const workspace = env.WORKSPACE_DOS
+      .get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT OR REPLACE INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, status, cursor_json, config_json,
+            created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, 'google', 'personal', ?, 'acct', 'Their Gmail', '[]', 'healthy',
+                 '{}', '{}', 1, 1, 'plugin_gmail')`,
+        OTHER_GMAIL, WORKSPACE_ID, OTHER_ID,
+      );
+    });
+
+    // A room's automation is managed by everyone in the room and outlives
+    // whoever wrote it. Binding a colleague's personal connection to one would
+    // lend their credentials to a standing automation they never agreed to —
+    // and before `workstream` existed, neither guard covered this case.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+      await expect((instance as unknown as {
+        prepareAcceptance(input: unknown, definition: unknown): Promise<unknown>;
+      }).prepareAcceptance({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER_ID,
+        authorUserId: OWNER_ID,
+        scope: "workstream",
+        defaultPluginIds: ["plugin_gmail"],
+        activitySourcePluginIds: {},
+        deliveryTargets: [],
+      }, readyDefinition("Candidate intake")))
+        .rejects.toThrow("automation_personal_connection_access_denied");
+    });
+  });
+});
