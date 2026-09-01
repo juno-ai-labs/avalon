@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import type { Env } from "../src/env";
 import { compatibleDesktopDeepLink, connectorAttemptTarget } from "../src/lib/desktop-handoff";
 import { AuthService } from "../src/services/auth-service";
@@ -90,6 +91,18 @@ describe("desktop sign-in across the scheme rename", () => {
 });
 
 describe("deep links the server mints without a caller scheme", () => {
+  it("does not let specialized connector completions bypass the addressed target builder", () => {
+    const source = readFileSync(
+      new URL("../src/services/connection-service.ts", import.meta.url),
+      "utf8",
+    );
+
+    // Google and GitHub complete through provider-specific methods. Building a
+    // return URL in either method bypasses the shared workspace-addressed
+    // callback and silently regresses only those two connectors.
+    expect(source).not.toContain('new URL(String(row.return_uri))');
+  });
+
   it("uses the scheme every live build registers", () => {
     const env = contractCompleteEnv({ DESKTOP_DEEP_LINK_URI: CURRENT, AVALON_REGION: "global" });
 
