@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  CLOUDFLARE_GET_MAX_RETRIES,
   ensureCloudflareLakehouses,
   ensureInferenceLakehouse,
   loadAnalyticsLakehouseManifest,
@@ -110,6 +111,144 @@ function accountDouble({ tokenOwner = 'account' } = {}) {
     },
   };
 }
+
+test('transient Cloudflare GET failures use the official client retry policy', async () => {
+  const account = accountDouble();
+  const retryDelays = [];
+  const retryLogs = [];
+  let streamListAttempts = 0;
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if ((init.method ?? 'GET') === 'GET'
+      && url.pathname.endsWith('/pipelines/v1/streams')
+      && streamListAttempts++ < CLOUDFLARE_GET_MAX_RETRIES) {
+      return Response.json(
+        { success: false, errors: [{ code: 500, message: 'Internal Server Error' }] },
+        { status: 500, headers: { 'cf-ray': `retry-ray-${streamListAttempts}` } },
+      );
+    }
+    return account.fetchImpl(input, init);
+  };
+
+  await ensureInferenceLakehouse({
+    environment,
+    fetchImpl,
+    log: (message) => retryLogs.push(message),
+    randomImpl: () => 0,
+    waitImpl: async (milliseconds) => retryDelays.push(milliseconds),
+  });
+
+  assert.equal(CLOUDFLARE_GET_MAX_RETRIES, 2);
+  assert.equal(streamListAttempts, 3);
+  assert.deepEqual(retryDelays, [500, 1_000]);
+  const retryMessages = retryLogs.filter((message) => message.includes('retrying'));
+  assert.match(retryMessages[0], /cf-ray: retry-ray-1.*retrying 1\/2 in 500 ms/u);
+  assert.match(retryMessages[1], /cf-ray: retry-ray-2.*retrying 2\/2 in 1000 ms/u);
+});
+
+test('Cloudflare retry directives and Retry-After override GET status defaults', async () => {
+  const account = accountDouble();
+  const retryDelays = [];
+  let streamListAttempts = 0;
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if ((init.method ?? 'GET') === 'GET'
+      && url.pathname.endsWith('/pipelines/v1/streams')) {
+      streamListAttempts += 1;
+      if (streamListAttempts === 1) {
+        return Response.json(
+          { success: false, errors: [{ code: 400, message: 'retry this read' }] },
+          {
+            status: 400,
+            headers: {
+              'retry-after': '1.5',
+              'x-should-retry': 'true',
+            },
+          },
+        );
+      }
+      return Response.json(
+        { success: false, errors: [{ code: 500, message: 'do not retry this read' }] },
+        {
+          status: 500,
+          headers: {
+            'cf-ray': 'provider-stopped-retry-ray',
+            'x-should-retry': 'false',
+          },
+        },
+      );
+    }
+    return account.fetchImpl(input, init);
+  };
+
+  await assert.rejects(
+    ensureInferenceLakehouse({
+      environment,
+      fetchImpl,
+      log: () => {},
+      randomImpl: () => 0,
+      waitImpl: async (milliseconds) => retryDelays.push(milliseconds),
+    }),
+    /HTTP 500.*cf-ray: provider-stopped-retry-ray/u,
+  );
+  assert.equal(streamListAttempts, 2);
+  assert.deepEqual(retryDelays, [1_500]);
+});
+
+test('persistent Cloudflare GET failures surface the final Ray ID after two retries', async () => {
+  const retryDelays = [];
+  let attempts = 0;
+  const fetchImpl = async () => {
+    attempts += 1;
+    return Response.json(
+      { success: false, errors: [{ code: 500, message: 'Internal Server Error' }] },
+      { status: 500, headers: { 'cf-ray': `persistent-ray-${attempts}` } },
+    );
+  };
+
+  await assert.rejects(
+    ensureInferenceLakehouse({
+      environment,
+      fetchImpl,
+      log: () => {},
+      randomImpl: () => 0,
+      waitImpl: async (milliseconds) => retryDelays.push(milliseconds),
+    }),
+    /HTTP 500.*cf-ray: persistent-ray-3/u,
+  );
+  assert.equal(attempts, 3);
+  assert.deepEqual(retryDelays, [500, 1_000]);
+});
+
+test('mutating Cloudflare requests are never retried', async () => {
+  const account = accountDouble();
+  const retryDelays = [];
+  let bucketCreateAttempts = 0;
+  const fetchImpl = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (init.method === 'POST' && url.pathname.endsWith('/r2/buckets')) {
+      bucketCreateAttempts += 1;
+      return Response.json(
+        { success: false, errors: [{ code: 500, message: 'Internal Server Error' }] },
+        { status: 500 },
+      );
+    }
+    return account.fetchImpl(input, init);
+  };
+
+  await assert.rejects(
+    ensureInferenceLakehouse({
+      environment,
+      fetchImpl,
+      log: () => {},
+      randomImpl: () => 0,
+      waitImpl: async (milliseconds) => retryDelays.push(milliseconds),
+    }),
+    /Cloudflare POST .*\/r2\/buckets failed with HTTP 500/u,
+  );
+  assert.equal(bucketCreateAttempts, 1);
+  assert.deepEqual(retryDelays, []);
+});
 
 test('an empty account is fully provisioned by one idempotent deploy preflight', async () => {
   const account = accountDouble();
