@@ -47,17 +47,17 @@ import {
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import type { Env } from "../src/env";
 
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000f0a1");
 /**
  * Reassigned per test, for the reason the pipeline suite reassigns its own: a
  * finished test's persistent-loop drain can outlast `reset()`, and giving each
  * test its own work-stream id sends that zombie work to its own object instead
  * of the next test's queue — which is exactly the state these tests assert on.
  */
-let WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
+let WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-00000000f0a2");
 let workstreamOrdinal = 0;
-const USER_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
-const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
+const USER_ID = asUserId("00000000-0000-7000-8000-00000000f0a3");
+const SESSION_ID = "00000000-0000-7000-8000-00000000f0a4";
 const MODEL = "queue-suite/primary";
 
 /** Wall-clock budgets, sized for a contended multi-suite run. See the pipeline suite. */
@@ -76,7 +76,7 @@ const AUTH: AuthContext = {
 beforeEach(async () => {
   workstreamOrdinal += 1;
   WORKSTREAM_ID = asWorkstreamId(
-    `00000000-0000-7000-8000-${String(workstreamOrdinal).padStart(4, "0")}000006a2`,
+    `00000000-0000-7000-8000-${String(workstreamOrdinal).padStart(4, "0")}0000f0a2`,
   );
   await reset();
   await seedWorkspaceControlPlane(env.DB, {
