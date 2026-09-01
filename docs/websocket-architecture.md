@@ -450,6 +450,8 @@ before mounting the new one. Background attention remains a regional request
 using that workspace's credential; adding background sockets is an architecture
 change, not a polling optimization.
 
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
+
 ### 2026-08-28 — The broker carries a third socket kind, on demand rather than proactively
 
 **What changed:** `automation_agent` joins `workstream_control` and

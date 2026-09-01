@@ -39,8 +39,8 @@ attention response distinguishes addressed work from unread activity.
 - Retain the identity credential beside one credential per activated workspace,
   remember the active workspace locally, and make late activation results
   unable to steal focus.
-- Refresh and remove one credential independently; revoke every stored session
-  on sign-out before clearing every local copy.
+- Refresh and remove one credential independently; clear every local copy on
+  sign-out before best-effort revocation of each captured server session.
 - Scope drafts by workspace and clear only the workspace that is left.
 
 Acceptance gate: legacy one-session storage migrates without credential loss;
