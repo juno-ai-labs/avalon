@@ -2,7 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { useTextClamped } from './use-text-clamped';
+import { CLAMP_ROUNDING_TOLERANCE_PX, useTextClamped } from './use-text-clamped';
 
 /**
  * jsdom performs no layout — every element reports a height of zero — so a
@@ -134,11 +134,11 @@ describe('useTextClamped', () => {
     // The constant is 4px against a ~16px line box. Both neighbours are pinned
     // so that widening it toward a real hidden line, or narrowing it back onto
     // the rounding it exists to absorb, fails here rather than in a window.
-    stubHeights({ clientHeight: 82, scrollHeight: 86 });
+    stubHeights({ clientHeight: 82, scrollHeight: 82 + CLAMP_ROUNDING_TOLERANCE_PX });
     const { rerender } = render(<Subject text="A note that fills its clamp exactly" />);
     expect(screen.getByRole('status')).toHaveTextContent('whole');
 
-    stubHeights({ clientHeight: 82, scrollHeight: 87 });
+    stubHeights({ clientHeight: 82, scrollHeight: 82 + CLAMP_ROUNDING_TOLERANCE_PX + 1 });
     rerender(<Subject text="A note that fills its clamp exactly " />);
 
     expect(screen.getByRole('status')).toHaveTextContent('clamped');

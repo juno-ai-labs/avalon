@@ -144,12 +144,15 @@ a blockquote stay in that container: `- Item 2\n---` is a list plus a
 thematic break, not a setext h2, and `  ## heading` under a list item is
 list content, not a section boundary.
 
-When enabled, a section starts collapsed. The heading stays fully visible; the body shows
+When enabled, a section starts collapsed **if its body continues past the
+preview**. The heading stays fully visible; the body shows
 approximately the first three line-heights of whatever follows — a
 paragraph, the top of a table, the start of a fence — behind an opacity
 mask that starts at 60% on the first pixel and reaches transparent on the
 last, so the content fades into the next heading rather than cutting off
-as a hard clip. The chevron sits in a left gutter, coloured
+as a hard clip. A body that already fits those three line-heights stays
+fully expanded, with no chevron: the click would reveal nothing. The
+chevron sits in a left gutter, coloured
 with `sys.color.text.muted` (the receding control tone, the same token the
 citation chip's icon uses), and carries a tooltip. Clicking the heading or
 the chevron toggles the section; a click that follows a text selection does
@@ -166,9 +169,14 @@ view state and must never decide which words are audible.
 
 The collapse-all control lives in the agent-message header, immediately to
 the right of **Worked for**. It expands or collapses every section in that
-turn. New sections that stream in are collapsed regardless of that
+turn whose body actually overflows the preview, and is absent when none do.
+New sections that stream in are collapsed regardless of that
 control's last action, because a heading that has only just arrived is the
-thing the reader has not chosen to open.
+thing the reader has not chosen to open. The streaming tail stays collapsible
+even while its current prefix still fits, so a two-line body does not open
+and then slam shut as the next tokens land. Once the stream leaves that
+section — the next heading arrives, or the turn settles — a body that still
+fits the preview opens on its own.
 
 Streaming keeps the existing settled-segment memo: complete sections
 render as memoised chunks, and only the last section's body goes through
@@ -649,6 +657,38 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-01 — Short heading sections are not accordions
+
+**What changed:** On the main work-stream feed, an h2–h6 section is only an
+accordion when its body continues past the existing 3-line collapsed preview.
+A body that already fits — two lines of a translation, an empty heading —
+stays fully expanded, with no chevron, no fade, and no collapse-all control
+for a turn where nothing is hidden. The streaming tail of a reply stays
+collapsible until the stream leaves it, even if the current prefix fits.
+
+**Why:** Collapse was gated on heading structure, not on whether anything was
+actually hidden. Expanding a two-line body under **Most Natural / Idiomatic**
+revealed the same two lines the preview already showed, minus the fade. The
+click was a tax. System rows already refuse to offer **more** until the
+five-line clamp is hiding something; heading sections had no equivalent.
+
+**Considered and rejected:** A character- or line-count threshold on the
+markdown source. Tables, fences, and images are short on the wire and tall
+on the screen, and the system-row clamp already settled that height is the
+only honest discriminator. Also rejected: keeping the chevron on a short
+section and auto-expanding it. A control that opens nothing is the original
+bug. Also rejected: collapsing the streaming tail when it still fits. A
+heading that has only just arrived would paint open and then slam shut as
+the next tokens crossed three lines, which is the viewport jump default-
+collapsed exists to prevent.
+
+**What a future change has to respect:** do not invent a second preview
+height. The accordion exists only to hide what the 3-line mask already
+clips; a section that fits is not a collapsed section with different
+chrome. jsdom reports 0×0, which must not be read as a perfect fit or every
+accordion vanishes in tests. The streaming tail is collapsible until it is
+no longer the tail.
 
 ### 2026-08-30 — Heading collapse belongs only to the main message feed
 

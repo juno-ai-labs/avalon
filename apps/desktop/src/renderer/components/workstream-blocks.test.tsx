@@ -1689,6 +1689,97 @@ describe('MarkdownBody heading collapse', () => {
     expect(sections[0]).toHaveClass('is-expanded');
     expect(sections[1]).toHaveClass('is-collapsed');
   });
+
+  describe('when the body already fits the preview', () => {
+    const previewHeight = 48;
+
+    function stubCollapseBodyHeights(scrollFor: (body: HTMLElement) => number): void {
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.classList.contains('markdown-collapse-body') ? previewHeight : 0;
+        },
+      });
+      Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.classList.contains('markdown-collapse-body') ? scrollFor(this) : 0;
+        },
+      });
+    }
+
+    afterEach(() => {
+      for (const name of ['clientHeight', 'scrollHeight']) Reflect.deleteProperty(HTMLElement.prototype, name);
+    });
+
+    it('leaves the section expanded without a chevron', () => {
+      stubCollapseBodyHeights(() => previewHeight);
+      const { container } = render(
+        <MarkdownBody collapseHeadings>
+          {'## Most Natural\n\n«Nei takk, jeg holder meg til Dunkin.»\n'}
+        </MarkdownBody>,
+      );
+      const section = container.querySelector('.markdown-collapse');
+      expect(section).toHaveClass('is-expanded');
+      expect(screen.queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
+      expect(section?.querySelector('.markdown-collapse-heading')).toBeNull();
+      expect(section?.querySelector('.markdown-collapse-body')).not.toHaveAttribute('aria-hidden');
+    });
+
+    it('still collapses a body that continues past the preview', () => {
+      stubCollapseBodyHeights(() => 400);
+      const { container } = render(
+        <MarkdownBody collapseHeadings>
+          {'## Alpha\n\nFirst section body that is long enough to preview.\n'}
+        </MarkdownBody>,
+      );
+      expect(container.querySelector('.markdown-collapse')).toHaveClass('is-collapsed');
+      expect(screen.getByRole('button', { name: 'Expand section' })).toBeInTheDocument();
+    });
+
+    it('collapses only the overflowing sibling in a mixed turn', () => {
+      stubCollapseBodyHeights((body) => (body.textContent?.includes('continues') ? 400 : previewHeight));
+      const markdown = [
+        '## Short',
+        '',
+        'Two lines.',
+        '',
+        '## Long',
+        '',
+        'A section whose body continues well past the preview.',
+        '',
+      ].join('\n');
+      const { container } = render(<MarkdownBody collapseHeadings>{markdown}</MarkdownBody>);
+      const [short, long] = container.querySelectorAll('.markdown-collapse');
+      expect(short).toHaveClass('is-expanded');
+      expect(long).toHaveClass('is-collapsed');
+      expect(screen.getAllByRole('button', { name: 'Expand section' })).toHaveLength(1);
+    });
+
+    it('keeps a streaming tail collapsed while it still fits, then opens it when the stream ends', () => {
+      stubCollapseBodyHeights(() => previewHeight);
+      const source = '## Most Natural\n\n«Nei takk.»\n';
+      const { container, rerender } = render(
+        <MarkdownBody collapseHeadings streaming>{source}</MarkdownBody>,
+      );
+      expect(container.querySelector('.markdown-collapse')).toHaveClass('is-collapsed');
+      expect(screen.getByRole('button', { name: 'Expand section' })).toBeInTheDocument();
+      rerender(<MarkdownBody collapseHeadings>{source}</MarkdownBody>);
+      expect(container.querySelector('.markdown-collapse')).toHaveClass('is-expanded');
+      expect(screen.queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
+    });
+
+    it('does not collapse an empty body', () => {
+      stubCollapseBodyHeights((body) => (body.textContent?.includes('later') ? 400 : previewHeight));
+      const { container } = render(
+        <MarkdownBody collapseHeadings>{'## Heading\n## Next\n\nlater\n'}</MarkdownBody>,
+      );
+      const [empty, next] = container.querySelectorAll('.markdown-collapse');
+      expect(empty).toHaveClass('is-expanded');
+      expect(empty?.querySelector('.markdown-collapse-chevron')).toBeNull();
+      expect(next).toHaveClass('is-collapsed');
+    });
+  });
 });
 
 describe('MessageBlock heading collapse control', () => {
@@ -1724,5 +1815,34 @@ describe('MessageBlock heading collapse control', () => {
     };
     render(<MessageBlock {...actions} collapseHeadings message={message} />);
     expect(screen.queryByRole('button', { name: 'Expand all sections' })).toBeNull();
+  });
+
+  it('hides the collapse-all control when every section already fits the preview', () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('markdown-collapse-body') ? 48 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('markdown-collapse-body') ? 48 : 0;
+      },
+    });
+    const message: Message = {
+      ...baseMessage,
+      id: 'agent-short',
+      authorType: 'agent',
+      author: undefined,
+      text: '## Most Natural\n\n«Nei takk.»\n\n## Also short\n\nTwo lines.\n',
+      workSummary: { durationMs: 1_000 },
+    };
+    try {
+      render(<MessageBlock {...actions} collapseHeadings message={message} />);
+      expect(screen.queryByRole('button', { name: 'Expand all sections' })).toBeNull();
+    } finally {
+      for (const name of ['clientHeight', 'scrollHeight']) Reflect.deleteProperty(HTMLElement.prototype, name);
+    }
   });
 });

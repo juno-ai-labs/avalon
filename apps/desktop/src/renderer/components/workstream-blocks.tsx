@@ -987,6 +987,7 @@ export function MarkdownBody({
           }
           return (
             <MarkdownCollapseSection
+              bodyKey={part.body}
               heading={(
                 <SettledMarkdownSegment
                   components={headingComponents}
@@ -998,6 +999,7 @@ export function MarkdownBody({
               )}
               id={part.id}
               key={part.id}
+              streamingTail={streamThis}
             >
               {streamThis
                 ? renderStreaming(part.body)
