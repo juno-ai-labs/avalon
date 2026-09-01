@@ -918,7 +918,7 @@ remains authoritative. Discovery may mark a missing route inactive only after
 both regional reads succeed. Abandonment must fence every authentication and
 invitation path before the column is used as a product action.
 
-Design: [`docs/PRDs/2026-08-31_multiple-workspaces/prd.md`](PRDs/2026-08-31_multiple-workspaces/prd.md).
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-30 — Suggested context storage was removed
 

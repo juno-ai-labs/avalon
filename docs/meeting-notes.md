@@ -412,7 +412,9 @@ knob.
 **What changed:** A meeting window registers capture with main before dictation
 starts and releases it after capture stops. Main refuses workspace activation,
 creation, invitation acceptance, and leave while that registration names the
-active workspace; window teardown clears a stranded registration.
+active workspace. The inverse is fenced too: recording cannot start while any of
+those workspace transitions is pending. Window teardown clears a stranded
+registration or transition claim.
 
 **Why:** Settings, the meeting window, and the main shell follow one active
 workspace. Switching mid-recording would leave one live capture writing through
@@ -426,6 +428,8 @@ owns the window.
 **Consequences:** A person must finish or stop recording before changing
 workspaces. The guard is privileged state, but the renderer still owns capture
 and finalization; main records only a window id and workspace id.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-29 — Note statements become typed WorkspaceDO methods, and the privacy outbox is written by the update itself
 

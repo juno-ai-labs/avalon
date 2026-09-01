@@ -83,6 +83,10 @@ are canonical storage services, not authorization layers.
 - Refresh material is encrypted in the main process. One versioned envelope
   holds the Global identity credential plus one credential/profile binding per
   activated workspace; renderers receive only the active short-lived session.
+  Sign-out snapshots that set, deletes every local credential/profile and draft,
+  and closes authenticated windows before attempting remote logout for the
+  identity and each regional workspace. Remote cleanup failures are reported but
+  cannot restore local authority.
   By default the desktop uses an application-wide embedded key so the saved set survives signing-identity
   and keystore changes. Application → **Lockdown mode** replaces that with
   Electron `safeStorage`, binding the saved authentication state to the
@@ -716,7 +720,8 @@ incident response that may prompt it.
 identity credential and independent region-bound workspace credentials with
 matching cached profiles. Version-1 values migrate losslessly into the
 version-2 set. Lockdown re-encrypts the whole set, and sign-out revokes every
-stored session before deleting every local credential/profile copy.
+locally stored credential/profile copy before attempting best-effort server
+revocation for the captured sessions.
 
 **Why:** Switching workspaces cannot require renderer-held refresh material or
 a fresh Google sign-in, and encrypting only the active credential would leave
@@ -731,6 +736,8 @@ after a crash.
 touching siblings. A failed online logout is reported, but local sign-out still
 deletes the complete set and all drafts. The preload gains only scoped actions;
 it never exposes refresh tokens or the encrypted set.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-30 — Spoken messages keep Azure authority in the regional Worker
 

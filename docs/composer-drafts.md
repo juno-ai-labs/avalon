@@ -29,14 +29,15 @@ Three surfaces cache a draft, and they are the only ones that do:
 
 | Surface | Component | Cache key |
 | --- | --- | --- |
-| A work stream's composer | `WorkstreamComposer` | `workspace:<workspaceId>:workstream:<workstreamId>` |
-| **New work stream** | `NewWorkstreamScreen` | `workspace:<workspaceId>:new-workstream` |
-| **New automation** | `NewAutomationScreen` | `workspace:<workspaceId>:new-automation`, and `workspace:<workspaceId>:new-automation:<draftAutomationId>` once the conversation has a draft automation |
+| A work stream's composer | `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<workstreamId>` |
+| **New work stream** | `NewWorkstreamScreen` | `workspace:<region>:<workspaceId>:new-workstream` |
+| **New automation** | `NewAutomationScreen` | `workspace:<region>:<workspaceId>:new-automation`, and `workspace:<region>:<workspaceId>:new-automation:<draftAutomationId>` once the conversation has a draft automation |
 
 `lib/draft-keys.ts` is the single place those strings are built. A draft's text and
 its attachments share one key, so the two halves of a composer can never drift
-apart, and the launchers are scoped per workspace so switching workspaces does not
-surface another workspace's words.
+apart, and the launchers are scoped by regional workspace identity so switching
+workspaces does not surface another workspace's words even if Global and EU hold
+the same workspace UUID.
 
 **New automation** is one screen serving many conversations, so its key gains the
 draft automation being written the moment a turn names one — otherwise an unsent
@@ -256,9 +257,9 @@ sits inside.
 ### 2026-08-31 — Every draft key begins with its workspace
 
 **What changed:** Work-stream and launcher keys now share the
-`workspace:<workspaceId>:` prefix. Switching within one account retains all
-scopes; successful self-leave clears exactly the departed workspace; sign-out or
-account replacement still clears the whole database.
+`workspace:<region>:<workspaceId>:` prefix. Switching within one account retains
+all scopes; successful self-leave clears exactly the departed regional
+workspace; sign-out or account replacement still clears the whole database.
 
 **Why:** A session change used to imply sign-out or another account, so a global
 wipe was safe. Workspace switching makes that transition routine, and clearing
@@ -268,10 +269,13 @@ all drafts would discard unsent work every time somebody moved between rows.
 globally unique. Uniqueness prevents collision but cannot enumerate every text
 and attachment row belonging to one workspace when that membership ends.
 
-**Consequences:** New composer surfaces must use the common workspace prefix or
-they cannot participate in exact leave cleanup. Versionless legacy draft keys
-expire through the existing twelve-hour policy rather than being guessed into a
-workspace.
+**Consequences:** New composer surfaces must use the common regional-workspace
+prefix or they cannot participate in exact leave cleanup. On the first active
+regional session, released single-workspace draft keys are migrated into that
+session's scope; only recognized legacy shapes move, and a newer regional row
+wins an interrupted rewrite.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-28 — New automation hands its local draft to a durable route
 

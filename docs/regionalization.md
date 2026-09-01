@@ -329,7 +329,10 @@ Under `apps/api`, run with `pnpm --filter @rally/api exec vitest run <path>`
 | `test/env-contract.test.ts` | The region-scoped entrypoint contract — that Global requires what EU must not. |
 | `test/health-env-contract.test.ts` | That `/health` blocks on the contract and reports the offending keys. |
 | `test/multiple-workspaces-schema.test.ts` | Plural Global/EU routes, per-region placement affinity, abandonment, and setup-operation replay schema. |
-| `test/platform-onboarding.test.ts` | Bootstrap-session limits, plural cross-region discovery, activation, create/accept replay, and route reconciliation. |
+| `test/sqlite-d1-snapshot.test.ts` | Migration 0098 preserves existing workspace routes, memberships, invitations, sessions, and product rows while adding plural control state. |
+| `test/platform-onboarding.test.ts` | Bootstrap-session limits, plural cross-region discovery, activation, create/accept replay against the real migrated D1 schema, and route reconciliation. |
+| `test-workers/durable-object-runtime.test.ts` | Real-workerd admission rejects WorkspaceDO, WorkstreamDO, SubstreamAgent, and AutomationAgent after regional abandonment. |
+| `test-workers/automation-agent.test.ts` | Real-workerd background execution fences compiler, schedule, provisioning, and outbox work after abandonment. |
 | `test/telemetry-bootstrap.test.ts` | Cloudflare-country classification, immediate routing, capability binding, and the EU crash-saving decision. |
 | `test/telemetry-preference.test.ts`, `test/telemetry-identity-link.test.ts` | Opaque cross-region preference projection and same-region anonymous linking. |
 | `test/crash-symbolicator-config.test.ts`, `test/env-contract.test.ts` | Dedicated per-region telemetry buckets, EU jurisdiction, Container bindings, and Global-only PostHog configuration. |
@@ -400,6 +403,8 @@ a server preference that can disagree with the device-local selection.
 **Consequences:** Global stores only opaque route metadata and setup replay;
 workspace content and authorization stay regional. Discovery may reconcile
 several memberships, but no request reads workspace content cross-region.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-30 — Admit an explicit operator SQLite inspection exception
 
