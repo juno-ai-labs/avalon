@@ -43,8 +43,9 @@ subrequest.
 
 Within the regional API graph, ordinary Rally-owned validation schemas use
 Zod's v3-compatible runtime. Bind's v4 JSON-Schema compiler stays behind a
-narrow compatibility edge, and shared helpers preserve v4's safe-integer,
-strict-UUID, provider-schema, and error-classification behavior. This is still
+narrow compatibility edge, and shared helpers preserve v4's required-field,
+finite-number, offset-datetime, safe-integer, strict-UUID, nested-provider-schema,
+and error-classification behavior. This is still
 one fully static graph; no schema or route is loaded on demand.
 
 Cloudflare currently rejects a default RPC entrypoint that has no named event
@@ -96,7 +97,7 @@ locally through Wrangler's scheduled-event test route.
 
 - Production code, tests, and scripts use static imports. A dynamic `import()`
   is not a startup strategy.
-- Schema-heavy API, contract, and connector modules import `zod/v3`; bare Zod
+- Regional API modules and all shared packages import `zod/v3`; bare Zod
   v4 imports are limited to checked compatibility edges. Consumers that compose
   shared schemas use the same runtime; a v4-only SDK reparses through a shared
   contract at its adapter instead of nesting v3 schemas into v4 shapes.
@@ -144,9 +145,10 @@ selected product regions.
 ## Failure modes and limits
 
 - Error 10021 during any upload means that Worker's static graph still exceeds
-  Cloudflare's hard startup budget. Inspect its retained CPU profile and move a
-  coherent stateless capability behind a typed service boundary; do not retry
-  until timing happens to pass.
+  Cloudflare's hard startup budget. Inspect its retained CPU profile and remove
+  the dominant eager initialization work. Use a typed service boundary only
+  when that hotspot is a coherent stateless capability; do not retry until
+  timing happens to pass.
 - A missing target Worker makes caller deployment fail. The workflow deploys or
   uploads target services first.
 - If any ordinary version upload fails, no region is promoted.
@@ -174,9 +176,11 @@ selected product regions.
   emitted bundles and requires the PostHog SDK, core, and adapter modules to be
   absent from both regional APIs. The provider build and production-entrypoint
   tests prove the private Worker independently without freezing its SDK internals.
-- `node --test scripts/check-api-startup-schema-runtime.test.mjs` proves the
-  schema-heavy graph cannot regain a bare Zod v4 import or lose v4-compatible
-  safe-integer and strict-UUID semantics.
+- `node --test scripts/check-api-startup-schema-runtime.test.mjs` enforces the
+  API graph's runtime boundary and rejects the known weaker v3 source forms.
+  Contract compatibility tests prove required-field, finite-number,
+  offset-datetime, safe-integer, strict-UUID, nested-provider-schema, and
+  cross-version error behavior at runtime.
 - Attachment tests run the same statically imported codec implementation behind
   an injected document-processing contract.
 - Terminal provider tests continue to prove Daytona behavior directly; RPC
@@ -266,7 +270,8 @@ for Azure-bound models in its route plan.
 Engineering MCP, and JSON-Schema compilation retain Zod v4 through explicit
 compatibility adapters. Shared conversion and error helpers preserve provider
 schema output and recognize failures from both versions. A repository check
-blocks bare-v4 regressions and the two known semantic widenings in v3.
+blocks bare-v4 regressions plus the known required-unknown, finite-number,
+offset-datetime, safe-integer, and UUID semantic widenings in v3.
 
 **Why:** The telemetry service split removed PostHog but the next fully verified
 Global artifact still failed Cloudflare upload with error 10021. The retained
@@ -282,9 +287,10 @@ movement without following a coherent stateless capability.
 
 **Consequences:** The API artifact contains both Zod runtimes and is about 7.34
 MiB uncompressed, but constructs the large Rally schema graph on the cheaper
-runtime. Integers and UUIDs retain v4 validation semantics, provider schemas
-retain required defaults and UUID formats, and error diagnostics work across
-both versions. No route, binding, resource, or data migration changes.
+runtime. Required opaque fields, finite numbers, offset datetimes, integers,
+and UUIDs retain v4 validation semantics; provider schemas retain required
+defaults and strict UUID metadata through nested branches; and error diagnostics
+work across both versions. No route, binding, resource, or data migration changes.
 
 ### 2026-09-01 — Global telemetry delivery gets one shared startup graph
 

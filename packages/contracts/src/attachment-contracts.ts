@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "./schema-runtime";
 import { STRICT_UUID_PATTERN } from "./uuid-validation";
 import { z } from "zod/v3";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
@@ -341,7 +342,7 @@ const ResourceListItemSchema = z.object({
   sizeBytes: NonNegativeIntegerSchema,
   relationshipType: ResourceRelationshipTypeSchema,
   direction: ResourceDirectionSchema,
-  attachedAt: z.string().datetime({ offset: true }),
+  attachedAt: OffsetDateTimeSchema,
   messageAttachment: z.boolean(),
   attachmentKind: AttachmentKindSchema,
   contentMode: ContentModeSchema,
@@ -350,7 +351,7 @@ const ResourceListItemSchema = z.object({
 
 export const WorkstreamListResourcesOutputSchema = z.object({
   workstreamId: CanonicalUuidSchema,
-  asOf: z.string().datetime({ offset: true }),
+  asOf: OffsetDateTimeSchema,
   totalVisibleResources: NonNegativeIntegerSchema,
   totalMatchingResources: NonNegativeIntegerSchema,
   filters: z.object({ attachmentKind: AttachmentKindSchema.nullable() }).strict(),

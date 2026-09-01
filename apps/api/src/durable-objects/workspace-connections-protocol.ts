@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { IdSchema } from "@rally/contracts";
 import { z } from "zod/v3";
 
@@ -22,7 +23,7 @@ import { z } from "zod/v3";
  * protocol does not touch.
  */
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = OffsetDateTimeSchema;
 const RegionSchema = z.enum(["global", "eu"]);
 
 /** The providers the attempt table's CHECK constraint admits. */

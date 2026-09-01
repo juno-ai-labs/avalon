@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { IdSchema } from "@rally/contracts";
 import { z } from "zod/v3";
 
@@ -17,7 +18,7 @@ import { z } from "zod/v3";
  * outcome and the service maps it to its `ApiError`.
  */
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = OffsetDateTimeSchema;
 
 /** One `resources` row, in the columns the cross-authority readers consume. */
 export const WorkspaceResourceDescriptorSchema = z.object({

@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { providerJsonSchema } from "@rally/contracts/json-schema";
 import { z } from "zod/v3";
@@ -281,8 +282,8 @@ const commitsListSchema = repoIdentitySchema.extend({
   sha: z.string().trim().min(1).max(250).optional(),
   path: z.string().trim().min(1).max(1_000).optional(),
   author: z.string().trim().min(1).max(250).optional(),
-  since: z.string().datetime({ offset: true }).optional(),
-  until: z.string().datetime({ offset: true }).optional(),
+  since: OffsetDateTimeSchema.optional(),
+  until: OffsetDateTimeSchema.optional(),
   perPage: z.number().int().safe().min(1).max(100).default(30),
   page: z.number().int().safe().min(1).max(1_000).default(1),
 }).strict();
@@ -290,7 +291,7 @@ const commitsListSchema = repoIdentitySchema.extend({
 const issuesListSchema = repoIdentitySchema.extend({
   state: z.enum(["open", "closed", "all"]).default("open"),
   labels: z.array(z.string().trim().min(1).max(100)).max(20).default([]),
-  since: z.string().datetime({ offset: true }).optional(),
+  since: OffsetDateTimeSchema.optional(),
   sort: z.enum(["created", "updated", "comments"]).default("updated"),
   direction: z.enum(["asc", "desc"]).default("desc"),
   perPage: z.number().int().safe().min(1).max(100).default(30),

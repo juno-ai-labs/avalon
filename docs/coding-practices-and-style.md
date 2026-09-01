@@ -42,8 +42,8 @@ lowest layer both sides can import without importing an implementation.
 
 ## API schemas use the startup-efficient runtime
 
-Schema-heavy production modules in `apps/api`, `packages/contracts`, and
-`packages/connectors` import `zod/v3`. Ace and desktop modules that compose those
+Production modules in the regional API and every shared package import
+`zod/v3` for ordinary validation. Ace and desktop modules that compose those
 shared schemas use the same runtime. Bind, the Engineering MCP SDK, and harness
 features that require Zod v4 retain an explicit adapter at that compatibility
 edge. Do not move an ordinary validation schema back to the bare `zod` export:
@@ -57,7 +57,11 @@ represent safely. This applies to every `zod/v3` schema, including one declared
 inside an explicit mixed-runtime adapter file. UUID strings use
 `STRICT_UUID_PATTERN` because Zod v3's generic UUID check accepts variants Zod
 v4 refuses. Provider-facing JSON Schema goes through `providerJsonSchema`, which
-preserves native-v4 default, UUID, and output-required behavior. Code that
+preserves native-v4 default, strict UUID, and output-required behavior,
+including schemas nested inside unions. Required opaque fields use
+`RequiredUnknownSchema`, offset-aware timestamps use `OffsetDateTimeSchema`,
+and non-integer number chains include `.finite()`; direct v3 forms otherwise
+admit missing properties, invalid offsets, or infinities that v4 refused. Code that
 classifies failures from both schema runtimes uses `isZodValidationError`; a
 single-version `instanceof` check loses the other runtime's diagnostics.
 
@@ -80,8 +84,9 @@ JavaScript module imports.
 
 **What changed:** Schema-heavy API, contract, and connector modules now use the
 shipped Zod v3-compatible runtime, as do Ace and desktop consumers that compose
-those shared schemas. A checked compatibility layer preserves safe integer,
-strict UUID, provider JSON-Schema, and cross-version error behavior; Bind's
+those shared schemas. A checked compatibility layer preserves required opaque
+fields, finite numbers, offset datetimes, safe integers, strict UUIDs, nested
+provider JSON Schema, and cross-version error behavior; Bind's
 JSON-Schema compiler and the Engineering MCP SDK remain on Zod v4 through
 explicit adapters.
 

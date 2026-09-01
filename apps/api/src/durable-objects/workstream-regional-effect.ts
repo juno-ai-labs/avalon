@@ -1,8 +1,9 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { IdSchema, RegionSchema, ResourceRelationshipTypeSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod/v3";
 
-const TimestampSchema = z.string().datetime({ offset: true });
+const TimestampSchema = OffsetDateTimeSchema;
 const NullableTimestampSchema = TimestampSchema.nullable();
 const ShortTextSchema = z.string().max(500);
 export const WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT = 10_000;

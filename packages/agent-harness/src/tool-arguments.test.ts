@@ -192,4 +192,24 @@ describe("tool argument validation errors", () => {
     expect(message).not.toContain("cursor");
     expect(message).not.toContain("unrecognized_keys");
   });
+
+  it("collapses Zod v3 union noise to the actionable branch", () => {
+    const schema = z3.union([
+      z3.object({
+        resourceId: z3.string(),
+        startCharacter: z3.number().int().safe().optional(),
+      }).strict(),
+      z3.object({ cursor: z3.string() }).strict(),
+    ]);
+
+    const result = schema.safeParse({ resourceId: "resource-1", startCharacter: "not-a-number" });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+
+    const message = formatToolArgumentValidationError(result.error);
+    expect(message).toContain("startCharacter: expected number, received string");
+    expect(message).not.toContain("invalid_union");
+    expect(message).not.toContain("cursor");
+    expect(message).not.toContain("unrecognized_keys");
+  });
 });

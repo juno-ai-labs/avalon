@@ -303,7 +303,7 @@ export function countNovelSubjectTerms(input: {
 const DescriptionDecisionSchema = z.object({
   decision: z.enum(["keep", "rewrite"]),
   description: z.string().nullable(),
-  confidence: z.number().min(0).max(1),
+  confidence: z.number().finite().min(0).max(1),
   reasoning: z.string(),
 });
 

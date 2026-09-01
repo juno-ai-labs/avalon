@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
@@ -117,7 +118,7 @@ const BlockDashboardStreamEventSchema = z.discriminatedUnion("type", [
     streamSeq: z.number().int().safe().nonnegative(),
     reset: z.literal(false),
     sequence: z.number().int().safe().positive(),
-    occurredAt: z.string().datetime({ offset: true }),
+    occurredAt: OffsetDateTimeSchema,
   }).passthrough(),
   z.object({
     type: z.literal("stream_delta"),
@@ -129,7 +130,7 @@ const BlockDashboardStreamEventSchema = z.discriminatedUnion("type", [
     delta: z.string(),
     reset: z.boolean(),
     sequence: z.number().int().safe().positive(),
-    occurredAt: z.string().datetime({ offset: true }),
+    occurredAt: OffsetDateTimeSchema,
   }).passthrough(),
 ]);
 
@@ -192,7 +193,7 @@ function applyBlockDashboardStreamEvent(
 type BlockDashboardSocketIdentity = z.infer<typeof BlockDashboardSocketIdentitySchema>;
 const BlockDashboardSocketAttachmentSchema = BlockDashboardSocketIdentitySchema.extend({
   connectionId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
-  connectedAt: z.string().datetime({ offset: true }),
+  connectedAt: OffsetDateTimeSchema,
   subscribed: z.boolean(),
   /**
    * Vestigial: nothing reads it now that time-based re-authorization is gone —

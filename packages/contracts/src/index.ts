@@ -1,5 +1,6 @@
 import { STRICT_UUID_PATTERN } from "./uuid-validation";
 import { z } from "zod/v3";
+import { OffsetDateTimeSchema, RequiredUnknownSchema } from "./schema-runtime";
 import { AutomationRunContextV1Schema } from "./automation-agent";
 import {
   TranscriptActivitySchema,
@@ -113,7 +114,7 @@ export {
 } from "./workspace-target";
 export { parseDesktopDeepLinkIntent, type DesktopDeepLinkIntent } from "./desktop-deep-link-intent";
 
-export const TimestampSchema = z.string().datetime({ offset: true });
+export const TimestampSchema = OffsetDateTimeSchema;
 export const RegionSchema = z.enum(["global", "eu"]);
 
 /**
@@ -2585,7 +2586,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("transcript_activity_upserted"),
     activity: TranscriptActivitySchema,
-    snapshotAtUtc: z.string().datetime({ offset: true }),
+    snapshotAtUtc: OffsetDateTimeSchema,
   }),
   ServerEventBaseSchema.extend({
     type: z.literal("transcript_range"),
@@ -2649,8 +2650,8 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   // Parse-only rollout compatibility for events emitted by the previous
   // Worker while a newer desktop is already running. No current producer or
   // consumer uses the payload.
-  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: z.unknown() }),
-  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: z.unknown() }),
+  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: RequiredUnknownSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: RequiredUnknownSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_configuration_updated"), blockDashboard: BlockDashboardSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_block_run_updated"), run: BlockDashboardBlockRunSchema }),
   ServerEventBaseSchema.extend({
@@ -2913,7 +2914,7 @@ export const ConnectorPollWorkflowInputSchema = z.object({
 
 export const AddressingClassificationSchema = z.object({
   classification: z.enum(["agent_action", "human_only", "both", "uncertain"]),
-  confidence: z.number().min(0).max(1),
+  confidence: z.number().finite().min(0).max(1),
   rationaleCode: z.enum([
     "imperative",
     "question",

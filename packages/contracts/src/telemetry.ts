@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "./schema-runtime";
 import { STRICT_UUID_PATTERN } from "./uuid-validation";
 import { z } from "zod/v3";
 
@@ -775,19 +776,19 @@ export const TELEMETRY_EVENTS = {
         "completed", "navigation_requested", "snapshot", "replay_event", "resync_required",
         "closed", "failed", "cancelled", "offline", "superseded", "unmounted",
       ]),
-      durationMs: z.number().nonnegative(),
-      blockedMs: z.number().nonnegative(),
+      durationMs: z.number().finite().nonnegative(),
+      blockedMs: z.number().finite().nonnegative(),
       longTaskCount: countBucket,
-      createRequestMs: z.number().nonnegative().optional(),
-      cacheSeedMs: z.number().nonnegative().optional(),
-      socketTicketMs: z.number().nonnegative().optional(),
-      dialMs: z.number().nonnegative().optional(),
-      handshakeMs: z.number().nonnegative().optional(),
-      firstFrameMs: z.number().nonnegative().optional(),
-      resolveMentionsMs: z.number().nonnegative().optional(),
-      commandRoundTripMs: z.number().nonnegative().optional(),
+      createRequestMs: z.number().finite().nonnegative().optional(),
+      cacheSeedMs: z.number().finite().nonnegative().optional(),
+      socketTicketMs: z.number().finite().nonnegative().optional(),
+      dialMs: z.number().finite().nonnegative().optional(),
+      handshakeMs: z.number().finite().nonnegative().optional(),
+      firstFrameMs: z.number().finite().nonnegative().optional(),
+      resolveMentionsMs: z.number().finite().nonnegative().optional(),
+      commandRoundTripMs: z.number().finite().nonnegative().optional(),
       attempts: countBucket.optional(),
-      sinceEffectMs: z.number().nonnegative().optional(),
+      sinceEffectMs: z.number().finite().nonnegative().optional(),
       ticketId: uuidV7Id.optional(),
       clientMessageId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").optional(),
       participantCount: countBucket.optional(),
@@ -1966,19 +1967,19 @@ const SafeReleaseSchema = z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u)
 export const TelemetryBreadcrumbSchema = z.discriminatedUnion("kind", [
   z.object({
     sequence: z.number().int().safe().positive(),
-    at: z.string().datetime({ offset: true }),
+    at: OffsetDateTimeSchema,
     kind: z.literal("screen_changed"),
     screen,
   }).strict(),
   z.object({
     sequence: z.number().int().safe().positive(),
-    at: z.string().datetime({ offset: true }),
+    at: OffsetDateTimeSchema,
     kind: z.literal("lifecycle"),
     phase: lifecycleState,
   }).strict(),
   z.object({
     sequence: z.number().int().safe().positive(),
-    at: z.string().datetime({ offset: true }),
+    at: OffsetDateTimeSchema,
     kind: z.literal("operation"),
     operation: z.enum([
       "workspace_create", "workspace_activate", "workstream_create", "run_start", "connector_setup", "update",
@@ -1991,7 +1992,7 @@ export type TelemetryBreadcrumb = z.infer<typeof TelemetryBreadcrumbSchema>;
 export const TelemetryBreadcrumbSidecarSchema = z.object({
   version: z.literal(1),
   launchId: UuidV7Schema,
-  updatedAt: z.string().datetime({ offset: true }),
+  updatedAt: OffsetDateTimeSchema,
   entries: z.array(TelemetryBreadcrumbSchema).max(32),
 }).strict().superRefine((sidecar, context) => {
   for (let index = 1; index < sidecar.entries.length; index += 1) {
@@ -2078,8 +2079,8 @@ const envelopeCommon = {
   source: z.enum(TELEMETRY_SOURCES),
   category: z.enum(TELEMETRY_CATEGORIES),
   identityScope: z.enum(TELEMETRY_IDENTITY_SCOPES),
-  originalTimestamp: z.string().datetime({ offset: true }),
-  sentAt: z.string().datetime({ offset: true }),
+  originalTimestamp: OffsetDateTimeSchema,
+  sentAt: OffsetDateTimeSchema,
   properties: z.record(z.string(), z.unknown()),
 };
 
@@ -2159,7 +2160,7 @@ export const TelemetryBootstrapResponseSchema = z.object({
   route: z.enum(["global", "eu"]),
   routingBasis: z.enum(["ip_geolocation", "geolocation_fallback"]),
   capability: z.string().min(32).max(2_048),
-  expiresAt: z.string().datetime({ offset: true }),
+  expiresAt: OffsetDateTimeSchema,
 }).strict();
 export type TelemetryBootstrapResponse = z.infer<typeof TelemetryBootstrapResponseSchema>;
 

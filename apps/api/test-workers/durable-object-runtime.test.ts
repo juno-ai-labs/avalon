@@ -708,7 +708,7 @@ describe("Durable Objects in the Workers runtime", () => {
       opportunityVersion: null,
       opportunityDisplayPromptHash: null,
       opportunityExecutionPromptHash: null,
-      executionPrincipal: { type: "user", userId: USER_ID },
+      executionPrincipal: { type: "user" as const, userId: USER_ID },
       reason: "user_message",
     };
 
@@ -799,7 +799,7 @@ describe("Durable Objects in the Workers runtime", () => {
         opportunityVersion: null,
         opportunityDisplayPromptHash: null,
         opportunityExecutionPromptHash: null,
-        executionPrincipal: { type: "user", userId: USER_ID },
+        executionPrincipal: { type: "user" as const, userId: USER_ID },
         reason: "user_message",
       });
 
@@ -875,7 +875,7 @@ describe("Durable Objects in the Workers runtime", () => {
       opportunityVersion: null,
       opportunityDisplayPromptHash: null,
       opportunityExecutionPromptHash: null,
-      executionPrincipal: { type: "user", userId: USER_ID },
+      executionPrincipal: { type: "user" as const, userId: USER_ID },
       reason: "user_message",
     };
 
@@ -977,7 +977,7 @@ describe("Durable Objects in the Workers runtime", () => {
         opportunityVersion: null,
         opportunityDisplayPromptHash: null,
         opportunityExecutionPromptHash: null,
-        executionPrincipal: { type: "user", userId: USER_ID },
+        executionPrincipal: { type: "user" as const, userId: USER_ID },
         reason: "user_message",
       });
       expect(created.workstream.scope).toBe("workspace");
@@ -2837,7 +2837,7 @@ describe("Durable Objects in the Workers runtime", () => {
         opportunityVersion: null,
         opportunityDisplayPromptHash: null,
         opportunityExecutionPromptHash: null,
-        executionPrincipal: { type: "user", userId: USER_ID },
+        executionPrincipal: { type: "user" as const, userId: USER_ID },
         reason: "user_message",
       });
     });

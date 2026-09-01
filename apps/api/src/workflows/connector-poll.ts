@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import {
   ActivityQueueMessageSchema,
   ConnectorPollWorkflowInputSchema,
@@ -22,7 +23,7 @@ const PollResultSchema = z.object({
   activityIds: z.array(IdSchema).max(5_000),
   cursor: z.record(z.string(), z.unknown()),
   baseCursorJson: z.string().min(2).max(1_000_000),
-  nextPollAt: z.string().datetime({ offset: true }).nullable().optional(),
+  nextPollAt: OffsetDateTimeSchema.nullable().optional(),
   streamErrors: z.array(z.object({
     streamId: z.string().min(1).max(200),
     code: z.string().min(1).max(100),

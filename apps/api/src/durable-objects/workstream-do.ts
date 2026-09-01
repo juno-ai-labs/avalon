@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
@@ -527,7 +528,7 @@ function readSocketAttachment(socket: WebSocket): WorkstreamSocketAttachment | n
   try {
     const parsed = WorkstreamSocketIdentitySchema.extend({
       connectionId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
-      connectedAt: z.string().datetime({ offset: true }),
+      connectedAt: OffsetDateTimeSchema,
       subscribed: z.boolean(),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;

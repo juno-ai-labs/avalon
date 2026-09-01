@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { z } from "zod/v3";
 
 /**
@@ -22,7 +23,7 @@ export const SemanticRealtimeReferenceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("transcript_activity"),
     activityId: z.string().min(1),
-    snapshotAtUtc: z.string().datetime({ offset: true }),
+    snapshotAtUtc: OffsetDateTimeSchema,
   }).strict(),
 ]);
 
@@ -129,7 +130,7 @@ export function dueSemanticRealtimeReferences(
     Math.max(1, Math.min(limit, 100)),
   ).toArray().map((row) => {
     const payload = z.object({
-      occurredAtUtc: z.string().datetime({ offset: true }),
+      occurredAtUtc: OffsetDateTimeSchema,
       reference: SemanticRealtimeReferenceSchema,
     }).strict().parse(JSON.parse(row.payload_json));
     const sequence = Number(row.source_version);

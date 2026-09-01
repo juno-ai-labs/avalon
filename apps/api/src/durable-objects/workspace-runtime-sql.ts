@@ -1,7 +1,7 @@
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { z } from "zod/v3";
 
-const WorkspaceSqlValueSchema = z.union([z.string(), z.number(), z.null()]);
+const WorkspaceSqlValueSchema = z.union([z.string(), z.number().finite(), z.null()]);
 
 const WorkspaceSqlStatementSchema = z.object({
   sql: z.string().min(1).max(100_000),

@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -198,13 +199,13 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   originType: z.enum(["ad_hoc", "automation"]).default("ad_hoc"),
   automationSubscriptionId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable().default(null),
   automationRunId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable().default(null),
-  plannedFor: z.string().datetime({ offset: true }).nullable().default(null),
+  plannedFor: OffsetDateTimeSchema.nullable().default(null),
   systemKind: z.literal("digest").nullable().default(null),
   createdFromOpportunityId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable().default(null),
   opportunityVersion: z.number().int().safe().positive().nullable().default(null),
   opportunityDisplayPromptHash: z.string().max(200).nullable().default(null),
   opportunityExecutionPromptHash: z.string().max(200).nullable().default(null),
-  executionPrincipal: z.unknown(),
+  executionPrincipal: WorkstreamWorkflowInputSchema.shape.executionPrincipal,
   slackOrigin: z.unknown().optional(),
   slackSearchAuthorization: z.unknown().optional(),
   telemetryOperationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").optional(),

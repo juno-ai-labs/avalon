@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
@@ -9,7 +10,7 @@ const MarkerSchema = z.object({
   version: z.literal(1),
   launchId: z.string().regex(UUID_V7),
   phase: z.enum(['starting', 'ready']),
-  changedAt: z.string().datetime({ offset: true }),
+  changedAt: OffsetDateTimeSchema,
 }).strict();
 
 type Marker = z.infer<typeof MarkerSchema>;

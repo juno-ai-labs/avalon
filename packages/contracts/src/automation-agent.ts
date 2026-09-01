@@ -4,6 +4,7 @@ import {
   UserIdSchema,
   WorkspaceIdSchema,
 } from "./identifiers";
+import { RequiredUnknownSchema } from "./schema-runtime";
 
 export const AutomationIdSchema = IdSchema.brand<"AutomationId">();
 export type AutomationId = z.infer<typeof AutomationIdSchema>;
@@ -89,7 +90,7 @@ export const AutomationAgentSnapshotSchema = z.object({
   authorityGeneration: z.number().int().safe().positive(),
   title: z.string(),
   definitionRevision: z.number().int().safe().nonnegative(),
-  definition: z.unknown().nullable(),
+  definition: RequiredUnknownSchema.nullable(),
   messages: z.array(AutomationDraftMessageSchema),
   activeCompilerRun: z.object({
     id: IdSchema,
@@ -105,7 +106,7 @@ export const AutomationAgentSnapshotSchema = z.object({
   pendingElicitation: z.object({
     id: IdSchema,
     definitionRevision: z.number().int().safe().positive(),
-    payload: z.unknown(),
+    payload: RequiredUnknownSchema,
   }).strict().nullable(),
   eventSequence: z.number().int().safe().nonnegative(),
 }).strict();
@@ -118,7 +119,7 @@ export const AutomationSetEvaluatorRulesMutationSchema = z.object({
   compilerRunId: IdSchema,
   providerCallId: z.string().min(1),
   inputHash: z.string().min(1),
-  evaluatorRules: z.unknown(),
+  evaluatorRules: RequiredUnknownSchema,
 }).strict();
 
 const AutomationRunDeliveryTargetV1Schema = z.discriminatedUnion("type", [

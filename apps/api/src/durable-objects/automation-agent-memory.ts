@@ -1,5 +1,6 @@
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { AutomationMemoryTableSchema } from "@rally/contracts";
+import { OffsetDateTimeSchema, RequiredUnknownSchema } from "@rally/contracts/schema-runtime";
 import { z } from "zod/v3";
 
 import { sha256 } from "../lib/crypto";
@@ -57,14 +58,14 @@ const SearchSchema = z.union([
 const AddSchema = z.object({
   scopeKind: z.literal("automation"),
   text: z.string().trim().min(1).max(16_000),
-  expiresAt: z.string().datetime({ offset: true }).optional(),
+  expiresAt: OffsetDateTimeSchema.optional(),
   rationale: z.string().trim().min(1).max(2_000),
 }).strict();
 const UpdateItemSchema = z.object({
   memoryItemId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   expectedRevision: z.number().int().safe().positive(),
   text: z.string().trim().min(1).max(16_000),
-  expiresAt: z.string().datetime({ offset: true }).optional(),
+  expiresAt: OffsetDateTimeSchema.optional(),
   rationale: z.string().trim().min(1).max(2_000),
 }).strict();
 const InvalidateItemSchema = z.object({
@@ -146,7 +147,7 @@ const OperationSchema = z.enum([
 
 export const AutomationMemoryToolRequestSchema = FenceSchema.extend({
   operation: OperationSchema,
-  args: z.unknown(),
+  args: RequiredUnknownSchema,
   providerIdempotencyKey: z.string().min(1).max(300).optional(),
 }).strict();
 
@@ -283,7 +284,7 @@ function normalizeValue(column: ColumnRow, value: unknown): unknown {
       if (typeof value !== "boolean") throw new Error(`memory_table_value_type:${column.name}:boolean`);
       return value;
     case "datetime":
-      if (typeof value !== "string" || !z.string().datetime({ offset: true }).safeParse(value).success) {
+      if (typeof value !== "string" || !OffsetDateTimeSchema.safeParse(value).success) {
         throw new Error(`memory_table_value_type:${column.name}:datetime`);
       }
       return new Date(value).toISOString();
@@ -394,7 +395,7 @@ function evaluateFilter(filter: Filter, values: Record<string, unknown>, table: 
     return filter.op === "in" ? found : !found;
   }
   if (filter.op === "between") {
-    const range = z.object({ from: z.unknown(), to: z.unknown() }).strict().parse(filter.value);
+    const range = z.object({ from: RequiredUnknownSchema, to: RequiredUnknownSchema }).strict().parse(filter.value);
     return compareValues(left, comparable(normalizeValue(column, range.from))) >= 0
       && compareValues(left, comparable(normalizeValue(column, range.to))) <= 0;
   }

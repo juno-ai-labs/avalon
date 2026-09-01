@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { STRICT_UUID_PATTERN } from '@rally/contracts/uuid-validation';
 import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
@@ -10,9 +11,9 @@ const ManifestSchema = z.object({
   version: z.literal(1),
   generationId: z.string(),
   route: z.enum(['global', 'eu']),
-  createdAt: z.string().datetime({ offset: true }),
-  deleteAfter: z.string().datetime({ offset: true }),
-  invalidatedAt: z.string().datetime({ offset: true }).nullable(),
+  createdAt: OffsetDateTimeSchema,
+  deleteAfter: OffsetDateTimeSchema,
+  invalidatedAt: OffsetDateTimeSchema.nullable(),
   runtime: z.object({
     release: z.string().min(1).max(64),
     buildId: z.string().min(1).max(64),

@@ -338,7 +338,7 @@ export const WorkspaceMemoryTableRowListSchema = z.object({
 // from the table's own rows, the physical cell field for each id, and values
 // already coerced. The object turns it into SQL without consulting the schema.
 const CellFieldSchema = z.enum(["string_value", "number_value", "boolean_value", "temporal_value"]);
-const PredicateValueSchema = z.union([z.string(), z.number(), z.null()]);
+const PredicateValueSchema = z.union([z.string(), z.number().finite(), z.null()]);
 
 const NormalizedPredicateSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("exists"), columnId: z.string().min(1) }).strict(),
@@ -476,7 +476,7 @@ const MemoryTableCellSchema = z.object({
   memoryTableColumnId: z.string().min(1),
   valueType: MemoryTableColumnTypeSchema,
   stringValue: z.string().nullable(),
-  numberValue: z.number().nullable(),
+  numberValue: z.number().finite().nullable(),
   booleanValue: z.number().int().safe().min(0).max(1).nullable(),
   temporalValue: z.string().nullable(),
 }).strict();

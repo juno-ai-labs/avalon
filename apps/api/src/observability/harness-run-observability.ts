@@ -34,16 +34,16 @@ const RUN_ANALYTICS_SCHEMA_VERSION = "harness_run_v1";
 
 export const HarnessRunMetricsSchema = z.object({
   model: z.string().nullable(),
-  durationMs: z.number(),
-  turns: z.number(),
-  iterations: z.number(),
-  toolCalls: z.number(),
-  modelTimeMs: z.number(),
-  toolTimeMs: z.number(),
-  inputTokens: z.number(),
-  outputTokens: z.number(),
-  costCents: z.number(),
-  outputTokensPerSecond: z.number(),
+  durationMs: z.number().finite(),
+  turns: z.number().finite(),
+  iterations: z.number().finite(),
+  toolCalls: z.number().finite(),
+  modelTimeMs: z.number().finite(),
+  toolTimeMs: z.number().finite(),
+  inputTokens: z.number().finite(),
+  outputTokens: z.number().finite(),
+  costCents: z.number().finite(),
+  outputTokensPerSecond: z.number().finite(),
   detailedTimingAvailable: z.boolean(),
 });
 

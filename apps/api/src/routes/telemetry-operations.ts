@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { Hono } from 'hono';
 import { z } from 'zod/v3';
@@ -26,8 +27,8 @@ const EuIssueQuerySchema = z.object({
   limit: z.coerce.number().int().safe().min(1).max(100).default(50),
 }).strict();
 const CrashFreeSchema = z.object({
-  from: z.string().datetime({ offset: true }),
-  to: z.string().datetime({ offset: true }),
+  from: OffsetDateTimeSchema,
+  to: OffsetDateTimeSchema,
 }).strict();
 const TelemetryOperationalSnapshotSchema = z.object({
   acceptedPending: z.number().int().safe().nonnegative(),
@@ -56,8 +57,8 @@ const ReplayResponseSchema = z.object({
 }).strict();
 const EuCrashIssueSchema = z.object({
   fingerprint: z.string().min(1),
-  firstSeen: z.string().datetime({ offset: true }),
-  lastSeen: z.string().datetime({ offset: true }),
+  firstSeen: OffsetDateTimeSchema,
+  lastSeen: OffsetDateTimeSchema,
   count: z.number().int().safe().nonnegative(),
   releases: z.array(z.string()),
 }).strict();

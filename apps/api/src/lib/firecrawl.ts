@@ -23,7 +23,7 @@ const searchResponseSchema = z.object({
       position: z.number().int().safe().optional(),
     })),
   }),
-  creditsUsed: z.number().nonnegative().optional(),
+  creditsUsed: z.number().finite().nonnegative().optional(),
   warning: z.string().nullish(),
   id: z.string().optional(),
 });
@@ -37,7 +37,7 @@ const scrapeMetadataSchema = z.object({
   // These fields are useful for future accounting but are intentionally
   // optional because Firecrawl's public scrape response schema does not
   // guarantee them.
-  creditsUsed: z.number().nonnegative().nullish(),
+  creditsUsed: z.number().finite().nonnegative().nullish(),
   proxyUsed: z.string().nullish(),
   cacheState: z.string().nullish(),
 });

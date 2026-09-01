@@ -1,2 +1,5 @@
-/** The RFC 9562 UUID forms accepted by Zod v4's generic UUID validator. */
-export const STRICT_UUID_PATTERN = /^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/iu;
+/** The RFC 9562 UUID forms accepted by Zod v4, case-explicit for JSON Schema. */
+export const STRICT_UUID_JSON_SCHEMA_PATTERN = "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$";
+
+/** Runtime and provider conversion share one pattern source so they cannot drift. */
+export const STRICT_UUID_PATTERN = new RegExp(STRICT_UUID_JSON_SCHEMA_PATTERN, "u");

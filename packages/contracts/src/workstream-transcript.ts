@@ -1,8 +1,9 @@
 import { STRICT_UUID_PATTERN } from "./uuid-validation";
 import { z } from "zod/v3";
 import { HttpUrlSchema } from "./url-schemas";
+import { OffsetDateTimeSchema, RequiredUnknownSchema } from "./schema-runtime";
 
-const UtcTimestampSchema = z.string().datetime({ offset: true });
+const UtcTimestampSchema = OffsetDateTimeSchema;
 
 /**
  * Stable identity for one canonical transcript turn.
@@ -115,8 +116,8 @@ export const TranscriptToolBlockSchema = z.object({
   toolName: z.string().min(1),
   callIndex: z.number().int().safe().nonnegative(),
   status: z.enum(["planned", "started", "completed", "failed", "ambiguous", "cancelled"]),
-  participantSafeInput: z.unknown().nullable(),
-  participantSafeResult: z.unknown().nullable(),
+  participantSafeInput: RequiredUnknownSchema.nullable(),
+  participantSafeResult: RequiredUnknownSchema.nullable(),
   error: z.string().nullable(),
   activityId: z.string().min(1).nullable(),
 });

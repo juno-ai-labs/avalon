@@ -1,3 +1,4 @@
+import { OffsetDateTimeSchema } from "@rally/contracts/schema-runtime";
 import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
@@ -119,7 +120,7 @@ const SearchInputSchema = z.union([
 const AddInputSchema = z.object({
   scopeKind: z.enum(MEMORY_SCOPE_KINDS),
   text: z.string().trim().min(1).max(16_000),
-  expiresAt: z.string().datetime({ offset: true }).optional(),
+  expiresAt: OffsetDateTimeSchema.optional(),
   rationale: z.string().trim().min(1).max(2_000),
 }).strict();
 
@@ -127,7 +128,7 @@ const UpdateInputSchema = z.object({
   memoryItemId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   expectedRevision: z.number().int().safe().positive(),
   text: z.string().trim().min(1).max(16_000),
-  expiresAt: z.string().datetime({ offset: true }).optional(),
+  expiresAt: OffsetDateTimeSchema.optional(),
   rationale: z.string().trim().min(1).max(2_000),
 }).strict();
 
