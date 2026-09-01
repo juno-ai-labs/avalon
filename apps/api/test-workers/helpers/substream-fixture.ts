@@ -17,6 +17,12 @@ import {
   asWorkstreamId,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
+import type { Env } from "../../src/env";
+import {
+  createTestD1Database,
+  createTestD1PreparedStatement,
+  createTestEnv,
+} from "../../test/helpers/cloudflare-test";
 import { substreamLoopId } from "../../src/durable-objects/names";
 import { SubstreamLoopStorage } from "../../src/durable-objects/substream-loop-storage";
 import { WorkstreamTranscriptStorage } from "../../src/durable-objects/workstream-transcript-storage";
@@ -26,6 +32,65 @@ export const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000004a1"
 export const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000004a2");
 export const USER_ID = asUserId("00000000-0000-7000-8000-0000000004a3");
 export const LOOP_ID = substreamLoopId(WORKSTREAM_ID);
+
+/**
+ * Create the regional control plane a work-stream object reads through: the
+ * authority gate, the workspace, its one member, that member's session, and the
+ * `users` row the product joins for mention resolution.
+ *
+ * The object owns its own SQLite, but every admission crosses into D1 for
+ * membership and into WorkspaceDO for the workspace itself, so a suite that
+ * drives real admissions needs both. Shared rather than restated per suite for
+ * the reason the root seed above is: a column list belongs in one place, and a
+ * test should be about behaviour.
+ */
+export async function seedWorkspaceControlPlane(
+  database: D1Database,
+  input: { workspaceId: string; userId: string; sessionId: string },
+): Promise<void> {
+  await database.batch([
+    database.prepare(`CREATE TABLE workstream_authority_control (
+      id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
+      required_serving_contract_version INTEGER NOT NULL,
+      serving_contract_version INTEGER NOT NULL
+    )`),
+    database.prepare(`INSERT INTO workstream_authority_control
+      (id, phase, generation, required_serving_contract_version, serving_contract_version)
+      VALUES (1, 'durable_object_open', 1, 1, 1)`),
+    database.prepare(`CREATE TABLE workspaces (
+      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT,
+      timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'
+    )`),
+    database.prepare(`CREATE TABLE audit_events (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL,
+      actor_user_id TEXT, workstream_id TEXT, action TEXT NOT NULL,
+      target_type TEXT NOT NULL, target_id TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
+    )`),
+    database.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`)
+      .bind(input.workspaceId),
+    database.prepare(`CREATE TABLE workspace_members (
+      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
+      role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+    )`),
+    database.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`)
+      .bind(input.workspaceId, input.userId),
+    database.prepare(`CREATE TABLE sessions (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+    )`),
+    database.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(input.sessionId, input.userId, input.workspaceId),
+    database.prepare(`CREATE TABLE users (
+      id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+    )`),
+    database.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+      VALUES (?, 'member@example.com', 'Member', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+      .bind(input.userId),
+  ]);
+}
 
 /** Declare the production authority state required by all run ingress. */
 export async function seedOpenWorkstreamAuthority(database: D1Database): Promise<void> {
@@ -471,4 +536,45 @@ export async function post(
 export async function boot(stub: DurableObjectStub): Promise<void> {
   const response = await stub.fetch("https://object.test/health");
   await response.arrayBuffer();
+}
+
+/**
+ * Park the *first* D1 read this object makes, and let every later one through.
+ *
+ * `createMessage` commits its mailbox reservation and then awaits `authorize`,
+ * which is a D1 read — so holding that read parks the admission with its
+ * reservation durable and nothing having settled it. That is the state a
+ * cancelled invocation leaves behind, and it is also how a test puts a second
+ * message behind the head-of-line gate on purpose. Only the first read is held,
+ * so whatever the test wants to happen next still can. Only the external system
+ * is replaced; the product runs its real admission against real storage.
+ */
+type AdmissionGateGlobal = typeof globalThis & {
+  __rallySubstreamAdmissionGate?: { open: boolean };
+};
+
+export function holdFirstWorkspaceRead(product: { env: Env }): { open: boolean } {
+  const scope = globalThis as AdmissionGateGlobal;
+  const gate = { open: false };
+  scope.__rallySubstreamAdmissionGate = gate;
+  let parked = false;
+  const hold = async (): Promise<void> => {
+    if (parked) return;
+    parked = true;
+    while (!gate.open) await scheduler.wait(10);
+  };
+  const holdStatement = (statement: D1PreparedStatement): D1PreparedStatement =>
+    createTestD1PreparedStatement({
+      bind: (...values: unknown[]) => holdStatement(statement.bind(...values)),
+      first: async () => { await hold(); return statement.first(); },
+      all: async () => { await hold(); return statement.all(); },
+      run: async () => { await hold(); return statement.run(); },
+      raw: async () => { await hold(); return statement.raw(); },
+    });
+  const database = product.env.DB;
+  product.env = createTestEnv({
+    ...product.env,
+    DB: createTestD1Database({ prepare: (query: string) => holdStatement(database.prepare(query)) }),
+  });
+  return gate;
 }
