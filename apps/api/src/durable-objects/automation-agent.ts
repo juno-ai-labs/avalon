@@ -10,6 +10,7 @@ import {
   ActivitySourcePluginIdsSchema,
   ModelPluginIdSchema,
   ScopeSchema,
+  isExternalEventTrigger,
   AutomationSetEvaluatorRulesInputV1Schema,
   AutomationSetEvaluatorRulesMutationSchema,
   AutomationScopeSchema,
@@ -757,21 +758,6 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
  * summary of a spreadsheet save.
  */
 /**
- * The triggers whose events an evaluator rule set decides on.
- *
- * One definition of "external event", read by both boundaries that enforce the
- * rule requirement, so adding a trigger kind cannot teach one of them about it
- * and not the other.
- */
-function externalEventTriggers(draft: AutomationDraft): AutomationDraft["triggers"] {
-  return draft.triggers.filter((trigger) => (
-    trigger.type === "connector_activity"
-    || trigger.type === "semantic_activity"
-    || trigger.type === "webhook"
-  ));
-}
-
-/**
  * Whether a definition needs evaluator rules and does not have them.
  *
  * Submission and acceptance both refuse on this, and the defect each exists to
@@ -785,7 +771,7 @@ function evaluatorRulesMissing(
   draft: AutomationDraft,
   rules: AutomationSetEvaluatorRulesInputV1 | null,
 ): boolean {
-  return externalEventTriggers(draft).length > 0 && (rules?.evaluators.length ?? 0) === 0;
+  return draft.triggers.some(isExternalEventTrigger) && (rules?.evaluators.length ?? 0) === 0;
 }
 
 function automationTriggerSummary(trigger: AutomationRunContextV1["trigger"]): string | null {
@@ -3089,7 +3075,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
     const deliveryTargets = await this.resolveDeliveryTargets(input);
 
-    const externalTriggers = externalEventTriggers(definition);
+    const externalTriggers = definition.triggers.filter(isExternalEventTrigger);
     const staged = this.state.storage.sql.exec<{ evaluator_rules_json: string | null }>(
       `SELECT evaluator.evaluator_rules_json
          FROM automation_definition_revisions definition
