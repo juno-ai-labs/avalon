@@ -6,6 +6,7 @@ import {
 } from "./object-port-protocol";
 import type { WorkstreamHarnessRunStorage } from "./workstream-harness-run-storage";
 import type { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 /**
  * The wire contract for one work stream's harness runs.
@@ -110,9 +111,9 @@ export function mutatesRunState(operation: HarnessRunOperation): boolean {
 
 export const isHarnessRunOperation = operationGuard(HARNESS_RUN_OPERATIONS);
 
-export const HarnessRunOperationRequestSchema = objectPortRequestSchema(
+export const HarnessRunOperationRequestSchema = deferredZodSchema(() => objectPortRequestSchema(
   isHarnessRunOperation,
   "unknown_harness_run_operation",
-);
+));
 
 export type HarnessRunOperationRequest = z.infer<typeof HarnessRunOperationRequestSchema>;

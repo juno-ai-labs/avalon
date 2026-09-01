@@ -56,6 +56,45 @@ change on an existing or further-derived schema is a different operation and
 must stay explicit. ESLint enforces the direct cases in the API, contracts,
 agent-harness, and connector production graphs.
 
+## Defer cold Zod schema graphs without changing Zod
+
+Use `deferredZodSchema()` from `@rally/contracts/deferred-zod-schema` when all
+of these are true:
+
+- the schema is statically reachable from a Worker entrypoint and would
+  otherwise construct during global-scope evaluation;
+- it is a non-trivial schema family, derived schema, or JSON Schema conversion,
+  rather than a small scalar that would only add a lazy wrapper;
+- it belongs to a capability that an isolate may never exercise, so paying the
+  construction cost on that capability's first use is preferable to charging
+  every isolate at startup; and
+- its factory is deterministic and independent of request data, bindings,
+  credentials, mutable state, and environment-specific values.
+
+A retained `wrangler check startup` profile that shows schema construction or
+allocation is the strongest evidence for applying the pattern. An obviously
+cold capability-specific schema family is also enough; do not invent a timing
+threshold merely to justify the wrapper. Do not defer a small schema used by
+every startup path, a schema whose value intentionally depends on runtime
+state, or a schema whose first-use construction would violate that capability's
+latency requirement. Laziness moves the one-time cost; it does not eliminate
+it.
+
+The exported value remains a regular Zod schema: callers keep using `parse`,
+`safeParse`, and `z.infer`, while the inner schema graph is constructed on
+first use and memoized for the life of the isolate. The cache may contain only
+a pure, immutable schema or derived JSON Schema.
+
+This is evaluation laziness, not dependency laziness. Imports remain static.
+Do not replace it with `import()`, and do not put an uncached schema factory in
+a request handler. When one deferred object schema derives another with an
+object-only API such as `.extend()` or `.shape`, unwrap the dependency inside
+the deferred factory. Ordinary consumers should not unwrap merely to parse.
+
+`deferredZodSchema()` uses regular Zod 4, including its default English locale,
+custom refinements, issue paths, and detailed messages. It is not a reason to
+switch to Zod Mini or to return raw Zod errors directly to users.
+
 ## Testing
 
 Repository-wide rules should have a mechanical check when the syntax can be
@@ -66,6 +105,31 @@ native host-language calls such as Objective-C's `ObjC.import` are not
 JavaScript module imports.
 
 ## Changelog
+
+### 2026-09-01 — Cold API schema families construct on first use
+
+**What changed:** API-reachable telemetry properties, capability-specific
+WorkspaceDO protocols, internal object-port requests, engineering inspection,
+GitHub tools, multimodal tools, and harness tool schemas now retain lightweight
+Zod lazy shells at module evaluation and construct their inner graphs on first
+use. Module-scope JSON Schema conversion for those tools is memoized behind the
+same first-use boundary.
+
+**Why:** Direct object constructors removed intermediate allocations, but the
+exact Worker profile still showed Zod construction and garbage collection as a
+large startup cost. These schema families were initialized together even though
+one request exercises only a small subset of them.
+
+**Considered and rejected:** Dynamic imports still violate the static-dependency
+rule. Zod Mini would change default error localization. Rebuilding schemas in
+each handler would trade startup cost for repeated request cost. A shared
+memoized `z.lazy()` wrapper preserves the existing runtime and type contracts
+while paying each inner graph at most once per isolate.
+
+**Consequences:** The first use of a deferred capability pays its schema
+construction cost. Only deterministic schema state may be retained. Code that
+derives a `ZodObject` from another deferred schema unwraps it inside its own
+factory; validation call sites continue to use the exported schema normally.
 
 ### 2026-09-01 — Construct API-reachable Zod object modes directly
 
