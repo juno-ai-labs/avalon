@@ -4,7 +4,6 @@ import type { Env } from "../env";
 import { automationResultEmailHtml } from "./automation-email-content";
 import { markdownToEmailText } from "./email-markdown";
 import { sendResendEmail, singleLine } from "./resend";
-import { shouldSuppressAutomationResult } from "./slack-agent-service";
 import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
 const MAX_RESULT_LENGTH = 40_000;
@@ -58,7 +57,6 @@ export async function deliverFrozenAutomationResultEmail(
   },
   request: typeof fetch = fetch,
 ): Promise<AutomationEmailDelivery> {
-  if (shouldSuppressAutomationResult(input.text)) return "skipped";
   const recipient = await workspaceRegionalDatabase(env).prepare(
     `SELECT user.timezone, user.email
        FROM users user

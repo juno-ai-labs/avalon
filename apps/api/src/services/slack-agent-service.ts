@@ -1367,7 +1367,6 @@ export class SlackAgentService {
     text: string;
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped";
   }): Promise<"delivered" | "skipped"> {
-    if (shouldSuppressAutomationResult(input.text)) return "skipped";
     this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     const [rawConnection, membership, link, preferences] = await Promise.all([
       this.env.DB.prepare(
@@ -3969,11 +3968,6 @@ function desktopHandoffUrl(webBase: string, target: string): string {
   const url = new URL("/open", webBase);
   url.hash = new URLSearchParams({ target }).toString();
   return url.toString();
-}
-
-export function shouldSuppressAutomationResult(text: string): boolean {
-  const normalized = text.trim();
-  return !normalized || /\b(?:no|zero)\s+(?:qualifying|actionable|matching)\s+(?:emails?|messages?)\b/iu.test(normalized);
 }
 
 function modalPrompt(state: unknown): string | null {
