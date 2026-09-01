@@ -28,6 +28,10 @@ exists.
 | `apps/api/src/artifacts/facet-host.ts` | The Rally-authored module source loaded into a stateful artifact's facet beside the model's own. |
 | `apps/api/src/artifacts/pages.ts` | The neutral page, the plain error page, and the fragment-to-cookie bootstrap. |
 | `apps/api/wrangler.artifacts.{global,eu}.jsonc` | The serving Workers: wildcard route, cross-script DO binding, loader, bucket. |
+| `apps/api/src/services/workstream-artifact-data-tools.ts` | The two read-only data tools' contract: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
+| `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, and reaching the supervisor through the one supported resolver. |
+| `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
+| `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
 
 ## How it works
 
@@ -217,6 +221,8 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/artifact-serving-policy.test.ts` | The three fences: CSP directives, cross-artifact request admission including the credentialed simple `POST`, version-mount parsing, and asset resolution. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-site-publish.test.ts` | Kind resolution, the one-file refusal, the storage-class check, content types, the zip, and the asymmetric transition. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
+| `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
+| `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. |
 
 Two traps:
@@ -305,7 +311,7 @@ zip); and an `<iframe>` for the rail preview (it would widen the renderer CSP to
 wildcard artifact host and graft remote model-authored content into the
 application DOM).
 
-**Not yet built:** the two artifact-data agent tools, the standing-policy site
-trigger and the `building-live-sites` skill, and the desktop surfaces (rail
-preview, Data view, artifact window). The `live-artifacts-enabled` flag gates
-those when they land; nothing that protects data is scoped by it.
+**Not yet built:** the desktop surfaces — the rail's site detail and preview
+pane, the Data view and its CSV export, and the pop-out artifact window. The
+`live-artifacts-enabled` flag exists and gates them; nothing that protects data
+is scoped by it, so an artifact's authorization holds with the flag off.
