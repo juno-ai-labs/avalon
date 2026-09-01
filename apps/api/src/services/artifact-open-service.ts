@@ -28,6 +28,7 @@ import {
 import { artifactHostDOName, workstreamDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import {
   durableObjectStubForArtifact,
   durableObjectStubForWorkspace,
@@ -45,7 +46,20 @@ export interface ArtifactOpenResult {
 }
 
 export class ArtifactOpenService {
-  constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+  private readonly env: Env;
+
+  /**
+   * `artifact_registry` lives in **WorkspaceDO**, not regional D1.
+   *
+   * Without this wrap every statement naming it falls through to D1, which has
+   * no such table, and every door into an artifact origin answers a 500 — the
+   * open endpoint, the Data view, the table page, and the error log alike.
+   * `users` is not a workspace-local table, so the display-name read still
+   * takes the regional fallthrough on the same handle.
+   */
+  constructor(env: Env, private readonly auth: AuthContext) {
+    this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
+  }
 
   /**
    * Authorize one viewer and mint their access.

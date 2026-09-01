@@ -33,6 +33,8 @@ jobs:
               pnpm --filter @rally/api build:telemetry &&
               pnpm --filter @rally/api check:telemetry-startup-boundary &&
               pnpm --filter @rally/api build:pricing &&
+              pnpm --filter @rally/api build:artifacts &&
+              pnpm --filter @rally/api build:artifacts:eu &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
