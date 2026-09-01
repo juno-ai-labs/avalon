@@ -111,6 +111,10 @@
       "service": "avalon-api-terminal-global"
     },
     {
+      "binding": "TELEMETRY_DELIVERY",
+      "service": "avalon-api-telemetry-delivery-global"
+    },
+    {
       "binding": "EU_IDENTITY_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "RegionalIdentityBridge"

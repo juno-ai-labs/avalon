@@ -1,5 +1,18 @@
 import type { TelemetryEnvelope } from "@rally/contracts/telemetry";
 import { PostHog } from "posthog-node";
+import type {
+  GlobalCrashDeliveryRow,
+  GlobalProfileDeliveryRow,
+  GlobalTelemetryDeliveryRow,
+  TelemetryDestinationResult,
+} from "./telemetry-delivery-contract";
+
+export type {
+  GlobalCrashDeliveryRow,
+  GlobalProfileDeliveryRow,
+  GlobalTelemetryDeliveryRow,
+  TelemetryDestinationResult,
+} from "./telemetry-delivery-contract";
 
 const APPROVED_POSTHOG_ORIGINS = new Set([
   "https://us.i.posthog.com",
@@ -9,44 +22,6 @@ const POSTHOG_APP_NAME = "Rally";
 const POSTHOG_APP_NAMESPACE = "app.rally.desktop";
 const POSTHOG_LIBRARY = "rally-regional-telemetry";
 const POSTHOG_LIBRARY_VERSION = "1";
-
-export interface GlobalTelemetryDeliveryRow {
-  eventId: string;
-  envelope: TelemetryEnvelope;
-  analyticsSubjectId: string;
-  workspaceAnalyticsId: string | null;
-  normalizedTimestamp: string;
-  /** Regionally resolved application locations. Source contents and paths are never included. */
-  symbolicatedFrames?: string[];
-}
-
-export interface GlobalCrashDeliveryRow {
-  crashId: string;
-  deviceId: string;
-  analyticsSubjectId: string;
-  workspaceAnalyticsId: string | null;
-  processPersonProfile: boolean;
-  receivedAt: string;
-  release: string;
-  buildId: string;
-  platform: "darwin" | "win32" | "linux";
-  architecture: "arm64" | "x64";
-  processRole: "main" | "renderer" | "utility" | "gpu" | "unknown";
-  launchId: string;
-  channel: "development" | "alpha" | "beta" | "stable";
-  parserState: "symbolicated" | "unsymbolicated" | "malformed";
-  fingerprint: string;
-  report: unknown;
-}
-
-export interface GlobalProfileDeliveryRow {
-  jobId: string;
-  kind: "epoch_transition" | "person_profile" | "group_profile";
-  destinationAnalyticsId: string;
-  anonymousEpochId: string | null;
-  properties: Record<string, string>;
-  createdAt: string;
-}
 
 export interface PostHogCapture {
   event: string;
@@ -419,12 +394,6 @@ export function mapPostHogProfileCapture(row: GlobalProfileDeliveryRow): PostHog
   };
 }
 
-export type PostHogDeliveryResult = {
-  result: "delivered" | "retry" | "terminal";
-  requestId: string | null;
-  retryAfterMs: number | null;
-};
-
 function retryAfter(response: Response): number | null {
   const value = response.headers.get("retry-after");
   if (!value) return null;
@@ -439,7 +408,7 @@ export async function sendPostHogBatch(input: {
   projectToken: string;
   webBaseUrl: string;
   rows: GlobalTelemetryDeliveryRow[];
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   return sendPostHogCaptures({
     host: input.host,
     projectToken: input.projectToken,
@@ -452,7 +421,7 @@ export async function sendPostHogCrashBatch(input: {
   projectToken: string;
   rows: GlobalCrashDeliveryRow[];
   clientFactory?: (projectToken: string, host: string) => PostHogExceptionClient;
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   const origin = new URL(input.host).origin;
   if (!APPROVED_POSTHOG_ORIGINS.has(origin)) throw new Error("posthog_host_forbidden");
   const client = (input.clientFactory ?? createExceptionClient)(input.projectToken, origin);
@@ -497,7 +466,7 @@ export async function sendPostHogJavascriptExceptionBatch(input: {
   projectToken: string;
   rows: GlobalTelemetryDeliveryRow[];
   clientFactory?: (projectToken: string, host: string) => PostHogExceptionClient;
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   const origin = new URL(input.host).origin;
   if (!APPROVED_POSTHOG_ORIGINS.has(origin)) throw new Error("posthog_host_forbidden");
   const client = (input.clientFactory ?? createExceptionClient)(input.projectToken, origin);
@@ -569,7 +538,7 @@ export async function sendPostHogProfileBatch(input: {
   host: string;
   projectToken: string;
   rows: GlobalProfileDeliveryRow[];
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   return sendPostHogCaptures({
     host: input.host,
     projectToken: input.projectToken,
@@ -581,7 +550,7 @@ async function sendPostHogCaptures(input: {
   host: string;
   projectToken: string;
   captures: PostHogCapture[];
-}): Promise<PostHogDeliveryResult> {
+}): Promise<TelemetryDestinationResult> {
   const origin = new URL(input.host).origin;
   if (!APPROVED_POSTHOG_ORIGINS.has(origin)) throw new Error("posthog_host_forbidden");
   let response: Response;

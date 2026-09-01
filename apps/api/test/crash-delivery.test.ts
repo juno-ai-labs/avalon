@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { gunzipSync } from 'node:zlib';
 import { CrashIngestService } from '../src/telemetry/crash-ingest';
 import { processPendingCrashReports } from '../src/telemetry/crash-processing';
 import {
@@ -42,9 +41,17 @@ describe('Global native crash delivery', () => {
       delete: vi.fn(async (key: string) => { objects.delete(key); }),
     });
     const report = { status: 'ok', crash_info: { type: 'EXC_BAD_ACCESS' }, threads: [{ frames: [{ function: 'main' }] }] };
+    const deliverCrashBatch = vi.fn(async () => ({
+      postHog: {
+        result: 'delivered' as const,
+        requestId: 'posthog-crash-request-1',
+        retryAfterMs: null,
+      },
+    }));
     const env = createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'global', TELEMETRY_PAYLOADS: bucket,
       POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      TELEMETRY_DELIVERY: { deliverCrashBatch },
       CRASH_SYMBOLICATOR: createCloudflareTestBinding<DurableObjectNamespace<CrashSymbolicatorContainer>>({
         idFromName: () => createTestDurableObjectId('crash-symbolicator'),
         get: () => ({
@@ -66,33 +73,24 @@ describe('Global native crash delivery', () => {
       dump, subjectUserId: 'user-1', rateLimitSubject: 'user-1',
     });
     await processPendingCrashReports(env);
-    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 200 }));
-    vi.stubGlobal('fetch', fetch);
 
     await expect(processCrashOutbox(env)).resolves.toEqual({ selected: 1, delivered: 1, retried: 0, terminal: 0, suppressed: 0 });
-    const requestBody = fetch.mock.calls[0]?.[1]?.body;
-    const encoded = requestBody instanceof Blob
-      ? new Uint8Array(await requestBody.arrayBuffer())
-      : new TextEncoder().encode(String(requestBody));
-    const headers = new Headers(fetch.mock.calls[0]?.[1]?.headers);
-    const body = JSON.parse(headers.get('content-encoding') === 'gzip'
-      ? Buffer.from(gunzipSync(encoded)).toString('utf8')
-      : new TextDecoder().decode(encoded));
-    expect(body.batch[0]).toMatchObject({
-      event: '$exception',
-      properties: {
-        $process_person_profile: true,
-        $session_id: '018f22f2-4c22-7abc-8def-0123456789ad',
+    expect(deliverCrashBatch).toHaveBeenCalledWith(expect.objectContaining({
+      host: 'https://us.i.posthog.com',
+      projectToken: 'phc_test',
+      rows: [expect.objectContaining({
+        processPersonProfile: true,
+        launchId: '018f22f2-4c22-7abc-8def-0123456789ad',
         channel: 'stable',
-        native_crash_report: expect.objectContaining({
+        report: expect.objectContaining({
           status: 'symbolicated',
           crash_type: 'EXC_BAD_ACCESS',
           mechanism: 'minidump',
           handled: false,
           process_role: 'renderer',
         }),
-      },
-    });
+      })],
+    }));
     expect(database.prepare('SELECT destination_state FROM telemetry_crash_reports').get())
       .toEqual({ destination_state: 'delivered' });
     database.close();
@@ -100,9 +98,57 @@ describe('Global native crash delivery', () => {
 
   it('has no destination path in EU', async () => {
     const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO telemetry_crash_reports
+      (crash_id, upload_id, installation_analytics_id, route, object_key, byte_size,
+       content_sha256, release, build_id, platform, architecture, process_role,
+       launch_id, channel, parser_state, structured_report_json, issue_fingerprint,
+       destination_state, received_at, delete_at)
+      VALUES ('crash-eu-guard', 'upload-eu-guard', 'installation-1', 'global',
+              'telemetry/crashes/global/eu-guard.dmp', 4, 'hash', '1.235.0',
+              'build-test', 'darwin', 'arm64', 'renderer', 'launch-1', 'stable',
+              'symbolicated', '{"status":"symbolicated"}', 'fingerprint-1',
+              'pending', ?, ?)`)
+      .run('2026-08-12T19:00:00.000Z', '2026-11-10T20:00:00.000Z');
+    const deliverCrashBatch = vi.fn();
     await expect(processCrashOutbox(createTestEnv({
       DB: sqliteD1(database), AVALON_REGION: 'eu',
+      POSTHOG_HOST: 'https://eu.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      TELEMETRY_DELIVERY: { deliverCrashBatch },
     }))).resolves.toEqual({ selected: 0, delivered: 0, retried: 0, terminal: 0, suppressed: 0 });
+    expect(deliverCrashBatch).not.toHaveBeenCalled();
+    expect(database.prepare('SELECT destination_state FROM telemetry_crash_reports').get())
+      .toEqual({ destination_state: 'pending' });
+    database.close();
+  });
+
+  it('translates crash RPC transport rejection into durable retry', async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO telemetry_crash_reports
+      (crash_id, upload_id, installation_analytics_id, route, object_key, byte_size,
+       content_sha256, release, build_id, platform, architecture, process_role,
+       launch_id, channel, parser_state, structured_report_json, issue_fingerprint,
+       destination_state, received_at, delete_at)
+      VALUES ('crash-rpc-retry', 'upload-rpc-retry', 'installation-1', 'global',
+              'telemetry/crashes/global/rpc-retry.dmp', 4, 'hash', '1.235.0',
+              'build-test', 'darwin', 'arm64', 'renderer', 'launch-1', 'stable',
+              'symbolicated', '{"status":"symbolicated"}', 'fingerprint-1',
+              'pending', ?, ?)`)
+      .run('2026-08-12T19:00:00.000Z', '2026-11-10T20:00:00.000Z');
+    const env = createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: 'global',
+      POSTHOG_HOST: 'https://us.i.posthog.com', POSTHOG_PROJECT_TOKEN: 'phc_test',
+      TELEMETRY_DELIVERY: {
+        deliverCrashBatch: vi.fn(async () => { throw new Error('posthog_rpc_unavailable'); }),
+      },
+    });
+
+    await expect(processCrashOutbox(env)).resolves.toMatchObject({ retried: 1 });
+    expect(database.prepare(`SELECT destination_state, destination_attempt_count,
+      destination_next_attempt_at FROM telemetry_crash_reports`).get()).toEqual({
+      destination_state: 'retrying',
+      destination_attempt_count: 1,
+      destination_next_attempt_at: '2026-08-12T20:01:00.000Z',
+    });
     database.close();
   });
 

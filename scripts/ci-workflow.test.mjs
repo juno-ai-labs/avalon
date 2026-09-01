@@ -48,7 +48,9 @@ test('CI distributes the expensive verification work across independent lanes', 
   assert.equal(
     matrixCommand(workflow, 'typecheck-and-build-invariants'),
     'pnpm typecheck && pnpm --filter @rally/api build && '
-      + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/api build:pricing && '
+      + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/api build:telemetry && '
+      + 'pnpm --filter @rally/api check:telemetry-startup-boundary && '
+      + 'pnpm --filter @rally/api build:pricing && '
       + 'pnpm --filter @rally/desktop test:release',
   );
   assert.equal(
@@ -138,6 +140,8 @@ test('CI still runs every repository quality gate', async () => {
     'pnpm typecheck',
     'pnpm --filter @rally/api build',
     'pnpm --filter @rally/api build:eu',
+    'pnpm --filter @rally/api build:telemetry',
+    'pnpm --filter @rally/api check:telemetry-startup-boundary',
     'pnpm --filter @rally/api build:pricing',
     'pnpm --filter @rally/desktop test:release',
     'pnpm test:scripts',
@@ -150,6 +154,16 @@ test('CI still runs every repository quality gate', async () => {
     2,
     'CI must retain the workers suite across two shards',
   );
+});
+
+test('CI retains the shared telemetry Worker startup profile', async () => {
+  const workflow = await readWorkflow();
+
+  assert.match(workflow, /- name: Preserve Worker startup evidence/u);
+  assert.match(workflow, /if: \$\{\{ always\(\) && matrix\.name == 'typecheck-and-build-invariants' \}\}/u);
+  assert.match(workflow, /^ {10}name: telemetry-worker-startup-\$\{\{ github\.sha \}\}$/mu);
+  assert.match(workflow, /^ {10}retention-days: 7$/mu);
+  assert.match(workflow, /^ {10}path: apps\/api\/dist-telemetry\/startup\.cpuprofile$/mu);
 });
 
 // A lane's `env:` is inert until the run step names it. Actions gives a matrix
