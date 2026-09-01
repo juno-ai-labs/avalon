@@ -711,6 +711,7 @@ describe('single-platform desktop identity routing', () => {
 
   it('returns from workspace B to same-region workspace A for connector completion', async () => {
     const workspaceA = '00000000-0000-7000-8000-000000000023';
+    window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000026';
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: {
@@ -736,6 +737,8 @@ describe('single-platform desktop identity routing', () => {
       workspaceId: workspaceA,
     }));
     expect(await screen.findByText('global:Workspace A')).toBeVisible();
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
+    expect(window.location.hash).toBe('#/workstreams/new');
   });
 
   it.each([
