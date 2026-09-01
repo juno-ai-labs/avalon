@@ -12,6 +12,7 @@
     "./http-headers": "./src/http-headers.ts",
     "./socket-tickets": "./src/socket-tickets.ts",
     "./telemetry": "./src/telemetry.ts",
+    "./workspace-target": "./src/workspace-target.ts",
     "./workstream-links": "./src/workstream-links.ts",
     "./url-schemas": "./src/url-schemas.ts",
     "./text": "./src/text.ts",

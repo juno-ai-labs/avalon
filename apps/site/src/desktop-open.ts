@@ -1,4 +1,5 @@
 import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
+import { parseWorkspaceTarget } from '@rally/contracts/workspace-target';
 import { reportDesktopHandoff } from './telemetry';
 
 type DesktopHandoffType = Parameters<typeof reportDesktopHandoff>[0];
@@ -15,12 +16,18 @@ export function classifyDesktopHandoffTarget(value: string | null): {
       : url.hostname === 'settings'
         ? 'settings'
         : url.hostname === 'automations' ? 'automation' : 'unknown';
+    const workspaceTarget = parseWorkspaceTarget(url.searchParams);
+    const validRouting = !url.search || (
+      [...url.searchParams.keys()].length === 2
+      && [...url.searchParams.keys()].every((key) => key === 'region' || key === 'workspace')
+      && workspaceTarget !== null
+    );
     const commonValid = isDesktopDeepLinkProtocol(url.protocol)
-      && !url.search && !url.hash && !url.username && !url.password && !url.port;
+      && validRouting && !url.hash && !url.username && !url.password && !url.port;
     const targetValid = handoffType === 'workstream'
       ? /^\/[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(url.pathname)
       : handoffType === 'settings'
-        ? url.pathname === '/connections' || url.pathname === '/digest'
+        ? url.pathname === '/workspace' || url.pathname === '/connections' || url.pathname === '/digest'
         : handoffType === 'automation' && url.pathname === '/new';
     return { handoffType, validity: commonValid && targetValid ? 'valid' : 'invalid' };
   } catch {

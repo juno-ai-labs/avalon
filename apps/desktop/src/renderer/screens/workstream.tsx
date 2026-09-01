@@ -35,6 +35,7 @@ import {
   type WorkstreamTranscriptSnapshot,
 } from '@rally/contracts';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import type { WorkspaceTarget } from '@rally/contracts/workspace-target';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { useAutoOpenLatestEmbeddedResource } from '../lib/use-auto-open-embedded-resource';
@@ -455,6 +456,7 @@ export function WorkstreamHeader({
   onToggleBlockDashboard,
   presentUserIds = [],
   currentUserId = null,
+  workspaceTarget,
 }: {
   workstream: WorkstreamDetail;
   socketState: SocketState;
@@ -466,6 +468,7 @@ export function WorkstreamHeader({
   onToggleBlockDashboard: () => void;
   presentUserIds?: readonly string[];
   currentUserId?: string | null;
+  workspaceTarget: WorkspaceTarget | null;
 }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
   const railVariant = useUiStore((state) => state.railVariant);
@@ -560,9 +563,14 @@ export function WorkstreamHeader({
   // has not installed Rally. The canonical link ends at the same work stream.
   const copyLink = (): void => {
     void (async () => {
+      if (!workspaceTarget) return;
       const bridge = desktopBridge();
       const { webBaseUrl } = await bridge.getRuntimeConfig();
-      await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, workstream.id));
+      await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, {
+        region: workspaceTarget.region,
+        workspaceId: workspaceTarget.workspaceId,
+        workstreamId: workstream.id,
+      }));
       reportTelemetryProductIntent({
         kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstream.id,
       });
@@ -2099,6 +2107,10 @@ export function WorkstreamScreen(): React.JSX.Element {
         onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
         onToggleBlockDashboard={() => setBlockDashboardVisible(!blockDashboardOpen)}
         currentUserId={session?.user.id ?? null}
+        workspaceTarget={session?.workspace ? {
+          region: session.workspace.region,
+          workspaceId: session.workspace.id,
+        } : null}
         presentUserIds={presenceUserIdsByWorkstream[id] ?? []}
         socketState={socketState}
         workstream={displayedDetail}

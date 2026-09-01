@@ -14,6 +14,7 @@ const input: WorkstreamParticipantAddedEmail = {
   recipientName: "Sam Okafor",
   actorName: "Adam <Admin>\nInjected",
   workspaceName: "Research & Development",
+  workspaceId: "00000000-0000-7000-8000-000000000001",
   workstreamId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d2",
   workstreamTitle: "Quarterly <script>alert(1)</script> planning",
   workstreamObjective: "Settle pricing <script>alert('objective')</script>.\nBy Friday.",
@@ -91,7 +92,7 @@ describe("work-stream participant-added email", () => {
 
     const body = sentBody(resend);
     expect(String(body.text)).toContain("You were added to a work stream in Rally.");
-    expect(String(body.text)).toContain("Open in Rally: https://rallywith.ai/app/workstreams/");
+    expect(String(body.text)).toContain(`Open in Rally: https://rallywith.ai/app/workspaces/global/${input.workspaceId}/workstreams/`);
     expect(String(body.html)).toContain(">Rally</td>");
     expect(String(body.html)).toContain("Open in Rally</a>");
     expect(String(body.text)).not.toContain("Avalon");

@@ -1,5 +1,6 @@
 import type { ConnectorOAuthProvider } from "@rally/contracts";
 import { COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL } from "@rally/contracts/desktop-deep-link";
+import { addWorkspaceTarget } from "@rally/contracts/workspace-target";
 import type { Env } from "../env";
 
 /**
@@ -41,18 +42,22 @@ export function connectorAttemptTarget(
     attemptId?: string;
     connectionId?: string;
     errorCode?: string;
+    workspaceId?: string;
   },
 ): string {
   const target = compatibleDesktopDeepLink(env);
   target.searchParams.set("provider", input.provider);
   target.searchParams.set("region", env.AVALON_REGION);
   if (input.attemptId) target.searchParams.set("attempt", input.attemptId);
+  const addressedTarget = input.workspaceId
+    ? addWorkspaceTarget(target, { region: env.AVALON_REGION, workspaceId: input.workspaceId })
+    : target;
   if (input.status === "succeeded" && input.connectionId) {
-    target.searchParams.set("connection", input.connectionId);
-    target.searchParams.set("status", "connected");
+    addressedTarget.searchParams.set("connection", input.connectionId);
+    addressedTarget.searchParams.set("status", "connected");
   } else {
-    target.searchParams.set("status", input.status);
-    target.searchParams.set("error", normalizeConnectorOAuthErrorCode(input.errorCode ?? "connector_oauth_failed"));
+    addressedTarget.searchParams.set("status", input.status);
+    addressedTarget.searchParams.set("error", normalizeConnectorOAuthErrorCode(input.errorCode ?? "connector_oauth_failed"));
   }
-  return target.toString();
+  return addressedTarget.toString();
 }

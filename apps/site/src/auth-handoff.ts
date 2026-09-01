@@ -1,5 +1,6 @@
 import { ConnectorOAuthProviders } from '@rally/contracts/connector-oauth-providers';
 import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
+import { parseWorkspaceTarget } from '@rally/contracts/workspace-target';
 import { reportDesktopHandoff } from './telemetry';
 
 const DESKTOP_HOST = 'auth';
@@ -65,8 +66,12 @@ export function parseDesktopTarget(fragment: string): string | null {
   const connection = target.searchParams.get('connection');
   const provider = target.searchParams.get('provider');
   const status = target.searchParams.get('status');
+  const workspaceId = target.searchParams.get('workspace');
   const validRegion = region === 'global' || region === 'eu';
   const validProvider = ConnectorOAuthProviders.some((candidate) => candidate === provider);
+  const workspaceTarget = workspaceId === null ? null : parseWorkspaceTarget(target.searchParams);
+  const validOptionalWorkspace = workspaceId === null
+    || (workspaceTarget !== null && workspaceTarget.region === region);
 
   const validTicketTarget =
     entries.length === 3
@@ -101,13 +106,14 @@ export function parseDesktopTarget(fragment: string): string | null {
 
   const validConnectorSuccessTarget =
     entries.length >= 4
-    && entries.length <= 5
-    && entries.every(([name]) => ['connection', 'status', 'region', 'attempt', 'provider'].includes(name))
+    && entries.length <= 6
+    && entries.every(([name]) => ['connection', 'status', 'region', 'workspace', 'attempt', 'provider'].includes(name))
     && ['connection', 'status', 'region', 'provider'].every((name) => hasSingleValue(target.searchParams, name))
     && connection !== null
     && CONNECTION_PATTERN.test(connection)
     && status === 'connected'
     && validRegion
+    && validOptionalWorkspace
     && (attempt === null || (hasSingleValue(target.searchParams, 'attempt') && ATTEMPT_PATTERN.test(attempt)))
     && validProvider
     && ticket === null
@@ -115,13 +121,14 @@ export function parseDesktopTarget(fragment: string): string | null {
 
   const validConnectorErrorTarget =
     entries.length >= 4
-    && entries.length <= 5
-    && entries.every(([name]) => ['status', 'error', 'region', 'attempt', 'provider'].includes(name))
+    && entries.length <= 6
+    && entries.every(([name]) => ['status', 'error', 'region', 'workspace', 'attempt', 'provider'].includes(name))
     && ['status', 'error', 'region', 'provider'].every((name) => hasSingleValue(target.searchParams, name))
     && (status === 'denied' || status === 'failed')
     && error !== null
     && ERROR_PATTERN.test(error)
     && validRegion
+    && validOptionalWorkspace
     && validProvider
     && connection === null
     && ticket === null
