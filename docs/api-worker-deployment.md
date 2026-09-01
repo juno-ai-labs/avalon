@@ -245,9 +245,9 @@ graph shape and are not predictions of Cloudflare CPU time.
 
 The failed 7.16 MiB release's exact-artifact profile reported 205.4 ms of local
 active startup, including 109.9 ms of garbage collection. Moving Rally-owned
-schema construction to the compatible runtime produces a 7.34 MiB artifact—the
-v4 compiler remains present—but five repeated profiles report 72.5–76.7 ms
-active, including 23.7–28.7 ms of GC. The larger source bundle and lower active
+schema construction to the compatible runtime produces a 7,339.63 KiB artifact
+(1,491.23 KiB gzip)—the v4 compiler remains present—but five repeated profiles
+report 71.5–72.9 ms active, including 22.7–24.9 ms of GC. The larger source bundle and lower active
 time are intentional: Cloudflare rejected initialization CPU, and the retained
 profile identifies schema-object construction rather than upload bytes as the
 dominant cost.
@@ -277,7 +277,7 @@ offset-datetime, safe-integer, and UUID semantic widenings in v3.
 Global artifact still failed Cloudflare upload with error 10021. The retained
 CPU profile showed eager Zod v4 constructor installation and garbage collection
 dominating startup. Five repeated exact-artifact profiles fell from the failed
-artifact's 205.4 ms active sample to 72.5–76.7 ms after this change.
+artifact's 205.4 ms active sample to 71.5–72.9 ms after this change.
 
 **Considered and rejected:** A blind retry, minification alone, or an arbitrary
 millisecond gate would preserve machine-dependent success. Dynamic imports
@@ -285,8 +285,8 @@ would move the same initialization into customer traffic. Splitting regional
 routes or Durable Object protocols would duplicate authority or require data
 movement without following a coherent stateless capability.
 
-**Consequences:** The API artifact contains both Zod runtimes and is about 7.34
-MiB uncompressed, but constructs the large Rally schema graph on the cheaper
+**Consequences:** The API artifact contains both Zod runtimes and is 7,339.63
+KiB uncompressed, but constructs the large Rally schema graph on the cheaper
 runtime. Required opaque fields, finite numbers, offset datetimes, integers,
 and UUIDs retain v4 validation semantics; provider schemas retain required
 defaults and strict UUID metadata through nested branches; and error diagnostics
