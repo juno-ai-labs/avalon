@@ -20,7 +20,7 @@ import { z } from "zod";
 const TimestampSchema = z.string().datetime({ offset: true });
 
 /** One `resources` row, in the columns the cross-authority readers consume. */
-export const WorkspaceResourceDescriptorSchema = z.object({
+export const WorkspaceResourceDescriptorSchema = z.strictObject({
   id: IdSchema,
   connection_id: z.string().nullable(),
   resource_type: z.string(),
@@ -41,9 +41,9 @@ export const WorkspaceResourceDescriptorSchema = z.object({
   model_content_error_code: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
-}).strict();
+});
 
-export const WorkspaceResourceDescriptorsRequestSchema = z.object({
+export const WorkspaceResourceDescriptorsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceIds: z.array(IdSchema),
   /**
@@ -52,22 +52,22 @@ export const WorkspaceResourceDescriptorsRequestSchema = z.object({
    * sent one — cannot be attached by id.
    */
   draftUploadedByUserId: IdSchema.nullable(),
-}).strict();
+});
 
-export const WorkspaceResourceDescriptorListSchema = z.object({
+export const WorkspaceResourceDescriptorListSchema = z.strictObject({
   items: z.array(WorkspaceResourceDescriptorSchema),
-}).strict();
+});
 
-export const WorkspaceResourceExistsRequestSchema = z.object({
+export const WorkspaceResourceExistsRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceResourceExistsResultSchema = z.object({
+export const WorkspaceResourceExistsResultSchema = z.strictObject({
   exists: z.boolean(),
-}).strict();
+});
 
-export const WorkspaceUploadDraftCreateRequestSchema = z.object({
+export const WorkspaceUploadDraftCreateRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   title: z.string(),
@@ -77,7 +77,7 @@ export const WorkspaceUploadDraftCreateRequestSchema = z.object({
   metadataJson: z.string(),
   uploadedByUserId: IdSchema,
   at: TimestampSchema,
-}).strict();
+});
 
 /**
  * `draft_exists` is a typed answer rather than a constraint error: two
@@ -85,21 +85,21 @@ export const WorkspaceUploadDraftCreateRequestSchema = z.object({
  * check, and whichever lost the insert surfaced as a bare SQLite primary-key
  * failure — a 500 — instead of the 409 the check was there to produce.
  */
-export const WorkspaceUploadDraftCreateResultSchema = z.object({
+export const WorkspaceUploadDraftCreateResultSchema = z.strictObject({
   outcome: z.enum(["created", "draft_exists"]),
-}).strict();
+});
 
-export const WorkspaceUploadDraftDeleteRequestSchema = z.object({
+export const WorkspaceUploadDraftDeleteRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   userId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceUploadDraftDeleteResultSchema = z.object({
+export const WorkspaceUploadDraftDeleteResultSchema = z.strictObject({
   outcome: z.enum(["deleted", "not_found"]),
-}).strict();
+});
 
-export const WorkspaceConnectorResourceResolveRequestSchema = z.object({
+export const WorkspaceConnectorResourceResolveRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   /** The id the row gets if no canonical row exists yet. */
   candidateResourceId: IdSchema,
@@ -110,15 +110,15 @@ export const WorkspaceConnectorResourceResolveRequestSchema = z.object({
   title: z.string(),
   canonicalUrl: z.string().nullable(),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceConnectorResourceResolveResultSchema = z.object({
+export const WorkspaceConnectorResourceResolveResultSchema = z.strictObject({
   resourceId: IdSchema,
   outcome: z.enum(["created", "existing"]),
-}).strict();
+});
 
 /** One `resource_versions` row, in the columns the history readers consume. */
-export const WorkspaceResourceVersionSchema = z.object({
+export const WorkspaceResourceVersionSchema = z.strictObject({
   resource_id: IdSchema,
   version: z.number().int().positive(),
   author_kind: z.string().nullable(),
@@ -138,18 +138,18 @@ export const WorkspaceResourceVersionSchema = z.object({
   content_ref: z.string().nullable(),
   model_content_ref: z.string().nullable(),
   metadata_json: z.string(),
-}).strict();
+});
 
-export const WorkspaceResourceVersionListRequestSchema = z.object({
+export const WorkspaceResourceVersionListRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   /** One version rather than the whole history, when set. */
   version: z.number().int().positive().nullable(),
-}).strict();
+});
 
-export const WorkspaceResourceVersionListSchema = z.object({
+export const WorkspaceResourceVersionListSchema = z.strictObject({
   items: z.array(WorkspaceResourceVersionSchema),
-}).strict();
+});
 
 /**
  * Both hydration writes are compare-and-swaps against the content the caller
@@ -157,16 +157,16 @@ export const WorkspaceResourceVersionListSchema = z.object({
  * `updated: false` means the fence refused the write, and the caller releases
  * whatever object it staged for it.
  */
-export const WorkspaceResourceHydrationRefreshRequestSchema = z.object({
+export const WorkspaceResourceHydrationRefreshRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   connectionId: IdSchema,
   expectedContentRef: z.string().nullable(),
   expectedContentSha256: z.string().nullable(),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceResourceHydrationPublishRequestSchema = z.object({
+export const WorkspaceResourceHydrationPublishRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   connectionId: IdSchema,
@@ -175,13 +175,13 @@ export const WorkspaceResourceHydrationPublishRequestSchema = z.object({
   expectedContentRef: z.string().nullable(),
   expectedContentSha256: z.string().nullable(),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceResourceHydrationResultSchema = z.object({
+export const WorkspaceResourceHydrationResultSchema = z.strictObject({
   updated: z.boolean(),
-}).strict();
+});
 
-export const WorkspaceResourceWatchEnableRequestSchema = z.object({
+export const WorkspaceResourceWatchEnableRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   watchId: IdSchema,
   workstreamId: IdSchema,
@@ -190,33 +190,33 @@ export const WorkspaceResourceWatchEnableRequestSchema = z.object({
   watchType: z.enum(["incremental", "webhook"]),
   nextPollAt: TimestampSchema.nullable(),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceResourceWatchDisableRequestSchema = z.object({
+export const WorkspaceResourceWatchDisableRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   resourceId: IdSchema,
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceResourceObjectRefRequestSchema = z.object({
+export const WorkspaceResourceObjectRefRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   objectRef: z.string(),
-}).strict();
+});
 
-export const WorkspaceReapableResourceObjectListRequestSchema = z.object({
+export const WorkspaceReapableResourceObjectListRequestSchema = z.strictObject({
   workspaceId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceReapableResourceObjectSchema = z.object({
+export const WorkspaceReapableResourceObjectSchema = z.strictObject({
   object_ref: z.string(),
   resource_id: z.string(),
   object_kind: z.enum(["original", "derivative", "receipt"]),
-}).strict();
+});
 
-export const WorkspaceReapableResourceObjectListSchema = z.object({
+export const WorkspaceReapableResourceObjectListSchema = z.strictObject({
   items: z.array(WorkspaceReapableResourceObjectSchema),
-}).strict();
+});
 
 /**
  * What one outbox row wants from the reaper, decided in one critical section.
@@ -230,54 +230,54 @@ export const WorkspaceReapableResourceObjectListSchema = z.object({
  * `removable` — delete the bytes, then retire the row.
  * `missing` — the row was retired since it was listed.
  */
-export const WorkspaceResourceObjectRemovalResultSchema = z.object({
+export const WorkspaceResourceObjectRemovalResultSchema = z.strictObject({
   outcome: z.enum(["retired", "awaiting_publisher", "removable", "missing"]),
-}).strict();
+});
 
-export const WorkspaceResourceObjectRetireResultSchema = z.object({
+export const WorkspaceResourceObjectRetireResultSchema = z.strictObject({
   retired: z.boolean(),
-}).strict();
+});
 
-export const WorkspaceResourceObjectFailureRequestSchema = z.object({
+export const WorkspaceResourceObjectFailureRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   objectRef: z.string(),
   errorCode: z.string(),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceExpiredDraftReapRequestSchema = z.object({
+export const WorkspaceExpiredDraftReapRequestSchema = z.strictObject({
   workspaceId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceExpiredDraftReapResultSchema = z.object({
+export const WorkspaceExpiredDraftReapResultSchema = z.strictObject({
   removed: z.number().int().nonnegative(),
-}).strict();
+});
 
-export const WorkspaceResourceSlugClaimRequestSchema = z.object({
+export const WorkspaceResourceSlugClaimRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   candidate: z.string(),
-}).strict();
+});
 
 /**
  * `candidate_taken` sends the allocator to its next attempt: the partial
  * unique index on `slug` refused the candidate because another row holds it,
  * while this row still has none.
  */
-export const WorkspaceResourceSlugClaimResultSchema = z.object({
+export const WorkspaceResourceSlugClaimResultSchema = z.strictObject({
   outcome: z.enum(["allocated", "already_named", "candidate_taken", "missing"]),
   slug: z.string().nullable(),
-}).strict();
+});
 
-export const WorkspaceResourceSlugBacklogRequestSchema = z.object({
+export const WorkspaceResourceSlugBacklogRequestSchema = z.strictObject({
   workspaceId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceResourceSlugBacklogSchema = z.object({
+export const WorkspaceResourceSlugBacklogSchema = z.strictObject({
   items: z.array(IdSchema),
-}).strict();
+});
 
-export const WorkspaceInboundEmailClaimRequestSchema = z.object({
+export const WorkspaceInboundEmailClaimRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resendEmailId: z.string(),
   workstreamId: IdSchema,
@@ -289,7 +289,7 @@ export const WorkspaceInboundEmailClaimRequestSchema = z.object({
    * object's, minted inside the claim and returned.
    */
   leaseExpiresAt: TimestampSchema,
-}).strict();
+});
 
 /**
  * `claimed` carries the lease token every later transition must present.
@@ -297,45 +297,45 @@ export const WorkspaceInboundEmailClaimRequestSchema = z.object({
  * delivery holds a live lease. The insert, the duplicate read and the expired
  * -lease takeover used to be three separate round trips.
  */
-export const WorkspaceInboundEmailClaimResultSchema = z.object({
+export const WorkspaceInboundEmailClaimResultSchema = z.strictObject({
   outcome: z.enum(["claimed", "already_processed", "in_progress"]),
   leaseToken: z.string().nullable(),
-}).strict();
+});
 
-export const WorkspaceInboundEmailLeaseRequestSchema = z.object({
+export const WorkspaceInboundEmailLeaseRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resendEmailId: z.string(),
   workstreamId: IdSchema,
   leaseToken: z.string(),
   leaseExpiresAt: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceInboundEmailLeaseResultSchema = z.object({
+export const WorkspaceInboundEmailLeaseResultSchema = z.strictObject({
   outcome: z.enum(["renewed", "lease_lost"]),
-}).strict();
+});
 
-export const WorkspaceInboundEmailSettleRequestSchema = z.object({
+export const WorkspaceInboundEmailSettleRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resendEmailId: z.string(),
   workstreamId: IdSchema,
   leaseToken: z.string(),
   payloadRef: z.string(),
   processedAt: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceInboundEmailSettleResultSchema = z.object({
+export const WorkspaceInboundEmailSettleResultSchema = z.strictObject({
   outcome: z.enum(["processed", "lease_lost"]),
-}).strict();
+});
 
-export const WorkspaceInboundEmailFailureRequestSchema = z.object({
+export const WorkspaceInboundEmailFailureRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resendEmailId: z.string(),
   workstreamId: IdSchema,
   leaseToken: z.string(),
   errorCode: z.string(),
-}).strict();
+});
 
-export const WorkspaceInboundEmailResourceRequestSchema = z.object({
+export const WorkspaceInboundEmailResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   /** The id the row gets if this email has no resource yet. */
   candidateResourceId: IdSchema,
@@ -344,28 +344,28 @@ export const WorkspaceInboundEmailResourceRequestSchema = z.object({
   contentRef: z.string(),
   metadataJson: z.string(),
   at: TimestampSchema,
-}).strict();
+});
 
-export const WorkspaceInboundEmailResourceResultSchema = z.object({
+export const WorkspaceInboundEmailResourceResultSchema = z.strictObject({
   resourceId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceDiscoveredResourceSchema = z.object({
+export const WorkspaceDiscoveredResourceSchema = z.strictObject({
   id: IdSchema,
   resourceType: z.string(),
   providerResourceId: z.string(),
   title: z.string(),
   canonicalUrl: z.string().nullable(),
   metadataJson: z.string(),
-}).strict();
+});
 
-export const WorkspaceDiscoveredResourcesRequestSchema = z.object({
+export const WorkspaceDiscoveredResourcesRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   connectionId: IdSchema,
   provider: z.string(),
   resources: z.array(WorkspaceDiscoveredResourceSchema),
   at: TimestampSchema,
-}).strict();
+});
 
 export type WorkspaceResourceDescriptor = z.infer<typeof WorkspaceResourceDescriptorSchema>;
 export type WorkspaceResourceDescriptorsRequest = z.infer<

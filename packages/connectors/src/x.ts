@@ -148,23 +148,23 @@ export const XAgentPluginDescriptor = defineConnectorAgentPlugin({
 const xIdSchema = z.string().trim().regex(/^\d{1,32}$/u, "Expected a numeric X ID");
 const xUserNameSchema = z.string().trim().regex(/^@?[A-Za-z0-9_]{1,15}$/u, "Expected an X handle");
 const cursorSchema = z.string().max(2_048).nullable().optional();
-const userTimelineSchema = z.object({
+const userTimelineSchema = z.strictObject({
   userId: xIdSchema.optional(),
   userName: xUserNameSchema.optional(),
   includeReplies: z.boolean().optional(),
   includeParentTweet: z.boolean().optional(),
   cursor: cursorSchema,
-}).strict().refine(
+}).refine(
   (value) => Number(value.userId != null) + Number(value.userName != null) === 1,
   "Provide exactly one of userId or userName",
 );
-const threadContextSchema = z.object({ tweetId: xIdSchema, cursor: cursorSchema }).strict();
-const repliesSchema = z.object({
+const threadContextSchema = z.strictObject({ tweetId: xIdSchema, cursor: cursorSchema });
+const repliesSchema = z.strictObject({
   tweetId: xIdSchema,
   cursor: cursorSchema,
   queryType: z.enum(["Relevance", "Latest", "Likes"]).default("Relevance"),
-}).strict();
-const listTimelineSchema = z.object({ listId: xIdSchema, cursor: cursorSchema }).strict();
+});
+const listTimelineSchema = z.strictObject({ listId: xIdSchema, cursor: cursorSchema });
 
 export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
   const apiKey = config.apiKey.trim();

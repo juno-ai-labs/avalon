@@ -24,9 +24,9 @@ import {
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
-const updateBody = z.object({ deliveryTargets: AutomationDeliveryTargetSetSchema }).strict();
-const AutomationSocketTicketSchema = z.object({ url: z.string().min(1), ticket: z.string().min(1) }).strict();
-const SharedTemplateSchema = z.object({ templateId: IdSchema }).strict();
+const updateBody = z.strictObject({ deliveryTargets: AutomationDeliveryTargetSetSchema });
+const AutomationSocketTicketSchema = z.strictObject({ url: z.string().min(1), ticket: z.string().min(1) });
+const SharedTemplateSchema = z.strictObject({ templateId: IdSchema });
 
 /** Envelopes this route composes; the entities inside come from the contracts. */
 const AutomationPageSchema = z.object({ items: z.array(AutomationSummarySchema) });
@@ -98,18 +98,18 @@ automationRoutes.get("/:id/agent/draft", zValidator("param", idParam), async (c)
     await new AutomationAgentService(c.env, getAuth(c)).snapshot(c.req.valid("param").id),
   ),
 ));
-automationRoutes.post("/:id/agent/draft/:runId/stop", zValidator("param", z.object({
+automationRoutes.post("/:id/agent/draft/:runId/stop", zValidator("param", z.strictObject({
   id: IdSchema,
   runId: IdSchema,
-}).strict()), async (c) => {
+})), async (c) => {
   const params = c.req.valid("param");
   await new AutomationAgentService(c.env, getAuth(c)).cancel(params.id, params.runId);
   return c.body(null, 204);
 });
-automationRoutes.post("/:id/agent/draft/:runId/retry", zValidator("param", z.object({
+automationRoutes.post("/:id/agent/draft/:runId/retry", zValidator("param", z.strictObject({
   id: IdSchema,
   runId: IdSchema,
-}).strict()), async (c) => {
+})), async (c) => {
   const params = c.req.valid("param");
   await new AutomationAgentService(c.env, getAuth(c)).retry(params.id, params.runId);
   return c.body(null, 204);
@@ -152,12 +152,12 @@ export const templateRoutes = new Hono<HonoAppEnv>();
 templateRoutes.get("/", async (c) =>
   c.json(TemplatePageSchema.parse(await new AutomationService(c.env, getAuth(c)).listTemplates())));
 const publishTemplateBody = z.union([
-  z.object({ automationSubscriptionId: IdSchema }).strict(),
-  z.object({
+  z.strictObject({ automationSubscriptionId: IdSchema }),
+  z.strictObject({
     name: z.string().min(1).max(140),
     description: z.string().min(1).max(1_200),
     draft: AutomationDraftSchema,
-  }).strict(),
+  }),
 ]);
 templateRoutes.post("/", zValidator("json", publishTemplateBody), async (c) => {
   const body = c.req.valid("json");

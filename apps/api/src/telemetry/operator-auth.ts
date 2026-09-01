@@ -4,10 +4,10 @@ import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { timingSafeEqualText } from '../lib/crypto';
 
-const OperatorPrincipalSchema = z.object({
+const OperatorPrincipalSchema = z.strictObject({
   operatorId: z.string().uuid(),
   role: z.enum(['support', 'security']),
-}).strict();
+});
 
 const OperatorConfigurationSchema = z.record(
   z.string().min(32).max(256),

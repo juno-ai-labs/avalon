@@ -63,7 +63,7 @@ const DUE_DEBOUNCE_MS = 2 * 60_000;
 // Wall-clock a single member's tournament may spend before it settles for the
 // finalists it already has. The point is that it always writes something.
 const RANK_BUDGET_MS = 2 * 60_000;
-const UserLinkDecisionSchema = z.object({
+const UserLinkDecisionSchema = z.strictObject({
   userId: z.string().uuid().nullable(),
   role: z.string().min(1).max(80),
   resolution: z.enum(["verified", "inferred", "ambiguous", "unresolved"]),
@@ -72,9 +72,9 @@ const UserLinkDecisionSchema = z.object({
   sourceText: z.string().max(1_000),
   startOffset: z.number().int().nonnegative().nullable(),
   endOffset: z.number().int().positive().nullable(),
-}).strict();
+});
 
-const AdmissionDecisionSchema = z.object({
+const AdmissionDecisionSchema = z.strictObject({
   action: z.enum(["add", "ignore", "update_existing"]),
   existingTargetId: z.string().uuid().nullable(),
   displayPrompt: z.string().max(180),
@@ -82,8 +82,8 @@ const AdmissionDecisionSchema = z.object({
   admissionReasoning: z.string().max(20_000),
   linkedUsers: z.array(UserLinkDecisionSchema).max(30),
   sourceIds: z.array(z.string().min(1).max(200)).min(1).max(16),
-}).strict();
-const AdmissionResultSchema = z.object({ decisions: z.array(AdmissionDecisionSchema).max(4) }).strict();
+});
+const AdmissionResultSchema = z.strictObject({ decisions: z.array(AdmissionDecisionSchema).max(4) });
 
 const admissionJsonSchema = {
   type: "object",
@@ -127,10 +127,10 @@ const admissionJsonSchema = {
   required: ["decisions"],
 };
 
-const RankingResultSchema = z.object({
+const RankingResultSchema = z.strictObject({
   orderedOpportunityIds: z.array(z.string().uuid()).max(4),
   rankingReasoning: z.string().min(1).max(20_000),
-}).strict();
+});
 const rankingJsonSchema = {
   type: "object",
   additionalProperties: false,

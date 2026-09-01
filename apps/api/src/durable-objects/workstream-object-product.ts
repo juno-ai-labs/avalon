@@ -142,7 +142,7 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   message: "A message must include text or an attachment",
 });
 
-export const InitializeWorkstreamObjectInputSchema = z.object({
+export const InitializeWorkstreamObjectInputSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   generation: z.number().int().positive(),
@@ -209,7 +209,7 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   telemetryOperationId: z.string().uuid().optional(),
   telemetrySubjectUserId: z.string().uuid().optional(),
   reason: z.string().min(1).max(80),
-}).strict();
+});
 
 export type InitializeWorkstreamObjectInput = z.infer<typeof InitializeWorkstreamObjectInputSchema>;
 

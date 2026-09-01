@@ -12,21 +12,21 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 
-const CoordinatesSchema = z.object({
+const CoordinatesSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
-}).strict();
+});
 
 export const BlockDashboardSourceRefreshRequestSchema = CoordinatesSchema.extend({
   triggerSequence: z.number().int().nonnegative(),
 }).strict();
 
-export const BlockDashboardContextFenceSchema = z.object({
+export const BlockDashboardContextFenceSchema = z.strictObject({
   /** Inclusive upper bound that is a complete provider-valid boundary. */
   throughSequence: z.number().int().nonnegative(),
   /** Exact compacted prefix, or null to begin at the start of the array. */
   compaction: WorkstreamCompactionFenceSchema.nullable(),
-}).strict();
+});
 
 export const BlockDashboardControlRequestSchema = z.discriminatedUnion("operation", [
   CoordinatesSchema.extend({ operation: z.literal("get") }).strict(),
@@ -62,7 +62,7 @@ export const BlockDashboardControlRequestSchema = z.discriminatedUnion("operatio
   CoordinatesSchema.extend({
     operation: z.literal("import_authority_rows"),
     generation: z.number().int().positive(),
-    configurations: z.array(z.object({
+    configurations: z.array(z.strictObject({
       configurationVersionId: IdSchema,
       versionNumber: z.number().int().positive(),
       blocksJson: z.string().refine((value) => {
@@ -70,8 +70,8 @@ export const BlockDashboardControlRequestSchema = z.discriminatedUnion("operatio
       }),
       createdByUserId: IdSchema,
       createdAt: z.number().int().nonnegative(),
-    }).strict()).max(250),
-    runs: z.array(z.object({
+    })).max(250),
+    runs: z.array(z.strictObject({
       blockRunId: IdSchema,
       configurationVersionId: IdSchema,
       blockId: IdSchema,
@@ -84,16 +84,16 @@ export const BlockDashboardControlRequestSchema = z.discriminatedUnion("operatio
       createdAt: z.number().int().nonnegative(),
       startedAt: z.number().int().nonnegative().nullable(),
       completedAt: z.number().int().nonnegative().nullable(),
-    }).strict()).max(250),
-    preferences: z.array(z.object({
+    })).max(250),
+    preferences: z.array(z.strictObject({
       userId: IdSchema,
       visible: z.boolean(),
       updatedAt: z.number().int().nonnegative(),
-    }).strict()).max(250),
+    })).max(250),
   }).strict(),
 ]);
 
-export const BlockDashboardBlockDispatchSchema = z.object({
+export const BlockDashboardBlockDispatchSchema = z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
@@ -106,7 +106,7 @@ export const BlockDashboardBlockDispatchSchema = z.object({
   triggerSequence: z.number().int().nonnegative(),
   contextFence: BlockDashboardContextFenceSchema,
   createdAt: z.string().datetime({ offset: true }),
-}).strict();
+});
 
 export const BlockDashboardViewerAuthorizationRequestSchema = CoordinatesSchema.extend({
   blockId: BlockIdSchema,

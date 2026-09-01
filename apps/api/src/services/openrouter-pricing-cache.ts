@@ -82,33 +82,33 @@ const CachedImageModelPricingSchema = z.object({
 });
 
 const EndpointEnvelopeSchema = z.object({
-  data: z.object({
-    endpoints: z.array(z.object({
-      pricing: z.object({
+  data: z.looseObject({
+    endpoints: z.array(z.looseObject({
+      pricing: z.looseObject({
         prompt: z.string(),
         completion: z.string(),
         input_cache_read: z.string().nullish(),
-        overrides: z.array(z.object({
+        overrides: z.array(z.looseObject({
           min_prompt_tokens: z.number().int().nonnegative().optional(),
           prompt: z.string().nullish(),
           completion: z.string().nullish(),
           input_cache_read: z.string().nullish(),
-        }).passthrough()).optional().default([]),
-      }).passthrough(),
-    }).passthrough()).min(1),
-  }).passthrough(),
+        })).optional().default([]),
+      }),
+    })).min(1),
+  }),
 });
 
-const ImageEndpointEnvelopeSchema = z.object({
-  endpoints: z.array(z.object({
-    pricing: z.array(z.object({
+const ImageEndpointEnvelopeSchema = z.looseObject({
+  endpoints: z.array(z.looseObject({
+    pricing: z.array(z.looseObject({
       billable: z.string().min(1),
       unit: z.string().min(1),
       cost_usd: z.union([z.number().finite().nonnegative(), DecimalStringSchema]),
       variant: z.string().nullish(),
-    }).passthrough()).min(1),
-  }).passthrough()).min(1),
-}).passthrough();
+    })).min(1),
+  })).min(1),
+});
 
 type CachedModelPricing =
   | z.infer<typeof CachedTokenModelPricingSchema>

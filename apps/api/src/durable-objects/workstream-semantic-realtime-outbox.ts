@@ -9,21 +9,21 @@ import { z } from "zod";
  * recovery authority.
  */
 export const SemanticRealtimeReferenceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("transcript_turn"), turnId: z.string().min(1) }).strict(),
-  z.object({
+  z.strictObject({ kind: z.literal("transcript_turn"), turnId: z.string().min(1) }),
+  z.strictObject({
     kind: z.literal("loop_input_upserted"),
     inputId: z.string().min(1),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     kind: z.literal("loop_input_removed"),
     inputId: z.string().min(1),
     outcome: z.enum(["delivered", "cancelled"]),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     kind: z.literal("transcript_activity"),
     activityId: z.string().min(1),
     snapshotAtUtc: z.string().datetime({ offset: true }),
-  }).strict(),
+  }),
 ]);
 
 export type SemanticRealtimeReference = z.infer<typeof SemanticRealtimeReferenceSchema>;
@@ -128,10 +128,10 @@ export function dueSemanticRealtimeReferences(
     now,
     Math.max(1, Math.min(limit, 100)),
   ).toArray().map((row) => {
-    const payload = z.object({
+    const payload = z.strictObject({
       occurredAtUtc: z.string().datetime({ offset: true }),
       reference: SemanticRealtimeReferenceSchema,
-    }).strict().parse(JSON.parse(row.payload_json));
+    }).parse(JSON.parse(row.payload_json));
     const sequence = Number(row.source_version);
     if (row.message_id !== `semantic-realtime:${sequence}`) {
       throw new Error("semantic_realtime_outbox_corrupt");

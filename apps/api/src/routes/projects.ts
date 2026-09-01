@@ -17,11 +17,11 @@ import { getAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { ProjectService } from "../services/project-service";
 
-const idParam = z.object({ id: ProjectIdSchema }).strict();
-const workstreamParam = z.object({ id: ProjectIdSchema, workstreamId: WorkstreamIdSchema }).strict();
-const workstreamBody = z.object({ workstreamId: WorkstreamIdSchema }).strict();
-const resourceParam = z.object({ id: ProjectIdSchema, resourceId: IdSchema }).strict();
-const resourceBody = z.object({ resourceId: IdSchema }).strict();
+const idParam = z.strictObject({ id: ProjectIdSchema });
+const workstreamParam = z.strictObject({ id: ProjectIdSchema, workstreamId: WorkstreamIdSchema });
+const workstreamBody = z.strictObject({ workstreamId: WorkstreamIdSchema });
+const resourceParam = z.strictObject({ id: ProjectIdSchema, resourceId: IdSchema });
+const resourceBody = z.strictObject({ resourceId: IdSchema });
 
 export const projectRoutes = new Hono<HonoAppEnv>();
 
