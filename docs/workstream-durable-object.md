@@ -1480,11 +1480,15 @@ server-side total precisely because the client may hold only a page, so
 notes under that heading as well as the work streams. The same filter selects
 both: WorkspaceDO returns the note IDs beside the work-stream IDs from one
 `batchUpdateTargets` call, so the confirmation counts each half at the same
-instant, and `archiveNotesForBatch` applies the note half in one statement
-before the Queue chunks go out. Notes take three fences the range does not —
-the viewer must own the note, it must not be recording, and it must not already
-be archived — which are the same three refusals the single-note archive makes,
-so the preview's count and the archive agree. The dispatch row gained
+instant, and `archiveNotesForBatch` applies the note half in one statement once
+the Queue chunks are published. Notes take four fences the range does not —
+the viewer must own the note, it must not be recording, it must not already be
+archived, and it must be inside the sidebar's own `SIDEBAR_LIST_LIMIT` window.
+The first three are the refusals the single-note archive already makes, so the
+preview's count and the archive agree. The fourth is there because notes have
+no cursor anywhere in the product: past the limit they are unreachable rather
+than unloaded, and an archive cannot be undone. The work-stream half is
+deliberately not fenced that way, because it pages. The dispatch row gained
 `archived_note_count` (migration 26) as that half's receipt; `NULL` is "no note
 archive has run", which is what every pre-existing row and every `mark_read`
 operation means. `mark_read` does not reach notes at all, because a note has no
@@ -1511,13 +1515,24 @@ selection, and one count closes that.
 **Consequences, and what a future change has to respect:** A new update kind
 must decide explicitly whether it reaches notes, and say so in both the preview
 and the confirmation rather than letting one count stand for two authorities.
-The note archive must stay ahead of the Queue sends: it is the half that is
-finished when the response returns, so a transport failure has to leave a retry
-with only work streams outstanding. Its receipt is a count and not a set, so
-nothing may come to depend on knowing *which* notes an operation took. The
-range is compared against `notes.last_activity_at`, an ISO string, so any
-timestamp reaching that comparison has to be re-spelled as canonical UTC first
-— an offset that sorts differently would silently select the wrong group.
+The note archive must stay *behind* the Queue publication, so that a caller
+which sees this request fail can read that as "nothing happened": with the
+archive first, a failed chunk send threw having already taken the notes, and
+the client showed a retryable error while the reader's notes were in fact gone
+— with the caches and open routes that follow an archive never told. The
+receipt makes the retry idempotent in either order; only this one makes the
+failure honest. Its receipt is a count and not a set, so
+nothing may come to depend on knowing *which* notes an operation took — the
+client learns what went by refetching, because reconstructing the set from the
+filter and the sidebar as it stands *now* gets it wrong: a note that was
+recording when the archive ran, and has since stopped, reads as taken when it
+was skipped. The range is compared against `notes.last_activity_at`, an ISO
+string, so any timestamp reaching that comparison has to be re-spelled as
+canonical UTC first — an offset that sorts differently would silently select
+the wrong group. The exposable-window fence is tied to the sidebar's own
+ordering and visibility in `NOTE_SIDEBAR_EXPOSABLE_IDS_SQL`; a window that
+ordered differently would expose a different 250 than the list it mirrors, and
+adding note pagination is what would let the fence go.
 
 ### 2026-08-31 — Batch receipts fit inside the object SQLite bind ceiling
 

@@ -239,7 +239,9 @@ resource separately.
 - **Every archive path refuses the same notes.** A bulk archive is not a
   shortcut past ownership or a live recording: the sidebar grouping's
   **Archive all** selects only notes the viewer owns and is not recording, so
-  it can never take a note the single-row archive would have refused.
+  it can never take a note the single-row archive would have refused. It also
+  cannot reach past `SIDEBAR_LIST_LIMIT`, because there is no note pagination:
+  a note the list has no way to show is one nobody could have decided about.
 
 ## Boundary
 

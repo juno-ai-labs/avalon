@@ -93,18 +93,6 @@ export class WorkstreamBatchUpdateService {
       requestHash,
       filter: request.filter,
     });
-    // Before the Queue sends, not after: the notes are done the moment this
-    // returns, so a transport failure below leaves a retry with only the
-    // work-stream half still to do rather than a group half-archived in the
-    // direction the person cannot see. Its receipt is what makes that retry
-    // safe.
-    const archivedNoteCount = request.update.kind === "archive"
-      ? await new NoteService(this.env, this.auth).archiveForBatch({
-        operationId: request.operationId,
-        requestHash,
-        filter: request.filter,
-      })
-      : 0;
     const workstreamIds = dispatch.items;
     const events = workstreamIds.map((workstreamId) => ({
       body: WorkstreamBatchUpdateQueueMessageSchema.parse({
@@ -144,6 +132,26 @@ export class WorkstreamBatchUpdateService {
       });
       throw failed[0]?.reason;
     }
+
+    // After the Queue publication, not before. Everything above can still fail
+    // and be retried, and a caller that sees this request fail has to be able
+    // to read that as "nothing happened": archiving first meant a failed chunk
+    // send threw with the notes already gone, so the client showed a retryable
+    // error while the reader's notes had in fact been archived, and the caches
+    // and open routes that follow an archive were never told. The receipt makes
+    // the retry idempotent either way; only this order makes the *failure*
+    // honest.
+    //
+    // The residual window is one RPC wide and points the safe way: if this
+    // throws, the work streams are enqueued and the notes are not, and the
+    // retry finishes them.
+    const archivedNoteCount = request.update.kind === "archive"
+      ? await new NoteService(this.env, this.auth).archiveForBatch({
+        operationId: request.operationId,
+        requestHash,
+        filter: request.filter,
+      })
+      : 0;
 
     logInfo(this.env, "workstream_batch_update_enqueued", {
       workspace_id: this.auth.workspaceId,

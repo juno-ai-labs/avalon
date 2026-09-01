@@ -5,8 +5,10 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { boundParameterChunks } from "./bound-parameters";
 
 import {
+  NOTE_SIDEBAR_EXPOSABLE_IDS_SQL,
   NOTE_SIDEBAR_SQL,
   NoteSidebarRowSchema,
+  SIDEBAR_LIST_LIMIT,
   toNoteSummary,
 } from "../services/sidebar-reads";
 import {
@@ -322,6 +324,13 @@ export function archiveWorkspaceNote(
  * live meeting window 404s the next segment save while capture keeps running;
  * and `archived_at` because an already-archived note is not in the group.
  *
+ * The fourth fence is the sidebar's own window. The list is capped at
+ * `SIDEBAR_LIST_LIMIT` and notes have no cursor anywhere in the product, so
+ * beyond it they are unreachable rather than merely unloaded — and an archive
+ * cannot be undone. `NOTE_SIDEBAR_EXPOSABLE_IDS_SQL` holds the ordering and
+ * visibility that decide which notes those are; the work-stream half is
+ * deliberately *not* fenced this way, because it pages.
+ *
  * The preview counts this same selection, so the number in the confirmation is
  * the number of notes that will actually go.
  */
@@ -329,7 +338,8 @@ const NOTE_BATCH_SELECTION_FENCE = `workspace_id = ? AND archived_at IS NULL
       AND owner_user_id = ?
       AND recording_status != 'recording'
       AND (? IS NULL OR last_activity_at >= ?)
-      AND (? IS NULL OR last_activity_at < ?)`;
+      AND (? IS NULL OR last_activity_at < ?)
+      AND id IN (${NOTE_SIDEBAR_EXPOSABLE_IDS_SQL})`;
 
 /**
  * `notes.last_activity_at` is an ISO string written by the server's own clock,
@@ -352,10 +362,21 @@ function noteBatchBindings(
   workspaceId: string,
   userId: string,
   filter: WorkstreamBatchFilter,
-): (string | null)[] {
+): (string | number | null)[] {
   const atOrAfter = noteRangeBound(filter.lastActivityAt?.atOrAfter);
   const before = noteRangeBound(filter.lastActivityAt?.before);
-  return [workspaceId, userId, atOrAfter, atOrAfter, before, before];
+  return [
+    workspaceId,
+    userId,
+    atOrAfter,
+    atOrAfter,
+    before,
+    before,
+    // The window subquery's own three, in its own order.
+    workspaceId,
+    userId,
+    SIDEBAR_LIST_LIMIT,
+  ];
 }
 
 /**

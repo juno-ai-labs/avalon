@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { ProjectSummarySchema } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
-import type { NoteSummary, WorkstreamSummary } from '../lib/types';
+import type { WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
@@ -11,7 +11,6 @@ import {
   invitationAccountMismatch,
   openWorkstreamId,
   RUNNING_HARNESS_STATUSES,
-  noteMatchesBatchFilter,
   showsAutomation,
   upsertProjectDirectory,
   workstreamMatchesBatchFilter,
@@ -125,58 +124,6 @@ describe('workstreamMatchesBatchFilter', () => {
       pinned: false,
       includeSystem: false,
     })).toBe(false);
-  });
-});
-
-describe('noteMatchesBatchFilter', () => {
-  const viewerId = '00000000-0000-7000-8000-0000000000d1';
-  function noteSummary(overrides: Partial<NoteSummary> = {}): NoteSummary {
-    return {
-      id: '00000000-0000-7000-8000-0000000000d0',
-      workspaceId: '00000000-0000-7000-8000-0000000000d2',
-      resourceId: '00000000-0000-7000-8000-0000000000d3',
-      ownerUserId: viewerId,
-      scope: 'personal',
-      title: 'Customer interview',
-      recordingStatus: 'complete',
-      recordedMs: 60_000,
-      startedAt: null,
-      endedAt: null,
-      generatedAt: null,
-      lastActivityAt: '2026-08-11T10:00:00.000Z',
-      createdAt: '2026-08-11T10:00:00.000Z',
-      updatedAt: '2026-08-11T10:00:00.000Z',
-      archivedAt: null,
-      ...overrides,
-    };
-  }
-  const group = {
-    lastActivityAt: {
-      atOrAfter: '2026-08-11T00:00:00.000Z',
-      before: '2026-08-12T00:00:00.000Z',
-    },
-    pinned: false,
-    includeSystem: false,
-  } as const;
-
-  it('leaves the route only for a note the object would actually archive', () => {
-    expect(noteMatchesBatchFilter(noteSummary(), group, viewerId)).toBe(true);
-    // Each of these is a note the archive skipped, so the screen showing it
-    // must stay: a route that left would strand the reader away from a note
-    // that is still there.
-    expect(noteMatchesBatchFilter(
-      noteSummary({ ownerUserId: '00000000-0000-7000-8000-0000000000d9', scope: 'workspace' }),
-      group,
-      viewerId,
-    )).toBe(false);
-    expect(noteMatchesBatchFilter(noteSummary({ recordingStatus: 'recording' }), group, viewerId))
-      .toBe(false);
-    expect(noteMatchesBatchFilter(noteSummary(), { ...group, pinned: true }, viewerId)).toBe(false);
-    expect(noteMatchesBatchFilter(
-      noteSummary({ lastActivityAt: '2026-08-12T00:00:00.000Z' }),
-      group,
-      viewerId,
-    )).toBe(false);
   });
 });
 
