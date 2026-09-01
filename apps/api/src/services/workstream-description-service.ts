@@ -33,7 +33,7 @@ import {
   renderWorkstreamDescriptionMessages,
   type WorkstreamDescriptionMessageInput,
 } from "@rally/agent-harness";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { WORKSTREAM_DESCRIPTION_MAX_CHARACTERS } from "@rally/contracts";
 

@@ -4,7 +4,7 @@ import type {
   OpenRouterProviderError,
   StructuredModelDiagnostic,
 } from "@rally/agent-harness";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
@@ -65,7 +65,7 @@ export const InferenceLakehousePointerSchema = z.object({
   region: z.enum(["global", "eu"]),
   objectKey: z.string().min(1),
   payloadSha256: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
-  payloadBytes: z.number().int().nonnegative(),
+  payloadBytes: z.number().int().safe().nonnegative(),
   capturedAt: z.string().datetime(),
 });
 

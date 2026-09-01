@@ -5,7 +5,7 @@ import {
   type ObjectPortOf,
 } from "./object-port-protocol";
 import type { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 type LocalOnlyTranscriptOperation =
   | "prepareParticipantMessage"

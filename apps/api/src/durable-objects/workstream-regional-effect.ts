@@ -1,6 +1,6 @@
 import { IdSchema, RegionSchema, ResourceRelationshipTypeSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const TimestampSchema = z.string().datetime({ offset: true });
 const NullableTimestampSchema = TimestampSchema.nullable();
@@ -28,8 +28,8 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
   automationRunId: IdSchema.nullable().optional(),
   plannedFor: NullableTimestampSchema.optional(),
   titleStatus: z.enum(["naming", "automatic", "settled"]).optional(),
-  latestAttentionOrdinal: z.number().int().nonnegative().optional(),
-  unreadTrackingStartOrdinal: z.number().int().nonnegative().optional(),
+  latestAttentionOrdinal: z.number().int().safe().nonnegative().optional(),
+  unreadTrackingStartOrdinal: z.number().int().safe().nonnegative().optional(),
   nextWakeupDueAt: NullableTimestampSchema.optional(),
   nextWakeupPrompt: z.string().max(500).nullable().optional(),
   nextTerminalActionAt: NullableTimestampSchema.optional(),
@@ -58,7 +58,7 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
    * timestamp it already stored rather than treating the person as new.
    */
   participantAddedAt: TimestampSchema.nullable().optional(),
-  unreadCount: z.number().int().nonnegative(),
+  unreadCount: z.number().int().safe().nonnegative(),
   youAreMentioned: z.boolean(),
   /**
    * Added to the work stream and never opened it. Optional because effects
@@ -67,17 +67,17 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
    */
   unseen: z.boolean().optional(),
   listable: z.boolean(),
-  seenAttentionOrdinal: z.number().int().nonnegative().optional(),
-  manualUnreadFromOrdinal: z.number().int().nonnegative().nullable().optional(),
-  manualUnreadGeneration: z.number().int().nonnegative().optional(),
-  latestMentionAttentionOrdinal: z.number().int().nonnegative().optional(),
+  seenAttentionOrdinal: z.number().int().safe().nonnegative().optional(),
+  manualUnreadFromOrdinal: z.number().int().safe().nonnegative().nullable().optional(),
+  manualUnreadGeneration: z.number().int().safe().nonnegative().optional(),
+  latestMentionAttentionOrdinal: z.number().int().safe().nonnegative().optional(),
 }).strict();
 
 export const WorkstreamActivityEffectSchema = z.object({
   kind: z.literal("activity_event"),
   eventId: IdSchema,
   eventType: z.string().min(1).max(160),
-  subjectSequenceNumber: z.number().int().nonnegative().nullable(),
+  subjectSequenceNumber: z.number().int().safe().nonnegative().nullable(),
   actorType: z.enum(["user", "agent", "system", "external"]),
   actorUserId: IdSchema.nullable(),
   actorLabel: z.string().max(300),
@@ -211,11 +211,11 @@ export const WorkstreamRegionalEffectEnvelopeSchema = z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
-  generation: z.number().int().positive(),
+  generation: z.number().int().safe().positive(),
   messageId: z.string().min(1).max(500),
   partitionKey: z.string().min(1).max(300),
-  sourceVersion: z.number().int().positive(),
-  requiredProjectionVersion: z.number().int().positive().nullable(),
+  sourceVersion: z.number().int().safe().positive(),
+  requiredProjectionVersion: z.number().int().safe().positive().nullable(),
   payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
   effect: WireWorkstreamRegionalEffectSchema,
 }).strict().superRefine((envelope, context) => {
@@ -242,7 +242,7 @@ export const WorkstreamRegionalEffectQueueMessageSchema = z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
-  generation: z.number().int().positive(),
+  generation: z.number().int().safe().positive(),
   messageId: z.string().min(1).max(500),
   payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
 }).strict();

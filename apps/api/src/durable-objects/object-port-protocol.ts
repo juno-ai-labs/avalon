@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
+import { z } from "zod/v3";
 
 /**
  * The shape every typed object port shares.
@@ -76,8 +77,8 @@ export function objectPortRequestSchema<TOperation extends string>(
   unknownOperationMessage: string,
 ) {
   return z.object({
-    workspaceId: z.string().uuid(),
-    workstreamId: z.string().uuid(),
+    workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+    workstreamId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
     operation: z.string().min(1).max(64).refine(isOperation, {
       message: unknownOperationMessage,
     }),

@@ -16,7 +16,7 @@ import type {
   Scope,
   ToolDefinition,
 } from "@rally/contracts";
-import type { ZodError, ZodType } from "zod";
+import type { ZodError, ZodType } from "zod/v3";
 
 /** Levels understood by a connector host's structured-log sink. */
 export type ConnectorLogLevel = "debug" | "info" | "warn" | "error";

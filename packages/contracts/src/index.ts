@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { STRICT_UUID_PATTERN } from "./uuid-validation";
+import { z } from "zod/v3";
 import { AutomationRunContextV1Schema } from "./automation-agent";
 import {
   TranscriptActivitySchema,
@@ -373,7 +374,7 @@ export const WorkspaceDepartureSchema = z.object({
   outcome: WorkspaceDepartureOutcomeSchema,
 });
 export const WorkspaceAttentionSchema = z.object({
-  waitingForYou: z.number().int().nonnegative(),
+  waitingForYou: z.number().int().safe().nonnegative(),
   waitingReason: z.enum(["mentioned", "needs_input", "unseen"]).nullable(),
   hasUnreadActivity: z.boolean(),
 });
@@ -434,7 +435,7 @@ export const ClientFeatureFlagsSchema = z.object({
    * it to the default keeps one bad flag from failing the whole response and
    * taking every other flag down with it.
    */
-  controlTowerRefreshSeconds: z.number().int()
+  controlTowerRefreshSeconds: z.number().int().safe()
     .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
     .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
     .catch(CONTROL_TOWER_REFRESH_SECONDS.default)
@@ -569,10 +570,10 @@ export const WorkstreamSchema = z.object({
   automationRunId: IdSchema.nullable(),
   plannedFor: TimestampSchema.nullable(),
   harnessStatus: HarnessStatusSchema,
-  latestAttentionSequenceNumber: z.number().int().nonnegative(),
-  readThroughSequenceNumber: z.number().int().nonnegative(),
-  manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
-  manualUnreadGeneration: z.number().int().nonnegative(),
+  latestAttentionSequenceNumber: z.number().int().safe().nonnegative(),
+  readThroughSequenceNumber: z.number().int().safe().nonnegative(),
+  manualUnreadFromSequenceNumber: z.number().int().safe().nonnegative().nullable(),
+  manualUnreadGeneration: z.number().int().safe().nonnegative(),
   hasUnread: z.boolean(),
   /** True while a person mention sits above this viewer's seen waterline. */
   youAreMentioned: z.boolean().default(false),
@@ -588,7 +589,7 @@ export const WorkstreamSchema = z.object({
    * work stream whose readers have all had it for a while.
    */
   unseen: z.boolean().default(false),
-  firstUnreadSequenceNumber: z.number().int().nonnegative().nullable(),
+  firstUnreadSequenceNumber: z.number().int().safe().nonnegative().nullable(),
   lastActivityAt: TimestampSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -642,7 +643,7 @@ export const WorkstreamSchema = z.object({
    * relative to the reader's other pins and changes whenever they rearrange
    * them. Sort by it; do not store it as an identity.
    */
-  pinPosition: z.number().int().nonnegative().nullable().default(null),
+  pinPosition: z.number().int().safe().nonnegative().nullable().default(null),
   /**
    * People in a personal work stream, for the sidebar facepile. At most
    * {@link WORKSTREAM_SIDEBAR_FACEPILE_LIMIT} ids, newest first, with
@@ -654,7 +655,7 @@ export const WorkstreamSchema = z.object({
    * whose sidebar showed a lock instead.
    */
   participantUserIds: z.array(IdSchema).max(WORKSTREAM_SIDEBAR_FACEPILE_LIMIT).default([]),
-  participantExtraCount: z.number().int().nonnegative().default(0),
+  participantExtraCount: z.number().int().safe().nonnegative().default(0),
 });
 
 export const ExternalActorSchema = z.object({
@@ -678,15 +679,15 @@ export const MentionSchema = z.object({
   connectorType: z.string().max(80).nullable(),
   displayName: z.string().min(1).max(180).nullable().optional(),
   avatarUrl: HttpUrlSchema.nullable().optional(),
-  startOffset: z.number().int().nonnegative(),
-  endOffset: z.number().int().positive()
+  startOffset: z.number().int().safe().nonnegative(),
+  endOffset: z.number().int().safe().positive()
 });
 
 export const MessageAttachmentSchema = z.object({
   id: IdSchema,
   fileName: z.string().min(1).max(300),
   mimeType: z.string().min(1).max(160),
-  sizeBytes: z.number().int().nonnegative(),
+  sizeBytes: z.number().int().safe().nonnegative(),
   contentAvailable: z.boolean(),
   createdAt: TimestampSchema,
 });
@@ -702,8 +703,8 @@ export const MessageSchema = z.object({
   structuredContent: z.record(z.string(), z.unknown()).nullable(),
   mentions: z.array(MentionSchema),
   attachments: z.array(MessageAttachmentSchema).default([]),
-  sequenceNumber: z.number().int().nonnegative(),
-  attentionSequenceNumber: z.number().int().positive().nullable().optional(),
+  sequenceNumber: z.number().int().safe().nonnegative(),
+  attentionSequenceNumber: z.number().int().safe().positive().nullable().optional(),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.nullable()
 });
@@ -726,8 +727,8 @@ export const ResourceSchema = z.object({
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
   contentAvailable: z.boolean().default(false),
-  sizeBytes: z.number().int().nonnegative().default(0),
-  currentVersion: z.number().int().positive().default(1),
+  sizeBytes: z.number().int().safe().nonnegative().default(0),
+  currentVersion: z.number().int().safe().positive().default(1),
 });
 
 export const WorkstreamResourceSchema = ResourceSchema.extend({
@@ -760,7 +761,7 @@ export const ResourceVersionCauseSchema = z.enum(["created", "published", "refet
 
 export const ResourceRevisionSchema = z.object({
   resourceId: IdSchema,
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
   /**
    * Null where history predates provenance, or a producer records none. The
    * surfaces say a version is unattributed rather than inventing an author.
@@ -784,7 +785,7 @@ export const ResourceRevisionSchema = z.object({
   createdAt: TimestampSchema,
   contentAvailable: z.boolean(),
   modelContentAvailable: z.boolean(),
-  sizeBytes: z.number().int().nonnegative(),
+  sizeBytes: z.number().int().safe().nonnegative(),
 });
 
 export const NoteRecordingStatusSchema = z.enum(["idle", "recording", "complete"]);
@@ -792,9 +793,9 @@ export const NoteRecordingStatusSchema = z.enum(["idle", "recording", "complete"
 export const NoteTranscriptSegmentSchema = z.object({
   id: IdSchema,
   noteId: IdSchema,
-  sequenceNumber: z.number().int().positive(),
-  startOffsetMs: z.number().int().nonnegative(),
-  endOffsetMs: z.number().int().nonnegative(),
+  sequenceNumber: z.number().int().safe().positive(),
+  startOffsetMs: z.number().int().safe().nonnegative(),
+  endOffsetMs: z.number().int().safe().nonnegative(),
   capturedAt: TimestampSchema,
   speakerLabel: z.string().trim().min(1).max(120).nullable(),
   text: z.string().trim().min(1).max(80_000),
@@ -812,7 +813,7 @@ export const NoteSummarySchema = z.object({
   scope: ScopeSchema,
   title: z.string().trim().min(1).max(180),
   recordingStatus: NoteRecordingStatusSchema,
-  recordedMs: z.number().int().nonnegative(),
+  recordedMs: z.number().int().safe().nonnegative(),
   startedAt: TimestampSchema.nullable(),
   endedAt: TimestampSchema.nullable(),
   generatedAt: TimestampSchema.nullable(),
@@ -825,7 +826,7 @@ export const NoteSummarySchema = z.object({
 export const NoteDetailSchema = NoteSummarySchema.extend({
   manualNotes: z.string().max(200_000),
   liveNotes: z.string().max(50_000),
-  notesThroughSequence: z.number().int().nonnegative(),
+  notesThroughSequence: z.number().int().safe().nonnegative(),
   segments: z.array(NoteTranscriptSegmentSchema),
 });
 
@@ -840,15 +841,15 @@ export const UpdateNoteRequestSchema = z.object({
   manualNotes: z.string().max(200_000).optional(),
   scope: ScopeSchema.optional(),
   recordingStatus: NoteRecordingStatusSchema.optional(),
-  recordedMs: z.number().int().nonnegative().optional(),
+  recordedMs: z.number().int().safe().nonnegative().optional(),
   startedAt: TimestampSchema.nullable().optional(),
   endedAt: TimestampSchema.nullable().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one note field is required");
 
 export const AppendNoteTranscriptSegmentRequestSchema = z.object({
   clientSegmentId: IdSchema,
-  startOffsetMs: z.number().int().nonnegative(),
-  endOffsetMs: z.number().int().nonnegative(),
+  startOffsetMs: z.number().int().safe().nonnegative(),
+  endOffsetMs: z.number().int().safe().nonnegative(),
   capturedAt: TimestampSchema,
   speakerLabel: z.string().trim().min(1).max(120).nullable().default(null),
   text: z.string().trim().min(1).max(80_000),
@@ -868,7 +869,7 @@ export const GenerateNoteNotesRequestSchema = z.object({
    * the flag moved under. Omitted by a client that does not know it, which
    * leaves the server resolving the flag as before.
    */
-  refreshSeconds: z.number().int()
+  refreshSeconds: z.number().int().safe()
     .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
     .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
     .optional(),
@@ -915,7 +916,7 @@ export const GitHubRepositoryAccessEntrySchema = z.object({
 export const GitHubRepositoryAccessSettingsSchema = z.object({
   connectionId: IdSchema,
   connectionName: z.string().min(1).max(180),
-  revision: z.number().int().nonnegative(),
+  revision: z.number().int().safe().nonnegative(),
   mode: GitHubRepositoryAccessModeSchema,
   defaultRemoteAccess: GitHubRepositoryRemoteAccessSchema,
   repositories: z.array(GitHubRepositoryAccessEntrySchema).max(1_000),
@@ -927,7 +928,7 @@ export const GitHubRepositoryAccessSettingsSchema = z.object({
   }).strict()).max(1_000),
 }).strict();
 export const UpdateGitHubRepositoryAccessSettingsSchema = z.object({
-  expectedRevision: z.number().int().nonnegative(),
+  expectedRevision: z.number().int().safe().nonnegative(),
   mode: GitHubRepositoryAccessModeSchema,
   defaultRemoteAccess: GitHubRepositoryRemoteAccessSchema,
   repositories: z.array(GitHubRepositoryAccessEntrySchema).max(1_000),
@@ -1059,8 +1060,8 @@ export const AutomationDraftElicitationSchema = z.object({
     label: z.string().min(1).max(300),
     description: z.string().max(800).nullable().default(null),
   })).max(30).default([]),
-  minimumSelections: z.number().int().nonnegative().default(0),
-  maximumSelections: z.number().int().positive().nullable().default(null),
+  minimumSelections: z.number().int().safe().nonnegative().default(0),
+  maximumSelections: z.number().int().safe().positive().nullable().default(null),
   allowOther: z.boolean().default(false),
 });
 
@@ -1111,8 +1112,8 @@ export const BackgroundTaskSchema = z.object({
   status: z.enum(["running", "needs_input", "completed", "failed"]),
   startedAt: TimestampSchema,
   completedAt: TimestampSchema.nullable(),
-  tokenCount: z.number().int().nonnegative().nullable(),
-  toolUses: z.number().int().nonnegative().nullable(),
+  tokenCount: z.number().int().safe().nonnegative().nullable(),
+  toolUses: z.number().int().safe().nonnegative().nullable(),
   transcriptTurnId: TranscriptTurnIdSchema.nullable()
 });
 
@@ -1128,8 +1129,8 @@ export const ElicitationSchema = z.object({
   prompt: z.string().min(1).max(4000),
   responseType: z.enum(["text", "radio", "single_select", "multi_select"]),
   options: z.array(ElicitationOptionSchema),
-  minimumSelections: z.number().int().nonnegative(),
-  maximumSelections: z.number().int().positive().nullable(),
+  minimumSelections: z.number().int().safe().nonnegative(),
+  maximumSelections: z.number().int().safe().positive().nullable(),
   targetUserId: IdSchema.nullable(),
   status: z.enum(["open", "answered", "cancelled"]),
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
@@ -1149,7 +1150,7 @@ export const BlockDashboardBlockRunSchema = z.object({
   id: IdSchema,
   blockId: IdSchema,
   configurationVersionId: IdSchema,
-  triggerSequence: z.number().int().nonnegative(),
+  triggerSequence: z.number().int().safe().nonnegative(),
   status: BlockDashboardBlockRunStatusSchema,
   markdown: z.string().nullable(),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
@@ -1164,7 +1165,7 @@ export const BlockDashboardBlockSchema = z.object({
 });
 export const BlockDashboardSchema = z.object({
   versionId: IdSchema.nullable(),
-  versionNumber: z.number().int().nonnegative(),
+  versionNumber: z.number().int().safe().nonnegative(),
   blocks: z.array(BlockDashboardBlockSchema).max(24),
   updatedAt: TimestampSchema.nullable()
 });
@@ -1176,7 +1177,7 @@ export const UpdateBlockDashboardPreferenceRequestSchema = z.object({
   visible: z.boolean()
 }).strict();
 export const UpdateBlockDashboardRequestSchema = z.object({
-  expectedVersionNumber: z.number().int().nonnegative(),
+  expectedVersionNumber: z.number().int().safe().nonnegative(),
   blocks: z.array(z.object({
     id: IdSchema,
     prompt: z.string().max(12_000)
@@ -1267,7 +1268,7 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("interval"),
-    intervalSeconds: z.number().int().min(60),
+    intervalSeconds: z.number().int().safe().min(60),
     summary: z.string().min(1)
   }),
   z.object({
@@ -1391,7 +1392,7 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
     type: z.literal("thinking"),
     inferenceRequestId: z.string().min(1).max(200),
     status: z.enum(["started", "completed"]),
-    durationMs: z.number().int().nonnegative()
+    durationMs: z.number().int().safe().nonnegative()
   }),
   z.object({
     type: z.literal("delta"),
@@ -1406,7 +1407,7 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
     status: z.enum(["started", "completed", "failed"]),
     /** The single plugin that owns this tool, or null for Avalon-owned tools. */
     plugin: AutomationPluginActivitySchema.nullable().default(null),
-    durationMs: z.number().int().nonnegative().optional()
+    durationMs: z.number().int().safe().nonnegative().optional()
   }),
   z.object({
     type: z.literal("completed"),
@@ -1425,7 +1426,7 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("error"),
     error: z.object({
-      status: z.number().int().min(0).max(599),
+      status: z.number().int().safe().min(0).max(599),
       code: z.string().min(1),
       message: z.string().min(1),
       requestId: z.string().min(1).nullable().default(null),
@@ -1503,7 +1504,7 @@ export const AutomationRunSchema = z.object({
 
 export const AutomationTemplateUpdateSchema = z.object({
   versionId: IdSchema,
-  versionNumber: z.number().int().positive(),
+  versionNumber: z.number().int().safe().positive(),
   instructions: z.string(),
   overview: z.string(),
   triggers: z.array(TriggerDefinitionSchema),
@@ -1516,7 +1517,7 @@ export const AutomationTemplateUpdateSchema = z.object({
 export const AutomationDetailSchema = AutomationSummarySchema.extend({
   templateId: IdSchema,
   templateVersionId: IdSchema,
-  versionNumber: z.number().int().positive(),
+  versionNumber: z.number().int().safe().positive(),
   instructions: z.string(),
   overview: z.string(),
   triggers: z.array(TriggerDefinitionSchema),
@@ -1594,9 +1595,9 @@ export const UpdateWorkspaceRequestSchema = z.object({ timezone: IanaTimezoneSch
 // --- Digest ---------------------------------------------------------------
 
 /** Sunday through Saturday, matching `Date#getDay` so no table maps between. */
-export const DigestWeekdaySchema = z.number().int().min(0).max(6);
+export const DigestWeekdaySchema = z.number().int().safe().min(0).max(6);
 /** Local wall-clock minute in the schedule's own timezone. */
-export const DigestMinuteOfDaySchema = z.number().int().min(0).max(1439);
+export const DigestMinuteOfDaySchema = z.number().int().safe().min(0).max(1439);
 
 /**
  * A destination a digest can be sent to. `email` is always offered and needs no
@@ -1690,7 +1691,7 @@ export const CreateWorkstreamRequestSchema = z.object({
 
 export const WorkOpportunitySchema = z.object({
   id: IdSchema,
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
   displayPrompt: z.string().min(1).max(180),
   icon: AutomationPluginIconSchema,
   sourceLabel: z.string().min(1).max(180),
@@ -1703,10 +1704,10 @@ export const RecordWorkOpportunityImpressionsRequestSchema = z.object({
   surface: z.enum(["menu_bar", "workspace_home"]),
 });
 export const StartWorkOpportunityRequestSchema = z.object({
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
   idempotencyKey: z.string().trim().min(1).max(120),
   surface: z.enum(["menu_bar", "workspace_home"]).optional(),
-  position: z.number().int().min(1).max(4).optional(),
+  position: z.number().int().safe().min(1).max(4).optional(),
 });
 
 export const UpdateWorkstreamRequestSchema = z.object({
@@ -1763,7 +1764,7 @@ export const PreviewWorkstreamBatchRequestSchema = z.object({
 }).strict();
 
 export const WorkstreamBatchPreviewSchema = z.object({
-  matchedCount: z.number().int().nonnegative(),
+  matchedCount: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const ApplyWorkstreamBatchRequestSchema = z.object({
@@ -1774,12 +1775,12 @@ export const ApplyWorkstreamBatchRequestSchema = z.object({
 
 export const WorkstreamBatchAcceptedSchema = z.object({
   operationId: IdSchema,
-  enqueuedCount: z.number().int().nonnegative(),
+  enqueuedCount: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
-  readThroughSequenceNumber: z.number().int().nonnegative(),
-  observedManualUnreadGeneration: z.number().int().nonnegative(),
+  readThroughSequenceNumber: z.number().int().safe().nonnegative(),
+  observedManualUnreadGeneration: z.number().int().safe().nonnegative(),
   entrypoint: z.enum([
     'direct', 'sidebar_new', 'sidebar_pinned', 'sidebar_recent', 'sidebar_note', 'sidebar_automation',
     'home_waiting', 'home_suggested', 'menu_bar', 'command_shortcut', 'deep_link', 'notification',
@@ -1895,7 +1896,7 @@ export const CompileAutomationRequestSchema = z.object({
   currentDraft: AutomationDraftSchema.nullable().default(null),
   attachmentIds: z.array(IdSchema).max(10).default([]),
   inputMode: z.enum(['typed', 'suggested_prompt', 'elicitation_response', 'edit']).default('typed'),
-  connectorMentionCount: z.number().int().min(0).max(100).default(0),
+  connectorMentionCount: z.number().int().safe().min(0).max(100).default(0),
   resolvedElicitation: z.object({
     id: IdSchema,
     responseType: z.enum(['free_text', 'single_select', 'multi_select']),
@@ -1931,7 +1932,7 @@ export const WORKSTREAM_REALTIME_MAX_FRAME_BYTES = 1_000_000;
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("subscribe"),
-    afterSequence: z.number().int().nonnegative(),
+    afterSequence: z.number().int().safe().nonnegative(),
     /**
      * Old desktop builds derived viewer presence from feed subscriptions. The
      * current desktop reports foreground presence through WorkspaceDO instead,
@@ -1993,11 +1994,11 @@ export const WorkspaceWorkstreamCursorSchema = z.string()
 export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("subscribe"),
-    afterWaterline: z.number().int().nonnegative(),
+    afterWaterline: z.number().int().safe().nonnegative(),
   }).strict(),
   z.object({
     type: z.literal("set_presence"),
-    revision: z.number().int().positive(),
+    revision: z.number().int().safe().positive(),
     applicationState: z.enum(["foreground", "background"]),
     foregroundWorkstreamId: WorkstreamIdSchema.nullable(),
   }).strict(),
@@ -2011,7 +2012,7 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("list_workstreams"),
     requestId: IdSchema,
-    limit: z.number().int().min(1).max(250),
+    limit: z.number().int().safe().min(1).max(250),
     before: WorkspaceWorkstreamCursorSchema.optional(),
     includeSystem: z.boolean(),
   }).strict(),
@@ -2039,13 +2040,18 @@ const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7
  * the UUIDv7 identity of its own state row unchanged over both socket paths;
  * those IDs are time-sortable traces, not a distributed total-order clock.
  */
-export const WorkstreamStateVersionSchema = z.object({
+const workstreamStateVersionFields = {
   commonEventId: WorkstreamStateEventIdSchema,
   viewerEventId: WorkstreamStateEventIdSchema.nullable(),
-  authorityGeneration: z.number().int().positive(),
-  commonWaterline: z.number().int().positive(),
-  viewerWaterline: z.number().int().nonnegative(),
-}).strict().superRefine((version, context) => {
+  authorityGeneration: z.number().int().safe().positive(),
+  commonWaterline: z.number().int().safe().positive(),
+  viewerWaterline: z.number().int().safe().nonnegative(),
+} as const;
+
+function refineWorkstreamStateVersion(
+  version: { viewerWaterline: number; viewerEventId: string | null },
+  context: z.RefinementCtx,
+): void {
   if ((version.viewerWaterline === 0) !== (version.viewerEventId === null)) {
     context.addIssue({
       code: "custom",
@@ -2053,11 +2059,16 @@ export const WorkstreamStateVersionSchema = z.object({
       message: "must be null exactly when viewerWaterline is zero",
     });
   }
-});
+}
 
-export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchema.extend({
+export const WorkstreamStateVersionSchema = z.object(workstreamStateVersionFields)
+  .strict()
+  .superRefine(refineWorkstreamStateVersion);
+
+export const WorkspaceWorkstreamStateVersionSchema = z.object({
+  ...workstreamStateVersionFields,
   workstreamId: IdSchema,
-}).strict();
+}).strict().superRefine(refineWorkstreamStateVersion);
 
 /**
  * The body of one cursor-paged directory answer, shared by both events that
@@ -2067,7 +2078,7 @@ export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchem
  * `ZodEffects`, which cannot be extended.
  */
 const workspaceWorkstreamPageFields = {
-  directoryWaterline: z.number().int().nonnegative(),
+  directoryWaterline: z.number().int().safe().nonnegative(),
   items: z.array(WorkstreamSchema),
   stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
@@ -2129,11 +2140,11 @@ export const WorkspaceSidebarSchema = z.object({
   workstreams: z.object(workspaceWorkstreamPageFields).strict()
     .superRefine(refineWorkstreamPagePairing),
   automations: z.object({
-    waterline: z.number().int().nonnegative(),
+    waterline: z.number().int().safe().nonnegative(),
     items: z.array(AutomationSummarySchema).max(250),
   }).strict(),
   notes: z.object({
-    waterline: z.number().int().nonnegative(),
+    waterline: z.number().int().safe().nonnegative(),
     items: z.array(NoteSummarySchema).max(250),
   }).strict(),
   /** Optional during the rolling deployment; current servers always send it. */
@@ -2155,7 +2166,7 @@ export const WorkspaceSidebarSchema = z.object({
 export const WorkspaceSocketSyncEventSchema = z.object({
   type: z.literal("workspace_sync"),
   eventId: WorkstreamStateEventIdSchema,
-  waterline: z.number().int().nonnegative(),
+  waterline: z.number().int().safe().nonnegative(),
   occurredAt: TimestampSchema,
   topics: z.array(WorkspaceSyncTopicSchema),
   reason: z.enum(["initial", "change", "history_unavailable", "resume"]),
@@ -2238,14 +2249,14 @@ export const WorkspaceSidebarListEventSchema = z.discriminatedUnion("list", [
     type: z.literal("workspace_sidebar_list"),
     occurredAt: TimestampSchema,
     list: z.literal("automations"),
-    waterline: z.number().int().positive(),
+    waterline: z.number().int().safe().positive(),
     items: z.array(AutomationSummarySchema).max(250),
   }).strict(),
   z.object({
     type: z.literal("workspace_sidebar_list"),
     occurredAt: TimestampSchema,
     list: z.literal("notes"),
-    waterline: z.number().int().positive(),
+    waterline: z.number().int().safe().positive(),
     items: z.array(NoteSummarySchema).max(250),
   }).strict(),
 ]);
@@ -2288,7 +2299,7 @@ export const WorkspaceWorkstreamStateEventSchema = z.object({
  */
 export const WorkstreamControlMetadataSchema = z.object({
   stateVersion: WorkstreamStateVersionSchema,
-  revision: z.number().int().nonnegative(),
+  revision: z.number().int().safe().nonnegative(),
   id: IdSchema,
   workspaceId: IdSchema,
   title: z.string().min(1).max(500),
@@ -2303,8 +2314,8 @@ export const WorkstreamControlMetadataSchema = z.object({
   titleStatus: z.enum(["naming", "automatic", "settled"]),
   exactState: z.string().min(1).max(80),
   harnessStatus: HarnessStatusSchema,
-  latestAttentionSequenceNumber: z.number().int().nonnegative(),
-  unreadTrackingStartSequenceNumber: z.number().int().nonnegative(),
+  latestAttentionSequenceNumber: z.number().int().safe().nonnegative(),
+  unreadTrackingStartSequenceNumber: z.number().int().safe().nonnegative(),
   lastActivityAt: TimestampSchema,
   completedAt: TimestampSchema.nullable(),
   archivedAt: TimestampSchema.nullable(),
@@ -2320,14 +2331,14 @@ export const WorkstreamControlMetadataSchema = z.object({
   viewer: z.object({
     isParticipant: z.boolean(),
     listable: z.boolean(),
-    unreadCount: z.number().int().nonnegative(),
+    unreadCount: z.number().int().safe().nonnegative(),
     youAreMentioned: z.boolean(),
     /** See `WorkstreamSchema.unseen`. False for anyone not in the room. */
     unseen: z.boolean().default(false),
-    readThroughSequenceNumber: z.number().int().nonnegative(),
-    manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
-    manualUnreadGeneration: z.number().int().nonnegative(),
-    latestMentionSequenceNumber: z.number().int().nonnegative(),
+    readThroughSequenceNumber: z.number().int().safe().nonnegative(),
+    manualUnreadFromSequenceNumber: z.number().int().safe().nonnegative().nullable(),
+    manualUnreadGeneration: z.number().int().safe().nonnegative(),
+    latestMentionSequenceNumber: z.number().int().safe().nonnegative(),
     /**
      * Whether this viewer has the HyperSight panel open.
      *
@@ -2411,7 +2422,7 @@ export const WorkstreamSocketCommandResultSchema = z.discriminatedUnion("type", 
     command: z.literal("create_message"),
     clientMessageId: z.string().min(1).max(120),
     error: z.object({
-      status: z.number().int().min(0).max(599),
+      status: z.number().int().safe().min(0).max(599),
       code: z.string().min(1).max(160),
       message: z.string().min(1).max(1_000),
       details: z.record(z.string(), z.unknown()).optional(),
@@ -2420,18 +2431,18 @@ export const WorkstreamSocketCommandResultSchema = z.discriminatedUnion("type", 
 ]);
 
 const ServerEventBaseSchema = z.object({
-  sequence: z.number().int().nonnegative(),
+  sequence: z.number().int().safe().nonnegative(),
   occurredAt: TimestampSchema
 });
 const StreamEventBaseSchema = ServerEventBaseSchema.extend({
   /** Stable identity for one model turn, across retries and route fallbacks. */
   turnId: TranscriptTurnIdSchema,
   /** Canonical position reserved before the provider request begins. */
-  transcriptSequence: z.number().int().positive(),
+  transcriptSequence: z.number().int().safe().positive(),
   /** Increments whenever a turn restarts on the same or a fallback route. */
-  epoch: z.number().int().nonnegative(),
+  epoch: z.number().int().safe().nonnegative(),
   /** Monotonic within one turn epoch; distinct from the room event sequence. */
-  streamSeq: z.number().int().nonnegative()
+  streamSeq: z.number().int().safe().nonnegative()
 });
 /**
  * The accumulated assistant text a room can hand to somebody who subscribes
@@ -2443,12 +2454,12 @@ const ActiveStreamCheckpointBaseSchema = z.object({
   streamId: IdSchema,
   harnessRunId: IdSchema,
   turnId: TranscriptTurnIdSchema,
-  epoch: z.number().int().nonnegative(),
-  streamSeq: z.number().int().nonnegative(),
+  epoch: z.number().int().safe().nonnegative(),
+  streamSeq: z.number().int().safe().nonnegative(),
   seenTurnIds: z.array(TranscriptTurnIdSchema),
   text: z.string(),
-  turnStartOffset: z.number().int().nonnegative(),
-  roomSequence: z.number().int().nonnegative(),
+  turnStartOffset: z.number().int().safe().nonnegative(),
+  roomSequence: z.number().int().safe().nonnegative(),
   createdAt: TimestampSchema,
 }).refine((checkpoint) => checkpoint.turnStartOffset <= checkpoint.text.length, {
   message: "Turn start must fall within the accumulated stream text",
@@ -2456,7 +2467,7 @@ const ActiveStreamCheckpointBaseSchema = z.object({
 });
 /** Workstream streams always occupy a pre-reserved canonical position. */
 export const ActiveStreamCheckpointSchema = ActiveStreamCheckpointBaseSchema.and(z.object({
-  transcriptSequence: z.number().int().positive(),
+  transcriptSequence: z.number().int().safe().positive(),
 }));
 export const ActiveStreamCheckpointsSchema = z.array(ActiveStreamCheckpointSchema).max(1);
 
@@ -2467,7 +2478,7 @@ export const BlockDashboardStreamCheckpointSchema = ActiveStreamCheckpointBaseSc
 export const AgentCompactionStateSchema = z.object({
   harnessRunId: IdSchema,
   attemptId: IdSchema,
-  compactionIndex: z.number().int().positive(),
+  compactionIndex: z.number().int().safe().positive(),
   trigger: z.enum(["manual", "auto"]),
   startedAt: TimestampSchema,
 }).strict();
@@ -2546,15 +2557,15 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
      * server-authoritative set would exceed one WebSocket frame. Zero means the
      * transcript snapshot already carries the complete set.
      */
-    pendingInputChunkCount: z.number().int().nonnegative(),
+    pendingInputChunkCount: z.number().int().safe().nonnegative(),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
   }).strict(),
   ServerEventBaseSchema.extend({
     type: z.literal("pending_inputs_snapshot_chunk"),
     snapshotId: z.string().min(1),
-    chunkIndex: z.number().int().nonnegative(),
-    chunkCount: z.number().int().positive(),
+    chunkIndex: z.number().int().safe().nonnegative(),
+    chunkCount: z.number().int().safe().positive(),
     inputs: z.array(PendingTranscriptInputSchema).min(1),
   }).strict(),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
@@ -2623,7 +2634,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     type: z.literal("compaction_finished"),
     harnessRunId: IdSchema,
     attemptId: IdSchema,
-    compactionIndex: z.number().int().positive(),
+    compactionIndex: z.number().int().safe().positive(),
     outcome: z.enum(["completed", "failed"]),
   }),
   ServerEventBaseSchema.extend({ type: z.literal("tool_started"), invocation: ToolInvocationSchema }),
@@ -2645,7 +2656,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
     reason: z.enum(["history_unavailable", "snapshot_expired", "sequence_ahead"]),
-    latestSequence: z.number().int().nonnegative(),
+    latestSequence: z.number().int().safe().nonnegative(),
     /** Preserves an in-flight response while canonical REST state is refreshed. */
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     /** Preserves the explicit compaction indicator across replay-window loss. */
@@ -2674,7 +2685,7 @@ export const GenerateMeetingNotesRequestSchema = z.object({
   endedAt: TimestampSchema.nullable().default(null),
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
   /** The cadence the client is keeping; null means resolve the flag instead. */
-  refreshSeconds: z.number().int()
+  refreshSeconds: z.number().int().safe()
     .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
     .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
     .nullable()
@@ -2761,7 +2772,7 @@ export const ActivityQueueMessageSchema = z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   activityId: IdSchema,
-  attempt: z.number().int().min(0).max(5).default(0)
+  attempt: z.number().int().safe().min(0).max(5).default(0)
 });
 
 export const SlackIngressQueueMessageSchema = z.object({
@@ -2825,7 +2836,7 @@ export const SlackSearchAuthorizationSchema = z.object({
 
 export const WorkstreamCompactionFenceSchema = z.object({
   checkpointRunId: IdSchema,
-  compactedThroughSequence: z.number().int().nonnegative(),
+  compactedThroughSequence: z.number().int().safe().nonnegative(),
   checkpointHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
 }).strict();
 
@@ -2952,7 +2963,7 @@ export const ToolDefinitionSchema = z.object({
   mode: z.enum(["read", "write"]),
   idempotency: z.enum(["safe", "provider_key", "record_before_execute"]),
   /** Optional per-tool ceiling. The host still applies its overall run limit. */
-  timeoutMs: z.number().int().positive().max(1_050_000).optional()
+  timeoutMs: z.number().int().safe().positive().max(1_050_000).optional()
 });
 
 /**
@@ -2997,9 +3008,9 @@ export const NativeAgentSurfaceSchema = z.object({
   /** How provider-native sessions select one authorized Avalon connection. */
   sessionOwnership: NativeAgentSessionOwnershipSchema,
   /** Maximum time the provider allows before the signed webhook is acknowledged. */
-  webhookResponseDeadlineMs: z.number().int().positive().max(60_000).optional(),
+  webhookResponseDeadlineMs: z.number().int().safe().positive().max(60_000).optional(),
   /** Maximum time before the connector must publish activity or an external URL. */
-  sessionAcknowledgementDeadlineMs: z.number().int().positive().max(60_000).optional()
+  sessionAcknowledgementDeadlineMs: z.number().int().safe().positive().max(60_000).optional()
 });
 
 /**
@@ -3018,7 +3029,7 @@ export const MessagingAgentSurfaceSchema = z.object({
   supportsProactiveDelivery: z.boolean(),
   maturity: ConnectorSurfaceMaturitySchema.default("stable"),
   runtimeStatus: ConnectorSurfaceRuntimeStatusSchema,
-  webhookResponseDeadlineMs: z.number().int().positive().max(60_000),
+  webhookResponseDeadlineMs: z.number().int().safe().positive().max(60_000),
 });
 
 export const ConnectorCapabilityKindSchema = z.enum(["tool", "host", "native_agent", "messaging_agent"]);
@@ -3400,23 +3411,23 @@ export const TerminalNetworkVerificationStateSchema = z.enum(["pending", "verifi
 export const TerminalWorkspaceSettingsSchema = z.object({
   availability: z.enum(["supported", "unsupported", "emergency_disabled"]),
   mode: TerminalNetworkModeSchema,
-  revision: z.number().int().positive(),
+  revision: z.number().int().safe().positive(),
   verificationState: TerminalNetworkVerificationStateSchema,
   customDomains: z.array(z.string().min(1).max(253)).max(20),
-  remainingCustomSlots: z.number().int().nonnegative().max(20),
+  remainingCustomSlots: z.number().int().safe().nonnegative().max(20),
   failureCode: z.string().min(1).max(160).nullable(),
 }).strict();
 export const PreviewTerminalNetworkPolicyRequestSchema = z.object({
-  expectedRevision: z.number().int().positive(),
+  expectedRevision: z.number().int().safe().positive(),
   mode: TerminalNetworkModeSchema,
   customDomains: z.array(z.string().min(1).max(253)).max(20),
 }).strict();
 export const TerminalNetworkPolicyPreviewSchema = z.object({
   mutationId: IdSchema,
-  expectedRevision: z.number().int().positive(),
+  expectedRevision: z.number().int().safe().positive(),
   proposedMode: TerminalNetworkModeSchema,
   customDomains: z.array(z.string().min(1).max(253)).max(20),
-  remainingCustomSlots: z.number().int().nonnegative().max(20),
+  remainingCustomSlots: z.number().int().safe().nonnegative().max(20),
   affectedWorkstreamIds: z.array(IdSchema).max(1_000),
   affectedWorkstreams: z.array(z.object({
     id: IdSchema,
@@ -3426,14 +3437,14 @@ export const TerminalNetworkPolicyPreviewSchema = z.object({
 }).strict();
 export const ApplyTerminalNetworkPolicyRequestSchema = z.object({
   mutationId: IdSchema,
-  expectedRevision: z.number().int().positive(),
+  expectedRevision: z.number().int().safe().positive(),
   confirmed: z.literal(true),
 }).strict();
 export const TerminalSandboxStateSchema = z.enum([
   "absent", "starting", "running", "stopped", "archived", "restoring", "expired", "failed",
 ]);
 export const TerminalSelectedRepositorySchema = z.object({
-  id: z.number().int().positive(),
+  id: z.number().int().safe().positive(),
   fullName: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
   baseRef: z.string().min(1).max(240),
   baseSha: z.string().regex(/^[0-9a-f]{40}$/u),
@@ -3536,7 +3547,7 @@ function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEY
         ? { valid: true, value }
         : { valid: false };
     case "resourceId": {
-      const parsed = z.string().uuid().safeParse(value);
+      const parsed = z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").safeParse(value);
       return parsed.success ? { valid: true, value: parsed.data } : { valid: false };
     }
     case "available":

@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
+import { z } from 'zod/v3';
 import type { Env } from '../env';
 import { TelemetryBootstrapService } from './bootstrap';
 import {
@@ -13,7 +14,7 @@ const CapabilityCommandSchema = z.object({
 
 const CapabilityProjectionSchema = z.object({
   route: z.literal('eu'),
-  anonymousEpochId: z.string().uuid(),
+  anonymousEpochId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   closed: z.boolean(),
 }).strict();
 

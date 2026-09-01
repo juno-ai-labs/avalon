@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "@rally/contracts";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   base64,
   isRecord,

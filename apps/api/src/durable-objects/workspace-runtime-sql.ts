@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
+import { z } from "zod/v3";
 
 const WorkspaceSqlValueSchema = z.union([z.string(), z.number(), z.null()]);
 
@@ -8,8 +9,8 @@ const WorkspaceSqlStatementSchema = z.object({
 }).strict();
 
 export const WorkspaceRuntimeSqlRequestSchema = z.object({
-  workspaceId: z.string().uuid(),
-  requestId: z.string().uuid(),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  requestId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   statements: z.array(WorkspaceSqlStatementSchema).min(1).max(100),
 }).strict();
 

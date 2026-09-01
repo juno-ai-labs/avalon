@@ -1,6 +1,6 @@
 import { parseSlackEventEnvelope, verifySlackRequest } from "@rally/connectors";
 import { Hono } from "hono";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { SlackAgentService } from "../services/slack-agent-service";

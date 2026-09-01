@@ -11,7 +11,7 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const WorkspaceProjectErrorCodeSchema = z.enum([
   "project_access_denied",
@@ -77,7 +77,7 @@ export const WorkspaceProjectWorkstreamConstraintResultSchema = z.object({
 export type WorkspaceProjectWorkstreamConstraintResult = z.infer<typeof WorkspaceProjectWorkstreamConstraintResultSchema>;
 
 export const WorkspaceProjectMembershipSettleRequestSchema = WorkspaceProjectMembershipPrepareRequestSchema.extend({
-  membershipGeneration: z.number().int().positive(),
+  membershipGeneration: z.number().int().safe().positive(),
   sourceProjectId: ProjectIdSchema.nullable(),
   sourceDetached: z.boolean(),
 }).strict();
@@ -88,7 +88,7 @@ export const WorkspaceProjectMembershipPlanSchema = z.object({
   project: ProjectSummarySchema,
   sourceProjectId: ProjectIdSchema.nullable(),
   sourceDetached: z.boolean(),
-  membershipGeneration: z.number().int().positive(),
+  membershipGeneration: z.number().int().safe().positive(),
 }).strict();
 export const WorkspaceProjectMembershipPlanResultSchema = z.union([
   WorkspaceProjectMembershipPlanSchema,
@@ -105,9 +105,9 @@ export type WorkspaceProjectDefaultResourceRequest = z.infer<typeof WorkspacePro
 export const WorkspaceProjectDefaultTargetSchema = z.object({
   projectId: ProjectIdSchema,
   resourceId: IdSchema,
-  defaultGeneration: z.number().int().positive(),
+  defaultGeneration: z.number().int().safe().positive(),
   workstreamId: WorkstreamIdSchema,
-  membershipGeneration: z.number().int().positive(),
+  membershipGeneration: z.number().int().safe().positive(),
 }).strict();
 export type WorkspaceProjectDefaultTarget = z.infer<typeof WorkspaceProjectDefaultTargetSchema>;
 

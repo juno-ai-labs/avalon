@@ -1,5 +1,5 @@
 import { IdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const TimestampSchema = z.string().datetime({ offset: true });
 const JsonStringSchema = z.string().refine((value) => {
@@ -57,7 +57,7 @@ export const WorkspaceReleaseDraftAttachmentsRequestSchema = z.object({
 }).strict();
 
 export const WorkspaceReleaseDraftAttachmentsResultSchema = z.object({
-  released: z.number().int().nonnegative(),
+  released: z.number().int().safe().nonnegative(),
 }).strict();
 
 export type WorkspaceReserveDraftAttachmentsRequest = z.infer<

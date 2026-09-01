@@ -1,3 +1,5 @@
+import { isZodValidationError } from "@rally/contracts/zod-error";
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   ConnectorError,
   joinAllSlackPublicChannels,
@@ -53,7 +55,7 @@ import {
   workstreamUnfurlSummary,
   type WorkstreamUnfurlSummary,
 } from "./slack-workstream-card";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { AuthContext, Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
@@ -3843,7 +3845,7 @@ function slackErrorReason(error: unknown): string {
     }
     return error.code;
   }
-  if (error instanceof z.ZodError) return "invalid_slack_data";
+  if (isZodValidationError(error)) return "invalid_slack_data";
   return error instanceof Error ? error.name : "unknown_error";
 }
 
@@ -4024,7 +4026,7 @@ function modalPrompt(state: unknown): string | null {
  * row and fell into that branch, and this keeps it reachable.
  */
 function slackModalWorkstreamId(privateMetadata: unknown): string | null {
-  const parsed = z.string().uuid().safeParse(privateMetadata);
+  const parsed = z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").safeParse(privateMetadata);
   return parsed.success ? parsed.data : null;
 }
 
@@ -4191,7 +4193,7 @@ function parseGrantedScopes(value: string): string[] {
 }
 
 function slackIngressRetryable(error: unknown): boolean {
-  if (error instanceof z.ZodError) return false;
+  if (isZodValidationError(error)) return false;
   // Two object-refusal codes are transient by construction and self-heal on
   // the durable retry, which re-reads `linkedAccount` fresh:
   // `connector_member_revoked` is reachable only as a race — a membership or

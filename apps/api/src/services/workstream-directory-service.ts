@@ -3,7 +3,7 @@ import {
   type Workstream,
   type WorkstreamBatchFilter,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { workspaceDOName } from "../durable-objects/names";
 import {

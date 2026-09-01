@@ -1,6 +1,6 @@
+import { isZodValidationError } from "@rally/contracts/zod-error";
 import type { ErrorHandler, NotFoundHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { z } from "zod";
 import { RepositoryError } from "@rally/db";
 import { ConnectorError } from "@rally/connectors";
 import type { HonoAppEnv } from "../env";
@@ -77,7 +77,7 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
           validation_target: "json",
           validation_issues: [{ path: "(root)", code: "invalid_json" }],
         }
-        : error instanceof z.ZodError
+        : isZodValidationError(error)
       ? {
         path: c.req.path,
         // The template, not the resolved path: `/workstreams/:id` is what makes

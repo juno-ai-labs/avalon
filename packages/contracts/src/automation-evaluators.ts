@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   ActivitySourceBindingKeySchema,
   IdSchema,
@@ -149,9 +149,9 @@ export const ExternalEventEvaluatorV1Schema = z.object({
 export const AutomationExternalEvaluatorSetV1Schema = z.object({
   schemaVersion: z.literal(1),
   automationId: IdSchema.brand<"AutomationId">(),
-  definitionRevision: z.number().int().positive().brand<"AutomationDefinitionRevision">(),
-  authorityGeneration: z.number().int().positive().brand<"AutomationAuthorityGeneration">(),
-  projectionVersion: z.number().int().positive().brand<"AutomationEvaluatorProjectionVersion">(),
+  definitionRevision: z.number().int().safe().positive().brand<"AutomationDefinitionRevision">(),
+  authorityGeneration: z.number().int().safe().positive().brand<"AutomationAuthorityGeneration">(),
+  projectionVersion: z.number().int().safe().positive().brand<"AutomationEvaluatorProjectionVersion">(),
   evaluators: z.array(ExternalEventEvaluatorV1Schema),
 }).strict().superRefine((value, context) => {
   const identities = new Set<string>();
@@ -226,8 +226,8 @@ export const ExternalEventRegistrationProjectionV1Schema = z.object({
       resourceId: IdSchema,
     }).strict(),
   ]),
-  authorityGeneration: z.number().int().positive(),
-  projectionVersion: z.number().int().positive(),
+  authorityGeneration: z.number().int().safe().positive(),
+  projectionVersion: z.number().int().safe().positive(),
   sourceHash: NonEmptyStringSchema,
   evaluators: z.array(ExternalEventEvaluatorV1Schema),
 }).strict();
@@ -263,33 +263,33 @@ export const WorkspaceExternalEventDeliveryClaimRequestSchema = z.object({
 
 export const WorkspaceExternalEventDeliveryClaimResultSchema = z.discriminatedUnion("outcome", [
   z.object({ outcome: z.literal("delivered") }).strict(),
-  z.object({ outcome: z.literal("busy"), retryAt: z.number().int().nonnegative() }).strict(),
+  z.object({ outcome: z.literal("busy"), retryAt: z.number().int().safe().nonnegative() }).strict(),
   z.object({
     outcome: z.literal("claimed"),
-    leaseExpiresAt: z.number().int().nonnegative(),
+    leaseExpiresAt: z.number().int().safe().nonnegative(),
     destination: z.discriminatedUnion("kind", [
       z.object({
         kind: z.literal("automation"),
         automationId: IdSchema,
-        authorityGeneration: z.number().int().positive(),
-        projectionVersion: z.number().int().positive(),
+        authorityGeneration: z.number().int().safe().positive(),
+        projectionVersion: z.number().int().safe().positive(),
       }).strict(),
       z.object({
         kind: z.literal("workstream_resource_update"),
         workstreamId: IdSchema,
         substreamId: z.union([z.literal("0"), IdSchema]),
         resourceId: IdSchema,
-        authorityGeneration: z.number().int().positive(),
-        projectionVersion: z.number().int().positive(),
+        authorityGeneration: z.number().int().safe().positive(),
+        projectionVersion: z.number().int().safe().positive(),
       }).strict(),
     ]),
     event: z.object({
       id: IdSchema,
-      eventSequence: z.number().int().positive(),
+      eventSequence: z.number().int().safe().positive(),
       eventType: NonEmptyStringSchema,
       title: NonEmptyStringSchema,
       summary: z.string(),
-      occurredAt: z.number().int().nonnegative(),
+      occurredAt: z.number().int().safe().nonnegative(),
       audienceUserIds: z.array(IdSchema),
       audienceKind: z.enum(["workspace", "restricted"]),
     }).strict(),

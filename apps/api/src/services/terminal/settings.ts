@@ -6,7 +6,7 @@ import type {
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { createTerminalPortFactory } from "./object-port";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";

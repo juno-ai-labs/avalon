@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * The workspace's resource inventory, as questions rather than SQL.
@@ -120,7 +120,7 @@ export const WorkspaceConnectorResourceResolveResultSchema = z.object({
 /** One `resource_versions` row, in the columns the history readers consume. */
 export const WorkspaceResourceVersionSchema = z.object({
   resource_id: IdSchema,
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
   author_kind: z.string().nullable(),
   author_run_id: z.string().nullable(),
   author_user_id: z.string().nullable(),
@@ -144,7 +144,7 @@ export const WorkspaceResourceVersionListRequestSchema = z.object({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   /** One version rather than the whole history, when set. */
-  version: z.number().int().positive().nullable(),
+  version: z.number().int().safe().positive().nullable(),
 }).strict();
 
 export const WorkspaceResourceVersionListSchema = z.object({
@@ -250,7 +250,7 @@ export const WorkspaceExpiredDraftReapRequestSchema = z.object({
 }).strict();
 
 export const WorkspaceExpiredDraftReapResultSchema = z.object({
-  removed: z.number().int().nonnegative(),
+  removed: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const WorkspaceResourceSlugClaimRequestSchema = z.object({

@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "./uuid-validation";
 /**
  * The one contract a Durable Object migration report is written and read
  * through.
@@ -20,7 +21,7 @@
  * a workspace slug, an email address, or any other legible field stops matching
  * and the report is refused rather than quietly forwarded.
  */
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /** Cloudflare renders a Durable Object ID as 64 lowercase hex characters. */
 export const DurableObjectIdSchema = z.string().regex(/^[0-9a-f]{64}$/u);
@@ -80,7 +81,7 @@ export type DurableObjectMigrationStatus = z.infer<typeof DurableObjectMigration
 export const DurableObjectMigrationFailureSchema = z.object({
   message: z.string().min(1).max(1_000),
   /** The version being applied when it threw, where the runner named one. */
-  version: z.number().int().positive().nullable(),
+  version: z.number().int().safe().positive().nullable(),
 });
 export type DurableObjectMigrationFailure = z.infer<typeof DurableObjectMigrationFailureSchema>;
 
@@ -94,7 +95,7 @@ export const DurableObjectMigrationReportSchema = z.object({
    * distinct wakes can produce byte-identical reports, and collapsing those
    * would silently lose a heartbeat.
    */
-  reportId: z.string().uuid(),
+  reportId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   objectId: DurableObjectIdSchema,
   /** Absent when the object was addressed by ID rather than derived from a name. */
   objectName: OpaqueDurableObjectNameSchema.nullable(),
@@ -107,17 +108,17 @@ export const DurableObjectMigrationReportSchema = z.object({
   workerVersionId: z.string().min(1).max(64),
   status: DurableObjectMigrationStatusSchema,
   /** The highest version in this object's ledger; `0` before the first one lands. */
-  schemaVersion: z.number().int().nonnegative(),
+  schemaVersion: z.number().int().safe().nonnegative(),
   /** The highest version the running build ships, so the tracker can see drift. */
-  latestVersion: z.number().int().nonnegative(),
+  latestVersion: z.number().int().safe().nonnegative(),
   /**
    * Versions this wake applied — empty when the object woke already current,
    * and for a failure, where the transaction rolled back. Bounded well above any
    * plausible migration history so a first-ever wake reports its whole list.
    */
-  appliedVersions: z.array(z.number().int().positive()).max(512),
+  appliedVersions: z.array(z.number().int().safe().positive()).max(512),
   failure: DurableObjectMigrationFailureSchema.nullable(),
-  occurredAt: z.number().int().positive(),
+  occurredAt: z.number().int().safe().positive(),
 });
 export type DurableObjectMigrationReport = z.infer<typeof DurableObjectMigrationReportSchema>;
 
@@ -163,9 +164,9 @@ export const DurableObjectMigrationCommandSchema = z.object({
    * object twice wakes it twice and reports twice — so this is not a dedupe
    * key; it is what ties a log line to the one message that produced it.
    */
-  commandId: z.string().uuid(),
+  commandId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   /** The operator run this message belongs to, as recorded by the tracker. */
-  runId: z.string().uuid(),
+  runId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   /**
    * Selects the Durable Object namespace binding to address the object through.
    * The consumer holds the map; a class it does not know is dropped rather than
@@ -196,14 +197,14 @@ export const DurableObjectMigrationCommandSchema = z.object({
    * command means joining `runId` back to a registry the operator is looking at
    * the queue precisely because they cannot get an answer from.
    */
-  requestedAt: z.number().int().positive(),
+  requestedAt: z.number().int().safe().positive(),
   /**
    * One merge-triggered, WorkspaceDO-only product-authority cutover. Ordinary
    * migration-tracker messages omit it and retain their existing behavior.
    */
   automationCutover: z.object({
-    workspaceId: z.string().uuid(),
-    expectedDraftIds: z.array(z.string().uuid()).optional(),
+    workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+    expectedDraftIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).optional(),
   }).strict().optional(),
 }).superRefine((command, context) => {
   if (!command.automationCutover) {

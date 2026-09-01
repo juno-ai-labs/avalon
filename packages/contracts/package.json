@@ -10,11 +10,14 @@
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./durable-object-migrations": "./src/durable-object-migrations.ts",
     "./engineering-inspection": "./src/engineering-inspection.ts",
+    "./json-schema": "./src/json-schema.ts",
     "./http-headers": "./src/http-headers.ts",
     "./socket-tickets": "./src/socket-tickets.ts",
     "./telemetry": "./src/telemetry.ts",
+    "./uuid-validation": "./src/uuid-validation.ts",
     "./workspace-target": "./src/workspace-target.ts",
     "./workstream-links": "./src/workstream-links.ts",
+    "./zod-error": "./src/zod-error.ts",
     "./url-schemas": "./src/url-schemas.ts",
     "./text": "./src/text.ts",
     "./markdown-code": "./src/markdown-code.ts",
@@ -26,7 +29,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "zod-to-json-schema": "catalog:"
   },
   "devDependencies": {
     "typescript": "catalog:",

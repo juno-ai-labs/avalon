@@ -1,6 +1,6 @@
 import type { HarnessToolContext, HarnessToolResult } from "@rally/agent-harness";
 import type { AttachmentKind } from "@rally/contracts";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 import { TerminalArgumentSchemas, type TerminalToolExecutors } from "./contract";
 import type { TerminalCheckoutRepositoryOutput } from "./repository-selection";

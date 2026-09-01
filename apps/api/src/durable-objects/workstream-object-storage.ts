@@ -10,7 +10,7 @@ import {
   type ActiveStreamCheckpoint,
   type ServerSocketEvent,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { uuidV7 } from "../lib/uuid-v7";
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
@@ -44,9 +44,9 @@ const RoomIdentitySchema = z.object({
 });
 
 const PendingBlockDashboardRefreshSchema = RoomIdentitySchema.extend({
-  triggerSequence: z.number().int().nonnegative(),
+  triggerSequence: z.number().int().safe().nonnegative(),
   contextFence: BlockDashboardContextFenceSchema,
-  firstQueuedAt: z.number().int().nonnegative(),
+  firstQueuedAt: z.number().int().safe().nonnegative(),
 });
 
 interface RealtimeStateRow extends Record<string, SqlStorageValue> {
@@ -778,7 +778,7 @@ export class WorkstreamObjectStore {
           Date.now(),
         );
       } else {
-        sourceVersion = z.number().int().positive().parse(command.sourceVersion);
+        sourceVersion = z.number().int().safe().positive().parse(command.sourceVersion);
         const dedupeKey = z.string().min(1).max(450).parse(command.dedupeKey);
         messageId = `effect:${dedupeKey}`;
         if (isPersonNotificationEffect(effect)) {

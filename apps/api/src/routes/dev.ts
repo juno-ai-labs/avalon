@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { Hono } from "hono";
 import {
   AutomationDraftSchema,
@@ -6,7 +7,7 @@ import {
   asUserId,
   asWorkspaceId,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { zValidator } from "@hono/zod-validator";
 
 import type { Env } from "../env";
@@ -92,33 +93,33 @@ const WORKSPACE_SEED_TABLES = new Set([
 ]);
 
 const seedAutomation = z.object({
-  id: z.string().uuid(),
-  authorUserId: z.string().uuid(),
+  id: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  authorUserId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   source: z.object({
     definition: AutomationDraftSchema,
     status: z.enum(["active", "paused", "error"]),
     scope: ScopeSchema,
     unsupportedTrigger: z.boolean(),
     schedules: z.array(z.object({
-      nextDueAt: z.number().int().nonnegative().nullable(),
+      nextDueAt: z.number().int().safe().nonnegative().nullable(),
     }).passthrough()),
   }).passthrough(),
 }).strict();
 
 const seedBody = z.object({
-  workspaceId: z.string().uuid(),
+  workspaceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   workspaceTables: z.record(z.string(), z.array(row)),
   automations: z.array(seedAutomation),
   workstreams: z.array(z.object({
-    id: z.string().uuid(),
+    id: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
     title: z.string().min(1),
     objective: z.string(),
     harnessStatus: z.string(),
-    nextSequenceNumber: z.number().int().positive(),
+    nextSequenceNumber: z.number().int().safe().positive(),
     participants: z.array(row),
     harnessRuns: z.array(row),
     toolInvocations: z.array(row),
-    resourceIds: z.array(z.string().uuid()),
+    resourceIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")),
     messages: z.array(row),
   })),
 }).strict();
@@ -128,11 +129,11 @@ const SeedProductResultSchema = z.object({
   seeded: z.boolean(),
   workspaceTables: z.record(z.string(), z.number()),
   automations: z.array(z.object({
-    automationId: z.string().uuid(),
+    automationId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
     lifecycle: z.enum(["active", "paused"]),
   }).strict()),
   workstreams: z.array(z.object({
-    workstreamId: z.string().uuid(),
+    workstreamId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
     copied: z.record(z.string(), z.number()),
   })),
 }).strict();

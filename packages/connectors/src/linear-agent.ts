@@ -1,6 +1,7 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type { ConnectorSurfaceRuntimeStatus } from "@rally/contracts";
 import { httpsUrlSchema } from "@rally/contracts/url-schemas";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   booleanValue,
   isRecord,
@@ -115,7 +116,7 @@ export const LinearAgentSessionEventSchema = z.object({
   oauthClientId: idSchema,
   organizationId: idSchema,
   webhookId: idSchema,
-  webhookTimestamp: z.number().int().nonnegative(),
+  webhookTimestamp: z.number().int().safe().nonnegative(),
   createdAt: dateTimeSchema,
   agentSession: sessionSchema,
   agentActivity: agentActivityWebhookSchema.nullable().optional(),
@@ -151,11 +152,11 @@ export type LinearAgentSessionEvent = z.infer<typeof LinearAgentSessionEventSche
 
 /** Structural bridge from verifyLinearWebhook without coupling this module to linear.ts. */
 export const VerifiedLinearAgentSessionEventSchema = z.object({
-  deliveryId: z.string().uuid(),
+  deliveryId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   eventName: z.literal("AgentSessionEvent"),
   organizationId: idSchema,
   webhookId: idSchema,
-  webhookTimestamp: z.number().int().nonnegative(),
+  webhookTimestamp: z.number().int().safe().nonnegative(),
   bodyHash: z.string().regex(/^[0-9a-f]{64}$/iu),
   event: LinearAgentSessionEventSchema,
 }).superRefine((verified, context) => {
@@ -318,7 +319,7 @@ const selectSignalMetadataSchema = z.object({
 
 export const LinearAgentActivityCreateInputSchema = z.object({
   agentSessionId: idSchema,
-  id: z.string().uuid().optional(),
+  id: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").optional(),
   content: LinearAgentActivityContentSchema,
   ephemeral: z.boolean().optional(),
   signal: z.enum(["auth", "select"]).optional(),

@@ -5,7 +5,7 @@ import {
   type ConnectorPollWorkflowInput
 } from "@rally/contracts";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";

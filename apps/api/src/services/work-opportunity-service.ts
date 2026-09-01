@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   renderWorkOpportunityAdmissionMessages,
   renderWorkOpportunityRankingMessages,
@@ -15,7 +16,7 @@ import {
   type WorkspaceId,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { activityContentAudience } from "../lib/activity-visibility";
@@ -64,19 +65,19 @@ const DUE_DEBOUNCE_MS = 2 * 60_000;
 // finalists it already has. The point is that it always writes something.
 const RANK_BUDGET_MS = 2 * 60_000;
 const UserLinkDecisionSchema = z.object({
-  userId: z.string().uuid().nullable(),
+  userId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable(),
   role: z.string().min(1).max(80),
   resolution: z.enum(["verified", "inferred", "ambiguous", "unresolved"]),
   reasoning: z.string().max(4_000),
   sourceId: z.string().min(1).max(200),
   sourceText: z.string().max(1_000),
-  startOffset: z.number().int().nonnegative().nullable(),
-  endOffset: z.number().int().positive().nullable(),
+  startOffset: z.number().int().safe().nonnegative().nullable(),
+  endOffset: z.number().int().safe().positive().nullable(),
 }).strict();
 
 const AdmissionDecisionSchema = z.object({
   action: z.enum(["add", "ignore", "update_existing"]),
-  existingTargetId: z.string().uuid().nullable(),
+  existingTargetId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").nullable(),
   displayPrompt: z.string().max(180),
   executionPrompt: z.string().max(20_000),
   admissionReasoning: z.string().max(20_000),
@@ -128,7 +129,7 @@ const admissionJsonSchema = {
 };
 
 const RankingResultSchema = z.object({
-  orderedOpportunityIds: z.array(z.string().uuid()).max(4),
+  orderedOpportunityIds: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).max(4),
   rankingReasoning: z.string().min(1).max(20_000),
 }).strict();
 const rankingJsonSchema = {

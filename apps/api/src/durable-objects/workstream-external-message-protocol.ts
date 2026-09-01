@@ -9,7 +9,7 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const ExternalMessageBaseSchema = z.object({
   workspaceId: WorkspaceIdSchema,
@@ -25,7 +25,7 @@ const ExternalMessageBaseSchema = z.object({
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
   runMode: z.enum(["steer", "queue"]).default("steer"),
-  now: z.number().int().nonnegative(),
+  now: z.number().int().safe().nonnegative(),
 }).strict();
 
 /** An external participant message that must reach the persistent Bind loop. */

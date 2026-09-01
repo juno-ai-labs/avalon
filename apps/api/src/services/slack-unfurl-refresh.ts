@@ -1,7 +1,7 @@
 import { slackApi } from "@rally/connectors";
 import { asWorkspaceId, workstreamCanonicalUrl } from "@rally/contracts";
 import { nowIso } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
@@ -63,7 +63,7 @@ const StaleUnfurlRowSchema = z.object({
   harness_status: z.string(),
   rendered_status: z.string(),
   // SQLite has no boolean type; the column is a 0/1 integer.
-  rendered_anonymous: z.number().int(),
+  rendered_anonymous: z.number().int().safe(),
   rendered_hash: z.string().nullable(),
 });
 
@@ -75,7 +75,7 @@ interface SlackUnfurlConnection {
   credential_key_version?: number;
 }
 
-const SlackCredentialsSchema = z.object({ botAccessToken: z.string().min(1) }).loose();
+const SlackCredentialsSchema = z.object({ botAccessToken: z.string().min(1) }).passthrough();
 
 export async function refreshSlackWorkstreamUnfurls(env: Env, workspaceId?: string): Promise<void> {
   if (!workspaceId && env.WORKSPACE_DOS) throw new Error("slack_unfurl_workspace_required");

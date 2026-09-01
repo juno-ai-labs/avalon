@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type { HarnessTool, HarnessToolContext, ModelMessageContentPart } from "@rally/agent-harness";
 import {
   ATTACHMENT_LIST_RESOURCES_DESCRIPTION,
@@ -20,7 +21,8 @@ import {
   type SuggestedAttachmentToolCall,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
-import { z } from "zod";
+import { providerJsonSchema } from "@rally/contracts/json-schema";
+import { z } from "zod/v3";
 import type { Env } from "../env";
 import { AttachmentCursorError, openAttachmentCursor, sealAttachmentCursor } from "../lib/attachment-cursor";
 import { logStructuredEvent } from "../observability/logger";
@@ -79,27 +81,27 @@ const ListCursorStateSchema = z.discriminatedUnion("mode", [
     mode: z.literal("database"),
     fingerprint: z.string().min(1).max(100),
     attachmentKind: AttachmentKindSchema.nullable(),
-    limit: z.number().int().min(1).max(50),
+    limit: z.number().int().safe().min(1).max(50),
     afterAttachedAt: z.string().datetime({ offset: true }),
-    afterResourceId: z.string().uuid(),
+    afterResourceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
     asOf: z.string().datetime({ offset: true }),
   }).strict(),
   z.object({
     mode: z.literal("in_memory"),
     fingerprint: z.string().min(1).max(100),
     attachmentKind: AttachmentKindSchema.nullable(),
-    limit: z.number().int().min(1).max(50),
-    nextIndex: z.number().int().nonnegative(),
+    limit: z.number().int().safe().min(1).max(50),
+    nextIndex: z.number().int().safe().nonnegative(),
     asOf: z.string().datetime({ offset: true }),
   }).strict(),
 ]);
 
 const ReadCursorStateSchema = z.object({
-  resourceId: z.string().uuid(),
+  resourceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   sha256: z.string().min(1).max(128),
   extractorVersion: z.string().min(1).max(160),
-  start: z.number().int().nonnegative(),
-  pageSize: z.number().int().min(1).max(MAXIMUM_READ_CHARACTERS),
+  start: z.number().int().safe().nonnegative(),
+  pageSize: z.number().int().safe().min(1).max(MAXIMUM_READ_CHARACTERS),
 }).strict();
 
 class AttachmentOperationError extends Error {
@@ -128,7 +130,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.list`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentListResourcesArgumentsSchema) as Record<string, unknown>,
+        inputSchema: providerJsonSchema(AttachmentListResourcesArgumentsSchema),
       },
       execute: async (raw) => {
         const args = AttachmentListResourcesArgumentsSchema.parse(raw);
@@ -230,7 +232,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.read`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentReadResourceArgumentsSchema) as Record<string, unknown>,
+        inputSchema: providerJsonSchema(AttachmentReadResourceArgumentsSchema),
       },
       execute: async (raw, context) => {
         const args = AttachmentReadResourceArgumentsSchema.parse(raw);
@@ -324,7 +326,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.search`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentSearchResourceArgumentsSchema) as Record<string, unknown>,
+        inputSchema: providerJsonSchema(AttachmentSearchResourceArgumentsSchema),
       },
       execute: async (raw, context) => {
         const args = AttachmentSearchResourceArgumentsSchema.parse(raw);
@@ -399,7 +401,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.view`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentViewResourceArgumentsSchema) as Record<string, unknown>,
+        inputSchema: providerJsonSchema(AttachmentViewResourceArgumentsSchema),
       },
       execute: async (raw) => {
         const args = AttachmentViewResourceArgumentsSchema.parse(raw);
@@ -509,7 +511,7 @@ export function createWorkstreamAttachmentTools(
         capability: `${capabilityPrefix}.summarize`,
         mode: "read",
         idempotency: "safe",
-        inputSchema: z.toJSONSchema(AttachmentSummarizeResourceArgumentsSchema) as Record<string, unknown>,
+        inputSchema: providerJsonSchema(AttachmentSummarizeResourceArgumentsSchema),
       },
       execute: async (raw, context) => {
         const args = AttachmentSummarizeResourceArgumentsSchema.parse(raw);

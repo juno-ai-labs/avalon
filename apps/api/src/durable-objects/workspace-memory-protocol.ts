@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * Scoped durable memory — prose items and typed tables — as questions rather
@@ -49,13 +49,13 @@ export const WorkspaceMemoryFtsSearchRequestSchema = z.object({
   match: z.string().min(1),
   scopeIds: z.array(z.string().min(1)),
   now: TimestampSchema,
-  limit: z.number().int().positive(),
+  limit: z.number().int().safe().positive(),
 }).strict();
 
 export const WorkspaceMemoryCandidateListSchema = z.object({
   candidates: z.array(z.object({
     memoryItemId: z.string().min(1),
-    revision: z.number().int().positive(),
+    revision: z.number().int().safe().positive(),
   }).strict()),
 }).strict();
 
@@ -72,7 +72,7 @@ export const WorkspaceMemoryItemSchema = z.object({
   workspaceId: z.string().min(1),
   scopeKind: MemoryScopeKindSchema,
   text: z.string(),
-  revision: z.number().int().positive(),
+  revision: z.number().int().safe().positive(),
   expiresAt: z.string().nullable(),
   invalidatedAt: z.string().nullable(),
   updatedAt: z.string(),
@@ -171,7 +171,7 @@ export const WorkspaceMemoryUpdateRequestSchema = z.object({
   workspaceId: IdSchema,
   memoryItemId: z.string().min(1),
   memoryScopeId: z.string().min(1),
-  expectedRevision: z.number().int().positive(),
+  expectedRevision: z.number().int().safe().positive(),
   text: z.string().min(1),
   expiresAt: z.string().nullable(),
   mutation: MemoryMutationRecordSchema,
@@ -182,7 +182,7 @@ export const WorkspaceMemoryInvalidateRequestSchema = z.object({
   workspaceId: IdSchema,
   memoryItemId: z.string().min(1),
   memoryScopeId: z.string().min(1),
-  expectedRevision: z.number().int().positive(),
+  expectedRevision: z.number().int().safe().positive(),
   reason: z.string().min(1),
   mutation: MemoryMutationRecordSchema,
   at: TimestampSchema,
@@ -193,7 +193,7 @@ export const WorkspaceMemoryInvalidateRequestSchema = z.object({
 export const WorkspaceMemoryOutboxDueRequestSchema = z.object({
   workspaceId: IdSchema,
   now: TimestampSchema,
-  limit: z.number().int().positive(),
+  limit: z.number().int().safe().positive(),
 }).strict();
 
 export const WorkspaceMemoryOutboxRowSchema = z.object({
@@ -201,9 +201,9 @@ export const WorkspaceMemoryOutboxRowSchema = z.object({
   memoryItemId: z.string().min(1),
   memoryScopeId: z.string().min(1),
   workspaceId: z.string().min(1),
-  revision: z.number().int().positive(),
+  revision: z.number().int().safe().positive(),
   operation: z.enum(["upsert", "delete"]),
-  attemptCount: z.number().int().nonnegative(),
+  attemptCount: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const WorkspaceMemoryOutboxDueListSchema = z.object({
@@ -248,7 +248,7 @@ export const WorkspaceMemoryProjectionSourceResultSchema = z.discriminatedUnion(
   z.object({
     outcome: z.literal("found"),
     text: z.string(),
-    revision: z.number().int().positive(),
+    revision: z.number().int().safe().positive(),
     invalidatedAt: z.string().nullable(),
     expiresAt: z.string().nullable(),
     scopeKind: MemoryScopeKindSchema,
@@ -277,8 +277,8 @@ export const WorkspaceMemoryTableRowSchema = z.object({
   description: z.string(),
   usageInstructions: z.string(),
   keyColumnIdsJson: z.string(),
-  schemaRevision: z.number().int().positive(),
-  dataRevision: z.number().int().nonnegative(),
+  schemaRevision: z.number().int().safe().positive(),
+  dataRevision: z.number().int().safe().nonnegative(),
   invalidatedAt: z.string().nullable(),
 }).strict();
 
@@ -290,7 +290,7 @@ export const WorkspaceMemoryTableColumnSchema = z.object({
   valueType: MemoryTableColumnTypeSchema,
   isRequired: z.boolean(),
   isSearchable: z.boolean(),
-  position: z.number().int().nonnegative(),
+  position: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const WorkspaceMemoryTableResultSchema = z.discriminatedUnion("outcome", [
@@ -307,7 +307,7 @@ export const WorkspaceMemoryTableSearchRequestSchema = z.object({
   scopeIds: z.array(z.string().min(1)),
   /** A prebuilt LIKE pattern, already escaped with `\`; matched NOCASE. */
   like: z.string().min(1),
-  limit: z.number().int().positive(),
+  limit: z.number().int().safe().positive(),
 }).strict();
 
 export const WorkspaceMemoryTableSearchResultSchema = z.object({
@@ -317,7 +317,7 @@ export const WorkspaceMemoryTableSearchResultSchema = z.object({
 export const WorkspaceMemoryTableRowRecordSchema = z.object({
   memoryTableRowId: z.string().min(1),
   dataJson: z.string(),
-  revision: z.number().int().positive(),
+  revision: z.number().int().safe().positive(),
   createdAt: z.string(),
   updatedAt: z.string(),
   invalidatedAt: z.string().nullable(),
@@ -396,8 +396,8 @@ export const WorkspaceMemoryTableQueryRequestSchema = z.object({
     field: CellFieldSchema,
     direction: z.enum(["asc", "desc"]),
   }).strict()),
-  limit: z.number().int().positive(),
-  offset: z.number().int().nonnegative(),
+  limit: z.number().int().safe().positive(),
+  offset: z.number().int().safe().nonnegative(),
 }).strict();
 
 /**
@@ -408,7 +408,7 @@ export const WorkspaceMemoryTableQueryRequestSchema = z.object({
 export const WorkspaceMemoryTableQueryResultSchema = z.discriminatedUnion("outcome", [
   z.object({
     outcome: z.literal("found"),
-    dataRevision: z.number().int().nonnegative(),
+    dataRevision: z.number().int().safe().nonnegative(),
     rows: z.array(WorkspaceMemoryTableRowRecordSchema),
   }).strict(),
   z.object({ outcome: z.literal("not_found") }).strict(),
@@ -445,7 +445,7 @@ export const WorkspaceMemoryTableCreateRequestSchema = z.object({
     valueType: MemoryTableColumnTypeSchema,
     isRequired: z.boolean(),
     isSearchable: z.boolean(),
-    position: z.number().int().nonnegative(),
+    position: z.number().int().safe().nonnegative(),
   }).strict()).min(1),
   mutation: MemoryTableMutationRecordSchema,
   at: TimestampSchema,
@@ -477,7 +477,7 @@ const MemoryTableCellSchema = z.object({
   valueType: MemoryTableColumnTypeSchema,
   stringValue: z.string().nullable(),
   numberValue: z.number().nullable(),
-  booleanValue: z.number().int().min(0).max(1).nullable(),
+  booleanValue: z.number().int().safe().min(0).max(1).nullable(),
   temporalValue: z.string().nullable(),
 }).strict();
 
@@ -493,7 +493,7 @@ export const WorkspaceMemoryTableInsertRowsRequestSchema = z.object({
   }).strict()).min(1),
   provenanceJson: JsonTextSchema,
   /** Rows the service dropped as exact duplicates inside one request. */
-  duplicateInputCount: z.number().int().nonnegative(),
+  duplicateInputCount: z.number().int().safe().nonnegative(),
   mutation: MemoryTableMutationRecordSchema.omit({ resultJson: true }),
   at: TimestampSchema,
 }).strict();
@@ -516,7 +516,7 @@ export const WorkspaceMemoryTableUpdateRowsRequestSchema = z.object({
   memoryTableId: z.string().min(1),
   rows: z.array(z.object({
     memoryTableRowId: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
+    expectedRevision: z.number().int().safe().positive(),
     dataJson: JsonTextSchema,
     searchableText: z.string(),
     cells: z.array(MemoryTableCellSchema),
@@ -530,7 +530,7 @@ export const WorkspaceMemoryTableInvalidateRowsRequestSchema = z.object({
   memoryTableId: z.string().min(1),
   rows: z.array(z.object({
     memoryTableRowId: z.string().min(1),
-    expectedRevision: z.number().int().positive(),
+    expectedRevision: z.number().int().safe().positive(),
   }).strict()).min(1),
   reason: z.string().min(1),
   actorPrincipalJson: JsonTextSchema,

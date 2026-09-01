@@ -1,5 +1,5 @@
 import { MESSAGE_MAX_CHARACTERS } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import {
   type Exhaustive,
@@ -16,8 +16,8 @@ export const OpenElicitationInputSchema = z.object({
   prompt: z.string().max(MESSAGE_MAX_CHARACTERS),
   responseType: z.string().min(1),
   optionsJson: z.string(),
-  minimumSelections: z.number().int().nonnegative(),
-  maximumSelections: z.number().int().nonnegative().nullable(),
+  minimumSelections: z.number().int().safe().nonnegative(),
+  maximumSelections: z.number().int().safe().nonnegative().nullable(),
   targetUserId: z.string().min(1).nullable(),
   messageId: z.string().min(1),
   structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS),

@@ -1,6 +1,6 @@
 import { IdSchema, RegionSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES } from "@rally/contracts/telemetry";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { WorkspaceConnectorEventSchema } from "./workspace-connector-event-protocol";
 
@@ -20,7 +20,7 @@ export const WorkspaceOpportunityEnqueueRequestSchema = z.object({
   sourceKind: z.enum(["activity", "message"]),
   sourceId: z.string().min(1).max(200),
   occurredAt: z.string().datetime(),
-  inputCharacters: z.number().int().nonnegative(),
+  inputCharacters: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const WorkspaceOpportunityEnqueueResultSchema = z.object({
@@ -36,14 +36,14 @@ export const WorkspaceOpportunityWorkflowInputSchema = z.discriminatedUnion("kin
     workspaceId: WorkspaceIdSchema,
     windowId: IdSchema,
     leaseId: IdSchema,
-    attempt: z.number().int().min(0).max(5),
+    attempt: z.number().int().safe().min(0).max(5),
   }).strict(),
   z.object({
     kind: z.literal("ranking"),
     region: RegionSchema,
     workspaceId: WorkspaceIdSchema,
     userId: UserIdSchema,
-    requestSeq: z.number().int().nonnegative(),
+    requestSeq: z.number().int().safe().nonnegative(),
     leaseId: IdSchema,
   }).strict(),
 ]);
@@ -65,8 +65,8 @@ export const WorkspaceOpportunityWindowSchema = z.object({
     sourceKind: z.enum(["activity", "message"]),
     sourceId: z.string(),
     occurredAt: z.string().datetime(),
-    inputCharacters: z.number().int().nonnegative(),
-    attemptCount: z.number().int().nonnegative(),
+    inputCharacters: z.number().int().safe().nonnegative(),
+    attemptCount: z.number().int().safe().nonnegative(),
   }).strict()).max(5_000),
 }).strict();
 
@@ -77,14 +77,14 @@ export const WorkspaceOpportunityBatchEventsRequestSchema = WorkspaceOpportunity
 }).strict();
 
 export const WorkspaceOpportunityWindowSettleRequestSchema = WorkspaceOpportunityWindowRequestSchema.extend({
-  retryDelayMs: z.number().int().min(1_000).max(60 * 60_000),
+  retryDelayMs: z.number().int().safe().min(1_000).max(60 * 60_000),
 }).strict();
 
 export const WorkspaceOpportunityExistingRequestSchema = z.object({
   workspaceId: IdSchema,
   audience: OpportunityAudienceSchema,
   now: z.string().datetime(),
-  limit: z.number().int().min(1).max(100),
+  limit: z.number().int().safe().min(1).max(100),
 }).strict();
 
 export const WorkspaceOpportunitySourceSchema = z.object({
@@ -113,8 +113,8 @@ export const WorkspaceOpportunityPersistLinkSchema = z.object({
   resolution: z.enum(["verified", "inferred", "ambiguous", "unresolved"]),
   reasoning: z.string().max(4_000),
   sourceText: z.string().max(1_000),
-  startOffset: z.number().int().nonnegative().nullable(),
-  endOffset: z.number().int().positive().nullable(),
+  startOffset: z.number().int().safe().nonnegative().nullable(),
+  endOffset: z.number().int().safe().positive().nullable(),
   verifiedIdentity: z.object({
     id: IdSchema,
     provider: z.string().max(120),
@@ -145,7 +145,7 @@ export const WorkspaceOpportunityPersistRequestSchema = z.object({
 
 export const WorkspaceOpportunityPersistResultSchema = z.object({
   opportunityId: IdSchema,
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
   eagerUserIds: z.array(IdSchema),
 }).strict();
 
@@ -170,7 +170,7 @@ export const WorkspaceOpportunityRankingRoundRequestSchema = WorkspaceOpportunit
   selectedIds: z.array(IdSchema).max(4),
   reasoning: z.string().max(20_000),
   model: z.string().max(200).nullable(),
-  roundNumber: z.number().int().nonnegative(),
+  roundNumber: z.number().int().safe().nonnegative(),
 }).strict();
 
 export const WorkspaceOpportunityStoreRankingRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
@@ -183,20 +183,20 @@ export const WorkspaceOpportunityStoreRankingRequestSchema = WorkspaceOpportunit
 
 export const WorkspaceOpportunityRankingSettleRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
   leaseId: IdSchema,
-  requestSeq: z.number().int().nonnegative(),
+  requestSeq: z.number().int().safe().nonnegative(),
   outcome: z.enum(["completed", "failed"]),
   retryAt: z.string().datetime().nullable(),
 }).strict();
 
 export const WorkspaceOpportunityListRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
   now: z.string().datetime(),
-  limit: z.number().int().min(1).max(4),
+  limit: z.number().int().safe().min(1).max(4),
   scheduleAt: z.string().datetime(),
 }).strict();
 
 export const WorkspaceOpportunityPublicSchema = z.object({
   id: IdSchema,
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
   displayPrompt: z.string(),
   icon: z.string(),
   sourceLabel: z.string(),
@@ -204,7 +204,7 @@ export const WorkspaceOpportunityPublicSchema = z.object({
 
 export const WorkspaceOpportunityRankingCandidatesResultSchema = z.array(z.object({
   id: IdSchema,
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
   displayPrompt: z.string(),
   admissionReasoning: z.string(),
   linkedUsers: z.array(z.object({
@@ -222,7 +222,7 @@ export const WorkspaceOpportunityRankingCandidatesResultSchema = z.array(z.objec
     canonicalUrl: z.string().nullable(),
     relationship: z.string().optional(),
     parentNodeId: IdSchema.optional(),
-    depth: z.number().int().nonnegative(),
+    depth: z.number().int().safe().nonnegative(),
     locator: z.string(),
   }).passthrough()),
   age: z.object({
@@ -230,7 +230,7 @@ export const WorkspaceOpportunityRankingCandidatesResultSchema = z.array(z.objec
     updatedAt: z.string().datetime(),
   }).strict(),
   impressions: z.object({
-    count: z.number().int().nonnegative(),
+    count: z.number().int().safe().nonnegative(),
     firstAt: z.string().datetime().nullable(),
     lastAt: z.string().datetime().nullable(),
   }).strict(),
@@ -250,10 +250,10 @@ export const WorkspaceOpportunityImpressionsRequestSchema = WorkspaceOpportunity
 
 export const WorkspaceOpportunityTelemetryContextSchema = z.object({
   opportunityId: IdSchema,
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
   audienceScope: z.enum(["personal", "workspace"]),
   createdAt: z.string().datetime(),
-  impressionCount: z.number().int().nonnegative(),
+  impressionCount: z.number().int().safe().nonnegative(),
   firstImpressedAt: z.string().datetime().nullable(),
   connectorTypes: z.array(z.enum(TELEMETRY_CONNECTOR_TYPES)).max(TELEMETRY_CONNECTOR_TYPES.length),
 }).strict();
@@ -278,7 +278,7 @@ export const WorkspaceOpportunityGetRequestSchema = WorkspaceOpportunityUserRequ
 }).strict();
 
 export const WorkspaceOpportunityOriginEventsRequestSchema = WorkspaceOpportunityGetRequestSchema.extend({
-  limit: z.number().int().min(1).max(8).default(8),
+  limit: z.number().int().safe().min(1).max(8).default(8),
 }).strict();
 
 export const WorkspaceOpportunityOriginEventsResultSchema = z.array(
@@ -286,7 +286,7 @@ export const WorkspaceOpportunityOriginEventsResultSchema = z.array(
 ).max(8);
 
 export const WorkspaceOpportunityClaimStartRequestSchema = WorkspaceOpportunityGetRequestSchema.extend({
-  version: z.number().int().positive(),
+  version: z.number().int().safe().positive(),
   idempotencyKey: z.string().min(1).max(200),
 }).strict();
 

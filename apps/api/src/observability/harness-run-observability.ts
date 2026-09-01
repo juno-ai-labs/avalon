@@ -1,5 +1,5 @@
 import type { HarnessOutcome } from "@rally/agent-harness";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import { logStructuredEvent } from "./logger";

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const DEFAULT_FIRECRAWL_BASE_URL = "https://api.firecrawl.dev/v2";
 export const FIRECRAWL_CACHE_MAX_AGE_MS = 172_800_000;
@@ -20,7 +20,7 @@ const searchResponseSchema = z.object({
       // Firecrawl has returned this in practice, but its current v2 contract
       // does not promise it for web results. Preserve the provider's ranked
       // array order rather than requiring or sorting on this optional field.
-      position: z.number().int().optional(),
+      position: z.number().int().safe().optional(),
     })),
   }),
   creditsUsed: z.number().nonnegative().optional(),
@@ -32,7 +32,7 @@ const scrapeMetadataSchema = z.object({
   title: z.string().nullish(),
   sourceURL: z.string().nullish(),
   url: z.string().nullish(),
-  statusCode: z.number().int().nullish(),
+  statusCode: z.number().int().safe().nullish(),
   error: z.string().nullish(),
   // These fields are useful for future accounting but are intentionally
   // optional because Firecrawl's public scrape response schema does not

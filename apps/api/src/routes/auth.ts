@@ -9,7 +9,7 @@ import {
   WorkspaceInvitationPreviewSchema,
 } from "@rally/contracts";
 import { HttpOrDesktopDeepLinkUrlSchema } from "@rally/contracts/url-schemas";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { compatibleDesktopDeepLink, desktopHandoffUrl } from "../lib/desktop-handoff";

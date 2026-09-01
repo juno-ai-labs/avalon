@@ -1,11 +1,12 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { TelemetryEnvelopeSchema } from '@rally/contracts/telemetry';
 import { newId } from '@rally/db';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { Env } from '../env';
 import type { TelemetryOperatorPrincipal } from './operator-auth';
 
 const ReplayInputSchema = z.object({
-  eventId: z.string().uuid().refine((value) => value[14] === '7'),
+  eventId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === '7'),
   reason: z.enum(['destination_recovery', 'incident_response']),
 }).strict();
 

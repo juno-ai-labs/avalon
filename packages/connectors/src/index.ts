@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ConnectorManifestSchema,
@@ -8,7 +9,7 @@ import {
   type NormalizedActivity,
   type ToolDefinition,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   assertPrincipalAccess,
   ConnectorError,
@@ -1014,7 +1015,7 @@ type GmailChangeRef = z.infer<typeof GmailChangeRefSchema>;
 const GmailPollCursorSchema = z.object({
   historyId: z.string().min(1).optional(),
   pageToken: z.string().min(1).optional(),
-  pageChangeOffset: z.number().int().min(0).max(1_000_000).optional(),
+  pageChangeOffset: z.number().int().safe().min(0).max(1_000_000).optional(),
   pendingHistoryId: z.string().min(1).optional(),
   reconciliationHistoryId: z.string().min(1).optional(),
   reconciliationPageToken: z.string().min(1).optional(),
@@ -1750,7 +1751,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     streams(connection) {
       const intervalSeconds = z
         .number()
-        .int()
+        .int().safe()
         .min(60)
         .max(86_400)
         .parse(connection.config.pollIntervalSeconds ?? 300);
@@ -2079,7 +2080,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (name === "gmail.search") {
         const args = z.object({
           query: z.string().max(2_000),
-          maxResults: z.number().int().min(1).max(25).default(10),
+          maxResults: z.number().int().safe().min(1).max(25).default(10),
           pageToken: z.string().min(1).max(2_000).optional()
         }).strict().parse(rawArgs);
         const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
@@ -2111,7 +2112,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (name === "gmail.find_contacts") {
         const args = z.object({
           name: z.string().min(1).max(200),
-          maxResults: z.number().int().min(1).max(25).default(10)
+          maxResults: z.number().int().safe().min(1).max(25).default(10)
         }).strict().parse(rawArgs);
         const contactQuery = gmailContactQuery(args.name);
         if (!contactQuery) {
@@ -2246,7 +2247,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "calendar.list_calendars") {
         const args = z.object({
-          maxResults: z.number().int().min(1).max(250).default(100),
+          maxResults: z.number().int().safe().min(1).max(250).default(100),
           pageToken: z.string().min(1).max(2_000).optional()
         }).strict().parse(rawArgs);
         const url = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
@@ -2272,7 +2273,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             timeMin: z.string().datetime({ offset: true }),
             timeMax: z.string().datetime({ offset: true }),
             query: z.string().max(2_000).optional(),
-            maxResults: z.number().int().min(1).max(100).default(25),
+            maxResults: z.number().int().safe().min(1).max(100).default(25),
             pageToken: z.string().min(1).max(2_000).optional()
           }).strict()
           .parse(rawArgs);
@@ -2594,7 +2595,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           fileType: z.enum(GOOGLE_DRIVE_FILE_TYPES).optional(),
           modifiedAfter: z.string().datetime({ offset: true }).optional(),
           orderBy: z.enum(["relevance", "modified"]).default("relevance"),
-          maxResults: z.number().int().min(1).max(100).default(25),
+          maxResults: z.number().int().safe().min(1).max(100).default(25),
           pageToken: z.string().min(1).max(2_000).optional()
         }).strict().parse(rawArgs);
         const url = new URL("https://www.googleapis.com/drive/v3/files");
@@ -4153,7 +4154,7 @@ function normalizeGoogleToken(value: unknown): Record<string, unknown> {
   const payload = z
     .object({
       access_token: z.string(),
-      expires_in: z.number().int().positive(),
+      expires_in: z.number().int().safe().positive(),
       refresh_token: z.string().optional(),
       scope: z.string().optional(),
       token_type: z.string().optional(),
@@ -4191,7 +4192,7 @@ const GenericWebhookEventSchema = z.object({
   text_snippet: z.string().max(4_000).optional(),
   entity_keys: z.array(z.string().trim().min(1).max(500)).max(100).optional(),
   dedupe_key: z.string().trim().min(1).max(500).optional(),
-  target_user_ids: z.array(z.string().uuid()).max(100).optional(),
+  target_user_ids: z.array(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID")).max(100).optional(),
   external_people: z.array(z.unknown()).max(100).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();

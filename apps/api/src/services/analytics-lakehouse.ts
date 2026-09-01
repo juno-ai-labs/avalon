@@ -1,9 +1,10 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   TELEMETRY_EVENTS,
   TelemetryEnvelopeSchema,
   type TelemetryEnvelope,
 } from "@rally/contracts/telemetry";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import { telemetryPayloadHash } from "../telemetry/payload-integrity";
@@ -14,7 +15,7 @@ export const ANALYTICS_LAKEHOUSE_QUEUE_NAMES = new Set([
 
 export const AnalyticsLakehousePointerSchema = z.object({
   schemaVersion: z.literal(1),
-  eventId: z.string().uuid(),
+  eventId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
   payloadHash: z.string().min(1),
   region: z.literal("global"),
 }).strict();

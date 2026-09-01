@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import {
   ElicitationSchema,
   ParticipantSchema,
@@ -24,7 +25,7 @@ import type {
   AnswerElicitationRequestSchema,
   UpdateWorkstreamRequestSchema,
 } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { substreamAgentName } from "../durable-objects/names";
 import type {
@@ -52,11 +53,11 @@ const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
 const AnsweredElicitationSchema = z.object({
   elicitation: ElicitationSchema.optional(),
 }).strict();
-const RetriedRunSchema = z.object({ harnessRunId: z.string().uuid() });
+const RetriedRunSchema = z.object({ harnessRunId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID") });
 const InitializedWorkstreamSchema = z.object({
   workstream: WorkstreamSchema,
-  turnId: z.string().uuid(),
-  harnessRunId: z.string().uuid(),
+  turnId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
+  harnessRunId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
 }).strict();
 
 async function objectStub(

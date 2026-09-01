@@ -6,7 +6,7 @@ import {
   WorkstreamSchema,
 } from "@rally/contracts";
 import { Hono } from "hono";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { newId } from "@rally/db";
 import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
@@ -21,12 +21,12 @@ import {
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
 
-const listQuery = z.object({ limit: z.coerce.number().int().min(1).max(4).default(4) });
+const listQuery = z.object({ limit: z.coerce.number().int().safe().min(1).max(4).default(4) });
 const idParam = z.object({ id: IdSchema });
 const suggestionActionQuery = z.object({
   surface: z.enum(["menu_bar", "workspace_home"]).optional(),
-  version: z.coerce.number().int().positive().optional(),
-  position: z.coerce.number().int().min(1).max(4).optional(),
+  version: z.coerce.number().int().safe().positive().optional(),
+  position: z.coerce.number().int().safe().min(1).max(4).optional(),
 });
 
 function suggestionFreshness(createdAt: string): "lt_1h" | "1h_24h" | "1d_7d" | "gte_7d" {

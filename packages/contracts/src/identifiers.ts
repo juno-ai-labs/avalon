@@ -1,6 +1,7 @@
-import { z } from "zod";
+import { STRICT_UUID_PATTERN } from "./uuid-validation";
+import { z } from "zod/v3";
 
-export const IdSchema = z.string().uuid();
+export const IdSchema = z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID");
 export const WorkspaceIdSchema = IdSchema.brand<"WorkspaceId">();
 export type WorkspaceId = z.infer<typeof WorkspaceIdSchema>;
 export const WorkstreamIdSchema = IdSchema.brand<"WorkstreamId">();

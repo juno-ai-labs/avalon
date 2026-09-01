@@ -5,7 +5,7 @@ import {
   type ObjectPortOf,
 } from "./object-port-protocol";
 import type { WorkstreamResourceStorage } from "./workstream-resource-storage";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 /**
  * The wire contract for one work stream's resource attachments.

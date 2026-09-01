@@ -1,5 +1,6 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import { Hono } from 'hono';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { HonoAppEnv } from '../env';
 import { ApiError } from '../lib/api-error';
 import { zValidator } from '../middleware/validation';
@@ -12,7 +13,7 @@ import {
   readRawCrashForSupport,
 } from '../telemetry/crash-operations';
 
-const UuidV7Schema = z.string().uuid().refine((value) => value[14] === '7');
+const UuidV7Schema = z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID").refine((value) => value[14] === '7');
 const ReplaySchema = z.object({
   eventId: UuidV7Schema,
   reason: z.enum(['destination_recovery', 'incident_response']),
@@ -22,24 +23,24 @@ const CrashAccessQuerySchema = z.object({
   reason: z.enum(['customer_support', 'incident_response']),
 }).strict();
 const EuIssueQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: z.coerce.number().int().safe().min(1).max(100).default(50),
 }).strict();
 const CrashFreeSchema = z.object({
   from: z.string().datetime({ offset: true }),
   to: z.string().datetime({ offset: true }),
 }).strict();
 const TelemetryOperationalSnapshotSchema = z.object({
-  acceptedPending: z.number().int().nonnegative(),
-  acceptedTerminal: z.number().int().nonnegative(),
-  crashPending: z.number().int().nonnegative(),
-  crashTerminal: z.number().int().nonnegative(),
-  profilePending: z.number().int().nonnegative(),
-  profileTerminal: z.number().int().nonnegative(),
-  rejectionCount: z.number().int().nonnegative(),
-  openCircuits: z.number().int().nonnegative(),
-  oldestAcceptedAgeSeconds: z.number().int().nonnegative().nullable(),
-  oldestCrashAgeSeconds: z.number().int().nonnegative().nullable(),
-  oldestProfileAgeSeconds: z.number().int().nonnegative().nullable(),
+  acceptedPending: z.number().int().safe().nonnegative(),
+  acceptedTerminal: z.number().int().safe().nonnegative(),
+  crashPending: z.number().int().safe().nonnegative(),
+  crashTerminal: z.number().int().safe().nonnegative(),
+  profilePending: z.number().int().safe().nonnegative(),
+  profileTerminal: z.number().int().safe().nonnegative(),
+  rejectionCount: z.number().int().safe().nonnegative(),
+  openCircuits: z.number().int().safe().nonnegative(),
+  oldestAcceptedAgeSeconds: z.number().int().safe().nonnegative().nullable(),
+  oldestCrashAgeSeconds: z.number().int().safe().nonnegative().nullable(),
+  oldestProfileAgeSeconds: z.number().int().safe().nonnegative().nullable(),
 }).strict();
 const ReplayResponseSchema = z.object({
   result: z.enum([
@@ -57,7 +58,7 @@ const EuCrashIssueSchema = z.object({
   fingerprint: z.string().min(1),
   firstSeen: z.string().datetime({ offset: true }),
   lastSeen: z.string().datetime({ offset: true }),
-  count: z.number().int().nonnegative(),
+  count: z.number().int().safe().nonnegative(),
   releases: z.array(z.string()),
 }).strict();
 const EuCrashIssuesResponseSchema = z.object({
@@ -68,10 +69,10 @@ const EuCrashFreeSegmentSchema = z.object({
   platform: z.string(),
   architecture: z.string(),
   channel: z.string(),
-  eligibleLaunches: z.number().int().nonnegative(),
-  crashedLaunches: z.number().int().nonnegative(),
-  crashFreeLaunches: z.number().int().nonnegative(),
-  uncorrelatedCrashes: z.number().int().nonnegative(),
+  eligibleLaunches: z.number().int().safe().nonnegative(),
+  crashedLaunches: z.number().int().safe().nonnegative(),
+  crashFreeLaunches: z.number().int().safe().nonnegative(),
+  uncorrelatedCrashes: z.number().int().safe().nonnegative(),
 }).strict();
 const EuCrashFreeResponseSchema = z.object({
   segments: z.array(EuCrashFreeSegmentSchema),

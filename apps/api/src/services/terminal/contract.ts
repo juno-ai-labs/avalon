@@ -1,3 +1,4 @@
+import { STRICT_UUID_PATTERN } from "@rally/contracts/uuid-validation";
 import type {
   HarnessPlugin,
   HarnessTool,
@@ -5,7 +6,7 @@ import type {
   HarnessToolResult,
 } from "@rally/agent-harness";
 import type { ToolDefinition } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const TERMINAL_PLUGIN_ID = "rally:terminal";
 export const TERMINAL_PLUGIN_SYSTEM_MESSAGE = "You have a Linux sandbox with Bash, Python, JavaScript (Node.js), TypeScript, and SQLite. Use these tools when code is the clearest reliable way to calculate, transform data, analyze files, validate a repository, or create a graph, image, dataset, report, archive, or artifact. Prefer Bash for simple CLI/file pipelines, Python for analysis and generated artifacts, JavaScript/TypeScript for Node and web-shaped data, and SQLite for relational transforms. Supported installers are apt/dpkg, pip/uv, and npm/pnpm. Use `sudo apt-get` for system packages; do not install another runtime or manager, and report an unsupported requirement. Use `terminal_run_command` with `ls`, `find`, `rg --files`, and `rg` for discovery and search. To work in an authorized GitHub repository, choose the exact owner/name yourself and call `terminal_checkout_repository`; use GitHub repository search first when needed, and set `requiredRemoteAccess` to `full_access` when the task needs a git push or to open a pull request. Permissions are a durable ceiling: choosing `read_only` keeps the sandbox credential read-only even when connector policy permits full access. The checkout result's `remoteAccess` is the remote boundary: `read_only` allows local edits and commits but its credential cannot push with git or mutate GitHub; `full_access` provides a repository-scoped credential for ordinary `git` and `gh` commands. Before initial repository access Rally creates or restores `$AVALON_GIT_BRANCH` and switches to it. Later tools attempt to restore that branch; if an in-progress merge, rebase, bisect, or local edit prevents the switch, inspect and repair Git state before pushing. Stay on the prepared branch, commit normally, push only that branch, and create or update its pull request against `$AVALON_GIT_BASE_BRANCH`; do not push the default branch or another ref. For deliberate text changes, read the file first with `terminal_read_file` and use `terminal_edit_file` or `terminal_apply_patch` to edit the file; use `terminal_write_file` only for intentional complete replacement or for writing a new file. To create a durable artifact/file/document visible and readable to the user, write the final stable file beneath `$AVALON_RESOURCE_DIR`, then call `terminal_publish_resource` with a path relative to that directory. Publishing the same path again updates that same artifact rather than creating a second one, so revise an artifact by editing its file and republishing its path. A nonzero command exit, timeout, cancellation, or output limit is a failed tool response whose `state` and `terminationReason` must be inspected; never infer success from the tool call alone.";
@@ -29,8 +30,8 @@ export type TerminalToolExecutors = Record<TerminalToolName, TerminalToolExecuto
 const relativePath = z.string().min(1).max(4_096);
 const readFileArguments = z.object({
   filePath: relativePath,
-  offset: z.number().int().positive().optional(),
-  limit: z.number().int().positive().max(1_000).optional(),
+  offset: z.number().int().safe().positive().optional(),
+  limit: z.number().int().safe().positive().max(1_000).optional(),
 }).strict();
 const editFileArguments = z.object({
   filePath: relativePath,
@@ -48,7 +49,7 @@ const applyPatchArguments = z.object({
 const runCommandArguments = z.object({
   command: z.string().min(1).max(32 * 1_024),
   cwd: relativePath.optional(),
-  timeoutMs: z.number().int().positive().max(900_000).optional(),
+  timeoutMs: z.number().int().safe().positive().max(900_000).optional(),
   description: z.string().min(1).max(240).optional(),
 }).strict();
 const checkoutRepositoryArguments = z.object({
@@ -59,13 +60,17 @@ const checkoutRepositoryArguments = z.object({
 // this message is the model's only feedback on it; see `SearchInputSchema` in
 // `memory-service.ts` for why a union's default reads backwards.
 const importResourceArguments = z.union([
-  z.object({ resourceId: z.string().uuid() }).strict(),
+  z.object({ resourceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID") }).strict(),
   z.object({
-    resourceId: z.string().uuid(),
+    resourceId: z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"),
     destinationPath: relativePath,
     overwrite: z.boolean().optional(),
   }).strict(),
-], { error: "Send resourceId alone for deterministic placement, or resourceId with destinationPath. overwrite is only accepted alongside destinationPath." });
+], {
+  errorMap: () => ({
+    message: "Send resourceId alone for deterministic placement, or resourceId with destinationPath. overwrite is only accepted alongside destinationPath.",
+  }),
+});
 const publishResourceArguments = z.object({
   filePath: relativePath,
   displayName: z.string().min(1).max(300).optional(),

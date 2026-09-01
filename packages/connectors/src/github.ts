@@ -1,5 +1,6 @@
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
-import { z } from "zod";
+import { providerJsonSchema } from "@rally/contracts/json-schema";
+import { z } from "zod/v3";
 import {
   base64,
   booleanValue,
@@ -104,7 +105,7 @@ const githubRepositoryAccessOverrideSchema = z.object({
 
 const githubRepositoryAccessPolicySchema = z.object({
   version: z.literal(1),
-  revision: z.number().int().nonnegative(),
+  revision: z.number().int().safe().nonnegative(),
   mode: z.enum(["all_repositories", "selected_repositories"]),
   defaultAccess: z.enum(["read_only", "full_access"]),
   repositories: z.array(githubRepositoryAccessOverrideSchema).max(1_000),
@@ -248,13 +249,13 @@ const repoIdentitySchema = z.object({
 }).strict();
 
 const paginationSchema = z.object({
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  perPage: z.number().int().safe().min(1).max(100).default(30),
+  page: z.number().int().safe().min(1).max(1_000).default(1),
 }).strict();
 
 const repositoriesListSchema = z.object({
-  perPage: z.number().int().min(1).max(100).default(50),
-  page: z.number().int().min(1).max(1_000).default(1),
+  perPage: z.number().int().safe().min(1).max(100).default(50),
+  page: z.number().int().safe().min(1).max(1_000).default(1),
 }).strict();
 
 const repositoriesSearchSchema = repositoriesListSchema.extend({
@@ -272,8 +273,8 @@ const contentsListSchema = repoIdentitySchema.extend({
   path: z.string().trim().max(1_000).default(""),
   ref: z.string().trim().min(1).max(250).optional(),
   recursive: z.boolean().default(false),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().min(1).max(TOOL_TREE_ENTRY_LIMIT).default(100),
+  offset: z.number().int().safe().nonnegative().default(0),
+  limit: z.number().int().safe().min(1).max(TOOL_TREE_ENTRY_LIMIT).default(100),
 }).strict();
 
 const commitsListSchema = repoIdentitySchema.extend({
@@ -282,8 +283,8 @@ const commitsListSchema = repoIdentitySchema.extend({
   author: z.string().trim().min(1).max(250).optional(),
   since: z.string().datetime({ offset: true }).optional(),
   until: z.string().datetime({ offset: true }).optional(),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  perPage: z.number().int().safe().min(1).max(100).default(30),
+  page: z.number().int().safe().min(1).max(1_000).default(1),
 }).strict();
 
 const issuesListSchema = repoIdentitySchema.extend({
@@ -292,12 +293,12 @@ const issuesListSchema = repoIdentitySchema.extend({
   since: z.string().datetime({ offset: true }).optional(),
   sort: z.enum(["created", "updated", "comments"]).default("updated"),
   direction: z.enum(["asc", "desc"]).default("desc"),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  perPage: z.number().int().safe().min(1).max(100).default(30),
+  page: z.number().int().safe().min(1).max(1_000).default(1),
 }).strict();
 
 const issueIdentitySchema = repoIdentitySchema.extend({
-  issueNumber: z.number().int().positive(),
+  issueNumber: z.number().int().safe().positive(),
 }).strict();
 
 const issueCreateSchema = repoIdentitySchema.extend({
@@ -328,12 +329,12 @@ const pullRequestsListSchema = repoIdentitySchema.extend({
   base: z.string().trim().min(1).max(250).optional(),
   sort: z.enum(["created", "updated", "popularity", "long-running"]).default("updated"),
   direction: z.enum(["asc", "desc"]).default("desc"),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  perPage: z.number().int().safe().min(1).max(100).default(30),
+  page: z.number().int().safe().min(1).max(1_000).default(1),
 }).strict();
 
 const pullRequestIdentitySchema = repoIdentitySchema.extend({
-  pullNumber: z.number().int().positive(),
+  pullNumber: z.number().int().safe().positive(),
 }).strict();
 
 const pullRequestPageSchema = pullRequestIdentitySchema.extend(paginationSchema.shape).strict();
@@ -362,12 +363,12 @@ const workflowRunsListSchema = repoIdentitySchema.extend({
     "completed", "action_required", "cancelled", "failure", "neutral", "skipped", "stale",
     "success", "timed_out", "in_progress", "queued", "requested", "waiting", "pending",
   ]).optional(),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  perPage: z.number().int().safe().min(1).max(100).default(30),
+  page: z.number().int().safe().min(1).max(1_000).default(1),
 }).strict();
 
 const workflowRunGetSchema = repoIdentitySchema.extend({
-  runId: z.number().int().positive(),
+  runId: z.number().int().safe().positive(),
 }).strict();
 
 const checksListSchema = repoIdentitySchema.extend({
@@ -375,8 +376,8 @@ const checksListSchema = repoIdentitySchema.extend({
   checkName: z.string().trim().min(1).max(250).optional(),
   status: z.enum(["queued", "in_progress", "completed"]).optional(),
   filter: z.enum(["latest", "all"]).default("latest"),
-  perPage: z.number().int().min(1).max(100).default(30),
-  page: z.number().int().min(1).max(1_000).default(1),
+  perPage: z.number().int().safe().min(1).max(100).default(30),
+  page: z.number().int().safe().min(1).max(1_000).default(1),
 }).strict();
 
 const githubToolInputSchemas = new Map<string, z.ZodType>();
@@ -435,7 +436,7 @@ function tool(
     capability,
     mode,
     idempotency: mode === "read" ? "safe" : "record_before_execute",
-    inputSchema: z.toJSONSchema(schema) as Record<string, unknown>,
+    inputSchema: providerJsonSchema(schema),
   };
 }
 
@@ -467,14 +468,14 @@ const authorizationInputSchema = z.object({
   state: z.string().min(20).max(2_000),
   codeChallenge: z.string().min(20).max(256),
   scopes: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
-  installationId: z.union([z.string().regex(/^\d+$/u), z.number().int().positive()]).optional(),
+  installationId: z.union([z.string().regex(/^\d+$/u), z.number().int().safe().positive()]).optional(),
   connectionScope: z.enum(["personal", "workspace"]).default("personal"),
 }).strict();
 
 const authorizationCallbackSchema = z.object({
   code: z.string().min(1).max(2_000),
   codeVerifier: z.string().min(20).max(256),
-  installationId: z.union([z.string().regex(/^\d+$/u), z.number().int().positive()]),
+  installationId: z.union([z.string().regex(/^\d+$/u), z.number().int().safe().positive()]),
   connectionScope: z.enum(["personal", "workspace"]),
 }).strict();
 

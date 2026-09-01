@@ -9,7 +9,7 @@ import {
   type SlackSearchAuthorization,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -39,8 +39,8 @@ const OpenElicitationRowSchema = z.object({
   prompt: z.string(),
   response_type: z.enum(["text", "radio", "single_select", "multi_select"]),
   options_json: z.string(),
-  minimum_selections: z.number().int(),
-  maximum_selections: z.number().int().nullable(),
+  minimum_selections: z.number().int().safe(),
+  maximum_selections: z.number().int().safe().nullable(),
   created_at: z.string(),
 });
 

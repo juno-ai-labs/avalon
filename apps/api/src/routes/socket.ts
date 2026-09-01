@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { HonoAppEnv } from "../env";
 import {
   BlockDashboardBlockSocketService,

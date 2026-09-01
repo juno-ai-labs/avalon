@@ -8,7 +8,7 @@ import type {
   Workstream,
 } from "@rally/contracts";
 import { newId } from "@rally/db";
-import type { z } from "zod";
+import type { z } from "zod/v3";
 
 import { workspaceDOName, workstreamDOName, substreamAgentName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";

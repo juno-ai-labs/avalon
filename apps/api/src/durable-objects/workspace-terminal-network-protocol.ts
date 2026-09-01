@@ -1,5 +1,5 @@
 import { IdSchema } from "@rally/contracts";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * The workspace's Terminal network policy, as questions rather than SQL.
@@ -19,7 +19,7 @@ const VerificationStateSchema = z.enum(["pending", "verified", "failed"]);
 
 export const WorkspaceTerminalNetworkPolicySchema = z.object({
   mode: TerminalNetworkModeSchema,
-  revision: z.number().int().positive(),
+  revision: z.number().int().safe().positive(),
   verificationState: VerificationStateSchema,
   baselineManifestVersion: z.string().min(1),
   failureCode: z.string().min(1).nullable(),
@@ -71,7 +71,7 @@ export const WorkspaceTerminalPolicyPreviewRequestSchema = z.object({
   workspaceId: IdSchema,
   mutationId: IdSchema,
   requestedByUserId: IdSchema,
-  expectedRevision: z.number().int().positive(),
+  expectedRevision: z.number().int().safe().positive(),
   proposedMode: TerminalNetworkModeSchema,
   proposedDomains: z.array(z.string().min(1)),
   effectiveDomains: z.array(z.string().min(1)),
@@ -83,7 +83,7 @@ export const WorkspaceTerminalPolicyClaimRequestSchema = z.object({
   workspaceId: IdSchema,
   mutationId: IdSchema,
   requestedByUserId: IdSchema,
-  expectedRevision: z.number().int().positive(),
+  expectedRevision: z.number().int().safe().positive(),
   at: TimestampSchema,
 }).strict();
 
@@ -121,7 +121,7 @@ export const WorkspaceTerminalPolicySettlementResultSchema = z.object({
 export const WorkspaceTerminalPolicyFailRequestSchema = z.object({
   workspaceId: IdSchema,
   mutationId: IdSchema,
-  revision: z.number().int().positive(),
+  revision: z.number().int().safe().positive(),
   failureCode: z.string().min(1),
   at: TimestampSchema,
 }).strict();
@@ -131,8 +131,8 @@ export const WorkspaceTerminalPolicyCommitRequestSchema = z.object({
   mutationId: IdSchema,
   createdByUserId: IdSchema,
   mode: TerminalNetworkModeSchema,
-  claimedRevision: z.number().int().positive(),
-  resultingRevision: z.number().int().positive(),
+  claimedRevision: z.number().int().safe().positive(),
+  resultingRevision: z.number().int().safe().positive(),
   customDomains: z.array(z.string().min(1)),
   effectiveDomains: z.array(z.string().min(1)),
   at: TimestampSchema,

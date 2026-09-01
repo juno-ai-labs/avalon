@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 import {
   DESKTOP_DEEP_LINK_PROTOCOLS,
 } from "./desktop-deep-link";

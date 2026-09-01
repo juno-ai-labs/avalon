@@ -4,7 +4,7 @@ import {
   HttpUrlSchema,
 } from "@rally/contracts/url-schemas";
 import type { Pipeline } from "cloudflare:pipelines";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Region, UserId, WorkspaceId } from "@rally/contracts";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
 import type { GitHubRegionalBridgeRpcBinding, GlobalGitHubRouterRpcBinding } from "./services/github-routing-service";

@@ -5,7 +5,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "@rally/connectors";
 import { nowIso } from "@rally/db";
-import { z } from "zod";
+import { z } from "zod/v3";
 import type { Env } from "../env";
 import { encryptString } from "../lib/crypto";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
@@ -16,7 +16,7 @@ const ROTATION_WAIT_ATTEMPTS = 8;
 const CredentialRowSchema = z.object({
   encrypted_credentials: z.string().min(1),
   credential_iv: z.string().min(1),
-  credential_key_version: z.coerce.number().int().positive(),
+  credential_key_version: z.coerce.number().int().safe().positive(),
 });
 
 type CredentialEnv = Pick<Env,
