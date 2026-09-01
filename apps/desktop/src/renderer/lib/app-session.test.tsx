@@ -757,7 +757,11 @@ describe('single-platform desktop identity routing', () => {
     {
       name: 'automation',
       url: 'rallywithai://workspace/eu/00000000-0000-7000-8000-000000000030/automations/new',
-      assertDestination: async () => expect(window.location.hash).toBe('#/automations/new'),
+      // Lands where drafting happens now that the builder is gone. What this
+      // case is really about is the workspace activation before the hop, which
+      // is unchanged: the link still addresses a workspace, and that workspace
+      // is still activated before anything navigates.
+      assertDestination: async () => expect(window.location.hash).toBe('#/workstreams/new'),
     },
     {
       name: 'connector result',
