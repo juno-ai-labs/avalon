@@ -819,6 +819,19 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${secondWorkstreamId}`));
   });
 
+  it('continues serialized deep-link delivery after one action rejects', async () => {
+    const workstreamId = '00000000-0000-7000-8000-000000000036';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.openSettings.mockRejectedValueOnce(new Error('Settings could not be opened'));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink('rallywithai://settings/connections');
+    await dispatchDeepLink(`rallywithai://workstreams/${workstreamId}`);
+
+    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${workstreamId}`));
+  });
+
   it('does not apply a connector result when its workspace cannot be activated', async () => {
     const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000025';
