@@ -644,7 +644,7 @@ export const MessageSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   author: MessageAuthorSchema,
-  messageType: z.enum(["text", "system", "tool", "elicitation", "suggestion"]),
+  messageType: z.enum(["text", "system", "tool", "elicitation", "suggestion", "automation_activation"]),
   textContent: z.string(),
   structuredContent: z.record(z.string(), z.unknown()).nullable(),
   mentions: z.array(MentionSchema),

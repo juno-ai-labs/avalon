@@ -109,7 +109,7 @@ export type MessageAppendInput = Omit<
 > & {
   authorType: "agent" | "external" | "system";
   authorUserId: null;
-  messageType: "text" | "system" | "elicitation";
+  messageType: "text" | "system" | "elicitation" | "automation_activation";
 };
 
 const MESSAGE_COLUMNS = `part.id, part.client_message_id,

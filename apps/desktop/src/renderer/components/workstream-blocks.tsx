@@ -1786,10 +1786,21 @@ export function MessageBlock({
     }
     return <div className="transcript-event" id={`message-${message.id}`}><ElicitationPanel elicitation={message.elicitation} onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)} /></div>;
   }
-  if (message.authorType === 'system' || message.messageType === 'system') {
+  // Ahead of the system branch, and on the type rather than the author: an
+  // activation is appended by Rally on an automation's behalf, so it arrives
+  // with a machine author and would otherwise fall into the row that means
+  // "Rally is noting something that happened *to* this work stream". It is not
+  // that. It is what an automation found, for the people in the room to read.
+  const automation = message.messageType === 'automation_activation';
+  if (!automation && (message.authorType === 'system' || message.messageType === 'system')) {
     return <SystemMessageBlock disclosure={systemRowDisclosure} message={message} />;
   }
 
+  // The ordinary authored row, not a kind of its own: the same block a
+  // colleague's message gets, with a different name in the author slot. A
+  // bespoke row would need its own empty and error states, and its own answer
+  // every time this family changes, to present something a reader already knows
+  // how to read.
   const human = message.authorType === 'human' || message.authorType === 'external';
   const external = message.authorType === 'external';
   const ownHumanMessage = message.authorType === 'human' && currentUserId !== undefined && message.author?.id === currentUserId;
@@ -1808,7 +1819,8 @@ export function MessageBlock({
     <article
       aria-label={sending ? 'Sending message' : pending && pendingLabel
         ? `${pendingLabel}: message from ${humanAuthorName}`
-        : human ? `Message from ${humanAuthorName}` : undefined}
+        : human ? `Message from ${humanAuthorName}`
+          : automation ? 'Automation result' : undefined}
       aria-busy={message.streaming || sending || undefined}
       className={clsx(
         'message-block',
@@ -1833,7 +1845,9 @@ export function MessageBlock({
           {!ownHumanMessage && (
             <>
               {human && <span aria-hidden="true" className="message-author-dot" />}
-              <span className="message-author">{human ? humanAuthorName : 'Rally'}</span>
+              <span className="message-author">
+                {human ? humanAuthorName : automation ? 'Automation' : 'Rally'}
+              </span>
             </>
           )}
           {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
