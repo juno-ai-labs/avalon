@@ -17,6 +17,7 @@ import {
   BlockDashboardPreferenceSchema as WireBlockDashboardPreferenceSchema,
   BlockDashboardSchema as WireBlockDashboardSchema,
   NoteDetailSchema as WireNoteDetailSchema,
+  NoteCursorSchema as WireNoteCursorSchema,
   NoteSummarySchema as WireNoteSummarySchema,
   NoteTranscriptSegmentSchema as WireNoteTranscriptSegmentSchema,
   ParticipantSchema as WireParticipantSchema,
@@ -211,7 +212,10 @@ export interface MentionIdentity {
 
 const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema);
-const wireNotePageSchema = z.object({ items: z.array(WireNoteSummarySchema) });
+const wireNotePageSchema = z.object({
+  items: z.array(WireNoteSummarySchema),
+  nextCursor: WireNoteCursorSchema.nullable(),
+});
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
@@ -1052,9 +1056,14 @@ export class RallyApi {
     };
   }
 
-  async getNotes(signal?: AbortSignal): Promise<NoteSummary[]> {
-    const page = await this.request('/notes?limit=250', { schema: wireNotePageSchema, signal });
-    return page.items;
+  /** One page of the note list, newest first; `before` resumes after a cursor. */
+  async getNotes(
+    input: { limit: number; before?: string } = { limit: 250 },
+    signal?: AbortSignal,
+  ): Promise<{ items: NoteSummary[]; nextCursor: string | null }> {
+    const query = new URLSearchParams({ limit: String(input.limit) });
+    if (input.before) query.set('before', input.before);
+    return this.request(`/notes?${query.toString()}`, { schema: wireNotePageSchema, signal });
   }
 
   createProject(input: CreateProjectRequest): Promise<ProjectSummary> {

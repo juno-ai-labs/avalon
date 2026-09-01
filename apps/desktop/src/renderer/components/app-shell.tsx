@@ -11,6 +11,7 @@ import { uuidV7 } from '../lib/telemetry';
 import { useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
+import { useNotesQuery } from '../lib/use-notes-query';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -274,7 +275,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
     return true;
   };
-  const notes = useSocketOwnedList<NoteSummary>(['notes']);
+  const notes = useNotesQuery();
   const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
@@ -735,8 +736,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           void signOut().catch(() => undefined);
         }}
         hasMoreWorkstreams={workstreams.hasMore}
+        hasMoreNotes={notes.hasMore}
         loadingMoreWorkstreams={workstreams.isFetchingMore}
+        loadingMoreNotes={notes.isFetchingMore}
         onLoadMoreWorkstreams={workstreams.fetchMore}
+        onLoadMoreNotes={notes.fetchMore}
         workspace={workspace}
         workstreams={workstreams.data ?? []}
       />

@@ -39,7 +39,11 @@ import {
   applyWorkspaceWorkstreamFields,
   workstreamSummaryState,
 } from './workstream-state-store';
-import { applyVersionedProjectSnapshot, applyVersionedSidebarList } from './sidebar-list-store';
+import {
+  applyVersionedNotePage,
+  applyVersionedProjectSnapshot,
+  applyVersionedSidebarList,
+} from './sidebar-list-store';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { mergeCachedWorkstreamPage, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
@@ -65,6 +69,8 @@ export interface WorkstreamPage {
 export interface SidebarConnect {
   generation: number;
   nextCursor: string | null;
+  /** The note list's own next page, tracked separately: two lists, two cursors. */
+  notesNextCursor: string | null;
 }
 
 interface PendingCommand {
@@ -329,11 +335,17 @@ export function WorkspaceSocketProvider({
         sidebar.automations.waterline,
         sidebar.automations.items.map(mapAutomationSummary),
       );
-      applyVersionedSidebarList(queryClient, 'notes', sidebar.notes.waterline, sidebar.notes.items);
+      applyVersionedNotePage(
+        queryClient,
+        sidebar.notes.waterline,
+        sidebar.notes.items,
+        sidebar.notes.nextCursor,
+      );
       if (sidebar.projects) applyVersionedProjectSnapshot(queryClient, sidebar.projects);
       setSidebarConnect((current) => ({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
+        notesNextCursor: sidebar.notes.nextCursor ?? null,
       }));
       return unaccountedFor && !wholeDirectory;
     };
@@ -522,11 +534,11 @@ export function WorkspaceSocketProvider({
                 sidebarList.data.items.map(mapAutomationSummary),
               );
             } else {
-              applyVersionedSidebarList(
+              applyVersionedNotePage(
                 queryClient,
-                'notes',
                 sidebarList.data.waterline,
                 sidebarList.data.items,
+                sidebarList.data.nextCursor,
               );
             }
             return;

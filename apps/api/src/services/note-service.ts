@@ -108,16 +108,26 @@ export class NoteService {
     return { note: state.note, segments: state.segments };
   }
 
-  /** Shares its statement and row mapping with the sidebar's socket batch. */
-  async list(limit: number): Promise<{ items: NoteSummary[] }> {
-    const result = WorkspaceNoteSidebarListSchema.parse(
+  /**
+   * One page of the list, sharing its statement and row mapping with the
+   * sidebar's socket batch.
+   *
+   * The socket delivers the first page unasked, so this serves what a reader's
+   * own scrolling asks for afterwards: `before` resumes at the cursor the
+   * previous page ended on.
+   */
+  async list(
+    limit: number,
+    before?: string,
+  ): Promise<{ items: NoteSummary[]; nextCursor: string | null }> {
+    return WorkspaceNoteSidebarListSchema.parse(
       await (await this.workspace()).listNoteSidebar({
         workspaceId: this.auth.workspaceId,
         userId: this.auth.userId,
         limit: Math.min(Math.max(limit, 1), SIDEBAR_LIST_LIMIT),
+        ...(before ? { before } : {}),
       }),
     );
-    return { items: result.items };
   }
 
   async create(input: CreateNoteRequest): Promise<NoteDetail> {

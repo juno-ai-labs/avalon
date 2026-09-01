@@ -2823,8 +2823,11 @@ describe('Sidebar work-stream paging', () => {
 
   function renderWithPaging(overrides: {
     hasMoreWorkstreams?: boolean;
+    hasMoreNotes?: boolean;
     loadingMoreWorkstreams?: boolean;
+    loadingMoreNotes?: boolean;
     onLoadMoreWorkstreams?: () => void;
+    onLoadMoreNotes?: () => void;
   }): HTMLElement {
     const { container } = render(
       <MemoryRouter>
@@ -2865,6 +2868,56 @@ describe('Sidebar work-stream paging', () => {
     // are usually there by the time the reader arrives.
     scrollTo(nav, 900);
     expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks both lists for their next page, since one set of headings holds both', () => {
+    // Notes and work streams interleave by recency under the same headings, so
+    // the row at the bottom belongs to one of them and the *other* is what the
+    // next heading down needs. Asking only for the kind at the end would stall
+    // the list wherever one of the two runs out — and for notes that used to be
+    // permanent, because the list did not page at all.
+    const onLoadMoreWorkstreams = vi.fn();
+    const onLoadMoreNotes = vi.fn();
+    const nav = renderWithPaging({
+      hasMoreWorkstreams: true,
+      hasMoreNotes: true,
+      onLoadMoreWorkstreams,
+      onLoadMoreNotes,
+    });
+
+    scrollTo(nav, 900);
+
+    expect(onLoadMoreWorkstreams).toHaveBeenCalledTimes(1);
+    expect(onLoadMoreNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks only the list that still has pages', () => {
+    const onLoadMoreWorkstreams = vi.fn();
+    const onLoadMoreNotes = vi.fn();
+    const nav = renderWithPaging({
+      hasMoreWorkstreams: false,
+      hasMoreNotes: true,
+      onLoadMoreWorkstreams,
+      onLoadMoreNotes,
+    });
+
+    scrollTo(nav, 900);
+
+    expect(onLoadMoreWorkstreams).not.toHaveBeenCalled();
+    expect(onLoadMoreNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks notes once while their page is in flight', () => {
+    const onLoadMoreNotes = vi.fn();
+    const nav = renderWithPaging({
+      hasMoreNotes: true,
+      loadingMoreNotes: true,
+      onLoadMoreNotes,
+    });
+
+    scrollTo(nav, 1_100);
+
+    expect(onLoadMoreNotes).not.toHaveBeenCalled();
   });
 
   it('asks once while a page is in flight', () => {
