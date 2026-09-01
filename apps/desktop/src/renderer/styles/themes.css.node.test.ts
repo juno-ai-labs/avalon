@@ -249,6 +249,7 @@ describe('token references', () => {
   // by libraries on their own elements. They cannot be checked from this file,
   // so they are listed to say they were considered.
   const RUNTIME = ['--rail-width', '--person-accent', '--markdown-table-columns', '--arrival-index',
+    '--radix-dropdown-menu-content-available-height',
     '--radix-select-content-available-height', '--radix-select-trigger-width'];
 
   it('names only tokens the registry declares', () => {
