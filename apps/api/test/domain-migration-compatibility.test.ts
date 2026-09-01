@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import type { Env } from "../src/env";
-import { compatibleDesktopDeepLink, connectorAttemptTarget } from "../src/lib/desktop-handoff";
+import {
+  compatibleDesktopDeepLink,
+  connectorAttemptTarget,
+  unknownConnectorAttemptFailureTarget,
+} from "../src/lib/desktop-handoff";
+import { addWorkspaceTarget, parseWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { AuthService } from "../src/services/auth-service";
 import { __resendInboundEmailTesting } from "../src/services/resend-inbound-email-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result } from "./helpers/cloudflare-test";
@@ -103,24 +108,56 @@ describe("deep links the server mints without a caller scheme", () => {
     expect(source).not.toContain('new URL(String(row.return_uri))');
   });
 
-  it("uses the scheme every live build registers", () => {
+  it.each(["google", "github", "granola", "linear", "notion", "slack"] as const)(
+    "uses an addressed callback for a version-two %s attempt",
+    (provider) => {
+      const env = contractCompleteEnv({ DESKTOP_DEEP_LINK_URI: CURRENT, AVALON_REGION: "global" });
+
+      expect(compatibleDesktopDeepLink(env).toString()).toBe(LEGACY);
+      const workspaceId = "00000000-0000-7000-8000-000000000009";
+      const returnUri = addWorkspaceTarget(new URL(LEGACY), { region: "global", workspaceId }).toString();
+
+      const target = new URL(connectorAttemptTarget(env, {
+        provider,
+        status: "succeeded",
+        connectionId: "00000000-0000-4000-8000-000000000004",
+        workspaceId,
+        returnUri,
+      }));
+      expect(target.protocol).toBe("avalon:");
+      expect(target.hostname).toBe("workspace");
+      expect(parseWorkspaceTarget(target)).toEqual({ region: "global", workspaceId });
+      expect(target.searchParams.get("provider")).toBe(provider);
+      expect(target.searchParams.get("status")).toBe("connected");
+    },
+  );
+
+  it("keeps a legacy connector attempt on its exact callback shape during rollout", () => {
     const env = contractCompleteEnv({ DESKTOP_DEEP_LINK_URI: CURRENT, AVALON_REGION: "global" });
-
-    // Connector start carries no returnUri, so the server cannot know which
-    // schemes the calling build claimed. A pre-rename build registered only the
-    // legacy scheme; every build since registers both.
-    expect(compatibleDesktopDeepLink(env).toString()).toBe(LEGACY);
-
     const target = new URL(connectorAttemptTarget(env, {
-      provider: "linear",
-      status: "succeeded",
-      connectionId: "00000000-0000-4000-8000-000000000004",
+      provider: "google",
+      status: "denied",
+      errorCode: "oauth_denied",
       workspaceId: "00000000-0000-7000-8000-000000000009",
+      returnUri: LEGACY,
     }));
-    expect(target.protocol).toBe("avalon:");
-    expect(target.searchParams.get("provider")).toBe("linear");
-    expect(target.searchParams.get("status")).toBe("connected");
-    expect(target.searchParams.get("workspace")).toBe("00000000-0000-7000-8000-000000000009");
+
+    expect(target.hostname).toBe("auth");
+    expect(target.pathname).toBe("/complete");
+    expect(target.searchParams.get("workspace")).toBeNull();
+    expect(target.searchParams.get("region")).toBe("global");
+  });
+
+  it("uses an explicitly unaddressed failure only when OAuth state cannot be resolved", () => {
+    const env = contractCompleteEnv({ DESKTOP_DEEP_LINK_URI: CURRENT, AVALON_REGION: "global" });
+    const target = new URL(unknownConnectorAttemptFailureTarget(env, {
+      provider: "github",
+      errorCode: "invalid_oauth_state",
+    }));
+
+    expect(target.hostname).toBe("auth");
+    expect(target.searchParams.get("workspace")).toBeNull();
+    expect(target.searchParams.get("status")).toBe("failed");
   });
 
   it("keeps the configured host and path", () => {

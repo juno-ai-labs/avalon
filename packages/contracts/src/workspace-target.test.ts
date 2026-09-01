@@ -12,24 +12,42 @@ const TARGET = {
 };
 
 describe('workspace-addressed links', () => {
-  it('uses one region/workspace query representation without discarding payload fields', () => {
+  it('uses one versioned path representation without discarding payload fields', () => {
     const url = addWorkspaceTarget(new URL('rallywithai://auth/complete?provider=slack'), TARGET);
 
     expect(url.toString()).toBe(
-      `rallywithai://auth/complete?provider=slack&region=eu&workspace=${TARGET.workspaceId}`,
+      `rallywithai://workspace/eu/${TARGET.workspaceId}/auth/complete?provider=slack`,
     );
-    expect(parseWorkspaceTarget(url.searchParams)).toEqual(TARGET);
+    expect(parseWorkspaceTarget(url)).toEqual(TARGET);
   });
 
-  it('rejects missing, duplicated, and malformed coordinates', () => {
-    for (const query of [
-      `region=eu`,
-      `workspace=${TARGET.workspaceId}`,
-      `region=us&workspace=${TARGET.workspaceId}`,
-      `region=eu&workspace=not-a-uuid`,
-      `region=eu&region=global&workspace=${TARGET.workspaceId}`,
+  it('rejects missing, duplicated, malformed, and query-addressed coordinates', () => {
+    for (const rawUrl of [
+      'rallywithai://workspace/eu',
+      'rallywithai://workspace/eu/not-a-uuid/settings/connections',
+      `rallywithai://workspace/us/${TARGET.workspaceId}/settings/connections`,
+      `rallywithai://workspace/eu/${TARGET.workspaceId}`,
+      `rallywithai://settings/connections?region=eu&workspace=${TARGET.workspaceId}`,
     ]) {
-      expect(parseWorkspaceTarget(new URLSearchParams(query)), query).toBeNull();
+      expect(parseWorkspaceTarget(new URL(rawUrl)), rawUrl).toBeNull();
+    }
+  });
+
+  it('uses a host the previous desktop rejects instead of opening relative to its active workspace', () => {
+    const previousReleaseAccepted = (url: URL): boolean => {
+      const knownHost = ['auth', 'workstreams', 'invitations', 'settings', 'automations', 'slack']
+        .includes(url.hostname);
+      return (url.protocol === 'rallywithai:' || url.protocol === 'avalon:') && knownHost;
+    };
+    for (const destination of [
+      `rallywithai://workstreams/00000000-0000-7000-8000-000000000010`,
+      'rallywithai://settings/connections',
+      'rallywithai://automations/new',
+      `rallywithai://slack/link?token=${'a'.repeat(43)}`,
+      'rallywithai://auth/complete?provider=google&status=denied&error=oauth_denied',
+    ]) {
+      const addressed = addWorkspaceTarget(new URL(destination), TARGET);
+      expect(previousReleaseAccepted(addressed), addressed.toString()).toBe(false);
     }
   });
 

@@ -66,9 +66,12 @@ function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; au
       DB: sqliteD1(regional),
       AVALON_REGION: "global",
       APP_ENV: "test",
+      PUBLIC_API_BASE_URL: "https://api.rallywith.ai",
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
       DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
       OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
+      GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-client",
+      GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-secret",
       WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, [
         "startConnectorOAuthAttempt",
         "abandonConnectorOAuthAttempt",
@@ -130,6 +133,34 @@ function insertConnection(object: DatabaseSync, id: string): void {
 }
 
 describe("connector OAuth handoff", () => {
+  it("persists a versioned addressed return for a capable desktop start", async () => {
+    const { auth, env, regional } = fixture();
+
+    await new ConnectionService(env, auth).beginGoogle({
+      scope: "personal",
+      capabilities: ["gmail.read"],
+      desktopHandoffVersion: 2,
+    });
+
+    const row = regional.prepare("SELECT return_uri FROM oauth_states").get() as { return_uri: string };
+    const target = new URL(row.return_uri);
+    expect(target.hostname).toBe("workspace");
+    expect(target.pathname).toBe(`/global/${WORKSPACE_ID}/auth/complete`);
+  });
+
+  it("persists the legacy return for a desktop start without a handoff capability", async () => {
+    const { auth, env, regional } = fixture();
+
+    await new ConnectionService(env, auth).beginGoogle({
+      scope: "personal",
+      capabilities: ["gmail.read"],
+    });
+
+    expect(regional.prepare("SELECT return_uri FROM oauth_states").get()).toEqual({
+      return_uri: "avalon://auth/complete",
+    });
+  });
+
   it("keeps the desktop target in a fragment on the no-store handoff surface", () => {
     const target = `avalon://auth/complete?provider=linear&region=global&attempt=${"a".repeat(43)}&status=denied&error=oauth_denied`;
     const handoff = new URL(desktopHandoffUrl({ PUBLIC_WEB_BASE_URL: "https://with-avalon.com" }, target));
