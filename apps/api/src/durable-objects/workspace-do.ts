@@ -141,6 +141,7 @@ import {
   WorkspaceDirectoryReadableIdsRequestSchema,
   WorkspaceDirectoryReadableIdsResultSchema,
   WorkspaceDirectoryDeliveryAuthorityRequestSchema,
+  WorkspaceDirectoryExposeRunRequestSchema,
   WorkspaceDirectoryDeliveryAuthoritySchema,
   WorkspaceDirectoryNotificationRequestSchema,
   WorkspaceDirectoryNotificationStateSchema,
@@ -8173,6 +8174,56 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       authorityGeneration: row.authority_generation,
       archived: row.archived_at !== null,
     }) : null;
+  }
+
+  /**
+   * Reveal an automation occurrence's own work stream in the sidebar.
+   *
+   * Creates nothing. The run finished in a work stream that already exists and
+   * already holds its whole transcript; every listing query hides it because
+   * `origin_type = 'automation'`, and this stops that one row being hidden. A
+   * reader who takes the disposition's name literally will look for a creation
+   * path that is deliberately absent.
+   *
+   * Idempotent because it is a boolean: a delivery retry after a crash has
+   * nothing to duplicate.
+   */
+  async exposeAutomationRunWorkstream(
+    input: z.input<typeof WorkspaceDirectoryExposeRunRequestSchema>,
+  ): Promise<{ exposed: boolean; outcomeCode: string }> {
+    await this.initialized;
+    const request = WorkspaceDirectoryExposeRunRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{
+      origin_type: string;
+      archived_at: number | null;
+    }>(
+      `SELECT origin_type, archived_at
+         FROM workspace_workstream_directory WHERE workstream_id = ?`,
+      request.workstreamId,
+    ).toArray()[0];
+    if (!row) return { exposed: false, outcomeCode: "workstream_not_found" };
+    // Only a run's own work stream. Exposing anything else would mean this RPC
+    // could unhide a room whose visibility somebody decided deliberately.
+    if (row.origin_type !== "automation") {
+      return { exposed: false, outcomeCode: "workstream_not_an_automation_run" };
+    }
+    // An archived run stays archived: a person archives an exposed run like any
+    // other work stream, and a later occurrence must not undo that.
+    if (row.archived_at !== null) return { exposed: false, outcomeCode: "workstream_archived" };
+    this.state.storage.sql.exec(
+      request.scope === null
+        ? `UPDATE workspace_workstream_directory
+              SET automation_exposed = 1
+            WHERE workstream_id = ?`
+        : `UPDATE workspace_workstream_directory
+              SET automation_exposed = 1, scope = ?
+            WHERE workstream_id = ?`,
+      ...(request.scope === null
+        ? [request.workstreamId]
+        : [request.scope, request.workstreamId]),
+    );
+    return { exposed: true, outcomeCode: "workstream_exposed" };
   }
 
   async workstreamsForResource(

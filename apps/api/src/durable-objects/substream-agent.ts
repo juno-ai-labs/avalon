@@ -3816,6 +3816,35 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         }).catch(() => undefined);
       }
     }
+    // An occurrence worth reading in full. Nothing is created: the run already
+    // finished in its own work stream, and this stops that one row being
+    // hidden from the sidebar. It reaches nobody the automation could not
+    // already reach, so it is not a delivery and gets no receipt.
+    if (disposition.disposition === "expose_workstream") {
+      // Null stays null: a context frozen before the scope was recorded reveals
+      // the run without widening who can see it.
+      const scope = frozen.scope === "workstream" ? null : frozen.scope;
+      const workspace = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.WORKSPACE_DOS,
+        asWorkspaceId(input.workspaceId),
+        workspaceDOName(input.region, asWorkspaceId(input.workspaceId)),
+      );
+      const exposed = await workspace.exposeAutomationRunWorkstream({
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        scope,
+      });
+      if (!exposed.exposed) {
+        // Not a failure to retry. Every refusal it can give — the run's work
+        // stream is gone, or somebody archived it — is a decision that stands.
+        logWarn(this.env, "automation_run_not_exposed", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          reason: exposed.outcomeCode,
+        });
+      }
+    }
     // The room that owns this automation, woken with the result as a message.
     // Not one of `deliveryTargets`: those are destinations somebody chose, and
     // this one follows from ownership. It is also the only "delivery" that

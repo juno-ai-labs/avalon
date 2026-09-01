@@ -238,6 +238,13 @@ export const AutomationRunContextV1Schema = z.strictObject({
    * agreement with the scope and no principal to record beside it.
    */
   owningWorkstreamId: IdSchema.nullable().default(null),
+  /**
+   * The accepted scope, frozen so exposing a run cannot widen it after the
+   * fact. Null on a context frozen before this was recorded: exposing such a
+   * run reveals it without changing its work stream's scope, because guessing
+   * wrong in the other direction shares somebody's run with the workspace.
+   */
+  scope: AutomationScopeSchema.nullable().default(null),
   modelOverride: z.string().min(1).nullable(),
   executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
   trigger: AutomationRunTriggerV1Schema,
