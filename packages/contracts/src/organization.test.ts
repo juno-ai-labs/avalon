@@ -70,7 +70,44 @@ describe("organization invitation contracts", () => {
     expect(SessionSchema.parse(session)).toEqual(session);
     expect(WorkspaceOnboardingStateSchema.parse({ invitations: [] })).toEqual({
       workspace: null,
+      workspaces: [],
       invitations: [],
     });
+  });
+
+  it("keeps the singular onboarding workspace while exposing every membership", () => {
+    const globalWorkspace = {
+      id: workspaceId,
+      name: "Global Research",
+      slug: "global-research",
+      region: "global" as const,
+      role: "owner" as const,
+      timezone: "America/Los_Angeles",
+      createdAt: "2026-08-01T00:00:00.000Z",
+    };
+    const euWorkspace = {
+      ...globalWorkspace,
+      id: "00000000-0000-7000-8000-000000000099",
+      name: "Europe Research",
+      slug: "europe-research",
+      region: "eu" as const,
+      role: "member" as const,
+      timezone: "Europe/London",
+    };
+
+    expect(WorkspaceOnboardingStateSchema.parse({
+      workspace: globalWorkspace,
+      workspaces: [globalWorkspace, euWorkspace],
+      invitations: [],
+    })).toEqual({
+      workspace: globalWorkspace,
+      workspaces: [globalWorkspace, euWorkspace],
+      invitations: [],
+    });
+
+    expect(WorkspaceOnboardingStateSchema.parse({
+      workspace: globalWorkspace,
+      invitations: [],
+    }).workspaces).toEqual([globalWorkspace]);
   });
 });

@@ -15,6 +15,7 @@ import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
+import { sha256 } from "../lib/crypto";
 import {
   deriveWorkspacePlacementAffinity,
   durableObjectStubForWorkspace,
@@ -321,42 +322,34 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
     }
 
-    const existing = await this.firstMembership(user.id);
-    if (existing && existing.workspace_id !== input.workspaceId) {
-      throw new ApiError(409, "workspace_membership_conflict", "This Rally account already belongs to another organization");
-    }
-    if (!existing) {
-      const at = nowIso();
-      const slugBase = input.name.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "workspace";
-      const slug = `${slugBase}-${input.workspaceId.slice(0, 8)}`;
-      await this.env.DB.batch([
-        this.env.DB.prepare(
-          `INSERT INTO workspaces
-           (id, name, slug, region, timezone, placement_affinity,
-            created_by_user_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          input.workspaceId,
-          input.name,
-          slug,
-          this.env.AVALON_REGION,
-          this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
-          input.placementAffinity,
-          user.id,
-          at,
-          at,
-        ),
-        this.env.DB.prepare(
-          `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
-           SELECT ?, ?, 'owner', 'active', ?
-           WHERE EXISTS (SELECT 1 FROM workspaces WHERE id = ? AND region = ?)
-           ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`,
-        ).bind(input.workspaceId, user.id, at, input.workspaceId, this.env.AVALON_REGION),
-        this.operationStatement(input, "create", null, at),
-      ]);
-    } else {
-      await this.recordOperation(input, "create", null);
-    }
+    const at = nowIso();
+    const slugBase = input.name.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "workspace";
+    const slug = `${slugBase}-${input.workspaceId.slice(0, 8)}`;
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `INSERT INTO workspaces
+         (id, name, slug, region, timezone, placement_affinity,
+          created_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        input.workspaceId,
+        input.name,
+        slug,
+        this.env.AVALON_REGION,
+        this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
+        input.placementAffinity,
+        user.id,
+        at,
+        at,
+      ),
+      this.env.DB.prepare(
+        `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+         SELECT ?, ?, 'owner', 'active', ?
+         WHERE EXISTS (SELECT 1 FROM workspaces WHERE id = ? AND region = ?)
+         ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`,
+      ).bind(input.workspaceId, user.id, at, input.workspaceId, this.env.AVALON_REGION),
+      this.operationStatement(input, "create", null, at),
+    ]);
     await this.requireMembership(user.id, input.workspaceId);
     await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
     await this.initializeWorkspaceObject(input.workspaceId, input.placementAffinity);
@@ -481,15 +474,6 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     }
   }
 
-  private async firstMembership(userId: string): Promise<{ workspace_id: string } | null> {
-    return this.env.DB.prepare(
-      `SELECT m.workspace_id FROM workspace_members m
-       JOIN workspaces w ON w.id = m.workspace_id
-       WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
-       ORDER BY m.joined_at LIMIT 1`,
-    ).bind(userId, this.env.AVALON_REGION).first<{ workspace_id: string }>();
-  }
-
   private async requireMembership(userId: string, workspaceId: string): Promise<void> {
     const membership = await this.env.DB.prepare(
       `SELECT 1 AS present FROM workspace_members m
@@ -612,13 +596,22 @@ export interface PlatformBindingRow {
   region: Region;
   workspace_id: string;
   placement_affinity: WorkspacePlacementAffinity;
-  status: "pending" | "active";
+  status: "pending" | "active" | "inactive";
   operation_id: string;
   pending_expires_at: string | null;
 }
 
 export interface PlatformBindingStore {
-  get(platformUserId: string): Promise<PlatformBindingRow | null>;
+  list(platformUserId: string): Promise<PlatformBindingRow[]>;
+  reconcile(
+    platformUserId: string,
+    destinations: readonly {
+      region: Region;
+      workspaceId: string;
+      placementAffinity: WorkspacePlacementAffinity;
+      operationId: string;
+    }[],
+  ): Promise<PlatformBindingRow[]>;
   reserve(
     platformUserId: string,
     region: Region,
@@ -633,9 +626,83 @@ export interface PlatformBindingStore {
 export class D1PlatformBindingStore implements PlatformBindingStore {
   constructor(private readonly db: D1Database, private readonly now: () => Date = () => new Date()) {}
 
-  async get(platformUserId: string): Promise<PlatformBindingRow | null> {
-    return this.db.prepare("SELECT * FROM platform_workspace_bindings WHERE platform_user_id = ?")
-      .bind(platformUserId).first<PlatformBindingRow>();
+  async list(platformUserId: string): Promise<PlatformBindingRow[]> {
+    const result = await this.db.prepare(
+      `SELECT platform_user_id, region, workspace_id, placement_affinity, status,
+              operation_id, pending_expires_at
+       FROM platform_workspace_bindings
+       WHERE platform_user_id = ?
+       ORDER BY created_at, region, workspace_id`,
+    ).bind(platformUserId).all<PlatformBindingRow>();
+    return result.results ?? [];
+  }
+
+  async reconcile(
+    platformUserId: string,
+    destinations: readonly {
+      region: Region;
+      workspaceId: string;
+      placementAffinity: WorkspacePlacementAffinity;
+      operationId: string;
+    }[],
+  ): Promise<PlatformBindingRow[]> {
+    const current = await this.list(platformUserId);
+    const destinationKeys = new Set(destinations.map((item) => `${item.region}:${item.workspaceId}`));
+    const statements: D1PreparedStatement[] = [];
+    const at = this.now().toISOString();
+
+    for (const destination of destinations) {
+      if (!isWorkspacePlacementAffinityForRegion(destination.region, destination.placementAffinity)) {
+        throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
+      }
+      const existing = current.find((row) => sameDestination(
+        { region: row.region, workspaceId: row.workspace_id },
+        destination.region,
+        destination.workspaceId,
+      ));
+      if (existing && existing.placement_affinity !== destination.placementAffinity) {
+        throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
+      }
+      if (existing) {
+        if (existing.status !== "active") {
+          statements.push(this.db.prepare(
+            `UPDATE platform_workspace_bindings
+             SET status = 'active', pending_expires_at = NULL, updated_at = ?
+             WHERE platform_user_id = ? AND region = ? AND workspace_id = ?`,
+          ).bind(at, platformUserId, destination.region, destination.workspaceId));
+        }
+      } else {
+        statements.push(this.db.prepare(
+          `INSERT INTO platform_workspace_bindings
+           (platform_user_id, region, workspace_id, placement_affinity, status,
+            operation_id, pending_expires_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'active', ?, NULL, ?, ?)`,
+        ).bind(
+          platformUserId,
+          destination.region,
+          destination.workspaceId,
+          destination.placementAffinity,
+          destination.operationId,
+          at,
+          at,
+        ));
+      }
+    }
+
+    for (const row of current) {
+      if (row.status === "pending") continue;
+      if (destinationKeys.has(`${row.region}:${row.workspace_id}`)) continue;
+      if (row.status !== "inactive") {
+        statements.push(this.db.prepare(
+          `UPDATE platform_workspace_bindings SET status = 'inactive', updated_at = ?
+           WHERE platform_user_id = ? AND region = ? AND workspace_id = ?
+             AND status IN ('active', 'inactive')`,
+        ).bind(at, platformUserId, row.region, row.workspace_id));
+      }
+    }
+
+    if (statements.length > 0) await this.db.batch(statements);
+    return this.list(platformUserId);
   }
 
   async reserve(
@@ -654,11 +721,28 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
     // could still commit after an apparent timeout.
     const expiresAt = new Date(this.now().getTime() + 2 * 60_000).toISOString();
     await this.db.prepare(
-      `INSERT INTO platform_workspace_bindings
+      `UPDATE platform_workspace_bindings
+       SET status = 'pending', operation_id = ?, pending_expires_at = ?, updated_at = ?
+       WHERE platform_user_id = ? AND region = ? AND workspace_id = ? AND status = 'inactive'
+         AND NOT EXISTS (
+           SELECT 1 FROM platform_workspace_bindings
+           WHERE platform_user_id = ? AND status = 'pending'
+         )`,
+    ).bind(
+      operationId,
+      expiresAt,
+      at,
+      platformUserId,
+      region,
+      workspaceId,
+      platformUserId,
+    ).run();
+    await this.db.prepare(
+      `INSERT OR IGNORE INTO platform_workspace_bindings
        (platform_user_id, region, workspace_id, placement_affinity, status, operation_id,
         pending_expires_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
-       ON CONFLICT(platform_user_id) DO NOTHING`,
+       `,
     ).bind(
       platformUserId,
       region,
@@ -669,7 +753,13 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
       at,
       at,
     ).run();
-    const row = await this.get(platformUserId);
+    const rows = await this.list(platformUserId);
+    const exact = rows.find((row) => sameDestination(
+      { region: row.region, workspaceId: row.workspace_id },
+      region,
+      workspaceId,
+    ));
+    const row = exact ?? rows.find((candidate) => candidate.status === "pending");
     if (!row) throw new ApiError(503, "workspace_binding_unavailable", "The workspace selection could not be reserved");
     return row;
   }
@@ -681,9 +771,9 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
        WHERE platform_user_id = ? AND operation_id = ? AND status = 'pending'`,
     ).bind(this.now().toISOString(), platformUserId, operationId).run();
     if (Number(result.meta.changes ?? 0) === 1) return;
-    const row = await this.get(platformUserId);
+    const row = (await this.list(platformUserId)).find((candidate) => candidate.operation_id === operationId);
     if (!row || row.status !== "active" || row.operation_id !== operationId) {
-      throw new ApiError(409, "workspace_binding_conflict", "This Rally account is already bound to another organization");
+      throw new ApiError(409, "workspace_binding_conflict", "The workspace route conflicts with this Rally account");
     }
   }
 
@@ -696,9 +786,76 @@ export class D1PlatformBindingStore implements PlatformBindingStore {
 
 }
 
+export interface PlatformOperationRow {
+  operation_id: string;
+  platform_user_id: string;
+  action: "create" | "accept";
+  request_fingerprint: string;
+  region: Region;
+  workspace_id: string;
+  placement_affinity: WorkspacePlacementAffinity;
+  invitation_id: string | null;
+  status: "pending" | "complete";
+}
+
+export interface PlatformOperationStore {
+  get(operationId: string): Promise<PlatformOperationRow | null>;
+  begin(row: PlatformOperationRow): Promise<PlatformOperationRow>;
+  complete(platformUserId: string, operationId: string): Promise<void>;
+}
+
+export class D1PlatformOperationStore implements PlatformOperationStore {
+  constructor(private readonly db: D1Database, private readonly now: () => Date = () => new Date()) {}
+
+  get(operationId: string): Promise<PlatformOperationRow | null> {
+    return this.db.prepare(
+      `SELECT operation_id, platform_user_id, action, request_fingerprint, region,
+              workspace_id, placement_affinity, invitation_id, status
+       FROM platform_workspace_operations WHERE operation_id = ?`,
+    ).bind(operationId).first<PlatformOperationRow>();
+  }
+
+  async begin(row: PlatformOperationRow): Promise<PlatformOperationRow> {
+    const at = this.now().toISOString();
+    await this.db.prepare(
+      `INSERT OR IGNORE INTO platform_workspace_operations
+       (operation_id, platform_user_id, action, request_fingerprint, region,
+        workspace_id, placement_affinity, invitation_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+    ).bind(
+      row.operation_id,
+      row.platform_user_id,
+      row.action,
+      row.request_fingerprint,
+      row.region,
+      row.workspace_id,
+      row.placement_affinity,
+      row.invitation_id,
+      at,
+      at,
+    ).run();
+    const stored = await this.get(row.operation_id);
+    if (!stored) throw new ApiError(503, "workspace_operation_unavailable", "Workspace setup could not be reserved");
+    return stored;
+  }
+
+  async complete(platformUserId: string, operationId: string): Promise<void> {
+    const result = await this.db.prepare(
+      `UPDATE platform_workspace_operations SET status = 'complete', updated_at = ?
+       WHERE operation_id = ? AND platform_user_id = ?`,
+    ).bind(this.now().toISOString(), operationId, platformUserId).run();
+    if (Number(result.meta.changes ?? 0) === 1) return;
+    const stored = await this.get(operationId);
+    if (!stored || stored.platform_user_id !== platformUserId || stored.status !== "complete") {
+      throw new ApiError(409, "onboarding_operation_conflict", "The onboarding operation could not be completed");
+    }
+  }
+}
+
 export interface PlatformOnboardingDependencies {
   gateways?: Partial<Record<Region, RegionalIdentityBridgeBinding>>;
   bindings?: PlatformBindingStore;
+  operations?: PlatformOperationStore;
   newId?: () => string;
 }
 
@@ -706,6 +863,7 @@ export interface PlatformOnboardingDependencies {
 export class PlatformOnboardingService {
   private readonly gateways: Record<Region, RegionalIdentityBridgeBinding>;
   private readonly bindings: PlatformBindingStore;
+  private readonly operations: PlatformOperationStore;
   private readonly createId: () => string;
 
   constructor(
@@ -724,16 +882,19 @@ export class PlatformOnboardingService {
       eu,
     };
     this.bindings = dependencies.bindings ?? new D1PlatformBindingStore(env.DB);
+    this.operations = dependencies.operations ?? new D1PlatformOperationStore(env.DB);
     this.createId = dependencies.newId ?? newId;
   }
 
   async state(): Promise<WorkspaceOnboardingState> {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);
-    const workspace = await this.resolveWorkspaceBinding(identity.platformUserId, discovery);
+    const workspaces = await this.reconcileWorkspaceBindings(identity.platformUserId, discovery);
     return {
-      workspace,
-      invitations: workspace ? [] : discovery.flatMap((item) => item.invitations),
+      // Compatibility for desktop builds released before plural discovery.
+      workspace: workspaces[0] ?? null,
+      workspaces,
+      invitations: discovery.flatMap((item) => item.invitations),
     };
   }
 
@@ -743,18 +904,12 @@ export class PlatformOnboardingService {
     const workspace = discovery.flatMap((item) => item.workspaces)
       .find((item) => item.region === region && item.id === workspaceId);
     if (!workspace) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
-    return this.completeRegionalAction(
+    await this.reconcileWorkspaceBindings(identity.platformUserId, discovery);
+    return this.issueExistingSession(
       identity,
       region,
       workspaceId,
       workspace.placementAffinity,
-      (operationId, preference) => this.gateways[region].activate({
-        identity,
-        operationId,
-        workspaceId: asWorkspaceId(workspaceId),
-        placementAffinity: workspace.placementAffinity,
-        preference,
-      }),
     );
   }
 
@@ -762,52 +917,114 @@ export class PlatformOnboardingService {
     name: string,
     region: Region,
     requestLocation?: unknown,
+    requestedOperationId?: string,
   ): Promise<Session> {
     const identity = await this.loadPlatformIdentity();
-    const discovery = await this.discover(identity);
-    if (discovery.some((item) => item.workspaces.length > 0)) {
-      throw new ApiError(409, "workspace_membership_conflict", "This Rally account already belongs to another organization");
+    const requestFingerprint = await sha256(JSON.stringify(["create", region, name]));
+    let operationId = requestedOperationId;
+    let existing = operationId ? await this.operations.get(operationId) : null;
+    let workspaceId: string;
+    let placementAffinity: WorkspacePlacementAffinity;
+    if (existing) {
+      this.assertPlatformOperation(existing, identity.platformUserId, "create", requestFingerprint, region, null);
+      workspaceId = existing.workspace_id;
+      placementAffinity = existing.placement_affinity;
+    } else {
+      workspaceId = this.createId();
+      operationId ??= this.createId();
+      placementAffinity = deriveWorkspacePlacementAffinity(region, requestLocation).affinity;
+      existing = await this.operations.begin({
+        operation_id: operationId,
+        platform_user_id: identity.platformUserId,
+        action: "create",
+        request_fingerprint: requestFingerprint,
+        region,
+        workspace_id: workspaceId,
+        placement_affinity: placementAffinity,
+        invitation_id: null,
+        status: "pending",
+      });
+      this.assertPlatformOperation(existing, identity.platformUserId, "create", requestFingerprint, region, null);
+      workspaceId = existing.workspace_id;
+      placementAffinity = existing.placement_affinity;
     }
-    const workspaceId = this.createId();
-    const placement = deriveWorkspacePlacementAffinity(region, requestLocation);
+    if (!operationId) {
+      throw new ApiError(500, "onboarding_operation_failed", "The onboarding operation could not be created");
+    }
     return this.completeRegionalAction(
       identity,
       region,
       workspaceId,
-      placement.affinity,
-      (operationId, preference) => this.gateways[region].create({
+      placementAffinity,
+      operationId,
+      (regionalOperationId, preference) => this.gateways[region].create({
         identity,
-        operationId,
+        operationId: regionalOperationId,
         workspaceId: asWorkspaceId(workspaceId),
         name,
-        placementAffinity: placement.affinity,
+        placementAffinity,
         preference,
       }),
     );
   }
 
-  async acceptInvitation(invitationId: string, region: Region): Promise<Session> {
+  async acceptInvitation(
+    invitationId: string,
+    region: Region,
+    requestedOperationId?: string,
+  ): Promise<Session> {
     const identity = await this.loadPlatformIdentity();
-    const discovery = await this.discover(identity);
-    if (discovery.some((item) => item.workspaces.length > 0)) {
-      throw new ApiError(409, "workspace_membership_conflict", "This Rally account already belongs to another organization");
-    }
-    const invitation = discovery.flatMap((item) => item.invitations)
-      .find((item) => item.id === invitationId && item.region === region);
-    if (!invitation) {
-      throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
+    const requestFingerprint = await sha256(JSON.stringify(["accept", region, invitationId]));
+    const operationId = requestedOperationId ?? this.createId();
+    let operation = await this.operations.get(operationId);
+    if (operation) {
+      this.assertPlatformOperation(
+        operation,
+        identity.platformUserId,
+        "accept",
+        requestFingerprint,
+        region,
+        invitationId,
+      );
+    } else {
+      const discovery = await this.discover(identity);
+      const invitation = discovery.flatMap((item) => item.invitations)
+        .find((item) => item.id === invitationId && item.region === region);
+      if (!invitation) {
+        throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
+      }
+      operation = await this.operations.begin({
+        operation_id: operationId,
+        platform_user_id: identity.platformUserId,
+        action: "accept",
+        request_fingerprint: requestFingerprint,
+        region,
+        workspace_id: invitation.workspaceId,
+        placement_affinity: invitation.placementAffinity,
+        invitation_id: invitationId,
+        status: "pending",
+      });
+      this.assertPlatformOperation(
+        operation,
+        identity.platformUserId,
+        "accept",
+        requestFingerprint,
+        region,
+        invitationId,
+      );
     }
     return this.completeRegionalAction(
       identity,
       region,
-      invitation.workspaceId,
-      invitation.placementAffinity,
-      (operationId, preference) => this.gateways[region].accept({
+      operation.workspace_id,
+      operation.placement_affinity,
+      operationId,
+      (regionalOperationId, preference) => this.gateways[region].accept({
         identity,
-        operationId,
-        workspaceId: asWorkspaceId(invitation.workspaceId),
+        operationId: regionalOperationId,
+        workspaceId: asWorkspaceId(operation.workspace_id),
         invitationId,
-        placementAffinity: invitation.placementAffinity,
+        placementAffinity: operation.placement_affinity,
         preference,
       }),
     );
@@ -877,54 +1094,25 @@ export class PlatformOnboardingService {
     }
   }
 
-  private async resolveWorkspaceBinding(
+  private async reconcileWorkspaceBindings(
     platformUserId: string,
     discovery: RegionalDiscovery[],
-  ): Promise<RegionalWorkspace | null> {
+  ): Promise<RegionalWorkspace[]> {
     const workspaces = discovery.flatMap((item) => item.workspaces);
     const unique = new Map(workspaces.map((workspace) => [`${workspace.region}:${workspace.id}`, workspace]));
-    if (unique.size > 1) {
-      throw new ApiError(409, "workspace_membership_conflict", "This Rally account is linked to more than one organization");
-    }
-    const workspace = unique.values().next().value as RegionalWorkspace | undefined;
-    const binding = await this.bindings.get(platformUserId);
-    if (!workspace) {
-      if (binding?.status === "active") {
-        throw new ApiError(409, "workspace_binding_inconsistent", "The selected organization is no longer available");
-      }
-      if (binding?.status === "pending") {
-        throw new ApiError(409, "workspace_setup_in_progress", "Organization setup is already in progress");
-      }
-      return null;
-    }
-
-    if (binding) {
-      if (!sameDestination({ region: binding.region, workspaceId: binding.workspace_id }, workspace.region, workspace.id)) {
-        throw new ApiError(409, "workspace_binding_conflict", "This Rally account is already bound to another organization");
-      }
-      if (binding.placement_affinity !== workspace.placementAffinity) {
-        throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
-      }
-      if (binding.status === "pending") await this.bindings.activate(platformUserId, binding.operation_id);
-      return workspace;
-    }
-
-    const operationId = this.createId();
-    const reserved = await this.bindings.reserve(
-      platformUserId,
-      workspace.region,
-      workspace.id,
-      workspace.placementAffinity,
-      operationId,
-    );
-    if (!sameDestination({ region: reserved.region, workspaceId: reserved.workspace_id }, workspace.region, workspace.id)) {
-      throw new ApiError(409, "workspace_binding_conflict", "This Rally account is already bound to another organization");
-    }
-    if (reserved.placement_affinity !== workspace.placementAffinity) {
-      throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
-    }
-    await this.bindings.activate(platformUserId, reserved.operation_id);
-    return workspace;
+    const ordered = [...unique.values()];
+    const current = await this.bindings.list(platformUserId);
+    await this.bindings.reconcile(platformUserId, ordered.map((workspace) => ({
+      region: workspace.region,
+      workspaceId: workspace.id,
+      placementAffinity: workspace.placementAffinity,
+      operationId: current.find((binding) => sameDestination(
+        { region: binding.region, workspaceId: binding.workspace_id },
+        workspace.region,
+        workspace.id,
+      ))?.operation_id ?? this.createId(),
+    })));
+    return ordered;
   }
 
   private async completeRegionalAction(
@@ -932,6 +1120,7 @@ export class PlatformOnboardingService {
     region: Region,
     workspaceId: string,
     placementAffinity: WorkspacePlacementAffinity,
+    operationId: string,
     action: (
       operationId: string,
       preference: z.infer<typeof PreferenceProjectionSchema>,
@@ -941,7 +1130,6 @@ export class PlatformOnboardingService {
       this.env,
       identity.platformUserId,
     );
-    const operationId = this.createId();
     const reservation = await this.bindings.reserve(
       identity.platformUserId,
       region,
@@ -950,7 +1138,7 @@ export class PlatformOnboardingService {
       operationId,
     );
     if (!sameDestination({ region: reservation.region, workspaceId: reservation.workspace_id }, region, workspaceId)) {
-      throw new ApiError(409, "workspace_binding_conflict", "This Rally account is already bound to another organization");
+      throw new ApiError(409, "workspace_binding_conflict", "The workspace route conflicts with this Rally account");
     }
     if (reservation.placement_affinity !== placementAffinity) {
       throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
@@ -959,7 +1147,7 @@ export class PlatformOnboardingService {
       return this.issueExistingSession(identity, region, workspaceId, placementAffinity);
     }
     if (reservation.operation_id !== operationId) {
-      throw new ApiError(409, "workspace_setup_in_progress", "Organization setup is already in progress");
+      throw new ApiError(409, "workspace_setup_in_progress", "Workspace setup is already in progress");
     }
 
     let session: Session;
@@ -985,11 +1173,7 @@ export class PlatformOnboardingService {
     }
     this.assertRegionalSession(session, region, workspaceId);
     await this.bindings.activate(identity.platformUserId, operationId);
-    // The bootstrap Global refresh session must not remain usable after the
-    // desktop receives a regional replacement. If the HTTP response is lost,
-    // the durable membership/binding remains and the next login safely takes
-    // the existing-workspace activation path instead of replaying the write.
-    await new AuthService(this.env).logout({ sessionId: this.auth.sessionId });
+    await this.operations.complete(identity.platformUserId, operationId);
     return session;
   }
 
@@ -1012,8 +1196,26 @@ export class PlatformOnboardingService {
       preference,
     });
     this.assertRegionalSession(session, region, workspaceId);
-    await new AuthService(this.env).logout({ sessionId: this.auth.sessionId });
     return session;
+  }
+
+  private assertPlatformOperation(
+    operation: PlatformOperationRow,
+    platformUserId: string,
+    action: PlatformOperationRow["action"],
+    requestFingerprint: string,
+    region: Region,
+    invitationId: string | null,
+  ): void {
+    if (
+      operation.platform_user_id !== platformUserId
+      || operation.action !== action
+      || operation.request_fingerprint !== requestFingerprint
+      || operation.region !== region
+      || operation.invitation_id !== invitationId
+    ) {
+      throw new ApiError(409, "onboarding_operation_conflict", "The onboarding operation was already used for another action");
+    }
   }
 
   private async recoverAmbiguousAction(

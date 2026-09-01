@@ -192,20 +192,6 @@ export async function acceptInvitationForUser(
     return invitation.workspace_id;
   }
 
-  const otherMembership = await env.DB.prepare(
-    `SELECT workspace_id FROM workspace_members
-     WHERE user_id = ? AND status = 'active' AND workspace_id != ? LIMIT 1`,
-  )
-    .bind(user.id, invitation.workspace_id)
-    .first<{ workspace_id: string }>();
-  if (otherMembership) {
-    throw new ApiError(
-      409,
-      "workspace_membership_conflict",
-      "This Avalon account already belongs to another organization",
-    );
-  }
-
   const acceptedAt = nowIso();
   const results = await env.DB.batch([
     env.DB.prepare(
