@@ -126,6 +126,8 @@ read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
   `pnpm test`. An
   assertion that survives the break is asserting on a fixture, a mock's own
   configuration, or a value the subject computed — none of which is coverage.
+  [`docs/testing.md`](docs/testing.md#prove-the-test-can-fail) has the scope in
+  full, and the catalogue of assertions that survive a break.
 
 ## Flaky tests
 

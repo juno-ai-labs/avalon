@@ -456,13 +456,16 @@ opened ready for review rather than as a draft, that is most of a change's life.
   change crosses into it. Fixing a flake is the exception:
   [the flaky-test rule](../AGENTS.md#flaky-tests) wants the full run, because
   cross-file interference is what makes a flake.
-- **Large changes, roughly 20 files or more: run the full package suite once**
-  before calling it done, because a change that wide can break a suite you had no
-  reason to think about. The threshold is the team's and it is approximate,
-  because file count is a weak proxy for what it is standing in for: three files
-  in `packages/contracts` or the harness reach further than forty independent
-  route handlers. The real trigger is reach — a change to a shared package, or
-  one whose blast radius you cannot enumerate, earns the run at any size.
+- **Large changes: run `pnpm test` once** before calling it done — every package,
+  not the whole suite of the one package you were in, which the bullet above
+  already allows. It catches a suite you had no reason to think about.
+
+  The trigger is roughly 20 files, and files in `docs/` do not count toward it.
+  The number is the team's and it is approximate, because a file count is a weak
+  proxy for what it stands in for: three files in `packages/contracts` or the
+  harness reach further than forty independent route handlers. Reach is the real
+  trigger — a change to a shared package, or one whose blast radius you cannot
+  enumerate, earns the run at any size.
 
 A narrow run you actually read beats a wide one you skim. If a test outside what
 you touched fails, that is a real result and it belongs to this change, whether
@@ -508,17 +511,24 @@ stream, serve the stale value. What you want to learn is whether the test notice
 a defect a member could feel. Flipping a `true` into a `false` on the one line
 the assertion mirrors teaches you nothing: it is the same statement written
 twice. If that flip is the only break you can find, the test is pinned to a
-literal rather than to behavior, and moving it up a rung is the fix.
+literal rather than to behavior. At rung 1 there is no rung above it to move to,
+so the fix is a better assertion — read the row back, the message the socket
+delivered, the status a refused request returned — rather than a promotion.
 
 **Prove each behavior once, not each `it()`.** If one break turns several tests
 in the file red, that single run proves all of them. Ten cases covering one
 decision need one cycle.
 
 **Keep the run narrow.** This costs two runs of that one file: one with the
-break, one after reverting it. Confirm the revert by reading the diff for the
-mutation specifically, since `git diff` also carries the rest of the change you
-have not committed. Never widen the confirmation to the package suite or
-`pnpm test`.
+break, and one after reverting it, which is the pass that shows the restored code
+is green. Confirm the revert by reading the diff for the mutation specifically,
+since `git diff` also carries the rest of the change you have not committed. Never
+widen the confirmation to the package suite or `pnpm test`.
+
+**The smoke and e2e lanes are not on that budget.** They need a running
+`pnpm dev:api:local`, a migrated database, and — for e2e — an OpenRouter key, so
+two cycles is a chunk of a session rather than a minute
+([`e2e.md`](e2e.md)). Break one production path, run that one lane, revert.
 
 A failure that names something else — a fixture that threw, a schema parse, a
 timeout — proves the test runs, not that it observes the behavior. An assertion
