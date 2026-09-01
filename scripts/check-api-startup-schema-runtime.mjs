@@ -20,6 +20,11 @@ export const sharedSchemaConsumerRoots = [
   'apps/desktop/src',
 ];
 
+export const schemaCompatibilityRoots = [
+  ...sharedSchemaConsumerRoots,
+  'packages/agent-harness/src',
+];
+
 /**
  * The harness consumes Zod v4 schemas owned by Bind and compiles JSON Schema
  * back into Zod v4 for argument classification. Keep that compatibility edge
@@ -33,7 +38,11 @@ export const zodV4WorkerAllowlist = new Set([
 ]);
 
 const BARE_ZOD_IMPORT = /\b(?:from\s+|import\s*)["']zod["']/u;
-const UNSAFE_V3_INTEGER = /\.int\(\)(?!\.safe\(\))/u;
+// These lexical checks deliberately keep the repository rule cheap and
+// dependency-free. A comment or string that spells a governed call may need to
+// be reworded; parsing TypeScript just to distinguish that rare case is not
+// justified until one occurs in production source.
+const UNSAFE_V3_INTEGER = /\.int\((?:[^()]|\([^()]*\))*\)(?!\.safe\(\))/u;
 const LOOSE_V3_UUID = /\.uuid\(\)/u;
 
 export async function findBareWorkerZodImports({
@@ -55,7 +64,7 @@ export async function findBareWorkerZodImports({
 
 export async function findWorkerSchemaCompatibilityViolations({
   rootDirectory = repositoryDirectory,
-  roots = sharedSchemaConsumerRoots,
+  roots = schemaCompatibilityRoots,
 } = {}) {
   const violations = [];
   for (const root of roots) {

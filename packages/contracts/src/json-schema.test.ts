@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod/v3";
 import { providerJsonSchema } from "./json-schema";
+import { STRICT_UUID_PATTERN } from "./uuid-validation";
 
 describe("providerJsonSchema", () => {
   it("preserves strict object fields, defaults, and refinements for provider input", () => {
@@ -25,5 +26,12 @@ describe("providerJsonSchema", () => {
       $schema: "https://json-schema.org/draft/2020-12/schema",
     });
     expect(schema.required).toEqual(["query", "limit"]);
+  });
+
+  it("restores UUID format metadata for the strict compatibility pattern", () => {
+    expect(providerJsonSchema(z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID"))).toMatchObject({
+      type: "string",
+      format: "uuid",
+    });
   });
 });

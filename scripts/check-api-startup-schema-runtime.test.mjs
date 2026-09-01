@@ -33,6 +33,10 @@ test('finds v3 integer and UUID semantics that are looser than Zod v4', async ()
     'z.number().int();',
     'z.string().uuid();',
   ].join('\n'));
+  await writeFile(
+    join(sourceDirectory, 'parameterized.ts'),
+    'z.number().int({ message: "whole numbers only" });\n',
+  );
   await writeFile(join(sourceDirectory, 'compatible.ts'), [
     'z.number().int().safe();',
     'z.string().regex(STRICT_UUID_PATTERN, "Invalid UUID");',
@@ -44,6 +48,7 @@ test('finds v3 integer and UUID semantics that are looser than Zod v4', async ()
   }), [
     'src/loose.ts: loose UUID',
     'src/loose.ts: unsafe integer',
+    'src/parameterized.ts: unsafe integer',
   ]);
 });
 

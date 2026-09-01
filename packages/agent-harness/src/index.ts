@@ -3572,8 +3572,8 @@ export const RequestElicitationInputSchema = z3.object({
     label: z3.string().min(1).max(300),
     description: z3.string().max(800).nullable().default(null),
   }).strict()).max(30).default([]),
-  minimumSelections: z3.number().int().nonnegative().default(0),
-  maximumSelections: z3.number().int().positive().nullable().default(null),
+  minimumSelections: z3.number().int().safe().nonnegative().default(0),
+  maximumSelections: z3.number().int().safe().positive().nullable().default(null),
 }).strict().superRefine((input, context) => {
   if (input.responseType !== "text" && input.options.length === 0) {
     context.addIssue({
