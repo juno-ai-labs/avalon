@@ -6,14 +6,14 @@ const MAXIMUM_CURSOR_LENGTH = 2_048;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-const AttachmentCursorPayloadSchema = z.object({
+const AttachmentCursorPayloadSchema = z.strictObject({
   version: z.literal(1),
   purpose: z.string().min(1).max(64),
   expiresAt: z.number().int().nonnegative(),
   principal: z.string().min(1).max(200),
   scopeId: z.string().min(1).max(200),
   state: z.record(z.string(), z.unknown()),
-}).strict();
+});
 
 export type AttachmentCursorInput = Omit<z.infer<typeof AttachmentCursorPayloadSchema>, "version">;
 export type AttachmentCursorPayload = z.infer<typeof AttachmentCursorPayloadSchema>;

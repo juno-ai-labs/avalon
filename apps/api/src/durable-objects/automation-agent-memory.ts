@@ -40,46 +40,46 @@ export const automationMemorySchemaStatements = [
   `ALTER TABLE automation_memory_rows ADD COLUMN invalidation_reason TEXT`,
 ] as const;
 
-const FenceSchema = z.object({
+const FenceSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: z.string().uuid(),
   workspaceId: z.string().uuid(),
   runId: z.string().uuid(),
   harnessRunId: z.string().uuid(),
   authorityGeneration: z.number().int().positive(),
-}).strict();
+});
 
 const SearchSchema = z.union([
-  z.object({ query: z.string().trim().min(1).max(2_000) }).strict(),
-  z.object({ memoryItemId: z.string().uuid() }).strict(),
+  z.strictObject({ query: z.string().trim().min(1).max(2_000) }),
+  z.strictObject({ memoryItemId: z.string().uuid() }),
 ]);
-const AddSchema = z.object({
+const AddSchema = z.strictObject({
   scopeKind: z.literal("automation"),
   text: z.string().trim().min(1).max(16_000),
   expiresAt: z.string().datetime({ offset: true }).optional(),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
-const UpdateItemSchema = z.object({
+});
+const UpdateItemSchema = z.strictObject({
   memoryItemId: z.string().uuid(),
   expectedRevision: z.number().int().positive(),
   text: z.string().trim().min(1).max(16_000),
   expiresAt: z.string().datetime({ offset: true }).optional(),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
-const InvalidateItemSchema = z.object({
+});
+const InvalidateItemSchema = z.strictObject({
   memoryItemId: z.string().uuid(),
   expectedRevision: z.number().int().positive(),
   reason: z.string().trim().min(1).max(2_000),
-}).strict();
+});
 
-const ColumnSchema = z.object({
+const ColumnSchema = z.strictObject({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(800),
   type: z.enum(["string", "url", "number", "integer", "boolean", "datetime", "date"]),
   required: z.boolean().default(false),
   searchable: z.boolean().default(false),
-}).strict();
-const TableCreateSchema = z.object({
+});
+const TableCreateSchema = z.strictObject({
   scopeKind: z.literal("automation"),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(1_200),
@@ -87,55 +87,55 @@ const TableCreateSchema = z.object({
   columns: z.array(ColumnSchema).min(1),
   keyColumns: z.array(z.string().trim().min(1).max(120)).min(1),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
-const TableSearchSchema = z.object({ query: z.string().trim().min(1).max(2_000) }).strict();
-const TableDescribeSchema = z.object({ memoryTableId: z.string().min(1) }).strict();
-const PredicateSchema = z.object({
+});
+const TableSearchSchema = z.strictObject({ query: z.string().trim().min(1).max(2_000) });
+const TableDescribeSchema = z.strictObject({ memoryTableId: z.string().min(1) });
+const PredicateSchema = z.strictObject({
   column: z.string().min(1),
   op: z.enum([
     "eq", "neq", "in", "not_in", "gt", "gte", "lt", "lte", "between",
     "contains", "not_contains", "starts_with", "ends_with", "is_null", "is_not_null",
   ]),
   value: z.unknown().optional(),
-}).strict();
+});
 type Filter = z.infer<typeof PredicateSchema> | { all: Filter[] } | { any: Filter[] };
 const FilterSchema: z.ZodType<Filter> = z.lazy(() => z.union([
   PredicateSchema,
-  z.object({ all: z.array(FilterSchema).min(1) }).strict(),
-  z.object({ any: z.array(FilterSchema).min(1) }).strict(),
+  z.strictObject({ all: z.array(FilterSchema).min(1) }),
+  z.strictObject({ any: z.array(FilterSchema).min(1) }),
 ]));
-const TableQuerySchema = z.object({
+const TableQuerySchema = z.strictObject({
   memoryTableId: z.string().min(1),
   memoryTableRowIds: z.array(z.string().min(1)).min(1).max(100).optional(),
   search: z.string().trim().min(1).max(2_000).optional(),
   filter: FilterSchema.optional(),
-  orderBy: z.array(z.object({ column: z.string().min(1), direction: z.enum(["asc", "desc"]) }).strict()).optional(),
+  orderBy: z.array(z.strictObject({ column: z.string().min(1), direction: z.enum(["asc", "desc"]) })).optional(),
   select: z.array(z.string().min(1)).optional(),
   pageSize: z.number().int().min(1).max(100).optional(),
   cursor: z.string().min(1).optional(),
-}).strict();
-const TableInsertSchema = z.object({
+});
+const TableInsertSchema = z.strictObject({
   memoryTableId: z.string().min(1),
   rows: z.array(z.record(z.string(), z.unknown())).min(1),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
-const TableUpdateSchema = z.object({
+});
+const TableUpdateSchema = z.strictObject({
   memoryTableId: z.string().min(1),
-  rows: z.array(z.object({
+  rows: z.array(z.strictObject({
     memoryTableRowId: z.string().min(1),
     expectedRevision: z.number().int().positive(),
     values: z.record(z.string(), z.unknown()),
-  }).strict()).min(1),
+  })).min(1),
   rationale: z.string().trim().min(1).max(2_000),
-}).strict();
-const TableInvalidateSchema = z.object({
+});
+const TableInvalidateSchema = z.strictObject({
   memoryTableId: z.string().min(1),
-  rows: z.array(z.object({
+  rows: z.array(z.strictObject({
     memoryTableRowId: z.string().min(1),
     expectedRevision: z.number().int().positive(),
-  }).strict()).min(1),
+  })).min(1),
   reason: z.string().trim().min(1).max(2_000),
-}).strict();
+});
 
 const OperationSchema = z.enum([
   "search", "add", "update", "invalidate",
@@ -393,7 +393,7 @@ function evaluateFilter(filter: Filter, values: Record<string, unknown>, table: 
     return filter.op === "in" ? found : !found;
   }
   if (filter.op === "between") {
-    const range = z.object({ from: z.unknown(), to: z.unknown() }).strict().parse(filter.value);
+    const range = z.strictObject({ from: z.unknown(), to: z.unknown() }).parse(filter.value);
     return compareValues(left, comparable(normalizeValue(column, range.from))) >= 0
       && compareValues(left, comparable(normalizeValue(column, range.to))) <= 0;
   }

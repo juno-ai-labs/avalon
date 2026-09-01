@@ -7,7 +7,7 @@ const NullableTimestampSchema = TimestampSchema.nullable();
 const ShortTextSchema = z.string().max(500);
 export const WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT = 10_000;
 
-export const WorkstreamDirectoryCommonEffectSchema = z.object({
+export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
   kind: z.literal("directory_common"),
   title: ShortTextSchema,
   description: z.string().max(4_000),
@@ -33,20 +33,20 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
   nextWakeupDueAt: NullableTimestampSchema.optional(),
   nextWakeupPrompt: z.string().max(500).nullable().optional(),
   nextTerminalActionAt: NullableTimestampSchema.optional(),
-  resourceLinks: z.array(z.object({
+  resourceLinks: z.array(z.strictObject({
     resourceId: IdSchema,
     watchEnabled: z.boolean(),
     relationshipType: ResourceRelationshipTypeSchema,
-  }).strict()).max(WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT).optional(),
-  attachmentReservationReleases: z.array(z.object({
+  })).max(WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT).optional(),
+  attachmentReservationReleases: z.array(z.strictObject({
     inputId: IdSchema,
     resourceId: IdSchema,
-  }).strict()).max(WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT).optional(),
+  })).max(WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT).optional(),
   createdAt: TimestampSchema.optional(),
   updatedAt: TimestampSchema.optional(),
-}).strict();
+});
 
-export const WorkstreamDirectoryUserEffectSchema = z.object({
+export const WorkstreamDirectoryUserEffectSchema = z.strictObject({
   kind: z.literal("directory_user"),
   userId: IdSchema,
   isParticipant: z.boolean(),
@@ -71,9 +71,9 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
   manualUnreadFromOrdinal: z.number().int().nonnegative().nullable().optional(),
   manualUnreadGeneration: z.number().int().nonnegative().optional(),
   latestMentionAttentionOrdinal: z.number().int().nonnegative().optional(),
-}).strict();
+});
 
-export const WorkstreamActivityEffectSchema = z.object({
+export const WorkstreamActivityEffectSchema = z.strictObject({
   kind: z.literal("activity_event"),
   eventId: IdSchema,
   eventType: z.string().min(1).max(160),
@@ -90,13 +90,13 @@ export const WorkstreamActivityEffectSchema = z.object({
   sourceId: z.string().min(1).max(300).nullable(),
   dedupeKey: z.string().min(1).max(300),
   metadata: z.record(z.string(), z.unknown()),
-  targets: z.array(z.object({
+  targets: z.array(z.strictObject({
     userId: IdSchema,
     relation: z.string().min(1).max(80),
-  }).strict()).max(100),
-}).strict();
+  })).max(100),
+});
 
-export const WorkstreamMentionNotificationEffectSchema = z.object({
+export const WorkstreamMentionNotificationEffectSchema = z.strictObject({
   kind: z.literal("mention_notification"),
   intentId: z.string().min(1).max(300),
   messageId: IdSchema,
@@ -106,7 +106,7 @@ export const WorkstreamMentionNotificationEffectSchema = z.object({
   workstreamTitleSnapshot: ShortTextSchema,
   messageText: z.string().max(8_000),
   occurredAt: TimestampSchema,
-}).strict();
+});
 
 /**
  * Somebody was added to a work stream and should be told.
@@ -123,7 +123,7 @@ export const WorkstreamMentionNotificationEffectSchema = z.object({
  * somebody who was removed notifies them again while a redelivery of the same
  * add does not.
  */
-export const WorkstreamParticipantNotificationEffectSchema = z.object({
+export const WorkstreamParticipantNotificationEffectSchema = z.strictObject({
   kind: z.literal("participant_notification"),
   intentId: z.string().min(1).max(300),
   sourceId: z.string().min(1).max(300),
@@ -147,7 +147,7 @@ export const WorkstreamParticipantNotificationEffectSchema = z.object({
    */
   titleIsProvisional: z.boolean().default(false),
   occurredAt: TimestampSchema,
-}).strict();
+});
 
 /**
  * Parse-only rolling-deployment tombstone. Previous SubstreamAgent and
@@ -155,7 +155,7 @@ export const WorkstreamParticipantNotificationEffectSchema = z.object({
  * object has upgraded. Receivers acknowledge it without storing or applying
  * feedback; no current producer can create one.
  */
-export const RetiredSuggestionFeedbackEffectSchema = z.object({
+export const RetiredSuggestionFeedbackEffectSchema = z.strictObject({
   kind: z.literal("suggestion_feedback"),
   actionId: IdSchema,
   activityId: IdSchema,
@@ -163,7 +163,7 @@ export const RetiredSuggestionFeedbackEffectSchema = z.object({
   status: z.enum(["accepted", "dismissed"]),
   resolvedAt: TimestampSchema,
   resolvedByUserId: IdSchema,
-}).strict();
+});
 
 /** Effects current code may produce and persist. */
 export const WorkstreamRegionalEffectSchema = z.discriminatedUnion("kind", [
@@ -205,7 +205,7 @@ export function isPersonNotificationEffect(
   return effect.kind === "mention_notification" || effect.kind === "participant_notification";
 }
 
-export const WorkstreamRegionalEffectEnvelopeSchema = z.object({
+export const WorkstreamRegionalEffectEnvelopeSchema = z.strictObject({
   kind: z.literal("workstream_regional_effect"),
   contractVersion: z.literal(1),
   region: RegionSchema,
@@ -218,7 +218,7 @@ export const WorkstreamRegionalEffectEnvelopeSchema = z.object({
   requiredProjectionVersion: z.number().int().positive().nullable(),
   payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
   effect: WireWorkstreamRegionalEffectSchema,
-}).strict().superRefine((envelope, context) => {
+}).superRefine((envelope, context) => {
   const requiresViewer = isPersonNotificationEffect(envelope.effect);
   if (requiresViewer !== (envelope.requiredProjectionVersion !== null)) {
     context.addIssue({
@@ -236,7 +236,7 @@ export type WorkstreamRegionalEffectEnvelope = z.infer<
 >;
 
 /** Queue carries only an opaque wake-up; product/display data stays in the DO. */
-export const WorkstreamRegionalEffectQueueMessageSchema = z.object({
+export const WorkstreamRegionalEffectQueueMessageSchema = z.strictObject({
   kind: z.literal("workstream_regional_effect_wakeup"),
   contractVersion: z.literal(1),
   region: RegionSchema,
@@ -245,7 +245,7 @@ export const WorkstreamRegionalEffectQueueMessageSchema = z.object({
   generation: z.number().int().positive(),
   messageId: z.string().min(1).max(500),
   payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
-}).strict();
+});
 
 export type WorkstreamRegionalEffectQueueMessage = z.infer<
   typeof WorkstreamRegionalEffectQueueMessageSchema
@@ -266,10 +266,10 @@ export function workstreamRegionalEffectWakeMessage(
   });
 }
 
-export const WorkstreamRegionalEffectAckSchema = z.object({
+export const WorkstreamRegionalEffectAckSchema = z.strictObject({
   messageId: z.string().min(1).max(500),
   payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
-}).strict();
+});
 
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);

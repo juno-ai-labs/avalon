@@ -72,10 +72,10 @@ import {
   type SocketAccessRevocation,
 } from "../services/access-revocation";
 
-const ForwardedEffectsSchema = z.object({
+const ForwardedEffectsSchema = z.strictObject({
   substreamId: z.string().min(1).max(180),
   envelopes: z.array(WorkstreamRegionalEffectEnvelopeSchema).min(1).max(25),
-}).strict();
+});
 export type ForwardedEffects = z.infer<typeof ForwardedEffectsSchema>;
 
 const realtimeTextEncoder = new TextEncoder();

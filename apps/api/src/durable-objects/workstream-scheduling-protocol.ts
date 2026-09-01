@@ -9,7 +9,7 @@ import {
 } from "./object-port-protocol";
 import type { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
 
-export const OpenElicitationInputSchema = z.object({
+export const OpenElicitationInputSchema = z.strictObject({
   elicitationId: z.string().min(1),
   runId: z.string().min(1),
   toolCallId: z.string().min(1),
@@ -22,9 +22,9 @@ export const OpenElicitationInputSchema = z.object({
   messageId: z.string().min(1),
   structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS),
   now: z.number().finite(),
-}).strict();
+});
 
-export const AnswerElicitationExternallyInputSchema = z.object({
+export const AnswerElicitationExternallyInputSchema = z.strictObject({
   elicitationId: z.string().min(1),
   answerJson: z.string(),
   externalActorJson: z.string(),
@@ -32,7 +32,7 @@ export const AnswerElicitationExternallyInputSchema = z.object({
   clientMessageId: z.string().min(1),
   structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS),
   now: z.number().finite(),
-}).strict();
+});
 
 /**
  * The wire contract for one work stream's scheduling state.

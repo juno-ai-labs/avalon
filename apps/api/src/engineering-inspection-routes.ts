@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Env } from "./env";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
 
-export const InspectionWorkspaceRouteSchema = z.object({
+export const InspectionWorkspaceRouteSchema = z.strictObject({
   id: z.string(),
   name: z.string(),
   slug: z.string(),
@@ -11,15 +11,15 @@ export const InspectionWorkspaceRouteSchema = z.object({
   placement_affinity: z.string(),
   authority_state: z.literal("active"),
   authority_generation: z.number().int().positive(),
-}).strict();
+});
 export type InspectionWorkspaceRoute = z.infer<typeof InspectionWorkspaceRouteSchema>;
 
-export const InspectionWorkstreamRouteSchema = z.object({
+export const InspectionWorkstreamRouteSchema = z.strictObject({
   workspace_id: z.string(),
   workstream_id: z.string(),
   object_name: z.string(),
   authority_generation: z.number().int().positive(),
-}).strict();
+});
 export type InspectionWorkstreamRoute = z.infer<typeof InspectionWorkstreamRouteSchema>;
 
 type InspectionRouteEnv = Pick<Env, "AVALON_REGION" | "DB">;

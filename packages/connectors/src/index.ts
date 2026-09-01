@@ -885,7 +885,7 @@ const RfcMessageIdSchema = z.string().min(3).max(998).refine(
   "Use one RFC Message-ID enclosed in angle brackets"
 );
 
-const EmailArgsSchema = z.object({
+const EmailArgsSchema = z.strictObject({
   to: z.array(z.string().email()).min(1),
   cc: z.array(z.string().email()).default([]),
   subject: z.string().min(1).max(998),
@@ -893,7 +893,7 @@ const EmailArgsSchema = z.object({
   threadId: z.string().optional(),
   inReplyTo: RfcMessageIdSchema.optional(),
   references: z.array(RfcMessageIdSchema).max(50).default([])
-}).strict().superRefine((value, context) => {
+}).superRefine((value, context) => {
   if (value.threadId && !value.inReplyTo) {
     context.addIssue({
       code: "custom",
@@ -903,7 +903,7 @@ const EmailArgsSchema = z.object({
   }
 });
 
-const CalendarEventCreateArgsSchema = z.object({
+const CalendarEventCreateArgsSchema = z.strictObject({
   calendarId: z.string().min(1).max(1_024).optional(),
   summary: z.string().min(1).max(1_000),
   description: z.string().max(20_000).optional(),
@@ -912,7 +912,7 @@ const CalendarEventCreateArgsSchema = z.object({
   end: z.string().datetime({ offset: true }),
   timeZone: z.string().min(1).max(100).optional(),
   attendeeEmails: z.array(z.string().email()).max(50).default([])
-}).strict().refine((value) => Date.parse(value.end) > Date.parse(value.start), {
+}).refine((value) => Date.parse(value.end) > Date.parse(value.start), {
   message: "Calendar event end must be after its start",
   path: ["end"]
 });
@@ -927,7 +927,7 @@ const CalendarEventCreateArgsSchema = z.object({
  * gets a strict-parse error naming the three that exist, instead of a
  * successful call that deletes the guest list.
  */
-const CalendarEventUpdateArgsSchema = z.object({
+const CalendarEventUpdateArgsSchema = z.strictObject({
   calendarId: z.string().min(1).max(1_024).optional(),
   eventId: z.string().min(1).max(1_024),
   summary: z.string().min(1).max(1_000).optional(),
@@ -939,7 +939,7 @@ const CalendarEventUpdateArgsSchema = z.object({
   addAttendeeEmails: z.array(z.string().email()).max(50).optional(),
   removeAttendeeEmails: z.array(z.string().email()).max(50).optional(),
   replaceAllAttendeeEmails: z.array(z.string().email()).max(50).optional()
-}).strict().superRefine((value, context) => {
+}).superRefine((value, context) => {
   if (Object.keys(value).every((key) => key === "eventId" || key === "calendarId")) {
     context.addIssue({ code: "custom", message: "Choose at least one event field to update" });
   }
@@ -970,13 +970,13 @@ const SheetValuesSchema = z.array(z.array(SheetCellValueSchema).max(1_000)).max(
   if (cells > 10_000) context.addIssue({ code: "custom", message: "A Sheets write is limited to 10,000 cells" });
 });
 
-const SheetValuesWriteArgsSchema = z.object({
+const SheetValuesWriteArgsSchema = z.strictObject({
   spreadsheetId: z.string().min(1).max(500),
   range: z.string().min(1).max(1_000),
   values: SheetValuesSchema,
   valueInputOption: z.enum(["RAW", "USER_ENTERED"]).default("USER_ENTERED"),
   insertDataOption: z.enum(["INSERT_ROWS", "OVERWRITE"]).optional()
-}).strict();
+});
 
 const GOOGLE_POLL_PAGE_SIZE = 50;
 const GOOGLE_MAX_POLL_PAGES = 3;
@@ -2058,7 +2058,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         throw connectorCapabilityRefused("Google", tool?.capability ?? name, googleTools, context.connection.grantedScopes);
       }
       if (name === "gmail.read_profile") {
-        z.object({}).strict().parse(rawArgs ?? {});
+        z.strictObject({}).parse(rawArgs ?? {});
         const payload = await api(
           context.connection,
           "https://gmail.googleapis.com/gmail/v1/users/me/profile",
@@ -2077,11 +2077,11 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "gmail.search") {
-        const args = z.object({
+        const args = z.strictObject({
           query: z.string().max(2_000),
           maxResults: z.number().int().min(1).max(25).default(10),
           pageToken: z.string().min(1).max(2_000).optional()
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
         url.searchParams.set("q", args.query);
         url.searchParams.set("maxResults", String(args.maxResults));
@@ -2109,10 +2109,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "gmail.find_contacts") {
-        const args = z.object({
+        const args = z.strictObject({
           name: z.string().min(1).max(200),
           maxResults: z.number().int().min(1).max(25).default(10)
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         const contactQuery = gmailContactQuery(args.name);
         if (!contactQuery) {
           return {
@@ -2162,7 +2162,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "gmail.read_thread") {
-        const args = z.object({ threadId: z.string().min(1).max(500) }).strict().parse(rawArgs);
+        const args = z.strictObject({ threadId: z.string().min(1).max(500) }).parse(rawArgs);
         const url = new URL(
           `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(args.threadId)}`
         );
@@ -2186,7 +2186,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "gmail.read_message") {
-        const args = z.object({ messageId: z.string().min(1).max(500) }).strict().parse(rawArgs);
+        const args = z.strictObject({ messageId: z.string().min(1).max(500) }).parse(rawArgs);
         const url = new URL(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(args.messageId)}`
         );
@@ -2245,10 +2245,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "calendar.list_calendars") {
-        const args = z.object({
+        const args = z.strictObject({
           maxResults: z.number().int().min(1).max(250).default(100),
           pageToken: z.string().min(1).max(2_000).optional()
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         const url = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
         url.searchParams.set("maxResults", String(args.maxResults));
         if (args.pageToken) url.searchParams.set("pageToken", args.pageToken);
@@ -2266,15 +2266,14 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "calendar.list_events") {
-        const args = z
-          .object({
+        const args = z.strictObject({
             calendarId: z.string().min(1).max(1_024).optional(),
             timeMin: z.string().datetime({ offset: true }),
             timeMax: z.string().datetime({ offset: true }),
             query: z.string().max(2_000).optional(),
             maxResults: z.number().int().min(1).max(100).default(25),
             pageToken: z.string().min(1).max(2_000).optional()
-          }).strict()
+          })
           .parse(rawArgs);
         const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
         const url = new URL(
@@ -2303,10 +2302,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "calendar.read_event") {
-        const args = z.object({
+        const args = z.strictObject({
           calendarId: z.string().min(1).max(1_024).optional(),
           eventId: z.string().min(1).max(1024)
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         assertGoogleIdFamily(args.eventId);
         const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
         const url = new URL(
@@ -2412,7 +2411,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "docs.read_document") {
-        const args = z.object({ documentId: z.string().min(1).max(500) }).strict().parse(rawArgs);
+        const args = z.strictObject({ documentId: z.string().min(1).max(500) }).parse(rawArgs);
         const payload = await withGoogleFileFamilyHint(context, args.documentId, "document", () =>
           readGoogleDocument(api, context.connection, args.documentId, context.signal));
         return {
@@ -2422,10 +2421,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "docs.create_document") {
-        const args = z.object({
+        const args = z.strictObject({
           title: z.string().min(1).max(500),
           text: z.string().max(100_000).optional()
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         const created = await api(context.connection, "https://docs.googleapis.com/v1/documents", {
           method: "POST",
           body: JSON.stringify({ title: args.title }),
@@ -2451,11 +2450,11 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "docs.append_text") {
-        const args = z.object({
+        const args = z.strictObject({
           documentId: z.string().min(1).max(500),
           tabId: z.string().min(1).max(500).optional(),
           text: z.string().min(1).max(100_000)
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         await assertGoogleDriveFileWritable(api, context.connection, args.documentId, "document", context.signal);
         const payload = await withGoogleFileFamilyHint(context, args.documentId, "document", () =>
           updateGoogleDocument(api, context.connection, args.documentId, [{
@@ -2475,12 +2474,12 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "docs.replace_text") {
-        const args = z.object({
+        const args = z.strictObject({
           documentId: z.string().min(1).max(500),
           find: z.string().min(1).max(10_000),
           replace: z.string().max(100_000),
           matchCase: z.boolean().default(true)
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         await assertGoogleDriveFileWritable(api, context.connection, args.documentId, "document", context.signal);
         const payload = await withGoogleFileFamilyHint(context, args.documentId, "document", () =>
           updateGoogleDocument(api, context.connection, args.documentId, [{
@@ -2500,7 +2499,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "sheets.read_spreadsheet") {
-        const args = z.object({ spreadsheetId: z.string().min(1).max(500) }).strict().parse(rawArgs);
+        const args = z.strictObject({ spreadsheetId: z.string().min(1).max(500) }).parse(rawArgs);
         const payload = await withGoogleFileFamilyHint(context, args.spreadsheetId, "spreadsheet", () =>
           readGoogleSpreadsheet(api, context.connection, args.spreadsheetId, context.signal));
         return {
@@ -2510,12 +2509,12 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "sheets.read_values") {
-        const args = z.object({
+        const args = z.strictObject({
           spreadsheetId: z.string().min(1).max(500),
           range: z.string().min(1).max(1_000),
           majorDimension: z.enum(["ROWS", "COLUMNS"]).default("ROWS"),
           valueRenderOption: z.enum(["FORMATTED_VALUE", "UNFORMATTED_VALUE"]).default("FORMATTED_VALUE")
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         const url = new URL(
           `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(args.spreadsheetId)}/values/${encodeURIComponent(args.range)}`
         );
@@ -2538,10 +2537,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "sheets.create_spreadsheet") {
-        const args = z.object({
+        const args = z.strictObject({
           title: z.string().min(1).max(500),
           sheetTitles: z.array(z.string().min(1).max(100)).max(25).default([])
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         if (new Set(args.sheetTitles).size !== args.sheetTitles.length) {
           throw new ConnectorError("invalid_configuration", "Google Sheet titles must be unique");
         }
@@ -2589,14 +2588,14 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "drive.search") {
-        const args = z.object({
+        const args = z.strictObject({
           query: z.string().min(1).max(1_000).optional(),
           fileType: z.enum(GOOGLE_DRIVE_FILE_TYPES).optional(),
           modifiedAfter: z.string().datetime({ offset: true }).optional(),
           orderBy: z.enum(["relevance", "modified"]).default("relevance"),
           maxResults: z.number().int().min(1).max(100).default(25),
           pageToken: z.string().min(1).max(2_000).optional()
-        }).strict().parse(rawArgs);
+        }).parse(rawArgs);
         const url = new URL("https://www.googleapis.com/drive/v3/files");
         // Names *and* contents. Matching names alone made a search for what a
         // document says come back empty, which the plugin message then licensed
@@ -2627,7 +2626,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "drive.get_metadata" || name === "drive.download") {
-        const args = z.object({ fileId: z.string().min(1).max(500) }).strict().parse(rawArgs);
+        const args = z.strictObject({ fileId: z.string().min(1).max(500) }).parse(rawArgs);
         const metadataUrl = googleDriveMetadataUrl(args.fileId);
         const payload = await api(context.connection, metadataUrl.toString(), { signal: context.signal }).then((response) =>
           safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
@@ -2648,7 +2647,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "drive.export") {
-        const args = z.object({ fileId: z.string().min(1).max(500), mimeType: z.enum(["text/plain", "application/pdf"]) }).strict().parse(rawArgs);
+        const args = z.strictObject({ fileId: z.string().min(1).max(500), mimeType: z.enum(["text/plain", "application/pdf"]) }).parse(rawArgs);
         if (args.mimeType === "application/pdf") {
           return {
             output: {
@@ -4176,7 +4175,7 @@ export interface VerifiedWebhook {
   signatureHash: string;
 }
 
-const GenericWebhookEventSchema = z.object({
+const GenericWebhookEventSchema = z.looseObject({
   provider_event_id: z.string().trim().min(1).max(500).optional(),
   id: z.string().trim().min(1).max(500).optional(),
   event_type: z.string().trim().min(1).max(500).optional(),
@@ -4194,7 +4193,7 @@ const GenericWebhookEventSchema = z.object({
   target_user_ids: z.array(z.string().uuid()).max(100).optional(),
   external_people: z.array(z.unknown()).max(100).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
-}).passthrough();
+});
 
 export async function verifyGenericWebhook(input: {
   secret: string;

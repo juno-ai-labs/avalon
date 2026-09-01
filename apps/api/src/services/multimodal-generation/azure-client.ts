@@ -2,38 +2,38 @@ import { z } from "zod";
 
 import { MULTIMODAL_GENERATION_MODEL, type ImageGenerationSizeSchema } from "./contract";
 
-const ImageUsageSchema = z.object({
+const ImageUsageSchema = z.looseObject({
   input_tokens: z.number().int().nonnegative(),
-  input_tokens_details: z.object({
+  input_tokens_details: z.looseObject({
     image_tokens: z.number().int().nonnegative(),
     text_tokens: z.number().int().nonnegative(),
-  }).passthrough(),
+  }),
   output_tokens: z.number().int().nonnegative(),
-  output_tokens_details: z.object({
+  output_tokens_details: z.looseObject({
     image_tokens: z.number().int().nonnegative(),
     text_tokens: z.number().int().nonnegative().optional(),
-  }).passthrough().optional(),
+  }).optional(),
   total_tokens: z.number().int().nonnegative(),
-}).passthrough();
+});
 
-const ImageResponseSchema = z.object({
-  data: z.array(z.object({
+const ImageResponseSchema = z.looseObject({
+  data: z.array(z.looseObject({
     b64_json: z.string().min(1),
     revised_prompt: z.string().nullish(),
-  }).passthrough()).length(1),
+  })).length(1),
   usage: ImageUsageSchema.optional(),
   size: z.string().optional(),
   quality: z.string().optional(),
   background: z.string().optional(),
   output_format: z.string().optional(),
-}).passthrough();
+});
 
-const ErrorEnvelopeSchema = z.object({
-  error: z.object({
+const ErrorEnvelopeSchema = z.looseObject({
+  error: z.looseObject({
     code: z.string().optional(),
     message: z.string().optional(),
-  }).passthrough(),
-}).passthrough();
+  }),
+});
 
 export type ImageGenerationSize = z.infer<typeof ImageGenerationSizeSchema>;
 export type AzureImageUsage = z.infer<typeof ImageUsageSchema>;

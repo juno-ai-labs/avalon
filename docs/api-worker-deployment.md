@@ -226,16 +226,55 @@ sample. Repeated local active-startup samples varied from 93–290 ms for the
 API, 7–14 ms for documents, and 18–28 ms for Terminal; these values diagnose
 graph shape and are not predictions of Cloudflare CPU time.
 
-Service Bindings add no monetary charge or network hop by default. A document,
-Terminal, or Global telemetry-destination operation adds a Worker invocation and subrequest,
-while ordinary API requests no longer initialize those provider libraries. That
-cost is bounded to the capability that uses it and is visible as a platform
-invocation.
+The API graph also constructs strict and loose Zod object schemas with their
+mode-specific constructors. `z.object(shape).strict()` and
+`z.object(shape).passthrough()` first build a default object schema and then
+derive another schema at module scope; `z.strictObject(shape)` and
+`z.looseObject(shape)` preserve the validation modes without that intermediate
+startup allocation. A lint rule covers the API and its statically linked
+contracts, agent-harness, and connector packages.
+
+Six alternating local Wrangler 4.126.0 samples against unchanged baseline
+`87b1a0c` and the direct-constructor working tree measured mean active startup
+at 183.6 ms versus 162.7 ms, and mean garbage collection at 83.0 ms versus
+61.6 ms. The paired result supports the allocation mechanism; like the broader
+ranges above, it is diagnostic evidence rather than a platform-time promise.
+
+Service Bindings add no monetary charge or network hop by default. A document
+Terminal, or Global telemetry-destination operation adds a Worker invocation
+and subrequest, while ordinary API requests no longer initialize those provider
+libraries. That cost is bounded to the capability that uses it and is visible
+as a platform invocation.
 The pricing graph runs once per hour in Global and performs fourteen OpenRouter
 catalog reads plus fourteen small KV writes; inference performs only the KV reads
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-01 — Remove intermediate Zod object schemas from API startup
+
+**What changed:** The 1,131 direct strict and loose object constructions in the
+API Worker's production source scope now use Zod's mode-specific constructors,
+and an autofixable lint rule preserves the invariant.
+
+**Why:** The retained startup profile for failing commit `87b1a0c` attributed
+258 ms of 507 ms active time to Zod schema construction and another 177 ms to
+garbage collection. Direct constructors remove one avoidable schema allocation
+from each eligible construction; the top-level subset is paid during startup.
+The validation contracts do not change.
+
+**Considered and rejected:** Changing Zod import syntax and marking the package
+side-effect-free did not make the statically reachable schemas disappear from
+the bundle. Dynamic imports would move startup work into requests and violate
+the static-dependency rule. A machine-specific timing assertion was rejected in
+favor of Wrangler's profile of each deployable Worker artifact.
+
+**Consequences:** Direct chained object-mode construction is a lint error in the
+API startup graph. Existing-schema and further-derived mode changes remain
+explicit and untouched. Startup profiles remain the evidence for whether the
+whole deployable graph has adequate platform margin. Six alternating local
+samples reduced mean active startup by 20.9 ms and mean garbage collection by
+21.4 ms on the implementing machine; those values are not a deployment limit.
 
 ### 2026-09-01 — Global telemetry delivery gets one shared startup graph
 
