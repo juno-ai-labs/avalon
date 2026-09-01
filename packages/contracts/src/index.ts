@@ -174,9 +174,24 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 
 /**
  * The OpenRouter models a creator may pin a work stream to from the composer's
- * developer-mode model selector, in the order the selector lists them. The
- * first is the one the selector shows before anything is chosen, so it should
- * stay the model `agent-model-workstream` serves by default.
+ * developer-mode model selector, in the order the selector lists them.
+ *
+ * **Each vendor's models are ordered newest first.** The selector groups by
+ * vendor, so that ordering is what a reader sees under each heading, and the
+ * model somebody is most likely to want is the one they do not have to scan
+ * for. A new model therefore goes at the *top* of its family rather than the
+ * end of the list. The "orders each vendor's models newest first" test holds
+ * the half of this a machine can check — a family whose ids carry comparable
+ * version numbers must not ascend — which is every family except the two whose
+ * members share a version (`gpt-5.6-*`, `deepseek-v4-*`) and are ordered by
+ * hand.
+ *
+ * Nothing reads position 0. An earlier note here claimed the first entry was
+ * what the selector showed before anything was chosen, and that has not been
+ * true since the unpinned state became a row of its own: the menu renders
+ * `UNPINNED_AGENT_MODEL` above every group and labels it **Default**, on the
+ * reasoning in `agent-models.ts` that the renderer cannot see which variation
+ * `agent-model-workstream` served and so must not name a model for it.
  *
  * This is a *closed* list rather than a free-text model id on purpose: an
  * override bypasses the Flagship rollout for the work stream it is attached to,
@@ -188,9 +203,9 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * See `docs/feature-flags.md` for how an override composes with the flags.
  */
 export const AGENT_MODEL_OVERRIDES = [
-  "x-ai/grok-4.3",
-  "x-ai/grok-4.5",
   "x-ai/grok-4.6",
+  "x-ai/grok-4.5",
+  "x-ai/grok-4.3",
   "google/gemini-3.7-flash",
   "google/gemini-3.6-flash",
   "google/gemini-3.5-flash",

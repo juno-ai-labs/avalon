@@ -286,8 +286,44 @@ describe("boundary contracts", () => {
     // An override bypasses the rollout, so the reachable set is reviewed here
     // rather than being whatever string a client sends.
     expect(CreateWorkstreamRequestSchema.safeParse({ ...base, modelOverride: "x-ai/grok-9" }).success).toBe(false);
-    expect(AGENT_MODEL_OVERRIDES[0]).toBe("x-ai/grok-4.3");
     expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
+  });
+
+  it("orders each vendor's models newest first", () => {
+    // The selector groups by vendor, so this ordering is what a reader sees
+    // under each heading — and the mistake it exists to catch is a new model
+    // appended to the end of the list rather than added to the top of its
+    // family. Only a version a machine can compare is checked: `gpt-5.6-terra`
+    // and `gpt-5.6-luna` share a version, as do the two `deepseek-v4` ids, and
+    // ties are ordered by hand rather than by this rule.
+    const version = (id: string): number[] | null => {
+      const match = /-v?(\d+(?:\.\d+)*)(?:-|$)/.exec(id.slice(id.indexOf("/") + 1));
+      return match ? match[1]!.split(".").map(Number) : null;
+    };
+    // Guards the parser itself: a regex that silently stopped matching would
+    // otherwise make every comparison below vacuous.
+    expect(version("x-ai/grok-4.6")).toEqual([4, 6]);
+    expect(version("google/gemini-3-flash-preview")).toEqual([3]);
+    expect(version("deepseek/deepseek-v4-pro")).toEqual([4]);
+    expect(AGENT_MODEL_OVERRIDES.filter((id) => version(id) === null)).toEqual([]);
+
+    const descends = (older: number[], newer: number[]): boolean => {
+      for (let index = 0; index < Math.max(older.length, newer.length); index += 1) {
+        const left = newer[index] ?? 0;
+        const right = older[index] ?? 0;
+        if (left !== right) return left > right;
+      }
+      return true; // equal versions are a tie this rule does not order
+    };
+    const offenders: string[] = [];
+    for (let index = 1; index < AGENT_MODEL_OVERRIDES.length; index += 1) {
+      const previous = AGENT_MODEL_OVERRIDES[index - 1]!;
+      const current = AGENT_MODEL_OVERRIDES[index]!;
+      const vendor = (id: string): string => id.slice(0, id.indexOf("/"));
+      if (vendor(previous) !== vendor(current)) continue;
+      if (!descends(version(current)!, version(previous)!)) offenders.push(`${previous} precedes ${current}`);
+    }
+    expect(offenders).toEqual([]);
   });
 
   it("owns the complete model-role, Flagship-key, and route-value contract", () => {
