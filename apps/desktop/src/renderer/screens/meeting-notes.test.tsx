@@ -71,7 +71,7 @@ vi.mock('../lib/app-session', () => ({
     api: state.api,
     session: {
       user: { id: state.userId },
-      workspace: { id: '00000000-0000-4000-8000-000000000112' },
+      workspace: { id: '00000000-0000-4000-8000-000000000112', region: 'global' },
     },
   }),
 }));
@@ -859,6 +859,7 @@ describe('MeetingNotesScreen', () => {
     expect(state.prepareMeetingAudioPermissions.mock.invocationCallOrder[0])
       .toBeLessThan(state.start.mock.invocationCallOrder[0]!);
     expect(state.setMeetingRecordingState).toHaveBeenCalledWith({
+      region: 'global',
       workspaceId: '00000000-0000-4000-8000-000000000112',
       recording: true,
     });

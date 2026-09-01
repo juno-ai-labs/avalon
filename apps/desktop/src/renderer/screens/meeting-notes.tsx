@@ -197,12 +197,17 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const recordingGuardRegisteredRef = useRef(false);
   const readOnly = Boolean(note && note.ownerUserId !== session?.user.id);
 
+  const recordingWorkspaceId = session?.workspace?.id;
+  const recordingWorkspaceRegion = session?.workspace?.region;
   const releaseRecordingGuard = useCallback(async (): Promise<void> => {
-    const workspaceId = session?.workspace?.id;
-    if (!workspaceId || !recordingGuardRegisteredRef.current) return;
+    if (!recordingWorkspaceId || !recordingWorkspaceRegion || !recordingGuardRegisteredRef.current) return;
     recordingGuardRegisteredRef.current = false;
-    await desktopBridge().setMeetingRecordingState({ workspaceId, recording: false }).catch(() => undefined);
-  }, [session?.workspace?.id]);
+    await desktopBridge().setMeetingRecordingState({
+      region: recordingWorkspaceRegion,
+      workspaceId: recordingWorkspaceId,
+      recording: false,
+    }).catch(() => undefined);
+  }, [recordingWorkspaceId, recordingWorkspaceRegion]);
 
   const hydrateNote = useCallback((next: NoteDetail): void => {
     noteRef.current = next;
@@ -516,7 +521,11 @@ export function MeetingNotesScreen(): React.JSX.Element {
         );
       }
       if (!session?.workspace) throw new Error('Open a workspace before recording a meeting.');
-      await bridge.setMeetingRecordingState({ workspaceId: session.workspace.id, recording: true });
+      await bridge.setMeetingRecordingState({
+        region: session.workspace.region,
+        workspaceId: session.workspace.id,
+        recording: true,
+      });
       recordingGuardRegisteredRef.current = true;
       activeRecordingStartedAtRef.current = Date.now();
       currentSegmentStartedOffsetRef.current = recordedMsRef.current;

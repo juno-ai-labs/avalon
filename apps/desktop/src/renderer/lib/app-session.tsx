@@ -285,11 +285,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   }, [bridge]);
 
   const leaveWorkspace = useCallback(async (workspaceId: string): Promise<WorkspaceDeparture> => {
-    const departure = await bridge.leaveWorkspace({ workspaceId });
+    if (!session?.workspace || session.workspace.id !== workspaceId) {
+      throw new Error('The workspace is no longer active');
+    }
+    const departure = await bridge.leaveWorkspace({ region: session.workspace.region, workspaceId });
     await clearWorkspaceDrafts(workspaceId);
     queryClient.removeQueries();
     return departure;
-  }, [bridge, queryClient]);
+  }, [bridge, queryClient, session?.workspace]);
 
   const refreshSession = useCallback(async (): Promise<DesktopSession> => {
     const nextSession = await bridge.refreshSession();

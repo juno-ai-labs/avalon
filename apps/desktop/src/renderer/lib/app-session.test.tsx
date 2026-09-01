@@ -1024,7 +1024,7 @@ describe('draft cache lifetime across a session', () => {
       await observedLeaveWorkspace?.('workspace-eu');
     });
 
-    expect(bridge.leaveWorkspace).toHaveBeenCalledWith({ workspaceId: 'workspace-eu' });
+    expect(bridge.leaveWorkspace).toHaveBeenCalledWith({ region: 'eu', workspaceId: 'workspace-eu' });
     expect(await readDraftText('workspace:workspace-eu:workstream:1')).toBeNull();
     expect((await readDraftText('workspace:workspace-global:workstream:2'))?.text).toBe('global thought');
   });
