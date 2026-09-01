@@ -29,7 +29,10 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { WorkspaceChangeGuard } from './workspace-change-guard';
-import { acceptedDeepLink, isConnectorOAuthResult } from './deep-links';
+import {
+  acceptedDeepLink,
+  shouldDeliverConnectorResultToSettings,
+} from './deep-links';
 import {
   app,
   BrowserWindow,
@@ -2575,17 +2578,16 @@ function isAllowedExternalUrl(rawUrl: string): boolean {
 
 function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): void {
   const navigation: DesktopDeepLinkNavigation = { url: rawUrl, entrypoint };
-  const connectorResult = isConnectorOAuthResult(rawUrl);
-  const connectorSettingsWindow = connectorResult
-    && !new URL(rawUrl).searchParams.has('workspace')
+  const connectorSettingsWindow = shouldDeliverConnectorResultToSettings(rawUrl)
     && settingsWindow && !settingsWindow.isDestroyed()
     ? settingsWindow
     : null;
 
-  // Settings runs in its own renderer process and therefore has its own React
-  // Query cache. Deliver connector completions to both renderers so the window
-  // that initiated OAuth can refresh as soon as the provider redirect lands.
-  // Authentication and invitation links remain exclusive to the main window.
+  // A legacy active-relative callback also refreshes the initiating Settings
+  // renderer's React Query cache. An addressed callback is main-only: main
+  // activates its target and reopens Connections, while a second delivery to
+  // Settings would race the same activation from another renderer process.
+  // Authentication and invitation links are likewise exclusive to main.
   connectorSettingsWindow?.webContents.send('auth:deep-link', navigation);
 
   if (!mainWindow || !rendererReady) {
