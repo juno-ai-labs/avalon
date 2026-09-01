@@ -358,17 +358,6 @@ function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
 }
-/** What the compiler says back after a turn. The service owns it rather than
- * the route because the saved transcript and the streamed reply have to be the
- * same sentence — a resumed draft that ends on a different question than the
- * one on screen reads as a different conversation. */
-export function assistantMessageForDraft(draft: AutomationDraft): string {
-  return draft.elicitation?.prompt
-    ?? draft.followUpQuestion
-    ?? (draft.ready
-      ? "The automation is ready to create."
-      : "I need one more detail before I can create this automation.");
-}
 function activityFilterValueMatches(valueType: string, value: unknown): boolean {
   if (valueType === "string") return typeof value === "string";
   if (valueType === "number") return typeof value === "number" && Number.isFinite(value);
