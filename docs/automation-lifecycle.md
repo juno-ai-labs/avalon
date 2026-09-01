@@ -760,6 +760,51 @@ reach rather than checked afterwards, so an arm it has no use for is not a value
 the model can emit; and an automation that can reach nobody spends no inference
 at all.
 
+### 2026-09-01 — A generated run's frozen recall query fits its authority's bound
+
+**What changed:** `freezeRunMemoryContext` cut the query it sends
+`AutomationAgent.executeMemoryTool` to
+`AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS`, which
+`automation-agent-memory.ts` now exports as the single definition site its two
+search schemas read. No bound moved; the caller that was exceeding one now
+respects it.
+
+**Why:** Every generated run was failing before its first model turn. The recall
+query is Rally's own text — the child work stream's title and objective plus
+`JSON.stringify` of the frozen `AutomationRunContextV1`, which carries the whole
+compiled definition — and nothing bounded it, while the authority's schema caps a
+search query at 2,000 characters because that bound was written for the
+model-facing memory tools. Any automation whose definition pushed the
+concatenation past the cap made the object throw a `ZodError`. A Durable Object
+RPC flattens the error class, so the harness could not read it as an
+argument-validation failure — the path that would have handed the model a
+`tool_failed` — and ended the run `harness_execution_failed`, whose member-facing
+sentence says retrying will not help. It did not: the query was rebuilt
+identically every occurrence. Interactive work streams never reached the schema,
+because `hybridMemorySearch` takes the same query with no length bound at all,
+which is why messages kept answering while every automation stayed broken.
+
+**Considered and rejected:** Raising the schema's cap, which moves a
+model-facing product bound to accommodate one internal caller and leaves the next
+unbounded caller to find it again. Swallowing a failed automation recall the way
+`hybridMemorySearch` tolerates a failed retrieval leg: the same call carries the
+authority-generation fence, and degrading to empty recall would turn a refused
+`automation_memory_authority_fenced` — a run outliving the consent it was
+provisioned under — into a silent success. Switching the frozen recall to
+`readAutomationMemoryBootstrap`, which needs no query at all: that changes which
+memories a run sees, and belongs to whoever owns recall rather than to an
+outage fix.
+
+**Consequences:** An automation whose definition exceeds the bound recalls
+against the first 2,000 characters of its query rather than failing. Recall
+quality there is unchanged in practice and was never better: the automation
+memory search is an `instr()` substring match, so a multi-thousand-character
+composite query matched nothing before it started throwing. The frozen row still
+records the full query, so the context hash keeps identifying the complete recall
+input. Making that recall actually select memories is a separate change.
+
+Shipped in the pull request for this change.
+
 ### 2026-09-01 — Abandonment fences already-addressed automations
 
 **What changed:** AutomationAgent now reads the regional workspace lifecycle

@@ -10,6 +10,7 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AutomationAgent } from "../src/durable-objects/automation-agent";
 import {
+  AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS,
   importLegacyAutomationMemory,
   materializeAutomationMemoryDefinitions,
 } from "../src/durable-objects/automation-agent-memory";
@@ -298,6 +299,27 @@ describe("AutomationAgent", () => {
         operation: "search",
         args: { query: "release" },
       })).rejects.toThrow("automation_memory_authority_fenced");
+
+      // The bound Rally's own recall has to fit inside. It is declared for a
+      // model-issued argument, but `freezeRunMemoryContext` reaches this same
+      // schema with a query it builds itself out of a run's title, objective,
+      // and frozen automation context — and a refusal here is not a
+      // model-visible tool error. It is a `ZodError` that a Durable Object RPC
+      // flattens into a plain `Error`, which is how an over-long recall query
+      // ended every generated run as `harness_execution_failed`. The service
+      // now cuts its query to `AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS`; this
+      // proves the number it cuts to is the one this object actually enforces,
+      // against real workerd rather than a Node double's copy of the schema.
+      await expect(instance.executeMemoryTool({
+        ...fence,
+        operation: "search",
+        args: { query: "r".repeat(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS) },
+      })).resolves.toMatchObject({ output: { results: [] } });
+      await expect(instance.executeMemoryTool({
+        ...fence,
+        operation: "search",
+        args: { query: "r".repeat(AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS + 1) },
+      })).rejects.toThrow(/too_big|Too big/);
     });
   });
 

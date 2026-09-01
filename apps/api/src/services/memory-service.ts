@@ -24,6 +24,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import { AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS } from "../durable-objects/automation-agent-memory";
 import { executeAutomationMemoryToolForRun } from "./automation-memory-client";
 import { MEMORY_EMBEDDING_MODEL, runEmbeddingInference } from "./structured-inference";
 
@@ -668,6 +669,32 @@ function parseFrozenContext(row: {
   };
 }
 
+/**
+ * The recall query an automation run sends its own memory authority.
+ *
+ * `query` is Rally's text, not a model's: the caller concatenates the work
+ * stream's title, its objective, and the frozen automation context, and none of
+ * those is bounded. The authority caps a search query at
+ * `AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS` because that bound was written for
+ * the model-facing memory tools, and this call is the one place Rally reaches
+ * the same schema with a string it built itself. Every automation whose
+ * definition pushed the concatenation past that cap therefore failed *before*
+ * its first model turn: the refusal is a `ZodError` raised inside the
+ * AutomationAgent, and a Durable Object RPC flattens it to a plain `Error`, so
+ * the harness could not read it as an argument-validation failure and ended the
+ * run `harness_execution_failed`. Interactive work streams never reached it —
+ * `hybridMemorySearch` takes the same query with no length bound at all.
+ *
+ * Cutting the query here rather than widening the schema keeps the model-facing
+ * bound where the product set it; this caller is the one that has to fit. The
+ * trim is safe: `freezeRunMemoryContext` has already replaced an all-whitespace
+ * query with its default, so the first character is never whitespace and the
+ * result always satisfies the schema's `min(1)`.
+ */
+function automationRecallQuery(query: string): string {
+  return query.slice(0, AUTOMATION_MEMORY_SEARCH_QUERY_MAX_CHARS).trim();
+}
+
 export async function freezeRunMemoryContext(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -686,7 +713,9 @@ export async function freezeRunMemoryContext(
   if (existing) return parseFrozenContext(existing);
 
   const recalled = input.automationRunContext
-    ? await executeAutomationMemoryToolForRun(env, input, "search", { query })
+    ? await executeAutomationMemoryToolForRun(env, input, "search", {
+        query: automationRecallQuery(query),
+      })
     : null;
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const workspaceRecall = recalled ? null : await hybridMemorySearch(env, input, query);
