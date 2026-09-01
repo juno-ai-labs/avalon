@@ -252,7 +252,7 @@ describe('resource citations', () => {
   it('shows image resource bytes as the card preview', async () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
-    const image = { ...DECK, title: 'Fjord Kaffe Oslo.png', resourceType: 'image', mimeType: 'image/png' };
+    const image = { ...DECK, title: 'Fjord Kaffe Oslo.png', resourceType: 'generated_file', mimeType: 'image/png' };
     const preview = vi.fn(async () => ({ kind: 'image' as const, blob: new Blob(['image'], { type: 'image/png' }) }));
 
     const { unmount } = render(
@@ -267,6 +267,8 @@ describe('resource citations', () => {
     expect(thumbnail).toHaveClass('citation-card-image-preview');
     expect(thumbnail).toHaveAttribute('src', 'blob:image-preview');
     expect(screen.getByText('Image')).toBeInTheDocument();
+    expect(document.querySelector('.citation-card-badge .lucide-image')).not.toBeNull();
+    expect(document.querySelector('.citation-card-badge .lucide-file')).toBeNull();
     expect(document.querySelector('.citation-card-preview')).toBeNull();
 
     unmount();
