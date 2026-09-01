@@ -279,6 +279,23 @@ the provider registration. Its public directory contact is the same confirmed
 `help@rallywith.ai` catch-all used by the site; `support@with-avalon.com` and
 other role aliases are not published as parallel external contact paths.
 
+**API error strings are this section's open remainder.** An `ApiError` message
+is product copy: the desktop client renders `caught.message` verbatim, so every
+one of these is a sentence a person reads. The invitation-acceptance conflict in
+`workspace-service.ts` has moved, because it disagreed with the identically
+scoped message on the platform-onboarding path. The rest still say Avalon —
+enumerated here so the next pass does not have to re-derive them, and because
+this document's own rule is that only enumerating what remains proves anything:
+three `global_identity_required` messages in `auth-service.ts`, two in
+`digest-service.ts` (`delivery_target_unavailable`, `email_delivery_unavailable`),
+two Linear native-agent messages in `connection-service.ts`, the
+`resource_preview_failed` message in `resource-service.ts`, and
+`scope_change_unsupported` in `workstream-object-product.ts`. That list covers
+`ApiError` constructions under `apps/api/src` only; user-visible strings minted
+elsewhere — the work-stream wake-up notice and the `Expanded by Avalon from
+suggested work` label in `workstream-service.ts` are two — were not audited and
+are not claimed complete.
+
 ### 8. Internal prose — cheapest, and safe to move alone
 
 - **`docs/`: 538 occurrences across 64 files.** Heaviest: `runbook.md` (67),
@@ -427,6 +444,43 @@ with this repository. The two halves of that line have different owners.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-09-01 — The invitation-acceptance conflict says Rally
+
+**What changed:** the 409 `workspace_membership_conflict` thrown by
+`acceptInvitationForUser` in `workspace-service.ts` now reads "This Rally
+account already belongs to another organization", matching word for word the
+three throws of that sentence in `platform-onboarding-service.ts` — the regional
+`create`, and the platform-side `createWorkspace` and `acceptInvitation`. A
+fourth throw there, in `resolveWorkspaceBinding`, carries the same code with
+different wording — "This Rally account is linked to more than one
+organization" — and describes a different condition, so it is not a copy of this
+sentence to keep in step. Section 7 gains an enumeration of the client-surfaced
+`ApiError` strings that still say Avalon.
+
+**Why:** not because it is one more Avalon string, but because the two paths
+disagreed. The same condition — an account already holding an active membership
+elsewhere — is rejected by the platform-onboarding path, which said Rally, and
+by the invitation path, which said Avalon; which name a person saw depended on
+which path happened to reject them. `InvitationOnboarding` in the desktop client
+renders the `ApiError` message verbatim into an `InlineError`, so this was the
+code name printed into product copy. That is the same reasoning the Resend
+sender entry below records: one name used consistently beats a split, and a
+split is the pressure that reorders the work.
+
+**Considered and rejected:** sweeping the other nine client-surfaced error
+strings in the same change. None of them has a Rally counterpart it contradicts,
+so none carries this one's pressure, and each has a copy question of its own —
+"This work stream belongs to Avalon itself" is describing the product's own work
+streams, not naming a vendor. They are one slice of section 7's remainder, and
+the enumeration added there is worth more to that slice than nine hurried edits.
+
+**What a future change has to respect:** the two literals are now the same
+sentence and have to move together. The test in
+`apps/api/test/workspace-and-invitations.test.ts` asserts the literal rather than
+importing the constant it guards — deliberately, per the lesson in the
+2026-08-25 telemetry-envelope entry: a test that compares a message to the
+constant that produces it passes no matter what that constant says.
 
 ### 2026-08-25 — The person-notification emails and both Resend senders
 
