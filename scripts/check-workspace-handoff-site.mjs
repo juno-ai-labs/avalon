@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Blocks an API writer deployment until the independently deployed public site
-// can resolve the workspace-addressed handoff path that writer emits.
+// and desktop release can both read the workspace-addressed link it emits.
 
 import { isEntryPoint } from "./entry-point.mjs";
 
@@ -10,6 +10,13 @@ const PROBE_WORKSTREAM_ID = "00000000-0000-7000-8000-000000000002";
 export function workspaceHandoffProbeUrl(baseUrl = "https://rallywith.ai") {
   return new URL(
     `/app/workspaces/global/${PROBE_WORKSPACE_ID}/workstreams/${PROBE_WORKSTREAM_ID}`,
+    `${baseUrl.replace(/\/+$/u, "")}/`,
+  ).toString();
+}
+
+export function workspaceHandoffDesktopManifestUrl(baseUrl = "https://downloads.rallywith.ai") {
+  return new URL(
+    "/stable/darwin/arm64/latest-mac.yml",
     `${baseUrl.replace(/\/+$/u, "")}/`,
   ).toString();
 }
@@ -29,18 +36,36 @@ export async function assertWorkspaceHandoffSite(response) {
   }
 }
 
+export async function assertWorkspaceHandoffDesktop(response) {
+  if (!response.ok) {
+    throw new Error(`Workspace-addressed desktop preflight returned HTTP ${response.status}`);
+  }
+  const body = await response.text();
+  if (!/^# rally-workspace-handoff-version: 2$/mu.test(body)) {
+    throw new Error("The live update channel does not contain a compatible desktop reader");
+  }
+}
+
 async function main() {
-  const baseUrl = process.argv[2] ?? "https://rallywith.ai";
-  const url = workspaceHandoffProbeUrl(baseUrl);
-  const response = await fetch(url, {
-    redirect: "follow",
-    headers: {
-      accept: "text/html",
-      "cache-control": "no-cache",
-    },
-  });
-  await assertWorkspaceHandoffSite(response);
-  console.log(`Workspace-addressed handoff site is ready (${url}).`);
+  const siteUrl = workspaceHandoffProbeUrl(process.argv[2] ?? "https://rallywith.ai");
+  const desktopUrl = workspaceHandoffDesktopManifestUrl(
+    process.argv[3] ?? "https://downloads.rallywith.ai",
+  );
+  const [siteResponse, desktopResponse] = await Promise.all([
+    fetch(siteUrl, {
+      redirect: "follow",
+      headers: { accept: "text/html", "cache-control": "no-cache" },
+    }),
+    fetch(desktopUrl, {
+      redirect: "follow",
+      headers: { accept: "application/yaml,text/yaml,text/plain", "cache-control": "no-cache" },
+    }),
+  ]);
+  await Promise.all([
+    assertWorkspaceHandoffSite(siteResponse),
+    assertWorkspaceHandoffDesktop(desktopResponse),
+  ]);
+  console.log(`Workspace-addressed handoff readers are ready (${siteUrl}; ${desktopUrl}).`);
 }
 
 if (isEntryPoint(import.meta.url)) {
