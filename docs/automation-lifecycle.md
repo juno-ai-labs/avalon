@@ -619,6 +619,16 @@ owned. One object refusing must not stop the rest, so failures are logged and
 the loop continues. An automation whose pause reason is `person` is invisible to
 unarchiving, permanently, until a person resumes it.
 
+**Only archival is wired, because only archival exists.** The design this
+implements also says deleting a work stream deletes the automations it owns, and
+that clause has nothing to attach to: Rally has no work-stream deletion path.
+`deletion_epoch` is a column on the work-stream object that nothing writes,
+there is no delete operation on the product service, and the client's removal
+affordance is Archive. Whoever builds work-stream deletion owns adding the
+cascade beside `applyArchiveToOwnedAutomations`; inventing a deletion path here
+to have somewhere to hang it would ship a destructive operation nobody asked
+for.
+
 ### 2026-09-01 — An automation a work stream can own
 
 **What changed:** `workstream` joins the automation scope vocabulary.
