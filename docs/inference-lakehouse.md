@@ -151,7 +151,9 @@ deployment credential as account-owned, so provisioning uses the account token
 verifier directly and does not guess ownership from an API failure. Existing
 resources are read back and compared to the manifest; immutable schema, sink, or
 SQL drift fails the deployment rather than creating a parallel table or silently
-dropping fields. Read-only Cloudflare API calls get up to ten total attempts for
+dropping fields. The provisioner uses each Pipeline list response directly for
+that comparison instead of repeating the same read through the resource's
+detail endpoint. Read-only Cloudflare API calls get up to ten total attempts for
 connection failures and HTTP 408, 409, 429, and 5xx responses. They respect a
 returned `Retry-After` value and otherwise use the official TypeScript client's
 jittered exponential backoff: a nominal 500 milliseconds, doubling to an
@@ -328,15 +330,58 @@ decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
 
+### 2026-09-01 — Pipeline list responses replace redundant detail reads
+
+**What changed:** Existing streams, sinks, and pipelines are now verified
+directly from their list responses. The provisioner no longer repeats each
+successful lookup through the resource's detail endpoint, removing six
+Cloudflare Pipelines reads from a two-lakehouse deploy preflight.
+
+**Why:** The list contracts include every stream, sink, and pipeline field used
+by the immutable-resource assertions. During the Pipelines control-plane
+incident, each unnecessary request was another independent opportunity for an
+HTTP 500 and added no evidence to the drift check.
+
+**Considered and rejected:** Removing the list requests too, because they are
+still required to discover Cloudflare-generated stream IDs, reject duplicate
+names, find the deployment-credential-bound sink, and compare existing
+resources with the checked-in manifests; and retaining the detail reads as a
+second confirmation, because they query the same control plane without checking
+any additional field.
+
+**Consequences:** A healthy existing two-lakehouse deployment now needs six
+Pipeline control-plane reads instead of twelve. A failed list read still retries
+and ultimately fails closed, and immutable stream, sink, and SQL drift remains
+deployment-blocking.
+
+### 2026-09-01 — The incident retry budget rises to ten attempts
+
+**What changed:** The merge-time provisioner's GET retry budget increased from
+Cloudflare's default three total attempts to ten. The existing provider-aligned
+status rules, `Retry-After` handling, jittered backoff, final Ray ID, and
+single-attempt POST behavior are unchanged.
+
+**Why:** Live probes during the Pipelines incident showed a failure rate high
+enough that three attempts across a multi-read preflight still made otherwise
+valid deployments unlikely to complete. The operator explicitly selected ten
+attempts after the smaller budget failed to restore reliable deploys.
+
+**Considered and rejected:** Retrying until success, which could hide a lasting
+control-plane outage; and changing mutation semantics, because repeating a POST
+after a lost response can create duplicate immutable resources.
+
+**Consequences:** Without a provider-directed `Retry-After`, nine waits add at
+most 47.5 seconds per persistently failing GET before downward jitter. A
+persistent fault still blocks deployment with a support-traceable final error.
+
 ### 2026-09-01 — Transient Cloudflare control-plane reads retry safely
 
 **What changed:** The merge-time lakehouse provisioner now retries GET requests
 for the same connection failures, HTTP 408 timeouts, HTTP 409 conflicts, rate
-limits, and server errors as Cloudflare's official TypeScript client. It gets up
-to ten total attempts, honors `Retry-After`, mirrors the client's short jittered
-exponential backoff from a nominal 500 milliseconds to an 8-second ceiling, and
-includes the final `cf-ray` value in an error. POST requests still execute
-exactly once.
+limits, and server errors as Cloudflare's official TypeScript client. It uses
+that client's published default of two retries, honors `Retry-After`, mirrors
+its short jittered exponential backoff, and includes the final `cf-ray` value in
+an error. POST requests still execute exactly once.
 
 **Why:** Three consecutive API deploys failed before migrations or Worker upload
 while Cloudflare's Pipelines control plane intermittently returned HTTP 500.
@@ -350,16 +395,13 @@ as a create-first Pipeline screen.
 interleaved production probes failed 13/20 and 14/20 times respectively;
 retrying POST requests, which could duplicate a resource after a lost response;
 skipping immutable-resource verification, which could deploy stale generated
-bindings; the official client's default of three total attempts, because the
-observed failure rate across a multi-read preflight still made deployment
-failure likely; and an unbounded retry policy. The operator explicitly selected
-ten total attempts, while the backoff continues to mirror Cloudflare's client.
+bindings; and an unbounded custom retry policy. The selected count and backoff
+come from Cloudflare's official client rather than a Rally-specific guess.
 
 **Consequences:** A short transient control-plane fault no longer blocks an
 otherwise valid deployment on its first response. A persistent fault still
-fails closed after ten attempts with a support-traceable Ray ID. Without a
-provider-directed `Retry-After`, those nine waits add at most 47.5 seconds before
-downward jitter; resource creation retains its existing single-attempt semantics.
+fails closed after the provider-standard retry budget with a support-traceable
+Ray ID, and resource creation retains its existing single-attempt semantics.
 
 ### 2026-08-27 — Embedding calls join the observable OpenRouter boundary
 

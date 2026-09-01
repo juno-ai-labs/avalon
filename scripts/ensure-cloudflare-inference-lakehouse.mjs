@@ -362,8 +362,7 @@ async function namedEntity(client, kind, name) {
   const result = await apiRequest(client, `/pipelines/v1/${kind}?name=${encodeURIComponent(name)}&per_page=100`);
   const matches = (Array.isArray(result) ? result : []).filter((entry) => entry.name === name);
   if (matches.length > 1) throw new Error(`Cloudflare returned duplicate ${kind} named ${name}`);
-  const match = matches[0];
-  return match ? apiRequest(client, `/pipelines/v1/${kind}/${match.id}`) : null;
+  return matches[0] ?? null;
 }
 
 async function credentialBoundSink(client, region, desiredName) {
@@ -380,7 +379,7 @@ async function credentialBoundSink(client, region, desiredName) {
       `${region.sink} uses a different deployment credential; sinks are immutable`,
     );
   }
-  return match ? apiRequest(client, `/pipelines/v1/sinks/${match.id}`) : null;
+  return match ?? null;
 }
 
 async function ensureStream(client, region, schema, create, log) {
