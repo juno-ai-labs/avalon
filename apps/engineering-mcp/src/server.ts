@@ -5,7 +5,6 @@ import {
   EngineeringWorkspaceTargetLookupSchema,
   EngineeringWorkstreamListLookupSchema,
   EngineeringWorkstreamTargetLookupSchema,
-  InspectionSqlBindingSchema,
   ListEngineeringWorkspacesResultSchema,
 } from "@rally/contracts/engineering-inspection";
 import {
@@ -105,10 +104,16 @@ const sqlInputSchema = {
   sql: z.string().min(1).describe(
     "SQLite statement or semicolon-separated statements. This may read or mutate the target database.",
   ),
-  bindings: InspectionSqlBindingSchema.array().optional().describe(
+  bindings: z.array(z.union([z.string(), z.number().finite(), z.null()])).optional().describe(
     "Positional values for ? parameters, in order.",
   ),
 };
+
+// The MCP SDK consumes Zod v4 schemas. Parse through the shared v3 contracts
+// in a transform so the callback still receives Rally's branded identifiers.
+const workspaceIdInputSchema = z.string().uuid().transform((value) => WorkspaceIdSchema.parse(value));
+const workstreamIdInputSchema = z.string().uuid().transform((value) => WorkstreamIdSchema.parse(value));
+const substreamIdInputSchema = z.string().min(1).transform((value) => SubstreamIdSchema.parse(value));
 
 export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal): McpServer {
   const server = new McpServer({ name: "Rally engineering", version: "1.0.0" });
@@ -130,7 +135,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
 
   server.registerTool("list_workstreams", {
     description: "List every work stream in the authoritative WorkspaceDO for a workspace ID.",
-    inputSchema: { workspaceId: WorkspaceIdSchema },
+    inputSchema: { workspaceId: workspaceIdInputSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_workstreams", { workspace_id: workspaceId }, async () => {
     const [globalRaw, euRaw] = await Promise.all([
@@ -147,7 +152,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
 
   server.registerTool("list_substreams", {
     description: "List main substream 0 and every child substream for a work-stream ID.",
-    inputSchema: { workstreamId: WorkstreamIdSchema },
+    inputSchema: { workstreamId: workstreamIdInputSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workstreamId }) => tool(principal, "list_substreams", { workstream_id: workstreamId }, async () => {
     const [globalRaw, euRaw] = await Promise.all([
@@ -164,7 +169,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
 
   server.registerTool("run_workspace_sql", {
     description: "Run arbitrary SQLite against a WorkspaceDO. Statements may mutate production state.",
-    inputSchema: { workspaceId: WorkspaceIdSchema, ...sqlInputSchema },
+    inputSchema: { workspaceId: workspaceIdInputSchema, ...sqlInputSchema },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, ({ workspaceId, sql, bindings = [] }) => tool(
     principal,
@@ -191,7 +196,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
 
   server.registerTool("run_workstream_sql", {
     description: "Run arbitrary SQLite against a WorkstreamDO. Statements may mutate production state.",
-    inputSchema: { workstreamId: WorkstreamIdSchema, ...sqlInputSchema },
+    inputSchema: { workstreamId: workstreamIdInputSchema, ...sqlInputSchema },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, ({ workstreamId, sql, bindings = [] }) => tool(
     principal,
@@ -219,9 +224,9 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   server.registerTool("run_substream_sql", {
     description: "Run arbitrary SQLite against a SubstreamAgent. Parent IDs are required because they are part of the Durable Object name. Statements may mutate production state.",
     inputSchema: {
-      workspaceId: WorkspaceIdSchema,
-      workstreamId: WorkstreamIdSchema,
-      substreamId: SubstreamIdSchema,
+      workspaceId: workspaceIdInputSchema,
+      workstreamId: workstreamIdInputSchema,
+      substreamId: substreamIdInputSchema,
       ...sqlInputSchema,
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },

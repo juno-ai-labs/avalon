@@ -67,8 +67,8 @@ import {
 } from '@rally/contracts';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
-import type { ZodType } from 'zod';
-import { z } from 'zod';
+import { STRICT_UUID_PATTERN } from '@rally/contracts/uuid-validation';
+import { z } from 'zod/v3';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { normalizeElicitation } from './elicitation';
 import { resolveMentionPayload } from './mention-draft';
@@ -178,11 +178,11 @@ async function rejectedTheBearer(response: Response): Promise<boolean> {
   return code !== undefined && sessionRejectionCodes.has(code);
 }
 
-interface RequestOptions<T> {
+interface RequestOptions<TSchema extends z.ZodTypeAny> {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   headers?: HeadersInit;
-  schema: ZodType<T>;
+  schema: TSchema;
   signal?: AbortSignal;
   /**
    * The `x-request-id` this call travels under. A caller that is timing a flow
@@ -713,7 +713,10 @@ export class RallyApi {
     }
   }
 
-  private async request<T>(path: string, options: RequestOptions<T>): Promise<T> {
+  private async request<TSchema extends z.ZodTypeAny>(
+    path: string,
+    options: RequestOptions<TSchema>,
+  ): Promise<z.output<TSchema>> {
     const headers = new Headers(options.headers);
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
     const method = options.method ?? 'GET';
@@ -736,7 +739,7 @@ export class RallyApi {
     return parsed.data;
   }
 
-  private async requestVoid(path: string, options: Omit<RequestOptions<never>, 'schema'>): Promise<void> {
+  private async requestVoid(path: string, options: Omit<RequestOptions<z.ZodTypeAny>, 'schema'>): Promise<void> {
     const headers = new Headers(options.headers);
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
     const method = options.method ?? 'POST';
@@ -1647,7 +1650,7 @@ export class RallyApi {
   async retryHarness(id: string): Promise<{ harnessRunId: string }> {
     return this.request(`/workstreams/${encodeURIComponent(id)}/retry`, {
       method: 'POST',
-      schema: z.object({ harnessRunId: z.string().uuid() }),
+      schema: z.object({ harnessRunId: z.string().regex(STRICT_UUID_PATTERN, 'Invalid UUID') }),
     });
   }
 

@@ -2,7 +2,7 @@ import {
   ProductFeatureFlagFanoutMessageSchema,
   ProductFeatureFlagKeySchema,
 } from '@rally/contracts';
-import { z } from 'zod';
+import { z } from 'zod/v3';
 import type { Env, FlagChangeMessage } from './env';
 
 const FlagChangeMessageSchema = z.object({

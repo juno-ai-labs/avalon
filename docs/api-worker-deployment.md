@@ -97,7 +97,9 @@ locally through Wrangler's scheduled-event test route.
 - Production code, tests, and scripts use static imports. A dynamic `import()`
   is not a startup strategy.
 - Schema-heavy API, contract, and connector modules import `zod/v3`; bare Zod
-  v4 imports are limited to the checked Bind/JSON-Schema compatibility edge.
+  v4 imports are limited to checked compatibility edges. Consumers that compose
+  shared schemas use the same runtime; a v4-only SDK reparses through a shared
+  contract at its adapter instead of nesting v3 schemas into v4 shapes.
 - The capability Workers own compute only. D1, R2, Durable Object namespaces,
   schedules, claims, and product state remain in the regional API.
 - Service methods are explicit and typed. Do not replace them with an untyped
@@ -260,8 +262,9 @@ for Azure-bound models in its route plan.
 ### 2026-09-01 — Regional schemas stop paying Zod v4 construction cost
 
 **What changed:** Rally-owned schemas in the regional API graph now use
-`zod/v3`; Bind and JSON-Schema compilation retain Zod v4 through explicit
-compatibility files. Shared conversion and error helpers preserve provider
+`zod/v3`; consumers that compose those schemas use the same runtime, while Bind,
+Engineering MCP, and JSON-Schema compilation retain Zod v4 through explicit
+compatibility adapters. Shared conversion and error helpers preserve provider
 schema output and recognize failures from both versions. A repository check
 blocks bare-v4 regressions and the two known semantic widenings in v3.
 

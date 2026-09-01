@@ -7,7 +7,7 @@ import test from 'node:test';
 import {
   findBareWorkerZodImports,
   findWorkerSchemaCompatibilityViolations,
-  schemaHeavyWorkerRoots,
+  sharedSchemaConsumerRoots,
   zodV4WorkerAllowlist,
 } from './check-api-startup-schema-runtime.mjs';
 
@@ -49,7 +49,7 @@ test('finds v3 integer and UUID semantics that are looser than Zod v4', async ()
 
 test('the production Worker graph keeps Zod v4 behind its compatibility edge', async () => {
   assert.deepEqual(await findBareWorkerZodImports({
-    roots: [...schemaHeavyWorkerRoots, 'packages/agent-harness/src'],
+    roots: [...sharedSchemaConsumerRoots, 'packages/agent-harness/src'],
     allowlist: zodV4WorkerAllowlist,
   }), []);
   assert.deepEqual(await findWorkerSchemaCompatibilityViolations(), []);
