@@ -845,8 +845,8 @@ decision about both regions at once, not a local change to a loader.
 
 Ace automatically ensures all eleven `agent-model-*` JSON flags plus
 `hypersight-enabled`, `meeting-recording-enabled`, `suggested-work-enabled`,
-`automation-workspace-templates-enabled`, and `digests-enabled` exist on every
-merge-to-main deployment. It seeds model flags from the checked-in Worker
+`automation-workspace-templates-enabled`, `multiple-workspaces-enabled`, and
+`digests-enabled` exist on every merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
 defaults off except
 `digests-enabled`, which defaults **on** — a digest already sends by default
@@ -1087,10 +1087,26 @@ To exercise a real flag locally you need Cloudflare credentials and
    change, and overrides the flag it is supposed to implement. If a rule cannot
    express the cohort, add the missing *attribute* below — that is the fix, not
    an `if`.
-5. Add the flag to the table above and create it in the `avalon-api` app,
-   together with the rules that scope it. There is one app for both regions, so
-   it is created once — and a flag created without its rule is live and
-   unscoped until the rule lands.
+5. **Register it in Ace, in all three places, or the flag does not exist.** A
+   key the Worker resolves is not a flag: nothing creates it in Flagship,
+   nothing lists it for an operator, and nothing accepts a change to it, so it
+   resolves off for everyone permanently and warns on every poll. A product
+   Boolean — any key ending `-enabled` — needs that key added to
+   `ProductFeatureFlagKeySchema` in `@rally/contracts`, to `MANAGED_FLAGS` in
+   `apps/ace/src/protocol.ts`, and to an `ensureFlag` call in
+   `apps/ace/scripts/deploy.mjs` carrying the identical description and
+   default. Merging those three redeploys Ace, and that deployment is what
+   creates the flag. `apps/ace/test/protocol.test.ts` fails when a product
+   Boolean the Worker serves is missing from the catalog, and
+   `deployment-contract.test.ts` fails when a catalogued flag is not
+   provisioned or its description drifts. A flag deliberately kept *outside*
+   Ace keeps a key that does not end in `-enabled`, the way `developer-settings`
+   does — the suffix is the rule, not a list.
+6. Add the flag to the table above and create the rules that scope it. There is
+   one app for both regions, so it is created once — and a flag created without
+   its rule is live and unscoped until the rule lands. Ace provisions with no
+   rules at the default variation, so for a feature that is off for everyone
+   until the rule lands, which is the safe order.
 
 ### Adding an attribute
 
@@ -1102,6 +1118,34 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-09-01 — Serving a flag key is not adding a flag
+
+**What changed:** "Adding a flag" gained an explicit Ace registration step
+naming all three edits a product Boolean needs — the contracts key enum, Ace's
+`MANAGED_FLAGS` catalog, and the `ensureFlag` call in Ace's deploy script — and
+`multiple-workspaces-enabled` was registered in each. A test now fails when a
+product Boolean this document's client table lists is missing from Ace's
+catalog.
+
+**Why:** Step 5 previously read "create it in the `avalon-api` app", which
+describes an outcome without naming the mechanism that produces it. #464 read
+that as satisfied by serving the key from `client-feature-flags.ts`, and the
+flag was never created in Flagship. Because the resolver treats a missing flag
+and a provisioned-off flag identically, nothing failed and nothing looked
+wrong — the feature was simply off for everyone with no way to change it.
+
+**Considered and rejected:** Making the Worker create an absent flag on first
+evaluation. That puts flag provisioning on a request path, needs Flagship write
+credentials in both regional Workers where only read access belongs, and would
+create a flag with no rule — live and unscoped — at whatever moment the first
+poll arrives.
+
+**Consequences:** The failure that used to be silent now fails on the pull
+request. Flags outside Ace stay outside it by keeping a key that does not end
+in `-enabled`; `developer-settings` and `control-tower-refresh-seconds` are the
+two, and both keep their Wrangler paths documented here. A flag whose key is
+renamed to end in `-enabled` becomes Ace's to manage and must be registered.
 
 ### 2026-09-01 — Grok 4.6 and Gemini 3.7 Flash join the pinnable set
 

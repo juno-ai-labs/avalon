@@ -1,8 +1,8 @@
 # Ace internal administration
 
 Ace is Avalon's internal administration Worker at
-`https://ace.internal.rallywith.ai`. Its feature-flag surface manages five
-Boolean product flags in Cloudflare Flagship: four presentation controls for
+`https://ace.internal.rallywith.ai`. Its feature-flag surface manages six
+Boolean product flags in Cloudflare Flagship: five presentation controls for
 Electron and one operational control for scheduled digest delivery. Its Queues
 surface lists every actively configured Cloudflare dead-letter queue, its live
 backlog, and a non-consuming peek at its messages. Its Models surface manages
@@ -38,8 +38,8 @@ identity-provider settings. Ace therefore follows the same employee rule while
 keeping a distinct audience.
 
 `GET /api/flags` reads `hypersight-enabled`, `meeting-recording-enabled`,
-`suggested-work-enabled`, `automation-workspace-templates-enabled`, and
-`digests-enabled`. The editor exposes enabled/paused state, default Boolean
+`suggested-work-enabled`, `automation-workspace-templates-enabled`,
+`multiple-workspaces-enabled`, and `digests-enabled`. The editor exposes enabled/paused state, default Boolean
 value, ordered first-match rules, all eleven operators, nested AND/OR groups,
 and sticky percentage rollouts. A rule is reordered by dragging its handle
 onto another or, from that same handle, ArrowUp/ArrowDown. A person search
@@ -307,6 +307,36 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-09-01 — multiple-workspaces-enabled joins the catalog it was assumed to be in
+
+**What changed:** `multiple-workspaces-enabled` was added to `MANAGED_FLAGS`,
+to `ProductFeatureFlagKeySchema`, and to `deploy.mjs`, making it Ace's sixth
+managed product flag and its fifth presentation control. A new
+`protocol.test.ts` case fails when a product Boolean the API resolves is absent
+from this catalog.
+
+**Why:** The flag shipped in #464 resolved by the API and consumed by Electron,
+but registered nowhere here. Nothing created it in Flagship, so it did not
+exist in the app at all: the feature was off for every account with no operator
+able to turn it on, and each desktop poll logged an unresolved flag. Every
+existing check starts from this catalog and walks outward to `deploy.mjs`, so a
+flag that never reached the catalog passed all of them.
+
+**Considered and rejected:** Having Ace list whatever Flagship returns instead
+of a hard-coded catalog. That would have surfaced this flag only once something
+else created it, and it would surrender the labels, descriptions, and defaults
+that make an operator page readable — `developer-settings` and
+`control-tower-refresh-seconds` are deliberately not Ace's to manage, and a
+live listing cannot express that. The catalog stays authoritative; the new test
+makes its incompleteness fail on the pull request.
+
+**Consequences:** Adding a product Boolean is now four edits, not one, and the
+suite says so before merge. The `-enabled` suffix is load-bearing: it is what
+separates a flag Ace must manage from one it must not, so a flag kept outside
+Ace must keep a key that does not end in `-enabled`. Deploying this creates the
+flag with no rules at its `off` default, which changes nothing for anyone until
+a targeting rule is added.
 
 ### 2026-08-27 — Memory embeddings stay outside live model routing
 
