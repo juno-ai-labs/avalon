@@ -79,6 +79,41 @@ export const AutomationDraftMessageSchema = z.strictObject({
   createdAt: z.number().int().nonnegative(),
 });
 
+/**
+ * What an automation delivered into a work stream, as the row's typed content.
+ *
+ * The row itself is an ordinary message authored by "Automation"; everything
+ * specific to an activation lives here, inside the `structuredContent` every
+ * other typed row already uses. No column, no table, no migration.
+ */
+export const AutomationActivationV1Schema = z.strictObject({
+  type: z.literal("automation_activation"),
+  schemaVersion: z.literal(1),
+  automationId: AutomationIdSchema,
+  /**
+   * Frozen at delivery so a later rename does not rewrite history — the same
+   * reason a delivery receipt carries the address it was sent to rather than
+   * looking one up.
+   */
+  automationName: z.string().min(1).max(300),
+  runId: IdSchema,
+  /** What an "open the run" affordance needs; the run's own child work stream. */
+  runWorkstreamId: IdSchema,
+  deliveryId: z.string().min(1).max(200),
+  /**
+   * Provenance a reader and the model can both see. It narrows nothing about
+   * what the woken run may do: an activation from an inbound email is the same
+   * kind of arrival as one from a Monday schedule, and the untrusted label is
+   * what carries the difference in how far to trust the text.
+   */
+  trigger: z.strictObject({
+    kind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+  }).strict(),
+  occurredAt: z.number().int().nonnegative(),
+});
+export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
+
+export const AutomationAgentSnapshotSchema = z.strictObject({
 export const AutomationAgentSnapshotSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,

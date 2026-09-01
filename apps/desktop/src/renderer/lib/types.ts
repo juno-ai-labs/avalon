@@ -439,7 +439,14 @@ export interface Message {
     | 'tool_event'
     | 'plugin_activity'
     | 'elicitation'
-    | 'system';
+    | 'system'
+    /**
+     * An automation's result, delivered into the work stream that owns it. It
+     * renders as an ordinary message authored by "Automation" — the row a
+     * colleague's message gets, with a different name in the author slot — so
+     * nothing but the author line and this type distinguishes it.
+     */
+    | 'automation_activation';
   text?: string;
   contextLabel?: string;
   mentions?: MessageMention[];

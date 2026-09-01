@@ -1726,3 +1726,40 @@ describe('MessageBlock heading collapse control', () => {
     expect(screen.queryByRole('button', { name: 'Expand all sections' })).toBeNull();
   });
 });
+
+describe('an automation result in the room', () => {
+  const activation = {
+    ...baseMessage,
+    id: 'message-activation',
+    // Appended by Rally on the automation's behalf, so it carries a machine
+    // author; what makes it an activation is the type, and the renderer has to
+    // agree with that rather than with the author.
+    authorType: 'system' as const,
+    author: undefined,
+    messageType: 'automation_activation' as const,
+    text: '## Monday agenda\n\nTwo candidates reached final round.',
+  };
+
+  it('renders as an ordinary authored message, named Automation', () => {
+    render(<MessageBlock {...actions} collapseHeadings message={activation} />);
+
+    const article = screen.getByRole('article', { name: 'Automation result' });
+    expect(article).toHaveClass('message-block', 'agent-message');
+    expect(article.querySelector('.message-author')?.textContent).toBe('Automation');
+    // Not "Rally": the room is being told what an automation found, and the
+    // name in the author slot is the whole of what marks it as one.
+    expect(article.textContent).not.toContain('Rally');
+  });
+
+  it('gets the feed treatment every other message gets', () => {
+    const { container } = render(
+      <MessageBlock {...actions} collapseHeadings message={activation} />,
+    );
+
+    // Headings fold, exactly as an assistant answer's do. An activation is a
+    // message, not a row kind with rules of its own.
+    expect(container.querySelectorAll('.markdown-collapse')).toHaveLength(1);
+    expect(screen.getByText('Two candidates reached final round.')).toBeVisible();
+    expect(container.querySelector('.transcript-event')).toBeNull();
+  });
+});

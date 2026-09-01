@@ -23,6 +23,7 @@ import {
   renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
   renderTriggerActivityMessage,
+  renderUntrustedAutomationResultMessage,
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
   renderWorkstreamSystemPrompt,
@@ -54,6 +55,7 @@ import {
 } from "@rally/agent-harness";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
+  AutomationActivationV1Schema,
   AutomationMemoryTableSchema,
   ModelPluginIdSchema,
   ToolDefinitionSchema,
@@ -1144,6 +1146,19 @@ async function loadTriggerFencedTranscriptMessages(
  * pairs. Unfinished or malformed receipts are omitted as one healed unit, so a
  * later run can never inherit a dangling call or an orphaned result.
  */
+/**
+ * The automation's name, off the activation object.
+ *
+ * Frozen at delivery rather than looked up, so a rename does not rewrite what
+ * an earlier run's context said. A malformed or absent object is not worth
+ * failing a whole projection over — the result still reaches the model, wearing
+ * a name that says only what it is.
+ */
+function automationActivationName(structuredContent: unknown): string {
+  const parsed = AutomationActivationV1Schema.safeParse(structuredContent);
+  return parsed.success ? parsed.data.automationName : "An automation";
+}
+
 async function projectModelProtocolTranscript(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
@@ -1348,6 +1363,31 @@ async function projectModelProtocolTranscript(
           message.sequenceNumber,
         ));
       }
+      continue;
+    }
+
+    // An automation's result, delivered into the room that owns the automation.
+    // Admitted ahead of the drop below rather than by falling through it: a new
+    // message type is dropped by that rule automatically, and this one's
+    // durable content is represented nowhere else in this work stream — an
+    // agent that cannot see it cannot do anything about it.
+    //
+    // Unlike the two exceptions above, an activation is admitted on every run
+    // and not only when it is the trigger. It is standing context: the agent
+    // should be able to consult last Monday's agenda when somebody asks a
+    // question today. The label is identical either way; nothing about being
+    // older makes an automation's output more trustworthy.
+    if (message.messageType === "automation_activation") {
+      projected.push(modelDerivative(
+        renderUntrustedAutomationResultMessage({
+          automationName: automationActivationName(message.structuredContent),
+          deliveredAt: message.createdAt,
+          text: modelMessageContent(message),
+        }),
+        "participant_turn",
+        message.id,
+        message.sequenceNumber,
+      ));
       continue;
     }
 

@@ -125,6 +125,7 @@ export const messageSchema = z
       'tool_event',
       'elicitation',
       'system',
+      'automation_activation',
     ]),
     text: z.string().optional(),
     createdAt: z.string(),

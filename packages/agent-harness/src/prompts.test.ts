@@ -8,6 +8,8 @@ import {
   renderSemanticTriggerMessages,
   renderScheduledDigestBriefMessage,
   renderTriggerActivityMessage,
+  renderAutomationResultDispositionMessages,
+  renderUntrustedAutomationResultMessage,
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
   renderWorkstreamDescriptionMessages,
@@ -382,6 +384,24 @@ describe("prompt renderers", () => {
       metadata: { body: injection },
     });
     const emailMessage = renderUntrustedInboundEmailMessage(injection);
+    // An automation's result is its model's prose wrapped around whatever its
+    // connector tools read, so both the name and the body are outside content.
+    const activationMessage = renderUntrustedAutomationResultMessage({
+      automationName: injection,
+      deliveredAt: "2026-08-03T00:00:00.000Z",
+      text: injection,
+    });
+    // The classifier reads that same result. Its system prompt must not carry
+    // it, and the user message must.
+    const dispositionMessages = renderAutomationResultDispositionMessages({
+      automationName: injection,
+      automationObjective: injection,
+      triggerKind: "external_event",
+      triggerSummary: injection,
+      result: injection,
+      recentDispositions: ["done"],
+      reach: { canDeliver: true, canExpose: false },
+    });
     // A digest brief is Avalon's instruction wrapped around connector-derived
     // event titles and bodies, so it carries outside content and belongs here.
     const digestMessage = renderScheduledDigestBriefMessage({
@@ -426,6 +446,12 @@ describe("prompt renderers", () => {
     expect(carrier.some((entry) => String(entry.content).includes(injection))).toBe(true);
     expect(activityMessage).toMatchObject({ role: "user" });
     expect(emailMessage).toMatchObject({ role: "user" });
+    expect(activationMessage).toMatchObject({ role: "user" });
+    expect(activationMessage.content).toContain(injection);
+    expect(dispositionMessages[0]).toMatchObject({ role: "system" });
+    expect(dispositionMessages[0]!.content).not.toContain(injection);
+    expect(dispositionMessages[1]).toMatchObject({ role: "user" });
+    expect(dispositionMessages[1]!.content).toContain(injection);
     expect(digestMessage).toMatchObject({ role: "user" });
     expect(digestMessage.content).toContain(injection);
     expect(semanticMessages[0]!.content).not.toContain(injection);

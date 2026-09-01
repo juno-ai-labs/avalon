@@ -162,7 +162,7 @@ export interface ParticipantMessageInput {
   authorUserId: string | null;
   authorSnapshot: { displayName: string; avatarUrl: string | null } | null;
   clientMessageId?: string;
-  messageType?: "text" | "system" | "elicitation";
+  messageType?: "text" | "system" | "elicitation" | "automation_activation";
   text: string;
   structuredContentJson?: string | null;
   externalActorJson?: string | null;
@@ -179,7 +179,7 @@ export interface DevelopmentConversationTurnInput {
   authorUserId: string | null;
   authorSnapshot: { displayName: string; avatarUrl: string | null } | null;
   externalActorJson: string | null;
-  messageType: "text" | "system" | "elicitation" | "tool";
+  messageType: "text" | "system" | "elicitation" | "tool" | "automation_activation";
   text: string;
   structuredContentJson: string | null;
   producedByRunId: string | null;
@@ -326,7 +326,7 @@ export interface ConversationTurnInput {
   authorType: "human" | "agent" | "external" | "system";
   authorUserId: string | null;
   externalActorJson: string | null;
-  messageType: "text" | "system" | "elicitation" | "tool" | "suggestion";
+  messageType: "text" | "system" | "elicitation" | "tool" | "suggestion" | "automation_activation";
   text: string;
   structuredContentJson: string | null;
   producedByRunId: string | null;
@@ -4663,8 +4663,12 @@ function parseExternalActor(value: string | null): ExternalActor | null {
 
 function isParticipantMessageType(
   value: string | null,
-): value is "text" | "system" | "elicitation" | "suggestion" {
-  return value === "text" || value === "system" || value === "elicitation" || value === "suggestion";
+): value is "text" | "system" | "elicitation" | "suggestion" | "automation_activation" {
+  return value === "text"
+    || value === "system"
+    || value === "elicitation"
+    || value === "suggestion"
+    || value === "automation_activation";
 }
 
 function participantShareable(message: BindLoopMessage): boolean {
