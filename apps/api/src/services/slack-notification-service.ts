@@ -299,7 +299,11 @@ async function deliverWorkstreamSlack(
       channel_id: channelId,
       outcome: "opened",
     });
-    const target = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, workstreamId);
+    const target = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
+      region: env.AVALON_REGION,
+      workspaceId: input.workspaceId,
+      workstreamId,
+    });
     const chunks = input.chunks(target, 40_000);
     for (const [index, chunk] of chunks.entries()) {
       if (index > 0) await sleep(1_000);

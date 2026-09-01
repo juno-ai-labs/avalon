@@ -41,6 +41,7 @@ interface InvitationRow {
   accepted_at: string | null;
   accepted_by_user_id: string | null;
   revoked_at: string | null;
+  abandoned_at: string | null;
   created_at: string;
 }
 
@@ -104,12 +105,14 @@ export interface ResolvedInvitation {
 const invitationSelect = `SELECT i.id, i.workspace_id, w.name AS workspace_name,
   w.region AS workspace_region, i.email, i.role, inviter.name AS invited_by_name,
   inviter.email AS invited_by_email,
-  i.expires_at, i.accepted_at, i.accepted_by_user_id, i.revoked_at, i.created_at
+  i.expires_at, i.accepted_at, i.accepted_by_user_id, i.revoked_at, i.created_at,
+  w.abandoned_at
   FROM workspace_invitations i
   JOIN workspaces w ON w.id = i.workspace_id
   JOIN users inviter ON inviter.id = i.invited_by_user_id`;
 
 function invitationStatus(row: InvitationRow): WorkspaceInvitation["status"] {
+  if (row.abandoned_at) return "revoked";
   if (row.accepted_at) return "accepted";
   if (row.revoked_at) return "revoked";
   if (Date.parse(row.expires_at) <= Date.now()) return "expired";
@@ -175,7 +178,12 @@ export async function acceptInvitationForUser(
   user: { id: string; email: string; name?: string },
 ): Promise<string> {
   const invitation = await loadInvitationById(env, invitationId);
-  if (!invitation || invitation.revoked_at || Date.parse(invitation.expires_at) <= Date.now()) {
+  if (
+    !invitation
+    || invitation.abandoned_at
+    || invitation.revoked_at
+    || Date.parse(invitation.expires_at) <= Date.now()
+  ) {
     throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
   }
   if (invitation.workspace_region !== env.AVALON_REGION) {
@@ -192,30 +200,21 @@ export async function acceptInvitationForUser(
     return invitation.workspace_id;
   }
 
-  const otherMembership = await env.DB.prepare(
-    `SELECT workspace_id FROM workspace_members
-     WHERE user_id = ? AND status = 'active' AND workspace_id != ? LIMIT 1`,
-  )
-    .bind(user.id, invitation.workspace_id)
-    .first<{ workspace_id: string }>();
-  if (otherMembership) {
-    throw new ApiError(
-      409,
-      "workspace_membership_conflict",
-      "This Avalon account already belongs to another organization",
-    );
-  }
-
   const acceptedAt = nowIso();
   const results = await env.DB.batch([
     env.DB.prepare(
       `UPDATE workspace_invitations SET accepted_at = ?, accepted_by_user_id = ?
-       WHERE id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+       WHERE id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?
+         AND EXISTS (
+           SELECT 1 FROM workspaces w
+           WHERE w.id = workspace_invitations.workspace_id AND w.abandoned_at IS NULL
+         )`,
     ).bind(acceptedAt, user.id, invitation.id, acceptedAt),
     env.DB.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
        SELECT i.workspace_id, ?, i.role, 'active', ?
        FROM workspace_invitations i
+       JOIN workspaces w ON w.id = i.workspace_id AND w.abandoned_at IS NULL
        WHERE i.id = ? AND i.accepted_at = ? AND i.accepted_by_user_id = ?
          AND i.revoked_at IS NULL
        ON CONFLICT(workspace_id, user_id) DO UPDATE SET
@@ -318,6 +317,7 @@ async function notifyInvitationResolution(
       outcome,
       recipientEmail: invitation.invited_by_email,
       workspaceName: invitation.workspace_name,
+      workspaceId: invitation.workspace_id,
       inviteeEmail: user.email,
       ...(user.name ? { inviteeName: user.name } : {}),
       role: invitation.role,
@@ -343,7 +343,8 @@ export class WorkspaceService {
     const row = await this.env.DB.prepare(
       `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at, m.role
        FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id
-       WHERE w.id = ? AND m.user_id = ? AND m.status = 'active'`,
+       WHERE w.id = ? AND m.user_id = ? AND m.status = 'active'
+         AND w.abandoned_at IS NULL`,
     )
       .bind(this.auth.workspaceId, this.auth.userId)
       .first<Record<string, unknown>>();
@@ -495,6 +496,127 @@ export class WorkspaceService {
     await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"]);
   }
 
+  /**
+   * End the caller's own membership, or close the workspace when they are its
+   * final active member.
+   *
+   * The abandonment batch is attempted first and re-asserts sole membership in
+   * the write that marks the workspace. Invitation acceptance uses its own D1
+   * batch, so SQLite serialization makes exactly one of those transitions see
+   * a live invitation/member state. If another member exists, the conditional
+   * delete below permits an ordinary leave while refusing the last owner.
+   */
+  async leaveWorkspace(expectedOutcome: "left" | "abandoned"): Promise<{ outcome: "left" | "abandoned" }> {
+    if (expectedOutcome === "abandoned") {
+      const at = nowIso();
+      const abandonment = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE workspaces SET abandoned_at = ?, updated_at = ?
+         WHERE id = ? AND abandoned_at IS NULL
+           AND EXISTS (
+             SELECT 1 FROM workspace_members actor
+             WHERE actor.workspace_id = workspaces.id AND actor.user_id = ?
+               AND actor.status = 'active'
+           )
+           AND 1 = (
+             SELECT COUNT(*) FROM workspace_members active_member
+             WHERE active_member.workspace_id = workspaces.id
+               AND active_member.status = 'active'
+           )`,
+      ).bind(at, at, this.auth.workspaceId, this.auth.userId),
+      this.env.DB.prepare(
+        `UPDATE workspace_members SET status = 'suspended'
+         WHERE workspace_id = ? AND user_id = ? AND status = 'active'
+           AND EXISTS (
+             SELECT 1 FROM workspaces
+             WHERE id = ? AND abandoned_at = ?
+           )`,
+      ).bind(this.auth.workspaceId, this.auth.userId, this.auth.workspaceId, at),
+      this.env.DB.prepare(
+        `UPDATE workspace_invitations SET revoked_at = ?
+         WHERE workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL
+           AND EXISTS (
+             SELECT 1 FROM workspaces
+             WHERE id = ? AND abandoned_at = ?
+           )`,
+      ).bind(at, this.auth.workspaceId, this.auth.workspaceId, at),
+      ]);
+      const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
+      if (abandoned) {
+        await this.publishOwnMembershipRevocation();
+        return { outcome: "abandoned" };
+      }
+      throw new ApiError(
+        409,
+        "membership_changed",
+        "The workspace membership changed while closing it. Check it and try again.",
+      );
+    }
+
+    const departure = await this.env.DB.prepare(
+      `DELETE FROM workspace_members
+       WHERE workspace_id = ? AND user_id = ? AND status = 'active'
+         AND 1 < (
+           SELECT COUNT(*) FROM workspace_members active_member
+           WHERE active_member.workspace_id = workspace_members.workspace_id
+             AND active_member.status = 'active'
+         )
+         AND (
+           role != 'owner'
+           OR 1 < (
+             SELECT COUNT(*) FROM workspace_members active_owner
+             WHERE active_owner.workspace_id = workspace_members.workspace_id
+               AND active_owner.status = 'active' AND active_owner.role = 'owner'
+           )
+         )
+       RETURNING user_id`,
+    ).bind(this.auth.workspaceId, this.auth.userId).first<{ user_id: string }>();
+    if (departure) {
+      await this.publishOwnMembershipRevocation();
+      await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"]);
+      return { outcome: "left" };
+    }
+
+    const standing = await this.env.DB.prepare(
+      `SELECT actor.role,
+              (SELECT COUNT(*) FROM workspace_members active_member
+               WHERE active_member.workspace_id = actor.workspace_id
+                 AND active_member.status = 'active') AS active_members,
+              (SELECT COUNT(*) FROM workspace_members active_owner
+               WHERE active_owner.workspace_id = actor.workspace_id
+                 AND active_owner.status = 'active' AND active_owner.role = 'owner') AS active_owners
+       FROM workspace_members actor
+       JOIN workspaces w ON w.id = actor.workspace_id
+       WHERE actor.workspace_id = ? AND actor.user_id = ? AND actor.status = 'active'
+         AND w.abandoned_at IS NULL`,
+    ).bind(this.auth.workspaceId, this.auth.userId).first<{
+      role: "owner" | "admin" | "member";
+      active_members: number;
+      active_owners: number;
+    }>();
+    if (standing?.role === "owner" && standing.active_members > 1 && standing.active_owners === 1) {
+      throw new ApiError(
+        409,
+        "sole_workspace_owner",
+        "You are the only owner of this workspace. Another owner has to exist before you can leave.",
+      );
+    }
+    throw new ApiError(
+      409,
+      "membership_changed",
+      "The workspace membership changed while leaving. Check it and try again.",
+    );
+  }
+
+  private async publishOwnMembershipRevocation(): Promise<void> {
+    await publishAccessRevocation(this.env, {
+      reason: "workspace_membership_removed",
+      workspaceId: asWorkspaceId(this.auth.workspaceId),
+      userId: asUserId(this.auth.userId),
+      sessionId: null,
+    });
+  }
+
   async listMembers() {
     const result = await this.env.DB.prepare(
       `SELECT u.id, u.email, u.name, u.avatar_url, u.timezone, u.created_at, m.role, m.status, m.joined_at
@@ -545,7 +667,7 @@ export class WorkspaceService {
       .bind(this.auth.workspaceId, normalizedEmail)
       .first<{ present: number }>();
     if (existingMember) {
-      throw new ApiError(409, "already_workspace_member", "That person is already a member of this organization");
+      throw new ApiError(409, "already_workspace_member", "That person is already a member of this workspace");
     }
 
     const token = randomToken(32);
@@ -660,7 +782,7 @@ export class WorkspaceOnboardingService {
        JOIN users invitee ON invitee.id = ?
        WHERE i.email = invitee.email COLLATE NOCASE
          AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?
-         AND w.region = ?
+         AND w.region = ? AND w.abandoned_at IS NULL
        ORDER BY i.created_at DESC LIMIT 100`,
     )
       .bind(this.auth.userId, nowIso(), this.env.AVALON_REGION)
@@ -673,7 +795,8 @@ export class WorkspaceOnboardingService {
     const existing = await this.env.DB.prepare(
       `SELECT m.workspace_id FROM workspace_members m
        JOIN workspaces w ON w.id = m.workspace_id
-       WHERE m.user_id = ? AND m.status = 'active' AND w.region = ? LIMIT 1`,
+       WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
+         AND w.abandoned_at IS NULL LIMIT 1`,
     )
       .bind(this.auth.userId, this.env.AVALON_REGION)
       .first<{ workspace_id: string }>();
@@ -732,7 +855,7 @@ export class WorkspaceOnboardingService {
 
   private requireUnboundSession(): void {
     if (this.auth.workspaceId) {
-      throw new ApiError(409, "workspace_already_selected", "This account already belongs to an organization");
+      throw new ApiError(409, "workspace_already_selected", "This account already belongs to this workspace");
     }
   }
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DRAFT_CACHE_TTL_MS,
   clearAllDrafts,
+  clearWorkspaceDrafts,
   draftCacheEpoch,
   deleteDraftAttachments,
   nextDraftSortKey,
@@ -9,10 +10,12 @@ import {
   readDraftAttachments,
   readDraftText,
   closeDraftCache,
+  migrateLegacyDrafts,
   updateDraftAttachment,
   writeDraftAttachment,
   writeDraftText,
 } from './draft-cache';
+import { newAutomationDraftKey, newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
 import type { WorkstreamResource } from './types';
 
 const resource: WorkstreamResource = {
@@ -162,6 +165,40 @@ describe('draft cache', () => {
     await writeDraftText('workstream:1', 'a new session, a new draft', [], atEpoch);
 
     expect((await readDraftText('workstream:1'))?.text).toBe('a new session, a new draft');
+  });
+
+  it('clears one regional workspace without touching a same-id workspace in another region', async () => {
+    const euKey = workstreamDraftKey('eu', 'shared-workspace', '1');
+    const globalKey = workstreamDraftKey('global', 'shared-workspace', '2');
+    await writeDraftText(euKey, 'leave this one');
+    await writeDraftText(globalKey, 'keep this one');
+    await cacheAttachment(euKey, 'eu-file', 'eu');
+    await cacheAttachment(globalKey, 'global-file', 'global');
+
+    await clearWorkspaceDrafts('eu', 'shared-workspace');
+
+    expect(await readDraftText(euKey)).toBeNull();
+    expect(await readDraftAttachments(euKey)).toEqual([]);
+    expect((await readDraftText(globalKey))?.text).toBe('keep this one');
+    expect(await readDraftAttachments(globalKey)).toHaveLength(1);
+  });
+
+  it('moves released single-workspace draft keys into the regional namespace', async () => {
+    await writeDraftText('workstream:room-one', 'existing room');
+    await writeDraftText('new-workstream:shared-workspace', 'new room');
+    await writeDraftText('new-automation:shared-workspace:draft-one', 'new automation');
+    await cacheAttachment('workstream:room-one', 'legacy-file', 'legacy');
+
+    await migrateLegacyDrafts('eu', 'shared-workspace');
+
+    const roomKey = workstreamDraftKey('eu', 'shared-workspace', 'room-one');
+    expect((await readDraftText(roomKey))?.text).toBe('existing room');
+    expect(await readDraftAttachments(roomKey)).toHaveLength(1);
+    expect((await readDraftText(newWorkstreamDraftKey('eu', 'shared-workspace')))?.text).toBe('new room');
+    expect((await readDraftText(newAutomationDraftKey('eu', 'shared-workspace', 'draft-one')))?.text)
+      .toBe('new automation');
+    expect(await readDraftText('workstream:room-one')).toBeNull();
+    expect(await readDraftAttachments('workstream:room-one')).toEqual([]);
   });
 
   it('degrades to empty results when IndexedDB is unavailable', async () => {

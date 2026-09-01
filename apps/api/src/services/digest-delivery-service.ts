@@ -1,4 +1,4 @@
-import { asWorkspaceId, type DigestDeliveryTargetType } from "@rally/contracts";
+import { addWorkspaceTarget, asWorkspaceId, type DigestDeliveryTargetType } from "@rally/contracts";
 import { nowIso } from "@rally/db";
 
 import type { Env } from "../env";
@@ -188,7 +188,7 @@ async function deliverToTarget(
         itemCount: context.itemCount,
         highlightCount: context.highlightCount,
         appUrl: env.PUBLIC_WEB_BASE_URL,
-        settingsUrl: digestSettingsUrl(env),
+        settingsUrl: digestSettingsUrl(env, context.workspaceId),
       }),
       text: [digestTitle(context), "", markdownToEmailText(context.bodyMarkdown)].join("\n"),
       idempotencyKey: `avalon-digest/${target.id}/${context.deliveryId}`,
@@ -217,9 +217,16 @@ async function deliverToTarget(
  * like every other public link in the API, which also survives a trailing slash
  * on the base.
  */
-export function digestSettingsUrl(env: Pick<Env, "PUBLIC_WEB_BASE_URL">): string {
+export function digestSettingsUrl(
+  env: Pick<Env, "AVALON_REGION" | "PUBLIC_WEB_BASE_URL">,
+  workspaceId: string,
+): string {
   const handoff = new URL("/open", env.PUBLIC_WEB_BASE_URL);
-  handoff.hash = new URLSearchParams({ target: "rallywithai://settings/digest" }).toString();
+  const target = addWorkspaceTarget(new URL("rallywithai://settings/digest"), {
+    region: env.AVALON_REGION,
+    workspaceId,
+  });
+  handoff.hash = new URLSearchParams({ target: target.toString() }).toString();
   return handoff.toString();
 }
 

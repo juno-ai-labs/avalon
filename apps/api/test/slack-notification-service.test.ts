@@ -49,7 +49,9 @@ describe("workspace Slack mention delivery", () => {
     // Slack can only unfurl a link on the app's registered domain, and the id
     // must sit in the path rather than a fragment for the unfurl handler to
     // read it back off the shared URL.
-    expect(String(calls[2]?.body.text)).toContain(`https://with-avalon.com/app/workstreams/${workstreamId}`);
+    expect(String(calls[2]?.body.text)).toContain(
+      `https://with-avalon.com/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`,
+    );
     expect(String(calls[2]?.body.text)).not.toContain("avalon://");
     expect(String(calls[2]?.body.text)).not.toContain("/open#");
     expect(calls[2]?.body.client_msg_id).toMatch(/^[0-9a-f-]{36}$/u);

@@ -1,6 +1,7 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { addWorkspaceTarget, parseWorkspaceTarget } from "@rally/contracts/workspace-target";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { AuthContext, Env } from "../src/env";
 import { sealString } from "../src/lib/crypto";
@@ -18,7 +19,22 @@ const databases: DatabaseSync[] = [];
 
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
+  vi.unstubAllGlobals();
 });
+
+async function testRsaPrivateKey(): Promise<string> {
+  const pair = await crypto.subtle.generateKey({
+    name: "RSASSA-PKCS1-v1_5",
+    modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]),
+    hash: "SHA-256",
+  }, true, ["sign", "verify"]);
+  const bytes = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
+  const body = Buffer.from(bytes).toString("base64").match(/.{1,64}/gu)!.join("\n");
+  const begin = [["-----BEGIN", "PRIVATE"].join(" "), "KEY-----"].join(" ");
+  const end = [["-----END", "PRIVATE"].join(" "), "KEY-----"].join(" ");
+  return `${begin}\n${body}\n${end}`;
+}
 
 /**
  * A real `WorkspaceDO` over its own schema answers the attempt RPCs, and the
@@ -66,9 +82,12 @@ function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; au
       DB: sqliteD1(regional),
       AVALON_REGION: "global",
       APP_ENV: "test",
+      PUBLIC_API_BASE_URL: "https://api.rallywith.ai",
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
       DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
       OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
+      GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-client",
+      GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-secret",
       WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, [
         "startConnectorOAuthAttempt",
         "abandonConnectorOAuthAttempt",
@@ -130,6 +149,71 @@ function insertConnection(object: DatabaseSync, id: string): void {
 }
 
 describe("connector OAuth handoff", () => {
+  it("persists a versioned addressed return for a capable desktop start", async () => {
+    const { auth, env, regional } = fixture();
+
+    await new ConnectionService(env, auth).beginGoogle({
+      scope: "personal",
+      capabilities: ["gmail.read"],
+      desktopHandoffVersion: 2,
+    });
+
+    const row = regional.prepare("SELECT return_uri FROM oauth_states").get() as { return_uri: string };
+    const target = new URL(row.return_uri);
+    expect(target.hostname).toBe("workspace");
+    expect(target.pathname).toBe(`/global/${WORKSPACE_ID}/auth/complete`);
+  });
+
+  it("persists the legacy return when the route maps an absent capability to version one", async () => {
+    const { auth, env, regional } = fixture();
+
+    await new ConnectionService(env, auth).beginGoogle({
+      scope: "personal",
+      capabilities: ["gmail.read"],
+      desktopHandoffVersion: 1,
+    });
+
+    expect(regional.prepare("SELECT return_uri FROM oauth_states").get()).toEqual({
+      return_uri: "avalon://auth/complete",
+    });
+  });
+
+  it("preserves an addressed return through both GitHub OAuth legs", async () => {
+    const { auth, env, regional } = fixture();
+    const githubEnv = {
+      ...env,
+      GITHUB_APP_ID: "1",
+      GITHUB_APP_CLIENT_ID: "Iv1.test",
+      GITHUB_APP_CLIENT_SECRET: "secret",
+      GITHUB_APP_PRIVATE_KEY: await testRsaPrivateKey(),
+      GITHUB_APP_SLUG: "rally-test",
+      GITHUB_WEBHOOK_SECRET: "webhook-secret",
+    };
+    vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ id: 42 }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )));
+    const service = new ConnectionService(githubEnv, auth);
+    const started = await service.beginGitHub({
+      scope: "workspace",
+      capabilities: ["github.metadata.read"],
+      desktopHandoffVersion: 2,
+    });
+    const installState = new URL(started.url).searchParams.get("state")!;
+
+    await service.setupGitHub("42", installState);
+
+    const rows = regional.prepare(
+      "SELECT purpose, return_uri FROM oauth_states ORDER BY purpose",
+    ).all() as Array<{ purpose: string; return_uri: string }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.return_uri).toBe(rows[1]!.return_uri);
+    expect(parseWorkspaceTarget(new URL(rows[0]!.return_uri))).toEqual({
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+    });
+  });
+
   it("keeps the desktop target in a fragment on the no-store handoff surface", () => {
     const target = `avalon://auth/complete?provider=linear&region=global&attempt=${"a".repeat(43)}&status=denied&error=oauth_denied`;
     const handoff = new URL(desktopHandoffUrl({ PUBLIC_WEB_BASE_URL: "https://with-avalon.com" }, target));
@@ -287,17 +371,22 @@ describe("connector OAuth handoff", () => {
       JSON.stringify({ attemptId }),
       env.OAUTH_STATE_ENCRYPTION_KEY,
     );
+    const returnUri = addWorkspaceTarget(new URL("avalon://auth/complete"), {
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+    }).toString();
     regional.prepare(
       `INSERT INTO oauth_states
        (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id,
         return_uri, expires_at, consumed_at)
-       VALUES (?, 'global', 'linear', 'connector', ?, ?, ?, 'avalon://auth/complete', ?, NULL)`,
-    ).run(state, sealedState, USER_ID, WORKSPACE_ID, "2099-01-01T00:00:00.000Z");
+       VALUES (?, 'global', 'linear', 'connector', ?, ?, ?, ?, ?, NULL)`,
+    ).run(state, sealedState, USER_ID, WORKSPACE_ID, returnUri, "2099-01-01T00:00:00.000Z");
 
     const target = new URL(await service.failProviderAttempt("linear", state, "audit_write_failed"));
 
     expect(target.searchParams.get("status")).toBe("connected");
     expect(target.searchParams.get("connection")).toBe(connectionId);
+    expect(parseWorkspaceTarget(target)).toEqual({ region: "global", workspaceId: WORKSPACE_ID });
     expect(object.prepare(
       "SELECT status, connection_id, error_code FROM connector_oauth_attempts WHERE id = ?",
     ).get(attemptId)).toEqual({
@@ -305,6 +394,31 @@ describe("connector OAuth handoff", () => {
       connection_id: connectionId,
       error_code: null,
     });
+  });
+
+  it("keeps addressed routing when recovery settles an attempt as failed", async () => {
+    const { auth, object, env, regional } = fixture();
+    const attemptId = "f".repeat(43);
+    const state = "t".repeat(32);
+    insertAttempt(object, { id: attemptId, expiresAt: "2099-01-01T00:00:00.000Z" });
+    const sealedState = await sealString(JSON.stringify({ attemptId }), env.OAUTH_STATE_ENCRYPTION_KEY);
+    const returnUri = addWorkspaceTarget(new URL("avalon://auth/complete"), {
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+    }).toString();
+    regional.prepare(
+      `INSERT INTO oauth_states
+       (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id,
+        return_uri, expires_at, consumed_at)
+       VALUES (?, 'global', 'linear', 'connector', ?, ?, ?, ?, ?, NULL)`,
+    ).run(state, sealedState, USER_ID, WORKSPACE_ID, returnUri, "2099-01-01T00:00:00.000Z");
+
+    const target = new URL(await new ConnectionService(env, auth)
+      .failProviderAttempt("linear", state, "provider_failed"));
+
+    expect(target.searchParams.get("status")).toBe("failed");
+    expect(target.searchParams.get("error")).toBe("provider_failed");
+    expect(parseWorkspaceTarget(target)).toEqual({ region: "global", workspaceId: WORKSPACE_ID });
   });
 
   it("always returns to the hosted handoff when GitHub setup recovery also fails", async () => {

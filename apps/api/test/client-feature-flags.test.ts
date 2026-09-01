@@ -251,6 +251,7 @@ describe("client feature flags", () => {
         meetingRecordingEnabled: false,
         suggestedWorkEnabled: false,
         automationWorkspaceTemplatesEnabled: false,
+        multipleWorkspacesEnabled: false,
         // The one field that fails the other direction: a digest already sends
         // by default, so a missing binding must reproduce that, not hide it.
         digestsEnabled: true,
@@ -270,6 +271,7 @@ describe("client feature flags", () => {
         meetingRecordingEnabled: false,
         suggestedWorkEnabled: false,
         automationWorkspaceTemplatesEnabled: false,
+        multipleWorkspacesEnabled: false,
         // `serving(false)` is an explicit, successfully-served `false` — the
         // one value that turns digestsEnabled off too, same as every other
         // Boolean here.
@@ -376,6 +378,7 @@ describe("client feature flags", () => {
         "digests-enabled",
         "hypersight-enabled",
         "meeting-recording-enabled",
+        "multiple-workspaces-enabled",
         "suggested-work-enabled",
       ]);
   });
@@ -418,6 +421,7 @@ describe("GET /feature-flags", () => {
       meetingRecordingEnabled: true,
       suggestedWorkEnabled: true,
       automationWorkspaceTemplatesEnabled: true,
+      multipleWorkspacesEnabled: true,
       digestsEnabled: true,
       controlTowerRefreshSeconds: CONTROL_TOWER_REFRESH_SECONDS.default,
     });
@@ -443,6 +447,7 @@ describe("GET /feature-flags", () => {
       meetingRecordingEnabled: false,
       suggestedWorkEnabled: false,
       automationWorkspaceTemplatesEnabled: false,
+      multipleWorkspacesEnabled: false,
       // The one field that answers `true` here: an unresolvable flag must
       // reproduce delivery continuing, not stopping.
       digestsEnabled: true,

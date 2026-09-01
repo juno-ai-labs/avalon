@@ -95,6 +95,11 @@ async function seedRegionalDatabase(): Promise<void> {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
     )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY, region TEXT NOT NULL, abandoned_at TEXT
+    )`),
+    env.DB.prepare(`INSERT OR REPLACE INTO workspaces (id, region, abandoned_at)
+      VALUES (?, 'global', NULL)`).bind(WORKSPACE_ID),
     env.DB.prepare(`INSERT OR REPLACE INTO users (id, email, name, avatar_url, timezone, created_at)
       VALUES (?, ?, 'Author', NULL, 'UTC', ?)`).bind(AUTHOR_ID, AUTHOR_EMAIL, NOW),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (

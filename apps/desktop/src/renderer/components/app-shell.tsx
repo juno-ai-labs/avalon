@@ -1,9 +1,13 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkstreamBatchFilter } from '@rally/contracts';
+import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkspaceAttention, WorkstreamBatchFilter } from '@rally/contracts';
+import { desktopWorkspaceIdentityKey } from '../../common/desktop';
+import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
+import { workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
+import { uuidV7 } from '../lib/telemetry';
 import { useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
@@ -14,6 +18,7 @@ import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { ThemeBackdrop } from './theme-backdrop';
 import { Sidebar } from './sidebar';
+import { WorkspaceAccountMenu } from './workspace-account-menu';
 
 interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
@@ -97,6 +102,11 @@ export function openWorkstreamId(pathname: string): string | null {
     // equal to the one the screen keys its detail query by.
     return id;
   }
+}
+
+export function invitationAccountMismatch(invitationEmail: string, accountEmail: string): string | null {
+  if (invitationEmail.toLocaleLowerCase('en-US') === accountEmail.toLocaleLowerCase('en-US')) return null;
+  return `This invitation is for ${invitationEmail}. Sign in with that account to continue.`;
 }
 
 /** Mirror the generic directory predicate only to decide whether this route must leave. */
@@ -191,7 +201,20 @@ export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryRes
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
-  const { api, signOut } = useAppSession();
+  const {
+    acceptInvitation,
+    activateWorkspace,
+    api,
+    clearPendingInvitation,
+    declineInvitation,
+    finishWorkspaceSetup,
+    getOnboardingState,
+    invitationApi,
+    pendingInvitation,
+    reconnectAccountIdentity,
+    session,
+    signOut,
+  } = useAppSession();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -250,6 +273,94 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const notes = useSocketOwnedList<NoteSummary>(['notes']);
   const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
   const featureFlags = useClientFeatureFlags(api);
+  const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
+  const workspaceDirectory = useQuery<DesktopWorkspaceOnboardingState>({
+    queryKey: ['workspace-account-directory'],
+    queryFn: getOnboardingState,
+    enabled: multipleWorkspacesEnabled,
+  });
+  const accountReconnectRequired = workspaceDirectory.error instanceof Error
+    && workspaceDirectory.error.message.includes('Sign in to Rally before setting up a workspace');
+  const pendingInvitationPreview = useQuery({
+    queryKey: ['workspace-invitation-preview', pendingInvitation?.region, pendingInvitation?.token],
+    queryFn: ({ signal }) => invitationApi!.getInvitationPreview(pendingInvitation!.token, signal),
+    enabled: Boolean(multipleWorkspacesEnabled && pendingInvitation && invitationApi),
+    retry: false,
+  });
+  useEffect(() => {
+    if (!pendingInvitationPreview.error) return;
+    clearPendingInvitation();
+    void desktopBridge().showDeepLinkError(
+      pendingInvitationPreview.error instanceof Error
+        ? pendingInvitationPreview.error.message
+        : 'This invitation is invalid, expired, or no longer available.',
+    );
+  }, [clearPendingInvitation, pendingInvitationPreview.error]);
+  useEffect(() => {
+    if (!pendingInvitationPreview.data || !session) return;
+    const mismatch = invitationAccountMismatch(pendingInvitationPreview.data.email, session.user.email);
+    if (!mismatch) return;
+    clearPendingInvitation();
+    void desktopBridge().showDeepLinkError(mismatch);
+  }, [clearPendingInvitation, pendingInvitationPreview.data, session]);
+  const activeWorkspace: DesktopWorkspaceSummary = workspaceDirectory.data?.workspaces
+    .find((candidate) => candidate.id === workspace.id && candidate.region === workspace.region) ?? {
+      id: workspace.id,
+      name: workspace.name,
+      slug: workspace.id,
+      region: workspace.region,
+      role: session?.workspace?.role ?? 'member',
+      createdAt: new Date(0).toISOString(),
+    };
+  const knownWorkspaces = workspaceDirectory.data?.workspaces.length
+    ? workspaceDirectory.data.workspaces
+    : [activeWorkspace];
+  const promptedInvitation = pendingInvitationPreview.data
+    ? workspaceDirectory.data?.invitations.find((candidate) => (
+      candidate.workspaceId === pendingInvitationPreview.data.workspaceId
+      && candidate.region === pendingInvitationPreview.data.region
+    )) ?? null
+    : null;
+  const backgroundWorkspaces = knownWorkspaces.filter((candidate) => (
+    candidate.id !== workspace.id || candidate.region !== workspace.region
+  ));
+  const backgroundWorkspaceKeys = backgroundWorkspaces.map((candidate) => (
+    desktopWorkspaceIdentityKey(candidate.region, candidate.id)
+  ));
+  const workspaceAttention = useQuery<Record<string, WorkspaceAttention>>({
+    queryKey: ['workspace-attention', ...backgroundWorkspaceKeys],
+    queryFn: async () => Object.fromEntries(await Promise.all(backgroundWorkspaces.map(async (candidate) => (
+      [
+        desktopWorkspaceIdentityKey(candidate.region, candidate.id),
+        await desktopBridge().getWorkspaceAttention({ region: candidate.region, workspaceId: candidate.id }),
+      ] as const
+    )))),
+    enabled: multipleWorkspacesEnabled && backgroundWorkspaces.length > 0,
+    placeholderData: (previous) => previous,
+    retry: false,
+  });
+  useEffect(() => {
+    if (!workspaceAttention.isError || !navigator.onLine) return;
+    // A removed background membership first surfaces through its own attention
+    // credential. Reconcile discovery immediately so that stable revocation
+    // removes the row; an ordinary transport failure leaves cached discovery
+    // untouched and the stale count remains visible.
+    void workspaceDirectory.refetch();
+  }, [workspaceAttention.isError]);
+  useEffect(() => {
+    if (!multipleWorkspacesEnabled) return undefined;
+    const refresh = (): void => {
+      void workspaceDirectory.refetch();
+      if (backgroundWorkspaces.length > 0) void workspaceAttention.refetch();
+    };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [backgroundWorkspaceKeys.join(':'), multipleWorkspacesEnabled]);
+  const [switchingWorkspaceKey, setSwitchingWorkspaceKey] = useState<string | null>(null);
+  const [workspaceErrors, setWorkspaceErrors] = useState<Record<string, string | undefined>>({});
+  const switchingWorkspace = knownWorkspaces.find((candidate) => (
+    desktopWorkspaceIdentityKey(candidate.region, candidate.id) === switchingWorkspaceKey
+  ));
   const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
@@ -294,6 +405,82 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       */}
       <ThemeBackdrop />
       <Sidebar
+        accountMenu={(
+          <WorkspaceAccountMenu
+            accountReconnectRequired={accountReconnectRequired}
+            activeWorkspace={activeWorkspace}
+            attention={workspaceAttention.data ?? {}}
+            currentUser={workspace.currentUser}
+            enabled={multipleWorkspacesEnabled}
+            invitations={workspaceDirectory.data?.invitations ?? []}
+            loadingAttention={workspaceAttention.isLoading}
+            promptedInvitation={promptedInvitation}
+            onAcceptInvitation={async (invitation, operationId) => {
+              await acceptInvitation(invitation.region, invitation.id, operationId);
+              clearPendingInvitation();
+              await workspaceDirectory.refetch();
+            }}
+            onCreateWorkspace={async (input, operationId) => {
+              await finishWorkspaceSetup(input.name, input.region, operationId);
+              await workspaceDirectory.refetch();
+            }}
+            onDeclineInvitation={async (invitation) => {
+              await declineInvitation(invitation.region, invitation.id);
+              await workspaceDirectory.refetch();
+            }}
+            onMenuOpen={() => {
+              void workspaceDirectory.refetch();
+              if (backgroundWorkspaces.length > 0) void workspaceAttention.refetch();
+            }}
+            onReconnectAccount={async () => {
+              try {
+                await reconnectAccountIdentity();
+              } catch (error) {
+                await desktopBridge().showDeepLinkError(
+                  error instanceof Error ? error.message : 'Rally could not open the sign-in page.',
+                );
+              }
+            }}
+            onInvitationPromptDismiss={clearPendingInvitation}
+            onOpenSettings={() => { void desktopBridge().openSettings(); }}
+            onSignOut={() => { void signOut().catch(() => undefined); }}
+            onSwitchWorkspace={async (target) => {
+              const targetKey = desktopWorkspaceIdentityKey(target.region, target.id);
+              if (!navigator.onLine) {
+                setWorkspaceErrors((current) => ({ ...current, [targetKey]: 'Connect to open this workspace' }));
+                return;
+              }
+              setWorkspaceErrors((current) => ({ ...current, [targetKey]: undefined }));
+              setSwitchingWorkspaceKey(targetKey);
+              try {
+                await activateWorkspace(target.region, target.id, uuidV7());
+              } catch (error) {
+                const code = error instanceof Error && 'code' in error ? String(error.code) : undefined;
+                const message = error instanceof Error ? error.message : '';
+                const activationFailure = workspaceActivationFailureCode(error);
+                setWorkspaceErrors((current) => ({
+                  ...current,
+                  [targetKey]: message === 'Finish or stop the recording before switching workspaces'
+                    ? message
+                    : code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied'
+                    ? 'You are no longer a member of this workspace'
+                    : 'Rally could not open this workspace',
+                }));
+                if (code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied') {
+                  await workspaceDirectory.refetch();
+                }
+              } finally {
+                setSwitchingWorkspaceKey((current) => current === targetKey ? null : current);
+              }
+            }}
+            staleAt={workspaceAttention.isError && workspaceAttention.dataUpdatedAt > 0
+              ? new Date(workspaceAttention.dataUpdatedAt).toISOString()
+              : null}
+            switchingWorkspaceKey={switchingWorkspaceKey}
+            workspaceErrors={workspaceErrors}
+            workspaces={knownWorkspaces}
+          />
+        )}
         automations={automations.data ?? []}
         members={members.data ?? []}
         // Not `isLoading`: the first page is not fetched, so there is no
@@ -526,6 +713,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         workspace={workspace}
         workstreams={workstreams.data ?? []}
       />
+        {switchingWorkspace && (
+          <div aria-live="polite" className="workspace-opening-overlay">
+            Opening {switchingWorkspace.name}…
+          </div>
+        )}
         <main className="main-pane">
           {children}
         </main>

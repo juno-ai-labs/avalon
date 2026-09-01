@@ -40,7 +40,7 @@ function workspace() {
 beforeEach(async () => {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspaces (
-      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT
+      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT
     )`),
     env.DB.prepare(`INSERT OR REPLACE INTO workspaces(id, region) VALUES (?, 'global')`)
       .bind(WORKSPACE_ID),

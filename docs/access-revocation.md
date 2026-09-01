@@ -18,8 +18,8 @@ the thing this module replaced, and it is not to come back.
 | --- | --- |
 | `apps/api/src/services/access-revocation.ts` | The message schema, the publish helpers, the expired-session sweep, and `revocationClosesSocket` — the one place that decides whether a socket belongs to a revocation. Every producer goes through here. |
 | `apps/api/src/queues/access-revocation-consumer.ts` | One hop per message: resolve the object, call it, publish the children it names. |
-| `apps/api/src/routes/workspace-membership.ts` | `DELETE /workspaces/:workspaceId/membership/member/:userId`, the only route that ends a membership. |
-| `apps/api/src/services/workspace-service.ts` | `removeMember` — deletes the D1 row and publishes in the same request. |
+| `apps/api/src/routes/workspace-membership.ts` | The administrator removal route and `DELETE /workspaces/:workspaceId/membership`, where a member leaves for themself. |
+| `apps/api/src/services/workspace-service.ts` | `removeMember` and `leaveWorkspace` — end the D1 membership and publish in the same request. Final-member leave suspends the row during atomic workspace abandonment instead of deleting it, but publishes the same membership-wide revocation. |
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
 | `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,block-dashboard-agent,automation-agent}.ts` | `revokeSocketAccess` on each of the five socket-holding objects. |
@@ -34,13 +34,17 @@ the thing this module replaced, and it is not to come back.
 it.** There is no watcher on D1 and no reconciliation pass; a retraction that is
 not published does not reach an open socket.
 
-Three producers exist today:
+Four producers exist today:
 
 - **A membership ends.** `WorkspaceService.removeMember` deletes the
   `workspace_members` row and publishes with `sessionId: null` — the membership
   is gone, so none of that person's windows is admissible any longer. Their
   session rows are deliberately left alone: every authorization query joins
   membership, so a session stops resolving the moment the row is gone.
+- **A member leaves.** `WorkspaceService.leaveWorkspace` deletes the caller's
+  membership, or atomically suspends it while abandoning a workspace whose last
+  active member is leaving, then publishes the same membership-wide message.
+  The self-leave route cannot skip the producer by performing its own delete.
 - **A session is revoked.** `AuthService.logout` returns the rows it revoked
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
   carrying that session's id. Only the windows that presented that session are
@@ -305,6 +309,30 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-08-31 — Self-leave and final-member abandonment publish the membership revocation
+
+**What changed:** `DELETE /workspaces/:workspaceId/membership` is the fourth
+producer. Ordinary leave deletes the caller's membership; final-member leave
+suspends it while setting `abandoned_at`. Both publish a message without a
+session id, so every socket that membership held closes through the existing
+walk.
+
+**Why:** Multiple workspaces make leaving a normal account action rather than
+an administrator-only removal. Committing that membership transition without a
+publish would leave the departed workspace live on another device until its
+next reconnect.
+
+**Considered and rejected:** Revoking only the desktop session that issued the
+leave. A membership can have several regional sessions and open sockets, and
+abandonment must close all of them rather than the one device that confirmed it.
+
+**Consequences:** Every future self-service membership exit must continue to
+publish in the request that writes the transition. Operator reversal of an
+abandoned workspace is a separate, paired membership reactivation and does not
+reopen old sockets.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-28 — AutomationAgent joins the walk as a sibling of the work streams
 

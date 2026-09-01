@@ -180,6 +180,9 @@ function report<TName extends TelemetryEventName>(
 
 export function normalizedTelemetryPathname(pathname: string): string {
   const path = pathname.toLowerCase().slice(0, 160);
+  if (path.startsWith('/app/workspaces/')) {
+    return '/app/workspaces/:region/:workspace/workstreams/:id';
+  }
   if (path.startsWith('/app/workstreams/')) return '/app/workstreams/:id';
   return /^\/[a-z0-9_:/.-]*$/u.test(path) ? path : '/';
 }
@@ -188,18 +191,22 @@ function normalizedPathname(): string {
   return normalizedTelemetryPathname(location.pathname);
 }
 
-export function currentSitePage(): SitePage {
-  const path = normalizedPathname();
-  if (document.querySelector('.not-found') || path === '/404.html') return 'not_found';
+export function sitePageForPath(path: string): SitePage {
+  if (path === '/404.html') return 'not_found';
   if (path.startsWith('/auth/desktop')) return 'auth_handoff';
   if (path.startsWith('/invite')) return 'invite_handoff';
-  if (path.startsWith('/app/workstreams')) return 'workstream_handoff';
+  if (path.startsWith('/app/workstreams') || path.startsWith('/app/workspaces')) return 'workstream_handoff';
   if (path.startsWith('/slack/link')) return 'slack_handoff';
   if (path.startsWith('/open')) return 'desktop_handoff';
   if (path.startsWith('/support') || path === '/slack/' || path === '/slack') return 'support';
   if (/^\/(?:terms|privacy|acceptable-use|dpa|subprocessors|cookies|security)(?:\/|$)/u.test(path)) return 'legal';
   if (path.startsWith('/download')) return 'download';
   return 'landing';
+}
+
+export function currentSitePage(): SitePage {
+  if (document.querySelector('.not-found')) return 'not_found';
+  return sitePageForPath(normalizedPathname());
 }
 
 function campaignValue(name: string): string | undefined {

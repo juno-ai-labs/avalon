@@ -30,7 +30,7 @@ function workspace() {
 async function establishWorkspace(): Promise<void> {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspaces (
-      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT
+      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT
     )`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,

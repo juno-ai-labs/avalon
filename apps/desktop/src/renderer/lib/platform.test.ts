@@ -119,7 +119,7 @@ describe('browser fallback single-platform identity boundary', () => {
     }) as Response);
 
     await expect(bridge.activateWorkspace({ region: 'eu', workspaceId: 'workspace-eu' }))
-      .rejects.toThrow('did not match this organization request');
+      .rejects.toThrow('did not match this workspace request');
   });
 
   it('rejects a regional shadow user for another verified email', async () => {
@@ -142,6 +142,6 @@ describe('browser fallback single-platform identity boundary', () => {
     }) as Response);
 
     await expect(bridge.activateWorkspace({ region: 'eu', workspaceId: 'workspace-eu' }))
-      .rejects.toThrow('did not match this organization request');
+      .rejects.toThrow('did not match this workspace request');
   });
 });

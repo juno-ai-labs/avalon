@@ -71,9 +71,14 @@ knowing an object's ID is enough to read it — it never is.
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
   zone chosen in one region does not cross to another.
 - `workspaces` pins an immutable `global` or `eu` region plus its immutable
-  west/east Durable Object placement affinity. The Global
-  `platform_workspace_bindings` row carries the same opaque route; `wnam` and
-  `weur` are migration/background/missing-request-metadata defaults only.
+  west/east Durable Object placement affinity. `abandoned_at` closes the
+  workspace without deleting retained authority; application authorization
+  treats a non-null value as unreachable. The Global
+  `platform_workspace_bindings` rows carry the same opaque routes, one per
+  account/workspace/region; `wnam` and `weur` are
+  migration/background/missing-request-metadata defaults only. A partial unique
+  index permits at most one `pending` route per account while any number of
+  `active` or reconciled `inactive` routes coexist.
 - `workspace_members` authorizes users as owner, admin, or member.
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
   sessions, PKCE, and single-use Electron deep-link completion. A session that
@@ -82,8 +87,14 @@ knowing an object's ID is enough to read it — it never is.
   [`access-revocation.md`](access-revocation.md). `oauth_states`
   is the signed pre-workspace callback route/security receipt; the user-visible
   `connector_oauth_attempts` status row lives in the selected WorkspaceDO.
-- `workspace_invitations` supports explicit membership growth without introducing
-  a workspace switcher in V1.
+- `workspace_invitations` supports explicit membership growth. Acceptance adds
+  one row to the already-many-to-many `workspace_members` authority; it does not
+  replace another membership.
+- `platform_workspace_operations` maps one client operation id and request
+  fingerprint to the destination chosen for workspace creation or invitation
+  acceptance. It contains opaque routing identifiers, not workspace names or
+  invited addresses, so replay can resume a regional write without moving EU
+  product data into Global.
 
 Every workspace-scoped table that remains in regional D1 carries `workspace_id`,
 and every D1 repository lookup includes it. Imported compatibility rows inside
@@ -881,6 +892,33 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-31 — Platform identity routes become plural and setup replay becomes durable
+
+**What changed:** `platform_workspace_bindings` is keyed by account, region,
+and workspace, gains an `inactive` reconciliation state, and keeps only pending
+setup unique per account. `platform_workspace_operations` records the chosen
+destination for create/accept operation ids. `workspaces.abandoned_at` provides
+a reversible closed lifecycle without deleting retained data.
+
+**Why:** Regional membership has always been many-to-many, but the Global route
+primary key and completed-request replay behavior still forced one workspace
+per account. Removing that key without a setup journal would let an ordinary
+lost create response allocate another workspace on retry; making creation easy
+without a reversible close would leave permanent clutter.
+
+**Considered and rejected:** A single mutable current-workspace route, a Global
+aggregate of regional membership, and immediate data deletion. They respectively
+cannot switch out of an EU-bound session, cross the regional product boundary,
+or require a deletion walk over D1, R2, and five Durable Object families that
+does not exist.
+
+**Consequences:** Global stores multiple opaque routes but regional membership
+remains authoritative. Discovery may mark a missing route inactive only after
+both regional reads succeed. Abandonment must fence every authentication and
+invitation path before the column is used as a product action.
+
+Shipped in #464. Design: [Multiple workspaces PRD](PRDs/2026-08-31_multiple-workspaces/prd.md).
 
 ### 2026-08-30 — Suggested context storage was removed
 

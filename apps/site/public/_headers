@@ -41,5 +41,8 @@
 
 # One page serves every work-stream id through a rewrite. Caching it against the
 # per-id URL would pin one visitor's link into a shared cache entry.
+/app/workspaces/*
+  Cache-Control: no-store
+
 /app/workstreams/*
   Cache-Control: no-store
