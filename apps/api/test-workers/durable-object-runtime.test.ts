@@ -6219,4 +6219,610 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(testable.nextRunAt!()).not.toBeNull();
     });
   });
+
+  describe("delivery authority for a work stream", () => {
+    const OWNING_ID = "00000000-0000-7000-8006-000000000001";
+    const ARCHIVED_ID = "00000000-0000-7000-8006-000000000002";
+
+    async function seededWorkspace(): Promise<DurableObjectStub<WorkspaceDO>> {
+      const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+        workspaceDOName("global", WORKSPACE_ID),
+      ));
+      await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+      await runInDurableObject(stub, (_instance, state) => {
+        const insert = (id: string, generation: number, archivedAt: number | null): void => {
+          state.storage.sql.exec(
+            `INSERT INTO workspace_workstream_directory
+               (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+                title, description, preview, scope, exact_state, system_kind, last_activity_at,
+                completed_at, archived_at, email_address, origin_type, origin_label,
+                created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+                title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+                next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+                source_created_at, source_updated_at, projected_at)
+             VALUES (?, ?, 1, ?, 'test', 'Owning room', '', '', 'workspace', 'idle', NULL, 1,
+                     NULL, ?, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+                     'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+            id,
+            generation,
+            `00000000-0000-7000-8007-${id.slice(-12)}`,
+            archivedAt,
+            USER_ID,
+          );
+        };
+        insert(OWNING_ID, 4, null);
+        insert(ARCHIVED_ID, 1, 1);
+      });
+      return stub;
+    }
+
+    it("answers the current fence, and refuses to name one for a room it does not have", async () => {
+      const stub = await seededWorkspace();
+
+      // The generation, not a default: an automation delivering behind a stale
+      // fence is the case the fence exists for, so reading one that was never
+      // bumped would make every delivery look current.
+      expect(await stub.workstreamDeliveryAuthority({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: OWNING_ID,
+      })).toEqual({ authorityGeneration: 4, archived: false });
+
+      // An automation can outlive the room it belongs to. Null rather than a
+      // generation, so a caller cannot mistake "gone" for "generation 1".
+      expect(await stub.workstreamDeliveryAuthority({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: "00000000-0000-7000-8006-000000000009",
+      })).toBeNull();
+    });
+
+    it("reports an archived room as archived rather than as absent", async () => {
+      const stub = await seededWorkspace();
+
+      // Archived is not the same as gone: unarchiving restores the room and its
+      // automations, so the caller declines to write without concluding the
+      // work stream no longer exists.
+      expect(await stub.workstreamDeliveryAuthority({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: ARCHIVED_ID,
+      })).toEqual({ authorityGeneration: 1, archived: true });
+    });
+  });
+
+  describe("a work stream's own automations", () => {
+    const ROOM_ID = "00000000-0000-7000-800a-000000000001";
+    const OTHER_ROOM_ID = "00000000-0000-7000-800a-000000000002";
+    const OWNED_ID = "00000000-0000-7000-800a-000000000011";
+    const OTHER_OWNED_ID = "00000000-0000-7000-800a-000000000012";
+    const WORKSPACE_AUTOMATION_ID = "00000000-0000-7000-800a-000000000013";
+    const DELETED_ID = "00000000-0000-7000-800a-000000000014";
+    const STRANGER_ID = "00000000-0000-7000-800a-000000000021";
+
+    async function seededWorkspace(): Promise<DurableObjectStub<WorkspaceDO>> {
+      // Membership is a D1 read, and this list is gated on it.
+      await seedOpenAuthority();
+      const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+        workspaceDOName("global", WORKSPACE_ID),
+      ));
+      await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+      await env.DB.prepare(
+        `INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+         VALUES (?, ?, 'active', 'member', '2026-09-01T00:00:00.000Z')`,
+      ).bind(WORKSPACE_ID, STRANGER_ID).run();
+      await runInDurableObject(stub, (_instance, state) => {
+        const automation = (
+          id: string,
+          lifecycle: string,
+          scope: string,
+          owning: string | null,
+          title: string,
+          projectedAt: number,
+        ): void => {
+          state.storage.sql.exec(
+            `INSERT INTO automation_directory
+               (automation_id, workspace_id, author_user_id, authority_generation,
+                projection_version, payload_hash, lifecycle, scope, owning_workstream_id,
+                title, description, next_run_at, attention_code, projected_at)
+             VALUES (?, ?, ?, 1, 1, 'test', ?, ?, ?, ?, 'Runs weekly', NULL, NULL, ?)`,
+            id, WORKSPACE_ID, USER_ID, lifecycle, scope, owning, title, projectedAt,
+          );
+        };
+        automation(OWNED_ID, "active", "workstream", ROOM_ID, "Weekly changelog", 200);
+        automation(DELETED_ID, "deleted", "workstream", ROOM_ID, "Retired", 300);
+        automation(OTHER_OWNED_ID, "active", "workstream", OTHER_ROOM_ID, "Another room's", 400);
+        automation(WORKSPACE_AUTOMATION_ID, "active", "workspace", null, "Shared digest", 500);
+        for (const id of [ROOM_ID, OTHER_ROOM_ID]) {
+          state.storage.sql.exec(
+            `INSERT INTO workspace_workstream_directory
+               (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+                title, description, preview, scope, exact_state, system_kind, last_activity_at,
+                completed_at, archived_at, email_address, origin_type, origin_label,
+                created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+                title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+                next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+                source_created_at, source_updated_at, projected_at)
+             VALUES (?, 1, 1, ?, 'test', 'A room', '', '', 'workspace', 'idle', NULL, 1,
+                     NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+                     'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+            id, `00000000-0000-7000-800b-${id.slice(-12)}`, USER_ID,
+          );
+        }
+        state.storage.sql.exec(
+          `INSERT INTO workspace_workstream_viewers
+             (workstream_id, user_id, authority_generation, waterline, source_event_id,
+              payload_hash, is_participant, participant_added_at, unread_count,
+              you_are_mentioned, unseen, listable, seen_attention_ordinal,
+              manual_unread_from_ordinal, manual_unread_generation,
+              latest_mention_attention_ordinal, projected_at)
+           VALUES (?, ?, 1, 1, ?, 'test', 1, 1, 0, 0, 0, 1, 0, NULL, 0, 0, 1)`,
+          ROOM_ID, USER_ID, `00000000-0000-7000-800c-000000000001`,
+        );
+      });
+      return stub;
+    }
+
+    it("lists what this room owns, and nothing another room or the workspace owns", async () => {
+      const stub = await seededWorkspace();
+
+      const listed = await stub.listWorkstreamAutomations({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: ROOM_ID,
+        userId: USER_ID,
+      });
+
+      // Exactly the complement of the sidebar list. Another room's automation
+      // appearing here would let somebody pause it from a room it has nothing
+      // to do with, and a deleted one is a row the projection has not reaped.
+      expect(listed.items.map((item) => item.id)).toEqual([OWNED_ID]);
+      expect(listed.items[0]).toMatchObject({ name: "Weekly changelog", status: "active" });
+      // No scope: every row here is owned by the room showing it.
+      expect(listed.items[0]).not.toHaveProperty("scope");
+    });
+
+    it("refuses a workspace member who can see the room but is not in it", async () => {
+      const stub = await seededWorkspace();
+
+      // A workspace-scoped room is listable to every member of the workspace,
+      // so gating on listability would hand the names, descriptions and
+      // schedules of its automations to people who are not in it — while
+      // `authorizeAutomationViewer` goes on refusing them the details. The
+      // wider half of that pair is the one that leaks.
+      await runInDurableObject(stub, async (instance) => {
+        await expect(instance.listWorkstreamAutomations({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: ROOM_ID,
+          userId: STRANGER_ID,
+        })).rejects.toThrow("automation_directory_access_denied");
+      });
+    });
+
+    it("answers whoever may read the room, not only whoever created the automation", async () => {
+      const stub = await seededWorkspace();
+
+      // The gate is the viewer row. A workspace member with no view of this
+      // room gets a refusal, not an empty list — an empty list would say the
+      // room owns nothing, which is a different and false statement.
+      //
+      // Asserted inside the object rather than over its stub: a rejection
+      // crossing the stub is reported a second time as an unhandled one and
+      // fails the run even though the assertion held.
+      await runInDurableObject(stub, async (instance) => {
+        await expect(instance.listWorkstreamAutomations({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: ROOM_ID,
+          userId: STRANGER_ID,
+        })).rejects.toThrow("automation_directory_access_denied");
+      });
+    });
+  });
+
+  describe("exposing an automation run", () => {
+    const RUN_ID = "00000000-0000-7000-8008-000000000001";
+    const ARCHIVED_RUN_ID = "00000000-0000-7000-8008-000000000002";
+    const AD_HOC_ID = "00000000-0000-7000-8008-000000000003";
+
+    async function seededWorkspace(): Promise<DurableObjectStub<WorkspaceDO>> {
+      const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+        workspaceDOName("global", WORKSPACE_ID),
+      ));
+      await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+      await runInDurableObject(stub, (_instance, state) => {
+        const insert = (id: string, originType: string, archivedAt: number | null): void => {
+          state.storage.sql.exec(
+            `INSERT INTO workspace_workstream_directory
+               (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+                title, description, preview, scope, exact_state, system_kind, last_activity_at,
+                completed_at, archived_at, email_address, origin_type, origin_label,
+                created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+                title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+                next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+                source_created_at, source_updated_at, projected_at)
+             VALUES (?, 1, 1, ?, 'test', 'An occurrence', '', '', 'personal', 'completed', NULL, 1,
+                     1, ?, NULL, ?, NULL, ?, NULL, NULL, NULL,
+                     'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+            id,
+            `00000000-0000-7000-8009-${id.slice(-12)}`,
+            archivedAt,
+            originType,
+            USER_ID,
+          );
+        };
+        insert(RUN_ID, "automation", null);
+        insert(ARCHIVED_RUN_ID, "automation", 1);
+        insert(AD_HOC_ID, "ad_hoc", null);
+      });
+      return stub;
+    }
+
+    function exposedScope(
+      stub: DurableObjectStub<WorkspaceDO>,
+      workstreamId: string,
+    ): Promise<{ automation_exposed: number; scope: string }> {
+      return runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ automation_exposed: number; scope: string }>(
+          `SELECT automation_exposed, scope FROM workspace_workstream_directory
+            WHERE workstream_id = ?`,
+          workstreamId,
+        ).one());
+    }
+
+    it("reveals a shared automation's run to the workspace, and stays idempotent", async () => {
+      const stub = await seededWorkspace();
+
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: RUN_ID,
+        scope: "workspace",
+      })).toEqual({ exposed: true, outcomeCode: "workstream_exposed" });
+      // Shared automation, shared output: the run is promoted, not merely
+      // unhidden for the one person the child work stream was created under.
+      expect(await exposedScope(stub, RUN_ID))
+        .toEqual({ automation_exposed: 1, scope: "workspace" });
+
+      // A delivery retry after a crash has nothing to duplicate.
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: RUN_ID,
+        scope: "workspace",
+      })).toEqual({ exposed: true, outcomeCode: "workstream_exposed" });
+      expect(await exposedScope(stub, RUN_ID))
+        .toEqual({ automation_exposed: 1, scope: "workspace" });
+    });
+
+    it("reveals a run whose scope was never recorded without widening it", async () => {
+      const stub = await seededWorkspace();
+
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: RUN_ID,
+        scope: null,
+      })).toEqual({ exposed: true, outcomeCode: "workstream_exposed" });
+      // Revealed narrowly. Guessing "workspace" for a context frozen before the
+      // scope travelled with it would hand somebody's run to everyone.
+      expect(await exposedScope(stub, RUN_ID))
+        .toEqual({ automation_exposed: 1, scope: "personal" });
+    });
+
+    it("leaves an archived run archived and refuses a work stream a person made", async () => {
+      const stub = await seededWorkspace();
+
+      // Somebody archived this occurrence. A later occurrence classifying
+      // expose_workstream must not undo that decision.
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: ARCHIVED_RUN_ID,
+        scope: "workspace",
+      })).toEqual({ exposed: false, outcomeCode: "workstream_archived" });
+      expect(await exposedScope(stub, ARCHIVED_RUN_ID))
+        .toEqual({ automation_exposed: 0, scope: "personal" });
+
+      // Only a run's own work stream. Otherwise this RPC could unhide a room
+      // whose visibility somebody chose deliberately.
+      expect(await stub.exposeAutomationRunWorkstream({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: AD_HOC_ID,
+        scope: "workspace",
+      })).toEqual({ exposed: false, outcomeCode: "workstream_not_an_automation_run" });
+      expect(await exposedScope(stub, AD_HOC_ID))
+        .toEqual({ automation_exposed: 0, scope: "personal" });
+    });
+  });
+
+  describe("the card for an automation that lost its principal", () => {
+    const card = {
+      type: "automation_principal_unavailable" as const,
+      schemaVersion: 1 as const,
+      automationId: "00000000-0000-7000-800d-000000000001",
+      automationName: "Candidate intake",
+      outgoingUserId: "00000000-0000-7000-800d-000000000002",
+      outgoingUserName: "Dana Reeve",
+      unreachableProviders: ["Gmail"],
+    };
+
+    async function openRuntime(): Promise<DurableObjectStub<SubstreamAgent>> {
+      await seedOpenAuthority();
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      expect((await stub.bootstrapRuntime({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        generation: 1,
+      })).status).toBe(200);
+      return stub;
+    }
+
+    it("is written by the settlement path, not only by its own RPC", async () => {
+      // The caller, not the writer. Every existing case here calls
+      // `appendPrincipalUnavailableCard` directly with a payload it composed,
+      // so all of them passed while the one production caller omitted a
+      // required `authorityGeneration` and threw a ZodError into its own catch
+      // — the card was never written and the log said only that reporting
+      // failed. This drives the settlement path so the payload is the one
+      // production builds.
+      const stub = await openRuntime();
+      const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+        workspaceDOName("global", WORKSPACE_ID),
+      ));
+      await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+      await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec(
+          `INSERT INTO workspace_workstream_directory
+             (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+              title, description, preview, scope, exact_state, system_kind, last_activity_at,
+              completed_at, archived_at, email_address, origin_type, origin_label,
+              created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+              title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+              next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+              source_created_at, source_updated_at, projected_at)
+           VALUES (?, 1, 1, ?, 'test', 'Owning room', '', '', 'workspace', 'idle', NULL, 1,
+                   NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+                   'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+          WORKSTREAM_ID,
+          "00000000-0000-7000-800e-000000000001",
+          USER_ID,
+        );
+      });
+
+      await runInDurableObject(stub, async (instance) => {
+        await (instance as unknown as {
+          reportUnreachablePrincipal(input: unknown): Promise<void>;
+        }).reportUnreachablePrincipal({
+          region: "global",
+          workspaceId: WORKSPACE_ID,
+          owningWorkstreamId: WORKSTREAM_ID,
+          frozen: {
+            automationId: card.automationId,
+            definition: { name: card.automationName },
+            executionPrincipal: { type: "user", userId: card.outgoingUserId },
+            // A binding whose connection row is gone: the offboarding shape.
+            connectorBindings: { plugin_gmail: "00000000-0000-7000-800e-000000000002" },
+          },
+        });
+      });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        const rows = state.storage.sql.exec<{ structured_content_json: string }>(
+          `SELECT structured_content_json FROM canonical_conversation_turn_details
+            WHERE message_type = 'system'
+              AND structured_content_json LIKE '%automation_principal_unavailable%'`,
+        ).toArray();
+        expect(rows).toHaveLength(1);
+        expect(JSON.parse(rows[0]!.structured_content_json).automationId)
+          .toBe(card.automationId);
+      });
+    });
+
+    it("writes one card however often the automation runs", async () => {
+      const stub = await openRuntime();
+      const request = {
+        schemaVersion: 1 as const,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        authorityGeneration: 1,
+        occurredAt: Date.parse("2026-09-01T09:00:00.000Z"),
+        card,
+      };
+
+      expect(await stub.appendPrincipalUnavailableCard(request))
+        .toEqual({ outcome: "appended", code: "automation_principal_card_appended" });
+      // An hourly automation finds the same dead binding every hour. One card.
+      expect(await stub.appendPrincipalUnavailableCard({
+        ...request,
+        occurredAt: Date.parse("2026-09-01T10:00:00.000Z"),
+      })).toEqual({ outcome: "replayed", code: "automation_principal_card_replayed" });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        const rows = state.storage.sql.exec<{
+          message_type: string; content: string; structured_content_json: string;
+        }>(
+          `SELECT message_type, content, structured_content_json
+             FROM canonical_conversation_turn_details
+            WHERE client_message_id LIKE 'automation:%:principal:%'`,
+        ).toArray();
+        expect(rows).toHaveLength(1);
+        // A system row: Rally noting something that happened to this room, not
+        // somebody speaking in it.
+        expect(rows[0]!.message_type).toBe("system");
+        // The text stands alone for a reader with no card — a Slack mirror, a
+        // notification, a client that does not know this kind.
+        expect(rows[0]!.content).toContain("Candidate intake cannot reach Gmail");
+        expect(rows[0]!.content).toContain("Dana Reeve");
+        expect(JSON.parse(rows[0]!.structured_content_json).type)
+          .toBe("automation_principal_unavailable");
+      });
+    });
+
+    it("keeps a second automation's card apart from the first", async () => {
+      const stub = await openRuntime();
+      const base = {
+        schemaVersion: 1 as const,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        authorityGeneration: 1,
+        occurredAt: Date.parse("2026-09-01T09:00:00.000Z"),
+      };
+
+      await stub.appendPrincipalUnavailableCard({ ...base, card });
+      // Idempotency is per automation and per outgoing principal: a room with
+      // two broken automations has two things to fix and needs two cards.
+      expect(await stub.appendPrincipalUnavailableCard({
+        ...base,
+        card: {
+          ...card,
+          automationId: "00000000-0000-7000-800d-000000000003",
+          automationName: "Weekly changelog",
+        },
+      })).toEqual({ outcome: "appended", code: "automation_principal_card_appended" });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        expect(state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details
+            WHERE client_message_id LIKE 'automation:%:principal:%'`,
+        ).one()).toEqual({ count: 2 });
+      });
+    });
+  });
+
+  describe("automation activation", () => {
+    const activation = {
+      type: "automation_activation" as const,
+      schemaVersion: 1 as const,
+      automationId: "00000000-0000-7000-8000-0000000001a1",
+      automationName: "Candidate email intake",
+      runId: "00000000-0000-7000-8000-0000000001a2",
+      runWorkstreamId: "00000000-0000-7000-8000-0000000001a3",
+      deliveryId: "delivery-1",
+      trigger: { kind: "external_event" as const },
+      occurredAt: Date.parse("2026-09-01T09:00:00.000Z"),
+    };
+
+    async function openRuntime(): Promise<DurableObjectStub<SubstreamAgent>> {
+      await seedOpenAuthority();
+      const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+      ));
+      expect((await stub.bootstrapRuntime({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        generation: 1,
+      })).status).toBe(200);
+      return stub;
+    }
+
+    it("lands one row a retry cannot duplicate", async () => {
+      const stub = await openRuntime();
+      const request = {
+        schemaVersion: 1 as const,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        authorityGeneration: 1,
+        deliveryId: activation.deliveryId,
+        text: "Two candidates reached final round.",
+        executionPrincipal: { type: "workspace" as const, workspaceId: WORKSPACE_ID },
+        activation,
+      };
+
+      expect(await stub.appendAutomationActivation(request))
+        .toEqual({ outcome: "appended", code: "automation_activation_appended" });
+      // The delivery loop retries after a crash; the room must not be told
+      // twice, and the idempotency is the delivery's own id.
+      expect(await stub.appendAutomationActivation(request))
+        .toEqual({ outcome: "replayed", code: "automation_activation_replayed" });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        // An activation is loop input, not a canonical turn: it becomes one
+        // when the loop promotes it, and the run it starts is the whole point
+        // of delivering into a room rather than appending to it.
+        //
+        // Read across pending *and* delivered, because the wake this admission
+        // requests is what empties the first: the alarm fires, the loop
+        // promotes the input, and the pending row is deleted with a receipt
+        // left behind. Asserting only on `pending_loop_inputs` is a race the
+        // assertion wins when the suite is fast and loses when it is not —
+        // which is exactly how it passed alone and failed in a full run.
+        const inputId = state.storage.sql.exec<{ input_id: string }>(
+          `SELECT input_id FROM pending_loop_inputs
+           UNION ALL
+           SELECT input_id FROM delivered_loop_inputs`,
+        ).toArray();
+        // Exactly once, whichever side of promotion it is on: the retry above
+        // must not have added a second.
+        expect(inputId).toHaveLength(1);
+      });
+    });
+
+    it("wakes the room rather than leaving the input for somebody else to find", async () => {
+      const stub = await openRuntime();
+
+      // Asserted at the admission itself: the activation request is what the
+      // object turns into an alarm, and by the time an assertion outside could
+      // look, that alarm has already fired and cleared. Without this request an
+      // activation is a row in a mailbox nothing ever drains. The input's own
+      // content is asserted here too, for the same reason — inside the
+      // transaction that wrote it, where no drain can have run yet.
+      await runInDurableObject(stub, async (instance, state) => {
+        const product = (instance as unknown as {
+          product: { admitAutomationActivation: (input: unknown) => Promise<{
+            activationRequest: { kind: string; cause: string } | null;
+          }> };
+        }).product;
+        const result = await product.admitAutomationActivation({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          messageId: "00000000-0000-7000-8000-0000000001b1",
+          clientMessageId: "automation-activation:delivery-wake",
+          text: "The board deck went out.",
+          activation: { ...activation, deliveryId: "delivery-wake" },
+          executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+          origin: "automation_activation",
+          now: activation.occurredAt,
+        });
+        expect(result.activationRequest).toMatchObject({
+          kind: "activate_substream_loop",
+          cause: "pending_input",
+        });
+        const row = state.storage.sql.exec<{
+          actor: string; message_type: string; mode: string; bind_payload_json: string;
+        }>(
+          `SELECT actor, message_type, mode, bind_payload_json FROM pending_loop_inputs`,
+        ).toArray()[0];
+        expect(row).toBeDefined();
+        // Authored by nobody: not a person in this room, and not a provider
+        // account either.
+        expect(row!.actor).toBe("system");
+        expect(row!.message_type).toBe("automation_activation");
+        // Never mid-run: a person watching the room is doing something.
+        expect(row!.mode).toBe("queue");
+        // What the woken agent reads. The untrusted wrapper travels with it —
+        // an activation quotes connector content and is not an instruction.
+        expect(row!.bind_payload_json).toContain("UNTRUSTED AUTOMATION RESULT");
+        expect(row!.bind_payload_json).toContain("The board deck went out.");
+      });
+    });
+
+    it("refuses a run that outlived a pause, and an archived room", async () => {
+      const stub = await openRuntime();
+      const request = {
+        schemaVersion: 1 as const,
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        authorityGeneration: 2,
+        deliveryId: "delivery-stale",
+        text: "Nobody should read this.",
+        executionPrincipal: { type: "workspace" as const, workspaceId: WORKSPACE_ID },
+        activation: { ...activation, deliveryId: "delivery-stale" },
+      };
+
+      // The same fence provider writes respect: an in-flight run whose
+      // automation was paused or deleted does not get to deliver.
+      expect(await stub.appendAutomationActivation(request))
+        .toEqual({ outcome: "refused", code: "workstream_authority_generation_stale" });
+
+      await runInDurableObject(stub, async (_instance, state) => {
+        state.storage.sql.exec(`UPDATE workstream SET archived_at = ? WHERE id = 1`, Date.now());
+      });
+      expect(await stub.appendAutomationActivation({ ...request, authorityGeneration: 1 }))
+        .toEqual({ outcome: "refused", code: "workstream_archived" });
+    });
+  });
 });

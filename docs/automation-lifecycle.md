@@ -236,7 +236,22 @@ The child receives the frozen context and returns only a terminal receipt. It
 reads and mutates parent memory over generation-fenced RPC — the parent refuses a
 call whose harness run ID does not match the run it is addressed for — delivers
 its own result to the frozen destinations, and reports each destination through
-`recordDeliveryReceipt`. Provider writes inside a generated run additionally
+`recordDeliveryReceipt`.
+
+**Whether it delivers at all is decided once, by the parent.** Before the
+delivery loop runs, the child calls `resolveRunDisposition` with the result text;
+the parent classifies it on the `automation_result_disposition` model role and
+stores the answer on the run — `disposition`, `disposition_source`,
+`disposition_reason`, `disposition_at`. The decision lives with the automation
+because everything it reads is the parent's state: the definition, the trigger,
+and what the last three occurrences were judged to be. A `done` disposition
+withholds every destination and writes the classifier's own sentence into each
+`skipped` receipt, so the run history says why nobody was told rather than
+leaving a bare code to interpret. A classifier that cannot answer **delivers**,
+recorded as `default`: a spurious delivery is noise somebody can see, and a
+swallowed result is silence nobody knows to look for. The columns are the
+idempotency — a delivery retry after a crash reads the stored answer instead of
+judging the same occurrence twice. Provider writes inside a generated run additionally
 re-check the parent's *live* lifecycle and authority generation, so a run that
 outlives a pause or a delete stops rather than finishing on stale consent.
 
@@ -576,6 +591,174 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-01 — The disposition classifier gets a corpus, and it is a gate
+
+**What changed:** A fixed corpus of real-shaped results, each with the
+disposition a person would have chosen and the reasoning for it, lives in
+`packages/agent-harness/src/prompts/automation-result-disposition-corpus.ts`.
+`scripts/score-automation-disposition-corpus.mjs` scores it against a live
+model and exits non-zero on any miss; a unit test keeps the corpus itself
+honest.
+
+**Why:** This classifier is the only thing between every automation in the
+fleet and every destination it has. Nothing about a disposition raises an
+error, retries, or reaches a dead-letter queue — a result judged `done` simply
+never arrives, and the person waiting for it has no way to know it existed. A
+regression is silent in exactly the direction nobody checks, which is what
+makes this a release gate rather than a nice-to-have.
+
+**Considered and rejected:** Scoring in the ordinary test suite. It needs a
+real model, and a suite that cannot run without provider credentials is a suite
+people learn to skip. Also rejected: one pass rate. A swallowed result and a
+spurious exposure are not interchangeable — the first is invisible, the second
+is a row somebody ignores — and a single number lets a release trade one for
+the other unnoticed, so they are counted and reported separately.
+
+**Consequences:** The unit test guards the corpus, not the model: it refuses a
+case expecting an arm that case's own reach never offers, and it requires all
+three arms to appear, because a classifier that answered `done` to everything
+would pass a corpus of nothing but `done` — and that is precisely the broken
+model this exists to catch. Every case carries a `why`, because when one starts
+failing the question is whether the model drifted or the case was wrong, and
+only a recorded reason answers it later without re-arguing the corpus.
+
+### 2026-09-01 — Who an automation runs as becomes state somebody can take over
+
+**What changed:** `automation_state` gains `run_as_user_id`, and the two sites
+that built the execution principal from the identity row's `author_user_id` now
+resolve `run_as_user_id ?? author_user_id`. `claimExecutionPrincipal` takes the
+automation over for its caller, rebinds each dead personal binding to the
+claimant's own connection for the same plugin, and records what moved and what
+could not in `automation_principal_claims`. `POST
+/automations/:id/execution-principal` is the route; a system row carrying
+`automation_principal_unavailable` is the card that prompts it.
+
+**Why:** A work stream's automation outlives its author — that is the point of
+the room owning it — but the principal was derived from an immutable identity
+column, so an offboarded author took the automation down with them. Separating
+the two lets "who runs it" move while "who wrote it" stays provenance the run
+history keeps reporting.
+
+**Considered and rejected:** A body naming the claimant. That field would let
+one person lend a colleague's Gmail to a standing automation; agreeing to run
+your own credentials is something the person does themselves, so the caller is
+always the claimant and the body is empty. Also rejected: refusing a claim when
+the claimant lacks a connection for one of the dead providers. The room would
+rather have most of its automation back, so the takeover proceeds and the
+missing providers are reported for the card to keep naming.
+
+**Consequences:** Bindings to workspace-scoped connections are never rewritten —
+they belong to the workspace rather than to whoever authorized them, so they
+never broke. The claim is idempotent on "already runs it with nothing to move",
+so a retry after a lost response writes no second audit row. Filling this in
+also revealed that `assertManager`'s `participantOfOwningWorkstream` arm had no
+caller: pause and resume now resolve participation through WorkspaceDO, which is
+what makes a room's automation manageable by the room at all.
+
+### 2026-09-01 — An owned automation follows its room into the archive
+
+**What changed:** AutomationAgent answers `pauseForArchivedWorkstream` and
+`resumeForUnarchivedWorkstream`, and `pause`/`resume` now write and clear
+`automation_state.paused_reason`. Archiving or unarchiving a work stream fans
+out to the automations it owns, found through WorkspaceDO's
+`automationsOwnedByWorkstream`.
+
+**Why:** A room's automations belong to the room, so a decision about the room
+is a decision about them — that is what ownership buys over a creator who may
+be gone. The two new entry points skip the manager check because nobody is
+acting on the automation; they check ownership instead, so a room an automation
+merely delivers into has no say over whether it runs.
+
+**Considered and rejected:** Resuming every paused automation when a room comes
+back. Without `paused_reason`, an automation somebody deliberately stopped and
+one the archive stopped are the same row, and unarchiving would restart the
+first. Also rejected: doing this inside the work stream's own commit — each
+automation is a separate object, so the fan-out is asynchronous and happens
+after the room's state is settled.
+
+**Consequences:** The fan-out is best effort per automation and every refusal is
+a decision rather than a failure: already paused, paused by a person, no longer
+owned. One object refusing must not stop the rest, so failures are logged and
+the loop continues. An automation whose pause reason is `person` is invisible to
+unarchiving, permanently, until a person resumes it.
+
+**Only archival is wired, because only archival exists.** The design this
+implements also says deleting a work stream deletes the automations it owns, and
+that clause has nothing to attach to: Rally has no work-stream deletion path.
+`deletion_epoch` is a column on the work-stream object that nothing writes,
+there is no delete operation on the product service, and the client's removal
+affordance is Archive. Whoever builds work-stream deletion owns adding the
+cascade beside `applyArchiveToOwnedAutomations`; inventing a deletion path here
+to have somewhere to hang it would ship a destructive operation nobody asked
+for.
+
+### 2026-09-01 — An automation a work stream can own
+
+**What changed:** `workstream` joins the automation scope vocabulary.
+AutomationAgent schema version 9 rebuilds `automation_acceptance` to admit it
+and to carry `owning_workstream_id`, paired to the scope by a CHECK so the two
+cannot disagree; WorkspaceDO version 26 rebuilds `automation_directory` the same
+way and adds an index for the per-room read the sidebar's index does not serve.
+`automation_state` gains `paused_reason`. Nothing sets the new scope yet — the
+authoring path that would is a later change — so every existing automation
+crosses both rebuilds unchanged and owning nothing.
+
+**Why:** An automation attached to a work stream is a standing behavior of that
+work stream: authored there, managed by whoever is there now, and delivering
+there. Keying any of that to its creator makes a personnel change into a silent
+product failure, and keying it to the workspace makes a room's business
+everybody's.
+
+`paused_reason` exists because archiving a work stream will pause the
+automations it owns and unarchiving will resume them — and resuming everything
+is wrong. An automation a person paused last month must not come back to life
+because somebody unarchived the room, so only rows that say
+`workstream_archived` are resumed.
+
+**Also, and it is a loosening:** acceptance no longer requires owner-or-admin
+for `workspace` scope. `connection-service.ts` already lists workspace-scoped
+connections to every member, so a member can call that connection's tools from a
+run in their own work stream today; a workspace automation adds a *schedule* on
+something they can already do, not a capability they lacked. What the workspace
+acquires is a standing object it must manage, so editing, pausing and deleting
+one stay owner-or-admin. The residual is that it runs unattended and repeatedly
+where interactive use is attended and once, and the workspace learns of it by
+seeing it in the list rather than by being asked.
+
+**Considered and rejected:** widening the shared `ScopeSchema`. A work stream
+has no third scope, and the enum is used wherever a room's audience is chosen —
+widening it would offer `workstream` in every one of those places. Automations
+got `AutomationScopeSchema` of their own instead.
+
+
+### 2026-09-01 — A completed run's result is judged before it is delivered
+
+**What changed:** `resolveRunDisposition` on AutomationAgent, four columns on
+`automation_runs` (DO schema version 8), and one call from the child's
+settlement path before its delivery loop. The answer is `done` or `deliver`
+today; `expose_workstream` exists in the column's CHECK and is deliberately not
+offered until there is a code path that can act on it.
+
+**Why:** Every completed run delivered something. The only escape was
+`shouldSuppressAutomationResult`, a regex matching one English phrasing about
+emails, so "No changes in the pipeline this week" was delivered and a real
+finding whose wording happened to match was silently withheld. That is
+survivable for one person's inbox and not for a shared room, which is what the
+automations-in-a-work-stream PRD needs it to be safe for.
+
+**Considered and rejected:** letting the run decide, with a tool. It has the
+most context and costs no extra inference, and it is the loop untrusted trigger
+content steers — a disposition it chooses is one an attacker can influence in
+both directions, and a turn that went badly ends most gracefully by declaring
+there was nothing to report. The classifier reads the run's output from outside
+it, holds no tools and no credentials, and answers a schema of two or three enum
+values and a sentence.
+
+**Also:** the arms are rendered into that schema from what the automation can
+reach rather than checked afterwards, so an arm it has no use for is not a value
+the model can emit; and an automation that can reach nobody spends no inference
+at all.
 
 ### 2026-09-01 — Abandonment fences already-addressed automations
 

@@ -435,6 +435,102 @@ describe("work-stream schema migration in workerd", () => {
       expect(state.storage.sql.exec(`PRAGMA foreign_keys`).one()).toEqual({ foreign_keys: 1 });
     });
   });
+  it("widens the populated mailbox's vocabulary without orphaning a delivered input", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("populated-v35-upgrade");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 35),
+        component: "substream_agent_do",
+        workerVersionId: "worker-v35",
+        now: 1_000,
+      });
+      state.storage.sql.exec(
+        `INSERT INTO substream_loops
+           (id, loop_id, revision, status, cycle_ordinal, step_ordinal, bind_state_revision,
+            next_input_sequence, next_assistant_turn_sequence, next_execution_sequence,
+            created_at, updated_at)
+         VALUES (1, 'loop-1', 1, 'idle', 0, 0, 0, 3, 1, 1, 1, 1)`,
+      );
+      // A preparation still in flight when the Worker rolled, and one that had
+      // already been promoted. The second is what makes this a referenced-parent
+      // rebuild: pending_loop_inputs points at the mailbox row.
+      state.storage.sql.exec(
+        `INSERT INTO pending_loop_input_mailbox
+           (input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
+            client_message_id, preparation_kind, envelope_json, state, terminal_code,
+            created_at, updated_at)
+         VALUES ('input-preparing', 'loop-1', 1, 0, 'client-preparing',
+                 'external_message', '{"kind":"fixture"}', 'preparing', NULL, 1, 1)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO pending_loop_input_mailbox
+           (input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
+            client_message_id, preparation_kind, envelope_json, state, terminal_code,
+            created_at, updated_at)
+         VALUES ('input-ready', 'loop-1', 2, 0, 'client-ready',
+                 'human_message', NULL, 'ready', NULL, 1, 1)`,
+      );
+
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+        component: "substream_agent_do",
+        workerVersionId: "worker-current",
+        now: 2_000,
+      });
+
+      expect(state.storage.sql.exec<{
+        input_id: string; preparation_kind: string; state: string; envelope_json: string | null;
+      }>(
+        `SELECT input_id, preparation_kind, state, envelope_json
+           FROM pending_loop_input_mailbox ORDER BY input_sequence`,
+      ).toArray()).toEqual([
+        {
+          input_id: "input-preparing",
+          preparation_kind: "external_message",
+          state: "preparing",
+          envelope_json: '{"kind":"fixture"}',
+        },
+        {
+          input_id: "input-ready",
+          preparation_kind: "human_message",
+          state: "ready",
+          envelope_json: null,
+        },
+      ]);
+      // The new kind is admitted, and the vocabulary is still closed: a rebuild
+      // that dropped the CHECK would pass every assertion above.
+      state.storage.sql.exec(
+        `INSERT INTO pending_loop_input_mailbox
+           (input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
+            client_message_id, preparation_kind, envelope_json, state, terminal_code,
+            created_at, updated_at)
+         VALUES ('input-activation', 'loop-1', 3, 0, 'client-activation',
+                 'automation_activation', '{"kind":"fixture"}', 'preparing', NULL, 2, 2)`,
+      );
+      expect(() => state.storage.sql.exec(
+        `INSERT INTO pending_loop_input_mailbox
+           (input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
+            client_message_id, preparation_kind, envelope_json, state, terminal_code,
+            created_at, updated_at)
+         VALUES ('input-invented', 'loop-1', 4, 0, 'client-invented',
+                 'telepathy', '{"kind":"fixture"}', 'preparing', NULL, 2, 2)`,
+      )).toThrow();
+      // The guards come back with the table, not just its columns: without them
+      // a reserved preparation could be retargeted at another client message.
+      expect(() => state.storage.sql.exec(
+        `UPDATE pending_loop_input_mailbox
+            SET client_message_id = 'client-stolen' WHERE input_id = 'input-activation'`,
+      )).toThrow();
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM sqlite_schema WHERE name LIKE '%_v36'`,
+      ).one()).toEqual({ count: 0 });
+      expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(`PRAGMA foreign_keys`).one()).toEqual({ foreign_keys: 1 });
+    });
+  });
 });
 
 describe("workspace schema migration in workerd", () => {

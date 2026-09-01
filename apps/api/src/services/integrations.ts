@@ -12,10 +12,7 @@ import {
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   BUILT_IN_SKILLS,
   RequestElicitationInputSchema,
-  AutomationCompilerError,
-  OpenRouterError,
   classifyAddressing,
-  compileAutomation,
   composeBeforeToolCallHooks,
   canonicalToolInputHash,
   createTextDeltaBatcher,
@@ -23,6 +20,7 @@ import {
   renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
   renderTriggerActivityMessage,
+  renderUntrustedAutomationResultMessage,
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
   renderWorkstreamSystemPrompt,
@@ -34,7 +32,7 @@ import {
   type BindLoopProjectionState,
   type BindLoopTransition,
   type BindCompactionCommit,
-  type AutomationCompilerStreamEvent,
+  createAutomationsPlugin,
   type AutomationCreatorPluginCatalogEntry,
   type HarnessActivationInput,
   type HarnessEvent,
@@ -43,17 +41,16 @@ import {
   type HarnessToolResult,
   type HarnessToolPolicyIdentity,
   type RunHarnessInput,
-  type RequestElicitationInput,
   type HarnessTool,
   type ModelMessage,
   type ModelMessageProvenance,
   type PluginAuthorization,
   type PluginAuthorizationOccasion,
-  type StructuredModelDiagnostic,
   toolActivityName,
 } from "@rally/agent-harness";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
+  AutomationActivationV1Schema,
   AutomationMemoryTableSchema,
   ModelPluginIdSchema,
   ToolDefinitionSchema,
@@ -61,13 +58,16 @@ import {
   readStructuredFailure,
   asSubstreamId,
   asAutomationId,
+  asUserId,
   asWorkspaceId,
+  type AutomationRunContextV1,
   asWorkstreamId,
   type UserId,
   type WorkspaceId,
   type AddressingClassification,
   type AutomationDraft,
   type AutomationSetEvaluatorRulesInputV1,
+  AutomationSetEvaluatorRulesInputV1Schema,
   type HarnessFailureCode,
   type AutomationPluginActivity,
   type AutomationPluginIcon,
@@ -106,7 +106,6 @@ import { markLoopActivationRecorded } from "../lib/loop-activation-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
-import { ApiError } from "../lib/api-error";
 import {
   contextCompactionCheckpointHash,
   type ContextCompactionCheckpointIdentity,
@@ -150,7 +149,6 @@ import {
   telemetryCountBucket,
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
-import { createAutomationDraftAttachmentTools } from "./automation-draft-attachment-tools";
 import { WorkspaceDigestDeliveryContextSchema } from "../durable-objects/workspace-digests-protocol";
 import {
   withWorkspaceRuntimeDatabase,
@@ -162,7 +160,6 @@ import {
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import {
-  buildAttachmentModelParts,
   type ModelAttachmentSource,
 } from "./attachment-model-content";
 import {
@@ -1144,6 +1141,19 @@ async function loadTriggerFencedTranscriptMessages(
  * pairs. Unfinished or malformed receipts are omitted as one healed unit, so a
  * later run can never inherit a dangling call or an orphaned result.
  */
+/**
+ * The automation's name, off the activation object.
+ *
+ * Frozen at delivery rather than looked up, so a rename does not rewrite what
+ * an earlier run's context said. A malformed or absent object is not worth
+ * failing a whole projection over — the result still reaches the model, wearing
+ * a name that says only what it is.
+ */
+function automationActivationName(structuredContent: unknown): string {
+  const parsed = AutomationActivationV1Schema.safeParse(structuredContent);
+  return parsed.success ? parsed.data.automationName : "An automation";
+}
+
 async function projectModelProtocolTranscript(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">
@@ -1348,6 +1358,31 @@ async function projectModelProtocolTranscript(
           message.sequenceNumber,
         ));
       }
+      continue;
+    }
+
+    // An automation's result, delivered into the room that owns the automation.
+    // Admitted ahead of the drop below rather than by falling through it: a new
+    // message type is dropped by that rule automatically, and this one's
+    // durable content is represented nowhere else in this work stream — an
+    // agent that cannot see it cannot do anything about it.
+    //
+    // Unlike the two exceptions above, an activation is admitted on every run
+    // and not only when it is the trigger. It is standing context: the agent
+    // should be able to consult last Monday's agenda when somebody asks a
+    // question today. The label is identical either way; nothing about being
+    // older makes an automation's output more trustworthy.
+    if (message.messageType === "automation_activation") {
+      projected.push(modelDerivative(
+        renderUntrustedAutomationResultMessage({
+          automationName: automationActivationName(message.structuredContent),
+          deliveredAt: message.createdAt,
+          text: modelMessageContent(message),
+        }),
+        "participant_turn",
+        message.id,
+        message.sequenceNumber,
+      ));
       continue;
     }
 
@@ -1558,262 +1593,160 @@ export async function classifyWorkstreamMessage(
   });
 }
 
-async function loadAutomationDraftAttachmentParts(
-  env: Env,
-  workspaceId: string,
-  userId: string,
-  attachmentIds: string[],
-) {
-  const ids = [...new Set(attachmentIds)];
-  if (ids.length === 0) return { parts: [], frozenResourceIds: [] };
-  const placeholders = ids.map(() => "?").join(", ");
-  const rows = await env.DB.prepare(
-    `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json, model_content_ref, model_mime_type,
-            model_content_sha256, model_metadata_json, model_content_status, model_content_error_code
-       FROM resources
-      WHERE id IN (${placeholders}) AND workspace_id = ? AND provider = 'avalon_upload'
-        AND uploaded_by_user_id = ? AND attachment_status = 'draft'`,
-  ).bind(...ids, workspaceId, userId).all<{
-    id: string;
-    title: string;
-    mime_type: string | null;
-    content_ref: string | null;
-    content_sha256: string | null;
-    model_content_ref: string | null;
-    model_mime_type: string | null;
-    model_content_sha256: string | null;
-    model_metadata_json: string | null;
-    metadata_json: string | null;
-    model_content_status: Exclude<ModelAttachmentSource["modelContentStatus"], undefined>;
-    model_content_error_code: string | null;
-  }>();
-  const sources = new Map((rows.results ?? []).map((row) => [row.id, {
-    id: row.id,
-    workspaceId,
-    fileName: row.title,
-    mimeType: row.mime_type ?? "application/octet-stream",
-    sizeBytes: attachmentMetadataSize(row.metadata_json),
-    contentRef: row.content_ref,
-    contentSha256: row.content_sha256,
-    modelContentRef: row.model_content_ref,
-    modelMimeType: row.model_mime_type,
-    modelContentSha256: row.model_content_sha256,
-    modelMetadataJson: row.model_metadata_json,
-    modelContentStatus: row.model_content_status,
-    modelContentErrorCode: row.model_content_error_code,
-  } satisfies ModelAttachmentSource]));
-  if (sources.size !== ids.length) {
-    throw new ApiError(422, "invalid_automation_attachment", "One or more automation attachments are unavailable");
+/**
+ * One trigger, in the one line a proposal card shows.
+ *
+ * The card renders what it is given rather than parsing a trigger union: a
+ * client that had to know every trigger shape would need updating for each new
+ * one, and a card is the wrong place to learn that a shape it does not know has
+ * appeared.
+ */
+function automationTriggerLine(trigger: AutomationDraft["triggers"][number]): string {
+  switch (trigger.type) {
+    case "manual": return "Run by hand";
+    case "calendar": return trigger.summary;
+    case "interval": return trigger.summary;
+    case "connector_activity": return `${trigger.connectorType}: ${trigger.eventTypes.join(", ")}`;
+    case "semantic_activity": return trigger.condition;
+    case "resource_watch": return "When the attached resource changes";
+    case "webhook": return `Webhook: ${trigger.eventTypes.join(", ")}`;
   }
-  const parts = await buildAttachmentModelParts(
-    env.PAYLOADS,
-    ids.map((id) => sources.get(id)!),
-    { database: env.DB, images: env.IMAGES, documentProcessor: env.DOCUMENT_PROCESSOR },
-  );
-  return { parts, frozenResourceIds: ids };
 }
 
-export async function compileAutomationDraft(
+/**
+ * The drafting tools, for a work-stream run.
+ *
+ * The catalog is filled on activation rather than at assembly: this plugin is
+ * deferred, most runs never load it, and a connector read on every run to
+ * populate tools nobody called is work for nothing. The tools read the array by
+ * reference when they execute, so filling it in place is what "loaded" means
+ * here.
+ *
+ * A draft submitted from this loop creates its automation on first submission —
+ * the conversation *is* the authoring loop, so there is no earlier moment when
+ * one could have been created — and remembers the room it was written in for an
+ * acceptance to use.
+ */
+function createAvalonAutomationsPlugin(
   env: Env,
-  input: {
-    draftId?: string | undefined;
-    messages: Array<{ role: "user" | "assistant"; content: string }>;
-    attachmentIds?: string[];
-    currentDraft?: AutomationDraft | null;
-    defaultTimezones: { personal: string; workspace: string };
-    requestId: string;
-    workspaceId: WorkspaceId;
-    userId: UserId;
-    onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
-    draftMutationPort?: {
-      setEvaluatorRules(
-        rules: AutomationSetEvaluatorRulesInputV1,
-        context: HarnessToolContext,
-      ): Promise<{ accepted: true }>;
-      submitDraft(
-        draft: AutomationDraft,
-        context: HarnessToolContext,
-      ): Promise<{ accepted: true }>;
-      requestElicitation(
-        elicitation: RequestElicitationInput,
-        context: HarnessToolContext,
-      ): Promise<{ accepted: true }>;
-    };
-    signal?: AbortSignal;
-  },
-): Promise<AutomationDraft> {
-  const pluginCatalog = await loadAutomationCreatorPluginCatalog(env, input.workspaceId, input.userId);
-  const draftAttachments = await loadAutomationDraftAttachmentParts(
-    env,
-    input.workspaceId,
-    input.userId,
-    input.attachmentIds ?? [],
-  );
-  const architectTools = draftAttachments.frozenResourceIds.length > 0
-    ? createAutomationDraftAttachmentTools(env, {
-        workspaceId: input.workspaceId,
-        userId: input.userId,
-        scopeId: input.draftId ?? draftAttachments.frozenResourceIds[0]!,
-        frozenResourceIds: draftAttachments.frozenResourceIds,
-      })
-    : [];
-  const draftResearchPort = {
-    searchPeople: async (query: string) => {
-      const pattern = `%${query}%`;
-      const rows = await env.DB.prepare(
-        `SELECT user.id, user.name, user.email
-           FROM workspace_members member
-           JOIN users user ON user.id = member.user_id
-          WHERE member.workspace_id = ? AND member.status = 'active'
-            AND (user.name LIKE ? OR user.email LIKE ?)
-          ORDER BY user.name, user.id`,
-      ).bind(input.workspaceId, pattern, pattern).all<{
-        id: string;
-        name: string;
-        email: string;
-      }>();
-      return { people: rows.results ?? [] };
+  input: WorkstreamWorkflowInput,
+): HarnessPlugin {
+  const catalog: AutomationCreatorPluginCatalogEntry[] = [];
+  const authorUserId = input.executionPrincipal?.type === "user"
+    ? input.executionPrincipal.userId
+    : null;
+  const draftState: { submitted: AutomationDraft | null } = { submitted: null };
+  /**
+   * The evaluator rules the model set, waiting for a submission to attach them
+   * to. Null until it sets any; a draft with no event trigger never needs them.
+   */
+  let stagedEvaluatorRules: AutomationSetEvaluatorRulesInputV1 | null = null;
+  // One automation per authoring loop. Held here so a second submission
+  // refines the first rather than creating another: an agent that asked a
+  // clarifying question and submitted again has one proposal, not two.
+  let authoredAutomationId: string | null = null;
+  const plugin = createAutomationsPlugin({
+    catalog,
+    inspectedPluginIds: new Set<string>(),
+    resolvedResources: new Map(),
+    loadedPluginIds: new Set<string>(),
+    resolvedPersonIds: new Set<string>(),
+    draftState,
+    // Telemetry only: the diagnostics these tools emit name the model that
+    // produced the arguments, and a work-stream run does not fix one here.
+    model: "",
+    draftMutationPort: {
+      submitDraft: async (draft: AutomationDraft) => {
+        if (!authorUserId) throw new Error("automation_draft_author_unavailable");
+        authoredAutomationId ??= crypto.randomUUID();
+        const agent = await durableObjectStubForWorkspace(
+          env,
+          env.AUTOMATION_AGENTS,
+          asWorkspaceId(input.workspaceId),
+          automationAgentName(
+            env.AVALON_REGION,
+            asWorkspaceId(input.workspaceId),
+            asAutomationId(authoredAutomationId),
+          ),
+        );
+        const admitted = await agent.admitAuthoredDraft({
+          schemaVersion: 1,
+          automationId: authoredAutomationId,
+          workspaceId: input.workspaceId,
+          authorUserId,
+          region: env.AVALON_REGION,
+          authoredInWorkstreamId: input.workstreamId,
+          // Only a real channel. A DM is where somebody asked, not somewhere a
+          // standing automation should speak from, and a mention with no
+          // channel has nothing to record.
+          evaluatorRules: stagedEvaluatorRules,
+          authoredOrigin: input.slackOrigin?.channelId
+            && input.slackOrigin.channelType !== "im"
+            ? {
+                kind: "slack" as const,
+                teamId: input.slackOrigin.teamId,
+                channelId: input.slackOrigin.channelId,
+                channelName: input.slackOrigin.channelName,
+              }
+            : null,
+          draft,
+        });
+        // The proposal, in the feed where the conversation happened. Posted
+        // after the draft exists so a card can never name an automation the
+        // accept action would not find.
+        const substream = await durableObjectStubForWorkspace(
+          env,
+          env.SUBSTREAM_AGENTS,
+          asWorkspaceId(input.workspaceId),
+          substreamAgentName(
+            env.AVALON_REGION,
+            asWorkspaceId(input.workspaceId),
+            asWorkstreamId(input.workstreamId),
+            asSubstreamId("0"),
+          ),
+        );
+        await substream.appendDraftProposedCard({
+          schemaVersion: 1,
+          workspaceId: input.workspaceId,
+          workstreamId: input.workstreamId,
+          definitionRevision: admitted.definitionRevision,
+          occurredAt: Date.now(),
+          card: {
+            type: "automation_draft_proposed",
+            schemaVersion: 1,
+            automationId: asAutomationId(authoredAutomationId),
+            automationName: draft.name,
+            description: draft.description,
+            triggerSummaries: draft.triggers.map(automationTriggerLine),
+            suggestedScope: draft.suggestedScope,
+            ready: draft.ready,
+          },
+        });
+        return admitted;
+      },
+      // Held until the submission that has somewhere to put them. A draft
+      // written here has no automation until its first submission, and the
+      // model may set rules before or after that — buffering removes the
+      // ordering question rather than answering it, and refusing outright made
+      // every event-driven draft authored in a room impossible to accept:
+      // `prepareAcceptance` requires evaluators for exactly those triggers.
+      setEvaluatorRules: async (rules) => {
+        stagedEvaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse(rules);
+        return { accepted: true as const };
+      },
     },
-    searchResources: async (query: string) => {
-      // The connector-scope predicate every other resource read applies: a
-      // participant's personal connection is theirs alone, so its resources —
-      // titles included, which routinely carry customer, deal, and candidate
-      // names — must not reach another member's draft conversation. Joining the
-      // connection here rather than resolving plugins from a second, unscoped
-      // statement keeps the filter and the plugin lookup on one row.
-      const resources = await env.DB.prepare(
-        `SELECT resource.id, resource.title, resource.resource_type,
-                connection.id AS connection_id, connection.model_plugin_id
-           FROM resources resource
-           JOIN connector_connections connection ON connection.id = resource.connection_id
-          WHERE resource.workspace_id = ? AND resource.title LIKE ?
-            AND connection.workspace_id = ? AND connection.status <> 'disabled'
-            AND (connection.scope = 'workspace' OR connection.owner_user_id = ?)
-          ORDER BY resource.title, resource.id`,
-      ).bind(input.workspaceId, `%${query}%`, input.workspaceId, input.userId).all<{
-        id: string;
-        title: string;
-        resource_type: string;
-        connection_id: string;
-        model_plugin_id: string;
-      }>();
-      const bindingKeysByPlugin = new Map<string, string[]>();
-      for (const trigger of input.currentDraft?.triggers ?? []) {
-        if (
-          (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook")
-          || !trigger.suggestedSourcePluginId
-          || !trigger.sourceBindingKey
-        ) continue;
-        bindingKeysByPlugin.set(trigger.suggestedSourcePluginId, [
-          ...(bindingKeysByPlugin.get(trigger.suggestedSourcePluginId) ?? []),
-          trigger.sourceBindingKey,
-        ]);
-      }
-      return {
-        resources: (resources.results ?? []).map((resource) => ({
-          id: resource.id,
-          title: resource.title,
-          resourceType: resource.resource_type,
-          pluginId: resource.model_plugin_id,
-          sourceBindingKeys: [...new Set(bindingKeysByPlugin.get(resource.model_plugin_id) ?? [])],
-        })),
-      };
+  });
+  return {
+    ...plugin,
+    onActivate: async () => {
+      if (!authorUserId || catalog.length > 0) return;
+      catalog.push(...await loadAutomationCreatorPluginCatalog(
+        env,
+        asWorkspaceId(input.workspaceId),
+        asUserId(authorUserId),
+      ));
     },
   };
-  const webPlugin = createAvalonWebPlugin(createFirecrawlWebTools(env));
-  const routing = await resolveAgentModelRouting(env, "automation_compiler", {
-    workspaceId: input.workspaceId,
-    userId: input.userId,
-  });
-  const inferenceLogger = createAgentInferenceLogger(env, {
-    workspaceId: input.workspaceId,
-    userId: input.userId,
-    requestId: input.requestId,
-    ...(input.draftId ? { draftId: input.draftId } : {}),
-    source: "automation_compiler",
-  });
-  try {
-    return await compileAutomation({
-      apiKey: env.OPENROUTER_API_KEY,
-      model: routing.model,
-      loopId: `automation-draft:${input.draftId ?? input.userId}:loop`,
-      workspaceId: input.workspaceId,
-      userId: input.userId,
-      traceContext: {
-        source: "automation_compiler",
-        feature: AGENT_MODEL_FLAG_KEYS.automation_compiler,
-        workspaceId: input.workspaceId,
-        contextUserId: input.userId,
-        requestId: input.requestId,
-        ...(input.draftId ? { draftId: input.draftId } : {}),
-        region: env.AVALON_REGION,
-        environment: env.APP_ENV,
-        ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
-        executionPrincipalType: "user",
-        executionPrincipalId: input.userId,
-      },
-      fallbackModels: routing.fallbackModels,
-      transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
-      messages: input.messages,
-      ...(draftAttachments.parts.length > 0 ? { latestUserAttachmentParts: draftAttachments.parts } : {}),
-      ...(architectTools.length > 0 ? { architectTools } : {}),
-      ...(input.draftMutationPort ? { draftMutationPort: input.draftMutationPort } : {}),
-      draftResearchPort,
-      currentDraft: input.currentDraft ?? null,
-      defaultTimezones: input.defaultTimezones,
-      pluginCatalog,
-      ...(webPlugin ? { additionalPlugins: [webPlugin] } : {}),
-      maxResearchIterations: 20,
-      maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
-      ...(input.onStreamEvent ? { onStreamEvent: input.onStreamEvent } : {}),
-      ...(input.signal ? { signal: input.signal } : {}),
-      onInferenceRequest: inferenceLogger.onRequest,
-      onInferenceAttempt: inferenceLogger.onAttempt,
-      onDiagnostic: async (diagnostic: StructuredModelDiagnostic) => {
-        logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
-          request_id: input.requestId,
-          draft_id: input.draftId,
-          workspace_id: input.workspaceId,
-          stage: diagnostic.stage,
-          schema_name: diagnostic.schemaName,
-          provider: "openrouter",
-          model: diagnostic.model,
-          attempt: diagnostic.attempt,
-          fallback_attempt: diagnostic.fallbackAttempt,
-          repair_attempt: diagnostic.repairAttempt,
-          latency_ms: diagnostic.latencyMs,
-          response_bytes: diagnostic.responseBytes,
-          input_tokens: diagnostic.inputTokens,
-          output_tokens: diagnostic.outputTokens,
-          context_tokens: diagnostic.inputTokens === undefined || diagnostic.outputTokens === undefined
-            ? undefined
-            : diagnostic.inputTokens + diagnostic.outputTokens,
-          reasoning_tokens: diagnostic.reasoningTokens,
-          cached_input_tokens: diagnostic.cachedInputTokens,
-          success: diagnostic.success,
-          failure_kind: diagnostic.failureKind,
-          validation_issues: diagnostic.validationIssues,
-        });
-      },
-    });
-  } catch (error) {
-    const compilerFailure = error instanceof AutomationCompilerError ? error : null;
-    const providerFailure = error instanceof OpenRouterError ? error : null;
-    logStructuredEvent(env, "error", "automation_compiler", {
-      request_id: input.requestId,
-      draft_id: input.draftId,
-      workspace_id: input.workspaceId,
-      stage: "failed",
-      schema_name: "automation_draft",
-      provider: "openrouter",
-      model: routing.model,
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      failure_code: compilerFailure?.code ?? (providerFailure ? "provider_failure" : error instanceof z.ZodError ? "validation_failure" : "unknown_failure"),
-      failure_kind: compilerFailure?.kind ?? (providerFailure ? "provider" : error instanceof z.ZodError ? "validation" : "unknown"),
-      retryable: compilerFailure?.retryable ?? (providerFailure ? providerFailure.status !== 401 && providerFailure.status !== 402 && providerFailure.status !== 403 : false),
-    });
-    throw error;
-  }
 }
 
 async function loadAutomationCreatorPluginCatalog(
@@ -5171,7 +5104,11 @@ async function loadRunPromptContext(
         versionNumber: number;
         instructions: string;
         expectedOutputs: string[];
-        resultDelivery: Array<{ channel: "email" | "slack_agent_dm"; destination: string }>;
+        resultDelivery: Array<{
+          channel: "email" | "slack_agent_dm" | "workstream";
+          destination: string;
+        }>;
+        authoringOrigin: AutomationRunContextV1["authoringOrigin"];
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
         durableTables: MaterializedMemoryTable[];
@@ -5199,8 +5136,11 @@ async function loadRunPromptContext(
     ) throw new Error("automation_run_context_not_found");
     AutomationMemoryTableSchema.array().parse(frozen.definition.memoryTables);
     const durableTables = (await readAutomationMemoryBootstrapForRun(env, input)).tables;
-    type ResultDestination = { channel: "email" | "slack_agent_dm"; destination: string };
-    const resultDelivery = frozen.deliveryTargets.flatMap<ResultDestination>((target) => {
+    type ResultDestination = {
+      channel: "email" | "slack_agent_dm" | "workstream";
+      destination: string;
+    };
+    const resultDelivery: ResultDestination[] = frozen.deliveryTargets.flatMap<ResultDestination>((target) => {
       // Match the sender's production guard. In development and tests no email
       // leaves Rally, so claiming that it will would suppress the model's own
       // requested delivery and leave the result nowhere.
@@ -5212,12 +5152,22 @@ async function loadRunPromptContext(
       return [{ channel: "slack_agent_dm", destination: target.slackUserId }];
     }).sort((left, right) => left.channel.localeCompare(right.channel)
       || left.destination.localeCompare(right.destination));
+    // The owning room is a destination Rally delivers to, and it is the one
+    // `deliveryTargets` never contains — nobody chose it, it follows from what
+    // the automation belongs to. Left out, a room-owned automation authored in
+    // a Slack channel got the origin section telling it where "here" is and no
+    // section telling it Rally already posts the result, which is the
+    // duplicate-send this section exists to prevent.
+    if (frozen.owningWorkstreamId !== null) {
+      resultDelivery.push({ channel: "workstream", destination: frozen.owningWorkstreamId });
+    }
     automationContext = {
       name: frozen.definition.name,
       versionNumber: frozen.definitionRevision,
       instructions: frozen.definition.instructions,
       expectedOutputs: frozen.definition.expectedOutputs,
       resultDelivery,
+      authoringOrigin: frozen.authoringOrigin,
       defaultBehavior: frozen.definition.defaultBehavior,
       overrides: {},
       durableTables,
@@ -5748,11 +5698,25 @@ async function loadHarnessTools(
     input,
     inObjectResourceAttacher,
   );
+  // Withheld from an automation occurrence, and this is where that call is
+  // made: a run carrying a frozen context is an automation doing its work, and
+  // one that could draft automations from the email it just read is a spam
+  // engine with a human approval step in front of it. It does its work, writes
+  // its result, and what happens to that result is decided outside it.
+  const automationsPlugin = input.automationRunContext
+    ? null
+    : createAvalonAutomationsPlugin(env, input);
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
-  const builtinPlugins = [workstreamPlugin, webPlugin, terminalPlugin, multimodalGenerationPlugin].filter(
+  const builtinPlugins = [
+    workstreamPlugin,
+    webPlugin,
+    terminalPlugin,
+    multimodalGenerationPlugin,
+    automationsPlugin,
+  ].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
   const plugins: HarnessPlugin[] = [...builtinPlugins];

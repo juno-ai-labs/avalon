@@ -1478,6 +1478,112 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-01 — Exposing an automation run unhides a row; it creates nothing
+
+**What changed:** WorkspaceDO answers `exposeAutomationRunWorkstream`, which
+sets `automation_exposed = 1` on the directory row of the work stream an
+occurrence already ran in, and promotes that row's `scope` to the automation's.
+It refuses a row that is not `origin_type = 'automation'` and one a person has
+archived. The settlement path calls it on an `expose_workstream` disposition,
+and the classifier is offered that arm only for an automation no work stream
+owns.
+
+**Why:** The occurrence's transcript, tool calls and result are already in a
+work stream — every listing query hides it because it is an automation run.
+"Expose" is that boolean, and naming it after what the person sees is what makes
+a reader look for the creation path it deliberately does not have. Being a
+boolean is also what makes a delivery retry after a crash free: there is nothing
+to duplicate, which is the problem an earlier create-a-room design answered with
+receipts and idempotency keys.
+
+**Considered and rejected:** Letting it unhide any work stream. A room whose
+visibility somebody chose deliberately must not be reachable from a
+classifier's decision, so the RPC refuses anything but a run's own work stream.
+Also rejected: defaulting a run frozen before `scope` travelled with the context
+to `workspace`. Revealing such a run narrowly is recoverable; guessing the other
+way hands somebody's run to everyone, so a null scope leaves the work stream's
+own scope alone.
+
+**Consequences:** Un-archiving is not part of it: an archived occurrence stays
+archived, and a later occurrence classifying `expose_workstream` cannot undo
+that. A refusal is a decision that stands rather than a failure to retry, so the
+path logs and moves on rather than recording a delivery receipt — exposing
+reaches nobody the automation could not already reach, so it is not a delivery.
+
+### 2026-09-01 — A delivery reads its fence from the directory, not from the room
+
+**What changed:** WorkspaceDO answers `workstreamDeliveryAuthority`, returning a
+work stream's current authority generation and whether it is archived, or null
+for one the workspace does not have. SubstreamAgent's automation settlement uses
+it to fence the activation it posts into the work stream that owns the
+automation.
+
+**Why:** An automation owned by a work stream keeps running when the person who
+created it is removed, so the room is the thing that can change underneath a
+delivery — re-authorized, or archived — between the decision to deliver and the
+write. The directory is what a re-authorization bumps first; a delivery that
+read the generation from the room itself would learn about the change only after
+writing into it.
+
+**Considered and rejected:** Returning the whole directory row. A caller holding
+this is answering "may I still write here", and a wider shape invites it to
+answer "what does this room look like" from a read that is not the serving path
+and will be staler than one.
+
+**Consequences:** Null means do not write; a caller that reads it as generation 1
+delivers behind a fence that was never checked. Archived is distinct from
+absent on purpose — unarchiving restores the room and its automations — so
+neither is inferred from the other.
+
+### 2026-09-01 — An automation activation is loop input, not a transcript row
+
+**What changed:** `pending_loop_input_mailbox` admits a fifth preparation kind,
+`automation_activation`, and SubstreamAgent's `appendAutomationActivation`
+admits through the mailbox — reserve, prepare, complete, then request the loop
+activation — instead of appending a canonical turn. Its pending input carries
+`actor = 'system'` and `mode = 'queue'`, and its Bind payload is the untrusted
+automation-result wrapper rather than a participant projection.
+
+**Why:** An automation owned by a work stream delivers its result *into* that
+work stream, and a room that receives a row nobody acts on has received
+nothing. Waking is a property of the mailbox: a pending input yields an
+`activate_substream_loop` request when the loop is idle, which is how an
+external Slack message starts a run. A canonical append reaches no loop at all,
+so the first implementation landed a row that would sit unread until something
+unrelated happened to start a run — which, for a room nobody is watching, is
+never.
+
+**Considered and rejected:** Reusing `admitExternalMessage` by giving the
+automation a synthetic `ExternalActor`. The base schema requires a provider, a
+provider account, and a provider user ID, and an automation has none of them;
+filling them with placeholders would put invented provider identity in the
+column every downstream reader trusts to name a real account, and
+`projectParticipantModelMessage` would have rendered the result as an
+"EXTERNALLY ATTRIBUTED WORKSPACE MEMBER REQUEST" — attributing connector-quoted
+text to a person who does not exist. Also rejected: `steer` mode. A room mid-run
+has somebody watching it, and a scheduled result is not more urgent than what
+they are already doing.
+
+**Consequences:** A future preparation kind must extend the `expectedActor`
+mapping in `substream-loop-storage.ts` as well as the CHECK — the mapping is
+prefix-based (`human_` → human) with `automation_activation` named explicitly,
+and a kind that matches neither silently becomes `external`. The v36 rebuild is
+a referenced-parent rebuild (`pending_loop_inputs` points at the mailbox) and so
+runs with `foreignKeys: "disabled_during_rebuild"`.
+
+**Extracting a shipped migration's SQL into a helper must not reformat it.** The
+mailbox's triggers and ordering index now come from
+`pendingLoopInputMailboxGuards()`, shared so a rebuild cannot recreate a subset
+of them — but migration statements are hashed into `_sql_schema_migrations`
+verbatim, and the first version of that helper dedented the SQL by two spaces on
+the way out of the base schema. Every deployed object would have refused to boot
+with `substream_agent_do_schema_hash_mismatch`, and no unit test noticed: a
+fresh object computes both sides from the same edited source and agrees with
+itself. A local Worker holding state from before the edit is what surfaced it.
+The helper now returns the statements at their original indentation, and any
+future extraction has to be proved byte-identical against the shipped text
+rather than merely re-indented to suit its new home.
+
 ### 2026-09-01 — The note list pages, so nothing in it is out of reach
 
 **What changed:** The sidebar's note list is cursor-paged the way the

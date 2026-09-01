@@ -637,7 +637,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const openAutomation = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          window.location.hash = '/automations/new';
+          // The builder this used to open is gone; drafting is a conversation.
+          window.location.hash = '/workstreams/new';
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openAutomation);
         else if (requireActiveWorkspace('Sign in before creating an automation.')) openAutomation();

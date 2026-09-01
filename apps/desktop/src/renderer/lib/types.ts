@@ -118,6 +118,14 @@ export interface AutomationSummary {
   statusMessage?: string;
 }
 
+/**
+ * One automation in a work stream's context rail.
+ *
+ * The sidebar summary without its scope: every row in that rail belongs to the
+ * work stream showing it, and `Scope` has no value that could say so.
+ */
+export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope'>;
+
 export interface WorkstreamSummary {
   id: string;
   title: string;
@@ -439,7 +447,14 @@ export interface Message {
     | 'tool_event'
     | 'plugin_activity'
     | 'elicitation'
-    | 'system';
+    | 'system'
+    /**
+     * An automation's result, delivered into the work stream that owns it. It
+     * renders as an ordinary message authored by "Automation" — the row a
+     * colleague's message gets, with a different name in the author slot — so
+     * nothing but the author line and this type distinguishes it.
+     */
+    | 'automation_activation';
   text?: string;
   contextLabel?: string;
   mentions?: MessageMention[];
@@ -455,6 +470,29 @@ export interface Message {
   statusEvent?: {
     kind: 'assistant_turn_failed' | 'assistant_turn_stopped';
     code: string;
+  };
+  /**
+   * Set on the system row proposing an automation an agent drafted here. The
+   * room decides; the row renders as a card with what it would create.
+   */
+  draftProposed?: {
+    automationId: string;
+    automationName: string;
+    description: string;
+    triggerSummaries: string[];
+    suggestedScope: 'personal' | 'workspace' | 'workstream';
+    ready: boolean;
+  };
+  /**
+   * Set on the system row telling this room that the person an automation runs
+   * as has lost access. The row renders as a card with one action rather than
+   * as prose, because there is something to do about it.
+   */
+  principalUnavailable?: {
+    automationId: string;
+    automationName: string;
+    outgoingUserName: string | null;
+    unreachableProviders: string[];
   };
   /**
    * Durable Object events and D1 transcript rows have independent sequence
@@ -619,17 +657,6 @@ export interface AutomationDeliveryChoice {
   email?: boolean;
 }
 
-export interface AutomationCreateOptions {
-  /** Overrides the scope Rally suggested for the draft. */
-  scope?: AutomationScope;
-  delivery?: AutomationDeliveryChoice;
-  /**
-   * Pins the work stream each run of this automation creates to one OpenRouter
-   * model, ahead of the `agent-model-workstream` flag.
-   */
-  modelOverride?: AgentModelOverride;
-}
-
 export type AutomationScope = 'you' | 'workspace';
 
 export interface AutomationDetail extends AutomationSummary {
@@ -681,13 +708,6 @@ export interface AutomationDraftSummary {
   capabilities: string[];
   requiresSlackDelivery: boolean;
   requiresEmailDelivery: boolean;
-}
-
-export interface AutomationDraftResponse {
-  draftId: string;
-  assistantMessage?: string;
-  question?: AutomationDraftQuestion;
-  summary?: AutomationDraftSummary;
 }
 
 export interface WorkspaceTemplate {

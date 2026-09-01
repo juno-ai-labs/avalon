@@ -1,10 +1,9 @@
 import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
   AutomationDetailSchema as WireAutomationDetailSchema,
-  AutomationAgentSnapshotSchema as WireAutomationAgentSnapshotSchema,
-  AutomationDraftTurnAdmissionResultSchema as WireAutomationDraftTurnAdmissionResultSchema,
-  AutomationDraftSchema as WireAutomationDraftSchema,
+  AutomationExecutionPrincipalClaimSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
+  WorkstreamAutomationSummarySchema as WireWorkstreamAutomationSummarySchema,
   WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
   WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
@@ -37,8 +36,6 @@ import {
   WorkstreamSchema as WireWorkstreamSchema,
   WorkOpportunityPageSchema as WireWorkOpportunityPageSchema,
   type AutomationDraft as WireAutomationDraft,
-  type AutomationAgentSnapshot as WireAutomationAgentSnapshot,
-  type AutomationDraftTurnAdmissionResult as WireAutomationDraftTurnAdmissionResult,
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
   type ClientFeatureFlags,
@@ -79,12 +76,11 @@ import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBuck
 import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import type {
   AgentModelOverride,
-  AutomationCreateOptions,
   AutomationDeliveryTargetType,
   AutomationDetail,
-  AutomationDraftResponse,
   AutomationRunSummary,
   AutomationSummary,
+  WorkstreamAutomationSummary,
   BackgroundTask,
   CreatedWorkstream,
   DigestSchedule,
@@ -219,6 +215,10 @@ const wireNotePageSchema = z.object({
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
+const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
+const wireWorkstreamAutomationPageSchema = z.object({
+  items: z.array(WireWorkstreamAutomationSummarySchema),
+});
 const wireConnectionPageSchema = z.object({ items: z.array(WireConnectionSchema) });
 const wireTemplatePageSchema = z.object({
   items: z.array(z.object({
@@ -518,6 +518,29 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     name: automation.name,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: automation.scope === 'personal' ? 'you' : 'workspace',
+    status: automation.status,
+    ...(automation.attention ? { attention: automation.attention } : {}),
+    ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
+    ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
+    updatedAt: automation.updatedAt,
+    ...(automation.updateAvailable ? { statusMessage: 'Update available' } : {}),
+  };
+}
+
+/**
+ * The rail's rows.
+ *
+ * Written out rather than delegating to {@link mapAutomationSummary} with an
+ * invented scope: the wire row has no scope, and manufacturing one to throw
+ * away would put a value in the type that no caller may trust.
+ */
+export function mapWorkstreamAutomationSummary(
+  automation: z.infer<typeof WireWorkstreamAutomationSummarySchema>,
+): WorkstreamAutomationSummary {
+  return {
+    id: automation.id,
+    name: automation.name,
+    ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     status: automation.status,
     ...(automation.attention ? { attention: automation.attention } : {}),
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
@@ -928,6 +951,49 @@ export class RallyApi {
   async getAutomations(signal?: AbortSignal): Promise<AutomationSummary[]> {
     const page = await this.request('/automations', { schema: wireAutomationPageSchema, signal });
     return page.items.map(mapAutomationSummary);
+  }
+
+  /** What one work stream owns. Its rail is the only place these are listed. */
+  async getWorkstreamAutomations(
+    workstreamId: string,
+    signal?: AbortSignal,
+  ): Promise<WorkstreamAutomationSummary[]> {
+    const page = await this.request(
+      `/automations/workstream/${encodeURIComponent(workstreamId)}`,
+      { schema: wireWorkstreamAutomationPageSchema, signal },
+    );
+    return page.items.map(mapWorkstreamAutomationSummary);
+  }
+
+  /**
+   * Create the automation a proposal card names.
+   *
+   * No body: the draft is on the server and the card holds only what it shows.
+   * The standalone screen's `createAutomation` echoes its client-held draft
+   * back as a staleness check; there is no client-held draft here to check.
+   */
+  async acceptProposedAutomation(id: string): Promise<AutomationDetail> {
+    const raw = await this.request(`/automations/${encodeURIComponent(id)}/accept`, {
+      method: 'POST',
+      schema: WireAutomationDetailSchema,
+    });
+    this.automationDetails.set(id, raw);
+    return mapAutomationDetail(raw);
+  }
+
+  /**
+   * Take over an automation whose principal lost access.
+   *
+   * No body: the claimant is the caller. A field naming somebody else would let
+   * one person lend a colleague's credentials to a standing automation.
+   */
+  async claimAutomationExecutionPrincipal(
+    id: string,
+  ): Promise<z.infer<typeof wireExecutionPrincipalClaimSchema>> {
+    return this.request(`/automations/${encodeURIComponent(id)}/execution-principal`, {
+      method: 'POST',
+      schema: wireExecutionPrincipalClaimSchema,
+    });
   }
 
   async getAutomation(id: string, signal?: AbortSignal): Promise<AutomationDetail> {
@@ -1772,204 +1838,6 @@ export class RallyApi {
 
   getTranscriptionSocketTicket(): Promise<SocketTicket> {
     return this.request('/realtime/transcription/socket', { schema: socketTicketSchema });
-  }
-
-  admitAutomationDraftTurn(input: {
-    automationId?: string;
-    clientCreationKey?: string;
-    clientMessageId: string;
-    content: string;
-    attachmentIds?: string[];
-    inputMode?: 'typed' | 'suggested_prompt' | 'elicitation_response' | 'edit';
-  }): Promise<WireAutomationDraftTurnAdmissionResult> {
-    const path = input.automationId
-      ? `/automations/${encodeURIComponent(input.automationId)}/agent/draft/turn`
-      : '/automations/agent/draft/turn';
-    return this.request(path, {
-      method: 'POST',
-      body: {
-        ...(!input.automationId ? { clientCreationKey: input.clientCreationKey } : {}),
-        clientMessageId: input.clientMessageId,
-        content: input.content,
-        attachmentIds: input.attachmentIds ?? [],
-        inputMode: input.inputMode ?? 'typed',
-      },
-      schema: WireAutomationDraftTurnAdmissionResultSchema,
-    });
-  }
-
-  getAutomationAgentDraft(id: string, signal?: AbortSignal): Promise<WireAutomationAgentSnapshot> {
-    return this.request(`/automations/${encodeURIComponent(id)}/agent/draft`, {
-      schema: WireAutomationAgentSnapshotSchema,
-      signal,
-    });
-  }
-
-  automationDraftFromAgentSnapshot(snapshot: WireAutomationAgentSnapshot): {
-    draft: AutomationDraftResponse | null;
-    messages: Array<{
-      turnId: string;
-      transcriptSequence: number;
-      clientMessageId: string | null;
-      role: 'user' | 'assistant';
-      content: string;
-      attachmentIds: string[];
-      createdAt: number;
-    }>;
-  } {
-    const messages = snapshot.messages.map((message) => ({
-      turnId: message.turnId,
-      transcriptSequence: message.transcriptSequence,
-      clientMessageId: message.clientMessageId,
-      role: message.role,
-      content: message.content,
-      attachmentIds: message.attachmentIds,
-      createdAt: message.createdAt,
-    }));
-    if (snapshot.definition === null) return { draft: null, messages };
-    // Thrown as an `ApiError`, never as a raw `ZodError`: this runs
-    // inside the builder's render effect, where a thrown parse takes
-    // the whole screen down instead of showing the failure. The
-    // sibling stream path already answers this shape the same way.
-    const parsed = WireAutomationDraftSchema.safeParse(snapshot.definition);
-    if (!parsed.success) {
-      throw new ApiError(STALE_BUILD_RESPONSE_MESSAGE, 502, 'invalid_response', {
-        issues: parsed.error.issues,
-        path: `/automations/${snapshot.automationId}/agent/draft`,
-      });
-    }
-    const raw = parsed.data;
-    // The one place a socket-driven draft is recorded for `createAutomation`,
-    // which sends the exact definition back and is rejected by the agent
-    // when the two disagree. Before the draft moved onto the socket this
-    // was written by the compile stream instead.
-    this.drafts.set(snapshot.automationId, {
-      attachmentIds: [...new Set(snapshot.messages.flatMap((message) => message.attachmentIds))],
-      messages: snapshot.messages.map((message) => ({ role: message.role, content: message.content })),
-      draft: raw,
-    });
-    const assistantMessage = [...snapshot.messages].reverse()
-      .find((message) => message.role === 'assistant')?.content ?? '';
-    return {
-      draft: this.automationDraftResponse(
-        snapshot.automationId,
-        raw,
-        assistantMessage,
-        snapshot.pendingElicitation?.id,
-        snapshot.pendingElicitation ? new Date(snapshot.messages.at(-1)?.createdAt ?? Date.now()).toISOString() : undefined,
-      ),
-      messages,
-    };
-  }
-
-  getAutomationAgentSocketTicket(id: string): Promise<SocketTicket> {
-    return this.request(`/automations/${encodeURIComponent(id)}/agent/socket`, {
-      schema: socketTicketSchema,
-    });
-  }
-
-  stopAutomationCompiler(id: string, runId: string): Promise<void> {
-    return this.requestVoid(
-      `/automations/${encodeURIComponent(id)}/agent/draft/${encodeURIComponent(runId)}/stop`,
-      { method: 'POST' },
-    );
-  }
-
-  retryAutomationCompiler(id: string, runId: string): Promise<void> {
-    return this.requestVoid(
-      `/automations/${encodeURIComponent(id)}/agent/draft/${encodeURIComponent(runId)}/retry`,
-      { method: 'POST' },
-    );
-  }
-
-  /** The one place a compiled draft becomes what the builder screen renders,
-   * so a draft picked back up out of the sidebar reads exactly like the turn
-   * that produced it. */
-  private automationDraftResponse(
-    draftId: string,
-    raw: WireAutomationDraft,
-    assistantMessage: string,
-    elicitationId?: string,
-    elicitationPresentedAt?: string,
-  ): AutomationDraftResponse {
-    const elicitation = raw.elicitation;
-    return {
-      draftId,
-      assistantMessage,
-      ...(raw.followUpQuestion
-        ? {
-            question: {
-              id: elicitationId ?? crypto.randomUUID(),
-              presentedAt: elicitationPresentedAt ?? new Date().toISOString(),
-              prompt: elicitation?.prompt ?? raw.followUpQuestion,
-              ...(elicitation?.placeholder ? { placeholder: elicitation.placeholder } : {}),
-              responseType: elicitation?.responseType ?? 'free_text',
-              options: (elicitation?.options ?? []).map((option) => ({
-                label: option.label,
-                value: option.value,
-                ...(option.description ? { description: option.description } : {}),
-              })),
-              ...(elicitation ? { minimumSelections: elicitation.minimumSelections } : {}),
-              ...(elicitation?.maximumSelections != null ? { maximumSelections: elicitation.maximumSelections } : {}),
-              allowOther: elicitation?.allowOther ?? false,
-            },
-          }
-        : {}),
-      ...(raw.ready
-        ? {
-            summary: {
-              name: raw.name,
-              description: raw.description,
-              overview: raw.overview,
-              recommendedPlugins: raw.recommendedPlugins,
-              activitySources: activitySourcesFromTriggers(raw.triggers),
-              scope: raw.suggestedScope === 'personal' ? 'you' : 'workspace',
-              triggerSummary: raw.triggers.map(triggerSummary).join(' · '),
-              capabilities: raw.requiredCapabilities,
-              // What the compiler understood the person to ask for, not what a
-              // regex could find in its prose. The prose version pre-ticked a
-              // destination for "a ranked list of your most important emails" —
-              // a briefing *about* email — and a destination frozen by mistake
-              // could not be changed afterwards.
-              requiresSlackDelivery: raw.requestedDelivery.includes("slack_agent_dm"),
-              requiresEmailDelivery: raw.requestedDelivery.includes("email"),
-            },
-          }
-        : {}),
-    };
-  }
-
-  async createAutomation(
-    draftId: string,
-    defaultPluginIds: string[],
-    activitySourcePluginIds: Record<string, string>,
-    options: AutomationCreateOptions = {},
-  ): Promise<AutomationDetail> {
-    const state = this.drafts.get(draftId);
-    if (!state?.draft?.ready) throw new ApiError('Finish the automation conversation before creating it.', 422, 'automation_not_ready');
-    const delivery = options.delivery ?? {};
-    const raw = await this.request('/automations', {
-      method: 'POST',
-      body: {
-        draftId,
-        draft: state.draft,
-        scope: options.scope === undefined
-          ? state.draft.suggestedScope
-          : options.scope === 'you' ? 'personal' : 'workspace',
-        defaultPluginIds,
-        activitySourcePluginIds,
-        resourceIds: [],
-        deliveryTargets: [
-          ...(delivery.connection ? [{ type: delivery.connection.targetType, connectionId: delivery.connection.id }] : []),
-          ...(delivery.email ? [{ type: 'email' }] : []),
-        ],
-        ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
-      },
-      schema: WireAutomationDetailSchema,
-    });
-    this.automationDetails.set(raw.id, raw);
-    this.drafts.delete(draftId);
-    return mapAutomationDetail(raw);
   }
 
   async getWorkspaceTemplates(signal?: AbortSignal): Promise<WorkspaceTemplate[]> {

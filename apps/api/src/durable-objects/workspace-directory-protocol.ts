@@ -232,6 +232,60 @@ export const WorkspaceDirectoryNotificationStateSchema = z.strictObject({
   emailAddress: z.string().email().max(254).nullable(),
 });
 
+/**
+ * What a delivery into a work stream needs to know before it writes.
+ *
+ * Only the fence and the archive flag: a caller holding this answers "may I
+ * still write here", not "what does this room look like". Keeping the shape
+ * that small is what stops it becoming a second, staler directory read.
+ */
+export const WorkspaceDirectoryDeliveryAuthorityRequestSchema = z.strictObject({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+});
+
+export const WorkspaceDirectoryDeliveryAuthoritySchema = z.strictObject({
+  authorityGeneration: z.number().int().positive(),
+  archived: z.boolean(),
+});
+
+/**
+ * Stop hiding the work stream an automation occurrence already ran in.
+ *
+ * `scope` is the automation's, not the work stream's: a shared automation's
+ * output is shared, so a run worth reading is promoted to the workspace. There
+ * is no `workstream` here because a room's automation has nothing to expose —
+ * its results already arrive in a room people can see. Null leaves the work
+ * stream's scope alone, for a run frozen before the automation's scope was
+ * recorded beside it: revealing it narrowly is recoverable, and guessing
+ * `workspace` would hand somebody's run to everyone.
+ */
+export const WorkspaceDirectoryExposeRunRequestSchema = z.strictObject({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  scope: z.enum(["personal", "workspace"]).nullable(),
+});
+
+/**
+ * Which automations a work stream owns, for an effect that follows the room.
+ *
+ * Answered from the directory rather than by asking each automation object,
+ * because the caller does not yet know which objects to ask — that is the
+ * question. Lifecycle rides along so a caller can skip an automation an
+ * archive has nothing to do to.
+ */
+export const WorkspaceDirectoryOwnedAutomationsRequestSchema = z.strictObject({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+});
+
+export const WorkspaceDirectoryOwnedAutomationsSchema = z.strictObject({
+  automations: z.array(z.strictObject({
+    automationId: IdSchema,
+    lifecycle: z.string().min(1).max(40),
+  }).strict()),
+});
+
 export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,

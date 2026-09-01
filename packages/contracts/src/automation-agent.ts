@@ -9,6 +9,21 @@ export const AutomationIdSchema = IdSchema.brand<"AutomationId">();
 export type AutomationId = z.infer<typeof AutomationIdSchema>;
 export const asAutomationId = (value: string): AutomationId => AutomationIdSchema.parse(value);
 
+/**
+ * Who can see an automation and who may change it — and nothing else.
+ *
+ * Deliberately not `ScopeSchema`, which a work stream shares: a work stream has
+ * no third scope, and widening the shared enum would offer `workstream` in
+ * every place a room's audience is chosen.
+ *
+ * Scope is not a destination. Where a result goes follows from what the
+ * automation belongs to: a person's own destinations for `personal`, the owning
+ * room for `workstream`, and nothing at all for `workspace`, which reaches
+ * people by acting with its connector tools rather than by delivering.
+ */
+export const AutomationScopeSchema = z.enum(["personal", "workspace", "workstream"]);
+export type AutomationScope = z.infer<typeof AutomationScopeSchema>;
+
 export const AutomationLifecycleStateSchema = z.enum([
   "draft",
   "activating",
@@ -78,6 +93,40 @@ export const AutomationDraftMessageSchema = z.strictObject({
   attachmentIds: z.array(IdSchema),
   createdAt: z.number().int().nonnegative(),
 });
+
+/**
+ * What an automation delivered into a work stream, as the row's typed content.
+ *
+ * The row itself is an ordinary message authored by "Automation"; everything
+ * specific to an activation lives here, inside the `structuredContent` every
+ * other typed row already uses. No column, no table, no migration.
+ */
+export const AutomationActivationV1Schema = z.strictObject({
+  type: z.literal("automation_activation"),
+  schemaVersion: z.literal(1),
+  automationId: AutomationIdSchema,
+  /**
+   * Frozen at delivery so a later rename does not rewrite history — the same
+   * reason a delivery receipt carries the address it was sent to rather than
+   * looking one up.
+   */
+  automationName: z.string().min(1).max(300),
+  runId: IdSchema,
+  /** What an "open the run" affordance needs; the run's own child work stream. */
+  runWorkstreamId: IdSchema,
+  deliveryId: z.string().min(1).max(200),
+  /**
+   * Provenance a reader and the model can both see. It narrows nothing about
+   * what the woken run may do: an activation from an inbound email is the same
+   * kind of arrival as one from a Monday schedule, and the untrusted label is
+   * what carries the difference in how far to trust the text.
+   */
+  trigger: z.strictObject({
+    kind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+  }).strict(),
+  occurredAt: z.number().int().nonnegative(),
+});
+export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
 
 export const AutomationAgentSnapshotSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -156,6 +205,58 @@ export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+/**
+ * The card a room gets when the person an automation runs as loses access.
+ *
+ * A `system` row, because this is Rally noting something that happened *to* the
+ * work stream rather than somebody speaking in it — the opposite call from an
+ * activation, which is a message with an author. Idempotent on the automation
+ * and the outgoing principal, and edited in place as providers are repaired, so
+ * an hourly automation writes one card rather than one an hour.
+ */
+export const AutomationPrincipalUnavailableV1Schema = z.strictObject({
+  type: z.literal("automation_principal_unavailable"),
+  schemaVersion: z.literal(1),
+  automationId: AutomationIdSchema,
+  automationName: z.string().min(1).max(300),
+  /** Whose access ended. Named so the room knows why, not to attribute blame. */
+  outgoingUserId: IdSchema,
+  outgoingUserName: z.string().min(1).max(300).nullable(),
+  /**
+   * What is unreachable right now. Workspace-scoped bindings never appear here:
+   * they belong to the workspace rather than to whoever authorized them, so
+   * they keep working and the automation keeps delivering on them.
+   */
+  unreachableProviders: z.array(z.string().min(1)).min(1),
+});
+export type AutomationPrincipalUnavailableV1 =
+  z.infer<typeof AutomationPrincipalUnavailableV1Schema>;
+
+/**
+ * The card proposing an automation an agent drafted in this work stream.
+ *
+ * A `system` row: Rally noting that something now exists for the room to decide
+ * about. The draft itself lives on the automation object — this carries only
+ * what the card shows and the id the accept action needs, so a card that has
+ * scrolled out of a long feed cannot disagree with the automation it proposes.
+ */
+export const AutomationDraftProposedV1Schema = z.strictObject({
+  type: z.literal("automation_draft_proposed"),
+  schemaVersion: z.literal(1),
+  automationId: AutomationIdSchema,
+  automationName: z.string().min(1).max(300),
+  description: z.string().min(1).max(1200),
+  /** One line per trigger, already rendered: the card shows them, not parses them. */
+  triggerSummaries: z.array(z.string().min(1).max(300)).max(10),
+  suggestedScope: AutomationScopeSchema,
+  /**
+   * False when the agent still has a blocking question. The card says so and
+   * offers no accept, because accepting an unfinished draft freezes the gap.
+   */
+  ready: z.boolean(),
+});
+export type AutomationDraftProposedV1 = z.infer<typeof AutomationDraftProposedV1Schema>;
+
 /** Immutable, self-contained execution input frozen when an occurrence commits. */
 export const AutomationRunContextV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -179,6 +280,39 @@ export const AutomationRunContextV1Schema = z.strictObject({
   activitySourcePluginIds: z.record(z.string(), z.string().min(1)),
   connectorBindings: z.record(z.string(), z.unknown()),
   deliveryTargets: z.array(AutomationRunDeliveryTargetV1Schema),
+  /**
+   * The work stream that owns this automation, for a `workstream`-scoped one.
+   *
+   * Frozen here rather than resolved at delivery, and not part of
+   * `deliveryTargets`: nobody chose it. A room's automation delivers to its
+   * room because that is what it belongs to, so there is no entry to keep in
+   * agreement with the scope and no principal to record beside it.
+   */
+  owningWorkstreamId: IdSchema.nullable().default(null),
+  /**
+   * The accepted scope, frozen so exposing a run cannot widen it after the
+   * fact. Null on a context frozen before this was recorded: exposing such a
+   * run reveals it without changing its work stream's scope, because guessing
+   * wrong in the other direction shares somebody's run with the workspace.
+   */
+  scope: AutomationScopeSchema.nullable().default(null),
+  /**
+   * Where the conversation that produced this automation was happening, when
+   * that place is somewhere an occurrence can speak.
+   *
+   * Standing context, not instructions. "Ask what each person shipped" is what
+   * the automation does and belongs in text a person reads and edits; which
+   * channel this occurrence is speaking from is where it is authorized to act,
+   * and belongs where the run learns the rest of what it may work with.
+   * Writing the id into the instructions instead would freeze a literal into
+   * prose that every later edit, rename, or move would have to find and rewrite.
+   */
+  authoringOrigin: z.strictObject({
+    kind: z.literal("slack"),
+    teamId: z.string().min(1).max(255),
+    channelId: z.string().min(1).max(255),
+    channelName: z.string().min(1).max(255).nullable(),
+  }).nullable().default(null),
   modelOverride: z.string().min(1).nullable(),
   executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
   trigger: AutomationRunTriggerV1Schema,

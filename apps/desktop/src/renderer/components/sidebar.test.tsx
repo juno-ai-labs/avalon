@@ -1061,127 +1061,20 @@ describe('Sidebar work-stream markers', () => {
     );
   });
 
-  it('sinks drafts under the automations that run, newest draft first, and deletes one from its menu', async () => {
-    const onDeleteAutomation = vi.fn(async () => undefined);
-    const staleDraft: AutomationSummary = {
-      id: 'automation-2',
-      name: 'Ad hoc competitor scan',
-      scope: 'you',
-      status: 'draft',
-      updatedAt: '2026-07-28T11:00:00.000Z',
-    };
-    const freshDraft: AutomationSummary = {
-      id: 'automation-3',
-      name: 'A support escalation digest',
-      scope: 'you',
-      status: 'draft',
-      updatedAt: '2026-08-02T11:00:00.000Z',
-    };
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[staleDraft, automation, freshDraft]}
-            onDeleteAutomation={onDeleteAutomation}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    // Drafts follow the automations that run, and lead with the one touched
-    // most recently rather than the alphabetically first one.
-    const section = screen.getByRole('region', { name: 'Automations' });
-    expect([...section.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent)).toEqual([
-      'Daily product brief',
-      'A support escalation digest',
-      'Ad hoc competitor scan',
-    ]);
-    const draftRow = screen.getByRole('link', { name: /Ad hoc competitor scan/u });
-    expect(draftRow).toHaveClass('is-draft');
-    expect(draftRow.querySelector('.mini-state.draft')).not.toBeNull();
-    expect(within(draftRow).getByText('Draft')).toBeVisible();
-    // A draft has no overview worth opening — its stable automation route
-    // restores the conversation that was left unfinished.
-    expect(draftRow).toHaveAttribute('href', '/automations/automation-2');
-    expect(screen.getByRole('link', { name: /Daily product brief/u }))
-      .toHaveAttribute('href', '/automations/automation-1');
-
-    fireEvent.contextMenu(draftRow, { clientX: 120, clientY: 90 });
-
-    expect(await screen.findByRole('menuitem', { name: 'Run now' })).toHaveAttribute('data-disabled');
-    expect(screen.queryByRole('menuitem', { name: 'Archive' })).not.toBeInTheDocument();
-    // Named for the tombstone it writes, and confirmed before it
-    // writes it — an "Archive draft" that deleted for good sat
-    // directly above the delete that did confirm.
-    expect(screen.queryByRole('menuitem', { name: 'Archive draft' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete draft' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Delete draft' });
-    expect(within(dialog).getByText(/no way to bring a draft back/u)).toBeVisible();
-    expect(onDeleteAutomation).not.toHaveBeenCalled();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(onDeleteAutomation).toHaveBeenCalledWith(staleDraft));
-    expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'automation_action_completed' }),
-    );
-  });
-
-  it('marks only the open draft, and not New automation, as the active entry', () => {
-    const openDraft: AutomationSummary = {
-      id: 'automation-2',
-      name: 'Ad hoc competitor scan',
-      scope: 'you',
-      status: 'draft',
-      updatedAt: '2026-07-28T11:00:00.000Z',
-    };
-    const otherDraft: AutomationSummary = {
-      id: 'automation-3',
-      name: 'A support escalation digest',
-      scope: 'you',
-      status: 'draft',
-      updatedAt: '2026-08-02T11:00:00.000Z',
-    };
-    render(
-      <MemoryRouter initialEntries={['/automations/automation-2']}>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automations={[openDraft, otherDraft]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    // Each durable draft owns the same stable route it keeps after acceptance.
-    expect(screen.getByRole('link', { name: /Ad hoc competitor scan/u })).toHaveClass('is-active');
-    expect(screen.getByRole('link', { name: /A support escalation digest/u })).not.toHaveClass('is-active');
-    expect(screen.getByRole('link', { name: 'New automation' })).not.toHaveClass('is-active');
-  });
-
-  it('reports a draft deletion that the server rejected instead of failing silently', async () => {
+  it('does not list a draft, which no longer has a screen to open', () => {
     const draft: AutomationSummary = {
-      id: 'automation-4',
-      name: 'Half-written monitor',
+      id: 'automation-2',
+      name: 'Ad hoc competitor scan',
       scope: 'you',
       status: 'draft',
-      updatedAt: '2026-08-02T11:00:00.000Z',
+      updatedAt: '2026-07-28T11:00:00.000Z',
     };
     render(
       <MemoryRouter>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[draft]}
-            onDeleteAutomation={vi.fn(async () => {
-              throw new Error('The automation could not be reached.');
-            })}
+            automations={[draft, automation]}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[]}
@@ -1190,17 +1083,17 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Half-written monitor/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete draft' }));
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete draft' })).getByRole('button', { name: 'Delete' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Delete draft' });
-    await waitFor(() => expect(within(dialog).getByText('The automation could not be reached.')).toBeVisible());
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete draft' })).not.toBeInTheDocument());
-    // The row is still there, which is what the dialog said.
-    expect(screen.getByRole('link', { name: /Half-written monitor/u })).toBeVisible();
+    // A draft is a conversation in progress and lives where that conversation
+    // is — a work stream's rail, or nowhere at all if it was written on the
+    // builder that no longer exists. A row here would lead to "this automation
+    // has not been created yet", which is what it did until this filter.
+    const section = screen.getByRole('region', { name: 'Automations' });
+    expect([...section.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent))
+      .toEqual(['Daily product brief']);
+    expect(screen.queryByText('Ad hoc competitor scan')).toBeNull();
+    // The server stopped sending drafts too; this is the second guard, for a
+    // client holding a socket-pushed list from before that change.
+    expect(section.querySelector('.automation-row.is-draft')).toBeNull();
   });
 
   it('deletes an automation only after the confirmation dialog', async () => {

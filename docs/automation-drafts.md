@@ -336,6 +336,37 @@ creation, not at draft time.
 
 ## Changelog
 
+### 2026-09-01 — The standalone draft screen is retired
+
+**What changed:** `new-automation.tsx` and its tests are deleted.
+`/automations/:id` serves durable automations only; `/automations/new` and the
+`rallywithai://automations/new` deep link redirect to a new work stream, and the
+sidebar's "New automation" does the same. An agent drafting in a work stream
+proposes the automation as a card in that feed, and accepting it calls the same
+`acceptDraft` the screen used to call.
+
+**Why:** A draft *is* a conversation in progress. The screen was a second place
+for that conversation to happen, with its own feed, its own draft state, and its
+own accept — and the work stream feed it duplicated had grown every feature the
+draft surface lacked. One conversation surface, in the place the conversation
+actually happened.
+
+**Considered and rejected:** Keeping the screen for drafts already in flight.
+That makes the retirement wait on other people's half-finished work for a
+surface being removed because it should not exist, and a read-only view with an
+Accept button is a surface built solely to bury the dead. Those drafts are
+deleted instead, with the count taken first —
+`scripts/retire-standalone-automation-drafts.mjs` — because losing work you
+started is worth a sentence even when the work was minutes old. Also rejected:
+removing the sidebar affordance. People look for it there; what it opens is now
+the conversation rather than a builder.
+
+**Consequences:** A draft authored inside a work stream is not stranded and is
+never deleted by that script — its room is still open and its proposal card is
+still in the feed. `automation_builder` stays in the telemetry union because
+rows recorded before this still carry it, but nothing reports it any more: a
+draft opens the same overview an accepted automation does.
+
 ### 2026-08-28 — Draft authority moves into AutomationAgent
 
 **What changed:** New automation navigation creates no server state. First-turn

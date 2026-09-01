@@ -124,6 +124,18 @@ const AUTOMATION_ERROR_RESPONSES = {
   // "Request" is the HTTP object, not anything on the screen, and "draft" is
   // already the sidebar's word for the thing being created.
   automation_draft_id_required: { status: 422, message: "This automation has no draft to create from." },
+  // A draft written outside a work stream has no room to belong to, and one
+  // cannot be supplied: the request carries no room by design.
+  automation_workstream_scope_requires_authoring_room: {
+    status: 422,
+    message: "Only an automation drafted inside a work stream can belong to one.",
+  },
+  // 403 rather than 422: the request is well formed and was valid when the
+  // draft was proposed. What changed is the caller's standing in the room.
+  automation_workstream_participation_required: {
+    status: 403,
+    message: "Only a participant of this work stream can create an automation that belongs to it.",
+  },
 } satisfies Readonly<Record<string, AutomationErrorResponse>>;
 
 /**
