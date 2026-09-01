@@ -53,12 +53,13 @@ runtimes breaks their input/output inference.
 
 The compatibility runtime does not authorize a looser contract. Integer chains
 include `.safe()` because Zod v4's `.int()` rejects integers JavaScript cannot
-represent safely. UUID strings use `STRICT_UUID_PATTERN` because Zod v3's
-generic UUID check accepts variants Zod v4 refuses. Provider-facing JSON Schema
-goes through `providerJsonSchema`, which preserves native-v4 default, UUID, and
-output-required behavior. Code that classifies failures from both schema
-runtimes uses `isZodValidationError`; a single-version `instanceof` check loses
-the other runtime's diagnostics.
+represent safely. This applies to every `zod/v3` schema, including one declared
+inside an explicit mixed-runtime adapter file. UUID strings use
+`STRICT_UUID_PATTERN` because Zod v3's generic UUID check accepts variants Zod
+v4 refuses. Provider-facing JSON Schema goes through `providerJsonSchema`, which
+preserves native-v4 default, UUID, and output-required behavior. Code that
+classifies failures from both schema runtimes uses `isZodValidationError`; a
+single-version `instanceof` check loses the other runtime's diagnostics.
 
 `scripts/check-api-startup-schema-runtime.mjs` enforces these source boundaries.
 Adding a genuine v4-only operation means isolating and documenting the narrow
