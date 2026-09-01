@@ -40,8 +40,8 @@ interface AgentModelPresentation {
 
 /**
  * How each id reads in the menu. Split into a provider and a short name rather
- * than shown as the raw OpenRouter id: a dozen ids from four vendors are a wall
- * of slashes, and the trigger has room for a name but not for a path.
+ * than shown as the raw OpenRouter id: a menu of them is a wall of slashes, and
+ * the trigger has room for a name but not for a path.
  *
  * Exhaustive over the contract's list by type, so adding a model there fails
  * the build here rather than shipping a selector entry labelled with its id.
