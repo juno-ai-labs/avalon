@@ -233,6 +233,31 @@ export const AutomationPrincipalUnavailableV1Schema = z.object({
 export type AutomationPrincipalUnavailableV1 =
   z.infer<typeof AutomationPrincipalUnavailableV1Schema>;
 
+/**
+ * The card proposing an automation an agent drafted in this work stream.
+ *
+ * A `system` row: Rally noting that something now exists for the room to decide
+ * about. The draft itself lives on the automation object — this carries only
+ * what the card shows and the id the accept action needs, so a card that has
+ * scrolled out of a long feed cannot disagree with the automation it proposes.
+ */
+export const AutomationDraftProposedV1Schema = z.object({
+  type: z.literal("automation_draft_proposed"),
+  schemaVersion: z.literal(1),
+  automationId: AutomationIdSchema,
+  automationName: z.string().min(1).max(300),
+  description: z.string().min(1).max(1200),
+  /** One line per trigger, already rendered: the card shows them, not parses them. */
+  triggerSummaries: z.array(z.string().min(1).max(300)).max(10),
+  suggestedScope: AutomationScopeSchema,
+  /**
+   * False when the agent still has a blocking question. The card says so and
+   * offers no accept, because accepting an unfinished draft freezes the gap.
+   */
+  ready: z.boolean(),
+}).strict();
+export type AutomationDraftProposedV1 = z.infer<typeof AutomationDraftProposedV1Schema>;
+
 /** Immutable, self-contained execution input frozen when an occurrence commits. */
 export const AutomationRunContextV1Schema = z.strictObject({
   schemaVersion: z.literal(1),

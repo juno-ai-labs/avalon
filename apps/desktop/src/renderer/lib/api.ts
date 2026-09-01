@@ -973,6 +973,22 @@ export class RallyApi {
   }
 
   /**
+   * Create the automation a proposal card names.
+   *
+   * No body: the draft is on the server and the card holds only what it shows.
+   * The standalone screen's `createAutomation` echoes its client-held draft
+   * back as a staleness check; there is no client-held draft here to check.
+   */
+  async acceptProposedAutomation(id: string): Promise<AutomationDetail> {
+    const raw = await this.request(`/automations/${encodeURIComponent(id)}/accept`, {
+      method: 'POST',
+      schema: WireAutomationDetailSchema,
+    });
+    this.automationDetails.set(id, raw);
+    return mapAutomationDetail(raw);
+  }
+
+  /**
    * Take over an automation whose principal lost access.
    *
    * No body: the claimant is the caller. A field naming somebody else would let

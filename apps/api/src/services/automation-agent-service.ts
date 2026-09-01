@@ -147,6 +147,42 @@ export class AutomationAgentService {
     return { url: url.toString(), ticket };
   }
 
+  /**
+   * Accept the draft an agent proposed in a work stream, by its id alone.
+   *
+   * The other entry point takes the draft in the request because the standalone
+   * screen holds it client-side and echoes it back as a staleness check. A feed
+   * card holds nothing: the draft lives on the object, the card carries only
+   * what it displays, and re-sending a copy the client never had would be
+   * inventing a check rather than making one.
+   *
+   * Same authority underneath — one `acceptDraft`, two ways in.
+   */
+  async acceptAuthoredDraft(automationId: string): Promise<AutomationDetail> {
+    const id = asAutomationId(automationId);
+    const agent = await this.agent(id);
+    const snapshot: AutomationAgentSnapshot = await withAutomationErrors(() => agent.readSnapshot({
+      automationId: id,
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+    }));
+    if (snapshot.definition === null) automationRefusal("automation_definition_not_ready");
+    const draft = AutomationDraftSchema.parse(snapshot.definition);
+    if (!draft.ready) automationRefusal("automation_definition_not_ready");
+    return this.accept({
+      draftId: id,
+      draft,
+      scope: draft.suggestedScope,
+      // Whatever the drafting conversation recommended, and nothing more: a
+      // plugin nobody chose is a connection nobody agreed to bind.
+      defaultPluginIds: [],
+      activitySourcePluginIds: {},
+      resourceIds: [],
+      deliveryTargets: [],
+      modelOverride: null,
+    });
+  }
+
   async accept(rawInput: unknown): Promise<AutomationDetail> {
     const input = CreateAutomationRequestSchema.parse(rawInput);
     if (!input.draftId) automationRefusal("automation_draft_id_required");

@@ -1860,6 +1860,26 @@ export async function compileAutomationDraft(
 }
 
 /**
+ * One trigger, in the one line a proposal card shows.
+ *
+ * The card renders what it is given rather than parsing a trigger union: a
+ * client that had to know every trigger shape would need updating for each new
+ * one, and a card is the wrong place to learn that a shape it does not know has
+ * appeared.
+ */
+function automationTriggerLine(trigger: AutomationDraft["triggers"][number]): string {
+  switch (trigger.type) {
+    case "manual": return "Run by hand";
+    case "calendar": return trigger.summary;
+    case "interval": return trigger.summary;
+    case "connector_activity": return `${trigger.connectorType}: ${trigger.eventTypes.join(", ")}`;
+    case "semantic_activity": return trigger.condition;
+    case "resource_watch": return "When the attached resource changes";
+    case "webhook": return `Webhook: ${trigger.eventTypes.join(", ")}`;
+  }
+}
+
+/**
  * The drafting tools, for a work-stream run.
  *
  * The catalog is filled on activation rather than at assembly: this plugin is
@@ -1910,7 +1930,7 @@ function createAvalonAutomationsPlugin(
             asAutomationId(authoredAutomationId),
           ),
         );
-        return agent.admitAuthoredDraft({
+        const admitted = await agent.admitAuthoredDraft({
           schemaVersion: 1,
           automationId: authoredAutomationId,
           workspaceId: input.workspaceId,
@@ -1931,6 +1951,38 @@ function createAvalonAutomationsPlugin(
             : null,
           draft,
         });
+        // The proposal, in the feed where the conversation happened. Posted
+        // after the draft exists so a card can never name an automation the
+        // accept action would not find.
+        const substream = await durableObjectStubForWorkspace(
+          env,
+          env.SUBSTREAM_AGENTS,
+          asWorkspaceId(input.workspaceId),
+          substreamAgentName(
+            env.AVALON_REGION,
+            asWorkspaceId(input.workspaceId),
+            asWorkstreamId(input.workstreamId),
+            asSubstreamId("0"),
+          ),
+        );
+        await substream.appendDraftProposedCard({
+          schemaVersion: 1,
+          workspaceId: input.workspaceId,
+          workstreamId: input.workstreamId,
+          definitionRevision: admitted.definitionRevision,
+          occurredAt: Date.now(),
+          card: {
+            type: "automation_draft_proposed",
+            schemaVersion: 1,
+            automationId: asAutomationId(authoredAutomationId),
+            automationName: draft.name,
+            description: draft.description,
+            triggerSummaries: draft.triggers.map(automationTriggerLine),
+            suggestedScope: draft.suggestedScope,
+            ready: draft.ready,
+          },
+        });
+        return admitted;
       },
       // Evaluator rules belong to an automation that exists. A draft written
       // here has one only after its first submission, so this refuses rather

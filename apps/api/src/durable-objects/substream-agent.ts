@@ -4,6 +4,7 @@ import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
   AutomationActivationV1Schema,
+  AutomationDraftProposedV1Schema,
   AutomationPrincipalUnavailableV1Schema,
   type AutomationRunContextV1,
   ExecutionPrincipalSchema,
@@ -1292,6 +1293,74 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return {
         outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
         code: appended.outcome === "replayed" ? "resource_update_replayed" : "resource_update_appended",
+      };
+    }, true);
+  }
+
+  /**
+   * Propose an automation an agent drafted here, as a card the room can accept.
+   *
+   * Idempotent on the automation and its revision: refining a draft writes a
+   * new card rather than a duplicate of the old one, so the feed reads as the
+   * conversation it was — proposal, question, better proposal — and the card
+   * somebody accepts is the one they were looking at.
+   */
+  async appendDraftProposedCard(input: unknown): Promise<{
+    outcome: "appended" | "replayed" | "refused";
+    code: string;
+  }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      workspaceId: z.string().min(1),
+      workstreamId: z.string().min(1),
+      definitionRevision: z.number().int().positive(),
+      occurredAt: z.number().int().nonnegative(),
+      card: AutomationDraftProposedV1Schema,
+    }).strict().parse(input);
+    const card = request.card;
+    const clientMessageId =
+      `automation:${card.automationId}:draft:${request.definitionRevision}`;
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return { outcome: "refused", code: "workstream_destination_mismatch" };
+    }
+    if (this.messages.messageByClientId({ clientMessageId })) {
+      return { outcome: "replayed", code: "automation_draft_card_replayed" };
+    }
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(request.occurredAt),
+      clientMessageId,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      // Stands alone for a reader with no card: a Slack mirror, a
+      // notification, a client that does not know this kind.
+      text: card.ready
+        ? `Proposed an automation: ${card.automationName}. ${card.description}`
+        : `Drafting an automation: ${card.automationName}. Still needs an answer before it can be created.`,
+      structuredContentJson: JSON.stringify(card),
+      producedByRunId: null,
+      now: request.occurredAt,
+    });
+    return this.product.commitRuntimeMutation(() => {
+      const authority = this.ctx.storage.sql.exec<{ archived_at: number | null }>(
+        `SELECT archived_at FROM workstream WHERE id = 1`,
+      ).toArray()[0];
+      if (!authority) return { outcome: "refused" as const, code: "workstream_not_found" };
+      if (authority.archived_at !== null) {
+        return { outcome: "refused" as const, code: "workstream_archived" };
+      }
+      const appended = this.messages.appendPreparedMessage(prepared);
+      return {
+        outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
+        code: appended.outcome === "replayed"
+          ? "automation_draft_card_replayed"
+          : "automation_draft_card_appended",
       };
     }, true);
   }

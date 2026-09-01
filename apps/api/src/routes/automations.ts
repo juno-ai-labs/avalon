@@ -157,6 +157,13 @@ automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("head
 // The claimant is always the caller, so this body is empty by design: a field
 // naming somebody else would let one person lend a colleague's credentials to a
 // standing automation.
+// The feed card's accept. Takes no body: the draft is on the object, and the
+// card carries only what it shows.
+automationRoutes.post("/:id/accept", zValidator("param", idParam), async (c) =>
+  c.json(AutomationDetailSchema.parse(
+    await new AutomationAgentService(c.env, getAuth(c))
+      .acceptAuthoredDraft(c.req.valid("param").id),
+  )));
 automationRoutes.post("/:id/execution-principal", zValidator("param", idParam), async (c) =>
   c.json(AutomationExecutionPrincipalClaimSchema.parse(
     await new AutomationAgentService(c.env, getAuth(c))
