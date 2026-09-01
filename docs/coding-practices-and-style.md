@@ -40,6 +40,28 @@ versioned data. Do not trade an import-cycle problem for untyped `fetch`,
 `unknown` payloads, or duplicated interfaces. Put a shared contract in the
 lowest layer both sides can import without importing an implementation.
 
+## API schemas use the startup-efficient runtime
+
+Schema-heavy production modules in `apps/api`, `packages/contracts`, and
+`packages/connectors` import `zod/v3`. Bind and the harness features that compile
+JSON Schema retain an explicit Zod v4 compatibility edge. Do not move an
+ordinary validation schema back to the bare `zod` export: Zod v4's classic API
+allocates substantially more objects while the Worker evaluates its static
+module graph.
+
+The compatibility runtime does not authorize a looser contract. Integer chains
+include `.safe()` because Zod v4's `.int()` rejects integers JavaScript cannot
+represent safely. UUID strings use `STRICT_UUID_PATTERN` because Zod v3's
+generic UUID check accepts variants Zod v4 refuses. Provider-facing JSON Schema
+goes through `providerJsonSchema`, which preserves native-v4 default, UUID, and
+output-required behavior. Code that classifies failures from both schema
+runtimes uses `isZodValidationError`; a single-version `instanceof` check loses
+the other runtime's diagnostics.
+
+`scripts/check-api-startup-schema-runtime.mjs` enforces these source boundaries.
+Adding a genuine v4-only operation means isolating and documenting the narrow
+compatibility file rather than widening the allowlist around ordinary schemas.
+
 ## Testing
 
 Repository-wide rules should have a mechanical check when the syntax can be
@@ -50,6 +72,31 @@ native host-language calls such as Objective-C's `ObjC.import` are not
 JavaScript module imports.
 
 ## Changelog
+
+### 2026-09-01 — API schema construction leaves the Zod v4 hot path
+
+**What changed:** Schema-heavy API, contract, and connector modules now use the
+shipped Zod v3-compatible runtime. A checked compatibility layer preserves safe
+integer, strict UUID, provider JSON-Schema, and cross-version error behavior;
+Bind's JSON-Schema compiler remains on Zod v4.
+
+**Why:** Cloudflare rejected a fully verified 7.16 MiB Global API artifact with
+startup CPU error 10021. Its retained profile attributed most active startup to
+Zod v4 schema constructors and garbage collection. In the exact merged bundle,
+local active startup was 205.4 ms including 109.9 ms of GC; the compatible
+runtime reduced five repeated samples to 72.5–76.7 ms including 23.7–28.7 ms of
+GC.
+
+**Considered and rejected:** Retrying or minifying the same eager graph leaves
+deployment dependent on validator timing. Request-time imports violate the
+static-import rule. Another service split was rejected because the remaining
+schemas enforce regional routes, RPC, and Durable Object authority rather than
+one coherent stateless provider capability.
+
+**Consequences:** Both Zod runtimes remain in the artifact, so this optimizes
+initialization rather than source bytes. New API schemas use `zod/v3` and its
+checked semantic shims; v4-only work stays at the named compatibility edge.
+There is no data migration.
 
 ### 2026-08-30 — Module imports are always static
 
