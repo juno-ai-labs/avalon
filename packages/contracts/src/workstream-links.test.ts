@@ -8,10 +8,20 @@ import {
 } from "./workstream-links";
 
 const WORKSTREAM_ID = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
+const WORKSPACE_ID = "00000000-0000-7000-8000-000000000009";
 const WEB_BASE_URL = "https://rallywith.ai";
 const LEGACY_WEB_BASE_URL = "https://with-avalon.com";
 
 describe("canonical work-stream links", () => {
+  it("mints one workspace-addressed canonical and desktop shape", () => {
+    const target = { region: "eu", workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
+
+    expect(workstreamCanonicalUrl(WEB_BASE_URL, target as never))
+      .toBe(`${WEB_BASE_URL}/app/workspaces/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`);
+    expect(workstreamDeepLink(target as never))
+      .toBe(`rallywithai://workstreams/${WORKSTREAM_ID}?region=eu&workspace=${WORKSPACE_ID}`);
+  });
+
   it("mints an HTTPS link that carries the id in the path", () => {
     expect(workstreamCanonicalUrl(WEB_BASE_URL, WORKSTREAM_ID))
       .toBe(`${WEB_BASE_URL}/app/workstreams/${WORKSTREAM_ID}`);
@@ -50,6 +60,13 @@ describe("canonical work-stream links", () => {
 });
 
 describe("reading a shared work-stream link", () => {
+  it("reads a workspace-addressed canonical link", () => {
+    expect(parseWorkstreamLink(
+      `${WEB_BASE_URL}/app/workspaces/eu/${WORKSPACE_ID}/workstreams/${WORKSTREAM_ID}`,
+      { webBaseUrl: WEB_BASE_URL },
+    )).toBe(WORKSTREAM_ID);
+  });
+
   it("reads the canonical link", () => {
     expect(parseWorkstreamLink(`${WEB_BASE_URL}/app/workstreams/${WORKSTREAM_ID}`, { webBaseUrl: WEB_BASE_URL }))
       .toBe(WORKSTREAM_ID);
