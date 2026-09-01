@@ -276,7 +276,8 @@ Put runtime-dependent coverage in `apps/api/test-workers/`:
    writes differ from logical rows.
 4. Assert the domain outcome and stored fence, not the test fixture's counter.
 5. Prove the test can fail by temporarily restoring the incorrect decision and
-   observing the named domain failure.
+   observing the named domain failure — this is a rung-1 test, so
+   [the rule](testing.md#prove-the-test-can-fail) applies in full.
 
 Use `runInDurableObject` only for inspection or runtime setup that cannot be
 expressed through the public object contract. Product behavior should enter

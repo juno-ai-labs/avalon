@@ -77,9 +77,13 @@ defined in [`docs/sandbox.md`](docs/sandbox.md).
 ## Quality gates
 
 Every change must leave `pnpm lint` (zero warnings), `pnpm typecheck`, and
-`pnpm test` green. CI additionally runs `pnpm test:scripts`, both Wrangler
-dry-run builds, the desktop release invariants, and a Gitleaks scan over the full
-history.
+`pnpm test` green in CI. Run lint and typecheck locally as well — both cache, so
+a warm run is seconds and there is nothing to scope. Tests are the one to scope:
+run the ones that cover what you touched, and
+[`docs/testing.md`](docs/testing.md#how-much-to-run) says when a full run is
+worth the minutes and when it is waste. CI additionally runs `pnpm test:scripts`,
+both Wrangler dry-run builds, the desktop release invariants, and a Gitleaks scan
+over the full history.
 
 `pnpm test:scripts` covers only the repository's own `scripts/`. The release
 tooling under `apps/desktop/scripts/` — the planner and the workflow invariants —
@@ -110,10 +114,20 @@ read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
   rather than stubbing a database. A double stands in for something that
   *cannot* run here — Workers AI, Vectorize, Flagship, a provider's API — never
   for setup that was inconvenient.
-- **Prove every test can fail.** Break the code it covers, watch that test fail
-  for the reason its name claims, then revert. An assertion that survives the
-  break is asserting on a fixture, a mock's own configuration, or a value the
-  subject computed — none of which is coverage.
+- **Prove every integration test can fail.** For a `test-workers/` test, a Node
+  test exercising a query, schema, route, service, or object against the real
+  migrations, or a local smoke or e2e lane, break the behavior it covers with one
+  edit in the production code, watch that test fail for the reason its name
+  claims, then revert. Break it the way production would break — a dropped write,
+  a skipped check, a stale read — not by flipping the literal the assertion
+  mirrors, which proves nothing. Unit-level tests, where the only break available
+  is the literal the assertion mirrors, are exempt. Prove each behavior once
+  rather than each case, and re-run only that one file: never the package, never
+  `pnpm test`. An
+  assertion that survives the break is asserting on a fixture, a mock's own
+  configuration, or a value the subject computed — none of which is coverage.
+  [`docs/testing.md`](docs/testing.md#prove-the-test-can-fail) has the scope in
+  full, and the catalogue of assertions that survive a break.
 
 ## Flaky tests
 
@@ -143,7 +157,9 @@ resolution here.
   on another in the same file having run first; cross-file interference only
   appears in a suite-wide rerun, where `--no-file-parallelism` isolates it.
 - Confirm the fix by looping the test again, then run the full `pnpm test` once
-  more before calling the change done.
+  more before calling the change done. This is the deliberate exception to
+  [how much to run](docs/testing.md#how-much-to-run): cross-file interference is
+  what makes a flake, and a narrow run is where it hides.
 - Fix the cause. A flake rooted in code the change does not touch may be left
   unfixed — only then, and only if it is named in the report and the pull
   request description. Never leave an intermittent failure unmentioned.
