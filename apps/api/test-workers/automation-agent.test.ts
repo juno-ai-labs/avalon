@@ -440,6 +440,35 @@ describe("AutomationAgent", () => {
         draft: ACTIVITY_DEFINITION,
       })).rejects.toThrow("automation_evaluator_rules_required");
 
+      // And an empty set staged on this run is refused too. Without this the
+      // regression would pass against the old presence-only guard, because the
+      // inheritance fix above means there is no row for it to find either way:
+      // this is the assertion that pins the guard to the rules rather than the
+      // row.
+      await instance.setEvaluatorRules({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        compilerRunId: second.compilerRunId,
+        providerCallId: "call-rules-cleared",
+        inputHash: "sha256:rules-cleared",
+        evaluatorRules: { schemaVersion: 1, evaluators: [] },
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM automation_draft_evaluator_sets WHERE compiler_run_id = ?`,
+        second.compilerRunId,
+      ).one().count).toBe(1);
+      await expect(instance.stageDraftSubmission({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        compilerRunId: second.compilerRunId,
+        providerCallId: "call-submit-activity-empty",
+        inputHash: "sha256:submit-activity-empty",
+        draft: ACTIVITY_DEFINITION,
+      })).rejects.toThrow("automation_evaluator_rules_required");
+
       // Setting real rules is what unblocks it, and those rules do carry
       // forward to the turn after this one.
       await instance.setEvaluatorRules({

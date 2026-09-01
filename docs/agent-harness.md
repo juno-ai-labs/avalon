@@ -1150,11 +1150,15 @@ silently return every test to the shared key while each still passes alone.
 **What changed:** `renderAutomationCompilerMessages` takes
 `currentEvaluatorRules` and renders one user-role message beside the existing
 draft state: the staged rule set, or that there is none and that submitting an
-external-event draft without calling `automation_set_evaluator_rules` is
-refused. It renders only alongside a draft — on the first turn there is nothing
-to have set rules for, and "none" there reads as a missing step rather than the
-ordinary starting state. The standing policy is unchanged, so the cached block
-and its byte ceiling are untouched.
+external-event draft without calling `automation_set_evaluator_rules` will be
+refused. It is suppressed only when the turn has neither a draft nor rules — on
+a genuine first turn there is nothing to have set rules for, and "none" there
+reads as a missing step rather than the ordinary starting state. Rules without a
+draft is a real state rather than a defensive case: `retryCompilerRun` reuses
+the failed run's id and `settleCompilerFailure` leaves its staged set in place,
+so a retried first turn has rules its own submission will be checked against
+while no definition has settled. The standing policy is unchanged, so the cached
+block and its byte ceiling are untouched.
 
 **Why:** the draft state carries a draft's triggers but not the rules that
 decide which of their events qualify; the two are staged separately, and only

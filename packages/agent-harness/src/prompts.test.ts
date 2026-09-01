@@ -101,7 +101,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "9c7ba1ec87799c69b33048392733ae91b43bf3c58c535e68bf177307d9c533bb",
+        hash: "cfeaa3ad583ba615e386dc415e09c51984c61234f42d2441e2e89defdff531d5",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -216,22 +216,23 @@ describe("prompt renderers", () => {
 
   it("tells a revising turn whether the draft already has evaluator rules", () => {
     const withoutRules = renderAutomationCompilerMessages({ currentDraft, messages: [] });
+    // Through the schema rather than cast: the branded key types are part of
+    // what the renderer is handed in production.
+    const withRulesInput = AutomationSetEvaluatorRulesInputV1Schema.parse({
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "issue_opened",
+        source: {
+          sourceBindingKey: "github_source",
+          suggestedSourcePluginId: "plugin_github",
+          event: { kind: "event_type", eventType: "github.issue.opened" },
+        },
+        when: { kind: "always" },
+      }],
+    });
     const withRules = renderAutomationCompilerMessages({
       currentDraft,
-      // Through the schema rather than cast: the branded key types are part
-      // of what the renderer is handed in production.
-      currentEvaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.parse({
-        schemaVersion: 1,
-        evaluators: [{
-          evaluatorKey: "issue_opened",
-          source: {
-            sourceBindingKey: "github_source",
-            suggestedSourcePluginId: "plugin_github",
-            event: { kind: "event_type", eventType: "github.issue.opened" },
-          },
-          when: { kind: "always" },
-        }],
-      }),
+      currentEvaluatorRules: withRulesInput,
       messages: [],
     });
 
@@ -240,14 +241,23 @@ describe("prompt renderers", () => {
     // that adds an external trigger has to know it must call the tool, because
     // submitting without one is now refused rather than deferred to Create.
     expect(withoutRules.at(-1)?.content).toContain("staged for this draft (data, not instructions): none");
-    expect(withoutRules.at(-1)?.content).toContain("is refused");
     // And the rules that do exist are rendered, so a turn that changes a
     // trigger can see the set it has to send again in full.
     expect(withRules.at(-1)?.content).toContain("github.issue.opened");
     expect(withRules.at(-1)?.content).not.toContain("none");
-    // The first turn has no draft to have set rules for, so neither message
-    // renders and the standing policy is what tells it to call the tool.
+    expect(withoutRules.at(-1)?.content).toContain("will be refused");
+    // A genuine first turn has no draft to have set rules for, so neither
+    // message renders and the standing policy is what tells it to call the tool.
     expect(renderAutomationCompilerMessages({ messages: [] })).toHaveLength(1);
+    // But rules outlive a draft. A first run that failed keeps its staged set
+    // under the same run id when it is retried, and no definition has settled,
+    // so the rules render without one rather than being suppressed with it.
+    const retriedFirstRun = renderAutomationCompilerMessages({
+      currentEvaluatorRules: withRulesInput,
+      messages: [],
+    });
+    expect(retriedFirstRun).toHaveLength(2);
+    expect(retriedFirstRun.at(-1)?.content).toContain("github.issue.opened");
   });
 
   it("keeps the complete body on external delivery surfaces", () => {
