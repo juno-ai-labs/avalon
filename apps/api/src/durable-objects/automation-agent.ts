@@ -584,6 +584,27 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
       consumed_at INTEGER NOT NULL CHECK (consumed_at >= 0)
     ) STRICT`,
   ],
+}, {
+  version: 8,
+  description: "what a completed run's result was worth, decided once per run",
+  statements: [
+    // Written once, before the delivery loop runs, and read by it. A delivery
+    // retry after a crash re-reads the disposition rather than classifying
+    // again, which is what stops one occurrence being judged differently the
+    // second time and delivering what the first attempt withheld.
+    `ALTER TABLE automation_runs ADD COLUMN disposition TEXT
+       CHECK (disposition IS NULL OR disposition IN ('done', 'deliver', 'expose_workstream'))`,
+    // Two ways to get an answer, and they are worth telling apart: "the
+    // classifier decided" and "the classifier was unreachable and we delivered
+    // anyway" produce identical deliveries and completely different follow-up.
+    // A run of `default` rows across a workspace is the shape a routing outage
+    // takes here — nothing errors, everything delivers, and only this says so.
+    `ALTER TABLE automation_runs ADD COLUMN disposition_source TEXT
+       CHECK (disposition_source IS NULL OR disposition_source IN ('classified', 'default'))`,
+    `ALTER TABLE automation_runs ADD COLUMN disposition_reason TEXT`,
+    `ALTER TABLE automation_runs ADD COLUMN disposition_at INTEGER
+       CHECK (disposition_at IS NULL OR disposition_at >= 0)`,
+  ],
 }];
 
 interface ActiveCompilerRow extends Record<string, SqlStorageValue> {
