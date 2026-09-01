@@ -2269,7 +2269,7 @@ async function requestOnboardingSession(
     || parsed.data.workspace.region !== expectedRegion
     || (expectedWorkspaceId !== undefined && parsed.data.workspace.id !== expectedWorkspaceId)
   ) {
-    throw new Error('Rally returned a workspace session for the wrong region');
+    throw new Error('Rally returned a workspace session for the wrong workspace or region');
   }
   if (parsed.data.user.email.toLocaleLowerCase('en-US') !== identity.user.email.toLocaleLowerCase('en-US')) {
     throw new Error('Rally returned a workspace session for another account');
