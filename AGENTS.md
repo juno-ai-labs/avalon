@@ -121,8 +121,9 @@ read [`docs/durable-object-sqlite.md`](docs/durable-object-sqlite.md).
   claims, then revert. Break it the way production would break — a dropped write,
   a skipped check, a stale read — not by flipping the literal the assertion
   mirrors, which proves nothing. Unit-level tests, where the only break available
-  is the literal the assertion mirrors, are exempt. Prove each behavior once rather than each case,
-  and re-run only that one file: never the package, never `pnpm test`. An
+  is the literal the assertion mirrors, are exempt. Prove each behavior once
+  rather than each case, and re-run only that one file: never the package, never
+  `pnpm test`. An
   assertion that survives the break is asserting on a fixture, a mock's own
   configuration, or a value the subject computed — none of which is coverage.
 
