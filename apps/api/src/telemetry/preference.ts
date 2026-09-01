@@ -4,22 +4,22 @@ import type { Env } from '../env';
 import { ApiError } from '../lib/api-error';
 
 const UuidV7Schema = z.string().uuid().refine((value) => value[14] === '7');
-export const PreferenceProjectionSchema = z.object({
+export const PreferenceProjectionSchema = z.strictObject({
   preferenceSubjectHandle: UuidV7Schema,
   enabled: z.boolean(),
   version: z.number().int().positive(),
-}).strict();
-export const CanonicalPreferenceMutationSchema = z.object({
+});
+export const CanonicalPreferenceMutationSchema = z.strictObject({
   preferenceSubjectHandle: UuidV7Schema,
   enabled: z.boolean(),
   expectedVersion: z.number().int().nonnegative(),
   operationId: UuidV7Schema,
-}).strict();
-const CanonicalPreferenceResultSchema = z.object({
+});
+const CanonicalPreferenceResultSchema = z.strictObject({
   result: z.enum(['applied', 'duplicate', 'conflict']),
   enabled: z.boolean(),
   version: z.number().int().positive(),
-}).strict();
+});
 
 export type CanonicalPreferenceResult = z.infer<typeof CanonicalPreferenceResultSchema>;
 

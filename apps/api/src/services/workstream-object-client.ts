@@ -49,15 +49,15 @@ const BootPayloadSchema = z.object({
   transcript: WorkstreamTranscriptSnapshotSchema,
 });
 const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
-const AnsweredElicitationSchema = z.object({
+const AnsweredElicitationSchema = z.strictObject({
   elicitation: ElicitationSchema.optional(),
-}).strict();
+});
 const RetriedRunSchema = z.object({ harnessRunId: z.string().uuid() });
-const InitializedWorkstreamSchema = z.object({
+const InitializedWorkstreamSchema = z.strictObject({
   workstream: WorkstreamSchema,
   turnId: z.string().uuid(),
   harnessRunId: z.string().uuid(),
-}).strict();
+});
 
 async function objectStub(
   env: Env,

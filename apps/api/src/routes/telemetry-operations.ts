@@ -13,22 +13,22 @@ import {
 } from '../telemetry/crash-operations';
 
 const UuidV7Schema = z.string().uuid().refine((value) => value[14] === '7');
-const ReplaySchema = z.object({
+const ReplaySchema = z.strictObject({
   eventId: UuidV7Schema,
   reason: z.enum(['destination_recovery', 'incident_response']),
-}).strict();
-const CrashIdSchema = z.object({ crashId: UuidV7Schema }).strict();
-const CrashAccessQuerySchema = z.object({
+});
+const CrashIdSchema = z.strictObject({ crashId: UuidV7Schema });
+const CrashAccessQuerySchema = z.strictObject({
   reason: z.enum(['customer_support', 'incident_response']),
-}).strict();
-const EuIssueQuerySchema = z.object({
+});
+const EuIssueQuerySchema = z.strictObject({
   limit: z.coerce.number().int().min(1).max(100).default(50),
-}).strict();
-const CrashFreeSchema = z.object({
+});
+const CrashFreeSchema = z.strictObject({
   from: z.string().datetime({ offset: true }),
   to: z.string().datetime({ offset: true }),
-}).strict();
-const TelemetryOperationalSnapshotSchema = z.object({
+});
+const TelemetryOperationalSnapshotSchema = z.strictObject({
   acceptedPending: z.number().int().nonnegative(),
   acceptedTerminal: z.number().int().nonnegative(),
   crashPending: z.number().int().nonnegative(),
@@ -40,8 +40,8 @@ const TelemetryOperationalSnapshotSchema = z.object({
   oldestAcceptedAgeSeconds: z.number().int().nonnegative().nullable(),
   oldestCrashAgeSeconds: z.number().int().nonnegative().nullable(),
   oldestProfileAgeSeconds: z.number().int().nonnegative().nullable(),
-}).strict();
-const ReplayResponseSchema = z.object({
+});
+const ReplayResponseSchema = z.strictObject({
   result: z.enum([
     'requeued',
     'denied',
@@ -52,18 +52,18 @@ const ReplayResponseSchema = z.object({
     'invalid_state',
   ]),
   eventId: UuidV7Schema,
-}).strict();
-const EuCrashIssueSchema = z.object({
+});
+const EuCrashIssueSchema = z.strictObject({
   fingerprint: z.string().min(1),
   firstSeen: z.string().datetime({ offset: true }),
   lastSeen: z.string().datetime({ offset: true }),
   count: z.number().int().nonnegative(),
   releases: z.array(z.string()),
-}).strict();
-const EuCrashIssuesResponseSchema = z.object({
+});
+const EuCrashIssuesResponseSchema = z.strictObject({
   issues: z.array(EuCrashIssueSchema),
-}).strict();
-const EuCrashFreeSegmentSchema = z.object({
+});
+const EuCrashFreeSegmentSchema = z.strictObject({
   release: z.string(),
   platform: z.string(),
   architecture: z.string(),
@@ -72,10 +72,10 @@ const EuCrashFreeSegmentSchema = z.object({
   crashedLaunches: z.number().int().nonnegative(),
   crashFreeLaunches: z.number().int().nonnegative(),
   uncorrelatedCrashes: z.number().int().nonnegative(),
-}).strict();
-const EuCrashFreeResponseSchema = z.object({
+});
+const EuCrashFreeResponseSchema = z.strictObject({
   segments: z.array(EuCrashFreeSegmentSchema),
-}).strict();
+});
 
 export const telemetryOperatorRoutes = new Hono<HonoAppEnv>();
 telemetryOperatorRoutes.use('*', requireTelemetryOperator);

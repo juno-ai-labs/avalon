@@ -3,12 +3,12 @@ import { httpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 
 export const WorkspaceActivityAudienceSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("workspace") }).strict(),
-  z.object({ kind: z.literal("user"), userId: IdSchema }).strict(),
-  z.object({ kind: z.literal("workstream"), workstreamId: IdSchema }).strict(),
+  z.strictObject({ kind: z.literal("workspace") }),
+  z.strictObject({ kind: z.literal("user"), userId: IdSchema }),
+  z.strictObject({ kind: z.literal("workstream"), workstreamId: IdSchema }),
 ]);
 
-export const WorkspaceActivityEventInputSchema = z.object({
+export const WorkspaceActivityEventInputSchema = z.strictObject({
   workspaceId: IdSchema,
   eventId: IdSchema.optional(),
   eventType: z.string().min(1).max(200),
@@ -28,13 +28,13 @@ export const WorkspaceActivityEventInputSchema = z.object({
   sourceId: z.string().max(200).nullable().optional(),
   dedupeKey: z.string().min(1).max(1_000),
   metadata: z.record(z.string(), z.unknown()).optional(),
-  targets: z.array(z.object({
+  targets: z.array(z.strictObject({
     userId: IdSchema,
     relation: z.string().min(1).max(120),
-  }).strict()).max(1_000).optional(),
-}).strict();
+  })).max(1_000).optional(),
+});
 
-export const WorkspaceActivityEventListRequestSchema = z.object({
+export const WorkspaceActivityEventListRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   from: z.number().int().nonnegative().nullable().optional(),
@@ -42,9 +42,9 @@ export const WorkspaceActivityEventListRequestSchema = z.object({
   notBefore: z.string().datetime().nullable().optional(),
   digestibleOnly: z.boolean(),
   limit: z.number().int().min(1).max(1_000),
-}).strict();
+});
 
-export const WorkspaceActivityEventSchema = z.object({
+export const WorkspaceActivityEventSchema = z.strictObject({
   sequence: z.number().int().positive(),
   id: IdSchema,
   eventType: z.string(),
@@ -62,23 +62,23 @@ export const WorkspaceActivityEventSchema = z.object({
   metadata: z.record(z.string(), z.unknown()),
   isTarget: z.boolean(),
   targetRelations: z.array(z.string()),
-}).strict();
+});
 
-export const WorkspaceActivityEventListResultSchema = z.object({
+export const WorkspaceActivityEventListResultSchema = z.strictObject({
   items: z.array(WorkspaceActivityEventSchema),
-}).strict();
+});
 
-export const WorkspaceActivityEventCursorRequestSchema = z.object({
+export const WorkspaceActivityEventCursorRequestSchema = z.strictObject({
   workspaceId: IdSchema,
-}).strict();
+});
 
-export const WorkspaceActivityEventSourceRequestSchema = z.object({
+export const WorkspaceActivityEventSourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   sourceKind: z.string().min(1).max(120),
   sourceId: z.string().min(1).max(200),
-}).strict();
+});
 
-export const WorkspaceActivityEventSourceSchema = z.object({
+export const WorkspaceActivityEventSourceSchema = z.strictObject({
   id: IdSchema,
   sourceId: z.string(),
   title: z.string(),
@@ -87,7 +87,7 @@ export const WorkspaceActivityEventSourceSchema = z.object({
   actorLabel: z.string(),
   audienceWorkstreamId: IdSchema.nullable(),
   occurredAt: z.string().datetime(),
-}).strict();
+});
 
 export type WorkspaceActivityEventInput = z.infer<typeof WorkspaceActivityEventInputSchema>;
 export type WorkspaceActivityEventListRequest = z.infer<typeof WorkspaceActivityEventListRequestSchema>;

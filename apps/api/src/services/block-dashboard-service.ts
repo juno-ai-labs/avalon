@@ -26,13 +26,13 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 
-const BlockDashboardResponseSchema = z.object({ blockDashboard: BlockDashboardSchema }).passthrough();
-const BlockDashboardPreferenceResponseSchema = z.object({
+const BlockDashboardResponseSchema = z.looseObject({ blockDashboard: BlockDashboardSchema });
+const BlockDashboardPreferenceResponseSchema = z.strictObject({
   preference: BlockDashboardPreferenceSchema,
-}).strict();
-const BlockDashboardRunsResponseSchema = z.object({
+});
+const BlockDashboardRunsResponseSchema = z.strictObject({
   runs: z.array(BlockDashboardBlockRunSchema),
-}).strict();
+});
 
 async function blockDashboardControl(
   env: Env,

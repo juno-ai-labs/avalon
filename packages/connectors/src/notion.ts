@@ -239,41 +239,41 @@ export const NotionAgentPluginDescriptor = defineConnectorAgentPlugin({
 
 const idSchema = z.string().trim().min(1).max(200);
 const cursorSchema = z.string().min(1).max(500).nullable().optional();
-const searchSchema = z.object({
+const searchSchema = z.strictObject({
   query: z.string().trim().min(1).max(500),
   object: z.enum(["page", "data_source"]).optional(),
   pageSize: z.number().int().min(1).max(25).default(20),
   startCursor: cursorSchema,
-}).strict();
-const queryDataSourceSchema = z.object({
+});
+const queryDataSourceSchema = z.strictObject({
   dataSourceId: idSchema,
   pageSize: z.number().int().min(1).max(25).default(20),
   startCursor: cursorSchema,
-}).strict();
-const createPageSchema = z.object({
+});
+const createPageSchema = z.strictObject({
   parentPageId: idSchema.nullable().optional(),
   title: z.string().trim().min(1).max(300).refine((value) => !/[\r\n]/u.test(value), "Page titles cannot contain newlines"),
   markdown: z.string().max(40_000).nullable().optional(),
-}).strict();
-const updatePageSchema = z.object({
+});
+const updatePageSchema = z.strictObject({
   pageId: idSchema,
-  updates: z.array(z.object({
+  updates: z.array(z.strictObject({
     oldText: z.string().min(1).max(20_000),
     newText: z.string().max(20_000),
     replaceAllMatches: z.boolean().default(false),
-  }).strict()).min(1).max(10),
-}).strict();
-const appendPageSchema = z.object({ pageId: idSchema, markdown: z.string().min(1).max(40_000) }).strict();
-const commentsListSchema = z.object({
+  })).min(1).max(10),
+});
+const appendPageSchema = z.strictObject({ pageId: idSchema, markdown: z.string().min(1).max(40_000) });
+const commentsListSchema = z.strictObject({
   blockId: idSchema,
   pageSize: z.number().int().min(1).max(25).default(20),
   startCursor: cursorSchema,
-}).strict();
-const createCommentSchema = z.object({
+});
+const createCommentSchema = z.strictObject({
   pageId: idSchema.optional(),
   discussionId: idSchema.optional(),
   markdown: z.string().min(1).max(20_000),
-}).strict().refine((value) => Boolean(value.pageId) !== Boolean(value.discussionId), {
+}).refine((value) => Boolean(value.pageId) !== Boolean(value.discussionId), {
   message: "Choose exactly one Notion page or discussion",
 });
 
@@ -772,12 +772,12 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       }
 
       if (name === "retrieve_page") {
-        const pageId = z.object({ pageId: idSchema }).strict().parse(rawArgs).pageId;
+        const pageId = z.strictObject({ pageId: idSchema }).parse(rawArgs).pageId;
         return { output: await retrievePage(context.connection, pageId, context.signal), summary: `Read Notion page ${pageId}` };
       }
 
       if (name === "retrieve_data_source") {
-        const dataSourceId = z.object({ dataSourceId: idSchema }).strict().parse(rawArgs).dataSourceId;
+        const dataSourceId = z.strictObject({ dataSourceId: idSchema }).parse(rawArgs).dataSourceId;
         const output = await request(context.connection, context.signal, "GET", `/data_sources/${encodeURIComponent(dataSourceId)}`);
         return { output: boundNotionValue(output), summary: `Read Notion data source ${dataSourceId}` };
       }

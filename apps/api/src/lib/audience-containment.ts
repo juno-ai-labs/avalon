@@ -2,21 +2,21 @@ import { IdSchema } from "@rally/contracts";
 import { z } from "zod";
 
 export const ContentAudienceSchema = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("workspace") }).strict(),
-  z.object({
+  z.strictObject({ scope: z.literal("workspace") }),
+  z.strictObject({
     scope: z.literal("users"),
     userIds: z.array(IdSchema).min(1),
-  }).strict(),
+  }),
 ]);
 
 export type ContentAudience = z.infer<typeof ContentAudienceSchema>;
 
 export const WorkstreamReaderAudienceSchema = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("workspace") }).strict(),
-  z.object({
+  z.strictObject({ scope: z.literal("workspace") }),
+  z.strictObject({
     scope: z.literal("personal"),
     userIds: z.array(IdSchema),
-  }).strict(),
+  }),
 ]);
 
 export type WorkstreamReaderAudience = z.infer<typeof WorkstreamReaderAudienceSchema>;

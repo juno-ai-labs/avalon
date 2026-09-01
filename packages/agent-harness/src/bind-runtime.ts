@@ -2342,11 +2342,11 @@ async function loadOpenRouterContextCatalog(
     })();
     const values = new Map<string, number>();
     for (const entry of envelope.data) {
-      const parsed = z.object({
+      const parsed = z.looseObject({
         id: z.string(),
         context_length: z.number().nullish(),
-        top_provider: z.object({ context_length: z.number().nullish() }).passthrough().nullish(),
-      }).passthrough().safeParse(entry);
+        top_provider: z.looseObject({ context_length: z.number().nullish() }).nullish(),
+      }).safeParse(entry);
       if (!parsed.success) continue;
       const contextWindowTokens = parsed.data.context_length
         ?? parsed.data.top_provider?.context_length

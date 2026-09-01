@@ -30,28 +30,28 @@ const MAX_SCHEMA_BYTES = 100_000;
 const MAX_DESCRIPTION_CHARS = 4_000;
 const MAX_RESULT_STRING_CHARS = 80_000;
 
-const ProtectedResourceMetadataSchema = z.object({
+const ProtectedResourceMetadataSchema = z.looseObject({
   resource: HttpsUrlSchema,
   authorization_servers: z.array(HttpsUrlSchema).min(1),
   scopes_supported: z.array(z.string().min(1)).optional(),
-}).passthrough();
+});
 
-const AuthorizationServerMetadataSchema = z.object({
+const AuthorizationServerMetadataSchema = z.looseObject({
   authorization_endpoint: HttpsUrlSchema,
   token_endpoint: HttpsUrlSchema,
   registration_endpoint: HttpsUrlSchema,
   scopes_supported: z.array(z.string().min(1)).optional(),
   code_challenge_methods_supported: z.array(z.string()).optional(),
   token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
-}).passthrough();
+});
 
-const ClientRegistrationSchema = z.object({
+const ClientRegistrationSchema = z.looseObject({
   client_id: z.string().min(1),
   client_secret: z.string().min(1).optional(),
   token_endpoint_auth_method: z.enum(["none", "client_secret_post", "client_secret_basic"]).optional(),
-}).passthrough();
+});
 
-const TokenResponseSchema = z.object({
+const TokenResponseSchema = z.looseObject({
   access_token: z.string().min(1),
   token_type: z.string().min(1).default("Bearer"),
   expires_in: z.number().positive().optional(),
@@ -60,34 +60,34 @@ const TokenResponseSchema = z.object({
   user_id: z.string().min(1).optional(),
   workspace_id: z.string().min(1).optional(),
   email_domain: z.string().optional(),
-}).passthrough();
+});
 
-const McpToolInputSchema = z.object({
+const McpToolInputSchema = z.looseObject({
   type: z.literal("object"),
-}).passthrough();
+});
 
-const McpToolSchema = z.object({
+const McpToolSchema = z.looseObject({
   name: z.string().min(1).max(200),
   description: z.string().optional(),
   inputSchema: McpToolInputSchema,
-  annotations: z.object({
+  annotations: z.looseObject({
     readOnlyHint: z.boolean().optional(),
     destructiveHint: z.boolean().optional(),
     idempotentHint: z.boolean().optional(),
     openWorldHint: z.boolean().optional(),
-  }).passthrough().optional(),
-}).passthrough();
+  }).optional(),
+});
 
-const ToolsListResultSchema = z.object({
+const ToolsListResultSchema = z.looseObject({
   tools: z.array(McpToolSchema),
   nextCursor: z.string().min(1).optional(),
-}).passthrough();
+});
 
-const ToolCallResultSchema = z.object({
+const ToolCallResultSchema = z.looseObject({
   content: z.array(z.unknown()).default([]),
   structuredContent: z.unknown().optional(),
   isError: z.boolean().optional(),
-}).passthrough();
+});
 
 const JsonRpcResponseSchema = z.object({
   jsonrpc: z.literal("2.0"),
@@ -556,7 +556,7 @@ async function withHostedMcpSession<T>(
 ): Promise<T> {
   const session: HostedMcpSession = { id: null, nextId: 1 };
   try {
-    const initialized = z.object({ protocolVersion: z.string() }).passthrough().parse(await mcpRequest(input, session, {
+    const initialized = z.looseObject({ protocolVersion: z.string() }).parse(await mcpRequest(input, session, {
       jsonrpc: "2.0",
       id: session.nextId++,
       method: "initialize",

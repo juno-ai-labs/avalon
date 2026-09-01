@@ -25,15 +25,15 @@ const dateTimeSchema = z.string().min(1).max(100);
 const markdownSchema = z.string().min(1).max(LINEAR_AGENT_BODY_CHARS);
 const jsonObjectSchema = z.record(z.string(), z.unknown());
 
-const userSchema = z.object({
+const userSchema = z.looseObject({
   id: idSchema,
   name: z.string().min(1).max(500),
   email: z.string().email().max(500),
   url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS),
   avatarUrl: httpsUrlSchema(LINEAR_AGENT_URL_CHARS).nullable().optional(),
-}).passthrough();
+});
 
-const commentSchema = z.object({
+const commentSchema = z.looseObject({
   id: idSchema,
   body: z.string().max(LINEAR_AGENT_BODY_CHARS),
   documentContentId: idSchema.nullable().optional(),
@@ -43,19 +43,19 @@ const commentSchema = z.object({
   projectId: idSchema.nullable().optional(),
   projectUpdateId: idSchema.nullable().optional(),
   userId: idSchema.nullable().optional(),
-}).passthrough();
+});
 
-const issueSchema = z.object({
+const issueSchema = z.looseObject({
   id: idSchema,
   identifier: z.string().min(1).max(100),
   teamId: idSchema,
   title: z.string().min(1).max(1_000),
   description: z.string().max(LINEAR_AGENT_BODY_CHARS).nullable().optional(),
   url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS),
-  team: z.object({ id: idSchema }).passthrough(),
-}).passthrough();
+  team: z.looseObject({ id: idSchema }),
+});
 
-const sessionSchema = z.object({
+const sessionSchema = z.looseObject({
   id: idSchema,
   appUserId: idSchema,
   organizationId: idSchema,
@@ -76,15 +76,15 @@ const sessionSchema = z.object({
   startedAt: dateTimeSchema.nullable().optional(),
   summary: z.string().max(LINEAR_AGENT_BODY_CHARS).nullable().optional(),
   url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS).nullable().optional(),
-}).passthrough();
+});
 
-const promptContentSchema = z.object({
+const promptContentSchema = z.looseObject({
   type: z.literal("prompt"),
   body: markdownSchema,
   title: z.string().max(500).nullable().optional(),
-}).passthrough();
+});
 
-const agentActivityWebhookSchema = z.object({
+const agentActivityWebhookSchema = z.looseObject({
   id: idSchema,
   agentSessionId: idSchema,
   content: jsonObjectSchema,
@@ -96,19 +96,19 @@ const agentActivityWebhookSchema = z.object({
   sourceCommentId: idSchema.nullable().optional(),
   userId: idSchema,
   user: userSchema,
-}).passthrough();
+});
 
-const guidanceSchema = z.object({
+const guidanceSchema = z.looseObject({
   body: z.string().max(LINEAR_AGENT_BODY_CHARS),
   origin: jsonObjectSchema,
-}).passthrough();
+});
 
 /**
  * The signed payload Linear sends when its native agent UI starts or resumes a
  * session. Unknown fields are retained so Developer Preview additions do not
  * silently disappear before the regional runtime persists the source payload.
  */
-export const LinearAgentSessionEventSchema = z.object({
+export const LinearAgentSessionEventSchema = z.looseObject({
   type: z.literal("AgentSessionEvent"),
   action: z.enum(["created", "prompted"]),
   appUserId: idSchema,
@@ -122,7 +122,7 @@ export const LinearAgentSessionEventSchema = z.object({
   guidance: z.array(guidanceSchema).max(200).nullable().optional(),
   previousComments: z.array(commentSchema).max(500).nullable().optional(),
   promptContext: z.string().max(200_000).nullable().optional(),
-}).passthrough().superRefine((event, context) => {
+}).superRefine((event, context) => {
   if (event.agentSession.organizationId !== event.organizationId) {
     context.addIssue({ code: "custom", message: "The agent session organization does not match the webhook organization", path: ["agentSession", "organizationId"] });
   }
@@ -204,10 +204,10 @@ export type LinearAgentInvocation =
       event: LinearAgentSessionEvent;
     };
 
-export const LinearAgentAcknowledgementSchema = z.object({
+export const LinearAgentAcknowledgementSchema = z.strictObject({
   commentId: idSchema,
   emoji: z.literal(LINEAR_AGENT_ACKNOWLEDGEMENT_EMOJI),
-}).strict();
+});
 
 export type LinearAgentAcknowledgement = z.infer<typeof LinearAgentAcknowledgementSchema>;
 
@@ -265,33 +265,33 @@ export function isLinearAgentStopRequest(eventInput: unknown): boolean {
   return invocation.kind === "prompt" && invocation.stopRequested;
 }
 
-export const LinearAgentThoughtContentSchema = z.object({
+export const LinearAgentThoughtContentSchema = z.strictObject({
   type: z.literal("thought"),
   body: markdownSchema,
-}).strict();
+});
 
-export const LinearAgentActionContentSchema = z.object({
+export const LinearAgentActionContentSchema = z.strictObject({
   type: z.literal("action"),
   action: z.string().min(1).max(500),
   parameter: z.string().min(1).max(2_000),
   result: z.string().max(LINEAR_AGENT_BODY_CHARS).optional(),
-}).strict();
+});
 
-export const LinearAgentElicitationContentSchema = z.object({
+export const LinearAgentElicitationContentSchema = z.strictObject({
   type: z.literal("elicitation"),
   body: markdownSchema,
-}).strict();
+});
 
-export const LinearAgentResponseContentSchema = z.object({
+export const LinearAgentResponseContentSchema = z.strictObject({
   type: z.literal("response"),
   body: markdownSchema,
-}).strict();
+});
 
-export const LinearAgentErrorContentSchema = z.object({
+export const LinearAgentErrorContentSchema = z.strictObject({
   type: z.literal("error"),
   body: markdownSchema,
   reasonCode: z.string().min(1).max(200).optional(),
-}).strict();
+});
 
 export const LinearAgentActivityContentSchema = z.discriminatedUnion("type", [
   LinearAgentThoughtContentSchema,
@@ -303,27 +303,27 @@ export const LinearAgentActivityContentSchema = z.discriminatedUnion("type", [
 
 export type LinearAgentActivityContent = z.infer<typeof LinearAgentActivityContentSchema>;
 
-const authSignalMetadataSchema = z.object({
+const authSignalMetadataSchema = z.strictObject({
   url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS),
   userId: idSchema.optional(),
   providerName: z.string().min(1).max(200).optional(),
-}).strict();
+});
 
-const selectSignalMetadataSchema = z.object({
-  options: z.array(z.object({
+const selectSignalMetadataSchema = z.strictObject({
+  options: z.array(z.strictObject({
     label: z.string().min(1).max(500).optional(),
     value: z.string().min(1).max(2_000),
-  }).strict().refine((option) => Boolean(option.label || option.value), "A select option must have a label or value")).min(1).max(100),
-}).strict();
+  }).refine((option) => Boolean(option.label || option.value), "A select option must have a label or value")).min(1).max(100),
+});
 
-export const LinearAgentActivityCreateInputSchema = z.object({
+export const LinearAgentActivityCreateInputSchema = z.strictObject({
   agentSessionId: idSchema,
   id: z.string().uuid().optional(),
   content: LinearAgentActivityContentSchema,
   ephemeral: z.boolean().optional(),
   signal: z.enum(["auth", "select"]).optional(),
   signalMetadata: jsonObjectSchema.optional(),
-}).strict().superRefine((activity, context) => {
+}).superRefine((activity, context) => {
   if (activity.ephemeral && activity.content.type !== "thought" && activity.content.type !== "action") {
     context.addIssue({ code: "custom", message: "Only thought and action activities may be ephemeral", path: ["ephemeral"] });
   }
@@ -343,15 +343,15 @@ export const LinearAgentActivityCreateInputSchema = z.object({
 
 export type LinearAgentActivityCreateInput = z.infer<typeof LinearAgentActivityCreateInputSchema>;
 
-export const LinearAgentExternalUrlSchema = z.object({
+export const LinearAgentExternalUrlSchema = z.strictObject({
   label: z.string().min(1).max(200),
   url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS),
-}).strict();
+});
 
-export const LinearAgentPlanStepSchema = z.object({
+export const LinearAgentPlanStepSchema = z.strictObject({
   content: z.string().min(1).max(2_000),
   status: z.enum(["pending", "inProgress", "completed", "canceled"]),
-}).strict();
+});
 
 export type LinearAgentExternalUrl = z.infer<typeof LinearAgentExternalUrlSchema>;
 export type LinearAgentPlanStep = z.infer<typeof LinearAgentPlanStepSchema>;

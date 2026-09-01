@@ -12,18 +12,18 @@ export const WorkspaceNotificationIntentStateSchema = z.enum([
   "failed",
 ]);
 
-export const WorkspaceNotificationIntentRequestSchema = z.object({
+export const WorkspaceNotificationIntentRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   intentId: NotificationIntentIdSchema,
-}).strict();
+});
 
-const WorkspaceNotificationIntentSummarySchema = z.object({
+const WorkspaceNotificationIntentSummarySchema = z.strictObject({
   intentId: NotificationIntentIdSchema,
   workstreamId: WorkstreamIdSchema,
   recipientUserId: UserIdSchema,
   notificationKind: WorkspaceNotificationIntentKindSchema,
   state: WorkspaceNotificationIntentStateSchema,
-}).strict();
+});
 
 const WorkspaceNotificationIntentClaimedSchema = WorkspaceNotificationIntentSummarySchema.extend({
   workspaceId: WorkspaceIdSchema,
@@ -34,22 +34,22 @@ const WorkspaceNotificationIntentClaimedSchema = WorkspaceNotificationIntentSumm
 }).strict();
 
 export const WorkspaceNotificationIntentClaimResultSchema = z.discriminatedUnion("outcome", [
-  z.object({
+  z.strictObject({
     outcome: z.literal("claimed"),
     leaseId: z.string().uuid(),
     intent: WorkspaceNotificationIntentClaimedSchema,
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     outcome: z.literal("terminal"),
     intent: WorkspaceNotificationIntentSummarySchema.extend({
       state: z.enum(["delivered", "skipped"]),
     }).strict(),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     outcome: z.literal("busy"),
     intent: WorkspaceNotificationIntentSummarySchema,
-  }).strict(),
-  z.object({ outcome: z.literal("missing") }).strict(),
+  }),
+  z.strictObject({ outcome: z.literal("missing") }),
 ]);
 
 const WorkspaceNotificationIntentTransitionBaseSchema = WorkspaceNotificationIntentRequestSchema.extend({
@@ -75,30 +75,30 @@ export const WorkspaceNotificationIntentTransitionRequestSchema = z.discriminate
 );
 
 export const WorkspaceNotificationIntentTransitionResultSchema = z.discriminatedUnion("outcome", [
-  z.object({ outcome: z.literal("applied"), intentId: NotificationIntentIdSchema }).strict(),
-  z.object({ outcome: z.literal("missing") }).strict(),
-  z.object({
+  z.strictObject({ outcome: z.literal("applied"), intentId: NotificationIntentIdSchema }),
+  z.strictObject({ outcome: z.literal("missing") }),
+  z.strictObject({
     outcome: z.literal("lease_lost"),
     state: WorkspaceNotificationIntentStateSchema,
-  }).strict(),
+  }),
 ]);
 
-export const WorkspaceNotificationIntentMaintenanceRequestSchema = z.object({
+export const WorkspaceNotificationIntentMaintenanceRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
-}).strict();
+});
 
-export const WorkspaceNotificationIntentMaintenanceTargetSchema = z.object({
+export const WorkspaceNotificationIntentMaintenanceTargetSchema = z.strictObject({
   dueAt: z.string().datetime().nullable(),
-}).strict();
+});
 
 export const WorkspaceNotificationIntentReapRequestSchema =
   WorkspaceNotificationIntentMaintenanceRequestSchema.extend({
     limit: z.number().int().min(1).max(1_000).default(500),
   }).strict();
 
-export const WorkspaceNotificationIntentReapResultSchema = z.object({
+export const WorkspaceNotificationIntentReapResultSchema = z.strictObject({
   reapedIntentIds: z.array(NotificationIntentIdSchema),
-}).strict();
+});
 
 export type WorkspaceNotificationIntentRequest = z.infer<
   typeof WorkspaceNotificationIntentRequestSchema

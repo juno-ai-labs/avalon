@@ -96,19 +96,19 @@ export interface GitHubRepositoryAuthorization {
   expectedRepositoryId: string | null;
 }
 
-const githubRepositoryAccessOverrideSchema = z.object({
+const githubRepositoryAccessOverrideSchema = z.strictObject({
   repositoryId: z.string().trim().min(1).max(100),
   repositoryFullName: z.string().trim().regex(/^[^/\s]{1,100}\/[^/\s]{1,100}$/u),
   access: z.enum(["read_only", "full_access"]),
-}).strict();
+});
 
-const githubRepositoryAccessPolicySchema = z.object({
+const githubRepositoryAccessPolicySchema = z.strictObject({
   version: z.literal(1),
   revision: z.number().int().nonnegative(),
   mode: z.enum(["all_repositories", "selected_repositories"]),
   defaultAccess: z.enum(["read_only", "full_access"]),
   repositories: z.array(githubRepositoryAccessOverrideSchema).max(1_000),
-}).strict();
+});
 
 /**
  * Missing policy means the pre-settings behavior: every App-authorized
@@ -242,20 +242,20 @@ export interface VerifyGitHubWebhookInput {
   maxBytes?: number;
 }
 
-const repoIdentitySchema = z.object({
+const repoIdentitySchema = z.strictObject({
   owner: z.string().trim().min(1).max(100),
   repo: z.string().trim().min(1).max(100),
-}).strict();
+});
 
-const paginationSchema = z.object({
+const paginationSchema = z.strictObject({
   perPage: z.number().int().min(1).max(100).default(30),
   page: z.number().int().min(1).max(1_000).default(1),
-}).strict();
+});
 
-const repositoriesListSchema = z.object({
+const repositoriesListSchema = z.strictObject({
   perPage: z.number().int().min(1).max(100).default(50),
   page: z.number().int().min(1).max(1_000).default(1),
-}).strict();
+});
 
 const repositoriesSearchSchema = repositoriesListSchema.extend({
   query: z.string().trim().min(1).max(200),
@@ -463,20 +463,20 @@ interface GitHubTokenPayload {
   error_description?: unknown;
 }
 
-const authorizationInputSchema = z.object({
+const authorizationInputSchema = z.strictObject({
   state: z.string().min(20).max(2_000),
   codeChallenge: z.string().min(20).max(256),
   scopes: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
   installationId: z.union([z.string().regex(/^\d+$/u), z.number().int().positive()]).optional(),
   connectionScope: z.enum(["personal", "workspace"]).default("personal"),
-}).strict();
+});
 
-const authorizationCallbackSchema = z.object({
+const authorizationCallbackSchema = z.strictObject({
   code: z.string().min(1).max(2_000),
   codeVerifier: z.string().min(20).max(256),
   installationId: z.union([z.string().regex(/^\d+$/u), z.number().int().positive()]),
   connectionScope: z.enum(["personal", "workspace"]),
-}).strict();
+});
 
 /** Create a short-lived GitHub App JWT without depending on a Node-only crypto API. */
 export async function createGitHubAppJwt(input: GitHubAppJwtInput): Promise<string> {

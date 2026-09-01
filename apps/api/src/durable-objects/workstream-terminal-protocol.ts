@@ -35,30 +35,30 @@ export type TerminalObjectPort = {
 
 /** Stable, participant-safe failures returned by the object authority. */
 export const TerminalOperationFailureSchema = z.discriminatedUnion("code", [
-  z.object({
+  z.strictObject({
     code: z.literal("terminal_operation_not_committed"),
     message: z.string().min(1).max(1_000),
     outcome: z.literal("not_committed"),
     retryable: z.literal(true),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     code: z.literal("invalid_terminal_operation"),
     message: z.string().min(1).max(1_000),
     outcome: z.literal("rejected"),
     retryable: z.literal(false),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     code: z.literal("workstream_terminal_identity_mismatch"),
     message: z.string().min(1).max(1_000),
     outcome: z.literal("rejected"),
     retryable: z.literal(false),
-  }).strict(),
-  z.object({
+  }),
+  z.strictObject({
     code: z.literal("terminal_operation_protocol_error"),
     message: z.string().min(1).max(1_000),
     outcome: z.literal("unknown"),
     retryable: z.literal(false),
-  }).strict(),
+  }),
 ]);
 
 export type TerminalOperationFailure = z.infer<typeof TerminalOperationFailureSchema>;
@@ -210,13 +210,13 @@ export function terminalOperationAffectsDirectory(operation: TerminalOperation):
   return !NON_DIRECTORY_OPERATIONS.has(operation);
 }
 
-export const TerminalOperationRequestSchema = z.object({
+export const TerminalOperationRequestSchema = z.strictObject({
   workspaceId: z.string().uuid(),
   workstreamId: z.string().uuid(),
   operation: z.string().min(1).max(64).refine(isTerminalOperation, {
     message: "unknown_terminal_operation",
   }),
   args: z.array(z.unknown()).max(4),
-}).strict();
+});
 
 export type TerminalOperationRequest = z.infer<typeof TerminalOperationRequestSchema>;

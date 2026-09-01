@@ -201,10 +201,10 @@ export const DurableObjectMigrationCommandSchema = z.object({
    * One merge-triggered, WorkspaceDO-only product-authority cutover. Ordinary
    * migration-tracker messages omit it and retain their existing behavior.
    */
-  automationCutover: z.object({
+  automationCutover: z.strictObject({
     workspaceId: z.string().uuid(),
     expectedDraftIds: z.array(z.string().uuid()).optional(),
-  }).strict().optional(),
+  }).optional(),
 }).superRefine((command, context) => {
   if (!command.automationCutover) {
     if (command.objectId === null) {

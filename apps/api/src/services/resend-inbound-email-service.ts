@@ -37,7 +37,7 @@ const ResendEnvelopeSchema = z.object({
   data: z.unknown(),
 });
 
-const ResendReceivedEventDataSchema = z.object({
+const ResendReceivedEventDataSchema = z.looseObject({
   email_id: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/u),
   created_at: z.string().datetime({ offset: true }).optional(),
   from: z.string().min(1).max(1_000),
@@ -46,9 +46,9 @@ const ResendReceivedEventDataSchema = z.object({
   bcc: z.array(z.string().min(1).max(1_000)).max(100).optional(),
   subject: z.string().max(2_000).optional(),
   attachments: z.array(z.unknown()).max(100).optional(),
-}).passthrough();
+});
 
-const ResendReceivedEmailSchema = z.object({
+const ResendReceivedEmailSchema = z.looseObject({
   id: z.string().min(1).max(200),
   created_at: z.string().datetime({ offset: true }).optional(),
   from: z.string().min(1).max(1_000),
@@ -60,13 +60,13 @@ const ResendReceivedEmailSchema = z.object({
   text: z.string().nullable().optional(),
   html: z.string().nullable().optional(),
   message_id: z.string().max(2_000).nullable().optional(),
-  attachments: z.array(z.object({
+  attachments: z.array(z.looseObject({
     id: z.string().max(500).optional(),
     filename: z.string().max(2_000).optional(),
     content_type: z.string().max(500).optional(),
     content_disposition: z.string().max(500).optional(),
-  }).passthrough()).max(100).optional(),
-}).passthrough();
+  })).max(100).optional(),
+});
 
 const RegionalEmailInputSchema = z.object({
   resendEmailId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/u),

@@ -91,21 +91,21 @@ const WORKSPACE_SEED_TABLES = new Set([
   "resources",
 ]);
 
-const seedAutomation = z.object({
+const seedAutomation = z.strictObject({
   id: z.string().uuid(),
   authorUserId: z.string().uuid(),
-  source: z.object({
+  source: z.looseObject({
     definition: AutomationDraftSchema,
     status: z.enum(["active", "paused", "error"]),
     scope: ScopeSchema,
     unsupportedTrigger: z.boolean(),
-    schedules: z.array(z.object({
+    schedules: z.array(z.looseObject({
       nextDueAt: z.number().int().nonnegative().nullable(),
-    }).passthrough()),
-  }).passthrough(),
-}).strict();
+    })),
+  }),
+});
 
-const seedBody = z.object({
+const seedBody = z.strictObject({
   workspaceId: z.string().uuid(),
   workspaceTables: z.record(z.string(), z.array(row)),
   automations: z.array(seedAutomation),
@@ -121,21 +121,21 @@ const seedBody = z.object({
     resourceIds: z.array(z.string().uuid()),
     messages: z.array(row),
   })),
-}).strict();
+});
 
 /** The route owns this shape; dev tooling has no member-facing contract. */
-const SeedProductResultSchema = z.object({
+const SeedProductResultSchema = z.strictObject({
   seeded: z.boolean(),
   workspaceTables: z.record(z.string(), z.number()),
-  automations: z.array(z.object({
+  automations: z.array(z.strictObject({
     automationId: z.string().uuid(),
     lifecycle: z.enum(["active", "paused"]),
-  }).strict()),
+  })),
   workstreams: z.array(z.object({
     workstreamId: z.string().uuid(),
     copied: z.record(z.string(), z.number()),
   })),
-}).strict();
+});
 
 /**
  * The `exact_state` a captured `harnessStatus` restores to.

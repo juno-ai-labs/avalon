@@ -2,16 +2,16 @@ import { z } from "zod";
 
 const WorkspaceSqlValueSchema = z.union([z.string(), z.number(), z.null()]);
 
-const WorkspaceSqlStatementSchema = z.object({
+const WorkspaceSqlStatementSchema = z.strictObject({
   sql: z.string().min(1).max(100_000),
   params: z.array(WorkspaceSqlValueSchema).max(500),
-}).strict();
+});
 
-export const WorkspaceRuntimeSqlRequestSchema = z.object({
+export const WorkspaceRuntimeSqlRequestSchema = z.strictObject({
   workspaceId: z.string().uuid(),
   requestId: z.string().uuid(),
   statements: z.array(WorkspaceSqlStatementSchema).min(1).max(100),
-}).strict();
+});
 
 export type WorkspaceRuntimeSqlRequest = z.infer<typeof WorkspaceRuntimeSqlRequestSchema>;
 

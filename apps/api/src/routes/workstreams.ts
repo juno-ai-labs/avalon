@@ -72,15 +72,15 @@ const WorkstreamPageSchema = z.object({
   items: z.array(WorkstreamSchema),
   nextCursor: z.string().nullable(),
 });
-const CreatedWorkstreamSchema = z.object({
+const CreatedWorkstreamSchema = z.strictObject({
   workstream: WorkstreamSchema,
   turnId: IdSchema,
   harnessRunId: IdSchema.nullable(),
-}).strict();
+});
 const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
-const AnsweredElicitationSchema = z.object({
+const AnsweredElicitationSchema = z.strictObject({
   elicitation: ElicitationSchema.optional(),
-}).strict();
+});
 const RetriedRunSchema = z.object({ harnessRunId: IdSchema });
 /**
  * What every pin mutation answers with: the caller's pinned work streams, in
