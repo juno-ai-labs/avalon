@@ -426,8 +426,11 @@ beforeEach(async () => {
 ## How much to run
 
 **Match the run to the size of the change.** A full `pnpm test` takes minutes and
-most changes do not need one locally. CI runs everything on every push, so a
-local full run buys confidence, not correctness.
+most changes do not need one locally. `ci.yml` runs on `pull_request`, so every
+revision of an open pull request gets the whole suite and a local full run buys
+confidence rather than correctness. A branch with no pull request open gets
+nothing — the other push workflows are path-scoped deploys — which is the one
+case where running wider locally earns its minutes.
 
 - **Documentation-only changes: run the documentation gates, not the suites.** No
   suite covers prose, but two things do. `pnpm docs:check` scans every file under
@@ -442,6 +445,9 @@ local full run buys confidence, not correctness.
   those runs its test too. For a document not on that list,
   `grep -rn 'docs/<file>.md' --include='*.test.*' .` finds the tests that name
   it; most hits only cite a document in a comment, and those need nothing.
+  A change inside a source file is not a documentation change even when it
+  touches only comments: `// @vitest-environment jsdom` and its neighbours are
+  directives, and they decide how the file runs.
 - **Ordinary changes: run the tests that cover what you touched.** One file, one
   test name, or the one package's suite. Add a second package only when the
   change crosses into it.
@@ -481,9 +487,11 @@ literal rather than to behavior, and moving it up a rung is the fix.
 in the file red, that single run proves all of them. Ten cases covering one
 decision need one cycle.
 
-**Keep the run narrow.** Two runs of that one file is the most this should cost.
-After you revert, do not run the package suite or `pnpm test` to confirm it.
-`git diff` already shows the break is gone.
+**Keep the run narrow.** This costs two runs of that one file: one with the
+break, one after reverting it. Confirm the revert by reading the diff for the
+mutation specifically, since `git diff` also carries the rest of the change you
+have not committed. Never widen the confirmation to the package suite or
+`pnpm test`.
 
 A failure that names something else — a fixture that threw, a schema parse, a
 timeout — proves the test runs, not that it observes the behavior. An assertion
