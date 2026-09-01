@@ -7,6 +7,7 @@ import type {
   TelemetryEventProperties,
   WorkspaceAttention,
   WorkspaceDeparture,
+  WorkspaceDepartureOutcome,
 } from '@rally/contracts';
 import type {
   DesktopRealtimeSocketCloseInput,
@@ -402,7 +403,11 @@ export interface RallyDesktopBridge {
   createDevelopmentSession: (apiBaseUrl: string, workspaceName: string) => Promise<DesktopSession>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
   getWorkspaceAttention: (input: { region: RallyRegion; workspaceId: string }) => Promise<WorkspaceAttention>;
-  leaveWorkspace: (input: { region: RallyRegion; workspaceId: string }) => Promise<WorkspaceDeparture>;
+  leaveWorkspace: (input: {
+    expectedOutcome: WorkspaceDepartureOutcome;
+    region: RallyRegion;
+    workspaceId: string;
+  }) => Promise<WorkspaceDeparture>;
   activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
   createWorkspace: (input: { region: RallyRegion; name: string; operationId?: string }) => Promise<DesktopSession>;
   acceptInvitation: (input: { region: RallyRegion; invitationId: string; operationId?: string }) => Promise<DesktopSession>;

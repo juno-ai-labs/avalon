@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import type { WorkspaceAttention } from '@rally/contracts';
 import { Check, ChevronDown, LoaderCircle, LogOut, Plus, Settings } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type {
   DesktopPendingWorkspaceInvitation,
@@ -11,6 +11,7 @@ import type {
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import type { WorkspaceMember } from '../lib/types';
 import { formatRelative } from '../lib/format';
+import { uuidV7 } from '../lib/telemetry';
 import { Avatar, Button, Modal } from './primitives';
 
 export interface WorkspaceAccountMenuProps {
@@ -25,8 +26,8 @@ export interface WorkspaceAccountMenuProps {
   switchingWorkspaceKey?: string | null;
   workspaceErrors?: Record<string, string | undefined>;
   workspaces: DesktopWorkspaceSummary[];
-  onAcceptInvitation: (invitation: DesktopPendingWorkspaceInvitation) => Promise<void>;
-  onCreateWorkspace: (input: { name: string; region: RallyRegion }) => Promise<void>;
+  onAcceptInvitation: (invitation: DesktopPendingWorkspaceInvitation, operationId: string) => Promise<void>;
+  onCreateWorkspace: (input: { name: string; region: RallyRegion }, operationId: string) => Promise<void>;
   onDeclineInvitation: (invitation: DesktopPendingWorkspaceInvitation) => Promise<void>;
   onMenuOpen: () => void;
   onInvitationPromptDismiss: () => void;
@@ -79,6 +80,8 @@ export function WorkspaceAccountMenu({
   const [workspaceRegion, setWorkspaceRegion] = useState<RallyRegion>('global');
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const creationOperation = useRef<{ fingerprint: string; id: string } | null>(null);
+  const invitationOperation = useRef<{ invitationId: string; id: string } | null>(null);
   const backgroundHasAttention = enabled && workspaces.some((workspace) => (
     (workspace.id !== activeWorkspace.id || workspace.region !== activeWorkspace.region)
     && (attention[desktopWorkspaceIdentityKey(workspace.region, workspace.id)]?.waitingForYou ?? 0) > 0
@@ -210,6 +213,7 @@ export function WorkspaceAccountMenu({
         footer={invitation ? (
           <>
             <Button className="button-secondary" disabled={actionPending} onClick={() => {
+              invitationOperation.current = null;
               setInvitation(null);
               onInvitationPromptDismiss();
             }}>Not now</Button>
@@ -221,7 +225,10 @@ export function WorkspaceAccountMenu({
                   setActionPending(true);
                   setActionError(null);
                   void onDeclineInvitation(invitation).then(
-                    () => setInvitation(null),
+                    () => {
+                      invitationOperation.current = null;
+                      setInvitation(null);
+                    },
                     (error: unknown) => setActionError(actionErrorMessage(
                       error, 'This invitation could not be declined.',
                     )),
@@ -235,8 +242,15 @@ export function WorkspaceAccountMenu({
               onClick={() => {
                 setActionPending(true);
                 setActionError(null);
-                void onAcceptInvitation(invitation).then(
-                  () => setInvitation(null),
+                const operation = invitationOperation.current?.invitationId === invitation.id
+                  ? invitationOperation.current
+                  : { invitationId: invitation.id, id: uuidV7() };
+                invitationOperation.current = operation;
+                void onAcceptInvitation(invitation, operation.id).then(
+                  () => {
+                    invitationOperation.current = null;
+                    setInvitation(null);
+                  },
                   (error: unknown) => setActionError(actionErrorMessage(
                     error, 'This invitation could not be accepted.',
                   )),
@@ -245,7 +259,13 @@ export function WorkspaceAccountMenu({
             >Join</Button>
           </>
         ) : undefined}
-        onOpenChange={(open) => { if (!open && !actionPending) setInvitation(null); }}
+        onOpenChange={(open) => {
+          if (!open && !actionPending) {
+            invitationOperation.current = null;
+            setInvitation(null);
+            if (promptedInvitation) onInvitationPromptDismiss();
+          }
+        }}
         open={invitation !== null}
         title={invitation ? `Join ${invitation.workspaceName}` : 'Join workspace'}
       >
@@ -258,6 +278,7 @@ export function WorkspaceAccountMenu({
           <>
             <Button className="button-secondary" disabled={actionPending} onClick={() => {
               setActionError(null);
+              creationOperation.current = null;
               setCreating(false);
             }}>Cancel</Button>
             <Button
@@ -266,7 +287,14 @@ export function WorkspaceAccountMenu({
               onClick={() => {
                 setActionPending(true);
                 setActionError(null);
-                void onCreateWorkspace({ name: workspaceName.trim(), region: workspaceRegion }).then(() => {
+                const input = { name: workspaceName.trim(), region: workspaceRegion };
+                const fingerprint = JSON.stringify(input);
+                const operation = creationOperation.current?.fingerprint === fingerprint
+                  ? creationOperation.current
+                  : { fingerprint, id: uuidV7() };
+                creationOperation.current = operation;
+                void onCreateWorkspace(input, operation.id).then(() => {
+                  creationOperation.current = null;
                   setCreating(false);
                   setWorkspaceName('');
                 }, (error: unknown) => {
@@ -279,6 +307,7 @@ export function WorkspaceAccountMenu({
         onOpenChange={(open) => {
           if (!open && !actionPending) {
             setActionError(null);
+            creationOperation.current = null;
             setCreating(false);
           }
         }}

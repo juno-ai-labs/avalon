@@ -1506,7 +1506,7 @@ describe('Workspace settings', () => {
     expect(within(dialog).getByText('Rally Studio stays available to its other members.')).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Leave workspace' }));
 
-    await waitFor(() => expect(leaveWorkspace).toHaveBeenCalledWith(workspace.id));
+    await waitFor(() => expect(leaveWorkspace).toHaveBeenCalledWith(workspace.id, 'left'));
   });
 
   it('warns that the last member will close the workspace', async () => {
@@ -1524,7 +1524,7 @@ describe('Workspace settings', () => {
     )).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Leave and close' }));
 
-    await waitFor(() => expect(leaveWorkspace).toHaveBeenCalledWith(workspace.id));
+    await waitFor(() => expect(leaveWorkspace).toHaveBeenCalledWith(workspace.id, 'abandoned'));
   });
 
   it('uses searchable section navigation and keeps one active settings pane', async () => {

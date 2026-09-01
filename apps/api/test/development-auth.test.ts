@@ -35,4 +35,26 @@ describe("development authentication", () => {
       apiBaseUrl: "http://127.0.0.1:8787",
     });
   });
+
+  it("reopens the fixed development authority after its final member closes it", async () => {
+    const database = migratedSqliteDatabase();
+    databases.push(database);
+    const service = new AuthService(createTestEnv({
+      APP_ENV: "development",
+      RALLY_DEV_AUTH: "true",
+      AVALON_REGION: "global",
+      DB: sqliteD1(database),
+      PUBLIC_API_BASE_URL: "http://127.0.0.1:8787",
+    }));
+    const first = await service.createDevelopmentSession("Rally Development");
+    database.prepare("UPDATE workspaces SET abandoned_at = ? WHERE id = ?")
+      .run("2026-09-01T00:00:00.000Z", first.workspace!.id);
+    database.prepare("UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ?")
+      .run(first.workspace!.id);
+
+    await expect(service.createDevelopmentSession("Rally Development"))
+      .resolves.toMatchObject({ workspace: { id: first.workspace!.id } });
+    expect(database.prepare("SELECT abandoned_at FROM workspaces WHERE id = ?").get(first.workspace!.id))
+      .toEqual({ abandoned_at: null });
+  });
 });

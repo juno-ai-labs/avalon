@@ -368,7 +368,7 @@ const browserBridge: RallyDesktopBridge = {
     if (!response.ok) throw new Error(`Workspace attention failed (${response.status})`);
     return response.json();
   },
-  async leaveWorkspace({ region, workspaceId }) {
+  async leaveWorkspace({ expectedOutcome, region, workspaceId }) {
     if (
       !browserSession?.workspace
       || browserSession.workspace.id !== workspaceId
@@ -377,7 +377,8 @@ const browserBridge: RallyDesktopBridge = {
       throw new Error('The browser keeps only its active workspace session.');
     }
     const response = await fetch(
-      `${browserSession.apiBaseUrl}/workspaces/${encodeURIComponent(workspaceId)}/membership`,
+      `${browserSession.apiBaseUrl}/workspaces/${encodeURIComponent(workspaceId)}/membership`
+        + `?expectedOutcome=${expectedOutcome}`,
       {
         method: 'DELETE',
         headers: { Accept: 'application/json', Authorization: `Bearer ${browserSession.accessToken}` },

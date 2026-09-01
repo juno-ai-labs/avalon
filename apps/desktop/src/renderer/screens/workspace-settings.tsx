@@ -566,7 +566,7 @@ export function WorkspaceSettingsScreen({
   });
   const leavingClosesWorkspace = members.data?.length === 1;
   const departWorkspace = useMutation({
-    mutationFn: () => leaveWorkspace(workspace.id),
+    mutationFn: () => leaveWorkspace(workspace.id, leavingClosesWorkspace ? 'abandoned' : 'left'),
     onSuccess: () => setLeaveConfirmationOpen(false),
   });
   const invitations = useQuery({

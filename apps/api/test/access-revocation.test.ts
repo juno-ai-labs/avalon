@@ -204,7 +204,7 @@ describe("leaving a workspace", () => {
     const database = seed();
     const { env, sent } = environment(database);
 
-    await expect(new WorkspaceService(env, auth(MEMBER, "member")).leaveWorkspace())
+    await expect(new WorkspaceService(env, auth(MEMBER, "member")).leaveWorkspace("left"))
       .resolves.toEqual({ outcome: "left" });
 
     expect(database.prepare(
@@ -224,7 +224,7 @@ describe("leaving a workspace", () => {
     const database = seed();
     const { env, sent } = environment(database);
 
-    await expect(new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace())
+    await expect(new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace("left"))
       .rejects.toMatchObject({ status: 409, code: "sole_workspace_owner" });
 
     expect(database.prepare(
@@ -253,7 +253,7 @@ describe("leaving a workspace", () => {
     );
     const { env, sent } = environment(database);
 
-    await expect(new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace())
+    await expect(new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace("abandoned"))
       .resolves.toEqual({ outcome: "abandoned" });
 
     expect(database.prepare("SELECT abandoned_at FROM workspaces WHERE id = ?").get(WORKSPACE))
@@ -290,7 +290,7 @@ describe("leaving a workspace", () => {
     const { env } = environment(database);
 
     await Promise.allSettled([
-      new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace(),
+      new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace("abandoned"),
       acceptInvitationForUser(env, "00000000-0000-7000-8000-000000000098", {
         id: MEMBER,
         email: "member@example.test",
@@ -304,6 +304,34 @@ describe("leaving a workspace", () => {
        FROM workspaces w WHERE w.id = ?`,
     ).get(WORKSPACE) as { abandoned_at: string | null; active_members: number };
     expect(lifecycle.abandoned_at === null || lifecycle.active_members === 0).toBe(true);
+  });
+
+  it("does not close a workspace after an ordinary-leave confirmation becomes stale", async () => {
+    const database = seed();
+    database.prepare(
+      "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id != ?",
+    ).run(WORKSPACE, OWNER);
+    const { env, sent } = environment(database);
+
+    await expect(new WorkspaceService(env, auth(OWNER, "owner")).leaveWorkspace("left"))
+      .rejects.toMatchObject({ status: 409, code: "membership_changed" });
+
+    expect(database.prepare("SELECT abandoned_at FROM workspaces WHERE id = ?").get(WORKSPACE))
+      .toEqual({ abandoned_at: null });
+    expect(sent).toEqual([]);
+  });
+
+  it("does not turn a close-workspace confirmation into an ordinary leave", async () => {
+    const database = seed();
+    const { env, sent } = environment(database);
+
+    await expect(new WorkspaceService(env, auth(MEMBER, "member")).leaveWorkspace("abandoned"))
+      .rejects.toMatchObject({ status: 409, code: "membership_changed" });
+
+    expect(database.prepare(
+      "SELECT status FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+    ).get(WORKSPACE, MEMBER)).toEqual({ status: "active" });
+    expect(sent).toEqual([]);
   });
 
   it("refuses invitation acceptance and fresh session issue for an abandoned workspace", async () => {
@@ -527,7 +555,7 @@ describe("the membership route", () => {
     const database = seed();
     const { env, sent } = environment(database);
     const response = await app(MEMBER, "member").request(
-      `/workspaces/${WORKSPACE}/membership`,
+      `/workspaces/${WORKSPACE}/membership?expectedOutcome=left`,
       { method: "DELETE" },
       env,
     );

@@ -10,7 +10,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { IdSchema, type WorkspaceDeparture } from '@rally/contracts';
+import { IdSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from '@rally/contracts';
 import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
 import type {
   RallyDesktopBridge,
@@ -63,7 +63,7 @@ export interface AppSessionValue {
   activateWorkspace: (region: Region, workspaceId: string, operationId?: string) => Promise<void>;
   acceptInvitation: (region: Region, invitationId: string, operationId?: string) => Promise<void>;
   declineInvitation: (region: Region, invitationId: string) => Promise<void>;
-  leaveWorkspace: (workspaceId: string) => Promise<WorkspaceDeparture>;
+  leaveWorkspace: (workspaceId: string, expectedOutcome: WorkspaceDepartureOutcome) => Promise<WorkspaceDeparture>;
   createDevelopmentSession: () => Promise<void>;
   finishWorkspaceSetup: (name: string, region: Region, operationId?: string) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
@@ -284,11 +284,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     await bridge.declineInvitation({ region: invitationRegion, invitationId });
   }, [bridge]);
 
-  const leaveWorkspace = useCallback(async (workspaceId: string): Promise<WorkspaceDeparture> => {
+  const leaveWorkspace = useCallback(async (
+    workspaceId: string,
+    expectedOutcome: WorkspaceDepartureOutcome,
+  ): Promise<WorkspaceDeparture> => {
     if (!session?.workspace || session.workspace.id !== workspaceId) {
       throw new Error('The workspace is no longer active');
     }
-    const departure = await bridge.leaveWorkspace({ region: session.workspace.region, workspaceId });
+    const departure = await bridge.leaveWorkspace({ expectedOutcome, region: session.workspace.region, workspaceId });
     await clearWorkspaceDrafts(session.workspace.region, workspaceId);
     queryClient.removeQueries();
     return departure;

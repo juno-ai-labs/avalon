@@ -11,6 +11,7 @@ import {
   WorkspaceOnboardingStateSchema,
   WorkspaceAttentionSchema,
   WorkspaceDepartureSchema,
+  WorkspaceDepartureRequestSchema,
   type Session as WireSession,
   type ClientFeatureFlags,
   type WorkspaceAttention,
@@ -216,6 +217,7 @@ import {
   type StoredAuthSet,
   type StoredProfileSet,
 } from './stored-auth';
+import { requestWithOnboardingIdentity } from './onboarding-identity-request';
 import { parseLegacyStoredSession } from './stored-session';
 import {
   decryptSessionValue,
@@ -644,14 +646,14 @@ function forceCloseMeetingWindow(window: BrowserWindow): void {
   window.close();
 }
 
-function assertWorkspaceChangeAllowed(target?: { region: RallyRegion; workspaceId: string }): void {
+function beginWorkspaceChange(target?: { region: RallyRegion; workspaceId: string }): number | null {
   const currentWorkspace = inMemorySession?.workspace;
-  if (workspaceChangeGuard.blocksChangeFrom(
+  return workspaceChangeGuard.beginChange(
     currentWorkspace
       ? desktopWorkspaceIdentityKey(currentWorkspace.region, currentWorkspace.id)
       : null,
     target ? desktopWorkspaceIdentityKey(target.region, target.workspaceId) : undefined,
-  )) throw new Error('Finish or stop the recording before switching workspaces');
+  );
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -2033,15 +2035,34 @@ async function requireOnboardingIdentitySession(): Promise<WireSession> {
   return stored;
 }
 
-async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
-  const identity = await requireOnboardingIdentitySession();
-  const response = await net.fetch(`${runtimeConfig().api.global}/onboarding`, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${identity.accessToken}`,
+async function onboardingIdentityRequest(
+  request: (identity: WireSession) => Promise<Response>,
+): Promise<{ identity: WireSession; response: Response }> {
+  return requestWithOnboardingIdentity({
+    load: requireOnboardingIdentitySession,
+    refresh: async (identity) => {
+      const auth = await loadStoredAuthSet();
+      const account = auth?.account;
+      if (!account || !storedAuthMatches(account, storedAuthFromSession(identity, 'global'))) {
+        throw new Error('A newer Rally identity credential replaced this request');
+      }
+      return refreshStoredCredential(account);
     },
+    fetch: request,
   });
+}
+
+async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
+  const { identity, response } = await onboardingIdentityRequest((credential) => net.fetch(
+    `${runtimeConfig().api.global}/onboarding`,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${credential.accessToken}`,
+      },
+    },
+  ));
   if (!response.ok) throw await responseError(response);
   const parsed = WorkspaceOnboardingStateSchema.safeParse(await response.json());
   if (!parsed.success) throw new Error('Rally returned an invalid workspace setup response');
@@ -2065,6 +2086,8 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
 }
 
 async function refreshStoredCredential(previous: StoredAuth): Promise<WireSession> {
+  const expectedLifecycleEpoch = sessionLifecycleEpoch;
+  if (loggingOut) throw new Error('Rally is signing out');
   const apiBaseUrl = apiBaseForAuth(previous);
   let session: WireSession;
   try {
@@ -2079,11 +2102,18 @@ async function refreshStoredCredential(previous: StoredAuth): Promise<WireSessio
     }
   } catch (error) {
     if (refreshFailureIsTerminal(error)) {
-      await withSessionMutation(() => removeStoredCredentialUnlocked(previous));
+      try {
+        await withSessionMutation(() => removeStoredCredentialUnlocked(previous));
+      } catch (cleanupError) {
+        logWarn('rally', 'could not remove a terminally rejected stored credential', cleanupError);
+      }
     }
     throw error;
   }
   return withSessionMutation(async () => {
+    if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
+      throw new Error('Rally was signed out while the session was refreshing');
+    }
     const auth = await loadStoredAuthSet();
     if (!auth) throw new Error('Rally was signed out while the session was refreshing');
     const current = previous.binding.workspaceId === null
@@ -2135,36 +2165,43 @@ async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
   const region = RegionSchema.safeParse(candidate['region']);
+  const parsedDeparture = WorkspaceDepartureRequestSchema.safeParse({ expectedOutcome: candidate['expectedOutcome'] });
   if (
     !workspaceId.success
     || !region.success
-    || Object.keys(candidate).some((key) => key !== 'workspaceId' && key !== 'region')
+    || !parsedDeparture.success
+    || Object.keys(candidate).some((key) => !['expectedOutcome', 'workspaceId', 'region'].includes(key))
   ) {
     throw new Error('Invalid workspace departure request');
   }
-  assertWorkspaceChangeAllowed();
-  const authSet = await loadStoredAuthSet();
-  let credential = authSet
-    ? activeStoredWorkspaceCredential(authSet, workspaceId.data, region.data)
-    : null;
-  if (!credential) throw new Error('No credential is stored for this workspace');
-  const ask = (stored: StoredAuth) => net.fetch(
-    `${apiBaseForAuth(stored)}/workspaces/${encodeURIComponent(workspaceId.data)}/membership`,
-    {
-      method: 'DELETE',
-      headers: { Accept: 'application/json', Authorization: `Bearer ${stored.accessToken}` },
-    },
-  );
-  let response = await ask(credential);
-  if (response.status === 401) {
-    const renewed = await refreshStoredCredential(credential);
-    credential = storedAuthFromSession(renewed, regionForStoredSession(renewed));
-    response = await ask(credential);
+  const changeId = beginWorkspaceChange();
+  try {
+    const authSet = await loadStoredAuthSet();
+    let credential = authSet
+      ? activeStoredWorkspaceCredential(authSet, workspaceId.data, region.data)
+      : null;
+    if (!credential) throw new Error('No credential is stored for this workspace');
+    const ask = (stored: StoredAuth) => net.fetch(
+      `${apiBaseForAuth(stored)}/workspaces/${encodeURIComponent(workspaceId.data)}/membership`
+        + `?expectedOutcome=${parsedDeparture.data.expectedOutcome}`,
+      {
+        method: 'DELETE',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${stored.accessToken}` },
+      },
+    );
+    let response = await ask(credential);
+    if (response.status === 401) {
+      const renewed = await refreshStoredCredential(credential);
+      credential = storedAuthFromSession(renewed, regionForStoredSession(renewed));
+      response = await ask(credential);
+    }
+    if (!response.ok) throw await responseError(response);
+    const departure = WorkspaceDepartureSchema.parse(await readJsonBody(response));
+    await withSessionMutation(() => removeStoredCredentialUnlocked(credential));
+    return departure;
+  } finally {
+    workspaceChangeGuard.finishChange(changeId);
   }
-  if (!response.ok) throw await responseError(response);
-  const departure = WorkspaceDepartureSchema.parse(await readJsonBody(response));
-  await withSessionMutation(() => removeStoredCredentialUnlocked(credential));
-  return departure;
 }
 
 async function requestOnboardingSession(
@@ -2180,16 +2217,20 @@ async function requestOnboardingSession(
   if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
     throw new Error('Rally was signed out while workspace setup was running');
   }
-  const response = await net.fetch(`${runtimeConfig().api.global}${path}`, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${identity.accessToken}`,
-      ...(operationId ? { [RALLY_HEADERS.OPERATION_ID]: operationId } : {}),
+  const requested = await onboardingIdentityRequest((credential) => net.fetch(
+    `${runtimeConfig().api.global}${path}`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${credential.accessToken}`,
+        ...(operationId ? { [RALLY_HEADERS.OPERATION_ID]: operationId } : {}),
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+  ));
+  const response = requested.response;
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
   if (!parsed.success || !parsed.data.workspace) {
@@ -2237,38 +2278,42 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
     region: candidate['region'], workspaceId: candidate['workspaceId'],
   });
   if (!parsed.success) throw new Error('Invalid workspace activation request');
-  assertWorkspaceChangeAllowed(parsed.data);
   const operationId = candidate['operationId'];
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
     throw new Error('Invalid workspace activation operation ID');
   }
-  const selectionIntent = ++workspaceSelectionIntent;
-  const cached = await withSessionMutation(async () => {
-    const auth = await loadStoredAuthSet();
-    if (!auth) return null;
-    const credential = storedWorkspaceCredential(auth, parsed.data.workspaceId, parsed.data.region);
-    if (!credential) return null;
-    const session = await storedSessionForCredential(credential);
-    if (!session || selectionIntent !== workspaceSelectionIntent) return null;
-    const selected = selectStoredWorkspace(auth, parsed.data.workspaceId, parsed.data.region);
-    await writeStoredAuthFile(
-      userDataDirectory(),
-      encryptStoredSessionValue(JSON.stringify(selected)),
+  const changeId = beginWorkspaceChange(parsed.data);
+  try {
+    const selectionIntent = ++workspaceSelectionIntent;
+    const cached = await withSessionMutation(async () => {
+      const auth = await loadStoredAuthSet();
+      if (!auth) return null;
+      const credential = storedWorkspaceCredential(auth, parsed.data.workspaceId, parsed.data.region);
+      if (!credential) return null;
+      const session = await storedSessionForCredential(credential);
+      if (!session || selectionIntent !== workspaceSelectionIntent) return null;
+      const selected = selectStoredWorkspace(auth, parsed.data.workspaceId, parsed.data.region);
+      await writeStoredAuthFile(
+        userDataDirectory(),
+        encryptStoredSessionValue(JSON.stringify(selected)),
+      );
+      inMemoryAuthSet = selected;
+      inMemorySession = session;
+      broadcastSessionChanged(session);
+      return publicSession(session);
+    });
+    if (cached) return cached;
+    return await requestOnboardingSession(
+      '/onboarding/workspace/activate',
+      parsed.data,
+      parsed.data.region,
+      parsed.data.workspaceId,
+      operationId as string | undefined,
+      selectionIntent,
     );
-    inMemoryAuthSet = selected;
-    inMemorySession = session;
-    broadcastSessionChanged(session);
-    return publicSession(session);
-  });
-  if (cached) return cached;
-  return requestOnboardingSession(
-    '/onboarding/workspace/activate',
-    parsed.data,
-    parsed.data.region,
-    parsed.data.workspaceId,
-    operationId as string | undefined,
-    selectionIntent,
-  );
+  } finally {
+    workspaceChangeGuard.finishChange(changeId);
+  }
 }
 
 async function createWorkspace(input: unknown): Promise<DesktopSession> {
@@ -2278,14 +2323,18 @@ async function createWorkspace(input: unknown): Promise<DesktopSession> {
   }
   const parsed = CreateWorkspaceRequestSchema.safeParse({ region: candidate['region'], name: candidate['name'] });
   if (!parsed.success) throw new Error('Invalid workspace creation request');
-  assertWorkspaceChangeAllowed();
   const operationId = candidate['operationId'];
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
     throw new Error('Invalid workspace creation operation ID');
   }
-  return requestOnboardingSession(
-    '/onboarding/workspace', parsed.data, parsed.data.region, undefined, operationId as string | undefined,
-  );
+  const changeId = beginWorkspaceChange();
+  try {
+    return await requestOnboardingSession(
+      '/onboarding/workspace', parsed.data, parsed.data.region, undefined, operationId as string | undefined,
+    );
+  } finally {
+    workspaceChangeGuard.finishChange(changeId);
+  }
 }
 
 function parseInvitationAction(input: unknown): {
@@ -2314,20 +2363,23 @@ function parseInvitationAction(input: unknown): {
 
 async function acceptInvitation(input: unknown): Promise<DesktopSession> {
   const parsed = parseInvitationAction(input);
-  assertWorkspaceChangeAllowed();
-  return requestOnboardingSession(
-    `/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/accept`,
-    { region: parsed.region },
-    parsed.region,
-    undefined,
-    parsed.operationId,
-  );
+  const changeId = beginWorkspaceChange();
+  try {
+    return await requestOnboardingSession(
+      `/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/accept`,
+      { region: parsed.region },
+      parsed.region,
+      undefined,
+      parsed.operationId,
+    );
+  } finally {
+    workspaceChangeGuard.finishChange(changeId);
+  }
 }
 
 async function declineInvitation(input: unknown): Promise<void> {
   const parsed = parseInvitationAction(input);
-  const identity = await requireOnboardingIdentitySession();
-  const response = await net.fetch(
+  const { response } = await onboardingIdentityRequest((identity) => net.fetch(
     `${runtimeConfig().api.global}/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/decline`,
     {
       method: 'POST',
@@ -2338,7 +2390,7 @@ async function declineInvitation(input: unknown): Promise<void> {
       },
       body: JSON.stringify({ region: parsed.region }),
     },
-  );
+  ));
   if (!response.ok) throw await responseError(response);
 }
 

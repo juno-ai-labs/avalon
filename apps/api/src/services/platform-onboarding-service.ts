@@ -273,7 +273,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          JOIN workspaces w ON w.id = m.workspace_id
          WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
            AND w.abandoned_at IS NULL
-         ORDER BY m.joined_at, w.created_at`,
+         ORDER BY m.joined_at, w.created_at, w.id`,
       ).bind(user.id, this.env.AVALON_REGION).all<Record<string, unknown>>(),
       this.env.DB.prepare(
         `SELECT i.id, i.workspace_id, w.name AS workspace_name,
@@ -995,6 +995,12 @@ export class PlatformOnboardingService {
       if (!invitation) {
         throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
       }
+      // Leaving is regional authority and deliberately does not synchronously
+      // mutate the Global route. Reconcile the discovery that proved this is a
+      // new acceptance before reserving, so a stale `active` route cannot turn
+      // a valid re-invitation into an activation of membership that no longer
+      // exists.
+      await this.reconcileWorkspaceBindings(identity.platformUserId, discovery);
       operation = await this.operations.begin({
         operation_id: operationId,
         platform_user_id: identity.platformUserId,
