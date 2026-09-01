@@ -308,6 +308,49 @@ describe("what the workspace object answers about its work streams", () => {
         targetCount: 1,
       });
     });
+
+    it("records 100 published ids without exceeding the object SQLite bind limit", async () => {
+      // Cloudflare admits 100 messages even though the product currently sends
+      // 50. Object SQLite also admits 100 parameters total, and this statement
+      // needs two scalars beside the ids. The real engine proves that this layer
+      // stays safe if the product's transport limit changes later.
+      const included: WorkstreamId[] = [];
+      for (let index = 0; index < 100; index += 1) {
+        included.push(await seedWorkstream({
+          title: `Full Queue batch ${index}`,
+          lastActivityAt: "2009-03-12T12:00:00.000Z",
+        }));
+      }
+      const request = {
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        operationId: "00000000-0000-7000-8000-0000000008f2",
+        requestHash: "fnv1a64:2222222222222222",
+        filter: {
+          lastActivityAt: {
+            atOrAfter: "2009-03-10T00:00:00.000Z",
+            before: "2009-03-20T00:00:00.000Z",
+          },
+          pinned: false,
+          includeSystem: false,
+        },
+      } as const;
+
+      await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
+        items: [...included].sort(),
+        targetCount: 100,
+      });
+      await expect(workspace().advanceWorkstreamBatchDispatch({
+        workspaceId: WORKSPACE_ID,
+        operationId: request.operationId,
+        requestHash: request.requestHash,
+        workstreamIds: included,
+      })).resolves.toEqual({ remainingCount: 0 });
+      await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
+        items: [],
+        targetCount: 100,
+      });
+    });
   });
 
   describe("lookupWorkstreamDirectory — Slack's unfurl summaries", () => {

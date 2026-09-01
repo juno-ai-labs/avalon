@@ -6006,14 +6006,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (!dispatch || dispatch.request_hash !== request.requestHash) {
         throw new Error("workstream_batch_dispatch_conflict");
       }
-      const placeholders = request.workstreamIds.map(() => "?").join(", ");
       const now = Date.now();
       this.state.storage.sql.exec(
         `UPDATE workspace_batch_dispatch_targets SET dispatched_at = COALESCE(dispatched_at, ?)
-          WHERE operation_id = ? AND workstream_id IN (${placeholders})`,
+          WHERE operation_id = ?
+            AND workstream_id IN (SELECT value FROM json_each(?))`,
         now,
         request.operationId,
-        ...request.workstreamIds,
+        JSON.stringify(request.workstreamIds),
       );
       this.state.storage.sql.exec(
         `UPDATE workspace_batch_dispatches SET updated_at = ? WHERE operation_id = ?`,
