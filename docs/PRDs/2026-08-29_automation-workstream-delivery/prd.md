@@ -6,7 +6,7 @@
 > authored from inside the room by the room's own agent, managed by its
 > participants, delivering back into it, and outliving whoever created it. A
 > classifier decides what each completed run's result is worth — nothing at all,
-> a message into the owning work stream that wakes its agent, or surfacing the
+> a message into the owning work stream that wakes its agent, or exposing the
 > run's own work stream so a person can go and look at it — and the Google
 > manifest declarations that make watching a Sheet, Doc, or Drive file actually
 > route events. Companion:
@@ -47,7 +47,7 @@ one idea:
 3. **A classifier decides what each result was worth.** One structured-output
    call on its own Flagship model role returns `done` (nothing worth anyone's
    attention), `deliver` (send it to the automation's destination), or
-   `new_workstream` (this occurrence is worth reading in full, so the work
+   `expose_workstream` (this occurrence is worth reading in full, so the work
    stream the run *already executed in* stops being hidden and appears in the
    sidebar). Nothing is created for that last arm. The run gets no vote, and
    `shouldSuppressAutomationResult` — the regex that approximates one arm of
@@ -166,7 +166,7 @@ can tell why.
    somewhere, it uses the connector tools it is already bound to, which is a
    different thing from delivery and stays that way.
 5. Each completed run's result is routed by a classified disposition — `done`,
-   `deliver`, or `new_workstream` — decided once per run by a structured-output
+   `deliver`, or `expose_workstream` — decided once per run by a structured-output
    classifier reading the result, never by a regex over the model's prose and
    never by the run itself. `shouldSuppressAutomationResult` and every call site
    of it are deleted.
@@ -174,7 +174,7 @@ can tell why.
    once per run, as a message of its own type carrying a typed activation
    object, visible to the room and projected to the model as untrusted evidence,
    and it starts a run there.
-7. A `new_workstream` disposition surfaces the work stream the run already
+7. An `expose_workstream` disposition exposes the work stream the run already
    executed in — no work stream is created — at the automation's own scope, so
    it appears in the sidebar for the people that scope covers.
 8. A delivery that cannot land — the work stream was archived or deleted, the
@@ -209,11 +209,15 @@ can tell why.
    automation's; the room gets the result and decides what to do in the room.
    Rejected: a reply path, which turns two independent loops into one
    distributed conversation with no owner.
-3. **No dedicated feed presentation for activations.** An activation renders as
-   what it is — an attributed message carrying the automation's name and result.
-   A distinct row kind, a "3 automation updates" fold, or a summary the room's
-   agent writes in its own voice are all left open; the renderer branch this
-   adds is where any of them would land. Deferred — open question 1.
+3. **No row kind of its own for an activation.** It renders as an ordinary
+   message authored by **Automation**, carrying the result — the row a
+   colleague's message gets, with a different name in the author slot. No
+   distinct kind, no "3 automation updates" fold, no affordances that exist only
+   here. Rejected: a bespoke row, which would need its own empty and error
+   states and its own answer every time the feed's row family changes, to
+   present something a reader already knows how to read. Deferred, and left
+   open: the room's agent writing the visible summary in its own voice on the
+   run the activation triggers (open question 1).
 4. **A work stream-scoped automation cannot be re-homed.** The owning work
    stream is identity, not configuration: moving it changes who may manage it,
    whose results it reaches, and which room's participants authorized it.
@@ -429,11 +433,18 @@ the point, and the run put it there.
 
 Two details the Slack origin settles for free:
 
-- **The channel comes from the origin, not from the model.** The run holds its
-  Slack origin, so "this channel" is the channel the mention arrived on, and
-  that ID is frozen into the automation's instructions at acceptance rather than
-  re-derived on each occurrence. A run does not go looking for a channel to post
-  in.
+- **The origin channel is in the run's system prompt, not in its
+  instructions.** The occurrence's system prompt names the channel the
+  automation was set up in — the id and the human-readable name — as standing
+  context, in the same place the run learns the rest of what it was authorized
+  to work with. The instructions say what the automation does ("ask what each
+  person shipped"); the prompt says where this occurrence is speaking from.
+  Writing the channel id into the instructions instead would freeze a literal
+  into the text a person reads and edits, and every re-read of that text — an
+  edit, a rename, a channel this automation later moves to — would have to find
+  and rewrite an id in prose. Standing context is the seam that already exists
+  for exactly this, and a run that needs to post somewhere else says so in its
+  tool call rather than in a string somebody has to maintain.
 - **The person sees the draft in the thread.** The draft card renders as Slack
   blocks in the thread the mention started, and accepting is a block action
   calling the same `acceptDraft` the feed card and `/automations/:id` call.
@@ -447,7 +458,7 @@ silently. Open question 5 asks whether that is right for an automation whose
 only effect is in a channel the requester can already post in.
 
 The classifier still runs on the occurrence, and for this automation it is
-choosing between `done` and surfacing the run: there is no `deliver` arm,
+choosing between `done` and exposing the run: there is no `deliver` arm,
 because there is no recipient. What that decides is whether anybody is told the
 occurrence happened *besides* the channel message the run already posted.
 
@@ -483,14 +494,14 @@ rather than recomputing it:
 | --- | --- |
 | `done` | Nothing is delivered. Every destination gets a `skipped` receipt carrying the reason. |
 | `deliver` | The result goes to whoever the automation belongs to — a person's own destinations, or the owning work stream, which also wakes (**What lands in the work stream**). |
-| `new_workstream` | The work stream the run already executed in is surfaced at the automation's scope (**When the run's own work stream is surfaced**). |
+| `expose_workstream` | The work stream the run already executed in is exposed at the automation's scope (**When the run's own work stream is exposed**). |
 
 **One classifier decides it, and nothing else gets a vote.** A structured-output
 call on its own Flagship model role, `automation_result_disposition`, through
 the bounded structured-inference gateway every other classifier uses. Its inputs
 are the automation's name and objective, the run's trigger kind and summary, the
 run's final message, and the dispositions of the last three runs of this
-automation — that last one is what stops a daily automation surfacing a room
+automation — that last one is what stops a daily automation exposing a room
 every day because each occurrence looks novel on its own. It returns
 `{ disposition, reason }`; the reason is one sentence, stored on the run and
 shown to the automation's managers on the run history, never to the target room.
@@ -508,12 +519,12 @@ checked afterwards, so a model cannot reach an arm it was not offered:
 
 | The automation belongs to | Arms |
 | --- | --- |
-| A person | `done`, `deliver`, `new_workstream` |
+| A person | `done`, `deliver`, `expose_workstream` |
 | A work stream | `done`, `deliver` |
-| The workspace | `done`, `new_workstream` |
+| The workspace | `done`, `expose_workstream` |
 
-A room's automation is not offered `new_workstream` because there is nothing for
-it to do: surfacing means "go and look at the run", and the room already has the
+A room's automation is not offered `expose_workstream` because there is nothing for
+it to do: exposing means "go and look at the run", and the room already has the
 result in its transcript, from an agent that woke on it and can be asked about
 it in place. A workspace automation is not offered `deliver` because it has no
 recipient — for it, the question is only whether this occurrence is worth
@@ -572,13 +583,22 @@ send a duplicate through a provider tool.
 
 ### Who sees it, and what runs
 
-**The room sees it, and the room's agent runs on it.** An activation is an
-ordinary visible message carrying the automation's name and result. It takes an
-attention ordinal like any other arrival, and appending it starts a run with the
-activation as that run's trigger message — mechanically the path an inbound
-email into a work stream already takes, reused rather than rebuilt, including
-whatever that path already does when a run is in flight. Delivery must not
-invent a second answer to that question.
+**The room sees it, and the room's agent runs on it.** An activation renders as
+an ordinary message in the feed, authored by **Automation** — the same row a
+person's message gets, with a name in the author slot rather than a row kind of
+its own. It takes an attention ordinal like any other arrival, and appending it
+starts a run with the activation as that run's trigger message — mechanically
+the path an inbound email into a work stream already takes, reused rather than
+rebuilt, including whatever that path already does when a run is in flight.
+Delivery must not invent a second answer to that question.
+
+That is the whole presentation decision, and it is deliberately the smallest one
+available. A distinct row kind would need its own affordances, its own empty and
+error states, and its own answer every time the feed's row family changes; an
+ordinary authored message inherits all of that, and a reader who knows what a
+message from a colleague looks like already knows what this is. The automation's
+name rides in the activation object beside the row, so a reader can be told
+*which* automation without the author slot carrying two things.
 
 The agent reads it as **untrusted evidence**, wrapped and projected
 `role: "user"` exactly as inbound mail is; **Agent behavior 1** states that in
@@ -594,7 +614,7 @@ on assigning ordinals unconditionally. **Key design decision 12** keeps the two
 traps that revision uncovered on the record, because they are in the read path
 rather than in the design that nearly walked into them.
 
-### When the run's own work stream is surfaced
+### When the run's own work stream is exposed
 
 Every admitted automation run already owns a work stream, created at
 provisioning with `originType: "automation"`, `scope: "personal"`, and one
@@ -604,22 +624,22 @@ participant. The three directory queries behind the sidebar all carry
 a room anybody asked for. It holds the whole occurrence: the transcript, every
 tool call, the result.
 
-A `new_workstream` disposition says this occurrence is worth looking at in full,
+A `expose_workstream` disposition says this occurrence is worth looking at in full,
 and Rally stops hiding the room that already holds it:
 
 - **Nothing is created.** No work stream, title, opening message, seated
   participants, or email address. This is a visibility change on the row that
   recorded the run.
-- **It is surfaced at the automation's scope.** A `personal` automation's run
+- **It is exposed at the automation's scope.** A `personal` automation's run
   appears in its author's sidebar; a `workspace` automation's run is promoted to
   `scope = "workspace"` and appears for the workspace, which is what "shared
   automation, shared output" means.
-- **The run is untouched.** It completed before any of this; surfacing does not
+- **The run is untouched.** It completed before any of this; exposing does not
   restart, re-run, or wake it. Somebody opens it and reads what happened.
 - **Idempotent by construction**, because it is a boolean. A delivery retry has
   nothing to duplicate — the whole class of problem the earlier create-a-room
   design answered with receipts and idempotency keys.
-- **Nothing is unsurfaced.** A person archives a surfaced run like any other
+- **Nothing is re-hidden.** A person archives an exposed run like any other
   work stream, and the run history keeps every occurrence either way.
 
 The name describes what the person sees, not the mechanism. Every place that
@@ -627,9 +647,9 @@ implements it says so plainly, because a reader who takes it literally will
 write the creation path this arm does not have.
 
 **The cap is real and its number is not ours to invent.** An automation
-classifying `new_workstream` every occurrence puts a row in somebody's sidebar
+classifying `expose_workstream` every occurrence puts a row in somebody's sidebar
 every occurrence, and a workspace notices that as clutter long before anything
-errors. `AUTOMATION_SURFACED_RUNS_MAX_PER_DAY` is introduced *by* the code path
+errors. `AUTOMATION_EXPOSED_RUNS_MAX_PER_DAY` is introduced *by* the code path
 that enforces it, spelled `Number.POSITIVE_INFINITY` with a `LIMIT UNSET`
 marker, per
 [`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md);
@@ -662,10 +682,10 @@ not a delivery failure at all: it is a step of the occurrence that errored, it
 appears on the run history as one, and the classifier still runs on whatever the
 run managed to conclude.
 
-A `new_workstream` disposition has one failure of its own, and it is a small
+A `expose_workstream` disposition has one failure of its own, and it is a small
 one: the day's cap is spent. The run's work stream stays hidden, the receipt
 says so, and the occurrence remains on the automation's run history where it
-always was — nothing is lost, because surfacing was never the thing that carried
+always was — nothing is lost, because exposing was never the thing that carried
 the result. It does not fall back to a delivery the classifier did not ask for.
 
 That is the whole list, and it is short on purpose. **Nothing about a person's
@@ -705,13 +725,26 @@ the target work stream.
 
 The Google activity types gain `resourceRelationships`:
 `sheets.spreadsheet_changed` names `google_sheet`, `docs.document_changed`
-names `google_doc`, and `drive.file_changed` names `drive_file` — written out,
-`{ relationship: "file", resourceType: "google_sheet" }` and its two siblings.
-Each needs that `relationship`, and none of the seven values
-`ConnectorResourceRelationshipSchema` allows today — `channel`, `folder`,
-`parent`, `project`, `repository`, `page`, `application` — describes a Drive
-file, so the enum gains `file`. That is a contracts change, not a manifest-only
-one; **Data model** carries the detail. Notion's `page` is the precedent for a
+names `google_doc`, `drive.file_changed` names `drive_file`, and the email
+events name `gmail_thread` — written out,
+`{ relationship: "file", resourceType: "google_sheet" }` and its siblings, with
+`{ relationship: "thread", resourceType: "gmail_thread" }` for mail. None of the
+seven values `ConnectorResourceRelationshipSchema` allows today — `channel`,
+`folder`, `parent`, `project`, `repository`, `page`, `application` — describes
+either a Drive file or a mail thread, so the enum gains `file` and `thread`.
+That is a contracts change, not a manifest-only one; **Data model** carries the
+detail.
+
+**A thread is watchable in the same pass**, and an earlier revision of this PRD
+deferred it on the grounds that the email events' filter fields were not
+designed with per-thread scoping in mind. They do not need to be: a resource
+relationship is not a filter. It says which attached resource an event is
+*about*, and the registration reconciler turns that into a resource-scoped
+evaluator — the same path the Sheet takes. Watching one thread is also the more
+common want of the two. Somebody following a live negotiation with a client
+wants that conversation, not their whole mailbox, and today the only way to
+express it is a mailbox-wide trigger with filters that approximate one thread
+and go stale the moment the subject line changes. Notion's `page` is the precedent for a
 relationship naming the watched entity itself rather than a container it sits
 in. With that declared, the existing machinery does the rest: watching an attached Sheet
 registers a resource-scoped evaluator, and each polled change appends a
@@ -758,7 +791,7 @@ keeps a `workspace`-scoped one that summarizes the week's search activity into
 `#recruiting`. Its run posts there with `slack.send_message` — that is an
 action, not a delivery — and on the week the summary turns up
 something worth reading properly — a client's terms changed mid-search — the
-classifier returns `new_workstream` and the run's own work stream appears in the
+classifier returns `expose_workstream` and the run's own work stream appears in the
 workspace's sidebar, holding the summary and every step that produced it. No
 room was created for that; one stopped hiding.
 
@@ -790,7 +823,7 @@ admitted automation run owns exactly one work stream" is strengthened rather
 than strained: the run still executes in its own child work stream, `deliver`
 appends a message into the room that owns the automation without that room
 becoming the run's — the same relationship email delivery has to an inbox — and
-`new_workstream` does nothing more than stop hiding the one work stream the run
+`expose_workstream` does nothing more than stop hiding the one work stream the run
 already owned. "Connected activities either trigger deterministic automation work,
 enrich an explicitly watched resource, or appear as an in-stream routing
 suggestion" is the clause the Google manifest fix makes true — watching a Google
@@ -873,7 +906,7 @@ None yet.
    workspace automation's person-shaped destinations against whoever accepted
    it, which hands a shared object one individual's inbox and breaks the day
    they leave.
-6. **`new_workstream` surfaces a room that exists; it does not create one.** An
+6. **`expose_workstream` reveals a room that exists; it does not create one.** An
    earlier revision had the arm create a work stream, seat it with the owning
    room's participants, seed it with the result, and key it to the run for
    idempotency. Every run already owns a work stream holding that result plus
@@ -905,7 +938,7 @@ None yet.
    own disposition costs no extra inference and has the most context, and is
    rejected anyway: the run is the loop untrusted trigger content steers, so a
    disposition it chooses is one an attacker can influence in both directions —
-   `new_workstream` on demand is reach, `done` on demand hides a result nobody
+   `expose_workstream` on demand is reach, `done` on demand hides a result nobody
    asked to hide. The run also has an interest of its own, since a turn that
    went badly ends most gracefully by declaring there was nothing to report. A
    separate classifier reads the run's *output* rather than executing inside it,
@@ -1134,28 +1167,28 @@ work stream. These are the additional destinations…" has "its" doing
 load-bearing work it was never asked to do, once a run can also deliver into the
 work stream that owns it.
 
-### Surfacing a run's work stream
+### Exposing a run's work stream
 
 The three directory queries behind the sidebar exclude automation-origin rows
 outright — `AND directory.origin_type <> 'automation'` at
 `workspace-do.ts:7797`, `:7893`, and `:7912`, with a fourth filter on the same
 value at `:7989`. That predicate is what hides every run's work stream, and it
-is right for every run that has not been surfaced.
+is right for every run that has not been exposed.
 
-Surfacing adds one column to the workspace directory row,
-`automation_surfaced INTEGER NOT NULL DEFAULT 0`, and turns each of those
+Exposing adds one column to the workspace directory row,
+`automation_exposed INTEGER NOT NULL DEFAULT 0`, and turns each of those
 predicates into `(directory.origin_type <> 'automation' OR
-directory.automation_surfaced = 1)`. All four move together or none of them do:
-a row surfaced into the recent-work list but still filtered out of the pinned
+directory.automation_exposed = 1)`. All four move together or none of them do:
+a row exposed into the recent-work list but still filtered out of the pinned
 and running lists is a work stream that vanishes when somebody pins it.
 
-For a `workspace` automation, surfacing also sets the work stream's
+For a `workspace` automation, exposing also sets the work stream's
 `scope = 'workspace'`. That is a real widening and it is the point — a shared
 automation's output is the workspace's — but it means the write goes through the
 work stream's own scope-change path rather than poking the directory row, so
 whatever that path already does about participants and visibility keeps
 happening. `origin_type` is never rewritten: it is provenance, the run history
-still needs it, and a surfaced run is still a run.
+still needs it, and an exposed run is still a run.
 
 No new table, no new work stream, and no create receipt. The idempotency the
 earlier create-a-room design needed is a boolean here.
@@ -1167,7 +1200,7 @@ Four nullable columns on the `automation_runs` table inside the
 that name was dropped with the rest of them:
 
 ```
-disposition        TEXT CHECK (disposition IN ('done', 'deliver', 'new_workstream')),
+disposition        TEXT CHECK (disposition IN ('done', 'deliver', 'expose_workstream')),
 disposition_source TEXT CHECK (disposition_source IN ('classified', 'default')),
 disposition_reason TEXT,
 disposition_at     INTEGER
@@ -1294,13 +1327,13 @@ same commit and is not required by anything here.
 
 Delivery does not cross the boundary. The owning work stream belongs to the same
 workspace as the automation, so appending an activation is an in-region
-object-to-object hop; surfacing a run's work stream is a flag on a row in the
+object-to-object hop; exposing a run's work stream is a flag on a row in the
 same region's WorkspaceDO; and a Slack channel is reached through the workspace's
 own connection from the Worker that holds it.
 
 **The Global email-address registry stays untouched**, which is worth stating
 because an earlier revision of this section had to say the opposite: while
-`new_workstream` created a work stream, it inherited creation's dependency on
+`expose_workstream` created a work stream, it inherited creation's dependency on
 that Global registry, so an EU automation's delivery could fail on a Global
 outage. Surfacing an existing run's work stream registers nothing — that room
 got whatever address it was going to get when the run was provisioned.
@@ -1334,8 +1367,8 @@ the EU needs the answer from the same place either way.
 2. **The scope is the audience, and the classifier stays inside it.**
    `personal` reaches that person, `workspace` reaches the channel an admin
    picked and whoever is in it, `workstream` reaches the room's participants,
-   present and future. `done` reaches nobody. `new_workstream` reaches exactly
-   the people the scope already covers, because the work stream it surfaces is
+   present and future. `done` reaches nobody. `expose_workstream` reaches exactly
+   the people the scope already covers, because the work stream it exposes is
    promoted to that same scope and no wider. The arm set is rendered into the
    JSON schema the classifier answers against, so an arm the scope does not
    allow is not a value the model can emit.
@@ -1556,9 +1589,9 @@ stale the same way a tool's description does. It is also, after this change, the
 input    the automation's name and objective, the trigger kind and trigger
          summary, the run's final message, and the dispositions of the last
          three runs of this automation
-schema   { "disposition": "done" | "deliver" | "new_workstream",
+schema   { "disposition": "done" | "deliver" | "expose_workstream",
            "reason": string (maxLength 300) }
-         `new_workstream` present only for a `personal` or `workspace`
+         `expose_workstream` present only for a `personal` or `workspace`
          automation; a `workstream` automation is asked a two-way question
 ```
 
@@ -1630,7 +1663,7 @@ acknowledgement, a result that plainly warrants opening the run — each with th
 disposition a person would have chosen. Watch two failures specifically: `done`
 on something that mattered, which is the invisible one and the reason this
 decision was taken away from the run that could have hidden behind it, and
-`new_workstream` on the fourth identical weekly digest, which is the one that
+`expose_workstream` on the fourth identical weekly digest, which is the one that
 fills a sidebar with rooms nobody opens.
 
 Because this classifier is now the *only* thing standing between every
@@ -1646,7 +1679,7 @@ worth isolating.
 
 1. **The Durable Object migrations.** The two scope rebuilds — AutomationAgent's
    `automation_acceptance` and WorkspaceDO's `automation_directory` — plus the
-   `automation_surfaced` column on the workspace directory row. They go alone
+   `automation_exposed` column on the workspace directory row. They go alone
    because a rebuild inside a live object upgrades on wake, one object at a
    time, and the thing to be sure of before any code reads the new columns is
    that every object in the fleet converged. Populated workerd upgrade tests,
@@ -1707,18 +1740,19 @@ switch — pointing it at another model is the lever that exists.
    still missing.
 5. **Delivery and the wake.** Send a matching email. Exactly one activation is
    written, carrying the automation's name, run ID, and
-   `trigger.kind: "external_event"`; the room's agent starts a run with it as
-   the trigger message, holding the tools that room's runs always hold. Send the
-   same email twice: still one row, one run.
+   `trigger.kind: "external_event"`; it renders as an ordinary message whose
+   author reads **Automation**, not as a row kind of its own; and the room's
+   agent starts a run with it as the trigger message, holding the tools that
+   room's runs always hold. Send the same email twice: still one row, one run.
 6. **The classifier's arms.** A `workstream` automation whose result is a
    routine update classifies `deliver`; the room receives it and the run history
    records `disposition_source: "classified"` with the reason. One whose result
    is "no changes this week" classifies `done`: nothing in the room, a `skipped`
    receipt, the run still inspectable. Assert the schema it was given had no
-   `new_workstream` arm at all.
+   `expose_workstream` arm at all.
 7. **Surfacing.** Fire the `workspace` automation from check 2 on an occurrence
    worth reading in full. Assert the schema it was given had no `deliver` arm,
-   that `new_workstream` surfaces the run's *own* work stream — nothing created,
+   that `expose_workstream` surfaces the run's *own* work stream — nothing created,
    the same ID, now `scope: "workspace"` and visible in a second member's
    sidebar — and that replaying changes nothing. Set the daily cap to zero and
    fire again: the run stays hidden and the receipt says why.
@@ -1741,10 +1775,12 @@ switch — pointing it at another model is the lever that exists.
     nowhere in the tree — a grep-level assertion, because a predicate left
     exported and unused is one somebody re-wires — and that a run whose final
     message is empty still classifies rather than crashing a delivery path.
-12. **Google watches.** Attach a Sheet, enable watch, edit it: a resource-update
-    row appears within one poll cycle. Separately, a unit test that builds the
-    registry and asserts a descriptor carrying
-    `{ relationship: "file", resourceType: "google_sheet" }` is accepted —
+12. **Google watches, file and thread.** Attach a Sheet, enable watch, edit it:
+    a resource-update row appears within one poll cycle. Attach a Gmail thread,
+    enable watch, reply to it: the same, from that thread rather than the whole
+    mailbox. Separately, a unit test that builds the registry and asserts
+    descriptors carrying `{ relationship: "file", resourceType: "google_sheet" }`
+    and `{ relationship: "thread", resourceType: "gmail_thread" }` are accepted —
     registry construction is where a missing enum value fails, and it fails for
     every connector at once.
 13. **Archive and delete.** Archive a room holding two automations, one already
@@ -1757,16 +1793,16 @@ switch — pointing it at another model is the lever that exists.
 
 ## Open questions
 
-1. **What an activation looks like in the room.** The row is visible, so the
-   renderer branch has to draw something; what is undecided is how much. A
-   message attributed to the automation with its result inline is the default
-   this PRD assumes. The alternatives worth weighing are a compact row that
-   expands, and — the interesting one — letting the room's agent write the
-   visible summary in its own voice on the run the activation triggers, so a
-   person reads something written for this room rather than a copy of an email.
-   That last one is now reachable, because the run happens. It belongs to
-   [`conversation-surfaces.md`](../../conversation-surfaces.md)'s row family.
-2. **`AUTOMATION_SURFACED_RUNS_MAX_PER_DAY`.** The team's number. Per
+1. **Whether the room's agent should write the visible summary instead.** An
+   activation renders as an ordinary message authored by **Automation**, which
+   is what this PRD builds and what the acceptance list checks. The one
+   alternative still worth weighing is letting the room's own agent write what
+   people read, in its own voice, on the run the activation triggers — a person
+   would then read something composed for this room rather than a copy of an
+   email. It is reachable now that the run happens, it is additive to what is
+   being built, and it is a question about voice rather than about rows, which
+   is why it is no longer blocking anything.
+2. **`AUTOMATION_EXPOSED_RUNS_MAX_PER_DAY`.** The team's number. Per
    automation per day; the legitimate maximum is one per triggering event, and
    the failure it guards is a misclassifying automation on a high-volume trigger
    filling a sidebar with rooms nobody opens.
@@ -1774,11 +1810,11 @@ switch — pointing it at another model is the lever that exists.
    arithmetic in **Agent behavior 1**. It wants answering before the first work
    stream carries a daily automation, and it is independent of question 1
    because it is context cost, not presentation.
-4. **Whether a surfaced run should be unsurfaceable.** A person archives one
-   today, which removes it from the sidebar and keeps it on the run history —
-   that is probably enough, and it is what this PRD assumes. The alternative is
-   an explicit "hide this again" that clears the flag, which is a second control
-   doing almost the same thing. Worth revisiting only if archiving a surfaced
+4. **Whether an exposed run should be re-hidable.** A person archives one today,
+   which removes it from the sidebar and keeps it on the run history — that is
+   probably enough, and it is what this PRD assumes. The alternative is an
+   explicit "hide this again" that clears the flag, which is a second control
+   doing almost the same thing. Worth revisiting only if archiving an exposed
    run turns out to read wrong on the automation's own run history.
 5. **Whether a member can accept a workspace automation that only acts where
    they already can.** Acceptance for `workspace` scope is owner-or-admin, and
@@ -1789,8 +1825,3 @@ switch — pointing it at another model is the lever that exists.
    credentials and can *read* things the requester cannot, so a harmless effect
    does not make the automation harmless. Probably resolved by looking at what
    those drafts actually bind to, once there are some.
-6. **Gmail-thread watching.** Whether to declare `resourceRelationships` for
-   `gmail_thread` on the email event types in this pass, or ship
-   Sheets/Docs/Drive first. Watching one email thread is a plausible want,
-   but the email events' filter fields were not designed with per-thread
-   scoping in mind and deserve a look of their own.
