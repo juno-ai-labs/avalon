@@ -23,6 +23,8 @@ const markdownResourceId = '00000000-0000-7000-8000-000000000023';
 const csvResourceId = '00000000-0000-7000-8000-000000000024';
 const documentResourceId = '00000000-0000-7000-8000-000000000025';
 const audioResourceId = '00000000-0000-7000-8000-000000000026';
+const heifResourceId = '00000000-0000-7000-8000-000000000027';
+const tiffResourceId = '00000000-0000-7000-8000-000000000028';
 
 const auth: AuthContext = {
   sessionId: 'session-1',
@@ -361,6 +363,41 @@ describe('uploaded attachment drafts', () => {
     expect(reads).toEqual(['source-markdown', 'source-csv', 'model-document', 'source-audio']);
   });
 
+  it('normalizes HEIF and TIFF preview bytes into a format Chromium can decode', async () => {
+    const heif = new Uint8Array([
+      0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0,
+    ]);
+    const tiff = new Uint8Array([0x49, 0x49, 0x2a, 0x00, 0, 0, 0, 0]);
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+    const sources = new Map<string, Uint8Array>([['source-heif', heif], ['source-tiff', tiff]]);
+    const { database, env } = fixture({
+      async get(key: string) {
+        const bytes = sources.get(key);
+        if (!bytes) return null;
+        return {
+          size: bytes.byteLength,
+          arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+        };
+      },
+    }, { IMAGES: fakeImagesBinding(jpeg) });
+    const previewRow = database.prepare(`
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         content_sha256, model_content_status, metadata_json, attachment_status, created_at, updated_at)
+      VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', '{}',
+              'attached', '2026-08-12T00:00:00.000Z', '2026-08-12T00:00:00.000Z')
+    `);
+    previewRow.run(heifResourceId, workspaceId, 'phone.heic', 'image/heif', 'source-heif', 'f'.repeat(64));
+    previewRow.run(tiffResourceId, workspaceId, 'scan.tiff', 'image/tiff', 'source-tiff', '1'.repeat(64));
+    const service = new ResourceService(env, auth);
+
+    for (const id of [heifResourceId, tiffResourceId]) {
+      const response = await service.preview(id, new AbortController().signal);
+      expect(response.headers.get('content-type')).toBe('image/jpeg');
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(jpeg);
+    }
+  });
+
   it('updates only hydration timestamps when connector content is unchanged', async () => {
     const payload = { revision: 1 };
     const put = vi.fn(async () => undefined);
@@ -434,4 +471,26 @@ function fakeHydrationRegistry(value: unknown): NonNullable<ConstructorParameter
       return { hydrateResource: async () => value };
     },
   } as never;
+}
+
+function fakeImagesBinding(output: Uint8Array): ImagesBinding {
+  return createCloudflareTestBinding<ImagesBinding>({
+    input() {
+      const transformer = {
+        transform() { return transformer; },
+        async output() {
+          return {
+            image() { return new Blob([exactArrayBuffer(output)]).stream(); },
+            contentType() { return 'image/jpeg'; },
+            response() { return new Response(exactArrayBuffer(output), { headers: { 'content-type': 'image/jpeg' } }); },
+          };
+        },
+      };
+      return transformer;
+    },
+  });
+}
+
+function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
