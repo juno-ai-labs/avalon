@@ -7,6 +7,7 @@ import {
   AutomationAgentSnapshotSchema,
   AutomationDraftTurnAdmissionResultSchema,
   AutomationRunSchema,
+  AutomationExecutionPrincipalClaimSchema,
   AutomationSummarySchema,
   WorkstreamAutomationSummarySchema,
   ActivitySourceBindingKeySchema,
@@ -153,6 +154,14 @@ automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("head
   )),
   202,
 ));
+// The claimant is always the caller, so this body is empty by design: a field
+// naming somebody else would let one person lend a colleague's credentials to a
+// standing automation.
+automationRoutes.post("/:id/execution-principal", zValidator("param", idParam), async (c) =>
+  c.json(AutomationExecutionPrincipalClaimSchema.parse(
+    await new AutomationAgentService(c.env, getAuth(c))
+      .claimExecutionPrincipal(c.req.valid("param").id),
+  )));
 automationRoutes.post("/:id/pause", zValidator("param", idParam), async (c) => { await new AutomationAgentService(c.env, getAuth(c)).pause(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.post("/:id/resume", zValidator("param", idParam), async (c) => { await new AutomationAgentService(c.env, getAuth(c)).resume(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.delete("/:id", zValidator("param", idParam), async (c) => { await new AutomationAgentService(c.env, getAuth(c)).delete(c.req.valid("param").id); return c.body(null, 204); });

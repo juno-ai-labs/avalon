@@ -56,6 +56,13 @@ export async function classifyAutomationResult(
   // Nothing to decide: an automation that can neither deliver nor expose has
   // no arm but `done`, and asking a model to choose from a set of one spends an
   // inference on a foregone conclusion.
+  //
+  // No caller can currently produce this, and the arithmetic is why: a room's
+  // automation always delivers to its room, and one no room owns can always
+  // expose the run it executed in, so the two flags cannot both be false. It
+  // stays because it is the honest guard for the question this function asks —
+  // a future reach rule that can empty the set would otherwise send a model a
+  // schema with one value in it.
   if (!input.reach.canDeliver && !input.reach.canExpose) {
     return {
       disposition: "done",

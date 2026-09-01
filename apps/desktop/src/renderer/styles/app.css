@@ -3137,6 +3137,18 @@ pre {
 .system-message-text[data-expanded] { max-height: 320px; overflow-y: auto; }
 .system-message-toggle { align-items: center; background: transparent; color: var(--av-ref-color-neutral-10); display: flex; font-size: 10.5px; gap: 2px; margin-top: 3px; padding: 0; }
 .system-message-toggle:hover { color: var(--av-sys-color-text-subtle); }
+/* The one system row with something to do about it. The action is a real
+   control rather than the "show more" affordance the toggle usually is, so it
+   is given a border and a hit area; the row keeps the system row's dot and
+   spacing so it still reads as Rally's note, not as somebody's message. */
+.principal-unavailable-card .system-message-toggle {
+  border: 1px solid var(--av-sys-color-border-subtle);
+  border-radius: 6px;
+  font-size: 11.5px;
+  margin-top: 8px;
+  padding: 4px 10px;
+}
+.principal-unavailable-card .system-message-toggle:disabled { opacity: 0.55; }
 .system-message-toggle svg { transition: transform 140ms; }
 .system-message-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
 
