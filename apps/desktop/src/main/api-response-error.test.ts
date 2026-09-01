@@ -6,6 +6,7 @@ import {
   refreshFailureIsTerminal,
   responseError,
   UnusableCredentialError,
+  workspaceActivationBridgeError,
 } from './api-response-error';
 
 describe('desktop API response errors', () => {
@@ -52,6 +53,15 @@ describe('desktop API response errors', () => {
     expect(error).toBeInstanceOf(RallyApiResponseError);
     expect(error.message).toBe('Rally authentication failed (500)');
     expect(error.status).toBe(500);
+  });
+
+  it('maps membership refusal and outages to stable bridge-owned failures', () => {
+    expect(workspaceActivationBridgeError(
+      new RallyApiResponseError('provider wording can change', 403, 'workspace_access_denied'),
+    ).message).toContain('workspace_access_denied');
+    expect(workspaceActivationBridgeError(
+      new RallyApiResponseError('provider wording can change', 503, 'service_unavailable'),
+    ).message).toContain('workspace_activation_unavailable');
   });
 });
 
