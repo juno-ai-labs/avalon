@@ -715,6 +715,29 @@ and fans `loop_input_upserted` to every connected viewer. Prepared content
 stays immutable. Reconnect never infers delivery mode or order from local
 composer state.
 
+An admission arms the object's alarm at the cancellation-recovery horizon
+*before* it commits its mailbox reservation, and an unresolved reservation
+keeps deriving a wake-up at the instant its in-memory claim expires. Both exist
+because the head-of-line gate hides a `preparing` row and everything queued
+behind it from `pendingInputs`, so nothing else in the object derives a wake-up
+for it: an admission whose invocation the runtime cancels — which neither
+throws nor runs a `finally` — would otherwise leave the object with no alarm at
+all, and that message and every message queued after it would wait for an
+unrelated request that a work stream nobody reopens never receives. Arming
+before the commit rather than after is what makes that unconditional: the worst
+an admission that then fails can cost is one wake that finds nothing to do.
+
+The claim itself expires. `activeInputPreparations` records when a preparation
+was first claimed, and past `LOOP_EXECUTION_LEASE_MS` the claim stops being
+evidence that its owner is running: recovery resumes the row and the drain
+stops answering `active`. Without that, a continuation cancelled inside an
+isolate that then survives would hold the row — and the whole queue behind it —
+for as long as the isolate lived. It is the same five-minute horizon the
+singleton execution lease and the harness attempt lease use, for the same
+reason and against the same failure; a resumed admission is idempotent against
+every durable row it re-enters, and a late completion by the original
+invocation is fenced by the canonical `client_message_id` check.
+
 Promotion is one object-local transaction that validates the loop fence,
 creates the immutable canonical participant turn with its exact fact,
 provenance, attachments and mentions, allocates transcript and attention order,
@@ -1141,7 +1164,21 @@ effect idempotency, streaming checkpoints, and renderer socket switching.
 `test-workers/message-to-output-pipeline.test.ts` asserts the exact public
 canonical/pending admission envelope across first admission, pending replay,
 promotion, and external elicitation delivery while separately inspecting the
-private activation state. `test/slack-workspace-assignment.test.ts` proves a
+private activation state. `test-workers/substream-message-queue.test.ts` takes
+the queue itself: three messages admitted during one run each get their own
+cycle in admission order and none of them appears in the running turn's model
+array; a drag reorders promotion rather than only the composer's list; a
+duplicate client message id admits one input and one run; and a queued message
+survives the run it waited on failing mid-stream, being stopped, and the object
+being replaced before its activation runs. Its last two cases are the
+head-of-line gate from both sides — a message admitted behind an unsettled one
+is *hidden rather than dropped* and both are delivered in order, and a
+preparation that fails terminally releases the queue behind it instead of
+holding the substream. Both suites share one deterministic OpenRouter boundary
+in `test-workers/helpers/scripted-provider.ts`; the queue suite's first shape
+used a scripted *refusal* to fail a run and quietly poisoned every later test in
+the file, because a refusal opens the provider circuit for that model across the
+isolate. Fail a run mid-stream instead when what follows it matters. `test/slack-workspace-assignment.test.ts` proves a
 connector replay returns the same pending turn and creates one deterministic
 audit row. `packages/contracts/src/index.test.ts` rejects the retired
 execution-shaped socket receipt, and
@@ -1579,6 +1616,82 @@ the wrong group. The note list's paging is what lets the selection stay
 unbounded: a cursor-fenced `Archive all` would be naming rows the reader can no
 longer reach, and an unbounded one over an *unpaged* list would be naming rows
 they never could.
+
+### 2026-09-01 — The queue's lifecycle is covered end to end on real workerd
+
+**What changed:** Added `test-workers/substream-message-queue.test.ts`, eight
+real-workerd cases over what happens to a message that waits: multi-message
+promotion order across successive cycles, the queue-versus-steer boundary at the
+running turn's model array, reorder as promotion authority, duplicate-admission
+dedupe, fall-forward past a mid-stream failure and past a stop, survival of an
+eviction before activation, and the head-of-line gate from both sides — hidden
+rather than dropped, and released when the admission ahead of it fails. The
+OpenRouter boundary and the admission-parking fixture moved into
+`test-workers/helpers/scripted-provider.ts` and `helpers/substream-fixture.ts`
+so both suites drive the same one, and the scripted provider gained a terminal
+refusal turn.
+
+**Why:** The wake-up bug fixed above was found by reading, not by a failing
+test, and the suite that should have caught it only ever put *one* message in
+the queue. One message cannot show promotion order, cannot show that a queued
+input stays out of the running turn, and cannot show the head-of-line gate at
+all — which is the property that turns one stranded message into a silent
+substream. Each case here fails under a targeted break of the thing it names:
+reversing `pendingInputs`' order, dropping the `mode = 'steer'` filter so a
+queued input is promoted mid-run, removing the gate's `NOT EXISTS`, letting a
+terminal mailbox row keep blocking, and disabling pending pickup entirely.
+
+**Considered and rejected:** Growing the pipeline suite instead of adding a file
+would have put the queue's lifecycle behind a name about the provider path, and
+that file was already the largest in the suite. Keeping a private copy of the
+provider mock in each file was rejected for the usual reason and one specific
+one: the circuit-breaker interference below is invisible until two suites share
+a model, and one shared helper is where that lesson can live.
+
+### 2026-09-01 — An unsettled message admission keeps the object's wake-up
+
+**What changed:** The product service arms the object's alarm at
+`SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS` *before* it commits a mailbox
+reservation; `nextLoopWorkAt` derives a wake-up at the expiry of the in-memory
+claim over an unresolved `preparing` row; and that claim now carries the
+instant it was taken and expires at `LOOP_EXECUTION_LEASE_MS`, which moved from
+`substream-agent.ts` into `substream-loop-storage.ts` now that a third claim
+shares it. The body of `ScheduledDurableObject.ensureAlarmNoLaterThan` was
+lifted into an exported `ensureStorageAlarmNoLaterThan` so the product can arm
+without a bare `setAlarm` that would push an earlier wake-up out.
+
+**Why:** A message is admitted in two durable steps — the mailbox reservation,
+then the prepared pending row — and only the second one made the message
+visible to anything that derives a wake-up. `pendingInputs` deliberately hides
+a `preparing` row *and every input queued behind it*, and
+`nextRecoverableInputPreparationAt` returned `null` while this isolate held the
+in-memory claim. A runtime cancellation mid-admission neither throws nor runs a
+`finally`, so the reservation survived with nothing left to rediscover it, and
+the message — plus everything the person queued after it — was stranded until
+an unrelated request happened to touch the object. For a work stream nobody
+reopens, that is never. This is the exact hazard
+`SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS` was introduced to name for alarm
+handlers; the admission path was the one place still carrying it.
+
+The claim expiry is the other half, and it is what makes the wake-up worth
+having. A wake-up that fires while the claim is held forever only converts a
+silent stall into an endless heartbeat: the drain answers `active`, declines to
+resume, and re-arms. Recovery has to be able to invalidate a claim whose owner
+cannot be shown to exist, and only elapsed time can say that, because a
+cancelled invocation announces nothing.
+
+**Considered and rejected:** A stored `_internal_durable_alarms` kind per
+reservation would survive the same way and bring retry gating for free, but it
+makes an admission write and then cancel an index entry on a path whose whole
+point is to commit fast, and it covers nothing the derived instant does not.
+Leaving the claim to expire only with its isolate — the first shape of this
+change — was rejected once it was clear the new heartbeat keeps the object
+alive, so "the isolate will be replaced eventually" is not a bounded recovery
+story. A new, shorter horizon of its own was rejected as a defensive number
+nobody here can pick ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md));
+the existing five-minute one is already the object's answer to this exact
+question and is far longer than any legitimate preparation, so it cannot race
+work that is merely slow.
 
 ### 2026-08-31 — Batch receipts fit inside the object SQLite bind ceiling
 

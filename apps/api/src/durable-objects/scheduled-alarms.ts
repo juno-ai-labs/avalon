@@ -65,6 +65,24 @@ export const SCHEDULED_ALARM_RETRY_MAX_MS = 30 * 60_000;
  * (retrieved 2026-08-24).
  */
 export const SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS = 2_000;
+
+/**
+ * Bring a Durable Object's alarm forward without erasing a sooner one.
+ *
+ * The body of {@link ScheduledDurableObject.ensureAlarmNoLaterThan}, lifted out
+ * so a collaborator that holds the storage but not the object can arm its own
+ * durability wake-up. Without it such a caller has only bare `setAlarm`, which
+ * pushes an earlier wake-up out and loses whatever that one was for.
+ */
+export async function ensureStorageAlarmNoLaterThan(
+  storage: DurableObjectStorage,
+  dueAt: number,
+): Promise<void> {
+  const floored = Math.max(Date.now() + 1, dueAt);
+  const existing = await storage.getAlarm();
+  if (existing === null || existing > floored) await storage.setAlarm(floored);
+}
+
 /**
  * Entries drained in one wake.
  *
@@ -547,9 +565,7 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
    * ever moves it earlier, so it can never erase a sooner one.
    */
   protected async ensureAlarmNoLaterThan(dueAt: number): Promise<void> {
-    const floored = Math.max(Date.now() + 1, dueAt);
-    const existing = await this.ctx.storage.getAlarm();
-    if (existing === null || existing > floored) await this.ctx.storage.setAlarm(floored);
+    await ensureStorageAlarmNoLaterThan(this.ctx.storage, dueAt);
   }
 
   /**

@@ -38,11 +38,22 @@ import {
 
 import type { AuthContext, Env } from "../src/env";
 import {
+  capturedProviderRequests,
+  installProviderCapture,
+  installScriptedProvider,
+  openProviderGate,
+  restoreProviderFetch,
+} from "./helpers/scripted-provider";
+import { createCloudflareTestBinding } from "../test/helpers/cloudflare-test";
+import {
   substreamAgentName,
   substreamLoopId,
   workspaceDOName,
 } from "../src/durable-objects/names";
-import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
+import {
+  LOOP_EXECUTION_LEASE_MS,
+  SubstreamLoopStorage,
+} from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
@@ -50,6 +61,7 @@ import { launchWorkstreamHarness } from "../src/services/workstream-service";
 import {
   seedCanonicalMessageRecord,
   seedParticipantMessage,
+  holdFirstWorkspaceRead,
   holdLoopExecuting,
   releaseHeldLoop,
 } from "./helpers/substream-fixture";
@@ -72,6 +84,7 @@ const SCHEDULED_ACTIVATION_MODEL = "deepseek/deepseek-v4-flash-0731";
 const STREAM_FAILURE_PRIMARY_MODEL = "pipeline-b06/primary";
 const STREAM_FAILURE_FALLBACK_MODEL = "pipeline-b06/fallback";
 const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
+const QUEUED_FOLLOW_UP_MODEL = "pipeline-queued/primary";
 
 /**
  * What the polls below wait for is alarm delivery and the drain finishing under
@@ -91,31 +104,6 @@ const SOCKET_EVIDENCE_TIMEOUT_MS = 5_000;
 // so this too is a wall-clock budget, not the 40x10ms loop it replaced.
 const SUBSCRIPTION_SETTLE_TIMEOUT_MS = 2_000;
 
-interface CapturedProviderRequest {
-  url: string;
-  body: Record<string, unknown>;
-}
-
-interface ProviderCaptureEntry {
-  requests: CapturedProviderRequest[];
-  scripts: unknown[][];
-  models: string[];
-}
-
-type ProviderCaptureGlobal = typeof globalThis & {
-  __rallyPipelineOriginalFetch?: typeof fetch;
-  __rallyPipelineProviderState?: Map<string, ProviderCaptureEntry>;
-};
-
-/**
- * Every object in this file shares one `globalThis` inside the Durable Object
- * isolate, so the `fetch` a live test installs also serves a finished test's
- * still-draining object. Each install therefore gives its own object a unique
- * OpenRouter key and keys its captured requests and script queue by that
- * object's id, and the installed `fetch` attributes a request by the bearer
- * token it arrived with instead of taking whatever is next in a file-wide queue.
- */
-const PROVIDER_KEY_PREFIX = "workerd-pipeline-provider-key:";
 
 interface SocketFrame extends Record<string, unknown> {
   type: string;
@@ -374,184 +362,6 @@ async function waitForLoopRelease(stub: DurableObjectStub): Promise<void> {
  * provider response. Neither bypasses the production harness or its RPC/storage
  * ports; they replace only the external system workerd cannot own.
  */
-async function installProviderCapture(
-  stub: DurableObjectStub,
-  model: string,
-): Promise<void> {
-  await runInDurableObject(stub, (instance, state) => {
-    const objectId = state.id.toString();
-    const target = instance as unknown as { env: Env };
-    target.env = new Proxy(target.env, {
-      get: (current, property, receiver) => {
-        if (property === "OPENROUTER_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
-        if (property === "OPENROUTER_PRIMARY_MODEL") return model;
-        if (property === "OPENROUTER_FALLBACK_MODELS") return "";
-        return Reflect.get(current, property, receiver);
-      },
-    });
-    const scope = globalThis as ProviderCaptureGlobal;
-    scope.__rallyPipelineOriginalFetch ??= scope.fetch;
-    const objects = scope.__rallyPipelineProviderState ??= new Map<string, ProviderCaptureEntry>();
-    objects.set(objectId, { requests: [], scripts: [], models: [model] });
-    scope.fetch = (async (request: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof request === "string"
-        ? request
-        : request instanceof URL
-          ? request.toString()
-          : request.url;
-      if (url === "https://openrouter.ai/api/v1/models") return providerCatalog(objects);
-      const entry = providerCaller(objects, request, init);
-      if (!entry) return unattributedProviderResponse();
-      if (url === "https://openrouter.ai/api/v1/chat/completions") {
-        const text = typeof init?.body === "string"
-          ? init.body
-          : request instanceof Request
-            ? await request.clone().text()
-            : "";
-        entry.requests.push({
-          url,
-          body: JSON.parse(text) as Record<string, unknown>,
-        });
-        return Response.json(
-          { error: { code: "test_provider_rejection", message: "test provider rejection" } },
-          { status: 401 },
-        );
-      }
-      throw new Error(`unexpected_pipeline_provider_request:${url}`);
-    }) as typeof fetch;
-  });
-}
-
-/**
- * The models catalog is fetched without an Authorization header, so it cannot be
- * attributed to one object; every registered object's models answer it, which is
- * all any of them reads out of it.
- */
-function providerCatalog(objects: Map<string, ProviderCaptureEntry>): Response {
-  const ids = [...new Set([...objects.values()].flatMap((entry) => entry.models))];
-  return Response.json({ data: ids.map((id) => ({ id, context_length: 131_072 })) });
-}
-
-/** The entry of the object whose per-object key signed this request, if any. */
-function providerCaller(
-  objects: Map<string, ProviderCaptureEntry>,
-  request: RequestInfo | URL,
-  init?: RequestInit,
-): ProviderCaptureEntry | null {
-  const authorization = request instanceof Request
-    ? request.headers.get("authorization")
-    : new Headers(init?.headers).get("authorization");
-  const prefix = `Bearer ${PROVIDER_KEY_PREFIX}`;
-  return (authorization?.startsWith(prefix)
-    ? objects.get(authorization.slice(prefix.length))
-    : undefined) ?? null;
-}
-
-/**
- * A request signed by no live install belongs to an object this file has
- * already finished with — a drain outliving its test. It is refused with the
- * provider's own terminal status rather than a thrown transport failure, which
- * the harness would retry: that keeps the zombie's work out of the running
- * test's captured requests and script queue *and* off its machine.
- */
-function unattributedProviderResponse(): Response {
-  return Response.json(
-    {
-      error: {
-        code: "unattributed_pipeline_provider_request",
-        message: "no live provider install owns this key",
-      },
-    },
-    { status: 401 },
-  );
-}
-
-function providerStream(events: readonly unknown[]): Response {
-  const encoder = new TextEncoder();
-  const chunks = [
-    ...events.map((event) => `data: ${JSON.stringify(event)}\n\n`),
-    "data: [DONE]\n\n",
-  ];
-  let index = 0;
-  return new Response(new ReadableStream<Uint8Array>({
-    pull(controller) {
-      const chunk = chunks[index];
-      index += 1;
-      if (chunk === undefined) {
-        controller.close();
-        return;
-      }
-      controller.enqueue(encoder.encode(chunk));
-    },
-  }), { headers: { "content-type": "text/event-stream" } });
-}
-
-/** Replace only the external provider with deterministic streaming turns. */
-async function installScriptedProvider(
-  stub: DurableObjectStub,
-  scripts: readonly (readonly unknown[])[],
-  routing: {
-    primaryModel: string;
-    fallbackModels: readonly string[];
-  },
-): Promise<void> {
-  await runInDurableObject(stub, (instance, state) => {
-    const objectId = state.id.toString();
-    const target = instance as unknown as { env: Env };
-    target.env = new Proxy(target.env, {
-      get: (current, property, receiver) => {
-        if (property === "OPENROUTER_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
-        if (property === "OPENROUTER_PRIMARY_MODEL") return routing.primaryModel;
-        if (property === "OPENROUTER_FALLBACK_MODELS") {
-          return routing.fallbackModels.join(",");
-        }
-        return Reflect.get(current, property, receiver);
-      },
-    });
-    const scope = globalThis as ProviderCaptureGlobal;
-    scope.__rallyPipelineOriginalFetch ??= scope.fetch;
-    const objects = scope.__rallyPipelineProviderState ??= new Map<string, ProviderCaptureEntry>();
-    objects.set(objectId, {
-      requests: [],
-      scripts: scripts.map((events) => [...events]),
-      models: [routing.primaryModel, ...routing.fallbackModels],
-    });
-    scope.fetch = (async (request: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof request === "string"
-        ? request
-        : request instanceof URL
-          ? request.toString()
-          : request.url;
-      if (url === "https://openrouter.ai/api/v1/models") return providerCatalog(objects);
-      const entry = providerCaller(objects, request, init);
-      if (!entry) return unattributedProviderResponse();
-      if (url !== "https://openrouter.ai/api/v1/chat/completions") {
-        throw new Error(`unexpected_pipeline_provider_request:${url}`);
-      }
-      const text = typeof init?.body === "string"
-        ? init.body
-        : request instanceof Request
-          ? await request.clone().text()
-          : "";
-      const body = JSON.parse(text) as Record<string, unknown>;
-      entry.requests.push({ url, body });
-      if (body.stream !== true) {
-        return Response.json(
-          { error: { code: "test_structured_request_refused", message: "not part of this oracle" } },
-          { status: 401 },
-        );
-      }
-      const events = entry.scripts.shift();
-      if (!events) {
-        return Response.json(
-          { error: { code: "unexpected_extra_stream", message: "script exhausted" } },
-          { status: 500 },
-        );
-      }
-      return providerStream(events);
-    }) as typeof fetch;
-  });
-}
 
 function nextSocketFrameOfType(socket: WebSocket, type: string): Promise<SocketFrame> {
   return new Promise((resolve) => {
@@ -639,32 +449,38 @@ async function waitForSocketEvidence(
   }).toBe("arrived");
 }
 
-async function capturedProviderRequests(stub: DurableObjectStub): Promise<CapturedProviderRequest[]> {
-  return runInDurableObject(stub, (_instance, state) => {
-    const scope = globalThis as ProviderCaptureGlobal;
-    return structuredClone(
-      scope.__rallyPipelineProviderState?.get(state.id.toString())?.requests ?? [],
-    );
-  });
+/**
+ * Record what the mailbox held the first time this object armed its alarm.
+ *
+ * The claim under test is an ordering *inside* one invocation — the wake-up is
+ * armed before the reservation it covers is committed — and the only observer
+ * of that order is the invocation itself. So the storage the product writes
+ * through reports the mailbox depth at the moment `setAlarm` is called; zero
+ * means the reservation was not yet durable, which is the invariant.
+ */
+function recordFirstAlarmArm(product: { storage: DurableObjectStorage }): {
+  mailboxRowsAtFirstArm: number | null;
+} {
+  const order: { mailboxRowsAtFirstArm: number | null } = { mailboxRowsAtFirstArm: null };
+  const storage = product.storage;
+  product.storage = createCloudflareTestBinding<DurableObjectStorage>(new Proxy(storage, {
+    get: (current, property) => {
+      const value = Reflect.get(current, property) as unknown;
+      if (property !== "setAlarm") {
+        return typeof value === "function" ? value.bind(current) : value;
+      }
+      return (scheduledTime: number | Date) => {
+        order.mailboxRowsAtFirstArm ??= Number(storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox`,
+        ).one().count);
+        return storage.setAlarm(scheduledTime);
+      };
+    },
+  }));
+  return order;
 }
 
-async function restoreProviderFetch(stub: DurableObjectStub): Promise<void> {
-  await runInDurableObject(stub, (_instance, state) => {
-    const scope = globalThis as ProviderCaptureGlobal;
-    scope.__rallyPipelineProviderState?.delete(state.id.toString());
-    // Hand the real fetch back only once no object still holds an install:
-    // every patched closure dispatches through the shared map, so while any
-    // entry remains the patch must stay, and restoring per-caller would strand
-    // a concurrent test's requests on the real network. Safe to call twice —
-    // a second call deletes nothing and finds either an empty map or nothing
-    // saved to restore.
-    if ((scope.__rallyPipelineProviderState?.size ?? 0) === 0
-      && scope.__rallyPipelineOriginalFetch) {
-      scope.fetch = scope.__rallyPipelineOriginalFetch;
-      delete scope.__rallyPipelineOriginalFetch;
-    }
-  });
-}
+/** Release the held first provider call installed by `gateFirstCall`. */
 
 function visibleAssistantBlockOrder(turns: readonly Record<string, unknown>[]): string[] {
   return [...turns]
@@ -1746,6 +1562,230 @@ describe("a member's message travels the whole pipeline", () => {
     const second = await settledRunForTrigger(stub, turnId);
     expect(second.run_id).not.toBe(opened.body.harnessRunId);
     expect(PRE_PROVIDER_FAILURES).not.toContain(failureCode(second));
+  });
+
+  it("carries a message queued during a live run to the model once that run ends", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          [{ choices: [{ delta: { content: "answering the first" }, finish_reason: "stop" }] }],
+          [{ choices: [{ delta: { content: "answering the queued one" }, finish_reason: "stop" }] }],
+        ],
+        {
+          primaryModel: QUEUED_FOLLOW_UP_MODEL,
+          fallbackModels: [],
+          gateFirstCall: true,
+        },
+      );
+      const opened = await initializeWorkstream(
+        stub,
+        "first message",
+        QUEUED_FOLLOW_UP_MODEL,
+      );
+      // Real execution, not a fixture hold: this is the state in which the
+      // composer stops offering steer at all and the server admits the message
+      // as `queue`, which is the delivery mode under test.
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ status: string }>(
+          `SELECT status FROM substream_loops WHERE id = 1`,
+        ).toArray()[0]?.status ?? "absent"), {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the opening run never took the loop",
+      }).toBe("executing");
+
+      const followUp = await product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: {
+          text: "and answer this next",
+          clientMessageId: "pipeline-queued-1",
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      });
+      expect(followUp.status).toBe(200);
+      expect(followUp.body.deliveryState).toBe("pending");
+      const turnId = (followUp.body.turn as { turnId: string }).turnId;
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ mode: string }>(
+          `SELECT mode FROM pending_loop_inputs WHERE prepared_turn_id = ?`,
+          turnId,
+        ).one().mode)).toBe("queue");
+
+      await openProviderGate(stub);
+      await externallySettledRun(stub, opened.body.harnessRunId as string);
+
+      // Deliberately without `runDurableObjectAlarm`: a queued message is
+      // admitted with no activation request of its own, so the loop that just
+      // finished is the only thing that can carry it to the model. Forcing an
+      // alarm here would supply the wake-up whose absence is the bug.
+      await expect.poll(async () => runInDurableObject(stub, (_instance, state) => {
+        const rows = state.storage.sql.exec<{
+          run_id: string;
+          status: string;
+          terminalized_at: number | null;
+          execution_context_json: string;
+        }>(
+          `SELECT run_id, status, terminalized_at, execution_context_json FROM runs
+            WHERE execution_context_json IS NOT NULL ORDER BY created_at, run_id`,
+        ).toArray();
+        const row = rows.find((candidate) => (
+          JSON.parse(candidate.execution_context_json) as { triggerMessageId?: string | null }
+        ).triggerMessageId === turnId);
+        if (!row) {
+          return {
+            outcome: "no execution receipt was minted for the queued message",
+            status: null as string | null,
+          };
+        }
+        return {
+          outcome: row.terminalized_at === null ? "the queued run never settled" : "settled",
+          status: row.status,
+        };
+      }), {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 50,
+      }).toMatchObject({ outcome: "settled" });
+
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_inputs`,
+        ).one().count)).toBe(0);
+      const providerRequests = await capturedProviderRequests(stub);
+      const asked = providerRequests.flatMap((request) =>
+        (request.body.messages as Array<{ role?: unknown; content?: unknown }>)
+          .filter((message) => message.role === "user"
+            && JSON.stringify(message.content).includes("and answer this next")));
+      expect(asked.length).toBeGreaterThan(0);
+    } finally {
+      // Before tearing the install down, and unconditionally: a failed
+      // assertion above would otherwise leave the held provider call parked in
+      // its wait loop for the rest of the file, where it outlives this test and
+      // can hang or contaminate the next one. Tolerant of a gate that was never
+      // installed, because an `installScriptedProvider` that itself threw
+      // reaches here too.
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("recovers an admitted message whose preparation is interrupted", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await externallySettledRun(stub, opened.body.harnessRunId as string);
+    await waitForLoopRelease(stub);
+    // The oracle below is that the *admission* is what arms the alarm, so this
+    // proves the object has no wake-up of its own left to take credit for it.
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()),
+      { timeout: LOOP_RELEASE_TIMEOUT_MS, interval: 50, message: "the object never quiesced" },
+    ).toBeNull();
+
+    let armOrder: { mailboxRowsAtFirstArm: number | null } = { mailboxRowsAtFirstArm: null };
+    const gate = await runInDurableObject(stub, (instance) => {
+      const product = (instance as unknown as {
+        product: WorkstreamObjectProductService;
+      }).product;
+      // `env` is a constructor parameter property: private to the compiler,
+      // an ordinary writable field to the runtime this test replaces it in.
+      const held = holdFirstWorkspaceRead(product as unknown as { env: Env });
+      armOrder = recordFirstAlarmArm(product as unknown as { storage: DurableObjectStorage });
+      // Not awaited, and never released below: the invocation that commits the
+      // reservation and then never returns is the case under test.
+      void product.createMessage(AUTH, {
+        text: "answer this once the run is over",
+        clientMessageId: "pipeline-interrupted-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      }).catch(() => undefined);
+      return held;
+    });
+
+    try {
+      const reservedInputId = (): Promise<string | null> =>
+        runInDurableObject(stub, (_instance, state) =>
+          state.storage.sql.exec<{ input_id: string }>(
+            `SELECT input_id FROM pending_loop_input_mailbox WHERE state = 'preparing'`,
+          ).toArray()[0]?.input_id ?? null);
+      await expect.poll(reservedInputId, {
+        timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the admission never reserved its mailbox row",
+      }).not.toBeNull();
+      const inputId = (await reservedInputId())!;
+
+      // Armed before the row it covers, not after: a wake-up written second
+      // leaves a window in which the reservation is durable and nothing is left
+      // to rediscover it, which is the whole failure this guards.
+      expect(armOrder.mailboxRowsAtFirstArm).toBe(0);
+
+      // The reservation is durable; nothing else in this object knows about it,
+      // because the head-of-line gate keeps it out of `pendingInputs` until it
+      // settles. Without a wake-up the message — and everything queued behind
+      // it — is stranded until something unrelated touches the object, which for
+      // a work stream nobody reopens is never.
+      expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()))
+        .not.toBeNull();
+      // And it has to survive the wake it just bought: the alarm re-derives from
+      // durable state on its way out, and an unresolved reservation that
+      // contributes nothing there loses the wake-up again one heartbeat later.
+      await runDurableObjectAlarm(stub);
+      expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()))
+        .not.toBeNull();
+
+      // Age the claim past the recovery horizon. The suite cannot wait five real
+      // minutes, and this claim is in memory rather than a row, so the instant it
+      // was taken is rewound in place — the same move a durable-lease test makes
+      // against `lease_expires_at`. Nothing else about the parked invocation
+      // changes: it is still holding the first D1 read and will never return.
+      await runInDurableObject(stub, (instance) => {
+        const claims = (instance as unknown as {
+          product: { activeInputPreparations: Map<string, { depth: number; claimedAt: number }> };
+        }).product.activeInputPreparations;
+        const claim = claims.get(inputId);
+        expect(claim).toBeDefined();
+        claims.set(inputId, { ...claim!, claimedAt: claim!.claimedAt - LOOP_EXECUTION_LEASE_MS - 1 });
+      });
+
+      // Recovery has to settle the mailbox row and carry the message to a run,
+      // driven by the alarm rather than by the invocation that vanished — the
+      // gate is never opened above, so the original `createMessage` is still
+      // parked and cannot be what does this.
+      await runDurableObjectAlarm(stub);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) => {
+        const settled = state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox
+            WHERE input_id = ? AND state = 'preparing'`,
+          inputId,
+        ).one().count === 0;
+        if (!settled) return "the interrupted preparation was never resumed";
+        const minted = state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM runs
+            WHERE json_extract(execution_context_json, '$.triggerMessageId') = ?`,
+          inputId,
+        ).one().count > 0;
+        return minted ? "runnable" : "the resumed message never became runnable";
+      }), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe("runnable");
+    } finally {
+      // Unconditionally, and only here: every assertion above runs while the
+      // admission is parked in a wait loop, and one that fails without this
+      // would leave that loop spinning for the rest of the file.
+      gate.open = true;
+    }
+
+    // The vanished invocation is fenced, not raced: released above, it finishes
+    // against a client message id the takeover already made canonical, and it
+    // must not admit a second copy of the same message.
+    await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE client_message_id = ?`,
+        "pipeline-interrupted-1",
+      ).one().count), { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS, interval: 25 }).toBe(1);
   });
 
   it("message writes are idempotent across the whole path", async () => {
