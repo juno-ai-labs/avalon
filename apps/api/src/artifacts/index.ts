@@ -308,12 +308,11 @@ async function runArtifactModule(
   const manifest = admitted.manifest!;
   // A stateful artifact's requests route through the supervisor: facet stubs
   // cannot travel over RPC, so the object that owns the facet is the only place
-  // that can forward into it. Until that path lands, a stateful artifact serves
-  // its pages and refuses its own API routes rather than silently running its
-  // module against no database — the failure is visible in the page instead of
-  // in rows that were never written.
+  // that can forward into it. That is a platform constraint rather than a
+  // routing preference, and the hop costs nothing extra — the serving Worker
+  // already consulted this object for the session check.
   if (manifest.stateful) {
-    throw new Error("artifact_facet_hosting_not_available");
+    return await artifact.fetchThroughFacet(await forwardable(request, admitted));
   }
   const loader = env.ARTIFACT_LOADER!;
   const worker = loader.get(`artifact:${artifactId}:v${manifest.artifactVersion}`, async () => {

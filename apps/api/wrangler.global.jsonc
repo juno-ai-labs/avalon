@@ -177,6 +177,12 @@
       "ssh": { "enabled": false }
     }
   ],
+  // Cloudflare's Worker Loader, which materializes model-authored artifact code
+  // at request time in a fresh isolate. Declared on this Worker because the
+  // stateful path runs the model's class as a facet of ArtifactHostDO, which is
+  // deployed here; the artifact serving Worker declares its own for the
+  // stateless path.
+  "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }],
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
