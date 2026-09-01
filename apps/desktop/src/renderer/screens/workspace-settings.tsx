@@ -67,6 +67,8 @@ type ConnectionFilter = 'all' | 'connected' | 'not_connected';
 interface PendingConnectorOAuth {
   attemptId: string;
   provider: ConnectorOAuthProvider;
+  region: 'global' | 'eu';
+  workspaceId: string;
 }
 
 const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
@@ -713,6 +715,8 @@ export function WorkspaceSettingsScreen({
       setPendingConnectorOAuth({
         attemptId: result.authorization.attemptId,
         provider: result.provider,
+        region: workspace.region,
+        workspaceId: workspace.id,
       });
     },
   });
@@ -762,6 +766,8 @@ export function WorkspaceSettingsScreen({
     onSuccess: ({ authorization, provider }) => setPendingConnectorOAuth({
       attemptId: authorization.attemptId,
       provider,
+      region: workspace.region,
+      workspaceId: workspace.id,
     }),
   });
   const disconnectConnection = useMutation({
@@ -955,7 +961,9 @@ export function WorkspaceSettingsScreen({
   }, [bridge]);
 
   useEffect(() => {
-    if (!api || !pendingConnectorOAuth) return;
+    if (!api || !pendingConnectorOAuth
+      || pendingConnectorOAuth.region !== workspace.region
+      || pendingConnectorOAuth.workspaceId !== workspace.id) return;
     let cancelled = false;
     const providerName = connectorProviderName[pendingConnectorOAuth.provider];
 
@@ -998,6 +1006,8 @@ export function WorkspaceSettingsScreen({
     api,
     pendingConnectorOAuth,
     queryClient,
+    workspace.id,
+    workspace.region,
     workspaceSocket?.state,
     workspaceSocket?.topicWaterlines.connector_oauth_attempts,
   ]);

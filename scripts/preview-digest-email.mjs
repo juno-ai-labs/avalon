@@ -87,7 +87,7 @@ export function resolveLocalDatabase(directory, entries) {
  */
 export function sampleBody(input) {
   const link = (title, id) => id
-    ? `[${title}](https://rallywith.ai/app/workstreams/${id})`
+    ? `[${title}](https://rallywith.ai/app/workspaces/global/${input.workspaceId}/workstreams/${id})`
     : `**${title}**`;
   const sections = input.workstreams.slice(0, 3).map((workstream, index) => index === 0
     ? [
@@ -148,10 +148,10 @@ async function main() {
     database = new DatabaseSync(databasePath, { readOnly: true });
   }
   const { digestEmailHtml } = await import("../apps/api/src/services/digest-email-content.ts");
-  const { occurrenceLabel } = await import("../apps/api/src/services/digest-delivery-service.ts");
+  const { digestSettingsUrl, occurrenceLabel } = await import("../apps/api/src/services/digest-delivery-service.ts");
 
   const members = database.prepare(
-    `SELECT u.id, u.name, u.email, u.timezone, w.name AS workspace_name
+    `SELECT u.id, u.name, u.email, u.timezone, w.id AS workspace_id, w.name AS workspace_name
        FROM workspace_members m
        JOIN users u ON u.id = m.user_id
        JOIN workspaces w ON w.id = m.workspace_id
@@ -167,6 +167,7 @@ async function main() {
     const highlightCount = 1;
     const bodyMarkdown = sampleBody({
       workstreams: SAMPLE_WORKSTREAMS,
+      workspaceId: member.workspace_id,
       otherName: others[0]?.name ?? "A teammate",
       highlightCount,
     });
@@ -180,7 +181,10 @@ async function main() {
       itemCount: SAMPLE_WORKSTREAMS.length * 2,
       highlightCount,
       appUrl: "https://rallywith.ai",
-      settingsUrl: "https://rallywith.ai/app/settings/digest",
+      settingsUrl: digestSettingsUrl({
+        AVALON_REGION: "global",
+        PUBLIC_WEB_BASE_URL: "https://rallywith.ai",
+      }, member.workspace_id),
     });
     const file = join(options.out, `${member.email.replace(/[^a-z0-9]+/giu, "-")}.html`);
     writeFileSync(file, html);

@@ -3,5 +3,7 @@
 # points at. No asset can exist per id, so every id under the prefix is rewritten
 # (status 200, URL preserved) onto the one handoff page, which reads the id back
 # out of window.location.pathname. Static assets are matched before these rules,
-# so /app/workstreams/ itself still serves the page directly.
+# so /app/workstreams/ itself still serves the page directly. The earlier
+# ID-only prefix remains a compatibility reader for links already shared.
+/app/workspaces/*  /app/workstreams/  200
 /app/workstreams/*  /app/workstreams/  200

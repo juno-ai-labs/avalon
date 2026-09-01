@@ -307,11 +307,18 @@ function CopyResourceIdItem({
  * menu and its right rail. Like every other surface it emits the canonical
  * HTTPS link, never the `rallywithai://` deep link — see `docs/workstream-links.md`.
  */
-function CopyWorkstreamLinkItem({ workstreamId }: { workstreamId: string }): React.JSX.Element {
+function CopyWorkstreamLinkItem({ workstreamId, workspace }: {
+  workstreamId: string;
+  workspace: Pick<Workspace, 'id' | 'region'>;
+}): React.JSX.Element {
   const copy = async (): Promise<void> => {
     const bridge = desktopBridge();
     const { webBaseUrl } = await bridge.getRuntimeConfig();
-    await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, workstreamId));
+    await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, {
+      region: workspace.region,
+      workspaceId: workspace.id,
+      workstreamId,
+    }));
     reportTelemetryProductIntent({
       kind: 'content_copied', contentType: 'workstream_link', resourceType: 'workstream', resourceId: workstreamId,
     });
@@ -460,6 +467,7 @@ function WorkstreamRow({
   debugEnabled,
   drag,
   members,
+  workspace,
   workstream,
   pinPending,
   scopePending,
@@ -477,6 +485,7 @@ function WorkstreamRow({
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
   members: WorkspaceMember[];
+  workspace: Pick<Workspace, 'id' | 'region'>;
   workstream: WorkstreamSummary;
   pinPending: boolean;
   scopePending: boolean;
@@ -711,7 +720,7 @@ function WorkstreamRow({
                 : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
             </ContextMenu.Item>
           )}
-          {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} />}
+          {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} workspace={workspace} />}
           <ContextMenu.Separator className="menu-separator" />
           {/* Names its noun, as every other destructive item in these menus
               does — "Archive note", "Archive draft", "Delete automation". A
@@ -1515,6 +1524,7 @@ export function Sidebar({
       currentUserId={workspace.currentUser.id}
       debugEnabled={debugEnabled}
       members={roster}
+      workspace={workspace}
       onArchive={setArchiveWorkstreamTarget}
       onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
       onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
@@ -1779,6 +1789,7 @@ export function Sidebar({
                     pinPending={pinPendingWorkstreamId === pinned.id}
                     projects={projects}
                     members={roster}
+                    workspace={workspace}
                     scopePending={scopePendingWorkstreamId === pinned.id}
                     workstream={pinned}
                   />
@@ -1877,6 +1888,7 @@ export function Sidebar({
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
                         projects={projects}
                         members={roster}
+                        workspace={workspace}
                         scopePending={scopePendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}
                       />

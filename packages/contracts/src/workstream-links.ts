@@ -1,56 +1,54 @@
 /**
- * The canonical shareable link to an Avalon work stream, shared by the API, the
- * desktop client, and the public site.
+ * Canonical shareable work-stream links and their desktop handoff form.
  *
- * `rallywithai://workstreams/<id>` is the protocol the desktop client
- * registers, and it stays the target every surface ultimately opens. It is
- * not, however, a link that survives being pasted somewhere else: Slack emits
- * `link_shared` only for URLs whose registered *domain* matches an unfurl
- * domain, so a custom scheme can never be unfurled; mail clients rarely
- * linkify an unknown scheme at all; and a recipient without the app installed
- * is left with a dead string.
+ * Newly emitted links carry `(region, workspaceId)` as routing context. That
+ * pair selects an already-authorized desktop workspace and grants no access;
+ * the regional API still authorizes every resource read. The earlier ID-only
+ * HTTPS and custom-protocol forms remain readable because they already exist
+ * in inboxes and Slack history, but no current writer emits them.
  *
- * The canonical form is therefore an HTTPS URL on the public site that carries
- * the work-stream id in its **path** — where a server reading the shared URL
- * can see it, which a `#fragment` handoff deliberately prevents — and that
- * hands off to the deep link once the browser has it.
- *
- * This module is intentionally free of dependencies (no zod) so the site can
- * import it directly without pulling a validation library into a static page.
+ * This module is intentionally dependency-free so the public site can import
+ * it directly without pulling a validation library into a static page.
  */
 
 import {
   DESKTOP_DEEP_LINK_PROTOCOL,
   isDesktopDeepLinkProtocol,
 } from "./desktop-deep-link";
+import {
+  addWorkspaceTarget,
+  isWorkspaceTarget,
+  parseWorkspaceTarget,
+  type WorkspaceTarget,
+} from "./workspace-target";
 
-/** Host segment of the desktop deep link: `rallywithai://workstreams/<id>`. */
 const DEEP_LINK_HOST = "workstreams";
 
-/** Path prefix of the canonical HTTPS link: `/app/workstreams/<id>`. */
-export const WORKSTREAM_LINK_PATH_PREFIX = "/app/workstreams/";
+/** New canonical prefix: `/app/workspaces/<region>/<workspace>/workstreams/<id>`. */
+export const WORKSTREAM_LINK_PATH_PREFIX = "/app/workspaces/";
 
-/**
- * Site origins a shared work-stream link may still be on, besides the caller's
- * own. Fixed historical values, like the legacy deep-link scheme: links minted
- * on these are in Slack history and inboxes and cannot be reissued.
- *
- * A caller opts in. Most read one origin at a time — the site really does serve
- * one origin per request — but a caller handed URLs by a third party does not
- * get to choose which domain they arrive on. Slack is the case that matters:
- * its app registers both domains for unfurling, so it delivers `link_shared`
- * for both.
- */
+/** ID-only links already shared before workspace-addressed links shipped. */
+export const LEGACY_WORKSTREAM_LINK_PATH_PREFIX = "/app/workstreams/";
+
 export const LEGACY_WORKSTREAM_LINK_ORIGINS: readonly string[] = Object.freeze([
   "https://with-avalon.com",
   "https://www.with-avalon.com",
 ]);
 
-/** Legacy handoff still present in Slack and mail history: `/open#target=…`. */
 const LEGACY_HANDOFF_PATHS = new Set(["/open", "/open/"]);
 
 const WORKSTREAM_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
+export interface WorkstreamLinkTarget extends WorkspaceTarget {
+  workstreamId: string;
+}
+
+export type ParsedWorkstreamLinkTarget = WorkstreamLinkTarget | {
+  region: null;
+  workspaceId: null;
+  workstreamId: string;
+};
 
 export function isWorkstreamId(value: string): boolean {
   return WORKSTREAM_ID_PATTERN.test(value);
@@ -62,55 +60,79 @@ function assertWorkstreamId(workstreamId: string): void {
   }
 }
 
-/** The desktop deep link every canonical link resolves to. */
-export function workstreamDeepLink(workstreamId: string): string {
-  assertWorkstreamId(workstreamId);
-  return `${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${workstreamId}`;
+function assertWorkstreamLinkTarget(target: WorkstreamLinkTarget): void {
+  if (!isWorkspaceTarget(target)) {
+    throw new Error("A work-stream link requires a region and workspace UUID");
+  }
+  assertWorkstreamId(target.workstreamId);
+}
+
+/** The workspace-addressed desktop deep link every new canonical link resolves to. */
+export function workstreamDeepLink(target: WorkstreamLinkTarget): string {
+  assertWorkstreamLinkTarget(target);
+  const deepLink = new URL(`${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${target.workstreamId}`);
+  return addWorkspaceTarget(deepLink, target).toString();
 }
 
 /**
- * The canonical shareable link. This is what every surface emits — copy link,
- * Slack blocks, mention email — so that one URL shape is what circulates.
+ * Handoff for a parsed link. The legacy arm exists only so an old HTTPS URL can
+ * still reach the current desktop; new writers call `workstreamDeepLink`.
  */
-export function workstreamCanonicalUrl(webBaseUrl: string, workstreamId: string): string {
-  assertWorkstreamId(workstreamId);
-  return new URL(`${WORKSTREAM_LINK_PATH_PREFIX}${workstreamId}`, webBaseUrl).toString();
+export function workstreamDeepLinkFromParsedTarget(target: ParsedWorkstreamLinkTarget): string {
+  if (target.region !== null) return workstreamDeepLink(target);
+  assertWorkstreamId(target.workstreamId);
+  return `${DESKTOP_DEEP_LINK_PROTOCOL}//${DEEP_LINK_HOST}/${target.workstreamId}`;
 }
 
-/** Read the work-stream id out of a canonical link's path, or null. */
+/** The canonical shareable link emitted by every current surface. */
+export function workstreamCanonicalUrl(webBaseUrl: string, target: WorkstreamLinkTarget): string {
+  assertWorkstreamLinkTarget(target);
+  const path = `${WORKSTREAM_LINK_PATH_PREFIX}${target.region}/${target.workspaceId}/workstreams/${target.workstreamId}`;
+  return new URL(path, webBaseUrl).toString();
+}
+
+/** Read a work-stream target out of either current or legacy canonical path. */
+export function parseWorkstreamLinkPathTarget(pathname: string): ParsedWorkstreamLinkTarget | null {
+  const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  const current = /^\/app\/workspaces\/(global|eu)\/([^/]+)\/workstreams\/([^/]+)$/u.exec(normalized);
+  if (current) {
+    const [, region, workspaceId, workstreamId] = current;
+    if (!region || !workspaceId || !workstreamId) return null;
+    const target = { region, workspaceId, workstreamId };
+    return isWorkspaceTarget(target) && isWorkstreamId(target.workstreamId)
+      ? target as WorkstreamLinkTarget
+      : null;
+  }
+  if (!normalized.startsWith(LEGACY_WORKSTREAM_LINK_PATH_PREFIX)) return null;
+  const workstreamId = normalized.slice(LEGACY_WORKSTREAM_LINK_PATH_PREFIX.length);
+  return isWorkstreamId(workstreamId) ? { region: null, workspaceId: null, workstreamId } : null;
+}
+
+/** Compatibility helper for callers that need only the resource id. */
 export function parseWorkstreamLinkPath(pathname: string): string | null {
-  if (!pathname.startsWith(WORKSTREAM_LINK_PATH_PREFIX)) return null;
-  const candidate = pathname.slice(WORKSTREAM_LINK_PATH_PREFIX.length).replace(/\/$/u, "");
-  return isWorkstreamId(candidate) ? candidate : null;
+  return parseWorkstreamLinkPathTarget(pathname)?.workstreamId ?? null;
 }
 
-function parseDeepLink(url: URL): string | null {
+function parseDeepLink(url: URL): ParsedWorkstreamLinkTarget | null {
   if (!isDesktopDeepLinkProtocol(url.protocol) || url.hostname !== DEEP_LINK_HOST) return null;
-  if (url.search || url.hash || url.username || url.password || url.port) return null;
-  const candidate = url.pathname.slice(1);
-  return isWorkstreamId(candidate) ? candidate : null;
+  if (url.hash || url.username || url.password || url.port) return null;
+  const workstreamId = url.pathname.slice(1);
+  if (!isWorkstreamId(workstreamId)) return null;
+  if (!url.search) return { region: null, workspaceId: null, workstreamId };
+  const entries = [...url.searchParams.keys()];
+  if (
+    entries.length !== 2
+    || entries.some((name) => name !== "region" && name !== "workspace")
+  ) return null;
+  const workspace = parseWorkspaceTarget(url.searchParams);
+  return workspace ? { ...workspace, workstreamId } : null;
 }
 
-/**
- * Recognize any Avalon link that identifies a work stream, whichever shape it
- * was minted in. Callers that act on a shared link — the Slack unfurl handler
- * above all — need to accept the links already circulating, not only the ones
- * emitted today.
- *
- * Accepted, in order of preference:
- * - the canonical `<webBaseUrl>/app/workstreams/<id>`
- * - the desktop deep link `rallywithai://workstreams/<id>`, or `avalon://…`
- * - the legacy handoff `<webBaseUrl>/open#target=<either deep link>`
- *
- * Only links on an origin the caller named are read, so a look-alike host
- * cannot borrow the treatment Avalon gives its own links. `webBaseUrl` accepts
- * several origins for a caller that is handed URLs it did not choose the domain
- * of — see `LEGACY_WORKSTREAM_LINK_ORIGINS`.
- */
-export function parseWorkstreamLink(
+/** Parse any current or already-circulating Rally work-stream link. */
+export function parseWorkstreamLinkTarget(
   raw: string,
   options: { webBaseUrl: string | readonly string[] },
-): string | null {
+): ParsedWorkstreamLinkTarget | null {
   let url: URL;
   let origins: string[];
   try {
@@ -122,14 +144,13 @@ export function parseWorkstreamLink(
     return null;
   }
 
-  const deepLinkId = parseDeepLink(url);
-  if (deepLinkId) return deepLinkId;
-
+  const deepLink = parseDeepLink(url);
+  if (deepLink) return deepLink;
   if (!origins.includes(url.origin)) return null;
 
-  if (!url.search) {
-    const canonicalId = parseWorkstreamLinkPath(url.pathname);
-    if (canonicalId && !url.hash) return canonicalId;
+  if (!url.search && !url.hash) {
+    const canonical = parseWorkstreamLinkPathTarget(url.pathname);
+    if (canonical) return canonical;
   }
 
   if (!LEGACY_HANDOFF_PATHS.has(url.pathname) || url.search || !url.hash.startsWith("#")) {
@@ -142,4 +163,12 @@ export function parseWorkstreamLink(
   } catch {
     return null;
   }
+}
+
+/** Compatibility helper for link readers that need only the resource id. */
+export function parseWorkstreamLink(
+  raw: string,
+  options: { webBaseUrl: string | readonly string[] },
+): string | null {
+  return parseWorkstreamLinkTarget(raw, options)?.workstreamId ?? null;
 }

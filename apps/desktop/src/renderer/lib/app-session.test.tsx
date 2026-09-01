@@ -697,6 +697,53 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('global:Origin Workspace')).toBeVisible();
   });
 
+  it('returns from workspace B to same-region workspace A for connector completion', async () => {
+    const workspaceA = '00000000-0000-7000-8000-000000000023';
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: '00000000-0000-7000-8000-000000000024',
+        name: 'Workspace B',
+        region: 'global',
+        role: 'member',
+      },
+    });
+    bridge.activateWorkspace.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: workspaceA, name: 'Workspace A', region: 'global', role: 'owner' },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Workspace B')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&workspace=${workspaceA}&attempt=${'a'.repeat(43)}&provider=slack`,
+    );
+
+    await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId: workspaceA,
+    }));
+    expect(await screen.findByText('global:Workspace A')).toBeVisible();
+  });
+
+  it('does not apply a connector result when its workspace cannot be activated', async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000025';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockRejectedValueOnce(new Error('workspace_access_denied'));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&workspace=${targetWorkspaceId}&attempt=${'a'.repeat(43)}&provider=notion`,
+    );
+
+    await waitFor(() => expect(lastDeepLinkFailure()).toContain('access'));
+    expect(screen.getByText('eu:European Research')).toBeVisible();
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ['connections'] });
+    invalidate.mockRestore();
+  });
+
   it('does not navigate when a workspace-addressed work-stream link cannot be activated', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000020';
     bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
@@ -920,6 +967,32 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink('rallywithai://automations/new');
     await waitFor(() => expect(window.location.hash).toBe('#/automations/new'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
+  it('activates a workspace-addressed settings destination before opening it', async () => {
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000026';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: targetWorkspaceId,
+        name: 'Notification Workspace',
+        region: 'global',
+        role: 'member',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await dispatchDeepLink(
+      `rallywithai://settings/digest?region=global&workspace=${targetWorkspaceId}`,
+    );
+
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('digest'));
+    expect(bridge.activateWorkspace).toHaveBeenCalledWith({
+      region: 'global',
+      workspaceId: targetWorkspaceId,
+    });
   });
 
   it('opens the note a closing meeting window hands back', async () => {

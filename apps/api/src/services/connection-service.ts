@@ -634,15 +634,15 @@ export class ConnectionService {
       connectionId,
       { provider: "google", scope: stateData.scope, capabilities: stateData.capabilities, providerAccountId: account.providerAccountId },
     );
-    const redirect = new URL(String(row.return_uri));
-    redirect.searchParams.set("connection", connectionId);
-    redirect.searchParams.set("status", "connected");
-    redirect.searchParams.set("region", this.env.AVALON_REGION);
-    if (attemptId) redirect.searchParams.set("attempt", attemptId);
-    redirect.searchParams.set("provider", "google");
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
     await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
-    return redirect.toString();
+    return this.connectorAttemptTarget({
+      provider: "google",
+      status: "succeeded",
+      ...(attemptId ? { attemptId } : {}),
+      connectionId,
+      workspaceId: String(row.workspace_id),
+    });
   }
 
   async beginProvider(
@@ -969,15 +969,15 @@ export class ConnectionService {
       connectionId,
       { provider: "github", scope: stateData.scope, capabilities: stateData.capabilities, installationId: providerAccountId },
     );
-    const redirect = new URL(String(row.return_uri));
-    redirect.searchParams.set("connection", connectionId);
-    redirect.searchParams.set("status", "connected");
-    redirect.searchParams.set("region", this.env.AVALON_REGION);
-    if (attemptId) redirect.searchParams.set("attempt", attemptId);
-    redirect.searchParams.set("provider", "github");
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
     await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
-    return redirect.toString();
+    return this.connectorAttemptTarget({
+      provider: "github",
+      status: "succeeded",
+      ...(attemptId ? { attemptId } : {}),
+      connectionId,
+      workspaceId: String(row.workspace_id),
+    });
   }
 
   async completeProvider(provider: OAuthConnectorProvider, code: string, state: string): Promise<string> {
@@ -1243,15 +1243,15 @@ export class ConnectionService {
       connectionId,
       { provider, scope: stateData.scope, capabilities: grantedCapabilities, providerAccountId },
     );
-    const redirect = new URL(String(row.return_uri));
-    redirect.searchParams.set("connection", connectionId);
-    redirect.searchParams.set("status", "connected");
-    redirect.searchParams.set("region", this.env.AVALON_REGION);
-    if (attemptId) redirect.searchParams.set("attempt", attemptId);
-    redirect.searchParams.set("provider", provider);
     if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
     await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
-    return redirect.toString();
+    return this.connectorAttemptTarget({
+      provider,
+      status: "succeeded",
+      ...(attemptId ? { attemptId } : {}),
+      connectionId,
+      workspaceId: String(row.workspace_id),
+    });
   }
 
   async completeProviderDenial(provider: ConnectorOAuthProvider, state: string): Promise<string> {
@@ -1263,6 +1263,7 @@ export class ConnectionService {
       status: "denied",
       attemptId,
       errorCode: "oauth_denied",
+      workspaceId: String(row.workspace_id),
     });
   }
 
@@ -1293,6 +1294,7 @@ export class ConnectionService {
         provider,
         status: "failed",
         errorCode: normalizeConnectorOAuthErrorCode(errorCode),
+        workspaceId,
       });
     }
     const existing = await this.loadOAuthAttempt(workspaceId, attemptId);
@@ -1302,6 +1304,7 @@ export class ConnectionService {
         status: "succeeded",
         attemptId,
         connectionId: existing.connectionId,
+        workspaceId,
       });
     }
     if (
@@ -1319,6 +1322,7 @@ export class ConnectionService {
           status: "succeeded",
           attemptId,
           connectionId: committed.id,
+          workspaceId,
         });
       }
     }
@@ -1332,6 +1336,7 @@ export class ConnectionService {
       status: terminalStatus,
       attemptId,
       errorCode: terminalError,
+      workspaceId,
     });
   }
 
@@ -2661,6 +2666,7 @@ export class ConnectionService {
     attemptId?: string;
     connectionId?: string;
     errorCode?: string;
+    workspaceId?: string;
   }): string {
     return connectorAttemptTarget(this.env, input);
   }
