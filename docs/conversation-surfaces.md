@@ -58,6 +58,37 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-01 — A queued row renders the transcript's Markdown, clipped to one line
+
+**What changed:** `ComposerQueue` renders each queued message through
+`MarkdownBody` (`verbatim`, with the message's stored `mentions`) instead of
+printing `item.text`. The row now shows the same emphasis, code spans, and
+person/connection chips the turn will show once it lands. `ComposerQueueItem`
+carries `mentions` because a connection mention is only offsets into `text`,
+and `text` reaches the renderer untrimmed so those offsets still land. The grip's
+accessible name keeps a plain string, with link and image syntax unwritten to its
+label by `queuePreviewLabel`.
+
+**Why:** A person mention is stored as `[@Ada Lovelace](person:<uuid>)`, so the
+plain-text row showed the author the raw source — UUID included — for the
+mention they had just typed, and went on showing it until the message left the
+queue.
+
+**Considered and rejected:** A second, inline-only renderer for previews. It
+would have had to track every construct `MarkdownBody` learns — chips, citation
+schemes, the connector token — and the first thing it would have got wrong is
+the thing this entry is about. The flattening it would have done in components
+is done in `app.css` instead: every block inside `.composer-queue-text
+.markdown-body` is `display: inline`, so the row's existing `nowrap` and
+ellipsis clip the whole message to its one line.
+
+**Consequences:** The one-line rule now lives in the stylesheet, where no
+component test can see it — `app.css.node.test.ts` owns it, and deleting the
+flattening fails there rather than silently growing the composer dock to the
+height of a queued message. A `.markdown-body` host that recedes states its own
+colour rather than inheriting, because the shared-paint guard reserves
+`color: inherit` for the embed-card preview.
+
 ### 2026-08-30 — Finished assistant turns share Speak and Stop speaking
 
 **What changed:** The common assistant action row can start one streamed AI
