@@ -25,18 +25,31 @@ function surface(overrides: Partial<SiteResourceDetailProps['surface']> = {}) {
   };
 }
 
+/**
+ * Every mint returns a *different* code, because the real one is single-use.
+ * A surface that reused an earlier code would be indistinguishable from a
+ * correct one against a constant fixture — and that is the bug this file now
+ * pins, so the fixture has to be able to tell them apart.
+ */
+function mintingAccess() {
+  let minted = 0;
+  return vi.fn(async (): Promise<SiteArtifactAccess> => {
+    minted += 1;
+    return {
+      openUrl: `https://${ARTIFACT}-g.rallyusercontent.test/__rally/open#code-${minted}`,
+      canonicalUrl: CANONICAL,
+      artifactId: ARTIFACT,
+      mode: 'active',
+      stateful: true,
+    };
+  });
+}
+
 function setup(overrides: Partial<SiteResourceDetailProps> = {}) {
-  const access: SiteArtifactAccess = {
-    openUrl: OPEN_URL,
-    canonicalUrl: CANONICAL,
-    artifactId: ARTIFACT,
-    mode: 'active',
-    stateful: true,
-  };
   const props: SiteResourceDetailProps = {
     resourceId: RESOURCE,
     title: 'Offsite RSVP',
-    openArtifact: vi.fn(async () => access),
+    openArtifact: mintingAccess(),
     describeData: vi.fn(async () => ({
       tables: [{
         name: 'rsvps',
@@ -56,17 +69,46 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}) {
 }
 
 describe('showing a live artifact in the rail', () => {
-  it('mints access once and hands the pane to the main process', async () => {
+  it('hands the pane to the main process rather than embedding anything', async () => {
     // The renderer measures a rectangle and gets out of the way; it never
     // embeds artifact content itself.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    expect(props.openArtifact).toHaveBeenCalledTimes(1);
     expect(props.surface.present).toHaveBeenCalledWith(expect.objectContaining({
       artifactId: ARTIFACT,
-      url: OPEN_URL,
       bounds: expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }),
     }));
+  });
+
+  it('gives every navigating surface its own code, because redemption spends it', async () => {
+    // Redemption clears the code in the same statement that reads it, so a
+    // second surface handed the first one redeems nothing and lands on the
+    // neutral page. Pop out and Open in browser were both dead this way.
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    const presented = vi.mocked(props.surface.present).mock.calls[0]?.[0]?.url;
+
+    fireEvent.click(screen.getByRole('button', { name: /pop out/i }));
+    await waitFor(() => expect(props.surface.popOut).toHaveBeenCalled());
+    const poppedOut = vi.mocked(props.surface.popOut).mock.calls[0]?.[0]?.url;
+
+    fireEvent.click(screen.getByRole('button', { name: /open in browser/i }));
+    await waitFor(() => expect(props.surface.openExternal).toHaveBeenCalled());
+    const external = vi.mocked(props.surface.openExternal).mock.calls[0]?.[0];
+
+    expect(presented).toBeDefined();
+    expect(new Set([presented, poppedOut, external]).size).toBe(3);
+  });
+
+  it('shows the unavailable state when the preview cannot be presented at all', async () => {
+    // A rejected mint or a main process that cannot composite leaves the
+    // tri-state at `null` unless this path sets it — an empty bordered box
+    // with no message and no way out.
+    const { props } = setup({
+      surface: surface({ present: vi.fn(async () => { throw new Error('no view'); }) }),
+    });
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    expect(await screen.findByText(/preview unavailable here/i)).toBeTruthy();
   });
 
   it('renders nothing into the pane while a view is composited over it', async () => {
@@ -122,14 +164,20 @@ describe('the actions beside the preview', () => {
   });
 
   it('pops out the artifact with its own access url', async () => {
+    // Named for what it always claimed and did not do: this asserted the URL
+    // the preview had already spent, which is why Pop out landed on the
+    // neutral page rather than the site.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    const presented = vi.mocked(props.surface.present).mock.calls[0]?.[0]?.url;
     fireEvent.click(screen.getByRole('button', { name: /Pop out/u }));
+    await waitFor(() => expect(props.surface.popOut).toHaveBeenCalled());
     expect(props.surface.popOut).toHaveBeenCalledWith({
       artifactId: ARTIFACT,
-      url: OPEN_URL,
+      url: expect.stringContaining('/__rally/open#'),
       title: 'Offsite RSVP',
     });
+    expect(vi.mocked(props.surface.popOut).mock.calls[0]?.[0]?.url).not.toBe(presented);
   });
 
   it('keeps every action disabled until access exists', () => {
