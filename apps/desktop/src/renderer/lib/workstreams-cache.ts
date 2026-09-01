@@ -56,7 +56,6 @@ export function evictCachedWorkstream(
     ['block-dashboard', workstreamId],
     ['block-dashboard-preference', workstreamId],
     ['terminal-workstream', workstreamId],
-    ['dismissed-suggestion-ids', workstreamId],
   ] as const;
   for (const queryKey of queryPrefixes) {
     queryClient.removeQueries({ queryKey });

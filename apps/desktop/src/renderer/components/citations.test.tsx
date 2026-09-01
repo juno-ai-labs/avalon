@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { CitationTarget } from '@rally/contracts/citations';
 import { describe, expect, it, vi } from 'vitest';
 import { CitationFootnoteSection, CitationsProvider } from './markdown-citations';
@@ -20,6 +20,21 @@ function context(overrides: Partial<CitationContext> = {}): CitationContext & { 
     resolve: (resourceId) => (resourceId === DECK.id ? DECK : undefined),
     ...overrides,
   } as CitationContext & { open: ReturnType<typeof vi.fn> };
+}
+
+/** Mount a card, deliver a derivative, and return the glance node. */
+async function showPreview(derivative: string): Promise<HTMLElement> {
+  let deliver: (text: string) => void = () => undefined;
+  const preview = vi.fn(() => new Promise<string>((resolve) => { deliver = resolve; }));
+  render(
+    <MarkdownBody citations={context({ preview })}>
+      {'![Q3 board deck](resource://board-deck)'}
+    </MarkdownBody>,
+  );
+  await act(async () => { deliver(derivative); });
+  const excerpt = document.querySelector('.citation-card-preview');
+  expect(excerpt).not.toBeNull();
+  return excerpt as HTMLElement;
 }
 
 describe('resource citations', () => {
@@ -55,6 +70,61 @@ describe('resource citations', () => {
     expect(card.closest('p')?.textContent).toBe(card.textContent);
     expect(screen.getByText('Published the review.').contains(card)).toBe(false);
     expect(screen.queryByRole('img')).toBeNull();
+    // A lone embed is not a run: it keeps its paragraph, not a row of one.
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+  });
+
+  it('merges consecutive embed cards into one scrollable row', () => {
+    render(
+      <MarkdownBody citations={context()}>
+        {'Two artifacts came out of this.\n\n![The deck](resource://board-deck)\n\n![The deck again](resource://board-deck)\n\nBoth are attached.'}
+      </MarkdownBody>,
+    );
+
+    const row = document.querySelector('.citation-card-row');
+    expect(row).not.toBeNull();
+    expect(row!.querySelectorAll('.citation-card')).toHaveLength(2);
+    // The row replaces the run's paragraphs outright: no card is left behind
+    // in a paragraph of its own, and the prose around the run is untouched.
+    expect(document.querySelectorAll('.citation-card')).toHaveLength(2);
+    expect(row!.closest('p')).toBeNull();
+    expect(screen.getByText('Two artifacts came out of this.')).toBeInTheDocument();
+    expect(screen.getByText('Both are attached.')).toBeInTheDocument();
+  });
+
+  it('leaves a run of embeds alone when they render as text rather than as cards', () => {
+    const run = 'Two of them.\n\n![The deck](resource://board-deck)\n\n![The other deck](resource://board-deck)\n\nBoth above.';
+
+    // No citation context at all — the five surfaces that render MarkdownBody
+    // this way (the block dashboard, note detail, meeting notes, the automation
+    // draft) show a `resource://` image as its label text. Grouping those would
+    // lay a run of sentences out side by side in a horizontal scroller.
+    const { unmount } = render(<MarkdownBody>{run}</MarkdownBody>);
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+    expect(document.body).toHaveTextContent('The deck');
+    unmount();
+
+    // Same again with a context that cannot resolve them: the matrix renders
+    // label text for these too, so there is still no row to make.
+    render(
+      <MarkdownBody citations={context({ resolve: () => undefined })}>{run}</MarkdownBody>,
+    );
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+    expect(document.querySelector('.citation-card')).toBeNull();
+  });
+
+  it('stops a run at a neighbour the matrix draws as something else', () => {
+    render(
+      <MarkdownBody citations={context()}>
+        {'![The deck](resource://board-deck)\n\n![A chart](https://example.com/c.png)\n\n![The deck again](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    // A real image between two embeds is not part of the run: grouping across
+    // it would put an `img` inside a row of cards and reorder the message.
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+    expect(document.querySelectorAll('.citation-card')).toHaveLength(2);
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://example.com/c.png');
   });
 
   it('reads a resource kind as words rather than as its system identifier', () => {
@@ -66,6 +136,37 @@ describe('resource citations', () => {
 
     // `capitalize` on the raw value prints `Github_pull_request` at a person.
     expect(screen.getByText('Github pull request')).toBeInTheDocument();
+  });
+
+  it('labels a generated file by what it is, not that it was generated', () => {
+    const generated = {
+      id: 'packaging',
+      title: 'Packaging & Pricing.pptx',
+      resourceType: 'generated_file',
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    };
+    const { unmount } = render(
+      <MarkdownBody citations={context({ resolve: () => generated })}>
+        {'![Packaging & Pricing](resource://packaging)'}
+      </MarkdownBody>,
+    );
+    expect(screen.getByText('Deck')).toBeInTheDocument();
+    expect(screen.queryByText('Generated file')).toBeNull();
+    unmount();
+
+    render(
+      <MarkdownBody citations={context({
+        resolve: () => ({
+          id: 'memo',
+          title: 'Strategy.docx',
+          resourceType: 'generated_file',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        }),
+      })}>
+        {'![Strategy](resource://memo)'}
+      </MarkdownBody>,
+    );
+    expect(screen.getByText('Document')).toBeInTheDocument();
   });
 
   it('opens the cited resource in the rail when either form is clicked', () => {
@@ -108,6 +209,118 @@ describe('resource citations', () => {
     // anchor: an id the allowlist rejected must not reach the DOM as a target.
     expect(document.body).toHaveTextContent('A walk and an empty.');
     expect(document.body.innerHTML).not.toContain('resource:');
+  });
+
+  it('shows the resource\'s converted markdown in the card, under a shimmering skeleton while it converts', async () => {
+    let deliver: (text: string) => void = () => undefined;
+    const preview = vi.fn(() => new Promise<string>((resolve) => { deliver = resolve; }));
+    render(
+      <MarkdownBody citations={context({ preview })}>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    // The card is asking, so the room holds a skeleton and not an empty box.
+    expect(document.querySelector('.citation-card-preview-skeleton')).not.toBeNull();
+    expect(document.querySelector('.citation-card-preview')).toBeNull();
+    expect(preview).toHaveBeenCalledWith('board-deck');
+
+    // The derivative is what shows — the markdown a Word file was converted
+    // into, not its bytes. The card renders that markdown (a heading is a
+    // heading, emphasis is strong) rather than printing the markers.
+    await act(async () => { deliver('## Revenue\n\n**Author:** Product. Up 14% on the quarter.'); });
+
+    const excerpt = document.querySelector('.citation-card-preview');
+    expect(excerpt).not.toBeNull();
+    expect(excerpt).toHaveTextContent('Up 14% on the quarter.');
+    expect(excerpt!.querySelector('.markdown-body')).not.toBeNull();
+    expect(excerpt!.querySelector('h2')).toHaveTextContent('Revenue');
+    expect(excerpt!.textContent).not.toContain('#');
+    expect(excerpt!.querySelector('strong')).toHaveTextContent('Author:');
+    expect(excerpt!.textContent).not.toContain('**');
+    expect(excerpt).toHaveAttribute('inert');
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
+    // A preview is presentation: the button still announces the title alone.
+    expect(excerpt).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('button', { name: 'Open Q3 board deck' })).toBeInTheDocument();
+  });
+
+  it('keeps two paragraphs as two paragraphs instead of collapsing the seam', async () => {
+    const excerpt = await showPreview('First paragraph here.\n\nSecond paragraph here.');
+    expect(excerpt.querySelectorAll('p')).toHaveLength(2);
+  });
+
+  it('does not promote a paragraph above a rule into a heading', async () => {
+    const excerpt = await showPreview('Quarterly report\n\n---\n\nRevenue was up.');
+    expect(excerpt.querySelector('h1, h2, h3, h4, h5, h6')).toBeNull();
+    expect(excerpt.querySelector('hr')).not.toBeNull();
+    expect(excerpt).toHaveTextContent('Quarterly report');
+    expect(excerpt).toHaveTextContent('Revenue was up.');
+  });
+
+  it('does not swallow the paragraph after a list into the last item', async () => {
+    const excerpt = await showPreview('Findings:\n\n- one\n- two\n\nNext paragraph.');
+    expect(excerpt.querySelector('li:last-child')).toHaveTextContent(/^two$/u);
+    expect(excerpt.querySelector('p:last-of-type')).toHaveTextContent('Next paragraph.');
+  });
+
+  it('still opens an ordered list that does not start at one', async () => {
+    const excerpt = await showPreview('Agenda:\n\n2. second\n3. third');
+    const list = excerpt.querySelector('ol');
+    expect(list).not.toBeNull();
+    expect(list).toHaveAttribute('start', '2');
+    expect(excerpt.textContent).not.toMatch(/2\.\s+second/u);
+  });
+
+  it('does not nest a copy control or a link inside the card button', async () => {
+    const excerpt = await showPreview(
+      'Notes\n\n```js\nconst a = 1;\n```\n\nSee [the source](https://example.com)',
+    );
+    // queryAllByRole would be 0 for any content: the glance is aria-hidden.
+    expect(excerpt.querySelectorAll('button, a[href]')).toHaveLength(0);
+    expect(excerpt).toHaveTextContent('const a = 1;');
+    expect(excerpt).toHaveTextContent('the source');
+  });
+
+  it('does not fetch an external image from the glance', async () => {
+    const excerpt = await showPreview('Chart follows.\n\n![chart](https://attacker.example/pixel.png)');
+    expect(excerpt.querySelector('img')).toBeNull();
+    expect(excerpt).toHaveTextContent('chart');
+  });
+
+  it('keeps the card\'s empty room when a preview is unavailable or not offered', async () => {
+    const failing = vi.fn(() => Promise.reject(new Error('not convertible')));
+    const { unmount } = render(
+      <MarkdownBody citations={context({ preview: failing })}>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+    await act(async () => { await Promise.resolve(); });
+
+    // A rejection reads the same as no preview at all: no skeleton left
+    // spinning, no error text inside a card that is a button.
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
+    expect(document.querySelector('.citation-card-preview')).toBeNull();
+    expect(document.querySelector('.citation-card')).not.toBeNull();
+    unmount();
+
+    // A host offering no preview at all never leaves a skeleton behind.
+    render(
+      <MarkdownBody citations={context()}>{'![Q3 board deck](resource://board-deck)'}</MarkdownBody>,
+    );
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
+  });
+
+  it('asks for no preview in a still, which would keep a skeleton forever', () => {
+    const preview = vi.fn(() => new Promise<string>(() => undefined));
+    render(
+      <MarkdownBody citations={context({ preview })} still>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    expect(preview).not.toHaveBeenCalled();
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
   });
 
   it('renders citations as plain text on a surface that cannot open one', () => {
@@ -177,6 +390,26 @@ describe('footnote citations', () => {
     '[^rev]: [Q3 board deck](resource://board-deck), slide 4',
     '[^mar]: [Margin memo](https://example.com/memo)',
   ].join('\n');
+
+  it('resolves a footnote whose definition lives under a later heading', () => {
+    // Heading collapse mounts each section as its own react-markdown tree.
+    // A [^rev] in Claims used to stay literal because the definition sat in
+    // Sources, a different parse — the same seam streaming used to heal by
+    // re-parsing the whole document after settle.
+    const markdown = [
+      '## Claims',
+      '',
+      'Revenue grew 40%.[^rev]',
+      '',
+      '## Sources',
+      '',
+      '[^rev]: [Q3 board deck](resource://board-deck), slide 4',
+      '',
+    ].join('\n');
+    render(<MarkdownBody citations={context()} collapseHeadings>{markdown}</MarkdownBody>);
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1']);
+    expect(document.querySelector('.footnotes')).toBeNull();
+  });
 
   it('renders each reference as a numbered inline pill and no trailing list', () => {
     render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);

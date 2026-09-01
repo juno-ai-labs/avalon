@@ -168,10 +168,22 @@ pre {
   width: 30px;
 }
 
-.button:hover:not(:disabled),
-.icon-button:hover:not(:disabled) {
+.button:hover:not(:disabled) {
   background: var(--av-sys-color-surface-raised-hover);
   border-color: var(--av-ref-color-line-4);
+  color: var(--av-sys-color-text-default);
+}
+
+/* Icon buttons are the borderless counterpart to `.button`. Hover used to
+   share the bordered fill, which made header controls next to the participant
+   stack and socket dot look like a different family. Keep the 1px transparent
+   border so the box does not shift; do not paint it. Open and keyboard-focus
+   match hover so a menu trigger does not snap back to empty, and so focus
+   gets the same raised fill as `.header-socket-state:focus-visible`. */
+.icon-button:hover:not(:disabled),
+.icon-button[data-state='open']:not(:disabled),
+.icon-button:focus-visible {
+  background: var(--av-sys-color-surface-raised);
   color: var(--av-sys-color-text-default);
 }
 
@@ -212,6 +224,19 @@ pre {
   background: transparent;
   border-color: transparent;
   color: var(--av-sys-color-text-muted);
+}
+
+/* A header icon that is itself the destructive action. Colour lives on the
+   glyph so the control stays the same size and padding as its neighbours. */
+.icon-button-danger {
+  color: var(--av-sys-color-danger-base);
+}
+
+.icon-button-danger:hover:not(:disabled),
+.icon-button-danger[data-state='open']:not(:disabled),
+.icon-button-danger:focus-visible {
+  background: color-mix(in srgb, var(--av-sys-color-danger-base) 13%, var(--av-sys-color-surface-raised));
+  color: var(--av-sys-color-danger-base);
 }
 
 .text-button {
@@ -697,14 +722,24 @@ pre {
 .project-sidebar-action.icon-button:hover:not(:disabled) { background: transparent; border-color: transparent; color: inherit; }
 .project-sidebar-item { border-radius: var(--av-sys-size-radius-sm); }
 .project-sidebar-item[draggable='true'] { cursor: grab; }
-.project-sidebar-row {
+/* Shares `.sidebar-row` for hover fill, radius, and padding so a project
+   and a work stream read as the same kind of row. The grid is the extra
+   accordion and plus columns; `height-dense` matches a single-line work
+   stream. Two classes so `display` and `gap` beat the later `.sidebar-row`
+   flex rule rather than racing it on source order. */
+.sidebar-row.project-sidebar-row {
   align-items: center;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) 28px;
+  gap: 0;
   min-height: var(--av-cmp-row-height-dense);
-  padding: 0 4px;
 }
-.project-sidebar-row:hover { background: var(--av-sys-color-surface-raised-hover); }
+/* The section heading's plus stays put. The per-row plus is the same
+   control, shown only while the row is the one being pointed at or tabbed
+   into, so a list of projects does not grow a column of idle pluses. */
+.project-sidebar-row .project-sidebar-row-action { opacity: 0; }
+.project-sidebar-row:hover .project-sidebar-row-action,
+.project-sidebar-row:focus-within .project-sidebar-row-action { opacity: 1; }
 .project-accordion-control {
   align-items: center;
   background: transparent;
@@ -731,11 +766,13 @@ pre {
 }
 .project-row-link > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-row-link.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
-.project-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0; padding: 2px 8px 7px 42px; }
-.project-sidebar-workstreams { display: grid; gap: 1px; padding: 2px 4px 6px 34px; }
-.project-sidebar-workstream { border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); font-size: 12px; overflow: hidden; padding: 5px 8px; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
-.project-sidebar-workstream:hover,
-.project-sidebar-workstream.is-active { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.project-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0; padding: 6px 8px 6px 18px; }
+/* Nested members start where the accordion column ends, so they share a
+   leading edge with the project icon rather than sitting under the name.
+   The 18px is the accordion column in `.project-sidebar-row`; keep them
+   equal. Font, hover, and the title/description pair come from the shared
+   work-stream row, not a second style. */
+.project-sidebar-workstreams { display: grid; gap: var(--av-sys-space-row-gap); padding-left: 18px; }
 .project-icon-pile { align-items: center; display: inline-flex; flex: 0 0 auto; margin-left: 2px; }
 .project-icon-pile-item { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-sys-color-border-subtle); border-radius: 50%; display: inline-flex; height: 20px; justify-content: center; width: 20px; }
 .project-icon-pile-item + .project-icon-pile-item { margin-left: -6px; }
@@ -826,8 +863,8 @@ pre {
   position: relative;
 }
 
-.sidebar-row:hover { --sidebar-row-background: var(--av-sys-color-surface-subtle); }
-.sidebar-row.is-active { --sidebar-row-background: var(--av-ref-color-neutral-4); }
+.sidebar-row:hover { --sidebar-row-background: var(--av-cmp-row-background-hover); }
+.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }
 
 /* Command-number hints are an overlay, not another column in the row. The
    scrim softly restores the row's own background before the pill, so a long
@@ -845,24 +882,16 @@ pre {
   z-index: 2;
 }
 
-.command-shortcut-pill {
-  align-items: center;
+/* Overlay extras only. Fill, radius, and border come from `.badge`; size and
+   padding come from `.scope-badge` — two rules, not a combined selector. This
+   selector is two classes so those extras cannot lose to `.scope-badge` the
+   way a one-class rule would (both are 0-1-0 and `.scope-badge` sits later
+   in the file). Restating chrome here would let the two pills drift apart. */
+.scope-badge.command-shortcut-pill {
   animation: fade-in 80ms ease-out;
-  background: var(--av-ref-color-neutral-5);
-  border: 1px solid var(--av-sys-color-border-highlight);
-  border-radius: var(--av-sys-size-radius-pill);
-  box-shadow: var(--av-sys-elevation-shadow-sm);
-  color: var(--av-ref-color-neutral-11);
-  display: inline-flex;
-  font-size: 11px;
   font-variant-numeric: tabular-nums;
-  font-weight: 550;
   gap: 1px;
-  height: 22px;
   justify-content: center;
-  line-height: 1;
-  min-width: 34px;
-  padding: 0 7px;
 }
 
 .command-shortcut-pill svg { flex: 0 0 auto; }
@@ -893,6 +922,12 @@ pre {
   justify-content: center;
   margin-left: 3px;
   width: 16px;
+}
+
+.sidebar-workstream-facepile {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-left: 3px;
 }
 
 .sidebar-workstream-timer {
@@ -949,7 +984,17 @@ pre {
 .sidebar-row-icon.is-attention { color: var(--av-sys-color-warning-base); }
 .sidebar-row-hint.is-attention { color: var(--av-sys-color-warning-base); }
 .scope-badge { flex: 0 0 auto; font-size: 9px; line-height: 16px; max-width: 68px; padding: 0 4px; }
-.workstream-row { min-height: var(--av-cmp-row-height-dense); }
+/* The chip fill is the selected-row token. On hover or current it would
+   punch a second pill through the row's own fill, so the badge drops its
+   fill and lets the shared row speak. */
+.sidebar-row:hover .scope-badge,
+.sidebar-row.is-active .scope-badge,
+.sidebar-row:focus-within .scope-badge {
+  background: transparent;
+  border-color: transparent;
+}
+.workstream-row,
+.automation-row { min-height: var(--av-cmp-row-height-dense); }
 .note-row { background: transparent; border: 0; min-height: var(--av-cmp-row-height-dense); text-align: left; width: 100%; }
 .mini-state { background: var(--av-ref-color-neutral-7); border-radius: 50%; height: 6px; width: 6px; }
 .mini-state.active,
@@ -1029,24 +1074,46 @@ pre {
 .mobile-only { display: none; }
 .header-menu-button { display: none; }
 
-.connection-banner {
-  align-items: center;
-  background: var(--av-sys-color-warning-wash);
-  border-bottom: 1px solid var(--av-sys-color-warning-edge);
-  color: var(--av-sys-color-warning-soft);
+/* Deep-link failure window
+   Its own renderer, so this is the whole window rather than a layer inside one:
+   no overlay, no dialog chrome, and the card is the page. */
+
+.deep-link-error-window {
+  background: var(--av-sys-color-surface-subtle);
+  box-sizing: border-box;
   display: flex;
-  font-size: 11px;
-  gap: 12px;
-  justify-content: center;
-  left: 0;
-  min-height: 28px;
-  position: absolute;
-  right: 0;
-  top: 0;
-  z-index: 22;
+  flex-direction: column;
+  gap: 16px;
+  height: 100vh;
+  justify-content: space-between;
+  padding: 24px;
 }
 
-.connection-banner button { background: transparent; color: var(--av-sys-color-warning-strong); font-weight: 600; padding: 2px 4px; text-decoration: underline; }
+/* The window cannot be resized and the message is not always short — the
+   sign-in branch interpolates the link's own error parameter — so the message
+   scrolls and the button below it stays put. Left to grow, a long message
+   pushes Continue past the bottom edge of a window with no way to scroll or
+   resize to it, and the one action there is becomes unreachable.
+   `min-height: 0` is what allows the shrink: a flex item defaults to
+   `min-height: auto` and refuses to be smaller than its content. */
+.deep-link-error-card {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.deep-link-error-title { font-size: 15px; margin: 0; }
+.deep-link-error-copy {
+  color: var(--av-sys-color-text-muted);
+  margin: 0;
+  /* The message can be one long unbroken token — the sign-in branch
+     interpolates the link's own error parameter — and the window does not
+     resize, so it wraps rather than reaching past the edge. */
+  overflow-wrap: anywhere;
+}
+.deep-link-error-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; }
 
 /* Onboarding and setup */
 
@@ -1108,11 +1175,6 @@ pre {
 .region-option-copy span { color: var(--av-sys-color-text-muted); font-size: 11px; }
 .region-check { color: var(--av-sys-color-brand-ink); }
 .region-note { color: var(--av-ref-color-neutral-9); font-size: 10.5px; line-height: 1.45; }
-.region-availability-note { color: var(--av-ref-color-neutral-10); font-size: 10px; line-height: 1.45; margin: 8px 0 0; }
-.region-availability-note:empty { display: none; }
-.region-availability-note p { margin: 0; }
-.region-availability-note ul { list-style: disc; margin: 4px 0 0; padding-left: 16px; }
-.region-availability-note li::marker { color: var(--av-ref-color-neutral-10); }
 .onboarding-continue { margin-top: 20px; width: 100%; }
 
 .signin-card { text-align: center; width: min(400px, 100%); }
@@ -2542,9 +2604,18 @@ pre {
 .virtual-message-row { display: flow-root; }
 .message-block { margin: 0 0 var(--av-sys-space-stack-gap); }
 .message-block > header { align-items: center; display: flex; gap: 8px; margin-bottom: 6px; }
+/* The header mixes three type sizes, and each one's line box is taller than its
+   glyphs by a different amount, so centring the boxes leaves the text looking
+   off-centre. Collapsing the children to their glyph height makes the flex
+   centring act on what a reader actually sees. */
+.message-block > header > * { line-height: 1; }
 .message-author { font-size: var(--av-sys-font-size-author); font-weight: var(--av-sys-font-weight-emphasis); }
 .human-message .message-author { color: var(--person-accent); }
-.message-block time { color: var(--av-ref-color-neutral-8); font-size: var(--av-sys-font-size-meta); }
+/* The time and a settled response's total are the same kind of thing — meta
+   about the message, not part of it — so they share one rule rather than two
+   that have to be kept equal by hand. */
+.message-block time,
+.message-block .message-work-summary { color: var(--av-ref-color-neutral-8); font-size: var(--av-sys-font-size-meta); }
 .markdown-body { color: var(--av-ref-color-neutral-13); font-size: var(--av-sys-font-size-prose); line-height: var(--av-sys-font-leading-prose); overflow-wrap: anywhere; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
@@ -2569,19 +2640,195 @@ pre {
 .markdown-body h4,
 .markdown-body h5,
 .markdown-body h6 { font-size: var(--av-cmp-markdown-heading-4); font-weight: var(--av-sys-font-weight-heading); }
+
+/* Heading collapse. h2+ become a one-level accordion: the chevron lives in a
+   gutter to the left of the heading, and a collapsed section keeps ~3 lines of
+   whatever follows (a paragraph, the top of a table) behind a fade that starts
+   at 60% opacity on the first pixel and reaches transparent on the last, so the
+   next heading is what the eye lands on. Nested headings are content, not
+   nested accordions — an h3 under an h2 has no chevron. */
+.markdown-body:has(> .markdown-collapse) {
+  padding-left: 20px;
+}
+.markdown-body > .markdown-collapse:first-child .markdown-collapse-heading { margin-top: 0; }
+.markdown-collapse-heading { cursor: pointer; position: relative; }
+.markdown-collapse-chevron {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.25em;
+  justify-content: center;
+  left: -20px;
+  padding: 0;
+  position: absolute;
+  top: 0.12em;
+  width: 20px;
+}
+.markdown-collapse-chevron:hover,
+.markdown-collapse-chevron:focus-visible { color: var(--av-sys-color-text-subtle); }
+.markdown-collapse-chevron:focus-visible { outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 1px; }
+.markdown-collapse-chevron svg { display: block; transition: transform 140ms ease; }
+.markdown-collapse.is-expanded .markdown-collapse-chevron svg { transform: rotate(90deg); }
+.markdown-collapse.is-collapsed > .markdown-collapse-body {
+  -webkit-mask-image: linear-gradient(to bottom, color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent), transparent);
+  -webkit-mask-mode: alpha;
+  mask-image: linear-gradient(to bottom, color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent), transparent);
+  mask-mode: alpha;
+  max-height: 3lh;
+  overflow: hidden;
+  pointer-events: none;
+}
+.message-block > header .message-collapse-all {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 18px;
+  justify-content: center;
+  margin-left: 2px;
+  padding: 0;
+  width: 18px;
+}
+.message-block > header .message-collapse-all:hover,
+.message-block > header .message-collapse-all:focus-visible { color: var(--av-sys-color-text-subtle); }
+.message-block > header .message-collapse-all:focus-visible { outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 1px; }
 .markdown-body strong { color: var(--av-ref-color-neutral-14); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body em { font-style: italic; }
 .markdown-body a { color: var(--av-sys-color-accent-soft); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .markdown-body a:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; }
 /* A sent mention wears the same brand as the draft it was typed in. */
 .mention-chip { align-items: center; background: color-mix(in srgb, var(--av-sys-color-brand-base) 12%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 26%, transparent); border-radius: var(--av-sys-size-radius-pill); box-sizing: border-box; color: var(--av-sys-color-brand-ink); display: inline-flex; font-size: 0.92em; font-weight: 580; gap: 4px; height: 1.55em; line-height: 1; max-width: 100%; padding: 1px 6px 1px 2px; vertical-align: middle; white-space: nowrap; }
-.mention-chip-connector { padding: 1px 7px; }
+.mention-chip-connector {
+  background: var(--av-sys-color-surface-raised);
+  border-color: var(--av-ref-color-line-4);
+  color: var(--av-sys-color-text-default);
+  gap: 5px;
+  padding: 1px 1px 1px 5px;
+}
 .mention-chip-avatar { align-items: center; background: var(--av-ref-color-neutral-6); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-14); display: inline-flex; flex: 0 0 auto; font-size: 6.5px; font-weight: 700; height: 16px; justify-content: center; letter-spacing: -0.02em; overflow: hidden; position: relative; width: 16px; }
 /* Cap-height centring, as on .avatar-fallback above. */
 .mention-chip-avatar > span { text-box: trim-both cap alphabetic; }
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
+/* Connector mentions keep the company mark but not Settings' citron control
+   treatment. In transcript prose, only connection state carries colour. */
+.mention-chip-connector-icon.provider-icon {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  height: 14px;
+  width: 14px;
+}
+.mention-chip-connector-icon.provider-icon .connector-mark { height: 11px; width: 11px; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mention-chip-status {
+  align-items: center;
+  border-radius: var(--av-sys-size-radius-pill);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.78em;
+  font-weight: 560;
+  gap: 2px;
+  line-height: 1;
+  margin-left: 1px;
+  padding: 2px 5px 2px 3px;
+}
+.mention-chip-status-healthy {
+  background: color-mix(in srgb, var(--av-sys-color-success-base) 16%, transparent);
+  color: var(--av-sys-color-success-base);
+}
+.mention-chip-status-reconnect_required {
+  background: color-mix(in srgb, var(--av-sys-color-warning-base) 18%, transparent);
+  color: var(--av-sys-color-warning-base);
+}
+.mention-chip-status-disabled,
+.mention-chip-status-missing {
+  background: color-mix(in srgb, var(--av-sys-color-text-muted) 14%, transparent);
+  color: var(--av-sys-color-text-muted);
+}
+
+/* Connector embed: citation-card tokens in a horizontal provider-style layout. */
+.citation-connector-card {
+  align-items: start;
+  background: var(--av-sys-color-surface-elevated);
+  border: 1px solid var(--av-ref-color-line-3);
+  border-radius: var(--av-sys-size-radius-lg);
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  gap: 10px;
+  margin: var(--av-sys-space-prose-gap) 0;
+  max-width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  width: min(100%, 420px);
+}
+.citation-connector-card > .provider-icon {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  height: 22px;
+  margin-top: 1px;
+  width: 22px;
+}
+.citation-connector-card-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 1px; min-width: 0; }
+.citation-connector-card-title { font-size: 12.5px; font-weight: 560; line-height: 1.25; }
+.markdown-body .citation-connector-card-description {
+  color: var(--av-sys-color-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 0;
+}
+.markdown-body .citation-connector-card-meta {
+  color: var(--av-sys-color-text-disabled);
+  font-size: 10px;
+  line-height: 1.35;
+  margin: 2px 0 0;
+}
+.markdown-body .citation-connector-card-scopes {
+  align-self: start;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 3px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.markdown-body .citation-connector-status {
+  align-items: center;
+  border-radius: var(--av-sys-size-radius-pill);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 560;
+  gap: 4px;
+  line-height: 1;
+  margin: 0;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.citation-connector-status-healthy {
+  background: color-mix(in srgb, var(--av-sys-color-success-base) 14%, transparent);
+  color: var(--av-sys-color-success-base);
+}
+.citation-connector-status-reconnect_required {
+  background: color-mix(in srgb, var(--av-sys-color-warning-base) 16%, transparent);
+  color: var(--av-sys-color-warning-base);
+}
+.citation-connector-status-disabled,
+.citation-connector-status-missing {
+  background: color-mix(in srgb, var(--av-sys-color-text-muted) 12%, transparent);
+  color: var(--av-sys-color-text-muted);
+}
 
 /* Citations. A chip is a mention chip's sibling in shape and its opposite in
    behaviour: a mention names an identity and never navigates, a citation names
@@ -2600,17 +2847,102 @@ pre {
 .citation-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* The embed card. It is a block because image syntax is block-level to the
-   model that wrote it, so it already arrives in a paragraph of its own — the
-   width here is what makes that visible rather than what causes it. It sizes to
-   its content: a full-width box around a three-word title leaves an icon
-   stranded at the far edge. */
-.citation-card { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-default); cursor: pointer; display: flex; font: inherit; gap: 10px; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; padding: 11px 13px; text-align: left; width: fit-content; }
-.citation-card:hover { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-border-strong); }
-.citation-card-icon { align-items: center; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 auto; }
-.citation-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.citation-card-title { font-size: 0.97em; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.citation-card-kind { color: var(--av-sys-color-text-muted); font-size: 0.82em; }
-.citation-card-chevron { color: var(--av-sys-color-text-muted); flex: 0 0 auto; margin-left: 8px; }
+   model that wrote it, so it already arrives in a paragraph of its own.
+
+   The shape is an attached file's tile rather than a list row: the kind badge
+   at the head, the title and kind at the foot, and deliberate empty room
+   between — the room is what says "a thing was produced here", so the height
+   is a floor rather than a hug. Every colour is a semantic token, which is how
+   the same rule lands as a white sheet with a hairline on Terra Light and as a
+   near-borderless warm card drawn with space on Air; the kind takes the
+   theme's own label voice for the same reason. */
+.citation-card { background: var(--av-sys-color-surface-elevated); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-text-default); cursor: pointer; display: flex; flex-direction: column; font: inherit; gap: 9px; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; min-height: 170px; overflow: hidden; padding: 11px; text-align: left; width: 176px; }
+.citation-card:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-strong); }
+.citation-card-badge { align-items: center; align-self: flex-start; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-muted); display: inline-flex; height: 27px; justify-content: center; width: 27px; }
+/* The opening lines of the resource's own text, filling the room between the
+   badge and the title. It is a *glance*, not a reader: the clamp cuts it at
+   four lines, and nothing here scrolls in either axis — a scrollable box
+   inside a card the whole of which is one button would swallow the click it
+   advertises. The kind label's size, and `font-weight: normal` rather than
+   `sys.label.weight`: that token is 560, the same as the title's
+   `sys.font.weight.strong`, so the glance competed with the line it is
+   meant to recede from. The named weights only go up from `strong`; `normal`
+   (400) is the step down that exists without inventing a number. Headings
+   inherit it; `strong` keeps markdown's own weight, so `**Author:**` actually
+   reads as emphasis. `pointer-events: none` plus `inert` on the node keep nested
+   markdown (a link, a code-block copy control) from becoming a second target
+   inside the card.
+
+   The tone is `text.disabled`, the faintest step on `sys.color.text`
+   (strongest to faintest). The preview exists to hint at the document, not
+   to be read here — type as dark as `text.muted` (the kind label) competes
+   with the title for the click. The token names a contrast, not the button's
+   state: the card stays enabled, and this layer is the one that should recede.
+   `.markdown-body` restates the colour on itself because a colour on the host
+   does not inherit into that wrapper. The card and the wrapper's element are
+   named so this is (0,3,1): the feed's
+   `:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`
+   (and the human-bubble twin) is (0,3,0), and a host written as
+   `.citation-card-preview .markdown-body` lost, so inherit never landed and the
+   glance painted at the turn's size and colour. `*` carries the tone into
+   descendants that `.markdown-body strong` (and `a`, `th`) paint themselves,
+   without naming a markdown element a host may not restyle. It also zeros
+   block margins: blank lines stay in the excerpt (they are the block grammar)
+   and the clamp's seams belong here rather than in a source rewrite. */
+.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-disabled); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: normal; line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; pointer-events: none; word-break: break-word; }
+.citation-card .citation-card-preview div.markdown-body { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
+.citation-card .citation-card-preview div.markdown-body * { color: inherit; margin: 0; }
+/* `*` does not match `::marker`, so the shared `.markdown-body li::marker`
+   colour would otherwise keep the bullets at the turn's ink beside faint
+   text. Inherit here the same way `*` carries the tone, without naming a
+   markdown element. */
+.citation-card .citation-card-preview div.markdown-body ::marker { color: inherit; }
+/* A heading scale of one size: the shared scale's h1 is larger than this
+   tile, and a glance that spent its four lines on a title would hide the
+   sentence that distinguishes one card from another. The same (0,3,1)-plus
+   element that wins the wrapper's inherit wins the scale, so a heading does
+   not keep the shared size while the wrapper's type recedes. */
+.citation-card .citation-card-preview div.markdown-body :is(h1, h2, h3, h4, h5, h6) {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  margin: 0;
+}
+/* What stands in for it while the derivative is still being converted. The
+   card does not resize when the text lands because of its own `min-height` and
+   the title block's `margin-top: auto`, not because these bars measure the
+   same as the lines they stand in for — they do not, and saying so here would
+   be a claim the next edit could quietly break. */
+.citation-card-preview-skeleton { display: flex; flex-direction: column; gap: 5px; overflow: hidden; }
+.citation-card-preview-skeleton > span { animation: citation-card-shimmer 1.8s ease-in-out infinite; background: var(--av-sys-color-shimmer-default); border-radius: var(--av-sys-size-radius-pill); height: 7px; }
+.citation-card-preview-skeleton > span:nth-child(1) { width: 100%; }
+.citation-card-preview-skeleton > span:nth-child(2) { animation-delay: 0.12s; width: 82%; }
+.citation-card-preview-skeleton > span:nth-child(3) { animation-delay: 0.24s; width: 60%; }
+@keyframes citation-card-shimmer {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .citation-card-preview-skeleton > span { animation: none; }
+}
+/* `margin-top: auto` puts the title block at the foot whether or not a preview
+   filled the room above it, so a card with an excerpt is the same shape as one
+   without. */
+.citation-card-text { display: flex; flex-direction: column; gap: 3px; margin-top: auto; min-width: 0; }
+.citation-card-title { font-size: 0.97em; font-weight: var(--av-sys-font-weight-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.citation-card-kind { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); letter-spacing: var(--av-sys-label-tracking); text-transform: var(--av-sys-label-transform); }
+/* A run of embeds, merged by the rehype pass into one row that scrolls
+   sideways — a column of tiles between two sentences reads as the transcript
+   stalling, and the row spends one card's height however many were announced.
+
+   `overscroll-behavior-x: contain` stops a swipe that reaches the end of the
+   row from chaining outward, where the window would take it as a back
+   gesture; `scrollbar-width: thin` matches the settings icon shelf, the other
+   horizontal scroller in this file, and keeps a full-size overlay bar out of
+   the 10px gap beneath 170px tiles. */
+.citation-card-row { display: flex; gap: 10px; margin: var(--av-sys-space-prose-gap) 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+.citation-card-row .citation-card { flex: 0 0 auto; margin: 0; }
 
 /* The grounding pill. It costs one character of line width and no vertical
    space at all, which is the whole reason the trailing source list is not
@@ -2689,6 +3021,13 @@ pre {
 .markdown-code-block pre { background: transparent !important; font-size: 0.93em; line-height: 1.55; margin: 0; overflow: auto; padding: 14px 18px; tab-size: 2; }
 .markdown-code-block code { background: none; border-radius: 0; display: block; min-width: max-content; padding: 0; }
 .markdown-code-block code > span { display: block; min-height: 1.55em; }
+.markdown-mermaid-diagram { overflow: auto; padding: 18px; }
+.markdown-mermaid-svg { margin: 0 auto; }
+/* Mermaid writes a responsive max-width into the generated SVG. The wrapper's
+   viewBox width is the scrollable frame; the SVG must fill that frame instead
+   of shrinking a wide diagram back to the message width. */
+.markdown-mermaid-svg svg { display: block; height: auto; max-width: none !important; width: 100% !important; }
+.markdown-mermaid-error { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; padding: 10px 18px 0; }
 .markdown-body blockquote { border-left: 2px solid var(--av-ref-color-line-4); color: var(--av-ref-color-neutral-11); margin: var(--av-cmp-markdown-blockquote-margin); padding: 1px 0 1px 15px; }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
 .markdown-body hr { background: var(--av-ref-color-neutral-5); border: 0; height: 1px; margin: var(--av-cmp-markdown-rule-margin); }
@@ -2701,7 +3040,8 @@ pre {
 .markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: 16px 0; max-width: 100%; }
 .agent-message-actions { align-items: center; display: flex; gap: 8px; margin-top: 9px; opacity: 0; transition: opacity 120ms; }
 .agent-message:hover .agent-message-actions,
-.agent-message:focus-within .agent-message-actions { opacity: 1; }
+.agent-message:focus-within .agent-message-actions,
+.agent-message-actions.is-speaking { opacity: 1; }
 .agent-message-actions button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: 4px; padding: 2px; }
 .agent-message-actions button:hover { color: var(--av-sys-color-text-default); }
 /* A save in flight keeps the row visible and stops a second one starting; the
@@ -2758,18 +3098,6 @@ pre {
 .tool-details pre { background: var(--av-sys-color-text-on-inverse); border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-11); font-size: 10px; margin: 0; max-height: 220px; overflow: auto; padding: 9px; white-space: pre-wrap; }
 .tool-warning { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; }
 
-.suggestion-block { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-5); border-radius: var(--av-sys-size-radius-lg); padding: 14px; }
-.suggestion-block > header { align-items: flex-start; display: flex; gap: 10px; }
-.suggestion-block > header > span:first-child { align-items: center; background: var(--av-sys-color-warning-wash); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-warning-base); display: flex; height: 30px; justify-content: center; width: 30px; }
-.suggestion-block > header > div { flex: 1; }
-.suggestion-block header small { color: var(--av-sys-color-warning-base); font-size: 9px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; }
-.suggestion-block h3 { font-size: 13px; line-height: 1.38; margin: 2px 0 0; }
-.suggestion-reason { background: var(--av-sys-color-surface-sunken); border-radius: var(--av-sys-size-radius-md); margin-top: 12px; padding: 9px 10px; }
-.suggestion-reason small { color: var(--av-sys-color-text-muted); font-size: 9px; text-transform: uppercase; }
-.suggestion-reason p { color: var(--av-sys-color-text-subtle); font-size: 11.5px; margin: 3px 0 0; }
-.suggestion-block > footer { display: flex; gap: 7px; justify-content: flex-end; margin-top: 11px; }
-.suggestion-block.is-resolved { border-color: var(--av-sys-color-border-default); opacity: 0.78; }
-.suggestion-resolution { align-items: center; color: var(--av-sys-color-success-base); display: flex; font-size: 10.5px; gap: 5px; margin: 10px 0 0; }
 
 
 .agent-work-timing { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: 11.5px; gap: 7px; margin: 2px 0 26px; min-height: 20px; }
@@ -2828,6 +3156,74 @@ pre {
 .composer-stack { display: grid; gap: 9px; margin: 0 auto; max-width: var(--av-cmp-feed-width); pointer-events: auto; position: relative; }
 .composer-wrap { margin: 0 auto; max-width: var(--av-cmp-feed-width); position: relative; }
 .composer-stack > .composer-wrap { margin: 0; max-width: none; width: 100%; }
+.composer-wrap > .workstream-composer { position: relative; z-index: 1; }
+.composer-queue {
+  background: var(--av-ref-color-neutral-2);
+  border: 1px solid var(--av-ref-color-line-4);
+  border-bottom: 0;
+  border-radius: var(--av-sys-size-radius-md) var(--av-sys-size-radius-md) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  list-style: none;
+  margin: 0 10px -10px;
+  padding: 4px 4px 14px;
+  position: relative;
+  z-index: 0;
+}
+.composer-queue-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-height: 28px;
+  padding: 3px 6px 3px 2px;
+}
+.composer-queue-row.is-dragging { opacity: .45; }
+.composer-queue-grip {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-sm);
+  color: var(--av-sys-color-text-muted);
+  cursor: grab;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 16px;
+  justify-content: center;
+  line-height: 0;
+  opacity: 0;
+  padding: 0;
+  width: 16px;
+}
+.composer-queue-grip svg { display: block; }
+.composer-queue-row:hover .composer-queue-grip,
+.composer-queue-row:focus-within .composer-queue-grip,
+.composer-queue-row.is-dragging .composer-queue-grip { opacity: 1; }
+.composer-queue-grip:disabled { cursor: default; visibility: hidden; }
+.composer-queue-grip:active { cursor: grabbing; }
+.composer-queue-avatar {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+.composer-queue-avatar .avatar-small {
+  height: 16px;
+  width: 16px;
+}
+.composer-queue-avatar .avatar-fallback { font-size: 7px; }
+.composer-queue-text {
+  color: var(--av-sys-color-text-subtle);
+  flex: 1 1 auto;
+  font-size: 12px;
+  line-height: 16px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .elicitation-panel,
 .elicitation-collapsed-bar { background: var(--av-ref-color-neutral-1); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-xl); box-shadow: var(--av-sys-elevation-shadow-md); width: 100%; }
 .elicitation-panel { padding: 14px 14px 13px; }
@@ -2909,6 +3305,8 @@ pre {
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
 .attachment-lightbox-content.is-image { align-items: center; display: flex; justify-content: center; overflow: hidden; padding: 32px; }
 .attachment-lightbox-content.is-image img { border-radius: var(--av-sys-size-radius-sm); box-shadow: var(--av-sys-elevation-shadow-lg); height: auto; max-height: 100%; max-width: 100%; object-fit: contain; width: auto; }
+.attachment-lightbox-content.is-audio { align-items: center; display: flex; justify-content: center; padding: 32px; }
+.attachment-lightbox-content.is-audio audio { max-width: 560px; width: 100%; }
 .attachment-lightbox-close { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-14); display: flex; height: 34px; justify-content: center; width: 34px; }
 .attachment-lightbox-document { margin: 0 auto; max-width: 960px; min-height: 100%; padding: 44px 36px 96px; }
 .attachment-lightbox-text { color: var(--av-ref-color-neutral-13); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.65; margin: 0 auto; max-width: 1100px; min-height: 100%; overflow-wrap: anywhere; padding: 44px 36px 96px; white-space: pre-wrap; }
@@ -3009,21 +3407,6 @@ pre {
 .model-selector-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-selector-item > svg { color: var(--av-sys-color-accent-base); flex: 0 0 auto; }
 .message-delivery-controls { align-items: center; display: flex; gap: 2px; }
-.message-delivery-mode {
-  background: transparent;
-  border: 0;
-  border-radius: var(--av-sys-size-radius-md);
-  color: var(--av-sys-color-text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 10.5px;
-  max-width: 150px;
-  min-height: 28px;
-  padding: 0 7px;
-  text-overflow: ellipsis;
-}
-.message-delivery-mode:hover,
-.message-delivery-mode:focus-visible { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .stop-button { background: transparent; border-color: transparent; color: var(--av-sys-color-text-muted); font-size: 10.5px; }
 .composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
 .composer-error-slot { padding-top: 7px; }
@@ -3064,7 +3447,13 @@ pre {
    window has capped. Each breakpoint that changes the room available restates
    it. */
 .workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - var(--av-cmp-sidebar-width) - 24px)); transition: --rail-width 190ms cubic-bezier(.32, .72, 0, 1); }
-.rail-surface { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); bottom: 8px; box-shadow: var(--av-sys-elevation-shadow-rail); display: grid; grid-template-rows: 45px minmax(0, 1fr); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; width: var(--rail-slot); z-index: 40; }
+/* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
+   column's minimum is the items' min-content, and a markdown document's
+   min-content is its longest unwrapped line — so the panel grew with the file
+   and `.rail-scroll`'s `overflow-x: hidden` clipped the prose instead of
+   wrapping it to the slot. HyperSight already set `min-width: 0` on
+   `.block-dashboard-panel`; the inspector document never got the equivalent. */
+.rail-surface { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); bottom: 8px; box-shadow: var(--av-sys-elevation-shadow-rail); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 45px minmax(0, 1fr); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; width: var(--rail-slot); z-index: 40; }
 /* The panel that just lost the slot dissolves over the one that took it. Only
    the outgoing panel animates: the incoming one is already opaque underneath,
    so the frame itself never thins out mid-hand-off. */
@@ -3095,8 +3484,10 @@ pre {
 .rail-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: flex; justify-content: space-between; padding: 0 7px 0 11px; }
 .rail-title,
 .rail-header-actions { align-items: center; display: flex; gap: 2px; }
-.rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; }
-.rail-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.rail-title { flex: 1; min-width: 0; }
+.rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-header-actions { flex-shrink: 0; }
+.rail-scroll { min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .rail-inline-error { padding: 9px 11px 0; }
 .rail-inline-error .inline-error { margin: 0; }
 .rail-sections { padding: 3px 11px 20px; }
@@ -3214,29 +3605,39 @@ pre {
 .run-rail-copy { display: flex; flex-direction: column; min-width: 0; }
 .run-rail-copy strong { color: var(--av-ref-color-neutral-12); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-rail-copy small { color: var(--av-ref-color-neutral-9); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inspector-detail { padding: 30px 18px; }
-.inspector-hero-icon { align-items: center; background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-subtle); display: flex; height: 38px; justify-content: center; margin-bottom: 13px; width: 38px; }
-.inspector-detail > h3 { font-size: 14px; margin: 0; }
-.inspector-detail > p { color: var(--av-sys-color-text-muted); font-size: 10.5px; margin: 3px 0 20px; }
-.inspector-detail .detail-list { margin-bottom: 18px; }
-/* The readable half of a resource detail. It is capped and scrolls inside its
-   own box rather than growing the rail: a cited document can be any length, and
-   the actions under it have to stay reachable. */
-.inspector-detail-preview { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-subtle); border-radius: var(--av-sys-size-radius-md); font-size: 12.5px; margin-bottom: 18px; max-height: 42vh; overflow-y: auto; padding: 12px 14px; }
+.inspector-detail { min-width: 0; padding: 16px 18px 28px; }
+.inspector-detail-updated { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0 0 12px; }
+.inspector-detail-updated time { font-variant-numeric: tabular-nums; }
+.inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
+/* Hairline between last-updated and the document. Subtle is the lightest
+   named border; hairline is the thin width — not a 1px literal, and not a
+   fill off the neutral ramp, which a border must not name. */
+.inspector-detail-rule {
+  background: none;
+  border: 0;
+  border-top: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-subtle);
+  margin: 0 0 16px;
+}
+/* The document itself, not a card of it: last-updated and the markdown share
+   the rail's scroll, so a long file does not trap the timestamp in a box above
+   a second scroller. Hosts may size the body; they may not restyle its
+   elements — see markdown-rendering.md. Width is the other allowed sizing:
+   without `max-width: 100%` and `min-width: 0` the host grows with the
+   markdown's max-content even after the rail's column can shrink, and the
+   scroller clips the unwrapped lines. */
+.inspector-detail-document { max-width: 100%; min-width: 0; }
+.inspector-detail-document .markdown-body { font-size: 13px; }
+.inspector-detail-image { display: block; height: auto; max-width: 100%; }
+.inspector-detail-audio { display: block; width: 100%; }
 .inspector-detail-preview-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 11.5px; gap: 6px; margin-bottom: 18px; }
-.inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-/* History under the actions: what the resource is comes first, what it was
-   comes after. The rows are their own grid so the version number, the author
-   and the time line up down the column rather than per row. */
-.inspector-versions { margin-top: 22px; }
-.inspector-versions ul { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; }
-.inspector-versions li { align-items: center; display: grid; gap: 9px; grid-template-columns: 22px minmax(0, 1fr) auto; min-height: 36px; }
-.inspector-version-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.inspector-version-meta > .inspector-version-author { color: var(--av-ref-color-neutral-12); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inspector-version-meta > time { color: var(--av-sys-color-text-muted); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* History in the header Versions dropdown. Group labels are the sparse
+   calendar buckets; the rows themselves are who wrote that revision. */
+.inspector-versions-menu { min-width: 220px; }
+.inspector-versions-menu .inspector-version-group-label { color: var(--av-sys-color-text-muted); font-size: 10.5px; font-weight: 560; padding: 7px 8px 3px; }
+.inspector-version-item { display: grid; gap: 9px; grid-template-columns: 22px minmax(0, 1fr) auto; }
+.inspector-version-author { color: var(--av-ref-color-neutral-12); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-version-label { color: var(--av-sys-color-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 600; }
-.inspector-versions li > .icon-button { height: 26px; justify-self: end; width: 26px; }
-.inspector-versions li > .badge { justify-self: end; }
+.inspector-version-item > .badge { justify-self: end; }
 /* A notice, not a caption: a superseded version renders in the same surface as
    the current one, and reading a stale draft as current is the failure the
    whole versioning layer exists to prevent. */
@@ -3389,7 +3790,10 @@ pre {
 .automation-email-value { font-family: var(--av-sys-font-family-mono); font-size: 9.5px; line-height: 1.35; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .automation-email-address .automation-email-copy { height: 24px; justify-self: end; width: 24px; }
 .automation-delivery-fact ul { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
-.automation-delivery-fact li { align-items: center; display: flex; gap: 6px; min-height: 26px; }
+/* Wraps because the sub-label below a row is a whole sentence: unwrapped it
+   shares one 250px line with the destination and ellipsises the name away,
+   so the row warning that something is wrong stops saying what. */
+.automation-delivery-fact li { align-items: center; display: flex; flex-wrap: wrap; gap: 2px 6px; min-height: 26px; }
 .automation-delivery-fact label { align-items: center; color: var(--av-sys-color-text-subtle); cursor: pointer; display: flex; font-size: 11.5px; gap: 7px; min-width: 0; }
 .automation-delivery-fact label > svg { color: var(--av-sys-color-text-muted); flex: 0 0 auto; }
 .automation-delivery-fact label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4317,6 +4721,11 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-screen .composer-wrap {
   max-width: 920px;
   pointer-events: auto;
+}
+
+.workstream-screen .composer-queue {
+  background: var(--av-cmp-composer-background);
+  border-color: var(--av-cmp-composer-border-color);
 }
 
 .workstream-screen .composer-stack {

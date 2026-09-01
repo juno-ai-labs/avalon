@@ -151,6 +151,7 @@ async function loadVisibleRows(
 // aggregation bounded by the requested page rather than the work-stream size.
 export const ATTACHMENT_KIND_SQL = `CASE
   WHEN lower(trim(substr(COALESCE(mime_type, ''), 1, instr(COALESCE(mime_type, '') || ';', ';') - 1))) LIKE 'image/%' THEN 'image'
+  WHEN lower(trim(substr(COALESCE(mime_type, ''), 1, instr(COALESCE(mime_type, '') || ';', ';') - 1))) LIKE 'audio/%' THEN 'audio'
   WHEN lower(trim(substr(COALESCE(mime_type, ''), 1, instr(COALESCE(mime_type, '') || ';', ';') - 1))) IN ('text/markdown', 'text/x-markdown') THEN 'markdown'
   WHEN lower(trim(substr(COALESCE(mime_type, ''), 1, instr(COALESCE(mime_type, '') || ';', ';') - 1))) = 'application/pdf' THEN 'pdf'
   WHEN lower(trim(substr(COALESCE(mime_type, ''), 1, instr(COALESCE(mime_type, '') || ';', ';') - 1))) IN ('application/msword', 'application/rtf', 'application/vnd.apple.pages', 'application/vnd.oasis.opendocument.text', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') THEN 'document'
@@ -167,6 +168,7 @@ export const ATTACHMENT_KIND_SQL = `CASE
   WHEN lower(title) GLOB '*.' || 'csv' OR lower(title) GLOB '*.' || 'numbers' OR lower(title) GLOB '*.' || 'ods' OR lower(title) GLOB '*.' || 'xls' OR lower(title) GLOB '*.' || 'xlsm' OR lower(title) GLOB '*.' || 'xlsx' THEN 'spreadsheet'
   WHEN lower(title) GLOB '*.' || 'key' OR lower(title) GLOB '*.' || 'odp' OR lower(title) GLOB '*.' || 'ppt' OR lower(title) GLOB '*.' || 'pptx' THEN 'presentation'
   WHEN lower(title) GLOB '*.' || 'apng' OR lower(title) GLOB '*.' || 'avif' OR lower(title) GLOB '*.' || 'gif' OR lower(title) GLOB '*.' || 'heic' OR lower(title) GLOB '*.' || 'heif' OR lower(title) GLOB '*.' || 'jpeg' OR lower(title) GLOB '*.' || 'jpg' OR lower(title) GLOB '*.' || 'png' OR lower(title) GLOB '*.' || 'tif' OR lower(title) GLOB '*.' || 'tiff' OR lower(title) GLOB '*.' || 'webp' THEN 'image'
+  WHEN lower(title) GLOB '*.' || 'aac' OR lower(title) GLOB '*.' || 'flac' OR lower(title) GLOB '*.' || 'm4a' OR lower(title) GLOB '*.' || 'mp3' OR lower(title) GLOB '*.' || 'ogg' OR lower(title) GLOB '*.' || 'opus' OR lower(title) GLOB '*.' || 'wav' THEN 'audio'
   WHEN lower(title) GLOB '*.' || 'c' OR lower(title) GLOB '*.' || 'cc' OR lower(title) GLOB '*.' || 'cpp' OR lower(title) GLOB '*.' || 'css' OR lower(title) GLOB '*.' || 'go' OR lower(title) GLOB '*.' || 'h' OR lower(title) GLOB '*.' || 'html' OR lower(title) GLOB '*.' || 'java' OR lower(title) GLOB '*.' || 'js' OR lower(title) GLOB '*.' || 'json' OR lower(title) GLOB '*.' || 'jsx' OR lower(title) GLOB '*.' || 'log' OR lower(title) GLOB '*.' || 'py' OR lower(title) GLOB '*.' || 'rb' OR lower(title) GLOB '*.' || 'rs' OR lower(title) GLOB '*.' || 'sh' OR lower(title) GLOB '*.' || 'sql' OR lower(title) GLOB '*.' || 'toml' OR lower(title) GLOB '*.' || 'ts' OR lower(title) GLOB '*.' || 'tsx' OR lower(title) GLOB '*.' || 'txt' OR lower(title) GLOB '*.' || 'xml' OR lower(title) GLOB '*.' || 'yaml' OR lower(title) GLOB '*.' || 'yml' THEN 'text'
   ELSE 'other'
 END`;

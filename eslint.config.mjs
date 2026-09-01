@@ -9,6 +9,7 @@ import {
   requireWebSocketTicketRule,
 } from "./scripts/eslint-rules/inference-boundaries.mjs";
 import { noBareZodUrlRule } from "./scripts/eslint-rules/no-bare-zod-url.mjs";
+import { noDynamicImportRule } from "./scripts/eslint-rules/no-dynamic-import.mjs";
 import { thesvgSubpathImportsRule } from "./scripts/eslint-rules/thesvg-subpath-imports.mjs";
 import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-point-check.mjs";
 import { providerJsonSchemaComplexityRule } from "./scripts/eslint-rules/provider-json-schema-complexity.mjs";
@@ -47,6 +48,7 @@ export default tseslint.config(
       rally: {
         rules: {
           "no-bare-zod-url": noBareZodUrlRule,
+          "no-dynamic-import": noDynamicImportRule,
           "thesvg-subpath-imports": thesvgSubpathImportsRule,
           "no-raw-entry-point-check": noRawEntryPointCheckRule,
           "no-direct-model-env-read": noDirectModelEnvReadRule,
@@ -78,8 +80,47 @@ export default tseslint.config(
     },
   },
   {
+    // A Worker, renderer, or main-process request must never discover a module
+    // for the first time. Legacy test and operator-script imports are migration
+    // debt recorded in docs/coding-practices-and-style.md; production source
+    // has no exception.
+    files: [
+      "apps/**/src/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+      "packages/**/src/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    ],
+    ignores: ["**/*.test.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"],
+    rules: {
+      "rally/no-dynamic-import": "error",
+    },
+  },
+  {
+    // The only type-aware block in the tree, and it carries the rule that needs
+    // the types in the same object deliberately — one `files` glob, so widening
+    // the rule's scope widens its type information in the same edit.
+    //
+    // `projectService` opens each linted file in a TypeScript language service,
+    // which loads that file's whole tsconfig program — every `.d.ts` its types
+    // reach, for the life of the process. Nothing releases a program once it is
+    // open, so a repo-wide `projectService` costs the *sum* of every package's
+    // program: measured at 4.7 GB of peak resident memory on a cold
+    // single-threaded run, against 0.9 GB with no type information at all.
+    //
+    // `rally/durable-object-sync-transaction` is what needs it. It asks the
+    // checker whether a callback handed to a synchronous Durable Object
+    // transaction returns a Promise, which the callee's own signature decides
+    // rather than this file's syntax. The other two rules here are syntactic and
+    // ride along because they share the scope.
+    //
+    // **Enabling a type-aware rule anywhere else means giving those files a
+    // `projectService` too.** A `@typescript-eslint` type-aware rule says so —
+    // `getParserServices` throws when no program is available — and
+    // `durable-object-sync-transaction` was changed to throw for the same reason
+    // rather than quietly passing every file it cannot type.
     files: ["apps/api/src/**/*.{ts,tsx}"],
     ignores: ["apps/api/src/lib/durable-object-namespace.ts"],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
+    },
     rules: {
       "rally/durable-object-region-routing": "error",
       "rally/durable-object-native-rpc": "error",
@@ -322,8 +363,7 @@ export default tseslint.config(
   {
     files: ["**/*.{ts,tsx}"],
     languageOptions: {
-      globals: { ...globals.browser, ...globals.node },
-      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
+      globals: { ...globals.browser, ...globals.node }
     },
     rules: {
       "@typescript-eslint/consistent-type-imports": "error",

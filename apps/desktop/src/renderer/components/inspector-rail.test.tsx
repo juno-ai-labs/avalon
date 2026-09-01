@@ -6,7 +6,8 @@ import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { ResourceVersion, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { ApiError } from '../lib/api';
-import { InspectorRail, MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from './inspector-rail';
+import { InspectorRail } from './inspector-rail';
+import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
 
 const copyText = vi.hoisted(() => vi.fn());
 const applicationSettings = vi.hoisted(() => ({
@@ -50,6 +51,8 @@ const workstream: WorkstreamDetail = {
   firstUnreadSequenceNumber: null,
   nextPendingWakeup: null,
   pinPosition: null,
+  participantUserIds: [],
+  participantExtraCount: 0,
   plannedFor: '2026-08-03T16:00:00.000Z',
   createdAt: '2026-07-31T20:00:00.000Z',
   participants: [],
@@ -309,23 +312,29 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
-    const versions = screen.getByRole('heading', { name: 'Versions' }).closest('section')!;
+    const versions = screen.getByRole('menu', { name: 'Versions' });
     // Newest first, and the current one is not something to open a copy of.
-    expect(within(versions).getAllByRole('listitem').map((row) => row.textContent))
+    expect(within(versions).getAllByRole('menuitem').map((row) => row.textContent))
       .toEqual([
         expect.stringContaining('V3'),
         expect.stringContaining('V2'),
         expect.stringContaining('V1'),
       ]);
     expect(within(versions).getByText(/Current/u)).toBeVisible();
-    expect(within(versions).getByRole('button', { name: /Open version 1/u })).toBeVisible();
-    expect(within(versions).queryByRole('button', { name: /Open version 3/u })).toBeNull();
+    expect(within(versions).getByRole('menuitem', { name: /V1/u })).not.toHaveAttribute('aria-disabled', 'true');
+    expect(within(versions).getByRole('menuitem', { name: /V3/u })).toHaveAttribute('aria-disabled', 'true');
     // Who moved it, in words the rail can actually show: Rally for a run, the
     // participant's own name for a member, the provider for a connector.
     expect(within(versions).getByText('Rally')).toBeVisible();
     expect(within(versions).getByText('linear')).toBeVisible();
     expect(within(versions).getByText('Alex')).toBeVisible();
+    // The document stays in the rail; Versions is a header dropdown, not a pane.
+    // Radix marks the rest of the page inert while the menu is open, so the
+    // title is hidden from the accessibility tree without leaving the DOM.
+    expect(document.querySelector('.inspector-detail')).not.toBeNull();
+    expect(screen.getByRole('heading', { hidden: true, name: watched.title })).toBeInTheDocument();
   });
 
   it('marks the newest version current even when the detail has not caught up', () => {
@@ -342,10 +351,11 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
-    const versions = screen.getByRole('heading', { name: 'Versions' }).closest('section')!;
-    expect(within(versions).queryByRole('button', { name: /Open version 3/u })).toBeNull();
-    expect(within(versions).getByRole('button', { name: /Open version 2/u })).toBeVisible();
+    const versions = screen.getByRole('menu', { name: 'Versions' });
+    expect(within(versions).getByRole('menuitem', { name: /V3/u })).toHaveAttribute('aria-disabled', 'true');
+    expect(within(versions).getByRole('menuitem', { name: /V2/u })).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('says a version cannot be opened rather than offering an unreadable one', () => {
@@ -363,8 +373,9 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
-    expect(screen.queryByRole('button', { name: /Open version 2/u })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: /V2/u })).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('says history is unavailable rather than saying there is none', () => {
@@ -377,11 +388,41 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
     // Offline, a 500, and "this document never changed" are four different
     // truths; silence tells the reader the last one.
-    expect(screen.getByRole('heading', { name: 'Versions' })).toBeVisible();
+    expect(screen.getByRole('menu', { name: 'Versions' })).toBeVisible();
     expect(screen.getByText('Rally could not load this history.')).toBeVisible();
+  });
+
+  it('says versions are loading rather than that there are none', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={{ ...workstream, resources: [watched] }} />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
+
+    expect(screen.getByText('Loading versions…')).toBeVisible();
+    expect(screen.queryByText('No versions yet.')).toBeNull();
+  });
+
+  it('says there are no versions when the history loaded empty', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          resourceVersions={[]}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
+
+    expect(screen.getByText('No versions yet.')).toBeVisible();
+    expect(screen.queryByText('Loading versions…')).toBeNull();
   });
 
   it('opens a prior version read-only rather than replacing what is current', () => {
@@ -396,8 +437,9 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
 
-    fireEvent.click(screen.getByRole('button', { name: /Open version 2/u }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /V2/u }));
 
     expect(onOpenResourceVersion).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'resource-1' }),
@@ -408,7 +450,7 @@ describe('InspectorRail details', () => {
     );
   });
 
-  it('shows no version section for a resource that has never changed', () => {
+  it('still lists a single version when Versions is opened', () => {
     render(
       <Tooltip.Provider>
         <InspectorRail
@@ -419,9 +461,11 @@ describe('InspectorRail details', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
 
-    // One version is no history: the section would say only that the resource
-    // exists, which the detail above it already says.
-    expect(screen.queryByRole('heading', { name: 'Versions' })).toBeNull();
+    // One version is no history on the document itself. The Versions control
+    // still opens onto that one row rather than pretending there is nothing.
+    expect(screen.queryByRole('menu', { name: 'Versions' })).toBeNull();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
+    expect(screen.getByText('V1')).toBeVisible();
   });
 
   it('offers a re-fetch for a watched source, and none for a generated artifact', () => {
@@ -485,6 +529,140 @@ describe('InspectorRail details', () => {
     expect(screen.getByRole('button', { name: /Linear issue create: AVA-9/ })).not.toContainElement(checkbox);
   });
 
+  it('puts the resource name in the header and drops the metadata card', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onDetachResource={vi.fn()}
+          workstream={{ ...workstream, resources: [{ ...watched, updatedAt: '2026-08-29T19:54:00.000Z' }] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    expect(screen.getByRole('heading', { name: watched.title })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Details' })).toBeNull();
+    expect(screen.queryByText('Type')).toBeNull();
+    expect(screen.queryByText('Direction')).toBeNull();
+    expect(screen.queryByText('Version')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+    expect(screen.getByText(/Last updated/u)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Versions' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Archive' })).toHaveClass('icon-button-danger');
+  });
+
+  it('hides Archive when nothing can unlink the resource', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={{ ...workstream, resources: [watched] }} />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    expect(screen.getByRole('button', { name: 'Versions' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
+  });
+
+  it('asks before archiving, and Continue unlinks the resource', async () => {
+    const onDetachResource = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onDetachResource={onDetachResource}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Archive this resource?' });
+    expect(dialog).toHaveAccessibleDescription(/will leave this work stream/u);
+    expect(within(dialog).getByText(new RegExp(watched.title, 'u'))).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(onDetachResource).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => {
+      expect(onDetachResource).toHaveBeenCalledWith(expect.objectContaining({ id: 'resource-1' }));
+    });
+    expect(useUiStore.getState().inspector).toBeNull();
+  });
+
+  it('keeps the archive dialog open when the unlink fails', async () => {
+    const onDetachResource = vi.fn(async () => {
+      throw new Error('The work stream refused the unlink.');
+    });
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onDetachResource={onDetachResource}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
+
+    expect(await screen.findByText('The work stream refused the unlink.')).toBeVisible();
+    expect(screen.getByRole('dialog', { name: 'Archive this resource?' })).toBeVisible();
+    expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'resource-1' });
+  });
+
+  it('disables archive actions while the unlink is in flight', async () => {
+    let finish: (() => void) | undefined;
+    const onDetachResource = vi.fn(() => new Promise<void>((resolve) => {
+      finish = resolve;
+    }));
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onDetachResource={onDetachResource}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' })).toBeDisabled();
+    });
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'resource-1' });
+
+    finish?.();
+    await waitFor(() => {
+      expect(useUiStore.getState().inspector).toBeNull();
+    });
+  });
+
+  it('groups versions under sparse relative dates', () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 14).toISOString();
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 11).toISOString();
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          resourceVersions={[
+            { ...historyEntry, version: 3, capturedAt: today, author: { kind: 'agent', runId: 'run-1' }, cause: 'published' },
+            { ...historyEntry, version: 2, capturedAt: yesterday, author: { kind: 'connector', connectionId: 'connection-1' }, cause: 'refetched' },
+          ]}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
+
+    expect(screen.getByText('today')).toBeVisible();
+    expect(screen.getByText('yesterday')).toBeVisible();
+  });
+
 });
 
 describe('resource detail content preview', () => {
@@ -510,6 +688,7 @@ describe('resource detail content preview', () => {
     watchEnabled: false,
     watchStatus: 'unsupported',
     currentVersion: 2,
+    updatedAt: '2026-08-29T19:54:00.000Z',
     relationshipType: 'context',
     direction: 'artifact',
   };
@@ -531,9 +710,68 @@ describe('resource detail content preview', () => {
     openDetail(note, loadResourceContent);
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument());
+    // The rail is the document reader, not a compact transcript reply. Its
+    // sections stay fully rendered rather than inheriting the feed's heading
+    // accordions and three-line preview.
+    expect(screen.queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
+    expect(document.querySelector('.markdown-collapse')).toBeNull();
     expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('resource-note', expect.anything());
-    // Beneath the metadata, not instead of it.
-    expect(screen.getByText('Version')).toBeInTheDocument();
+    // Last-updated sits in the same scroll as the body, not a metadata card.
+    expect(screen.getByText(/Last updated/u)).toBeInTheDocument();
+    expect(screen.queryByText('Version')).not.toBeInTheDocument();
+    expect(document.querySelector('.inspector-detail-preview')).toBeNull();
+    expect(document.querySelector('.inspector-detail-document')).not.toBeNull();
+    const updated = screen.getByText(/Last updated/u);
+    const rule = document.querySelector('.inspector-detail-rule');
+    const documentBody = document.querySelector('.inspector-detail-document');
+    expect(rule).not.toBeNull();
+    expect(updated.compareDocumentPosition(rule!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(rule!.compareDocumentPosition(documentBody!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('renders an image resource in the detail instead of leaving it empty', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:diagram');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const loadResourceContent = vi.fn(async () => new Blob(['PNG'], { type: 'image/png' }));
+    try {
+      openDetail({
+        ...note,
+        id: 'resource-image',
+        title: 'diagram.png',
+        mimeType: 'image/png',
+      }, loadResourceContent);
+
+      const image = await screen.findByRole('img', { name: 'diagram.png' });
+      expect(image).toHaveAttribute('src', 'blob:diagram');
+      expect(document.querySelector('.inspector-detail-document')).not.toBeNull();
+      expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('resource-image', expect.anything());
+    } finally {
+      createObjectURL.mockRestore();
+      revokeObjectURL.mockRestore();
+    }
+  });
+
+  it('renders generated audio in the detail as a disclosed player', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:voice');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const loadResourceContent = vi.fn(async () => new Blob(['ID3audio'], { type: 'audio/mpeg' }));
+    try {
+      openDetail({
+        ...note,
+        id: 'resource-audio',
+        title: 'launch-update.mp3',
+        mimeType: 'audio/mpeg',
+      }, loadResourceContent);
+
+      const player = await screen.findByLabelText('Audio: launch-update.mp3');
+      expect(player.tagName).toBe('AUDIO');
+      expect(player).toHaveAttribute('controls');
+      expect(player).toHaveAttribute('src', 'blob:voice');
+      expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('resource-audio', expect.anything());
+    } finally {
+      createObjectURL.mockRestore();
+      revokeObjectURL.mockRestore();
+    }
   });
 
   it('re-reads the content when the resource is revised in place', async () => {
@@ -576,7 +814,7 @@ describe('resource detail content preview', () => {
     openDetail({ ...note, contentAvailable: false }, loadResourceContent);
 
     expect(loadResourceContent).not.toHaveBeenCalled();
-    expect(screen.getByText('Version')).toBeInTheDocument();
+    expect(screen.getByText(/Last updated/u)).toBeInTheDocument();
   });
 
   it('says the preview is unavailable rather than leaving the panel half-drawn', async () => {
@@ -584,7 +822,7 @@ describe('resource detail content preview', () => {
     openDetail(note, loadResourceContent);
 
     await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
-    expect(screen.getByText('Version')).toBeInTheDocument();
+    expect(screen.getByText(/Last updated/u)).toBeInTheDocument();
   });
 
   /** What `/resources/:id/preview` answers while a derivative is materializing. */
@@ -773,13 +1011,6 @@ describe('resource detail content preview', () => {
         vi.useRealTimers();
       }
     });
-  });
-
-  it('does not try to render an image as text', () => {
-    const loadResourceContent = vi.fn();
-    openDetail({ ...note, mimeType: 'image/png', title: 'Screenshot.png' }, loadResourceContent);
-
-    expect(loadResourceContent).not.toHaveBeenCalled();
   });
 
   it.each([

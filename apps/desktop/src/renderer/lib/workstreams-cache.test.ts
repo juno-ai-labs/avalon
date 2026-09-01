@@ -24,6 +24,8 @@ function summary(): WorkstreamSummary {
     firstUnreadSequenceNumber: null,
     nextPendingWakeup: null,
     pinPosition: null,
+    participantUserIds: [],
+    participantExtraCount: 0,
     lastActivityAt: '2026-08-12T12:00:00.000Z',
   };
 }
@@ -80,7 +82,6 @@ describe('setCachedWorkstreams', () => {
       'block-dashboard',
       'block-dashboard-preference',
       'terminal-workstream',
-      'dismissed-suggestion-ids',
     ];
     for (const prefix of prefixes) {
       queryClient.setQueryData([prefix, workstreamId], { sensitive: true });

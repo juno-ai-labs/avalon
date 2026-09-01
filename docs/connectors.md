@@ -228,6 +228,8 @@ Saving a **digest** destination runs the same resolution. `resolveFrozenDelivery
 
 **An automation's destinations no longer go through that path.** `AutomationAgent.resolveDeliveryTargets` resolves the whole set itself, at acceptance and again on every `PATCH`, reading the connection's status and scope and then `slack_user_links` in its own SQL. It has to: the resolution now happens inside the Durable Object that owns the automation, and it freezes the result into the acceptance row rather than a workspace table. The rules it applies are the same ones — a disabled connection, a personal connection belonging to somebody else, or a missing identity link each refuse the write — but they are stated a second time, in a second place. A change to eligibility has to be made in both.
 
+Both tables it reads there — `connector_connections` and `slack_user_links` — are WorkspaceDO's, and the object reaches them through `withWorkspaceRuntimeDatabase`, never through its own `this.env.DB`. A Durable Object is handed the raw environment, so unlike a service nothing wraps its `DB` on the way in; migration 0090 dropped both tables from regional D1, and the statements sent there failed as `no such table` — an unmapped code, so a `500` — which is why no automation could save a connector destination until 2026-08-31. `apps/api/test/durable-object-workspace-table-routing.test.ts` now fails on any object that reaches a `WORKSPACE_LOCAL_TABLES` table on the regional binding.
+
 Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way and register it in `AutomationDeliveryTargetTypeSchema`, in `PERSONAL_IDENTITY_LINKS` if the surface needs a link, in `FROZEN_IDENTITY_RESOLVERS`, and — because that resolver is not on the automation path — in `AutomationAgent.resolveDeliveryTargets` and in `AutomationRunDeliveryTargetV1Schema`, the discriminated union the frozen run context carries. Digest delivery needs one more entry — `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts` — but no schema change: `digest_delivery_targets.target_type` is checked per family (email versus connector-addressed) rather than enumerated. A target type with no resolver is refused at save rather than half-stored. The two identity columns are still named `slack_team_id` and `slack_user_id`; they hold the provider tenant and user of whichever connector owns the row, and a second connector is the point at which renaming them earns its migration. The saved destinations and how each is delivered are described in [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results).
 
 ### Being found, and being refused
@@ -243,6 +245,37 @@ Two things every connector owes a run, both settled on the descriptor rather tha
 Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, but before context gathering, model calls, or tools. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
 
 The hook is deliberately optional. Slack uses an `eyes` reaction on the exact triggering message and treats Slack's `already_reacted` result as success. Its operational host logs provider-side reaction failures and continues the admitted request so a supplemental acknowledgement cannot discard user work. Linear uses a `👀` reaction only when the current activation includes a source comment. A future message-oriented Teams, Discord, or GitHub agent can opt in when it has an unambiguous source object and a lightweight reaction API. Email, file, calendar, database, and ordinary resource-webhook connectors should not acknowledge activation: they have no conversational source message, and manufacturing a reply or mutation would be noisy or misleading.
+
+### External result delivery
+
+An external conversation, issue, or comment thread is a projection of Rally's
+durable transcript, never a live model-output surface. A connector may show a
+fixed acknowledgement, status label, or reaction while work is running, but it
+must not start a provider response stream, append model deltas, or construct
+reply prose from an in-memory accumulator. Slack, a future Microsoft Teams
+agent, and a future Linear comment-back path all follow the same rule.
+
+The terminal delivery boundary receives the final transcript turn identity and
+reloads that exact canonical turn from the owning work-stream object. A
+`needs_input` outcome instead prefers the oldest open elicitation's canonical
+turn, because its prompt is saved in structured turn content rather than the
+text column. Only text rendered from one of those hydrated turns may become an
+external message or comment. If no saved turn can be read, the adapter may
+clear status and apply an outcome reaction, but it sends no result body. A
+named-but-missing turn is retained as a settlement diagnostic rather than
+retrying provider status forever; transcript persistence is awaited before
+terminalization, so a null exact read is not a late-write race. Provider
+idempotency keys remain required because the saved projection can be retried
+after an ambiguous network response.
+
+Automation destinations obey the same content rule. An absent or whitespace-only
+saved result performs no external write, but each frozen target still receives
+a durable `skipped` / `delivery_suppressed` receipt so suppression cannot be
+confused with a settlement path that never ran.
+
+This boundary is intentionally above individual adapters. Adding another
+message-oriented connector means branching after the exact saved-turn read,
+not adding a second path from streaming checkpoints or terminal error objects.
 
 ### Google
 
@@ -498,7 +531,15 @@ activityTriggers: defineConnectorActivityTriggers("GitHub", {
 
 The shape is the point. There is no list meaning "I did not think about this", so adding an event type is adding it to a list, and an event type in both is refused where it is written rather than resolved silently. Ask it this way: **would a person who was away for a day want this read back to them?** A pull request opened, yes. The eleven check runs it started, no.
 
-`operational` is not a rejected event. It is verified or polled, normalized, routed, matched against automations and watches, and written to the activity log exactly like a digestible one — every surface except the one that interrupts somebody on a schedule. [Contextual routing](contextual-routing.md) uses the declaration as a prior: an operational type starts at a higher confidence bar before it can become Suggested context, and a workspace's own acceptances can overrule that prior. Answer the digest question when classifying an event type, and nothing else; that document is responsible for anything it infers from the answer. Most of what a provider emits belongs here, and that is the normal case rather than a failure: the GitHub manifest declares ninety-one activity types and thirty of them are digestible. Every current connector's classification, one row per activity type with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
+`operational` is not a rejected event. It is verified or polled, normalized,
+routed, matched against automations and watches, considered for Suggested Work,
+and written to the activity log exactly like a digestible one — every surface
+except the one that interrupts somebody on a schedule. Answer the digest
+question when classifying an event type, and nothing else. Most of what a
+provider emits belongs here, and that is the normal case rather than a failure:
+the GitHub manifest declares ninety-one activity types and thirty of them are
+digestible. Every current connector's classification, one row per activity type
+with the reason, is in [`connector-digestibility.md`](connector-digestibility.md).
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
@@ -524,10 +565,25 @@ Manifests and facets are cross-validated at registry construction: a connector t
    A duplicate returns `busy` with the lease's exact expiry; a delivery after
    expiry can recover interrupted processing, and settlement is fenced by the
    returned lease token so the expired handler cannot overwrite its successor.
-8. Under that lease the consumer does the product step — contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables; admission and ranking are separate fenced Workflows whose durable product results, including provenance and per-user resolutions, commit in the same WorkspaceDO — and then calls `matchExternalEventDestinations`. That is the **only** automation and watch fan-out: WorkspaceDO selects active registrations by connection, connector type, event type, and activation boundary, applies the audience rule, evaluates each one's typed DNF predicate with no model inference, and inserts one delivery row per match. There is no semantic prefilter and no semantic matcher; the evaluator grammar is deliberately closed and deterministic, and [`automation-lifecycle.md`](automation-lifecycle.md) owns it. The Queue consumer then settles the authoritative event as processed or failed. A transient failure calls per-message `retry()` and an exhausted message enters the existing regional activities DLQ.
+8. Under that lease the consumer first calls
+   `matchExternalEventDestinations`. That is the **only** automation and watch
+   fan-out: WorkspaceDO selects active registrations by
+   connection, connector type, event type, and activation boundary, applies the
+   audience rule, evaluates each one's typed DNF predicate with no model
+   inference, and inserts one delivery row per match. A durable `claimed`
+   witness remains true after those delivery rows settle, so processing retries
+   cannot mistake handled work for an unmatched event. Only an unclaimed event
+   enters WorkspaceDO's Suggested Work batch tables; activity-log projection is
+   unconditional. There is no semantic route into an existing work stream.
+   Admission and ranking are separate fenced Workflows whose durable product
+   results, including provenance and per-user resolutions, commit in the same
+   WorkspaceDO. The evaluator grammar is deliberately closed and deterministic,
+   and [`automation-lifecycle.md`](automation-lifecycle.md) owns it. The Queue
+   consumer then settles the authoritative event as processed or failed. A
+   transient failure calls per-message `retry()` and an exhausted message enters
+   the existing regional activities DLQ.
 9. Each match becomes its own identifiers-and-hashes-only message on the same regional Queue. The consumer claims that delivery under its own lease and calls `AutomationAgent.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own authority generation and lifecycle, admits at most one occurrence per canonical event, and the consumer settles the delivery back to WorkspaceDO under the lease token.
 10. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
-11. Persist accepted/dismissed feedback that decides what step 8 offers next.
 
 **Why the event is present in ingress but absent from processing:** the first
 Queue message must be self-contained because no canonical WorkspaceDO event
@@ -563,9 +619,8 @@ are correlation fields and should be logged.
 
 The canonical event remains the automation trigger's evidence after admission.
 Prompt construction and between-turn authorization revalidation load it from
-WorkspaceDO; suggestion-quality feedback joins the WorkspaceDO feedback index
-to the same local event table by provider and event type. Neither path may
-consult a scrubbed D1 `activities` row.
+WorkspaceDO. Suggested Work admission also loads that authority rather than a
+scrubbed D1 `activities` row.
 
 One normalized event is never sent to two WorkspaceDOs and is never shared
 between workspaces. Fan-out happens before normalization at the raw provider
@@ -580,17 +635,9 @@ The global router may inspect routing metadata, but EU workspace content is
 forwarded to the EU regional Worker, EU Queue, and EU-locked WorkspaceDO.
 Normalized content never crosses through the global D1 routing plane.
 
-Steps 1 through 6 are deterministic and are what this document owns. Step 7's
-speculative classifier, feedback gates, explicit candidate audience, and the
-single switch that guards every producer and reader live in
-[`contextual-routing.md`](contextual-routing.md). It consumes the digestibility
-declaration described above and nothing else from here; change it there, not in
-this document.
-
-The routing feedback endpoint is idempotent in the direction it was given.
-Repeating the same accept or dismissal reports the state the suggestion already
-reached; only a contradictory resolution is refused with
-`409 suggestion_already_resolved`.
+The removed semantic route into an existing work stream is recorded in
+[`contextual-routing.md`](contextual-routing.md). It is not a dormant step in
+this pipeline: current processing has no classifier, card, or feedback endpoint.
 
 A routed watch activity names the resources it matched. Their titles are in the
 message text a participant reads, so the person who sees the notification can
@@ -615,13 +662,13 @@ normalized-event authority.
 
 #### Suggested work admission
 
-Eligible connector activity is grouped into bounded per-member personal batch windows before the suggested-work admission agent decides whether to ignore it, route it into existing work, or create/update a work opportunity. A workspace-visible event is copied into one window per active member; the event remains workspace-visible while each inference sees only that member's authorized directory context. The model-facing JSON Schema deliberately uses only the portable structural subset: object and array shapes, primitive types, required fields, enums, and `additionalProperties: false`. Do not add string formats, string-length bounds, numeric bounds, or array-length bounds to that provider schema. Nested limits such as `linkedUsers.maxItems` can make the schema's constrained-decoding state space too large for otherwise supported Gemini structured-output endpoints, causing every admission request to fail before inference.
+Eligible connector activity is grouped into bounded per-member personal batch windows before the suggested-work admission agent decides whether to ignore it or create/update a work opportunity. A workspace-visible event is copied into one window per active member; the event remains workspace-visible while each inference sees only that member's authorized directory context. The model-facing JSON Schema deliberately uses only the portable structural subset: object and array shapes, primitive types, required fields, enums, and `additionalProperties: false`. Do not add string formats, string-length bounds, numeric bounds, or array-length bounds to that provider schema. Nested limits such as `linkedUsers.maxItems` can make the schema's constrained-decoding state space too large for otherwise supported Gemini structured-output endpoints, causing every admission request to fail before inference.
 
 The stricter `AdmissionResultSchema` remains authoritative after generation. It enforces UUIDs, string lengths, offsets, source counts, linked-user counts, and the four-decision cap before any result reaches persistence. This separation is intentional: the provider schema guides portable constrained generation, while Zod is Rally's trust boundary. Keep regression coverage asserting both halves whenever the admission response changes. The repository ESLint rule `avalon/provider-json-schema-complexity` statically follows schemas passed through a `jsonSchema` property and rejects excessive schema depth, node count, detailed constraints, or nested bounded-array expansion; a dynamic or imported schema that the rule cannot resolve still needs an explicit unit test.
 
 Admission failures are retried through new batch windows only while an event's attempt count is below three. Once that limit is reached the event remains failed; deploying a schema or model fix does not replay it automatically. Operators must verify the corrected admission path first, then use an explicit, bounded replay rather than resetting every activity indiscriminately.
 
-A connector's normalized `title`/`summary` is not independently bounded to the API contract's suggestion and resource limits (`ActivitySuggestionSchema`/`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`SubstreamAgent` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
+A connector's normalized `title`/`summary` is not independently bounded to the API contract's resource limits (`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`SubstreamAgent` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
 
 Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Rally's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
@@ -710,7 +757,7 @@ It does not own:
 
 | For | Read |
 | --- | --- |
-| The Suggested context surface and its accept/dismiss model | [`contextual-routing.md`](contextual-routing.md) |
+| The retired Suggested context feature | [`contextual-routing.md`](contextual-routing.md) |
 | Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
 | One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
 | What happens to `digestible` after the log is written | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
@@ -722,12 +769,21 @@ It does not own:
 | How a run holds and narrows connector authority | [`agent-harness.md`](agent-harness.md) |
 | Where automation results are delivered | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
 
-Adding a personal delivery surface touches registries and nothing else:
+Adding a personal delivery surface touches registries and one hand-written read:
 `AutomationDeliveryTargetTypeSchema`, `AutomationRunDeliveryTargetV1Schema`,
 `PERSONAL_IDENTITY_LINKS` if the surface needs a link, `FROZEN_IDENTITY_RESOLVERS`
 for the digest path, `AutomationAgent.resolveDeliveryTargets` for the automation
 path, and `CONNECTOR_DELIVERIES` for digest delivery. Nothing
 about which providers can deliver is written into the API or the client.
+
+The automation path is the one that is not a registry, and the one to be careful
+with: a new link table (`teams_user_links`, say) is a WorkspaceDO table, so the
+read added there goes through `withWorkspaceRuntimeDatabase` like its neighbour.
+Written against `this.env.DB` it names a table regional D1 does not have, which
+reaches the person as "An unexpected error occurred" rather than as anything
+naming the boundary. That is the defect recorded in the delivery-resolution note
+above, and `durable-object-workspace-table-routing.test.ts` is what now catches
+it.
 
 ## Failure modes and limits
 
@@ -817,6 +873,7 @@ about which providers can deliver is written into the API or the client.
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
+| `apps/api/test-workers/message-to-output-pipeline.test.ts`, `apps/api/test/slack-workspace-assignment.test.ts` | A completed composite-id transcript turn is reloaded before terminal side effects settle; Slack never opens or appends a response stream, posts only the complete saved turn, and emits no result message when no saved turn exists. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/connector-credential-freshness.test.ts`
@@ -828,6 +885,54 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-30 — Connector activity no longer produces Suggested context
+
+**What changed:** The processing step now has no classifier or route into an
+existing work stream. It runs deterministic automation/watch matching first,
+uses WorkspaceDO's durable `claimed` witness even after delivery settlement,
+offers only unclaimed activity to Suggested Work, and always projects the
+activity log.
+
+**Why:** Suggested context was removed rather than left as a dormant branch in
+the shared activity consumer.
+
+**Considered and rejected:** Keeping digestibility as a confidence prior for a
+hidden classifier. Digestibility answers only whether a person wants an event
+read back in a digest; no other product now interprets it.
+
+**Consequences:** Connector manifests, watches, automations, activity logs, and
+Suggested Work remain. The connector pipeline stores no context-card feedback.
+
+### 2026-08-29 — External platforms receive saved turns, never model streams
+
+**What changed:** External result delivery now has one connector-wide rule: a
+fixed status signal may be live, but a reply or comment is posted only from a
+canonical turn after it is saved. Terminal results use the exact named turn;
+`needs_input` uses the saved open-elicitation turn. Slack no longer starts or
+appends response streams; its connector API contract no longer exposes those
+methods. The retained `chat.stopStream` method exists only to close placeholder
+streams left by an older deployed version. Empty automation projections still
+record suppressed receipts, and a named turn that is missing settles status
+without a body while retaining a durable diagnostic.
+
+**Why:** A Slack run completed at the model boundary but terminal settlement
+could not hydrate its structured assistant turn ID through a UUID-only message
+schema. The already-open provider stream therefore remained as an empty shell,
+while retrying settlement never reached result delivery. More generally,
+streaming partial model output to a provider creates a second visible transcript
+whose partial writes cannot be retracted or reconciled with Rally's authority.
+
+**Considered and rejected:** Keeping provider streaming and appending the whole
+saved answer at the end. Opening the stream is already an externally visible
+write before Rally has a saved answer, and a lost append response leaves an
+ambiguous partial result. Also rejected: adapter-specific policy. Teams, Linear
+comments, Slack, and later message connectors have the same authority boundary.
+
+**What a future change has to respect:** Branch to a new external adapter only
+after saved-turn hydration. With no saved turn, settle status and send no reply
+body; do not leave a provider surface looking busy forever. Never expose a
+provider streaming primitive merely because its API offers one.
 
 ### 2026-08-29 — OAuth attempts and webhook receipt claims become typed WorkspaceDO methods
 

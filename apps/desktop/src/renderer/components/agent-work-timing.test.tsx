@@ -133,4 +133,22 @@ describe('AgentWorkTiming', () => {
     expect(screen.getByText('worked for at most 1m 23s')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveAccessibleName('worked for at most 1m 23s');
   });
+
+  it('says only what it knows when the completed total is unknown', () => {
+    render(<AgentWorkTiming active={false} durationMs={null} />);
+
+    expect(screen.getByText('worked')).toBeInTheDocument();
+    expect(screen.queryByText(/for/u)).not.toBeInTheDocument();
+  });
+
+  it('stays silent about the number while running with an unknown total', () => {
+    // The live segment is real, but it is not the whole: printing it alone
+    // reads as the total, which is the same overstatement as `0ms`.
+    render(
+      <AgentWorkTiming active durationMs={null} monotonicStartedAt={[performance.now() - 3_000]} />,
+    );
+
+    expect(screen.getByText('working')).toBeInTheDocument();
+    expect(screen.queryByText(/3s/u)).not.toBeInTheDocument();
+  });
 });

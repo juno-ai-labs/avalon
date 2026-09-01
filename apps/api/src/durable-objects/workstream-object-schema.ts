@@ -18,11 +18,26 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 33;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 35;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
-const RESOURCE_RELATIONSHIP_CHECK_VALUES = RESOURCE_RELATIONSHIP_TYPES
+// Frozen for the v1 and v31 migration hashes. The current vocabulary no longer
+// contains `suggested_activity`; migration 35 rebuilds the live table with the
+// current contract after preserving accepted links as ordinary attachments.
+const LEGACY_RESOURCE_RELATIONSHIP_TYPES = [
+  "attachment",
+  "message_attachment",
+  "origin",
+  "generated",
+  "suggested_activity",
+  "inbound_email",
+  "context",
+] as const;
+const RESOURCE_RELATIONSHIP_CHECK_VALUES = LEGACY_RESOURCE_RELATIONSHIP_TYPES
+  .map((relationshipType) => `'${relationshipType}'`)
+  .join(", ");
+const CURRENT_RESOURCE_RELATIONSHIP_CHECK_VALUES = RESOURCE_RELATIONSHIP_TYPES
   .map((relationshipType) => `'${relationshipType}'`)
   .join(", ");
 
@@ -2652,6 +2667,75 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
          CHECK (transcript_sequence > 0)`,
     ],
   },
+  {
+    version: 34,
+    description: "pending loop input sequence may be reordered while content stays immutable",
+    statements: [
+      `DROP TRIGGER IF EXISTS pending_loop_inputs_prepared_immutable`,
+      pendingLoopInputsPreparedImmutableTrigger(),
+    ],
+  },
+  {
+    version: 35,
+    description: "retire suggested context state and preserve accepted resources as attachments",
+    statements: [
+      // A pending feedback effect belongs to a product that no longer has a
+      // receiver. Removing it here keeps the generic outbox from retrying a
+      // payload whose protocol has been retired.
+      `DELETE FROM durable_outbox WHERE partition_key GLOB 'suggestion:*'`,
+      // Accepted resources outlive the feature, so their original audience
+      // must outlive it too. Copy only that security fact into a generic table
+      // before the suggestion rows disappear; invalid/missing legacy audience
+      // data becomes JSON null and therefore continues to fail closed.
+      `CREATE TABLE content_audience_fences (
+        fence_id TEXT PRIMARY KEY,
+        audience_json TEXT NOT NULL CHECK (
+          json_valid(audience_json) AND length(audience_json) <= 262144
+        ),
+        created_at INTEGER NOT NULL
+      ) STRICT`,
+      `INSERT INTO content_audience_fences (fence_id, audience_json, created_at)
+       SELECT action_id || ':' || version,
+              COALESCE(json_extract(share_intent_json, '$.sourceAudience'), 'null'),
+              COALESCE(resolved_at, created_at)
+         FROM suggested_actions
+        WHERE status = 'accepted'`,
+      `DROP TRIGGER IF EXISTS accepted_suggestion_source_audience_immutable`,
+      `DROP TRIGGER IF EXISTS accepted_suggestion_source_audience_retained`,
+      `DROP TRIGGER IF EXISTS participants_restricted_content_insert`,
+      `DROP TRIGGER IF EXISTS participants_restricted_content_reactivate`,
+      `DROP TRIGGER IF EXISTS workstream_restricted_content_scope`,
+      `DROP TABLE suggested_actions`,
+      ...retainedContentAudienceTriggers(),
+      // Resources a person previously accepted remain useful context. They are
+      // no longer suggestion state, so normalize the relationship before the
+      // CHECK-constrained table is rebuilt without that retired vocabulary.
+      `UPDATE workstream_resource_links
+          SET relationship_type = 'attachment'
+        WHERE relationship_type = 'suggested_activity'`,
+      `CREATE TABLE workstream_resource_links_v35 (
+        resource_id TEXT PRIMARY KEY,
+        attached_by_user_id TEXT,
+        watch_enabled INTEGER NOT NULL CHECK (watch_enabled IN (0, 1)),
+        relationship_type TEXT NOT NULL CHECK (
+          relationship_type IN (${CURRENT_RESOURCE_RELATIONSHIP_CHECK_VALUES})
+        ),
+        resource_json TEXT NOT NULL CHECK (json_valid(resource_json)),
+        attached_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+      `INSERT INTO workstream_resource_links_v35
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+          resource_json, attached_at, updated_at)
+       SELECT resource_id, attached_by_user_id, watch_enabled, relationship_type,
+              resource_json, attached_at, updated_at
+         FROM workstream_resource_links`,
+      `DROP TABLE workstream_resource_links`,
+      `ALTER TABLE workstream_resource_links_v35 RENAME TO workstream_resource_links`,
+      `CREATE INDEX workstream_resource_links_relation_idx
+         ON workstream_resource_links(relationship_type, attached_at, resource_id)`,
+    ],
+  },
 ];
 
 /**
@@ -3112,6 +3196,73 @@ function acceptedSuggestionAudienceTriggers(): string[] {
                json_extract(accepted.share_intent_json, '$.sourceAudience.scope'),
                ''
              ) != 'workspace'
+        )
+       BEGIN
+         SELECT RAISE(ABORT, 'workstream_audience_restricted_content');
+       END`,
+  ];
+}
+
+/**
+ * The retired feature's accepted resources are ordinary attachments now, but
+ * ordinary does not mean public. These generic fences preserve only the source
+ * audience needed to stop a future participant or scope change widening that
+ * content. No suggestion action, status, feedback, or display state survives.
+ */
+function retainedContentAudienceTriggers(): string[] {
+  const userIsAllowed = `(
+    COALESCE(json_extract(fence.audience_json, '$.scope'), '') = 'workspace'
+    OR (
+      COALESCE(json_extract(fence.audience_json, '$.scope'), '') = 'users'
+      AND COALESCE(json_type(fence.audience_json, '$.userIds'), '') = 'array'
+      AND EXISTS (
+        SELECT 1
+          FROM json_each(json_extract(fence.audience_json, '$.userIds')) AS audience_user
+         WHERE audience_user.value = NEW.user_id
+      )
+    )
+  )`;
+  const wouldExposeRetainedContent = `EXISTS (
+    SELECT 1 FROM content_audience_fences AS fence WHERE NOT ${userIsAllowed}
+  )`;
+
+  return [
+    `CREATE TRIGGER content_audience_fences_immutable_update
+       BEFORE UPDATE ON content_audience_fences
+       BEGIN
+         SELECT RAISE(ABORT, 'content_audience_fence_immutable');
+       END`,
+    `CREATE TRIGGER content_audience_fences_immutable_delete
+       BEFORE DELETE ON content_audience_fences
+       BEGIN
+         SELECT RAISE(ABORT, 'content_audience_fence_immutable');
+       END`,
+    `CREATE TRIGGER participants_restricted_content_insert
+       BEFORE INSERT ON participants
+       WHEN NEW.status = 'active'
+        AND NOT EXISTS (
+          SELECT 1 FROM participants AS current
+           WHERE current.user_id = NEW.user_id AND current.status = 'active'
+        )
+        AND ${wouldExposeRetainedContent}
+       BEGIN
+         SELECT RAISE(ABORT, 'workstream_audience_restricted_content');
+       END`,
+    `CREATE TRIGGER participants_restricted_content_reactivate
+       BEFORE UPDATE OF status ON participants
+       WHEN OLD.status != 'active'
+        AND NEW.status = 'active'
+        AND ${wouldExposeRetainedContent}
+       BEGIN
+         SELECT RAISE(ABORT, 'workstream_audience_restricted_content');
+       END`,
+    `CREATE TRIGGER workstream_restricted_content_scope
+       BEFORE UPDATE OF scope ON workstream
+       WHEN OLD.scope = 'personal'
+        AND NEW.scope = 'workspace'
+        AND EXISTS (
+          SELECT 1 FROM content_audience_fences AS fence
+           WHERE COALESCE(json_extract(fence.audience_json, '$.scope'), '') != 'workspace'
         )
        BEGIN
          SELECT RAISE(ABORT, 'workstream_audience_restricted_content');
@@ -3762,6 +3913,55 @@ function toolReceiptAuthorityPromotion(): string[] {
     ...compatObjects.filter((statement) => statement.startsWith("DROP TRIGGER")),
     ...compatObjects.filter((statement) => statement.startsWith("DROP VIEW")),
   ];
+}
+
+/**
+ * Prepared pending-input content stays immutable; `input_sequence` does not.
+ * Queue order is the one live mutation a pending row admits: a drag rewrites
+ * promotion order without minting a second input. `updated_at` is already
+ * outside this trigger.
+ */
+function pendingLoopInputsPreparedImmutableTrigger(): string {
+  return `CREATE TRIGGER pending_loop_inputs_prepared_immutable
+       BEFORE UPDATE OF
+         input_id, loop_id, prepared_turn_id,
+         admitted_after_transcript_sequence, mode,
+         actor, author_user_id, author_name_snapshot,
+         author_avatar_url_snapshot, client_message_id, external_actor_json,
+         message_type, prepared_payload_id, prepared_fact_id,
+         prepared_payload_audience, prepared_payload_media_type,
+         prepared_payload_json, prepared_payload_sha256,
+         prepared_payload_byte_length, bind_payload_json, provenance_json, authorization_json,
+         attachments_json, mentions_json, created_at
+       ON pending_loop_inputs
+       WHEN NEW.input_id IS NOT OLD.input_id
+         OR NEW.loop_id IS NOT OLD.loop_id
+         OR NEW.prepared_turn_id IS NOT OLD.prepared_turn_id
+         OR NEW.admitted_after_transcript_sequence IS NOT OLD.admitted_after_transcript_sequence
+         OR NEW.mode IS NOT OLD.mode
+         OR NEW.actor IS NOT OLD.actor
+         OR NEW.author_user_id IS NOT OLD.author_user_id
+         OR NEW.author_name_snapshot IS NOT OLD.author_name_snapshot
+         OR NEW.author_avatar_url_snapshot IS NOT OLD.author_avatar_url_snapshot
+         OR NEW.client_message_id IS NOT OLD.client_message_id
+         OR NEW.external_actor_json IS NOT OLD.external_actor_json
+         OR NEW.message_type IS NOT OLD.message_type
+         OR NEW.prepared_payload_id IS NOT OLD.prepared_payload_id
+         OR NEW.prepared_fact_id IS NOT OLD.prepared_fact_id
+         OR NEW.prepared_payload_audience IS NOT OLD.prepared_payload_audience
+         OR NEW.prepared_payload_media_type IS NOT OLD.prepared_payload_media_type
+         OR NEW.prepared_payload_json IS NOT OLD.prepared_payload_json
+         OR NEW.prepared_payload_sha256 IS NOT OLD.prepared_payload_sha256
+         OR NEW.prepared_payload_byte_length IS NOT OLD.prepared_payload_byte_length
+         OR NEW.bind_payload_json IS NOT OLD.bind_payload_json
+         OR NEW.provenance_json IS NOT OLD.provenance_json
+         OR NEW.authorization_json IS NOT OLD.authorization_json
+         OR NEW.attachments_json IS NOT OLD.attachments_json
+         OR NEW.mentions_json IS NOT OLD.mentions_json
+         OR NEW.created_at IS NOT OLD.created_at
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_prepared_fields_are_immutable');
+       END`;
 }
 
 /** Fast deterministic schema fingerprint; the value is evidence, not authority. */

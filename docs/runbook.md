@@ -126,17 +126,90 @@ To rotate connector credentials in one region, keep the old key, set `CONNECTOR_
 
 Configure the Azure values in every region where dictation is enabled. `AZURE_OPENAI_ENDPOINT` is the HTTPS resource endpoint, and `AZURE_OPENAI_REALTIME_DEPLOYMENT` is the name of an Azure deployment backed by `gpt-live-transcribe`. Azure's GA transcription contract connects to `/openai/v1/realtime?intent=transcription` and identifies that deployment in `session.audio.input.transcription.model`. Do not place any Azure value behind a `VITE_` prefix. Local development may use one unsuffixed set or `_GLOBAL` and `_EU` overrides in `.env.local`.
 
+Azure agent inference is a separate opt-in pair:
+`AZURE_INFERENCE_ENDPOINT` and `AZURE_INFERENCE_API_KEY`. Configure both only
+on a Worker whose regional data boundary permits that resource. With neither,
+Bind omits Azure and retains the existing OpenRouter route; with only one, the
+run fails configuration before provider I/O. The endpoint is the resource root
+or its `/openai/v1` base, never HTTP, a deployment URL, or a URL carrying
+credentials, query parameters, or a fragment; invalid values fail Worker
+startup. The key remains a Worker secret. Rally's checked-in bindings currently map canonical `x-ai/grok-4.3`
+and `x-ai/grok-4.6` to their Monad production deployment names and try Azure
+before OpenRouter for the same model. Model Flagship values stay canonical and
+must never contain an Azure deployment name.
+
+The live Monad production endpoint is
+`https://monad-prod-resource.services.ai.azure.com`. As verified on 2026-08-30,
+the project had the following ten successful deployments. Nine have canonical
+OpenRouter identities and participate in the pricing inventory; realtime
+transcription does not.
+
+| Azure deployment | OpenRouter pricing key |
+| --- | --- |
+| `FLUX.2-flex` | `black-forest-labs/flux.2-flex` |
+| `grok-4.6` | `x-ai/grok-4.6` |
+| `gpt-image-2` | `openai/gpt-image-2` |
+| `text-embedding-3-large` | `openai/text-embedding-3-large` |
+| `gpt-5.6-sol` | `openai/gpt-5.6-sol` |
+| `gpt-5.6-terra` | `openai/gpt-5.6-terra` |
+| `gpt-live-transcribe` | none |
+| `DeepSeek-V4-Flash` | `deepseek/deepseek-v4-flash-0731` |
+| `DeepSeek-V4-Pro` | `deepseek/deepseek-v4-pro` |
+| `grok-4.3` | `x-ai/grok-4.3` |
+
+As verified on the same date,
+the 4.3 and 4.6 deployments are version-1 Preview Global Standard deployments
+with DefaultV2 guardrails; their limits are respectively 250,000 TPM / 250 RPM
+and 2,250,000 TPM / 2,250 RPM. The inference API reports tokens, not dollar
+cost. In that case, Bind bills with the cached unweighted average of every
+endpoint OpenRouter publishes for the canonical model, including the catalog's
+prompt-token override tiers. The Worker
+`avalon-api-inference-pricing-global` refreshes the OpenRouter endpoint
+inventories hourly. The inventory is the union of the developer-mode manual
+choice list and every Monad production Azure deployment that has an
+OpenRouter identity: fourteen canonical model IDs as of 2026-08-30. It stores one
+record per model in `INFERENCE_PRICING_CACHE`, using the canonical OpenRouter ID
+itself (for example `x-ai/grok-4.3`) as the KV key. Each input, cached-input, and
+output USD-per-million value in a token-priced record remains a decimal JSON
+string. Long-context `overrides` retain their numeric `minPromptTokens`
+threshold and another string-valued input/cache/output triple. Image records
+instead retain OpenRouter's native `billable`, `unit`, and
+string `costUsd` lines—for example FLUX input/output image costs per megapixel—
+so a zero generic token price cannot conceal the actual image charge. Global
+and EU bind the same Cloudflare KV namespace; it contains public provider metadata only,
+never a workspace ID, prompt, usage, or credential. Do not copy the top-level
+OpenRouter catalog price: it is the lowest endpoint price, not the average.
+
+Inference never refreshes this cache, and a route whose primary and fallback
+models are all OpenRouter-only does not read it. On a cron failure, each stale
+valid model record remains usable. A rejected cache read or a missing,
+malformed, or legacy numeric-cost record makes Bind omit Azure for that model
+and continue with the existing OpenRouter
+candidate instead of making an unpriced Azure request. To inspect the two
+currently Azure-routed records without exposing provider credentials, run:
+
+```bash
+pnpm --filter @rally/api exec wrangler kv key get x-ai/grok-4.3 --namespace-id <id>
+pnpm --filter @rally/api exec wrangler kv key get x-ai/grok-4.6 --namespace-id <id>
+```
+
+Use the namespace ID from any of the three pricing-bound Wrangler configs. To
+exercise the cron locally, start `pnpm --filter @rally/api dev:pricing`, then
+request `/cdn-cgi/handler/scheduled`. Deleting a record is not a refresh
+mechanism: retain stale valid pricing during an upstream outage.
+
 ### Terminal provider activation and recovery
 
-Terminal is fail-closed per region. Global is enabled for the configured Daytona
-`us` target and `daytona-small` snapshot; EU remains checked in with
-`TERMINAL_REGION_CAPABILITY=unsupported` even though its provider values are
-preconfigured. Presence of provider values never implies availability. Leave
-any unverified region unsupported until its Daytona data residency,
-private-sandbox isolation, managed snapshot bootstrap, native domain policy,
-secret-host restriction, stop/archive/restore, and deletion behavior have
-passed for that exact target and provider version. There is no cross-region
-fallback.
+Terminal is fail-closed per region. Global and EU are both enabled against the
+same Daytona environment: `DAYTONA_TARGET=us` and `daytona-small`. Rally does
+not run a separate EU Daytona fleet. Presence of provider values never implies
+availability: a region whose `TERMINAL_REGION_CAPABILITY` is `unsupported`, or
+whose Daytona values are incomplete, omits the plugin. Leave any unverified
+region unsupported until private-sandbox isolation, managed snapshot
+bootstrap, native domain policy, secret-host restriction, stop/archive/restore,
+and deletion behavior have passed for that exact target and provider version.
+There is no Rally cross-region fallback; Daytona itself is the shared
+subprocessor.
 
 An activated region requires:
 
@@ -144,9 +217,11 @@ An activated region requires:
   `TERMINAL_EMERGENCY_DISABLED=false`;
 - `DAYTONA_API_URL`, `DAYTONA_TARGET`, and
   `DAYTONA_TERMINAL_SNAPSHOT=daytona-small`; and
-- `DAYTONA_API_KEY` as a regional Worker secret. Never put the Daytona project
-  credential in a `VITE_` variable, D1, a sandbox environment value, or a
-  checked-in Wrangler file.
+- `DAYTONA_API_KEY` as a regional Worker secret. EU reuses the same Daytona
+  project key already on Global: put that exact value on the EU Worker. Cloudflare
+  cannot copy a secret between Workers, so this is a second `secret put`, not a
+  shared binding. Never put the Daytona project credential in a `VITE_`
+  variable, D1, a sandbox environment value, or a checked-in Wrangler file.
 
 If any required Daytona value is absent, Rally treats that region as
 `unsupported` and continues starting without the Terminal plugin. This is the
@@ -806,19 +881,32 @@ without putting either setup material or its signing secret into logs:
 
 For ordinary releases after both entrypoints exist:
 
-1. Validate both Wrangler configurations with dry-run builds.
+1. Build the API, document-processing, and Terminal-provider artifacts for both
+   regions plus the Global pricing Worker, validate the exact Wrangler
+   configurations with dry runs, and retain all seven startup profiles. See
+   [`api-worker-deployment.md`](api-worker-deployment.md).
 2. Create or confirm each region's named Cloudflare resources. The deployment
    automatically creates and verifies the Global inference Queue, analytical R2
    bucket, Data Catalog, sink, stream, Pipeline, and generated binding. EU has no
    inference analytics resources in its Worker config. Scoped
    memory still requires `avalon-global-memory` and `avalon-eu-memory` Vectorize
-   indexes with 1,024 dimensions and cosine distance, plus the Workers AI
-   binding declared by each API Worker.
+   indexes with 1,024 dimensions and cosine distance. Memory embeddings use
+   OpenRouter `qwen/qwen3-embedding-8b` with an explicit 1,024-dimension
+   request; the Workers AI binding remains for Cloudflare-backed PDF OCR.
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
 5. Apply the D1 migration remotely to EU and Global with `pnpm db:migrate:remote:eu` and `pnpm db:migrate:remote`. Inspect the pending set first with `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The unsuffixed `pnpm db:migrate` targets local Wrangler state only and never touches a hosted database.
-6. Deploy the EU Worker, then the Global Worker. For the first inbound-email release and the first shared-Notion-ingress release, use the three-stage bootstrap order above instead.
-7. Call `GET /health` on both regional APIs with `pnpm health:regions`, which fails unless both regions report `ok`. That now includes the Worker's own environment contract: a region missing a required secret answers `503` here and names the keys, rather than reporting healthy while every other route returns `service_misconfigured`.
+6. For an ordinary release, upload both regional Cloudflare Versions without
+   traffic, promote EU to 100%, prove EU health, then promote Global. A Wrangler
+   config or Crash Symbolicator image change uses direct deploy because Versions
+   cannot apply Durable Object migrations or update Container images. For the
+   first inbound-email release and the first shared-Notion-ingress release, use
+   the three-stage bootstrap order above instead.
+7. Call `GET /health` after each regional promotion and finally on both APIs
+   with `pnpm health:regions`, which fails unless both regions report `ok`. That
+   now includes the Worker's own environment contract: a region missing a
+   required secret answers `503` here and names the keys, rather than reporting
+   healthy while every other route returns `service_misconfigured`.
 8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
 9. Complete one Google identity login in a provider test account.
 10. Connect **Google Mail + Calendar** and verify a Gmail read, Gmail draft, Calendar read, and Calendar test-event create/update. Delete the provider-side test fixture afterward.
@@ -833,8 +921,8 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
-- `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies both Global lakehouses before migrations; the EU deploy config intentionally contains no lakehouse binding. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop Vitest suite uses two shards, the API Vitest suite uses three, and the workers suite uses two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: seven exact-artifact dry-runs and startup profiles, remote D1 migrations, service-first two-region version upload or direct deployment, EU promotion and health, Global service/pricing/API promotion and health, and final regional health. The profiles and build manifests are retained even on failure. Wrangler-config, Durable Object migration, Container-image, and first-service releases select direct deployment because Cloudflare Versions cannot establish that platform state; successful releases tag each active version with the immutable verified Git SHA. Its verify matrix shards the workers suite the same way CI does (`api-tests-workers-1-of-n` / `2-of-n`) rather than appending an unsharded `test:workers` onto a Node lane — that split is load, not coverage, and an unsharded full-suite Miniflare is more `reset()` interleave than PR CI ever sees. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies both Global lakehouses before migrations; the EU deploy config intentionally contains no lakehouse binding. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - **The durable automation lifecycle cutover ran on 2026-08-28** and its three
   one-shot deploy steps — the single-region refusal, the preflight, and the
@@ -927,7 +1015,7 @@ object that predates 2026-08-28.
 
 Every other automation failure a person can hit has its own status and sentence
 in `apps/api/src/services/automation-agent-errors.ts`; a `500 internal_error`
-from an automation route means the object threw a code that table does not name,
+from an automation route means the object threw a code that table does not name, or a refusal was raised outside a wrapper that reads it,
 which is a defect rather than a state to wait out.
 
 The symbolicator image is the one expensive thing either workflow builds, in the single `crash-symbolicator-container` lane each of them runs it from. Its builder stage compiles `minidump-stackwalk` from source — about three and a half minutes, depending on nothing in this repository — so both workflows run a **Warm the symbolicator image cache** step against a `docker-container` builder before anything builds the image for real. That step is the only one that reads or writes the shared `crash-symbolicator` cache scope; the builds that follow it — the integration lane's own `docker build`, and Wrangler's during a regional deploy — resolve every layer from the warmed builder without naming a cache at all. It warms that builder by **materializing the image** (`load: true`), not by importing cache records alone. A remote cache import is lazy — it resolves the keys without fetching the layers behind them, and BuildKit keeps that only for the solve that imported it — so a cache-only warm-up hands a later, separate `docker build` nothing. That arrangement shipped first and was measured: the warm-up reported every vertex `CACHED` in 2.4s and the lane recompiled the crate from scratch immediately afterwards. Do not revert it to `type=cacheonly` on the reasoning that the image is unused; the image is the point, and its tag is the side effect. `install: true` on `docker/setup-buildx-action` is what points their plain `docker build` at that builder, and it must stay. Buildx now warns that the `docker buildx install` alias it sets is deprecated and names `BUILDX_BUILDER` as the successor; when that alias is finally removed, replace `install: true` with `BUILDX_BUILDER` set to the builder name the setup step outputs, in the same job env the later builds read. Do not simply drop it — a build that silently resolves to the default builder still succeeds, just cold, which is the failure this arrangement exists to make impossible. The warm-up must also stay a JavaScript action rather than a `docker buildx build` line: `type=gha` authenticates with `ACTIONS_RUNTIME_TOKEN`, which the runner injects into actions and never into a `run:` step, so a shell-driven cache silently transfers nothing.
@@ -1524,7 +1612,7 @@ buckets as credential-adjacent: bucket-scoped write-only delivery credentials,
 no wider dashboard access than a responder needs. Moving those two secrets off
 the query string is the only fix that removes them from the capture.
 
-Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded in Workers Logs: some upstreams quote the request back inside it, these lines are written for every workspace into Workers Logs and 90-day Logpush storage, and the key-based redactor has no way to recognise it. For Global inference, the sensitive lakehouse retains the bounded provider failure beside the exact request instead; EU inference has no analytical archive, so the message is not available for later analysis. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
+Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded in Workers Logs or the Global lakehouse: some upstreams quote the request back inside it, and the key-based redactor has no way to recognise member content arriving inside provider prose. The Global lakehouse keeps the exact request and the bounded classification; EU inference has no analytical archive. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
 
 Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. The read-only release check must report all saved-query drift at once so a partial repair cannot make the next release discover one definition at a time.
 

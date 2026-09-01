@@ -808,10 +808,6 @@ const SlackWebApiSchemas = {
     request: z.object({}).strict(),
     response: SlackOkSchema.extend({ user_id: z.string().min(1).optional() }),
   },
-  "chat.appendStream": {
-    request: z.object({ channel: SlackIdSchema, ts: SlackTimestampSchema, markdown_text: z.string().min(1).max(12_000) }).strict(),
-    response: SlackStreamResponseSchema,
-  },
   "chat.getPermalink": {
     request: z.object({ channel: SlackIdSchema, message_ts: SlackTimestampSchema }).strict(),
     response: SlackOkSchema.extend({ permalink: HttpsUrlSchema }),
@@ -826,17 +822,9 @@ const SlackWebApiSchemas = {
     }).strict(),
     response: SlackMessageResponseSchema,
   },
-  "chat.startStream": {
-    request: z.object({
-      channel: SlackIdSchema,
-      thread_ts: SlackTimestampSchema,
-      markdown_text: z.string().max(12_000),
-      recipient_user_id: SlackIdSchema,
-      recipient_team_id: SlackIdSchema,
-      task_display_mode: z.enum(["dense", "plan", "timeline"]).optional(),
-    }).strict(),
-    response: SlackStreamResponseSchema,
-  },
+  // Kept only to close placeholder streams created by versions deployed before
+  // external delivery became saved-turn-only. Starting and appending streams
+  // are intentionally absent from the callable method contract.
   "chat.stopStream": {
     request: z.object({ channel: SlackIdSchema, ts: SlackTimestampSchema, blocks: z.array(SlackBlockSchema).max(50).optional() }).strict(),
     response: SlackStreamResponseSchema,

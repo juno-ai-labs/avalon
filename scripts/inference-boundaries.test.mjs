@@ -56,6 +56,9 @@ test("requires cancellation and diagnostics on inference calls", () => {
   assert.equal(lint("client.structured({ messages, onDiagnostic });", "require-inference-signal").length, 1);
   assert.equal(lint("client.structured({ messages, signal });", "require-inference-diagnostics").length, 1);
   assert.equal(lint("client.stream({ messages });", "require-inference-signal").length, 1);
+  assert.equal(lint("client.embed({ input, signal, onDiagnostic });", "require-inference-signal").length, 0);
+  assert.equal(lint("client.embed({ input, onDiagnostic });", "require-inference-signal").length, 1);
+  assert.equal(lint("client.embed({ input, signal });", "require-inference-diagnostics").length, 1);
 });
 
 test("requires renderer WebSockets to consume an authenticated ticket URL", () => {

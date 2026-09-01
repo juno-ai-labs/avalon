@@ -19,7 +19,6 @@ import {
   mapElicitation,
   mapParticipant,
   mapResource,
-  mapSuggestion,
   mapToolInvocation,
   mapWorkstreamDetail,
   normalizeHarnessStatus,
@@ -46,11 +45,9 @@ import {
   workstreamSocketSnapshotGenerationQueryKey,
 } from './telemetry';
 import {
-  appendDismissedSuggestionId,
   createElicitationMessage,
   createTextMessage,
   createToolEventMessage,
-  dismissedSuggestionIdsQueryKey,
   mergeRealtimeTranscriptActivity,
   mergeRealtimeTranscriptTurn,
   mergeCanonicalTranscriptSnapshot,
@@ -567,9 +564,7 @@ export function detailTranscriptOverlays(
   snapshotId: string,
   afterTranscriptSequence: number,
   eventSequence: number,
-  dismissedSuggestionIds: readonly string[] = [],
 ): TranscriptOverlay[] {
-  const dismissed = new Set(dismissedSuggestionIds);
   const elicitations = (detail.openElicitations ?? []).map((elicitation): TranscriptOverlay => ({
     identity: { type: 'elicitation', elicitationId: elicitation.id },
     provenance: { source: 'socket_snapshot', snapshotId },
@@ -583,22 +578,7 @@ export function detailTranscriptOverlays(
       elicitation,
     }),
   }));
-  const suggestions = (detail.suggestions ?? []).flatMap((suggestion): TranscriptOverlay[] =>
-    suggestion.status === 'dismissed' || dismissed.has(suggestion.id) ? [] : [{
-      identity: { type: 'activity_suggestion', suggestionId: suggestion.id },
-      provenance: { source: 'socket_snapshot', snapshotId },
-      position: { afterTranscriptSequence, eventSequence },
-      message: {
-        id: `suggestion-${suggestion.id}`,
-        workstreamId: detail.id,
-        sequenceNumber: 0,
-        authorType: 'system',
-        messageType: 'activity_suggestion',
-        createdAt: suggestion.occurredAt ?? detail.lastActivityAt,
-        activitySuggestion: suggestion,
-      },
-    }]);
-  return [...elicitations, ...suggestions];
+  return elicitations;
 }
 
 export function useWorkstreamSocket(
@@ -1125,7 +1105,6 @@ export function useWorkstreamSocket(
             event.transcript.snapshotId,
             event.transcript.snapshotThrough,
             event.sequence,
-            queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
           ),
         ];
         queryClient.setQueryData<TranscriptOverlay[]>(
@@ -1377,51 +1356,6 @@ export function useWorkstreamSocket(
               : [...current.resources, resource],
           };
         });
-      } else if (event.type === 'activity_suggestion_created' || event.type === 'activity_suggestion_resolved') {
-        // Detail is what transcript reconstruction uses, so update it together
-        // with the synthetic message or a later snapshot would revive a card
-        // that has already been resolved.
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
-          if (!current) return current;
-          const remaining = (current.suggestions ?? []).filter((suggestion) => suggestion.id !== event.suggestion.id);
-          return {
-            ...current,
-            suggestions: event.suggestion.status === 'pending'
-              ? [mapSuggestion(event.suggestion), ...remaining]
-              : remaining,
-          };
-        });
-        if (event.suggestion.status === 'dismissed') {
-          queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId), (dismissed) =>
-            appendDismissedSuggestionId(dismissed, event.suggestion.id));
-        }
-        const afterTranscriptSequence = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
-        )?.snapshotThrough ?? 0;
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
-          const messageId = `suggestion-${event.suggestion.id}`;
-          if (event.suggestion.status === 'dismissed') {
-            return removeTranscriptOverlay(current, (overlay) => overlay.identity.type === 'activity_suggestion'
-              && overlay.identity.suggestionId === event.suggestion.id);
-          }
-          const message: Message = {
-            id: messageId,
-            workstreamId,
-            sequenceNumber: 0,
-            authorType: 'system',
-            messageType: 'activity_suggestion',
-            createdAt: event.suggestion.createdAt,
-            activitySuggestion: mapSuggestion(event.suggestion),
-          };
-          return upsertSocketEventOverlay(
-            current,
-            { type: 'activity_suggestion', suggestionId: event.suggestion.id },
-            message,
-            event.type,
-            event.sequence,
-            afterTranscriptSequence,
-          );
-        });
       } else if (event.type === 'block_dashboard_configuration_updated') {
         queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], event.blockDashboard);
       } else if (event.type === 'block_dashboard_block_run_updated') {
@@ -1572,7 +1506,6 @@ export function useWorkstreamSocket(
               canonicalTranscript.snapshotId,
               canonicalTranscript.snapshotThrough,
               canonicalTranscript.eventSequence,
-              queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
             ),
           ];
           queryClient.setQueryData<TranscriptOverlay[]>(

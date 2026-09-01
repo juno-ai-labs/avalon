@@ -14,7 +14,7 @@ import { allocateResourceSlugBesideCreation } from "../resource-slug";
 import { putStagedResourceObject, releaseStagedResourceObject } from "../resource-object-cleanup";
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
 import type { TerminalPortFactory } from "./object-port";
-import type { TerminalSandboxProvider } from "./daytona-provider";
+import type { TerminalSandboxProvider } from "./provider-contract";
 import type { TerminalResourceBridge } from "./runtime";
 import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedResourceOutput } from "./tools";
 
@@ -469,8 +469,8 @@ export function createTerminalResourceBridge(
       const sourceName = fileName(input.filePath);
       const mimeType = verifyAttachmentMimeType(bytes, sourceName, null);
       const attachmentKind = classifyAttachmentKind({ mimeType, fileName: sourceName });
-      const contentMode = attachmentKind === "image" ? "view" : attachmentKind === "other" ? "unsupported" : "read";
-      const derivativeStatus = attachmentKind === "other" ? "unsupported" : "pending";
+      const contentMode = attachmentKind === "image" ? "view" : attachmentKind === "audio" || attachmentKind === "other" ? "unsupported" : "read";
+      const derivativeStatus = attachmentKind === "audio" || attachmentKind === "other" ? "unsupported" : "pending";
       const digest = await sha256Hex(bytes);
 
       if (settled) {

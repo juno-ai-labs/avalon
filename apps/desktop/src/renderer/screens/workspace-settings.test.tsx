@@ -1817,7 +1817,11 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Application');
 
-    await screen.findByRole('switch', { name: 'Lockdown mode' });
+    // The settings shell renders disabled controls while its bridge read is in
+    // flight, so another switch merely existing does not prove availability
+    // has loaded. First observe a control become interactive as the positive
+    // readiness signal, then assert that the unavailable control disappeared.
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Lockdown mode' })).toBeEnabled());
     expect(screen.queryByRole('switch', { name: 'Show Rally in the menu bar' })).toBeNull();
   });
 

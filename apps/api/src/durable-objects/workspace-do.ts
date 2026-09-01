@@ -24,6 +24,7 @@ import {
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  workstreamParticipantPreview,
   WorkspaceIdSchema,
   WorkspaceProjectSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
@@ -83,6 +84,7 @@ import {
   type SocketAccessRevocation,
 } from "../services/access-revocation";
 import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
+import { boundParameterChunks } from "./bound-parameters";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -128,8 +130,6 @@ import {
   WorkspaceDirectoryExistsRequestSchema,
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryDueRequestSchema,
-  WorkspaceDirectoryFeedbackRequestSchema,
-  WorkspaceDirectoryFeedbackResultSchema,
   WorkspaceDirectoryListRequestSchema,
   WorkspaceDirectoryLookupRequestSchema,
   WorkspaceDirectoryLookupResultSchema,
@@ -147,7 +147,6 @@ import {
   WorkspaceDirectoryResourceAccessResultSchema,
   WorkspaceDirectoryResourceRequestSchema,
   WorkspaceDirectoryResourceResultSchema,
-  WorkspaceDirectoryRoutingCandidatesRequestSchema,
   WorkspaceDirectoryScheduleTargetsRequestSchema,
   WorkspaceDirectoryScheduleTargetsResultSchema,
   WorkspaceDirectoryVisibilityRequestSchema,
@@ -164,8 +163,6 @@ import {
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
   type WorkspaceDirectoryExistsRequest,
-  type WorkspaceDirectoryFeedbackRequest,
-  type WorkspaceDirectoryFeedbackResult,
   type WorkspaceDirectoryListRequest,
   type WorkspaceDirectoryLookupRequest,
   type WorkspaceDirectoryLookupResult,
@@ -183,7 +180,6 @@ import {
   type WorkspaceDirectoryNotificationState,
   type WorkspaceDirectoryResourceRequest,
   type WorkspaceDirectoryResourceResult,
-  type WorkspaceDirectoryRoutingCandidatesRequest,
   type WorkspaceDirectoryScheduleTargetsRequest,
   type WorkspaceDirectoryScheduleTargetsResult,
   type WorkspaceDirectoryVisibilityRequest,
@@ -240,6 +236,97 @@ import {
   type WorkspaceWebhookReceiptClaimResult,
 } from "./workspace-connections-protocol";
 import {
+  addWorkspaceMemoryItem,
+  canonicalWorkspaceMemoryItems,
+  claimWorkspaceMemoryIndexOutboxRow,
+  completeWorkspaceMemoryIndexOutboxRow,
+  createWorkspaceMemoryTable,
+  dueWorkspaceMemoryIndexOutbox,
+  ensureWorkspaceMemoryScope,
+  insertWorkspaceMemoryTableRows,
+  invalidateWorkspaceMemoryItem,
+  invalidateWorkspaceMemoryTableRows,
+  queryWorkspaceMemoryTableRows,
+  recordWorkspaceMemoryItemAccess,
+  recordWorkspaceMemoryTableOpenReceipt,
+  retryWorkspaceMemoryIndexOutboxRow,
+  searchWorkspaceMemoryItemsFts,
+  searchWorkspaceMemoryTables,
+  updateWorkspaceMemoryItem,
+  updateWorkspaceMemoryTableRows,
+  workspaceMemoryIndexProjectionSource,
+  workspaceMemoryItemForWrite,
+  workspaceMemoryMutationReceipt,
+  workspaceMemoryTableMutationReceipt,
+  workspaceMemoryTableRowsById,
+  workspaceMemoryTableWithColumns,
+} from "./workspace-memory-storage";
+import {
+  WorkspaceMemoryAccessRecordRequestSchema,
+  WorkspaceMemoryAddRequestSchema,
+  WorkspaceMemoryCanonicalItemsRequestSchema,
+  WorkspaceMemoryFtsSearchRequestSchema,
+  WorkspaceMemoryInvalidateRequestSchema,
+  WorkspaceMemoryItemForWriteRequestSchema,
+  WorkspaceMemoryOutboxClaimRequestSchema,
+  WorkspaceMemoryOutboxCompleteRequestSchema,
+  WorkspaceMemoryOutboxDueRequestSchema,
+  WorkspaceMemoryOutboxRetryRequestSchema,
+  WorkspaceMemoryProjectionSourceRequestSchema,
+  WorkspaceMemoryReceiptRequestSchema,
+  WorkspaceMemoryScopeEnsureRequestSchema,
+  WorkspaceMemoryTableCreateRequestSchema,
+  WorkspaceMemoryTableInsertRowsRequestSchema,
+  WorkspaceMemoryTableInvalidateRowsRequestSchema,
+  WorkspaceMemoryTableOpenReceiptRequestSchema,
+  WorkspaceMemoryTableQueryRequestSchema,
+  WorkspaceMemoryTableRequestSchema,
+  WorkspaceMemoryTableRowsByIdRequestSchema,
+  WorkspaceMemoryTableSearchRequestSchema,
+  WorkspaceMemoryTableUpdateRowsRequestSchema,
+  WorkspaceMemoryUpdateRequestSchema,
+  type WorkspaceMemoryAddRequest,
+  type WorkspaceMemoryAddResult,
+  type WorkspaceMemoryAccessRecordRequest,
+  type WorkspaceMemoryCandidateList,
+  type WorkspaceMemoryCanonicalItemsRequest,
+  type WorkspaceMemoryFtsSearchRequest,
+  type WorkspaceMemoryInvalidateRequest,
+  type WorkspaceMemoryItemForWriteRequest,
+  type WorkspaceMemoryItemForWriteResult,
+  type WorkspaceMemoryItemList,
+  type WorkspaceMemoryOutboxClaimRequest,
+  type WorkspaceMemoryOutboxClaimResult,
+  type WorkspaceMemoryOutboxCompleteRequest,
+  type WorkspaceMemoryOutboxDueList,
+  type WorkspaceMemoryOutboxDueRequest,
+  type WorkspaceMemoryOutboxRetryRequest,
+  type WorkspaceMemoryProjectionSourceRequest,
+  type WorkspaceMemoryProjectionSourceResult,
+  type WorkspaceMemoryReceiptRequest,
+  type WorkspaceMemoryReceiptResult,
+  type WorkspaceMemoryScope,
+  type WorkspaceMemoryScopeEnsureRequest,
+  type WorkspaceMemoryTableCreateRequest,
+  type WorkspaceMemoryTableCreateResult,
+  type WorkspaceMemoryTableInsertRowsRequest,
+  type WorkspaceMemoryTableInsertRowsResult,
+  type WorkspaceMemoryTableInvalidateRowsRequest,
+  type WorkspaceMemoryTableOpenReceiptRequest,
+  type WorkspaceMemoryTableQueryRequest,
+  type WorkspaceMemoryTableQueryResult,
+  type WorkspaceMemoryTableRequest,
+  type WorkspaceMemoryTableResult,
+  type WorkspaceMemoryTableRowList,
+  type WorkspaceMemoryTableRowsByIdRequest,
+  type WorkspaceMemoryTableSearchRequest,
+  type WorkspaceMemoryTableSearchResult,
+  type WorkspaceMemoryTableUpdateRowsRequest,
+  type WorkspaceMemoryTableWriteResult,
+  type WorkspaceMemoryUpdateRequest,
+  type WorkspaceMemoryWriteResult,
+} from "./workspace-memory-protocol";
+import {
   claimWorkspaceTerminalPolicyApplication,
   commitWorkspaceTerminalPolicyApplication,
   failWorkspaceTerminalPolicyApplication,
@@ -276,6 +363,19 @@ import {
   sweepWorkspaceSlackIngress,
   workspaceSlackPendingPrompt,
   workspaceSlackThreadRoutable,
+  assignWorkspaceSlackSessions,
+  createWorkspaceSlackSession,
+  recordWorkspaceSlackFeedback,
+  setWorkspaceSlackSessionDeliveryKey,
+  setWorkspaceSlackSessionStream,
+  anchorWorkspaceSlackSessionReaction,
+  settleWorkspaceSlackSessionReaction,
+  storeWorkspaceSlackContext,
+  workspaceSlackContext,
+  workspaceSlackSessionById,
+  workspaceSlackSessionByThread,
+  workspaceSlackSessionByWorkstream,
+  workspaceSlackSessionExists,
 } from "./workspace-slack-storage";
 import {
   WorkspaceSlackIngressClaimRequestSchema,
@@ -311,6 +411,38 @@ import {
   type WorkspaceSlackThreadReleaseRequest,
   type WorkspaceSlackThreadRoutableRequest,
   type WorkspaceSlackThreadRoutableResult,
+  WorkspaceSlackContextRequestSchema,
+  WorkspaceSlackContextStoreRequestSchema,
+  WorkspaceSlackFeedbackRequestSchema,
+  WorkspaceSlackSessionAssignRequestSchema,
+  WorkspaceSlackSessionByIdRequestSchema,
+  WorkspaceSlackSessionByThreadRequestSchema,
+  WorkspaceSlackSessionByWorkstreamRequestSchema,
+  WorkspaceSlackSessionCreateRequestSchema,
+  WorkspaceSlackSessionDeliveryKeyRequestSchema,
+  WorkspaceSlackSessionExistsRequestSchema,
+  WorkspaceSlackSessionReactionAnchorRequestSchema,
+  WorkspaceSlackSessionReactionRequestSchema,
+  WorkspaceSlackSessionStreamRequestSchema,
+  type WorkspaceSlackContextRequest,
+  type WorkspaceSlackContextResult,
+  type WorkspaceSlackContextStoreRequest,
+  type WorkspaceSlackFeedbackRequest,
+  type WorkspaceSlackFeedbackResult,
+  type WorkspaceSlackSessionAssignRequest,
+  type WorkspaceSlackSessionAssignResult,
+  type WorkspaceSlackSessionByIdRequest,
+  type WorkspaceSlackSessionByThreadRequest,
+  type WorkspaceSlackSessionByWorkstreamRequest,
+  type WorkspaceSlackSessionCreateRequest,
+  type WorkspaceSlackSessionDeliveryKeyRequest,
+  type WorkspaceSlackSessionExistsRequest,
+  type WorkspaceSlackSessionExistsResult,
+  type WorkspaceSlackSessionReactionAnchorRequest,
+  type WorkspaceSlackSessionReactionRequest,
+  type WorkspaceSlackSessionReactionResult,
+  type WorkspaceSlackSessionResult,
+  type WorkspaceSlackSessionStreamRequest,
 } from "./workspace-slack-protocol";
 import {
   appendWorkspaceNoteSegment,
@@ -741,6 +873,29 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // `persistConnectionMutation` still arrives generically, and refusing the
   // table here would break that atomic pair.
   "webhook_receipts",
+  // The memory domain is typed methods now. `memory_index_outbox` is the one
+  // deliberate omission: the schedule's alarm-target derivation in
+  // `workspace-schedule-execution.ts` still reads its due time generically
+  // through the object's local executor, alongside the other alarm sources.
+  "memory_scopes",
+  "memory_items",
+  "memory_items_fts",
+  "memory_mutations",
+  "memory_tables",
+  "memory_table_columns",
+  "memory_table_rows",
+  "memory_table_rows_fts",
+  "memory_table_cells",
+  "memory_table_mutations",
+  // The Slack agent session, context, and feedback tables are typed methods
+  // now. `slack_link_challenges`, `slack_agent_thread_claims`,
+  // `slack_agent_pending_prompts`, and `slack_ingress_jobs` are deliberately
+  // absent: the schedule's alarm-target derivation reads their due times
+  // generically through this object's local executor, alongside the other
+  // alarm sources.
+  "slack_agent_sessions",
+  "slack_agent_contexts",
+  "slack_agent_feedback",
 ] as const;
 
 function typedRpcOnlyWorkspaceTable(sql: string): string | null {
@@ -2017,6 +2172,66 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
   ],
+}, {
+  version: 23,
+  description: "rebuild durable-memory vectors with the OpenRouter embedding space",
+  statements: [
+    // The existing 1,024-dimensional Vectorize indexes can store a reduced
+    // Qwen3 Embedding 8B output, but the Workers AI 0.6B and OpenRouter 8B
+    // coordinates are not comparable.
+    // Requeue only each active item's current upsert; invalidated, expired, and
+    // historical revisions stay retired. The projection writes a model-derived
+    // namespace, so old vectors are unreachable throughout the rebuild.
+    `UPDATE memory_index_outbox
+        SET status = 'pending', attempt_count = 0,
+            available_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
+            completed_at = NULL,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE operation = 'upsert'
+        AND EXISTS (
+          SELECT 1
+            FROM memory_items item
+           WHERE item.memory_item_id = memory_index_outbox.memory_item_id
+             AND item.memory_scope_id = memory_index_outbox.memory_scope_id
+             AND item.workspace_id = memory_index_outbox.workspace_id
+             AND item.revision = memory_index_outbox.revision
+             AND item.invalidated_at IS NULL
+             AND (item.expires_at IS NULL OR item.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )`,
+    // Existing objects may otherwise have no reason to wake after the rows are
+    // requeued. The one-shot bootstrap reconciles the memory maintenance target
+    // into the shared alarm index; fresh objects have no identity and pay no
+    // empty wake-up.
+    `INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
+        created_at, updated_at)
+     SELECT 'schedule_bootstrap', 'workspace', unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+      WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)
+     ON CONFLICT(kind, alarm_key) DO UPDATE SET
+       due_at = MIN(due_at, excluded.due_at), retry_at = 0, attempt = 0,
+       updated_at = excluded.updated_at`,
+  ],
+}, {
+  version: 24,
+  description: "store participant join time on the sidebar viewer overlay",
+  statements: [
+    // The facepile sorts by who joined, not by the last overlay rewrite.
+    // `projected_at` moves on every unread and mention, and a message stamps
+    // every participant with the same now(), so that column is UUID order.
+    // Defaulted to NULL because every row already here predates the field;
+    // NULL sorts last under DESC until the next directory_user effect lands.
+    `ALTER TABLE workspace_workstream_viewers
+       ADD COLUMN participant_added_at INTEGER
+         CHECK (participant_added_at IS NULL OR participant_added_at >= 0)`,
+  ],
+}, {
+  version: 25,
+  description: "retire work-stream context suggestion feedback",
+  statements: [
+    `DROP TABLE workspace_workstream_suggestion_feedback`,
+  ],
 }];
 
 function compareProjectionCoordinate(
@@ -2240,7 +2455,47 @@ function workstreamHarnessStatus(state: string): Workstream["harnessStatus"] {
   return "idle";
 }
 
-function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): Workstream {
+function loadParticipantPreviews(
+  sql: DurableObjectState["storage"]["sql"],
+  workstreamIds: readonly string[],
+): Map<string, ReturnType<typeof workstreamParticipantPreview>> {
+  const previews = new Map<string, ReturnType<typeof workstreamParticipantPreview>>();
+  if (workstreamIds.length === 0) return previews;
+  const rows: { workstream_id: string; user_id: string }[] = [];
+  for (const chunk of boundParameterChunks(workstreamIds)) {
+    const placeholders = chunk.map(() => "?").join(", ");
+    rows.push(...sql.exec<{ workstream_id: string; user_id: string }>(
+      `SELECT viewer.workstream_id, viewer.user_id
+         FROM workspace_workstream_viewers viewer
+         JOIN workspace_workstream_directory directory
+           ON directory.workstream_id = viewer.workstream_id
+          AND directory.authority_generation = viewer.authority_generation
+        WHERE viewer.workstream_id IN (${placeholders})
+          AND viewer.is_participant = 1
+        ORDER BY viewer.workstream_id, viewer.participant_added_at DESC, viewer.user_id`,
+      ...chunk,
+    ).toArray());
+  }
+  const grouped = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.workstream_id);
+    if (list) list.push(row.user_id);
+    else grouped.set(row.workstream_id, [row.user_id]);
+  }
+  for (const [workstreamId, userIds] of grouped) {
+    previews.set(workstreamId, workstreamParticipantPreview(userIds));
+  }
+  return previews;
+}
+
+function directoryWorkstream(
+  row: WorkspaceDirectoryRow,
+  workspaceId: string,
+  preview: ReturnType<typeof workstreamParticipantPreview> = {
+    participantUserIds: [],
+    participantExtraCount: 0,
+  },
+): Workstream {
   const latest = Number(row.latest_attention_ordinal);
   const seen = row.seen_attention_ordinal === null
     ? Number(row.unread_tracking_start_ordinal)
@@ -2253,6 +2508,9 @@ function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): W
     && Date.now() - row.source_created_at > WORKSTREAM_NAMING_GRACE_MS
     ? "automatic"
     : row.title_status;
+  const participantPreview = row.scope === "personal"
+    ? preview
+    : { participantUserIds: [], participantExtraCount: 0 };
   return WorkstreamSchema.parse({
     id: row.workstream_id,
     workspaceId,
@@ -2288,7 +2546,28 @@ function directoryWorkstream(row: WorkspaceDirectoryRow, workspaceId: string): W
         }
       : null,
     pinPosition: row.pin_position,
+    ...participantPreview,
   });
+}
+
+function mapDirectoryWorkstreams(
+  sql: DurableObjectState["storage"]["sql"],
+  rows: readonly WorkspaceDirectoryRow[],
+  workspaceId: string,
+): Workstream[] {
+  const personalIds = [...new Set(
+    rows.filter((row) => row.scope === "personal").map((row) => row.workstream_id),
+  )];
+  const previews = loadParticipantPreviews(sql, personalIds);
+  return rows.map((row) => directoryWorkstream(row, workspaceId, previews.get(row.workstream_id)));
+}
+
+function mapDirectoryWorkstream(
+  sql: DurableObjectState["storage"]["sql"],
+  row: WorkspaceDirectoryRow,
+  workspaceId: string,
+): Workstream {
+  return mapDirectoryWorkstreams(sql, [row], workspaceId)[0]!;
 }
 
 function directoryStateVersion(row: WorkspaceDirectoryRow) {
@@ -3783,7 +4062,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         payloadHash: row.payload_hash,
       })
     ));
+    const claimed = this.state.storage.sql.exec<{ claimed: number }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM workspace_external_event_deliveries WHERE workspace_event_id = ?
+       ) AS claimed`,
+      event.event_id,
+    ).one().claimed === 1;
     return WorkspaceExternalEventMatchResultSchema.parse({
+      claimed,
       deliveries: [...new Map([...deliveries, ...pending].map((delivery) => [delivery.deliveryId, delivery])).values()],
     });
   }
@@ -5269,14 +5555,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewerChanges = new Map<string, Set<string>>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
     for (const envelope of request.envelopes) {
-      const changed = this.applyDirectoryEnvelope(envelope, activeUsers, originLabels);
-      directoryChanged = directoryChanged || changed;
-      if (changed && envelope.effect.kind === "directory_common") {
+      const applied = this.applyDirectoryEnvelope(envelope, activeUsers, originLabels);
+      directoryChanged = directoryChanged || applied.changed;
+      if (applied.changed && envelope.effect.kind === "directory_common") {
         commonChanges.add(envelope.workstreamId);
-      } else if (changed && envelope.effect.kind === "directory_user") {
-        const users = viewerChanges.get(envelope.workstreamId) ?? new Set<string>();
-        users.add(envelope.effect.userId);
-        viewerChanges.set(envelope.workstreamId, users);
+      } else if (applied.changed && envelope.effect.kind === "directory_user") {
+        if (applied.participantMembershipChanged) {
+          // The facepile is the whole participant set. A join or leave that
+          // only reached the affected viewer's socket would leave everyone
+          // else's pile stale until reconnect.
+          commonChanges.add(envelope.workstreamId);
+        } else {
+          const users = viewerChanges.get(envelope.workstreamId) ?? new Set<string>();
+          users.add(envelope.effect.userId);
+          viewerChanges.set(envelope.workstreamId, users);
+        }
       }
       if (envelope.effect.kind === "directory_common") {
         const current = this.state.storage.sql.exec<{
@@ -6617,6 +6910,151 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The Slack agent-session lifecycle.
+   *
+   * None of `slack_agent_sessions`, `slack_agent_contexts`, or
+   * `slack_agent_feedback` is an alarm source — no schedule target derives a
+   * due time from them — so these mutations deliberately do **not** call
+   * `refreshScheduleAfterSlackWrite`. That is the one thing to re-check before
+   * adding a method here: a table that gains an alarm target needs the refresh
+   * back, and its absence is a decision rather than an omission.
+   */
+  async slackSessionById(
+    input: WorkspaceSlackSessionByIdRequest,
+  ): Promise<WorkspaceSlackSessionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionByIdRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackSessionById(this.state.storage, request);
+  }
+
+  /** The session a Slack thread already has, if this thread is one Rally runs. */
+  async slackSessionByThread(
+    input: WorkspaceSlackSessionByThreadRequest,
+  ): Promise<WorkspaceSlackSessionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionByThreadRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackSessionByThread(this.state.storage, request);
+  }
+
+  /** The session behind a work stream, for delivering that run's outcome. */
+  async slackSessionByWorkstream(
+    input: WorkspaceSlackSessionByWorkstreamRequest,
+  ): Promise<WorkspaceSlackSessionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionByWorkstreamRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackSessionByWorkstream(this.state.storage, request);
+  }
+
+  /** The interaction preflight: has this work stream already been seated here? */
+  async slackSessionExists(
+    input: WorkspaceSlackSessionExistsRequest,
+  ): Promise<WorkspaceSlackSessionExistsResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionExistsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackSessionExists(this.state.storage, request);
+  }
+
+  /** Store a new thread's session and answer with the row that was stored. */
+  async createSlackSession(
+    input: WorkspaceSlackSessionCreateRequest,
+  ): Promise<WorkspaceSlackSessionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionCreateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return createWorkspaceSlackSession(this.state.storage, request);
+  }
+
+  /** Seat a member across this Slack user's workspace-scoped sessions. */
+  async assignSlackSessions(
+    input: WorkspaceSlackSessionAssignRequest,
+  ): Promise<WorkspaceSlackSessionAssignResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionAssignRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return assignWorkspaceSlackSessions(this.state.storage, request);
+  }
+
+  /** Stamp the delivery key a run's outcome was delivered under. */
+  async setSlackSessionDeliveryKey(
+    input: WorkspaceSlackSessionDeliveryKeyRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionDeliveryKeyRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    setWorkspaceSlackSessionDeliveryKey(this.state.storage, request);
+  }
+
+  /** Clear a response-stream pointer left by a pre-saved-turn-only deployment. */
+  async setSlackSessionStream(
+    input: WorkspaceSlackSessionStreamRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionStreamRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    setWorkspaceSlackSessionStream(this.state.storage, request);
+  }
+
+  /**
+   * Settle the status reaction against the emoji the caller removed.
+   *
+   * Answers `raced` when another transition — a working tick, or the terminal
+   * outcome — moved `reaction_current` while the caller was talking to Slack.
+   * The decision comes from the `RETURNING` witness, not a row count.
+   */
+  async settleSlackSessionReaction(
+    input: WorkspaceSlackSessionReactionRequest,
+  ): Promise<WorkspaceSlackSessionReactionResult> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionReactionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return settleWorkspaceSlackSessionReaction(this.state.storage, request);
+  }
+
+  /** Point the status reaction at the newest prompt's message. */
+  async anchorSlackSessionReaction(
+    input: WorkspaceSlackSessionReactionAnchorRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackSessionReactionAnchorRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    anchorWorkspaceSlackSessionReaction(this.state.storage, request);
+  }
+
+  /** The App Home context Rally keeps for one Slack user on one connection. */
+  async slackAppContext(
+    input: WorkspaceSlackContextRequest,
+  ): Promise<WorkspaceSlackContextResult> {
+    await this.initialized;
+    const request = WorkspaceSlackContextRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackContext(this.state.storage, request);
+  }
+
+  /** Replace that context wholesale. */
+  async storeSlackAppContext(
+    input: WorkspaceSlackContextStoreRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackContextStoreRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    storeWorkspaceSlackContext(this.state.storage, request);
+  }
+
+  /** Record one feedback submission, or report that its job already had one. */
+  async recordSlackFeedback(
+    input: WorkspaceSlackFeedbackRequest,
+  ): Promise<WorkspaceSlackFeedbackResult> {
+    await this.initialized;
+    const request = WorkspaceSlackFeedbackRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return recordWorkspaceSlackFeedback(this.state.storage, request);
+  }
+
+  /**
    * Re-derive the workspace alarm after a typed write to an alarm-source
    * Slack table, exactly as `executeRuntimeSql` does for a generic statement
    * naming one — without it, a job admitted or a prompt retained through a
@@ -6638,6 +7076,303 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         code: error instanceof Error ? error.message : "unknown_error",
       });
     }));
+  }
+
+  /** Create a memory scope if it is missing; answer with the stored row either way. */
+  async ensureMemoryScope(input: WorkspaceMemoryScopeEnsureRequest): Promise<WorkspaceMemoryScope> {
+    await this.initialized;
+    const request = WorkspaceMemoryScopeEnsureRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return ensureWorkspaceMemoryScope(this.state.storage, request);
+  }
+
+  /** The FTS leg of hybrid memory retrieval, over the caller's authorized scopes. */
+  async searchMemoryItemsFts(
+    input: WorkspaceMemoryFtsSearchRequest,
+  ): Promise<WorkspaceMemoryCandidateList> {
+    await this.initialized;
+    const request = WorkspaceMemoryFtsSearchRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return searchWorkspaceMemoryItemsFts(this.state.storage, request);
+  }
+
+  /**
+   * Live items among the requested ids, restricted to the given scopes.
+   *
+   * The scope list is the service's re-resolved authorization union: what this
+   * method enforces is that no candidate outside it is answered, so a scope
+   * revoked mid-search cannot leak rows through the ranking.
+   */
+  async canonicalMemoryItems(
+    input: WorkspaceMemoryCanonicalItemsRequest,
+  ): Promise<WorkspaceMemoryItemList> {
+    await this.initialized;
+    const request = WorkspaceMemoryCanonicalItemsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return canonicalWorkspaceMemoryItems(this.state.storage, request);
+  }
+
+  /** Bump non-authoritative access counters; a lost update costs nothing. */
+  async recordMemoryItemAccess(input: WorkspaceMemoryAccessRecordRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceMemoryAccessRecordRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    recordWorkspaceMemoryItemAccess(this.state.storage, request);
+  }
+
+  /** One item with its scope kind, live or not — the write path's read. */
+  async memoryItemForWrite(
+    input: WorkspaceMemoryItemForWriteRequest,
+  ): Promise<WorkspaceMemoryItemForWriteResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryItemForWriteRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceMemoryItemForWrite(this.state.storage, request);
+  }
+
+  /**
+   * A prose-memory mutation receipt by idempotency key, so the service can
+   * answer a replay before it authorizes anything — the order the tool path
+   * has always had.
+   */
+  async memoryMutationReceipt(
+    input: WorkspaceMemoryReceiptRequest,
+  ): Promise<WorkspaceMemoryReceiptResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryReceiptRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceMemoryMutationReceipt(this.state.storage, request);
+  }
+
+  /**
+   * Add one durable memory: the item, its audit record, and its
+   * embedding-outbox intent in one transaction, with the receipt decided
+   * inside it. The facade path ran these as a D1 batch and re-read the
+   * receipt out-of-band when the batch lost a race.
+   */
+  async addMemoryItem(input: WorkspaceMemoryAddRequest): Promise<WorkspaceMemoryAddResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryAddRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = addWorkspaceMemoryItem(this.state.storage, request, uuidV7());
+    if (result.outcome === "added") this.refreshScheduleAfterMemoryOutboxWrite(request.workspaceId);
+    return result;
+  }
+
+  /**
+   * Replace a durable memory at an expected revision. A refusal is an
+   * outcome, not a throw: `revision_conflict` reaches the service with its
+   * HTTP-mapped error intact rather than as a bare RPC message.
+   */
+  async updateMemoryItem(input: WorkspaceMemoryUpdateRequest): Promise<WorkspaceMemoryWriteResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryUpdateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = updateWorkspaceMemoryItem(this.state.storage, request, uuidV7());
+    if (result.outcome === "written") this.refreshScheduleAfterMemoryOutboxWrite(request.workspaceId);
+    return result;
+  }
+
+  /** Reversibly invalidate a durable memory at an expected revision. */
+  async invalidateMemoryItem(
+    input: WorkspaceMemoryInvalidateRequest,
+  ): Promise<WorkspaceMemoryWriteResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryInvalidateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = invalidateWorkspaceMemoryItem(this.state.storage, request, uuidV7());
+    if (result.outcome === "written") this.refreshScheduleAfterMemoryOutboxWrite(request.workspaceId);
+    return result;
+  }
+
+  /**
+   * Re-derive the workspace alarm after a memory write left an embedding
+   * intent in `memory_index_outbox`.
+   *
+   * `memory_index_outbox` is on `WORKSPACE_ALARM_SOURCE_TABLES`, so while
+   * these writes were generic statements `executeRuntimeSql` armed the
+   * `memory_index` maintenance target for them. A typed method gets no such
+   * thing for free, and without this a memory written into a quiet workspace
+   * would sit unprojected until some unrelated mutation happened to reconcile
+   * the schedule. Same `waitUntil`-and-log shape as there: the alarm's own
+   * end-of-drain refresh is the backstop, and this line is how anyone finds
+   * out the backstop was needed.
+   *
+   * The outbox claim, completion, and retry methods deliberately do not call
+   * this. Their only caller is `processMemoryIndexOutbox`, reached only as the
+   * `memory_index` maintenance target — inside this object's own alarm drain,
+   * whose statements go through the local executor and never carried the
+   * auto-refresh either. A reconcile started there would race the drain's own
+   * `schedule_reconcile` with a target list read before the rest of the drain
+   * advanced its rows.
+   */
+  private refreshScheduleAfterMemoryOutboxWrite(workspaceId: string): void {
+    this.state.waitUntil(this.refreshSchedule(workspaceId).catch((error: unknown) => {
+      logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
+        workspace_id: workspaceId,
+        code: error instanceof Error ? error.message : "unknown_error",
+      });
+    }));
+  }
+
+  /** Embedding-outbox rows due for projection, oldest first. */
+  async dueMemoryIndexOutbox(
+    input: WorkspaceMemoryOutboxDueRequest,
+  ): Promise<WorkspaceMemoryOutboxDueList> {
+    await this.initialized;
+    const request = WorkspaceMemoryOutboxDueRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return dueWorkspaceMemoryIndexOutbox(this.state.storage, request);
+  }
+
+  /** Claim one due outbox row for a lease; the witness is the returned token. */
+  async claimMemoryIndexOutboxRow(
+    input: WorkspaceMemoryOutboxClaimRequest,
+  ): Promise<WorkspaceMemoryOutboxClaimResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryOutboxClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimWorkspaceMemoryIndexOutboxRow(this.state.storage, request);
+  }
+
+  /** Settle a claimed outbox row as projected. */
+  async completeMemoryIndexOutboxRow(input: WorkspaceMemoryOutboxCompleteRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceMemoryOutboxCompleteRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    completeWorkspaceMemoryIndexOutboxRow(this.state.storage, request);
+  }
+
+  /** Return a claimed outbox row to pending with its backoff and last error. */
+  async retryMemoryIndexOutboxRow(input: WorkspaceMemoryOutboxRetryRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceMemoryOutboxRetryRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    retryWorkspaceMemoryIndexOutboxRow(this.state.storage, request);
+  }
+
+  /** What the vector index should hold for one item, read at projection time. */
+  async memoryIndexProjectionSource(
+    input: WorkspaceMemoryProjectionSourceRequest,
+  ): Promise<WorkspaceMemoryProjectionSourceResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryProjectionSourceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceMemoryIndexProjectionSource(this.state.storage, request);
+  }
+
+  /** One durable table and its ordered columns, invalidated or not. */
+  async memoryTableWithColumns(
+    input: WorkspaceMemoryTableRequest,
+  ): Promise<WorkspaceMemoryTableResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryTableRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceMemoryTableWithColumns(this.state.storage, request);
+  }
+
+  /** Live durable tables in the given scopes whose prose matches the pattern. */
+  async searchMemoryTables(
+    input: WorkspaceMemoryTableSearchRequest,
+  ): Promise<WorkspaceMemoryTableSearchResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryTableSearchRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return searchWorkspaceMemoryTables(this.state.storage, request);
+  }
+
+  /**
+   * One page of rows and the revision they were read under, in one object
+   * event. Through the facade the page and the stale-revision re-check were
+   * separate round trips, so a mutation between them failed an innocent read
+   * with `memory_table_query_changed_during_read`; here that window is gone.
+   */
+  async queryMemoryTableRows(
+    input: WorkspaceMemoryTableQueryRequest,
+  ): Promise<WorkspaceMemoryTableQueryResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryTableQueryRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return queryWorkspaceMemoryTableRows(this.state.storage, request);
+  }
+
+  /** The rows a mutation names, in whatever state they currently hold. */
+  async memoryTableRowsById(
+    input: WorkspaceMemoryTableRowsByIdRequest,
+  ): Promise<WorkspaceMemoryTableRowList> {
+    await this.initialized;
+    const request = WorkspaceMemoryTableRowsByIdRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceMemoryTableRowsById(this.state.storage, request);
+  }
+
+  /** A durable-table mutation receipt by idempotency key. */
+  async memoryTableMutationReceipt(
+    input: WorkspaceMemoryReceiptRequest,
+  ): Promise<WorkspaceMemoryReceiptResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryReceiptRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceMemoryTableMutationReceipt(this.state.storage, request);
+  }
+
+  /**
+   * Create a typed durable table, or answer with the standing table's id so
+   * the service can decide whether the caller reopened it or collided with it.
+   */
+  async createMemoryTable(
+    input: WorkspaceMemoryTableCreateRequest,
+  ): Promise<WorkspaceMemoryTableCreateResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryTableCreateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return createWorkspaceMemoryTable(this.state.storage, request);
+  }
+
+  /** Record the create receipt for an idempotent reopen of a standing table. */
+  async recordMemoryTableOpenReceipt(
+    input: WorkspaceMemoryTableOpenReceiptRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceMemoryTableOpenReceiptRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    recordWorkspaceMemoryTableOpenReceipt(this.state.storage, request);
+  }
+
+  /**
+   * Insert rows by natural key as one decision: revision bump, rows, cells,
+   * and the audit record commit together. The facade path retried a D1 batch
+   * against its own revision counter and threw
+   * `memory_table_insert_contention` after three losses; a single transaction
+   * has nothing to contend with, so that failure mode no longer exists.
+   */
+  async insertMemoryTableRows(
+    input: WorkspaceMemoryTableInsertRowsRequest,
+  ): Promise<WorkspaceMemoryTableInsertRowsResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryTableInsertRowsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return insertWorkspaceMemoryTableRows(this.state.storage, request);
+  }
+
+  /** Patch rows at expected revisions; one stale row refuses the whole batch. */
+  async updateMemoryTableRows(
+    input: WorkspaceMemoryTableUpdateRowsRequest,
+  ): Promise<WorkspaceMemoryTableWriteResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryTableUpdateRowsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return updateWorkspaceMemoryTableRows(this.state.storage, request);
+  }
+
+  /** Reversibly invalidate rows at expected revisions, all or nothing. */
+  async invalidateMemoryTableRows(
+    input: WorkspaceMemoryTableInvalidateRowsRequest,
+  ): Promise<WorkspaceMemoryTableWriteResult> {
+    await this.initialized;
+    const request = WorkspaceMemoryTableInvalidateRowsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return invalidateWorkspaceMemoryTableRows(this.state.storage, request);
   }
 
   /**
@@ -6964,7 +7699,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.automationSubscriptionId,
       epoch(request.plannedFor),
     ).toArray()[0];
-    return row ? directoryWorkstream(row, request.workspaceId) : null;
+    return row ? mapDirectoryWorkstream(this.state.storage.sql, row, request.workspaceId) : null;
   }
 
   /** Exact idempotency lookup for the scheduler, independent of any member's visibility. */
@@ -6984,7 +7719,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.automationSubscriptionId,
       epoch(request.plannedFor),
     ).toArray()[0];
-    return row ? directoryWorkstream(row, request.workspaceId) : null;
+    return row ? mapDirectoryWorkstream(this.state.storage.sql, row, request.workspaceId) : null;
   }
 
   async pinWorkstream(input: WorkspaceDirectoryPinRequest): Promise<{ items: Workstream[] }> {
@@ -7025,9 +7760,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return inserted;
     });
     if (changed) await this.publishDirectorySync(request.workspaceId);
-    return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
-      directoryWorkstream(row, request.workspaceId)
-    )) };
+    return { items: mapDirectoryWorkstreams(
+      this.state.storage.sql,
+      this.pinnedDirectoryRows(request.userId, true),
+      request.workspaceId,
+    ) };
   }
 
   async unpinWorkstream(input: WorkspaceDirectoryPinRequest): Promise<{ items: Workstream[] }> {
@@ -7049,9 +7786,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return removed;
     });
     if (changed) await this.publishDirectorySync(request.workspaceId);
-    return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
-      directoryWorkstream(row, request.workspaceId)
-    )) };
+    return { items: mapDirectoryWorkstreams(
+      this.state.storage.sql,
+      this.pinnedDirectoryRows(request.userId, true),
+      request.workspaceId,
+    ) };
   }
 
   async reorderWorkstreamPins(
@@ -7066,9 +7805,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.advanceDirectoryVersion(now);
     });
     await this.publishDirectorySync(request.workspaceId);
-    return { items: this.pinnedDirectoryRows(request.userId, true).map((row) => (
-      directoryWorkstream(row, request.workspaceId)
-    )) };
+    return { items: mapDirectoryWorkstreams(
+      this.state.storage.sql,
+      this.pinnedDirectoryRows(request.userId, true),
+      request.workspaceId,
+    ) };
   }
 
   async notificationDirectoryState(
@@ -7210,108 +7951,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         kind: row.kind,
         workstreamId: row.workstream_id,
         dueAt: iso(row.due_at),
-      })),
-    });
-  }
-
-  async routingCandidates(
-    input: WorkspaceDirectoryRoutingCandidatesRequest,
-  ): Promise<WorkspaceDirectoryLookupResult> {
-    await this.initialized;
-    const request = WorkspaceDirectoryRoutingCandidatesRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const restrictedJson = request.audience.scope === "users"
-      ? JSON.stringify(request.audience.userIds)
-      : "[]";
-    const audienceScope = request.audience.scope;
-    const excludedJson = JSON.stringify(request.excludedWorkstreamIds);
-    const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
-      `${SELECT_WORKSPACE_DIRECTORY}
-       WHERE directory.archived_at IS NULL
-         AND directory.system_kind IS NULL
-         AND directory.exact_state IN ('idle', 'running', 'interrupting', 'preparing_context',
-                                       'waiting_capacity', 'needs_input', 'scheduled')
-         AND ((? = 'workspace' AND directory.scope = 'workspace')
-           OR (? = 'users' AND (
-             directory.scope = 'personal'
-             AND NOT EXISTS (
-               SELECT 1 FROM workspace_workstream_viewers reader
-                WHERE reader.workstream_id = directory.workstream_id
-                  AND reader.authority_generation = directory.authority_generation
-                  AND reader.is_participant = 1
-                  AND reader.user_id NOT IN (SELECT value FROM json_each(?))
-             )
-             AND EXISTS (
-               SELECT 1 FROM workspace_workstream_viewers allowed
-                WHERE allowed.workstream_id = directory.workstream_id
-                  AND allowed.authority_generation = directory.authority_generation
-                  AND allowed.user_id IN (SELECT value FROM json_each(?))
-                  AND allowed.is_participant = 1
-             )
-           )))
-         AND (
-           SELECT COUNT(*) FROM workspace_workstream_suggestion_feedback dismissed
-            WHERE dismissed.workstream_id = directory.workstream_id
-              AND dismissed.source = 'contextual_routing'
-              AND dismissed.status = 'dismissed'
-              AND dismissed.resolved_at >= ?
-              AND dismissed.resolved_at > COALESCE((
-                SELECT MAX(accepted.resolved_at)
-                  FROM workspace_workstream_suggestion_feedback accepted
-                 WHERE accepted.workstream_id = directory.workstream_id
-                   AND accepted.source = 'contextual_routing'
-                   AND accepted.status = 'accepted'
-              ), 0)
-         ) < ?
-         AND directory.workstream_id NOT IN (SELECT value FROM json_each(?))
-       ORDER BY directory.last_activity_at DESC, directory.workstream_id
-       LIMIT ?`,
-      "",
-      "",
-      audienceScope,
-      audienceScope,
-      restrictedJson,
-      restrictedJson,
-      epoch(request.feedbackSince),
-      request.dismissalLimit,
-      excludedJson,
-      request.limit,
-    ).toArray();
-    return WorkspaceDirectoryLookupResultSchema.parse({ items: rows.map(internalDirectoryItem) });
-  }
-
-  async suggestionFeedback(
-    input: WorkspaceDirectoryFeedbackRequest,
-  ): Promise<WorkspaceDirectoryFeedbackResult> {
-    await this.initialized;
-    const request = WorkspaceDirectoryFeedbackRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const rows = this.state.storage.sql.exec<{
-      workstream_id: string;
-      activity_id: string;
-      status: "accepted" | "dismissed";
-      resolved_at: number;
-      resolved_by_user_id: string;
-    }>(
-      `SELECT feedback.workstream_id, feedback.activity_id, feedback.status,
-              feedback.resolved_at, feedback.resolved_by_user_id
-         FROM workspace_workstream_suggestion_feedback feedback
-         JOIN workspace_connector_events event ON event.event_id = feedback.activity_id
-        WHERE feedback.source = ? AND feedback.resolved_at >= ?
-          AND event.provider = ? AND event.event_type = ?
-        ORDER BY feedback.resolved_at, feedback.workstream_id, feedback.action_id`,
-      request.source,
-      epoch(request.since),
-      request.provider,
-      request.eventType,
-    ).toArray();
-    return WorkspaceDirectoryFeedbackResultSchema.parse({
-      items: rows.map((row) => ({
-        workstreamId: row.workstream_id,
-        activityId: row.activity_id,
-        status: row.status,
-        resolvedAt: iso(row.resolved_at),
-        resolvedByUserId: row.resolved_by_user_id || null,
       })),
     });
   }
@@ -7500,7 +8139,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     envelope: WorkstreamRegionalEffectEnvelope,
     activeUsers: ReadonlySet<string>,
     originLabels: ReadonlyMap<string, string>,
-  ): boolean {
+  ): { changed: boolean; participantMembershipChanged: boolean } {
     return this.state.storage.transactionSync(() => {
       const receipt = this.state.storage.sql.exec<{ payload_hash: string }>(
         `SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?`,
@@ -7510,11 +8149,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (receipt.payload_hash !== envelope.payloadHash) {
           throw new Error("workspace_directory_effect_idempotency_conflict");
         }
-        return false;
+        return { changed: false, participantMembershipChanged: false };
       }
 
       const now = Date.now();
       let changed = false;
+      let participantMembershipChanged = false;
       if (envelope.effect.kind === "directory_common") {
         const current = this.state.storage.sql.exec<{
           authority_generation: number;
@@ -7665,19 +8305,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           authority_generation: number;
           waterline: number;
           payload_hash: string;
+          is_participant: number;
         }>(
-          `SELECT authority_generation, waterline, payload_hash
+          `SELECT authority_generation, waterline, payload_hash, is_participant
              FROM workspace_workstream_viewers WHERE workstream_id = ? AND user_id = ?`,
           envelope.workstreamId,
           effect.userId,
         ).toArray()[0];
         if (!activeUsers.has(effect.userId)) {
-          changed = this.state.storage.sql.exec<{ user_id: string }>(
+          const deleted = this.state.storage.sql.exec<{ is_participant: number }>(
             `DELETE FROM workspace_workstream_viewers
-              WHERE workstream_id = ? AND user_id = ? RETURNING user_id`,
+              WHERE workstream_id = ? AND user_id = ? RETURNING is_participant`,
             envelope.workstreamId,
             effect.userId,
-          ).toArray().length === 1;
+          ).toArray()[0];
+          changed = deleted !== undefined;
+          participantMembershipChanged = deleted?.is_participant === 1;
         } else {
           const applies = !current
             || envelope.generation > current.authority_generation
@@ -7690,20 +8333,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             throw new Error("workspace_directory_viewer_version_conflict");
           }
           if (applies) {
+            const wasParticipant = current?.is_participant === 1;
             this.state.storage.sql.exec(
               `INSERT INTO workspace_workstream_viewers
                  (workstream_id, user_id, authority_generation, waterline,
-                  source_event_id, payload_hash, is_participant, unread_count, you_are_mentioned,
+                  source_event_id, payload_hash, is_participant, participant_added_at,
+                  unread_count, you_are_mentioned,
                   unseen, listable, seen_attention_ordinal, manual_unread_from_ordinal,
                   manual_unread_generation, latest_mention_attention_ordinal,
                   projected_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(workstream_id, user_id) DO UPDATE SET
                  authority_generation = excluded.authority_generation,
                  waterline = excluded.waterline,
                  source_event_id = excluded.source_event_id,
                  payload_hash = excluded.payload_hash,
                  is_participant = excluded.is_participant,
+                 participant_added_at = CASE
+                   WHEN excluded.is_participant = 0 THEN NULL
+                   ELSE COALESCE(
+                     excluded.participant_added_at,
+                     workspace_workstream_viewers.participant_added_at
+                   )
+                 END,
                  unread_count = excluded.unread_count,
                  you_are_mentioned = excluded.you_are_mentioned,
                  unseen = excluded.unseen,
@@ -7720,6 +8372,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               envelope.messageId,
               envelope.payloadHash,
               effect.isParticipant ? 1 : 0,
+              effect.isParticipant ? epoch(effect.participantAddedAt) : null,
               effect.unreadCount,
               effect.youAreMentioned ? 1 : 0,
               effect.unseen === true ? 1 : 0,
@@ -7731,49 +8384,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               now,
             );
             changed = true;
+            participantMembershipChanged = wasParticipant !== effect.isParticipant;
           }
-        }
-      } else if (envelope.effect.kind === "suggestion_feedback") {
-        const effect = envelope.effect;
-        const current = this.state.storage.sql.exec<{
-          authority_generation: number;
-          waterline: number;
-        }>(
-          `SELECT authority_generation, waterline
-             FROM workspace_workstream_suggestion_feedback
-            WHERE workstream_id = ? AND action_id = ?`,
-          envelope.workstreamId,
-          effect.actionId,
-        ).toArray()[0];
-        if (!current
-          || envelope.generation > current.authority_generation
-          || (envelope.generation === current.authority_generation
-            && envelope.sourceVersion > current.waterline)) {
-          this.state.storage.sql.exec(
-            `INSERT INTO workspace_workstream_suggestion_feedback
-               (workstream_id, action_id, activity_id, source, status, resolved_at,
-                resolved_by_user_id, authority_generation, waterline, source_event_id, projected_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(workstream_id, action_id) DO UPDATE SET
-               activity_id = excluded.activity_id, source = excluded.source,
-               status = excluded.status, resolved_at = excluded.resolved_at,
-               resolved_by_user_id = excluded.resolved_by_user_id,
-               authority_generation = excluded.authority_generation,
-               waterline = excluded.waterline,
-               source_event_id = excluded.source_event_id,
-               projected_at = excluded.projected_at`,
-            envelope.workstreamId,
-            effect.actionId,
-            effect.activityId,
-            effect.source,
-            effect.status,
-            epoch(effect.resolvedAt),
-            effect.resolvedByUserId,
-            envelope.generation,
-            envelope.sourceVersion,
-            envelope.messageId,
-            now,
-          );
         }
       }
 
@@ -7785,7 +8397,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         now,
       );
       if (changed) this.advanceDirectoryVersion(now);
-      return changed;
+      return { changed, participantMembershipChanged };
     });
   }
 
@@ -7830,7 +8442,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     return {
-      items: rows.map((row) => directoryWorkstream(row, request.workspaceId)),
+      items: mapDirectoryWorkstreams(this.state.storage.sql, rows, request.workspaceId),
       stateVersions: rows.map(directoryStateVersion),
       nextCursor,
       directoryWaterline: this.directoryWaterline(),
@@ -7973,6 +8585,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Push the current row; missed intermediate rows are intentionally irrelevant. */
   private async publishWorkstreamState(workstreamId: string, targetUserId?: string): Promise<void> {
     const occurredAt = new Date().toISOString();
+    // Viewer-independent: one query for every subscribed socket, not one per socket.
+    const preview = loadParticipantPreviews(this.state.storage.sql, [workstreamId]).get(workstreamId);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed) continue;
@@ -8000,7 +8614,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           commonWaterline: stateVersion.commonWaterline,
           viewerWaterline: stateVersion.viewerWaterline,
         },
-        workstream: visible ? directoryWorkstream(row, attachment.workspaceId) : null,
+        workstream: visible ? directoryWorkstream(row, attachment.workspaceId, preview) : null,
       }));
       try {
         socket.send(payload);

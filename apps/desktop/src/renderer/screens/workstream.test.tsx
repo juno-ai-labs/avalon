@@ -92,7 +92,7 @@ describe('work-stream route handoff', () => {
     const transcript = {
       snapshotId: 'snapshot-route', snapshotThrough: 0, eventSequence: 0,
       snapshotAtUtc: '2026-08-27T12:00:00.000Z', unreadAnchorSequence: null,
-      unreadReason: 'no_unread' as const, ranges: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+      unreadReason: 'no_unread' as const, ranges: [], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
 
     expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, workstream, transcript)).toBe(true);
@@ -132,6 +132,8 @@ const headerWorkstream: WorkstreamDetail = {
   firstUnreadSequenceNumber: null,
   nextPendingWakeup: null,
   pinPosition: null,
+  participantUserIds: [],
+  participantExtraCount: 0,
   createdAt: '2026-08-07T12:00:00.000Z',
   participants: [],
   viewers: [],
@@ -145,11 +147,11 @@ describe('running work-stream message delivery', () => {
   it('keeps accepted pending messages visibly pending until canonical promotion', () => {
     expect(acceptedMessageOverlayDeliveryState('pending', 'steer')).toBe('steer_pending');
     expect(acceptedMessageOverlayDeliveryState('pending', 'queue')).toBe('queue_pending');
-    expect(acceptedMessageOverlayDeliveryState('pending', undefined)).toBe('steer_pending');
+    expect(acceptedMessageOverlayDeliveryState('pending', undefined)).toBe('queue_pending');
     expect(acceptedMessageOverlayDeliveryState('canonical', 'queue')).toBeUndefined();
   });
 
-  it('lets the person queue a message for the next loop and sends that exact choice', async () => {
+  it('queues a message for the in-flight loop without a delivery dropdown', async () => {
     const onSend = vi.fn(async () => undefined);
     render(
       <Tooltip.Provider>
@@ -170,9 +172,7 @@ describe('running work-stream message delivery', () => {
       </Tooltip.Provider>,
     );
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Message delivery' }), {
-      target: { value: 'queue' },
-    });
+    expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: 'Message the work stream' });
     fireEvent.change(composer, { target: { value: 'Do this after the current loop stops' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -183,7 +183,6 @@ describe('running work-stream message delivery', () => {
       undefined,
       'queue',
     ));
-    expect(screen.getByRole('combobox', { name: 'Message delivery' })).toHaveValue('steer');
   });
 });
 
@@ -265,8 +264,11 @@ describe('WorkstreamHeader presence', () => {
       presentUserIds: [current.id, collaborator.id],
     });
 
-    expect(screen.getByTitle(current.name).closest('.avatar-stack-item')).not.toHaveClass('is-present');
-    expect(container.querySelector('.avatar-stack-item.is-present')).not.toBeNull();
+    const items = [...container.querySelectorAll('.participant-header-button .avatar-stack-item')];
+    expect(items).toHaveLength(2);
+    expect(items[0]).not.toHaveClass('is-present');
+    expect(items[1]).toHaveClass('is-present');
+    expect(screen.queryByTitle(current.name)).not.toBeInTheDocument();
     expect(screen.queryByTitle(collaborator.name)).not.toBeInTheDocument();
     expect(container.querySelectorAll('.avatar-presence-ping')).toHaveLength(1);
     expect(container.querySelector('.participant-header-button [tabindex]')).toBeNull();

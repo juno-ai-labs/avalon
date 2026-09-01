@@ -271,6 +271,8 @@ interface RunRow extends Record<string, SqlStorageValue> {
   error_json: string | null;
   terminalized_at: number | null;
   final_turn_id: string | null;
+  external_settled_at: number | null;
+  last_settlement_error_code: string | null;
 }
 
 /** Polls the object until the run settles; a run that never settles fails here. */
@@ -289,7 +291,8 @@ async function settledRun(stub: DurableObjectStub, runId: string): Promise<RunRo
   await expect.poll(async () => {
     const row = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<RunRow>(
-        `SELECT run_id, status, error_json, terminalized_at, final_turn_id
+        `SELECT run_id, status, error_json, terminalized_at, final_turn_id,
+                external_settled_at, last_settlement_error_code
            FROM runs WHERE run_id = ?`,
         runId,
       ).toArray()[0] ?? null);
@@ -308,6 +311,27 @@ async function settledRun(stub: DurableObjectStub, runId: string): Promise<RunRo
     return `run ${runId} never reached a terminal state — row=${JSON.stringify(row)} `
       + `alarm=${String(diagnostics.alarm)} loop=${JSON.stringify(diagnostics.loop)}`;
   }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe("terminal");
+  return settled!;
+}
+
+/** Polls until terminal side effects have consumed the saved canonical turn. */
+async function externallySettledRun(stub: DurableObjectStub, runId: string): Promise<RunRow> {
+  await settledRun(stub, runId);
+  let settled: RunRow | null = null;
+  await expect.poll(async () => {
+    const row = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<RunRow>(
+        `SELECT run_id, status, error_json, terminalized_at, final_turn_id,
+                external_settled_at, last_settlement_error_code
+           FROM runs WHERE run_id = ?`,
+        runId,
+      ).toArray()[0] ?? null);
+    if (row?.external_settled_at !== null && row?.external_settled_at !== undefined) {
+      settled = row;
+      return "settled";
+    }
+    return `terminal side effects did not consume the canonical turn — row=${JSON.stringify(row)}`;
+  }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe("settled");
   return settled!;
 }
 
@@ -819,8 +843,12 @@ describe("a member's message travels the whole pipeline", () => {
           "establish the persistent conversation",
           SCHEDULED_ACTIVATION_MODEL,
         );
-        expect((await settledRun(stub, result.body.harnessRunId as string)).status)
-          .toBe("completed");
+        const settled = await externallySettledRun(stub, result.body.harnessRunId as string);
+        expect(settled).toMatchObject({
+          status: "completed",
+          last_settlement_error_code: null,
+        });
+        expect(settled.final_turn_id).toContain(":turn:");
         await waitForLoopRelease(stub);
         return result;
       } finally {

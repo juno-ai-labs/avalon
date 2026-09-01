@@ -11,6 +11,7 @@ import {
   WorkstreamSearchResourceOutputSchema,
   WorkstreamSummarizeResourceOutputSchema,
   WorkstreamViewResourceOutputSchema,
+  AttachmentKindSchema,
   classifyAttachmentKind,
   ResourceRelationshipTypeSchema,
   resourceDirectionForRelationship,
@@ -20,7 +21,6 @@ import {
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { z } from "zod";
-import { extractText, getDocumentProxy } from "unpdf";
 import type { Env } from "../env";
 import { AttachmentCursorError, openAttachmentCursor, sealAttachmentCursor } from "../lib/attachment-cursor";
 import { logStructuredEvent } from "../observability/logger";
@@ -78,7 +78,7 @@ const ListCursorStateSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("database"),
     fingerprint: z.string().min(1).max(100),
-    attachmentKind: z.enum(["image", "markdown", "pdf", "document", "spreadsheet", "presentation", "text", "other"]).nullable(),
+    attachmentKind: AttachmentKindSchema.nullable(),
     limit: z.number().int().min(1).max(50),
     afterAttachedAt: z.string().datetime({ offset: true }),
     afterResourceId: z.string().uuid(),
@@ -87,7 +87,7 @@ const ListCursorStateSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("in_memory"),
     fingerprint: z.string().min(1).max(100),
-    attachmentKind: z.enum(["image", "markdown", "pdf", "document", "spreadsheet", "presentation", "text", "other"]).nullable(),
+    attachmentKind: AttachmentKindSchema.nullable(),
     limit: z.number().int().min(1).max(50),
     nextIndex: z.number().int().nonnegative(),
     asOf: z.string().datetime({ offset: true }),
@@ -446,6 +446,7 @@ export function createWorkstreamAttachmentTools(
             }, {
               database: env.DB,
               images: env.IMAGES,
+              documentProcessor: env.DOCUMENT_PROCESSOR,
               maxDimension,
               maxBytes: MAX_TOTAL_MODEL_IMAGE_BYTES - deliveredImageBytes,
             });
@@ -613,6 +614,7 @@ export async function rehydrateWorkstreamViewReceipt(
     }, {
       database: env.DB,
       images: env.IMAGES,
+      documentProcessor: env.DOCUMENT_PROCESSOR,
       maxDimension: parsedInput.data.maxDimension ?? DEFAULT_IMAGE_MAX_DIMENSION,
       maxBytes: MAX_TOTAL_MODEL_IMAGE_BYTES - deliveredImageBytes,
     });
@@ -719,7 +721,7 @@ async function ensureReadyTextDerivative(
 ): Promise<Extract<MaterializedAttachmentDerivative, { status: "ready" }>> {
   const result = await materializeAttachmentDerivative(env.DB, env.PAYLOADS, authorizedDerivativeResource(row), {
     signal: context.signal,
-    pdfExtractor: extractPdfText,
+    pdfExtractor: (bytes) => env.DOCUMENT_PROCESSOR.extractText(bytes),
     ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(env.AI, row.title, bytes, pageCount, context.signal),
     onPhase: (event) => logStructuredEvent(env, "info", "attachment_derivative_phase_finished", {
       workspace_id: context.workspaceId,
@@ -742,13 +744,6 @@ async function ensureReadyTextDerivative(
     result.status === "unsupported" ? "This resource format is unsupported" : "The resource could not be converted",
     { reason: result.errorCode },
   );
-}
-
-async function extractPdfText(bytes: Uint8Array) {
-  const pdf = await getDocumentProxy(bytes);
-  if (pdf.numPages > 200) return { pageCount: pdf.numPages, pages: [] };
-  const extracted = await extractText(pdf);
-  return { pageCount: extracted.totalPages, pages: Array.isArray(extracted.text) ? extracted.text : [extracted.text] };
 }
 
 function authorizedDerivativeResource(row: VisibleWorkstreamResourceRow): AuthorizedDerivativeResource {
@@ -798,6 +793,7 @@ function rowKind(row: VisibleWorkstreamResourceRow): AttachmentKind {
 
 function contentMode(row: VisibleWorkstreamResourceRow, kind: AttachmentKind): ContentMode {
   if (kind === "image") return "view";
+  if (kind === "audio") return "unsupported";
   if (row.model_content_status === "unsupported"
     && row.model_content_extractor_version === ATTACHMENT_TEXT_EXTRACTOR_VERSION) return "unsupported";
   if (kind !== "other" || (row.model_content_status === "ready" && row.model_mime_type?.startsWith("text/"))) return "read";

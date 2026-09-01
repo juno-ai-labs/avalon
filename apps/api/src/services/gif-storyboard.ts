@@ -1,5 +1,6 @@
 import { decompressFrame, decompressFrames, parseGIF } from "gifuct-js";
 import UPNG from "upng-js";
+import type { GifModelMetadata } from "./gif-metadata";
 
 const MAX_GIF_FRAMES = 500;
 const MAX_GIF_CANVAS_PIXELS = 4_000_000;
@@ -10,17 +11,6 @@ const TILE_HEIGHT = 360;
 const LABEL_HEIGHT = 28;
 const STORYBOARD_PADDING = 16;
 const STORYBOARD_COLUMNS = 3;
-
-export interface GifModelMetadata {
-  kind: "animated_gif";
-  width: number;
-  height: number;
-  frameCount: number;
-  durationMs: number;
-  averageFps: number;
-  loopCount: number | null;
-  sampledTimestampsMs: number[];
-}
 
 export interface GifStoryboard {
   bytes: Uint8Array;
@@ -82,41 +72,6 @@ export function buildGifStoryboard(bytes: Uint8Array): GifStoryboard | null {
       sampledTimestampsMs: renderedSamples.map((sample) => sample.timestampMs),
     },
   };
-}
-
-export function parseGifModelMetadata(value: string | null | undefined): GifModelMetadata | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as Partial<GifModelMetadata>;
-    if (parsed.kind !== "animated_gif"
-      || !isPositiveInteger(parsed.width)
-      || !isPositiveInteger(parsed.height)
-      || !isPositiveInteger(parsed.frameCount)
-      || !isNonNegativeInteger(parsed.durationMs)
-      || typeof parsed.averageFps !== "number"
-      || !Number.isFinite(parsed.averageFps)
-      || parsed.averageFps < 0
-      || !(parsed.loopCount === null || isNonNegativeInteger(parsed.loopCount))
-      || !Array.isArray(parsed.sampledTimestampsMs)
-      || parsed.sampledTimestampsMs.length === 0
-      || parsed.sampledTimestampsMs.length > MAX_STORYBOARD_FRAMES
-      || !parsed.sampledTimestampsMs.every(isNonNegativeInteger)) return null;
-    return parsed as GifModelMetadata;
-  } catch {
-    return null;
-  }
-}
-
-export function describeGifModelMetadata(fileName: string, metadata: GifModelMetadata): string {
-  const loop = metadata.loopCount === 0 ? "loops indefinitely"
-    : metadata.loopCount === null ? "loop behavior is unspecified"
-      : `loops ${metadata.loopCount} ${metadata.loopCount === 1 ? "time" : "times"}`;
-  const timestamps = metadata.sampledTimestampsMs.map(formatTimestamp).join(", ");
-  return `[${fileName}: animated GIF; ${formatDuration(metadata.durationMs)}; ${metadata.frameCount} frames; approximately ${formatFps(metadata.averageFps)} fps; ${metadata.width}x${metadata.height}; ${loop}. The storyboard cells are ordered left-to-right, top-to-bottom at timestamps ${timestamps}.]`;
-}
-
-function formatFps(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/u, "").replace(/\.$/u, "");
 }
 
 function roundTo(value: number, places: number): number {
@@ -307,10 +262,6 @@ function formatTimestamp(milliseconds: number): string {
   return `${minutes}m${Math.floor(totalSeconds % 60).toString().padStart(2, "0")}s`;
 }
 
-function formatDuration(milliseconds: number): string {
-  return `duration ${formatTimestamp(milliseconds)}`;
-}
-
 function assertSafeDimensions(width: number, height: number): void {
   if (!isPositiveInteger(width) || !isPositiveInteger(height) || width * height > MAX_GIF_CANVAS_PIXELS) {
     throw new Error("GIF dimensions exceed the safe storyboard limit");
@@ -319,10 +270,6 @@ function assertSafeDimensions(width: number, height: number): void {
 
 function isPositiveInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) > 0;
-}
-
-function isNonNegativeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 0;
 }
 
 function fill(target: Uint8ClampedArray, red: number, green: number, blue: number, alpha: number): void {

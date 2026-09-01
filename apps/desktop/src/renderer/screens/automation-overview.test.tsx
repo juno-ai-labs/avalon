@@ -199,6 +199,35 @@ describe('Automation template updates', () => {
     }));
   });
 
+  it('does not call a destination disconnected while the connection list is still unknown', async () => {
+    // The screen renders as soon as the automation resolves, so an absent
+    // connection list is not an empty one. Read as empty, every healthy
+    // connector destination was declared orphaned and the reader was told to
+    // "turn off to stop trying" — advice that destroys a working destination —
+    // and the row it needs to add one was never offered. A failed
+    // `GET /connections` made that permanent, since nothing here retries it.
+    api.getConnections.mockRejectedValue(new Error('Rally could not reach the selected regional service.'));
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      deliveryTargets: [
+        { type: 'slack_agent_dm', connectionId: 'connection-slack', displayName: 'Slack direct message', status: 'active' },
+      ],
+    });
+    renderScreen();
+
+    await screen.findByRole('region', { name: 'Delivered to' });
+    await waitFor(() => expect(
+      screen.getByText(/Rally cannot check your connections right now/),
+    ).toBeInTheDocument());
+    expect(screen.queryByText('Disconnected — turn off to stop trying')).not.toBeInTheDocument();
+    // Still listed, and still ticked: dropping the row would leave the sentence
+    // below claiming nothing is sent while the destination is delivering.
+    expect(await screen.findByRole('checkbox', { name: /Slack direct message/ })).toBeChecked();
+    expect(
+      screen.queryByText(/Results now only go to the work stream/),
+    ).not.toBeInTheDocument();
+  });
+
   it('replaces a same-kind destination rather than composing a set the API refuses', async () => {
     api.getConnections.mockResolvedValue([
       {

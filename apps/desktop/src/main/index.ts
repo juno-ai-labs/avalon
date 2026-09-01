@@ -55,6 +55,7 @@ import type {
   DesktopWorkspaceOnboardingState,
   MeetingAudioPermissionKind,
   RuntimeConfig,
+  DesktopDeepLinkErrorNotice,
 } from '../common/desktop';
 import {
   applicationIconArtworkFileName,
@@ -423,6 +424,39 @@ async function reportTelemetryProductIntent(
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+/**
+ * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: characters of the message a renderer may put in the deep-link failure
+ *   window.
+ * Without it: the window is always-on-top and its message is its entire
+ *   contents, so whatever reaches this draws text above every other window,
+ *   under Rally's own name. Checked 2026-08-29: most messages are fixed
+ *   literals in `app-session.tsx`, but not all of them — the sign-in branch
+ *   interpolates the link's own `error` parameter
+ *   (`Sign in could not be completed: ${…}`) with no length or charset check on
+ *   it, and anyone who can get the operating system to open a `rally://` URL
+ *   chooses that string. So the untrusted path is the link, not only a renderer
+ *   that has been taken over.
+ * Direction: upper bound; the open value is +Infinity.
+ * Trips: the invoke rejects and no window opens. The reporting renderer already
+ *   ignores the result, so a refused message costs the failure notice, not the
+ *   surface that reported it.
+ * Derive from: the longest fixed message in `app-session.tsx` against the
+ *   window's 420x260 at the body type size — a couple of lines of copy, not a
+ *   document. Bounding the interpolation at its own source would be better
+ *   still; this guard is the backstop, not the fix.
+ */
+const DEEP_LINK_ERROR_MESSAGE_LIMIT = Number.POSITIVE_INFINITY;
+
+let deepLinkErrorWindow: BrowserWindow | null = null;
+// Held in main rather than passed in the URL so that re-showing the singleton
+// with a later failure does not have to reload the window to change its text.
+// Carries an id because the window's acknowledgement is matched against it: see
+// `deep-link-error:dismiss`.
+let deepLinkErrorNotice: DesktopDeepLinkErrorNotice | null = null;
+let deepLinkErrorNoticesShown = 0;
 const meetingWindows = new Set<BrowserWindow>();
 const meetingWindowsAllowedToClose = new WeakSet<BrowserWindow>();
 let rendererReady = false;
@@ -576,7 +610,7 @@ async function reportJavascriptErrorCandidate(
 }
 
 function rallyWindows(): BrowserWindow[] {
-  return [mainWindow, settingsWindow, ...meetingWindows]
+  return [mainWindow, settingsWindow, deepLinkErrorWindow, ...meetingWindows]
     .filter((window): window is BrowserWindow => Boolean(window && !window.isDestroyed()));
 }
 
@@ -2368,6 +2402,7 @@ function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const sender = event.sender;
   const belongsToRallyWindow = sender === mainWindow?.webContents
     || sender === settingsWindow?.webContents
+    || sender === deepLinkErrorWindow?.webContents
     || isMeetingWindowContents(sender);
   if (!belongsToRallyWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
     throw new Error('Blocked IPC request from untrusted content');
@@ -2378,6 +2413,20 @@ function assertMeetingIpcSender(event: IpcMainInvokeEvent): void {
   assertTrustedIpcSender(event);
   if (!isMeetingWindowContents(event.sender)) {
     throw new Error('Only a meeting-notes window can request recording permissions');
+  }
+}
+
+/**
+ * The failure window reads and dismisses its own message and nothing else.
+ *
+ * Narrower than the trusted-sender check on purpose: `dismissDeepLinkError`
+ * closes a window, and a renderer that is not that window closing it would
+ * discard a message the person has not read.
+ */
+function assertDeepLinkErrorIpcSender(event: IpcMainInvokeEvent): void {
+  assertTrustedIpcSender(event);
+  if (!deepLinkErrorWindow || event.sender !== deepLinkErrorWindow.webContents) {
+    throw new Error('Only the deep-link failure window can read or dismiss its message');
   }
 }
 
@@ -2643,6 +2692,37 @@ function registerIpc(): void {
     const section = rawSection === undefined ? undefined : parseDesktopSettingsSection(rawSection);
     if (rawSection !== undefined && !section) throw new Error('Invalid settings section');
     await createSettingsWindow(section ?? undefined);
+  });
+  ipcMain.handle('deep-link-error:show', async (event, rawMessage: unknown) => {
+    assertTrustedIpcSender(event);
+    // The copy is the renderer's, but the window is main's, so the string is
+    // checked here rather than trusted: it is about to be the entire contents
+    // of a window that sits above everything else.
+    if (typeof rawMessage !== 'string') throw new Error('Invalid deep-link failure message');
+    const message = rawMessage.trim();
+    if (!message || message.length > DEEP_LINK_ERROR_MESSAGE_LIMIT) {
+      throw new Error('Invalid deep-link failure message');
+    }
+    await createDeepLinkErrorWindow(message);
+  });
+  ipcMain.handle('deep-link-error:get', (event) => {
+    assertDeepLinkErrorIpcSender(event);
+    return deepLinkErrorNotice;
+  });
+  ipcMain.handle('deep-link-error:dismiss', (event, rawNoticeId: unknown) => {
+    assertDeepLinkErrorIpcSender(event);
+    if (typeof rawNoticeId !== 'number' || !Number.isSafeInteger(rawNoticeId)) {
+      throw new Error('Invalid deep-link failure notice id');
+    }
+    // Acknowledging is scoped to what was read. A failure reported between the
+    // person reading this one and their click arriving has already replaced the
+    // text — duplicate reports of one connector completion are the normal case
+    // here — and closing on a stale acknowledgement would take that newer notice
+    // with it, resolving the report that carried it and leaving nothing on
+    // screen. Ignoring the stale click leaves the window up on the newer text,
+    // which is the one thing nobody has acknowledged yet.
+    if (deepLinkErrorNotice?.id !== rawNoticeId) return;
+    deepLinkErrorWindow?.close();
   });
   ipcMain.handle('system:open-meeting-notes', async (event, rawNoteId: unknown) => {
     assertTrustedIpcSender(event);
@@ -3067,7 +3147,10 @@ function preloadPath(): string {
   return path;
 }
 
-function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'settings' | 'meeting'): void {
+function installWindowDiagnostics(
+  window: BrowserWindow,
+  surface: 'main' | 'settings' | 'meeting' | 'deep-link-error',
+): void {
   window.webContents.on('preload-error', (_event, _scriptPath, error) => {
     logError('rally', `${surface} preload failed to initialize`, {
       errorCode: javascriptErrorCode(error, 'unknown'),
@@ -3124,7 +3207,11 @@ function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'sett
   }
 }
 
-async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' | 'settings' | 'meeting'): Promise<void> {
+async function loadRenderer(
+  window: BrowserWindow,
+  url: string,
+  surface: 'main' | 'settings' | 'meeting' | 'deep-link-error',
+): Promise<void> {
   try {
     await window.loadURL(url);
   } catch (error) {
@@ -3135,7 +3222,7 @@ async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' 
 }
 
 function rendererUrl(
-  surface?: 'settings' | 'meeting',
+  surface?: 'settings' | 'meeting' | 'deep-link-error',
   settingsSection?: DesktopSettingsSection,
   noteId?: string,
   meetingEntrypoint?: 'sidebar' | 'menu_bar' | 'unknown',
@@ -3146,6 +3233,7 @@ function rendererUrl(
   if (surface) target.searchParams.set('surface', surface);
   if (settingsSection) target.searchParams.set('settingsSection', settingsSection);
   if (surface === 'settings') target.hash = '/settings';
+  if (surface === 'deep-link-error') target.hash = '/deep-link-error';
   if (surface === 'meeting') {
     if (noteId) target.searchParams.set('noteId', noteId);
     if (meetingEntrypoint) target.searchParams.set('meetingEntrypoint', meetingEntrypoint);
@@ -3158,6 +3246,110 @@ function requestSettingsSection(window: BrowserWindow, section: DesktopSettingsS
   const deliver = (): void => window.webContents.send('settings:section-requested', section);
   if (window.webContents.isLoadingMainFrame()) window.webContents.once('did-finish-load', deliver);
   else deliver();
+}
+
+/**
+ * Show one refused deep link, in a window of its own.
+ *
+ * A deep link is the operating system handing Rally somewhere to go. When it is
+ * refused there is nothing on screen that reflects the attempt, and the window
+ * that is in front may not even be the one that handled it: a connector
+ * completion is delivered to settings, which raises itself, while the failure
+ * used to be drawn in the main window behind it. Neither an in-page banner nor
+ * an in-page dialog can fix that from inside one renderer, so the message gets
+ * a window — small, above the others, and in front of whichever one is focused.
+ *
+ * Sized rather than resizable, and deliberately not a native `showMessageBox`:
+ * the message is Rally's own copy and belongs in Rally's own type and colours,
+ * and a native box on Linux is drawn by whatever toolkit is installed.
+ */
+async function createDeepLinkErrorWindow(message: string): Promise<void> {
+  deepLinkErrorNotice = { id: deepLinkErrorNoticesShown += 1, message };
+  if (deepLinkErrorWindow && !deepLinkErrorWindow.isDestroyed()) {
+    deepLinkErrorWindow.webContents.send('deep-link-error:changed', deepLinkErrorNotice);
+    // Not while the first load is still in flight, which is the *common* case
+    // here rather than a rare one: a connector completion is reported by both
+    // renderers microseconds apart, so the second report routinely arrives
+    // while the window created by the first is still loading. `show: false`
+    // plus `ready-to-show` below exists to keep an unpainted window off the
+    // screen, and showing one here would step around it — an empty always-on-top
+    // 420x260 rectangle over everything until the renderer paints. The message
+    // is not lost by waiting: it is in `deepLinkErrorNotice` above, and the
+    // mounting renderer reads that.
+    if (!deepLinkErrorWindow.webContents.isLoadingMainFrame()) {
+      if (deepLinkErrorWindow.isMinimized()) deepLinkErrorWindow.restore();
+      deepLinkErrorWindow.show();
+      deepLinkErrorWindow.focus();
+    }
+    return;
+  }
+
+  const failureWindow = new BrowserWindow({
+    width: 420,
+    height: 260,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    show: false,
+    alwaysOnTop: true,
+    backgroundColor: windowBackgroundColor(),
+    title: 'Rally',
+    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      devTools: !app.isPackaged,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  });
+
+  deepLinkErrorWindow = failureWindow;
+  installWindowDiagnostics(failureWindow, 'deep-link-error');
+  failureWindow.setMenuBarVisibility(false);
+  failureWindow.once('ready-to-show', () => failureWindow.show());
+  // Closing the window *is* the acknowledgement, whether that was the button or
+  // the title bar. Leaving the message behind would hand it to the next
+  // failure's window as though it had just happened.
+  //
+  // Bound to `close` as well as `closed`, and that is the important half: a
+  // window between the two is still non-destroyed, so a report landing in that
+  // gap would take the re-show branch above, hand its message to a renderer that
+  // is going away, and *resolve* — and then `closed` would null the message it
+  // had just accepted. Releasing on `close` means such a report finds no window
+  // and builds a fresh one. `destroy()` skips `close` entirely, which is why
+  // both are bound; whichever runs first does the work.
+  //
+  // Only ever for the window that is still *the* window: a disposed one's event
+  // arrives after the singleton has moved on, and clearing then would take the
+  // live window's message with it.
+  const releaseFailureWindow = (): void => {
+    if (deepLinkErrorWindow !== failureWindow) return;
+    deepLinkErrorWindow = null;
+    deepLinkErrorNotice = null;
+  };
+  failureWindow.on('close', releaseFailureWindow);
+  failureWindow.on('closed', releaseFailureWindow);
+  try {
+    await loadRenderer(failureWindow, rendererUrl('deep-link-error'), 'deep-link-error');
+  } catch (error) {
+    // A window that never loaded must not stay in the singleton. Left there it
+    // is worse than no window at all: the next failure takes the re-show branch
+    // above, raises a blank window with no Continue button in it, and *resolves*
+    // — so the reporter reads it as delivered and its own fallback never runs
+    // either. One failed load would disable every later notice for the lifetime
+    // of the process. Disposing here means the next report builds a fresh one.
+    if (deepLinkErrorWindow === failureWindow) {
+      deepLinkErrorWindow = null;
+      deepLinkErrorNotice = null;
+    }
+    if (!failureWindow.isDestroyed()) failureWindow.destroy();
+    throw error;
+  }
 }
 
 async function createSettingsWindow(section?: DesktopSettingsSection): Promise<void> {
@@ -3380,7 +3572,7 @@ function installContentSecurityPolicy(): void {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: ${fontScheme}:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src ${backdropScheme}:; frame-ancestors 'none'`,
+          `default-src 'self'; script-src ${scriptSources}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data: ${fontScheme}:; connect-src ${connectSources}; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src ${backdropScheme}:; frame-ancestors 'none'`,
         ],
       },
     });

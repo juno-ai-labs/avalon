@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
@@ -168,38 +168,106 @@ describe('AvatarStack', () => {
       </Tooltip.Provider>,
     );
 
-    const currentItem = screen.getByTitle('Current User').closest('.avatar-stack-item');
-    const collaboratorItem = container.querySelector('.avatar-stack-item.is-present');
-    if (!currentItem || !collaboratorItem) throw new Error('avatar stack item missing');
-
-    fireEvent.pointerMove(currentItem, { pointerType: 'mouse' });
-    await act(() => new Promise((resolve) => setTimeout(resolve, 350)));
-    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
-    expect(currentItem).not.toHaveAttribute('aria-describedby');
-    fireEvent.focus(currentItem);
-    expect(currentItem).not.toHaveAttribute('aria-describedby');
+    const items = [...container.querySelectorAll('.avatar-stack-item')];
+    const currentItem = items[0];
+    const collaboratorItem = items[1];
+    if (!currentItem || !collaboratorItem || !items[2]) {
+      throw new Error('avatar stack item missing');
+    }
 
     fireEvent.pointerMove(collaboratorItem, { pointerType: 'mouse' });
-    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       'Ari Collaborator is viewing this workstream.',
     );
     expect(container.querySelector('.avatar-stack')).toHaveAccessibleName(
       'Current User; Ari Collaborator is viewing this workstream.; Casey Observer',
     );
-    const items = [...container.querySelectorAll('.avatar-stack-item')];
     const ping = collaboratorItem.querySelector('.avatar-presence-ping');
     const collaboratorAvatar = collaboratorItem.querySelector('.avatar');
-    if (!ping || !collaboratorAvatar || !items[0] || !items[2]) {
+    if (!ping || !collaboratorAvatar) {
       throw new Error('three-avatar presence stack missing');
     }
-    expect(items[0].compareDocumentPosition(ping) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(currentItem.compareDocumentPosition(ping) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(ping.compareDocumentPosition(collaboratorAvatar) & Node.DOCUMENT_POSITION_FOLLOWING)
       .not.toBe(0);
     expect(ping.compareDocumentPosition(items[2]) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(currentItem).not.toHaveClass('is-present');
     expect(currentItem).not.toHaveAttribute('tabindex');
     expect(collaboratorItem).not.toHaveAttribute('tabindex');
+    expect(screen.queryByTitle('Current User')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Ari Collaborator')).not.toBeInTheDocument();
+  });
+
+  it('names a person who is not viewing the work stream', async () => {
+    stubResizeObserver();
+    const { container } = render(
+      <Tooltip.Provider delayDuration={0}>
+        <AvatarStack
+          members={[{
+            id: 'user-observer',
+            name: 'Casey Observer',
+            email: 'casey@rally.test',
+            timezone: 'America/Los_Angeles',
+          }]}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const item = container.querySelector('.avatar-stack-item');
+    if (!item) throw new Error('avatar stack item missing');
+    fireEvent.pointerMove(item, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Casey Observer');
+    expect(screen.queryByTitle('Casey Observer')).not.toBeInTheDocument();
+  });
+
+  it('skips the per-face name tooltip when the caller already explains the stack', async () => {
+    stubResizeObserver();
+    const { container } = render(
+      <Tooltip.Provider delayDuration={0}>
+        <AvatarStack
+          members={[{
+            id: 'user-observer',
+            name: 'Casey Observer',
+            email: 'casey@rally.test',
+            timezone: 'America/Los_Angeles',
+          }]}
+          nameTooltip={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const item = container.querySelector('.avatar-stack-item');
+    if (!item) throw new Error('avatar stack item missing');
+    expect(item).not.toHaveAttribute('data-state');
+    fireEvent.pointerMove(item, { pointerType: 'mouse' });
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(container.querySelector('.avatar-stack')).toHaveAccessibleName('Casey Observer');
+  });
+
+  it('still explains presence when name tooltips are off', async () => {
+    stubResizeObserver();
+    const { container } = render(
+      <Tooltip.Provider delayDuration={0}>
+        <AvatarStack
+          currentUserId="user-current"
+          members={[{
+            id: 'user-collaborator',
+            name: 'Ari Collaborator',
+            email: 'ari@rally.test',
+            timezone: 'America/Los_Angeles',
+          }]}
+          nameTooltip={false}
+          presentUserIds={['user-collaborator']}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const item = container.querySelector('.avatar-stack-item');
+    if (!item) throw new Error('avatar stack item missing');
+    fireEvent.pointerMove(item, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'Ari Collaborator is viewing this workstream.',
+    );
   });
 
   it('keeps a final visible participant ping below the overflow badge', () => {
@@ -232,6 +300,50 @@ describe('AvatarStack', () => {
     if (!ping || !overflow) throw new Error('final presence ping or overflow badge missing');
     expect(ping.compareDocumentPosition(overflow) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(overflow).toHaveTextContent('+1');
+  });
+
+  it('uses a caller-supplied overflow when the stack was already truncated', () => {
+    const members = [
+      ['user-ari', 'Ari Collaborator'],
+      ['user-casey', 'Casey Observer'],
+      ['user-drew', 'Drew Participant'],
+    ].map(([id, name]) => ({
+      id: id!,
+      name: name!,
+      email: `${id}@rally.test`,
+      timezone: 'America/Los_Angeles',
+    }));
+    const { container } = render(
+      <Tooltip.Provider>
+        <AvatarStack extraCount={2} limit={3} members={members} />
+      </Tooltip.Provider>,
+    );
+
+    expect(container.querySelectorAll('.avatar-small')).toHaveLength(3);
+    expect(container.querySelector('.avatar-overflow')).toHaveTextContent('+2');
+    expect(container.querySelector('.avatar-stack')).toHaveAccessibleName(
+      'Ari Collaborator; Casey Observer; Drew Participant; and 2 more',
+    );
+  });
+
+  it('does not invent an overflow when extraCount is zero', () => {
+    const members = [
+      ['user-ari', 'Ari Collaborator'],
+      ['user-casey', 'Casey Observer'],
+      ['user-drew', 'Drew Participant'],
+    ].map(([id, name]) => ({
+      id: id!,
+      name: name!,
+      email: `${id}@rally.test`,
+      timezone: 'America/Los_Angeles',
+    }));
+    const { container } = render(
+      <Tooltip.Provider>
+        <AvatarStack extraCount={0} limit={3} members={members} />
+      </Tooltip.Provider>,
+    );
+
+    expect(container.querySelector('.avatar-overflow')).toBeNull();
   });
 });
 

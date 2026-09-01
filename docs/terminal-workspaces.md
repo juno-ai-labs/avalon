@@ -411,11 +411,11 @@ reconciliation facts and never authorize a request.
 
 All Terminal local rows, regional resource bytes, generated logs/diffs, GitHub App
 installation-token creation, and tool execution records stay in the workspace's
-owning Rally region. Daytona processes the sandbox filesystem in the configured
-regional target and is therefore a regional subprocessor boundary, not a
-cross-region Rally bridge. Global and EU advertise capability independently;
-both checked-in deployments remain `unsupported` until their target, residency,
-snapshot, egress, and lifecycle probes pass. No Terminal record falls back to
+owning Rally region. Daytona is one shared environment: both the Global and EU
+Workers are `supported` on `DAYTONA_TARGET=us` and the same `daytona-small`
+snapshot. Sandbox files therefore run on that one Daytona fleet regardless of
+the Rally workspace region. That is a subprocessor exception, not a Rally
+cross-region bridge — no Terminal D1, R2, or GitHub-token record falls back to
 Global.
 
 ## Security and trust model
@@ -584,6 +584,33 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-30 — EU Terminal is a supported regional deployment
+
+**What changed:** The EU Worker declares `TERMINAL_REGION_CAPABILITY=supported`
+and keeps `DAYTONA_TARGET=us`, the same Daytona environment Global already
+uses. Onboarding no longer tells people Terminal is unavailable in the
+European Union.
+
+**Why:** EU workspaces were shipping without a sandbox while Global had one.
+Rally operates Daytona as a single environment, not a second regional sandbox
+fleet, so enabling EU Terminal means pointing that Worker at the existing
+`us` target rather than inventing a separate Daytona region.
+
+**Considered and rejected:** Declaring `DAYTONA_TARGET=eu` from Daytona's
+published region list. Rally does not run a separate EU Daytona setting;
+treating the two Rally regions as two Daytona fleets would have advertised a
+target the account does not use. Also rejected was leaving the onboarding
+copy in place after the Worker gate opened: the notice is hardcoded, so it
+would have kept telling people the capability was missing after it was not.
+
+**Consequences:** EU sandbox files run on the same Daytona fleet as Global.
+Rally-owned Terminal rows, resource bytes, and GitHub tokens stay in the EU
+Worker. EU uses the same Daytona project key as Global, set as its own Worker
+secret — Cloudflare cannot copy `DAYTONA_API_KEY` from Global. Runtime still
+degrades to `unsupported` if that EU secret (or another required Daytona
+value) is absent. Settings continues to read availability from the regional
+API rather than from hardcoded copy.
 
 ### 2026-08-29 — The revoked-import note check asks WorkspaceDO a typed question
 

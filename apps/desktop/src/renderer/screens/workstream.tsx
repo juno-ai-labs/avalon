@@ -37,6 +37,7 @@ import {
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
+import { useAutoOpenLatestEmbeddedResource } from '../lib/use-auto-open-embedded-resource';
 import { useCitations } from '../lib/use-citations';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { formatDateTime } from '../lib/format';
@@ -57,15 +58,20 @@ import {
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
-  appendDismissedSuggestionId,
   adjacentTranscriptRange,
   composeTranscript,
   createTextMessage,
-  dismissedSuggestionIdsQueryKey,
+  foldSettledWorkIntoMessages,
   groupPluginToolMessages,
   orderedTranscriptMessages,
+  applyPendingInputQueueOrder,
+  assignPendingInputQueueSequences,
+  composerQueueOverlays,
+  isComposerQueueOverlay,
+  pendingOverlayInputId,
   pendingTranscriptInputOverlay,
   reconcileAuthoritativeTranscriptOverlays,
+  transcriptOverlayIdentityKey,
   removeTranscriptOverlay,
   setTranscriptElicitationState,
   transcriptCoverageAdvanced,
@@ -95,7 +101,9 @@ import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
+import { queueAuthorMember, type ComposerQueueItem } from '../components/composer-queue';
 import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
+import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { BlockDashboardPanel, BlockDashboardRail } from '../components/block-dashboard-panel';
 import { useRailCrossFade } from '../components/rail-surface';
@@ -121,7 +129,7 @@ export function acceptedMessageOverlayDeliveryState(
   requestedMode: WorkstreamMessageDeliveryMode | undefined,
 ): Message['deliveryState'] {
   if (deliveryState === 'canonical') return undefined;
-  return requestedMode === 'queue' ? 'queue_pending' : 'steer_pending';
+  return requestedMode === 'steer' ? 'steer_pending' : 'queue_pending';
 }
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
@@ -1079,11 +1087,6 @@ export function WorkstreamScreen(): React.JSX.Element {
     readSocketOpenContext,
     workstreamId: id,
   });
-  // Citations resolve against the loaded work stream's resources, and the
-  // transcript needs this before the screen has decided it has a work stream to
-  // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
-  // which keeps the identity stable while there is nothing loaded.
-  const citations = useCitations({ resources: routedDetail?.resources ?? NO_RESOURCES });
   // The rail's detail reads through the *preview* route, exactly as the
   // attachment lightbox does: it materializes readable text for a file that is
   // not already text, which is what makes a cited Word file or PDF worth
@@ -1096,6 +1099,16 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
     [api],
   );
+  // Citations resolve against the loaded work stream's resources, and the
+  // transcript needs this before the screen has decided it has a work stream to
+  // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
+  // which keeps the identity stable while there is nothing loaded. It is
+  // declared after the preview read because it now takes it: the embed card's
+  // excerpt is the same derivative the rail's panel shows.
+  const citations = useCitations({
+    loadResourceContent,
+    resources: routedDetail?.resources ?? NO_RESOURCES,
+  });
   const automationSubscriptionId = routedDetail?.automationSubscriptionId;
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, automationSubscriptionId ?? null],
@@ -1152,6 +1165,12 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api),
     staleTime: 60_000,
   });
+  const connections = useQuery({
+    queryKey: ['connections'],
+    queryFn: ({ signal }) => api!.getConnections(signal),
+    enabled: Boolean(api),
+    staleTime: 60_000,
+  });
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
@@ -1196,10 +1215,46 @@ export function WorkstreamScreen(): React.JSX.Element {
     id,
     members.data ?? [],
   ), [id, members.data, orderedTranscript.data]);
-  const transcript = useMemo(
-    () => groupPluginToolMessages(composeTranscript(canonicalTranscript, transcriptOverlays.data)),
-    [canonicalTranscript, transcriptOverlays.data],
+  const harnessRunning = routedDetail?.harnessStatus === 'running';
+  const queueOverlays = useMemo(
+    () => composerQueueOverlays(transcriptOverlays.data, { harnessRunning }),
+    [harnessRunning, transcriptOverlays.data],
   );
+  const queueItems = useMemo<ComposerQueueItem[]>(
+    () => queueOverlays.map((overlay) => ({
+      key: transcriptOverlayIdentityKey(overlay.identity),
+      inputId: pendingOverlayInputId(overlay) ?? null,
+      text: overlay.message.text ?? '',
+      member: queueAuthorMember(overlay.message, members.data ?? []),
+      sending: overlay.message.deliveryState === 'sending',
+    })),
+    [members.data, queueOverlays],
+  );
+  const transcript = useMemo(
+    () => {
+      const feedOverlays = (transcriptOverlays.data ?? []).filter((overlay) =>
+        !isComposerQueueOverlay(overlay, { harnessRunning }));
+      return foldSettledWorkIntoMessages(
+        groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+      );
+    },
+    [canonicalTranscript, harnessRunning, transcriptOverlays.data],
+  );
+  // An embed card in the last two text turns opens the inspector onto that
+  // document: when this feed first belongs to the route, and again when a
+  // new turn announces a card this visit has not already opened. Closing
+  // the rail during a live stream does not reopen it when that turn
+  // settles — the visit key is the turn id, shared by the overlay and the
+  // canonical block. `payloadBelongsToRoute` is the fence —
+  // WorkstreamScreen stays mounted across work streams, and a handoff
+  // render can still hold the previous transcript.
+  useAutoOpenLatestEmbeddedResource({
+    enabled: payloadBelongsToRoute,
+    open: citations.open,
+    resolve: citations.resolve,
+    transcript,
+    workstreamId: id,
+  });
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
@@ -1861,43 +1916,26 @@ export function WorkstreamScreen(): React.JSX.Element {
     }
   };
 
-  const resolveSuggestion = async (suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> => {
-    // Remove the pending detail entry before the request so an overlapping
-    // transcript rebuild cannot restore a card whose decision is in flight.
-    const pending = queryClient.getQueryData<WorkstreamDetail>(['workstream', id])
-      ?.suggestions?.find((suggestion) => suggestion.id === suggestionId);
-    const pendingOverlay = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id))
-      ?.find((overlay) => overlay.identity.type === 'activity_suggestion'
-        && overlay.identity.suggestionId === suggestionId);
-    queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
-      ? { ...current, suggestions: (current.suggestions ?? []).filter((suggestion) => suggestion.id !== suggestionId) }
-      : current);
-    queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) =>
-      removeTranscriptOverlay(current, (overlay) => overlay.identity.type === 'activity_suggestion'
-        && overlay.identity.suggestionId === suggestionId));
+  const reorderQueue = async (inputIds: string[]): Promise<void> => {
+    if (!api) throw new Error('This work stream is not ready to reorder queued messages.');
+    const previous = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id));
+    queryClient.setQueryData<TranscriptOverlay[]>(
+      transcriptOverlaysQueryKey(id),
+      (current) => applyPendingInputQueueOrder(current, inputIds),
+    );
     try {
-      await api!.resolveActivitySuggestion(id, suggestionId, action);
-      if (action === 'dismiss') {
-        queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id), (current) =>
-          appendDismissedSuggestionId(current, suggestionId));
-      }
+      const result = await api.reorderPendingLoopInputs(id, inputIds);
+      queryClient.setQueryData<TranscriptOverlay[]>(
+        transcriptOverlaysQueryKey(id),
+        (current) => assignPendingInputQueueSequences(current, result.pendingInputs),
+      );
     } catch (error) {
-      const status = error instanceof ApiError ? error.status : 0;
-      if (pending && status !== 404 && status !== 409) {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
-          && !(current.suggestions ?? []).some((suggestion) => suggestion.id === suggestionId)
-          ? { ...current, suggestions: [...(current.suggestions ?? []), pending] }
-          : current);
-        if (pendingOverlay) {
-          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) =>
-            upsertTranscriptOverlay(current, pendingOverlay));
-        }
-      } else {
-        requestSocketSnapshot();
+      if (previous) {
+        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), previous);
       }
+      setSendError(error instanceof Error ? error.message : 'Queued messages could not be reordered.');
       throw error;
     }
-    requestSocketSnapshot();
   };
 
   useEffect(() => {
@@ -2045,6 +2083,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   ).values()];
 
   return (
+    <ConnectorConnectionsProvider connections={connections.data}>
     <div className="workstream-screen">
       {/* The HyperSight preference is independent metadata, never an open or
           interaction gate. The control is optimistic even before the control
@@ -2106,7 +2145,17 @@ export function WorkstreamScreen(): React.JSX.Element {
         // The transcript reads scrolling intent from the wheel as well as from
         // the scroll it causes, because the two do not arrive in the same frame.
         // `useTranscriptFollow` holds the reasoning.
-        onWheel={(event) => onTranscriptWheel(event.currentTarget, event.deltaY)}
+        //
+        // A predominantly horizontal gesture is not that intent, and since the
+        // embed-card row a run of citations renders into scrolls sideways
+        // inside the transcript, one now reaches this handler: a trackpad swipe
+        // across a row of cards carries enough vertical drift to look like a
+        // scroll up, which would drop the reader out of follow and raise Jump
+        // to latest in the middle of a streaming turn.
+        onWheel={(event) => {
+          if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+          onTranscriptWheel(event.currentTarget, event.deltaY);
+        }}
         onScroll={(event) => {
           const element = event.currentTarget;
           onTranscriptScroll(element);
@@ -2186,12 +2235,12 @@ export function WorkstreamScreen(): React.JSX.Element {
                     ) : (
                       <MessageBlock
                         citations={citations}
+                        collapseHeadings
                         currentUserId={session?.user.id}
                         loadAttachmentContent={loadAttachmentContent}
                         message={message}
                         onAnswerElicitation={answerElicitation}
                         onOpenAttachment={setAttachmentPreview}
-                        onResolveSuggestion={resolveSuggestion}
                         systemRowDisclosure={systemRowDisclosure}
                       />
                     )}
@@ -2242,6 +2291,8 @@ export function WorkstreamScreen(): React.JSX.Element {
             onStop={async () => {
               await stop.mutateAsync();
             }}
+            onReorderQueue={reorderQueue}
+            queueItems={queueItems}
             sending={sending}
             uploading={attachmentDraft.uploading}
             key={displayedDetail.id}
@@ -2261,13 +2312,13 @@ export function WorkstreamScreen(): React.JSX.Element {
         leaving={railLeaving === 'inspector'}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
-        onDetachResource={(resource) => detachResource.mutate(resource)}
+        onDetachResource={(resource) => detachResource.mutateAsync(resource)}
         onOpenResourceVersion={openResourceVersion}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
         onRefreshResource={(resource) => refreshResource.mutate(resource)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
-        resourceVersions={resourceVersions.data ?? []}
+        resourceVersions={resourceVersions.data}
         resourceVersionsError={resourceVersions.error?.message}
         workstream={displayedDetail}
       />
@@ -2321,5 +2372,6 @@ export function WorkstreamScreen(): React.JSX.Element {
       />
       <AttachmentLightbox onClose={() => setAttachmentPreview(null)} preview={attachmentPreview} />
     </div>
+    </ConnectorConnectionsProvider>
   );
 }

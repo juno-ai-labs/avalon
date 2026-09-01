@@ -3,8 +3,8 @@
 A theme is a JSON file. `config/design-tokens/` holds one file per appearance
 and a registry saying which tokens exist and what each one means; a build step
 turns them into the stylesheet the renderer loads. Nothing in the interface
-knows which theme is running, and no component reads a colour, so adding an
-appearance costs a JSON file rather than an audit of a 3,800-line stylesheet.
+chooses a colour outside that vocabulary, so adding an appearance costs a JSON
+file rather than an audit of a 3,800-line stylesheet.
 
 Read this before adding a theme, adding a token, or writing a colour anywhere in
 the renderer. Two rules carry the rest: **`app.css` names tokens and never a
@@ -184,8 +184,8 @@ person actually picked, one attribute per axis, because a pinned Dark and
 "system, currently dark" produce an identical `data-theme` and the Settings
 picker has to tell them apart.
 
-Nothing else in the renderer branches on the theme. No component reads a colour,
-and no rule is written twice for two appearances.
+Nothing else in the renderer branches on the theme. No component chooses a
+colour, and no rule is written twice for two appearances.
 
 ### The token taxonomy
 
@@ -331,6 +331,21 @@ level carried by weight alone is a decision, while one *below* the prose is a
 caption. The other rejects a bare `px` font-size, weight or line-height inside a
 `.markdown-body` rule, which is the guard that would have caught this: the
 engine had one for colour and none for size.
+
+Mermaid is the one renderer that cannot keep a `var()` reference in the markup:
+it parses, derives, and writes an SVG stylesheet before the browser sees it. The
+adapter in `markdown-mermaid-theme.ts` therefore reads the active theme's
+computed custom properties at that third-party boundary and hands Mermaid
+concrete values. The mapping still chooses no palette of its own: diagram
+surfaces, text, borders, state washes, chart series, font, radius, and stroke
+width all name design tokens. Relationship lines use
+`cmp.markdown.diagram-line`, aliased to the strongest line-ramp step in each
+theme; ordinary container borders stay deliberately quieter. Switching
+appearance causes the diagram to render again from the newly resolved values.
+Mermaid's numeric configuration takes pixel counts, and reading a custom
+property does not convert units: `font-size-prose`, `radius-md`, and
+`border-hairline` must therefore remain `px` lengths. The adapter rejects any
+other unit rather than silently passing a partial measurement.
 
 ### The navigation is translucent
 
@@ -550,11 +565,14 @@ depend on that:
 - **A focus border stays visible in every theme.** `--av-ref-color-line-6` is the one step
   Air does not flatten; an invisible focus indicator is an accessibility defect,
   not a design choice.
-- **No component reads a colour.** Two places would otherwise have to: the
-  `prism-react-renderer` theme and the per-participant accent, both of which take
+- **No component invents or branches on a colour.** Two places that accept CSS
+  values — the `prism-react-renderer` theme and the per-participant accent — take
   JavaScript values. Both pass `var(--av-sys-color-syntax-*)` and `var(--person-accent)` strings into
   inline styles, which resolve against the element's cascade like any other
-  reference — **in the renderer**. The message exporter re-hosts that same markup
+  reference. Mermaid is the explicit exception to retaining the reference: its
+  generator must receive concrete colours before it writes an SVG stylesheet,
+  so `markdown-mermaid-theme.ts` resolves named semantic tokens at render time
+  without owning a value. The message exporter re-hosts Prism markup
   in a standalone document that loads none of this, so it declares the syntax
   tokens itself from the generated `exportSyntaxPalette`; a `var()` that resolves
   nowhere is invalid at computed-value time and falls back to the inherited
@@ -662,6 +680,80 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-08-30 — Mermaid resolves the active design tokens
+
+**What changed:** Mermaid's base theme now receives concrete values resolved
+from Rally's active design tokens for surfaces, text, borders, state washes,
+chart series, typography, radius, and stroke width. The new
+`cmp.markdown.diagram-line` token gives relationship lines the strongest
+line-ramp value while leaving container borders quiet. A theme change
+re-renders the SVG from the new token values.
+
+**Why:** Selecting Mermaid's generic `neutral` or `dark` theme followed the
+window's brightness but not Rally's design system. Actor cards, notes, lines,
+and sequence numbers therefore looked like an embedded document instead of the
+code-block surface around them.
+
+**Considered and rejected:** CSS overrides over Mermaid's generated stylesheet
+cover only diagram kinds and selectors known today. Passing unresolved `var()`
+strings was also rejected because Mermaid performs colour calculations before
+the browser can resolve them. Reading the computed tokens at the generator
+boundary keeps every value owned by the theme and works for Mermaid's shared
+theme-variable vocabulary.
+
+**What a future change has to respect:** the adapter may map Mermaid roles to
+Rally roles, but it must not add literal colours or branch on a theme id. New
+diagram-specific fields should resolve design tokens, and every appearance must
+be checked in a real window because token provenance alone does not prove
+contrast. The visible relationship line and the quieter boundary line are
+different roles; do not collapse them back onto the generic border token.
+
+### 2026-08-30 — Automation rows use the same hover pill as work streams
+
+**What changed:** Sidebar automation rows now wear `.automation-row` and
+`--row-height-dense`, the same floor as work-stream, note, and project rows.
+The scope badge drops its chip fill while the row is hovered, focused, or
+current so it cannot punch the selected-row colour through the shared pill.
+
+**Why:** Project rows had been brought onto `.sidebar-row` so hover fill,
+radius, and padding matched a work stream. Automations already used that
+class, but they still sat on `--row-height` (3px taller in Terra Light) and
+kept a `neutral-4` chip on the trailing badge — the same token as the
+selected fill. Hovering one therefore read as a taller, two-tone pill rather
+than the same navigation row.
+
+**Considered and rejected:** Hiding the You / Workspace badge until hover, the
+way a project's plus appears. Scope is something you scan the list for, not an
+action that only matters on the row you are pointing at. Ghosting the chip on
+the hovered and current states keeps the information and the uniform fill.
+
+**What a future change has to respect:** a new sidebar row kind should pick
+`--row-height-dense` when it lives in the same list as work streams, and must
+not give itself a private hover colour. Trailing chrome that paints a fill
+must drop that fill on `.sidebar-row:hover` and `.is-active` or it will
+compete with the row.
+
+### 2026-08-30 — Terra Light's row hover sits on raised-hover, not subtle
+
+**What changed:** Terra Light now sets `cmp.row.background-hover` to
+`sys.color.surface.raised-hover` instead of inheriting the default theme's
+alias to `surface.subtle`. The command-shortcut scrim reads the same hover and
+selected tokens as the row fill.
+
+**Why:** Subtle in Terra Light (`#faf9f6`) is *lighter* than the solid sidebar
+(`#f7f6f2`), so a hovered or current row painted as a near-white wash. The
+project accordion had already been using raised-hover (`#eae8e1`) for the
+same job, which is the direction a hover fill has to go on a light ground.
+
+**Considered and rejected:** Darkening `surface.subtle` itself. That token is
+the quiet fill behind many other surfaces; changing it to repair navigation
+rows would have moved those too. Pairing the row hover with raised-hover
+matches the popover-row pairing from 2026-08-26 and leaves subtle alone.
+
+**What a future change has to respect:** a light theme's row hover must be
+darker than the sidebar it sits on, not lighter. Selected stays
+`ref.color.neutral.4`, which is a step darker than that hover.
 
 ### 2026-08-27 — Projects add a closed semantic color palette
 

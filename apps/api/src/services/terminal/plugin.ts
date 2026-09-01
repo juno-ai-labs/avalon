@@ -20,10 +20,8 @@ import {
 } from "./contract";
 import { TerminalSandboxCoordinator } from "./coordinator";
 import { createResourcePortFactory } from "../../runtime/resource-port";
-import {
-  createDaytonaTerminalProvider,
-  type TerminalSandboxProvider,
-} from "./daytona-provider";
+import type { TerminalSandboxProvider } from "./provider-contract";
+import { createTerminalProviderRpcClient } from "./provider-rpc-client";
 import {
   admitTerminalPublicationGrant,
   bootstrapTerminalRepository,
@@ -85,7 +83,7 @@ export async function createAvalonTerminalPlugin(
     executionPrincipal: input.executionPrincipal,
   }, new Date(), terminalPort);
 
-  const provider = options.provider ?? createDaytonaTerminalProvider(configuration, undefined, {
+  const provider = options.provider ?? createTerminalProviderRpcClient(env.TERMINAL_PROVIDER, configuration, {
     observe: (measurement) => recordTerminalPlatformObservation(env, measurement),
     observeRequest: (measurement) => {
       recordTerminalProviderRequest(measurement);

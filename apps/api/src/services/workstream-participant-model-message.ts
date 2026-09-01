@@ -58,7 +58,7 @@ export function participantModelMessageContent(
 }
 
 export async function projectParticipantModelMessage(
-  env: Pick<Env, "PAYLOADS" | "DB" | "IMAGES">,
+  env: Pick<Env, "PAYLOADS" | "DB" | "IMAGES" | "DOCUMENT_PROCESSOR">,
   input: ParticipantModelProjectionInput,
 ): Promise<ModelMessage | null> {
   if (input.messageType === "elicitation") {
@@ -85,6 +85,7 @@ export async function projectParticipantModelMessage(
     ? await buildAttachmentModelParts(env.PAYLOADS, sources, {
         database: env.DB,
         images: env.IMAGES,
+        documentProcessor: env.DOCUMENT_PROCESSOR,
       })
     : [buildAttachmentManifestPart(sources)];
   return {

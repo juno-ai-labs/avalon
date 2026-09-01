@@ -308,6 +308,24 @@ When a save succeeds but clients do not change, inspect in order:
 
 ## Changelog
 
+### 2026-08-27 — Memory embeddings stay outside live model routing
+
+**What changed:** Ace does not expose or provision a durable-memory embedding
+role. The inference gateway fixes the model to `qwen/qwen3-embedding-8b` and
+passes no model fallbacks.
+
+**Why:** An embedding-model edit changes the coordinate space. Letting an
+ordinary Flagship rule, rollout, or Ace save change it can make document and
+query vectors incomparable even when they have the same dimensions.
+
+**Considered and rejected:** Managing embeddings like chat inference with an
+empty default fallback list. The empty default does not prevent a later rule or
+operator edit from splitting the vector space.
+
+**Consequences:** Embeddings remain visible in inference diagnostics under the
+static `memory_embedding` feature category, but changing their model requires a
+code change paired with a durable active-memory rebuild.
+
 ### 2026-08-26 — Models makes every agent route editable without flattening rollouts
 
 **What changed:** Ace gained a Models navigation section for all eleven roles
