@@ -28,6 +28,12 @@ const RESOURCE = "00000000-0000-7000-8000-0000000000e3";
 const ARTIFACT = "00000000-0000-7000-8000-0000000000e4";
 const VIEWER = "00000000-0000-7000-8000-0000000000e5";
 
+/** The site's own published page, reached through the facet's ASSETS binding. */
+const PAGE_HTML = "<!doctype html><title>Votes</title><p>Cast your vote.";
+
+/** A published data file, read server-side the way the skill teaches. */
+const SEED_JSON = '{"quorum":3}';
+
 /** A stateful artifact that counts votes, as a model would write one. */
 const VOTING_MODULE = `
 import { DurableObject } from "cloudflare:workers";
@@ -58,15 +64,24 @@ export class SiteData extends DurableObject {
       const rows = this.ctx.storage.sql.exec("SELECT member, choice FROM votes ORDER BY member").toArray();
       return Response.json({ votes: rows });
     }
-    return new Response("page", { headers: { "content-type": "text/html" } });
+    if (url.pathname === "/quorum") {
+      // The string form the skill teaches for reading a published data file.
+      const seed = await (await this.env.ASSETS.fetch("/seed.json")).json();
+      return Response.json(seed);
+    }
+    // The asset fallback exactly as the skill teaches it. Written this way on
+    // purpose: a hand-written Response here proves the routing and hides
+    // whether the facet has an ASSETS binding at all, which is how every
+    // stateful site came to throw on its own index.html.
+    return this.env.ASSETS.fetch(request);
   }
 }
 `;
 
 /** The same site after a revision: a new route, the same schema and rows. */
 const VOTING_MODULE_V2 = VOTING_MODULE.replace(
-  'return new Response("page"',
-  'if (url.pathname === "/added") return Response.json({ added: true });\n    return new Response("page"',
+  '    return this.env.ASSETS.fetch(request);',
+  '    if (url.pathname === "/added") return Response.json({ added: true });\n    return this.env.ASSETS.fetch(request);',
 );
 
 function manifest(version: number) {
@@ -77,8 +92,11 @@ function manifest(version: number) {
     mode: "active" as const,
     stateful: true,
     serverModuleSha256: "a".repeat(64),
-    assets: [],
-    totalBytes: 0,
+    assets: [
+      { path: "index.html", contentType: "text/html; charset=utf-8", sizeBytes: PAGE_HTML.length, sha256: "b".repeat(64) },
+      { path: "seed.json", contentType: "application/json; charset=utf-8", sizeBytes: SEED_JSON.length, sha256: "c".repeat(64) },
+    ],
+    totalBytes: PAGE_HTML.length + SEED_JSON.length,
     publishedAt: "2026-08-29T12:00:00.000Z",
   };
 }
@@ -114,6 +132,8 @@ async function publish(source: string): Promise<number> {
   nextVersion += 1;
   const version = nextVersion;
   await env.PAYLOADS.put(artifactAssetKey(ARTIFACT, version, "index.js"), source);
+  await env.PAYLOADS.put(artifactAssetKey(ARTIFACT, version, "index.html"), PAGE_HTML);
+  await env.PAYLOADS.put(artifactAssetKey(ARTIFACT, version, "seed.json"), SEED_JSON);
   await hostStub().recordPublish({
     artifactId: ARTIFACT,
     workspaceId: WORKSPACE,
@@ -137,6 +157,32 @@ beforeEach(async () => {
 });
 
 describe("a stateful artifact's facet", () => {
+  it("serves its own published page through the ASSETS binding", async () => {
+    // The flagship shape: a poll whose API routes the model wrote and whose
+    // index.html Rally serves. With an empty facet env there was no ASSETS at
+    // all, so this line threw and every request that was not a hand-written
+    // route took the artifact's error page instead of the page.
+    await publish(VOTING_MODULE);
+    const response = await hostStub().fetchThroughFacet(viewerRequest("/"));
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(PAGE_HTML);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+  });
+
+  it("accepts the relative string the skill teaches for a server-side read", async () => {
+    // A stub's own `fetch` is the runtime's Fetcher and throws
+    // `Invalid URL: /seed.json` on this. Rally's shim inside the isolate is
+    // what makes the declared `Request | string` contract true.
+    await publish(VOTING_MODULE);
+    const response = await hostStub().fetchThroughFacet(viewerRequest("/quorum"));
+    expect(await response.json()).toEqual({ quorum: 3 });
+  });
+
+  it("answers a path the manifest does not name with a 404, not the page", async () => {
+    await publish(VOTING_MODULE);
+    expect((await hostStub().fetchThroughFacet(viewerRequest("/nope.css"))).status).toBe(404);
+  });
+
   it("runs the model's class with its own database and remembers between requests", async () => {
     await publish(VOTING_MODULE);
     const host = hostStub();
