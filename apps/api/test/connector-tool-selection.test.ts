@@ -578,7 +578,12 @@ describe("connector tools selected for harness runs", () => {
       FIRECRAWL_API_KEY: "firecrawl-test-key",
     });
     const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
-    expect(parentTools.plugins).toHaveLength(4);
+    // Every work-stream run can draft an automation, so the plugin is on the
+    // parent surface — deferred, so being here costs a catalog entry and no
+    // connector read until somebody loads it.
+    expect(parentTools.plugins.map((plugin) => plugin.canonicalId))
+      .toContain("rally:automations");
+    expect(parentTools.plugins).toHaveLength(5);
     expect(parentTools.plugins.flatMap((plugin) => plugin.tools)
       .some((tool) => tool.definition.mode === "write")).toBe(true);
 
@@ -591,6 +596,9 @@ describe("connector tools selected for harness runs", () => {
       assertChildOwned: async () => undefined,
     });
 
+    // Not inherited: this surface is read-only and non-recursive, and drafting
+    // an automation is a write a child running on somebody's behalf must not
+    // make on its own.
     expect(childTools.plugins.map((plugin) => plugin.canonicalId)).toEqual([
       "rally:workstream",
       "rally:web",

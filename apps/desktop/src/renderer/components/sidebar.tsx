@@ -1047,7 +1047,6 @@ export function Sidebar({
   onLoadMoreNotes,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
-  const openDraftId = useOpenDraftId();
   const location = useLocation();
   const navigate = useNavigate();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
@@ -1133,15 +1132,12 @@ export function Sidebar({
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  // Drafts are unfinished automations, so they sit under the ones that run
-  // rather than interleaving with them by name. Among themselves they lead with
-  // the one touched most recently, which is the draft still being worked on.
-  const orderedAutomations = [
-    ...automations.filter((automation) => automation.status !== 'draft'),
-    ...automations
-      .filter((automation) => automation.status === 'draft')
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-  ];
+  // The server stopped listing drafts when the builder was retired — a draft is
+  // a conversation in progress and lives where that conversation is — but a
+  // client holding a socket-pushed list from before that change would still
+  // have one, and clicking it lands on "this automation has not been created
+  // yet". Filtered here as well, so an old row cannot outlive its screen.
+  const orderedAutomations = automations.filter((automation) => automation.status !== 'draft');
   // A pinned work stream leaves the recent list entirely rather than appearing
   // twice: the section it moves to is the one whose order the reader controls,
   // and a row in both places would take its order from whichever they saw last.
@@ -1769,13 +1765,17 @@ export function Sidebar({
               <MessageSquarePlus aria-hidden="true" size={15} />
               <span>New work stream</span>
             </NavLink>
-            {/* Reopening a draft lands on this same path, where the active row
-                is the draft's own. Two entries lit at once would say the screen
-                is both a new automation and that one. */}
+            {/* Drafting happens by asking for it in a work stream, so this
+                starts one. The affordance stays because people look for it
+                here; what it opens is the conversation the agent drafts in.
+
+                Never active: it shares a destination with "New work stream"
+                now, and deriving active state from the route would light both
+                rows at once for one screen. */}
             <NavLink
-              className={({ isActive }) => clsx('sidebar-action', isActive && openDraftId === null && 'is-active')}
+              className="sidebar-action"
               onClick={() => markSurfaceEntrypoint('sidebar_new')}
-              to="/automations/new"
+              to="/workstreams/new"
             >
               <Plus aria-hidden="true" size={15} />
               <span>New automation</span>

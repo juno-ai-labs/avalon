@@ -18,7 +18,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 35;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 36;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -2334,41 +2334,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
             AND envelope_json IS NULL AND terminal_code IS NULL)
         )
       ) STRICT`,
-      `CREATE TRIGGER pending_loop_input_mailbox_identity_immutable
-       BEFORE UPDATE OF
-         input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
-         client_message_id,
-         preparation_kind, created_at
-       ON pending_loop_input_mailbox
-       WHEN NEW.input_id IS NOT OLD.input_id
-         OR NEW.loop_id IS NOT OLD.loop_id
-         OR NEW.input_sequence IS NOT OLD.input_sequence
-         OR NEW.admitted_after_transcript_sequence IS NOT OLD.admitted_after_transcript_sequence
-         OR NEW.client_message_id IS NOT OLD.client_message_id
-         OR NEW.preparation_kind IS NOT OLD.preparation_kind
-         OR NEW.created_at IS NOT OLD.created_at
-       BEGIN
-         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_identity_is_immutable');
-       END`,
-      `CREATE TRIGGER pending_loop_input_mailbox_state_transition
-       BEFORE UPDATE OF state
-       ON pending_loop_input_mailbox
-       WHEN NOT (
-         OLD.state = 'preparing' AND NEW.state IN ('ready', 'failed', 'discarded')
-       )
-       BEGIN
-         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_state_transition_invalid');
-       END`,
-      `CREATE TRIGGER pending_loop_input_mailbox_envelope_immutable
-       BEFORE UPDATE OF envelope_json
-       ON pending_loop_input_mailbox
-       WHEN OLD.state = 'preparing' AND NEW.state = 'preparing'
-         AND NEW.envelope_json IS NOT OLD.envelope_json
-       BEGIN
-         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_envelope_is_immutable');
-       END`,
-      `CREATE INDEX pending_loop_input_mailbox_order_idx
-         ON pending_loop_input_mailbox(loop_id, state, input_sequence)`,
+      ...pendingLoopInputMailboxGuards(),
       `CREATE TABLE pending_loop_inputs (
         input_id TEXT PRIMARY KEY,
         loop_id TEXT NOT NULL REFERENCES substream_loops(loop_id) ON DELETE RESTRICT,
@@ -2734,6 +2700,66 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `ALTER TABLE workstream_resource_links_v35 RENAME TO workstream_resource_links`,
       `CREATE INDEX workstream_resource_links_relation_idx
          ON workstream_resource_links(relationship_type, attached_at, resource_id)`,
+    ],
+  },
+  {
+    version: 36,
+    description: "an automation activation is a loop input, so the mailbox admits its kind",
+    // `pending_loop_inputs` points at this table, so the drop-and-rename is a
+    // referenced-parent rebuild: enforcement is off for the swap and
+    // `foreign_key_check` proves on commit that no delivered input was orphaned.
+    foreignKeys: "disabled_during_rebuild",
+    statements: [
+      // An automation waking the room it belongs to has to arrive the way an
+      // external message does — as a loop input that starts a run — and a
+      // pending input exists only where a preparation reserved it. The
+      // vocabulary is a CHECK, which SQLite cannot widen in place.
+      `CREATE TABLE pending_loop_input_mailbox_v36 (
+        input_id TEXT PRIMARY KEY,
+        loop_id TEXT NOT NULL REFERENCES substream_loops(loop_id) ON DELETE RESTRICT,
+        input_sequence INTEGER NOT NULL CHECK (input_sequence > 0),
+        admitted_after_transcript_sequence INTEGER NOT NULL CHECK (
+          admitted_after_transcript_sequence >= 0
+        ),
+        client_message_id TEXT NOT NULL UNIQUE,
+        preparation_kind TEXT NOT NULL CHECK (
+          preparation_kind IN (
+            'human_message', 'human_elicitation',
+            'external_message', 'external_elicitation',
+            'automation_activation'
+          )
+        ),
+        envelope_json TEXT CHECK (
+          envelope_json IS NULL
+          OR (json_valid(envelope_json) AND json_type(envelope_json) = 'object')
+        ),
+        state TEXT NOT NULL CHECK (
+          state IN ('preparing', 'ready', 'failed', 'discarded')
+        ),
+        terminal_code TEXT CHECK (
+          terminal_code IS NULL OR length(terminal_code) BETWEEN 1 AND 160
+        ),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+        UNIQUE(loop_id, input_sequence),
+        CHECK (
+          (state = 'preparing' AND envelope_json IS NOT NULL AND terminal_code IS NULL)
+          OR (state = 'failed' AND envelope_json IS NULL AND terminal_code IS NOT NULL)
+          OR (state IN ('ready', 'discarded')
+            AND envelope_json IS NULL AND terminal_code IS NULL)
+        )
+      ) STRICT`,
+      `INSERT INTO pending_loop_input_mailbox_v36
+         (input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
+          client_message_id, preparation_kind, envelope_json, state, terminal_code,
+          created_at, updated_at)
+       SELECT input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
+              client_message_id, preparation_kind, envelope_json, state, terminal_code,
+              created_at, updated_at
+         FROM pending_loop_input_mailbox`,
+      `DROP TABLE pending_loop_input_mailbox`,
+      `ALTER TABLE pending_loop_input_mailbox_v36 RENAME TO pending_loop_input_mailbox`,
+      ...pendingLoopInputMailboxGuards(),
     ],
   },
 ];
@@ -3921,6 +3947,55 @@ function toolReceiptAuthorityPromotion(): string[] {
  * promotion order without minting a second input. `updated_at` is already
  * outside this trigger.
  */
+/**
+ * The mailbox's triggers and ordering index, in one place.
+ *
+ * Shared with the rebuild that widened its `preparation_kind` vocabulary:
+ * dropping the table drops these with it, and a rebuild that recreated them by
+ * hand would let the upgraded object's guards drift from a fresh object's
+ * silently — the immutability triggers are the only thing preventing a
+ * preparation from being retargeted after it was reserved.
+ */
+function pendingLoopInputMailboxGuards(): string[] {
+  return [
+      `CREATE TRIGGER pending_loop_input_mailbox_identity_immutable
+       BEFORE UPDATE OF
+         input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
+         client_message_id,
+         preparation_kind, created_at
+       ON pending_loop_input_mailbox
+       WHEN NEW.input_id IS NOT OLD.input_id
+         OR NEW.loop_id IS NOT OLD.loop_id
+         OR NEW.input_sequence IS NOT OLD.input_sequence
+         OR NEW.admitted_after_transcript_sequence IS NOT OLD.admitted_after_transcript_sequence
+         OR NEW.client_message_id IS NOT OLD.client_message_id
+         OR NEW.preparation_kind IS NOT OLD.preparation_kind
+         OR NEW.created_at IS NOT OLD.created_at
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_identity_is_immutable');
+       END`,
+      `CREATE TRIGGER pending_loop_input_mailbox_state_transition
+       BEFORE UPDATE OF state
+       ON pending_loop_input_mailbox
+       WHEN NOT (
+         OLD.state = 'preparing' AND NEW.state IN ('ready', 'failed', 'discarded')
+       )
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_state_transition_invalid');
+       END`,
+      `CREATE TRIGGER pending_loop_input_mailbox_envelope_immutable
+       BEFORE UPDATE OF envelope_json
+       ON pending_loop_input_mailbox
+       WHEN OLD.state = 'preparing' AND NEW.state = 'preparing'
+         AND NEW.envelope_json IS NOT OLD.envelope_json
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_envelope_is_immutable');
+       END`,
+      `CREATE INDEX pending_loop_input_mailbox_order_idx
+         ON pending_loop_input_mailbox(loop_id, state, input_sequence)`,
+  ];
+}
+
 function pendingLoopInputsPreparedImmutableTrigger(): string {
   return `CREATE TRIGGER pending_loop_inputs_prepared_immutable
        BEFORE UPDATE OF

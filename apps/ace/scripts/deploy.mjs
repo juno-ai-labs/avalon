@@ -138,6 +138,7 @@ await Promise.all([
   ensureModelFlag('agent-model-work-opportunity-admission', 'Decides whether recent unclaimed activity should become a personal or workspace suggestion and drafts its candidate.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-work-opportunity-ranking', 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
   ensureModelFlag('agent-model-workstream-description', 'Re-evaluates the derived one-line description after terminal runs and rewrites it only when the work stream changed purpose.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
+  ensureModelFlag('agent-model-automation-result-disposition', 'Decides whether a completed automation run is worth delivering at all, and whether its result belongs in the work stream that owns the automation or in the work stream the run itself used, made visible.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.6-flash']),
 ]);
 await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken });
 

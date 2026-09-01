@@ -356,6 +356,7 @@ describe("boundary contracts", () => {
       "work_opportunity_admission",
       "work_opportunity_ranking",
       "workstream_description",
+      "automation_result_disposition",
     ]);
     expect(AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role])).toEqual([
       "agent-model-workstream",
@@ -368,6 +369,7 @@ describe("boundary contracts", () => {
       "agent-model-work-opportunity-admission",
       "agent-model-work-opportunity-ranking",
       "agent-model-workstream-description",
+      "agent-model-automation-result-disposition",
     ]);
     expect(AgentModelRoutingSchema.parse({ model: " x-ai/grok-4.3 " })).toEqual({
       model: "x-ai/grok-4.3",
@@ -517,6 +519,71 @@ describe("boundary contracts", () => {
         eventTypes: ["github.pull_request.merged"],
         deterministicFilters: {},
       }],
+    }).success).toBe(true);
+  });
+
+  it("lets a draft belong to the work stream it was written in", () => {
+    const base = {
+      name: "Weekly changelog",
+      description: "Summarize what shipped.",
+      overview: "Every Monday, write what shipped.",
+      instructions: "Summarize the merged work, newest first.",
+      triggers: [{ type: "manual" as const }],
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+
+    expect(AutomationDraftSchema.safeParse({
+      ...base,
+      suggestedScope: "workstream",
+      requestedDelivery: [],
+    }).success).toBe(true);
+
+    // Scope is the destination for a room's automation: its results land in
+    // the room that owns it. Naming another would ask for two destinations,
+    // one of which nobody chose.
+    const withDelivery = AutomationDraftSchema.safeParse({
+      ...base,
+      suggestedScope: "workstream",
+      requestedDelivery: ["email"],
+    });
+    expect(withDelivery.success).toBe(false);
+    expect(withDelivery.error?.issues[0]?.path).toEqual(["requestedDelivery"]);
+
+    // The other scopes are unaffected: a person's automation delivers to them.
+    expect(AutomationDraftSchema.safeParse({
+      ...base,
+      suggestedScope: "personal",
+      requestedDelivery: ["email"],
+    }).success).toBe(true);
+  });
+
+  it("lets a workspace draft ask for a channel without naming one", () => {
+    // A workspace automation reaches people by acting with its connector
+    // tools. "channel" says the person asked for one; which channel is decided
+    // when it runs, from where it was authored, so no ID appears here.
+    expect(AutomationDraftSchema.safeParse({
+      name: "Shipped this week",
+      description: "Post what shipped.",
+      overview: "Every Friday, post to the team channel.",
+      instructions: "Summarize the week.",
+      triggers: [{ type: "manual" as const }],
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "workspace",
+      requestedDelivery: ["channel"],
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
     }).success).toBe(true);
   });
 

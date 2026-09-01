@@ -96,17 +96,17 @@ export function telemetryJourneyDuration(milliseconds: number):
   return 'gte_10m';
 }
 
+/**
+ * The surface a path is showing.
+ *
+ * This used to take whether the automation was still a draft, because a draft
+ * and an accepted automation shared one durable route with two screens behind
+ * it. Only one screen is behind it now — the builder is gone — so the path says
+ * everything, and a parameter that cannot change the answer is one every caller
+ * has to work out how to supply for nothing.
+ */
 export function telemetrySurfaceForPath(
   pathname: string,
-  /**
-   * Whether the automation this path names is still a draft. A draft
-   * and an accepted automation share one durable route — the builder
-   * and the overview are two screens behind it — so the path alone
-   * cannot say which is on screen. Without this, every draft after
-   * its first turn reported as `automation_detail`, and drafting an
-   * automation became indistinguishable from reading one.
-   */
-  context: { automationIsDraft?: boolean } = {},
 ): {
   surface: 'workspace_home' | 'workstream' | 'note_detail' | 'meeting_capture' | 'automation_builder'
     | 'automation_detail' | 'settings_application';
@@ -115,7 +115,11 @@ export function telemetrySurfaceForPath(
 } | null {
   if (pathname === '/workstreams/new') return { surface: 'workspace_home' };
   if (pathname === '/meeting') return { surface: 'meeting_capture' };
-  if (pathname === '/automations/new') return { surface: 'automation_builder' };
+  // `/automations/new` redirects to a new work stream now that drafting is a
+  // conversation. Reporting a builder surface for a path that shows one for an
+  // instant on its way somewhere else would put a screen nobody saw in the
+  // funnel; `automation_builder` stays in the union because rows recorded
+  // before the retirement still carry it.
   if (pathname === '/settings') return { surface: 'settings_application' };
   const match = /^\/(workstreams|notes|automations)\/([0-9a-f-]{36})$/iu.exec(pathname);
   if (!match) return null;
@@ -124,7 +128,10 @@ export function telemetrySurfaceForPath(
     ? 'workstream'
     : resourceType === 'note'
       ? 'note_detail'
-      : context.automationIsDraft === true ? 'automation_builder' : 'automation_detail';
+      // A draft opens the same overview an accepted automation does — there is
+      // no builder behind this route any more — so the surface is the one the
+      // reader is actually looking at.
+      : 'automation_detail';
   return { surface, resourceType, resourceId: match[2] };
 }
 

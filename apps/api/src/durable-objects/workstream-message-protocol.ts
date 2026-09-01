@@ -15,7 +15,7 @@ export const AppendMessageInputSchema = z.strictObject({
   authorType: z.enum(["agent", "external", "system"]),
   authorUserId: z.null(),
   externalActorJson: z.string().nullable(),
-  messageType: z.enum(["text", "system", "elicitation"]),
+  messageType: z.enum(["text", "system", "elicitation", "automation_activation"]),
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
   structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
   producedByRunId: z.string().min(1).nullable(),

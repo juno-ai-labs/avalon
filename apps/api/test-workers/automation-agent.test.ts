@@ -22,7 +22,8 @@ import { AutomationAgentService } from "../src/services/automation-agent-service
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000b1");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000000b2");
 const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-0000000000b3");
-const CLIENT_MESSAGE_ID = "00000000-0000-7000-8000-0000000000b4";
+/** The room these fixtures are drafted in, since a draft now always has one. */
+const AUTHORING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000b9";
 
 function automationStub() {
   return env.AUTOMATION_AGENTS.get(env.AUTOMATION_AGENTS.idFromName(
@@ -73,45 +74,25 @@ function readyDefinition(name: string) {
 }
 
 /**
- * An automation whose first turn is admitted and whose compiler run settled on
- * one ready definition — the state a person is in when they press Create.
+ * An automation holding one ready definition — the state a person is in when a
+ * proposal card offers them Create.
  *
- * The compiler run is marked `completed` inside the same invocation that admits
- * it. `admitDraftTurn` arms a dispatch alarm for `now`, and the tests below go
- * on asserting from outside this callback: the patched `executeCompilerRun`
- * covers the window before the update lands, and the settled row is what makes
- * a drain on a fresh instance after eviction a no-op rather than a real
- * compiler run against the placeholder provider key.
+ * Seeded through `admitAuthoredDraft`, which is the only way a draft is made
+ * now that the compiler loop is gone. That makes these fixtures exercise the
+ * surviving path rather than a retired one, so a change to how a draft is
+ * recorded breaks them here rather than in production.
  */
 async function seedReadyDraft(definition: ReturnType<typeof readyDefinition>): Promise<void> {
-  await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
-    (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-    const admission = await instance.admitDraftTurn({
+  await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+    await instance.admitAuthoredDraft({
       schemaVersion: 1,
       automationId: AUTOMATION_ID,
       workspaceId: WORKSPACE_ID,
       authorUserId: AUTHOR_ID,
       region: "global",
-      clientMessageId: CLIENT_MESSAGE_ID,
-      content: "Summarize my unread email every weekday at 9am",
-      attachmentIds: [],
-      inputMode: "typed",
+      authoredInWorkstreamId: AUTHORING_WORKSTREAM_ID,
+      draft: definition,
     });
-    state.storage.sql.exec(
-      `UPDATE automation_compiler_runs SET state = 'completed', settled_at = 1 WHERE run_id = ?`,
-      admission.compilerRunId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO automation_definition_revisions
-         (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
-       VALUES (1, ?, ?, 'sha256:definition', 1, 1)`,
-      admission.compilerRunId,
-      JSON.stringify(definition),
-    );
-    state.storage.sql.exec(
-      `UPDATE automation_state SET definition_revision = 1, title = ? WHERE id = 1`,
-      definition.name,
-    );
   });
 }
 
@@ -195,94 +176,10 @@ describe("AutomationAgent", () => {
     });
   });
 
-  it("persists identity, the first human turn, and one compiler admission before dispatch", async () => {
+  it("accepts the canonical revision in place, leaving one definition behind", async () => {
+    await seedReadyDraft(readyDefinition("Manual helper"));
     const stub = automationStub();
     await runInDurableObject(stub, async (instance: AutomationAgent, state) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-      const request = {
-        schemaVersion: 1 as const,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global" as const,
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Tell me when a Slack message contains foobar",
-        attachmentIds: [],
-        inputMode: "typed" as const,
-      };
-
-      const first = await instance.admitDraftTurn(request);
-      const retry = await instance.admitDraftTurn(request);
-
-      expect(first.admitted).toBe(true);
-      expect(retry).toEqual({ ...first, admitted: false });
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
-      ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM transcript_payloads`,
-      ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM automation_compiler_runs`,
-      ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ author_user_id: string }>(
-        `SELECT author_user_id FROM automation_identity WHERE id = 1`,
-      ).one().author_user_id).toBe(AUTHOR_ID);
-      expect(await state.storage.getAlarm()).not.toBeNull();
-
-      await expect(instance.admitDraftTurn({
-        ...request,
-        clientMessageId: "00000000-0000-7000-8000-0000000000b5",
-        content: "A second concurrent turn",
-      })).rejects.toThrow("automation_compiler_busy");
-    });
-  });
-
-  it("records evaluator replacement and receipt in the same object transaction", async () => {
-    const stub = automationStub();
-    await runInDurableObject(stub, async (instance: AutomationAgent, state) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-      const admission = await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Watch Slack",
-        attachmentIds: [],
-        inputMode: "typed",
-      });
-      state.storage.sql.exec(
-        `UPDATE automation_compiler_runs SET state = 'running' WHERE run_id = ?`,
-        admission.compilerRunId,
-      );
-      const mutation = {
-        schemaVersion: 1 as const,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        compilerRunId: admission.compilerRunId,
-        providerCallId: "call-1",
-        inputHash: "sha256:rules",
-        evaluatorRules: { schemaVersion: 1, evaluators: [] },
-      };
-
-      expect(await instance.setEvaluatorRules(mutation)).toEqual({ accepted: true });
-      expect(await instance.setEvaluatorRules(mutation)).toEqual({ accepted: true });
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM automation_tool_receipts`,
-      ).one().count).toBe(1);
-      expect(state.storage.sql.exec<{ evaluator_rules_json: string }>(
-        `SELECT evaluator_rules_json FROM automation_draft_evaluator_sets`,
-      ).one().evaluator_rules_json).toBe('{"schemaVersion":1,"evaluators":[]}');
-    });
-  });
-
-  it("accepts the canonical revision in place and deletes only the draft conversation", async () => {
-    const stub = automationStub();
-    await runInDurableObject(stub, async (instance: AutomationAgent, state) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
       (instance as unknown as { workspace(): unknown }).workspace = async () => ({
         applyExternalEventRegistrations: async () => ({
           applied: true,
@@ -290,49 +187,6 @@ describe("AutomationAgent", () => {
         }),
         applyAutomationProjection: async () => ({ applied: true }),
       });
-      const admission = await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Run when I ask",
-        attachmentIds: [],
-        inputMode: "typed",
-      });
-      const definition = {
-        name: "Manual helper",
-        description: "Runs on request",
-        overview: "A manual automation",
-        instructions: "Do the requested work.",
-        triggers: [{ type: "manual" as const }],
-        requiredCapabilities: [],
-        expectedOutputs: [],
-        requestedDelivery: [],
-        defaultBehavior: {},
-        recommendedPlugins: [],
-        memoryTables: [],
-        suggestedScope: "personal" as const,
-        followUpQuestion: null,
-        elicitation: null,
-        ready: true,
-      };
-      state.storage.sql.exec(
-        `UPDATE automation_compiler_runs SET state = 'completed', settled_at = 1 WHERE run_id = ?`,
-        admission.compilerRunId,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO automation_definition_revisions
-           (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
-         VALUES (1, ?, ?, 'sha256:definition', 1, 1)`,
-        admission.compilerRunId,
-        JSON.stringify(definition),
-      );
-      state.storage.sql.exec(
-        `UPDATE automation_state SET definition_revision = 1, title = ? WHERE id = 1`,
-        definition.name,
-      );
 
       const detail = await instance.acceptDraft({
         schemaVersion: 1,
@@ -351,38 +205,16 @@ describe("AutomationAgent", () => {
       expect(state.storage.sql.exec<{ lifecycle: string }>(
         `SELECT lifecycle FROM automation_state WHERE id = 1`,
       ).one().lifecycle).toBe("active");
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
-      ).one().count).toBe(0);
+      // Accepting settles the revision it accepted rather than accumulating a
+      // second one, which is what makes a re-accept idempotent.
       expect(state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM automation_definition_revisions`,
       ).one().count).toBe(1);
+      // The registration's own sequence is carried onto the acceptance, so an
+      // event admitted before activation is not replayed into the first run.
       expect(state.storage.sql.exec<{ effective_after_event_sequence: number }>(
         `SELECT effective_after_event_sequence FROM automation_acceptance WHERE id = 1`,
       ).one().effective_after_event_sequence).toBe(7);
-
-      const started = await instance.runNow({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-        idempotencyKey: "manual-overview-run",
-      });
-      const afterRun = await instance.readDetail({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-      });
-      expect(afterRun.recentRuns).toEqual([expect.objectContaining({
-        id: started.runId,
-        workstreamId: started.workstreamId,
-        triggerType: "manual",
-        status: "scheduled",
-      })]);
-      await expect(instance.listRuns({
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        userId: AUTHOR_ID,
-      })).resolves.toEqual({ items: afterRun.recentRuns });
     });
   });
 
@@ -626,47 +458,6 @@ describe("AutomationAgent", () => {
     }
   });
 
-  it("refuses a create against a draft the compiler has not compiled yet", async () => {
-    // `admitFirstTurn` answers with the automation's id as soon as the turn is
-    // durable, so a caller can reach `accept` before any definition revision
-    // exists. `AutomationDraftSchema.parse(null)` threw a `ZodError` from
-    // between the two refusals this change fixed, which is the same 500 by
-    // another route.
-    const stub = automationStub();
-    await runInDurableObject(stub, async (instance: AutomationAgent) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-      await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Watch the release channel",
-        attachmentIds: [],
-        inputMode: "typed",
-      });
-    });
-
-    await expect(authorService().accept({
-      draftId: AUTOMATION_ID,
-      draft: {
-        name: "Not compiled yet",
-        description: "Nothing has been compiled for this draft.",
-        overview: "Nothing has been compiled for this draft.",
-        instructions: "Nothing has been compiled for this draft.",
-        triggers: [{ type: "manual" as const }],
-        suggestedScope: "personal" as const,
-        followUpQuestion: null,
-        ready: true,
-      },
-      scope: "personal",
-    })).rejects.toMatchObject({
-      status: 409,
-      code: "automation_definition_not_ready",
-    });
-  });
-
   it("tells a reader why an imported automation with an unrunnable trigger is stopped", async () => {
     // The one thing a person has to be told after the cutover: this automation
     // is not waiting for its next run, it has none. The reason travels on the
@@ -812,63 +603,6 @@ describe("AutomationAgent", () => {
       expect(state.storage.sql.exec<{ operation: string }>(
         `SELECT operation FROM automation_memory_mutations ORDER BY settled_at DESC LIMIT 1`,
       ).one().operation).toBe("table_create");
-    });
-  });
-
-  it("answers a follow-up question so the draft can still be accepted", async () => {
-    const now = 1_800_000_000_000;
-    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
-      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
-      const first = await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: CLIENT_MESSAGE_ID,
-        content: "Watch the release channel",
-        attachmentIds: [],
-        inputMode: "typed",
-      });
-      // Stand in for a compiler run that asked a question rather than
-      // finishing: one revision, one pending elicitation against it.
-      state.storage.sql.exec(
-        `INSERT INTO automation_definition_revisions
-           (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
-         VALUES (1, ?, '{}', 'sha256:draft', 0, ?)`,
-        first.compilerRunId, now,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO automation_pending_elicitations
-           (elicitation_id, definition_revision, payload_json, state, created_at)
-         VALUES ('00000000-0000-7000-8000-0000000000e1', 1, '{"question":"Which channel?"}', 'pending', ?)`,
-        now,
-      );
-      state.storage.sql.exec(
-        `UPDATE automation_compiler_runs SET state = 'needs_input', settled_at = ? WHERE run_id = ?`,
-        now, first.compilerRunId,
-      );
-
-      await instance.admitDraftTurn({
-        schemaVersion: 1,
-        automationId: AUTOMATION_ID,
-        workspaceId: WORKSPACE_ID,
-        authorUserId: AUTHOR_ID,
-        region: "global",
-        clientMessageId: "00000000-0000-7000-8000-0000000000e2",
-        content: "#shipping",
-        attachmentIds: [],
-        inputMode: "elicitation_response",
-      });
-
-      // The person answered, so nothing is outstanding — which is what
-      // `acceptDraft` reads before it will create the automation at all.
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM automation_pending_elicitations WHERE state = 'pending'`,
-      ).one().count).toBe(0);
-      expect(state.storage.sql.exec<{ state: string }>(
-        `SELECT state FROM automation_pending_elicitations`,
-      ).one().state).toBe("answered");
     });
   });
 
@@ -1066,6 +800,544 @@ describe("AutomationAgent", () => {
       expect(new Set(after.map((row) => row.table_id)).size).toBe(2);
       expect(after.find((row) => row.name === "Releases")?.table_id)
         .toBe(before[0]?.table_id);
+    });
+  });
+
+  describe("run disposition", () => {
+    const now = 1_800_000_000_000;
+
+    /** A settled occurrence with a frozen context, ready to be judged. */
+    function seedRun(
+      state: DurableObjectState,
+      runId: string,
+      options: { deliveryTargets?: unknown[]; disposition?: string } = {},
+    ): void {
+      const context = {
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        runId,
+        authorityGeneration: 1,
+        definitionRevision: 1,
+        definition: {
+          name: "Pipeline watch",
+          description: "Watches the pipeline sheet.",
+          overview: "Watches the pipeline sheet and reports movement.",
+          instructions: "Report what moved in the pipeline since the last run.",
+          requiredCapabilities: [],
+          expectedOutputs: [],
+          defaultBehavior: {},
+          recommendedPlugins: [],
+          memoryTables: [],
+        },
+        defaultPluginIds: [],
+        activitySourcePluginIds: {},
+        connectorBindings: {},
+        deliveryTargets: options.deliveryTargets ?? [
+          { type: "email", emailAddress: "recruiter@example.com" },
+        ],
+        modelOverride: null,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID },
+        trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
+        opening: null,
+        memoryScope: { automationId: AUTOMATION_ID, authorityGeneration: 1 },
+      };
+      state.storage.sql.exec(
+        `INSERT INTO automation_runs
+           (run_id, occurrence_key, trigger_type, workstream_id, harness_run_id,
+            admission_state, execution_state, delivery_state, context_json,
+            source_version, disposition, disposition_source, disposition_reason,
+            created_at, updated_at)
+         VALUES (?, ?, 'manual', ?, ?, 'provisioned', 'completed', 'pending', ?, 1, ?, ?, ?, ?, ?)`,
+        runId,
+        `manual:${runId}`,
+        `00000000-0000-7000-8000-0000000000${runId.slice(-2)}`,
+        `00000000-0000-7000-8000-0000000001${runId.slice(-2)}`,
+        JSON.stringify(context),
+        options.disposition ?? null,
+        options.disposition ? "classified" : null,
+        options.disposition ? "An earlier judgement." : null,
+        now,
+        now,
+      );
+    }
+
+    function seedIdentity(state: DurableObjectState): void {
+      state.storage.sql.exec(
+        `INSERT INTO automation_identity
+           (id, automation_id, workspace_id, author_user_id, region, authority_generation,
+            created_at, updated_at)
+         VALUES (1, ?, ?, ?, 'global', 1, ?, ?)`,
+        AUTOMATION_ID, WORKSPACE_ID, AUTHOR_ID, now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_state
+           (id, lifecycle, title, definition_revision, accepted_definition_revision,
+            event_sequence, created_at, updated_at)
+         VALUES (1, 'active', 'Pipeline watch', 1, 1, 0, ?, ?)`,
+        now, now,
+      );
+    }
+
+    it("keeps the first answer, so a delivery retry cannot judge one run twice", async () => {
+      const runId = "00000000-0000-7000-8000-0000000000e1";
+      await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+        seedIdentity(state);
+        seedRun(state, runId, { disposition: "done" });
+
+        const decision = await instance.resolveRunDisposition({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          runId,
+          result: "The pipeline moved: two candidates reached final round.",
+        });
+
+        // Stored, not recomputed — the result text here would plainly be
+        // delivered if this were a fresh judgement.
+        expect(decision).toEqual({
+          disposition: "done",
+          reason: "An earlier judgement.",
+          source: "classified",
+        });
+      });
+    });
+
+    it("delivers rather than withholding when the classifier cannot be reached", async () => {
+      const runId = "00000000-0000-7000-8000-0000000000e2";
+      await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+        seedIdentity(state);
+        seedRun(state, runId);
+
+        const decision = await instance.resolveRunDisposition({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          runId,
+          result: "Two candidates reached final round.",
+        });
+
+        // No provider credentials in workerd here, so the inference fails and
+        // the failure direction is what this proves: a result nobody can judge
+        // is sent, not swallowed.
+        expect(decision.disposition).toBe("deliver");
+        expect(decision.source).toBe("default");
+        expect(state.storage.sql.exec<{ disposition: string; disposition_source: string }>(
+          `SELECT disposition, disposition_source FROM automation_runs WHERE run_id = ?`,
+          runId,
+        ).one()).toEqual({ disposition: "deliver", disposition_source: "default" });
+      });
+    });
+
+    it("can still open the run when there is nobody to deliver to", async () => {
+      const runId = "00000000-0000-7000-8000-0000000000e3";
+      await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+        seedIdentity(state);
+        seedRun(state, runId, { deliveryTargets: [] });
+
+        const decision = await instance.resolveRunDisposition({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          runId,
+          result: "Two candidates reached final round.",
+        });
+
+        // Having no destination is not having nothing to decide. An automation
+        // no work stream owns can expose the run it executed in, which is the
+        // whole of what a workspace automation reaches people with — it acts
+        // with its tools rather than delivering. So the question is still live,
+        // and with no provider credentials here the fallback is the reachable
+        // arm rather than `deliver`, which this automation cannot do.
+        expect(decision.disposition).toBe("expose_workstream");
+        expect(decision.source).toBe("default");
+      });
+    });
+
+    it("refuses a run that is not this automation's", async () => {
+      const runId = "00000000-0000-7000-8000-0000000000e4";
+      await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+        seedIdentity(state);
+        seedRun(state, runId);
+
+        await expect(instance.resolveRunDisposition({
+          schemaVersion: 1,
+          automationId: AUTOMATION_ID,
+          workspaceId: WORKSPACE_ID,
+          runId: "00000000-0000-7000-8000-0000000000ff",
+          result: "anything",
+        })).rejects.toThrow("automation_run_not_found");
+      });
+    });
+  });
+});
+
+describe("an automation the work stream owns", () => {
+  const OWNING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000c1";
+  const OTHER_USER_ID = "00000000-0000-7000-8000-0000000000c3";
+  const OTHER_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000c2";
+
+  /** Accepted, active, and owned by a room — the state an archive acts on. */
+  async function seedActiveOwnedAutomation(): Promise<void> {
+    await seedReadyDraft(readyDefinition("Weekly changelog"));
+    await pinWorkspaceIdentity();
+    await runInDurableObject(automationStub(), (_instance: AutomationAgent, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_acceptance
+           (id, definition_revision, request_hash, scope, owning_workstream_id,
+            default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+            delivery_targets_json, model_override, evaluator_projection_json,
+            evaluator_source_hash, accepted_at, activated_at)
+         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', '{}', '[]', NULL, '[]',
+                 'sha256:evaluators', 100, 101)`,
+        OWNING_WORKSTREAM_ID,
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_state
+            SET lifecycle = 'active', accepted_definition_revision = 1 WHERE id = 1`,
+      );
+    });
+  }
+
+  /** The most recently queued workspace projection, as the outbox holds it. */
+  function newestProjection(): Promise<Record<string, unknown>> {
+    return runInDurableObject(automationStub(), (_instance: AutomationAgent, state) =>
+      JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM automation_outbox
+          WHERE effect_kind = 'workspace_projection'
+          ORDER BY created_at DESC, effect_id DESC LIMIT 1`,
+      ).one().payload_json) as Record<string, unknown>);
+  }
+
+  function lifecycleAndReason(): Promise<{ lifecycle: string; paused_reason: string | null }> {
+    return runInDurableObject(automationStub(), (_instance: AutomationAgent, state) =>
+      state.storage.sql.exec<{ lifecycle: string; paused_reason: string | null }>(
+        `SELECT lifecycle, paused_reason FROM automation_state WHERE id = 1`,
+      ).one());
+  }
+
+  it("follows its room into the archive and back out again", async () => {
+    await seedActiveOwnedAutomation();
+    const stub = automationStub();
+
+    expect(await stub.pauseForArchivedWorkstream({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: OWNING_WORKSTREAM_ID,
+    })).toEqual({ paused: true, outcomeCode: "automation_paused" });
+    // The reason is recorded, not just the lifecycle: unarchiving has to be
+    // able to tell what the archive paused from what a person paused.
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "paused", paused_reason: "workstream_archived" });
+    // The projection this pause queues has to carry the owning work stream
+    // beside the scope. The directory pairs the two with a CHECK, so a
+    // projection naming one without the other is rejected there — as an
+    // asynchronous outbox failure, which no assertion about this object's own
+    // lifecycle would ever notice.
+    expect(await newestProjection()).toMatchObject({
+      lifecycle: "paused",
+      scope: "workstream",
+      owningWorkstreamId: OWNING_WORKSTREAM_ID,
+    });
+
+    expect(await stub.resumeForUnarchivedWorkstream({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: OWNING_WORKSTREAM_ID,
+    })).toEqual({ resumed: true, outcomeCode: "automation_resumed" });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "active", paused_reason: null });
+  });
+
+  it("gives the author no standing once they leave the room", async () => {
+    await seedActiveOwnedAutomation();
+
+    // The scope exists to end exactly this tenure: an automation belongs to the
+    // room, so whoever typed it keeps no say after leaving. Checked before the
+    // author shortcut, because after it is indistinguishable from no check —
+    // the author would go on pausing, editing and deleting for as long as they
+    // remained anywhere in the workspace.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+      await expect(instance.pause({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: AUTHOR_ID,
+        actorRole: "member",
+        participantOfOwningWorkstream: false,
+      })).rejects.toThrow("automation_authority_mismatch");
+    });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "active", paused_reason: null });
+
+    // And a participant who never touched it has full standing.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+      await instance.pause({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: OTHER_USER_ID,
+        actorRole: "member",
+        participantOfOwningWorkstream: true,
+      });
+    });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "paused", paused_reason: "person" });
+  });
+
+  it("does not start an automation a person paused before the archive", async () => {
+    await seedActiveOwnedAutomation();
+    const stub = automationStub();
+
+    // As a participant, which is what management of a room's automation now
+    // requires: the author shortcut no longer reaches this scope.
+    await stub.pause({
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID,
+      actorRole: "member",
+      participantOfOwningWorkstream: true,
+    });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "paused", paused_reason: "person" });
+
+    // Unarchiving resumes exactly what the archive paused. Without the reason
+    // these two rows are identical, and a room coming back would restart an
+    // automation somebody deliberately stopped.
+    expect(await stub.resumeForUnarchivedWorkstream({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: OWNING_WORKSTREAM_ID,
+    })).toEqual({ resumed: false, outcomeCode: "automation_not_paused_by_archive" });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "paused", paused_reason: "person" });
+  });
+
+  it("is not pausable by a work stream that merely receives from it", async () => {
+    await seedActiveOwnedAutomation();
+
+    // Ownership, not destination: a room an automation delivers into has no say
+    // over whether it runs.
+    expect(await automationStub().pauseForArchivedWorkstream({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: OTHER_WORKSTREAM_ID,
+    })).toEqual({ paused: false, outcomeCode: "automation_not_owned_by_workstream" });
+    expect(await lifecycleAndReason())
+      .toEqual({ lifecycle: "active", paused_reason: null });
+  });
+});
+
+describe("taking over who an automation runs as", () => {
+  const OWNING_WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000d1";
+  const LEAVER_ID = "00000000-0000-7000-8000-0000000000d2";
+  const CLAIMANT_ID = "00000000-0000-7000-8000-0000000000d3";
+  const LEAVER_GMAIL = "00000000-0000-7000-8000-0000000000d4";
+  const CLAIMANT_GMAIL = "00000000-0000-7000-8000-0000000000d5";
+  const SHARED_SLACK = "00000000-0000-7000-8000-0000000000d6";
+
+  /**
+   * A room's automation bound to two connections: the leaver's personal Gmail
+   * and a workspace-scoped Slack. Only the first is at risk.
+   */
+  async function seedOwnedAutomation(): Promise<void> {
+    await seedReadyDraft(readyDefinition("Candidate intake"));
+    await pinWorkspaceIdentity();
+    const workspace = env.WORKSPACE_DOS
+      .get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+    await runInDurableObject(workspace, (_instance, state) => {
+      const connection = (
+        id: string, scope: string, owner: string | null, plugin: string,
+      ): void => {
+        state.storage.sql.exec(
+          `INSERT OR REPLACE INTO connector_connections
+             (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+              display_name, granted_scopes_json, status, cursor_json, config_json,
+              created_at, updated_at, model_plugin_id)
+           VALUES (?, ?, 'google', ?, ?, 'acct', 'A connection', '[]', 'healthy',
+                   '{}', '{}', 1, 1, ?)`,
+          id, WORKSPACE_ID, scope, owner, plugin,
+        );
+      };
+      connection(LEAVER_GMAIL, "personal", LEAVER_ID, "plugin_gmail");
+      connection(CLAIMANT_GMAIL, "personal", CLAIMANT_ID, "plugin_gmail");
+      connection(SHARED_SLACK, "workspace", null, "plugin_slack");
+    });
+    await runInDurableObject(automationStub(), (_instance: AutomationAgent, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_acceptance
+           (id, definition_revision, request_hash, scope, owning_workstream_id,
+            default_plugin_ids_json, activity_source_plugin_ids_json, connector_bindings_json,
+            delivery_targets_json, model_override, evaluator_projection_json,
+            evaluator_source_hash, accepted_at, activated_at)
+         VALUES (1, 1, 'sha256:request', 'workstream', ?, '[]', '{}', ?, '[]', NULL, '[]',
+                 'sha256:evaluators', 100, 101)`,
+        OWNING_WORKSTREAM_ID,
+        JSON.stringify({ plugin_gmail: LEAVER_GMAIL, plugin_slack: SHARED_SLACK }),
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_state
+            SET lifecycle = 'active', accepted_definition_revision = 1, run_as_user_id = ?
+          WHERE id = 1`,
+        LEAVER_ID,
+      );
+    });
+  }
+
+  function principalState(): Promise<{ run_as_user_id: string | null }> {
+    return runInDurableObject(automationStub(), (_instance: AutomationAgent, state) =>
+      state.storage.sql.exec<{ run_as_user_id: string | null }>(
+        `SELECT run_as_user_id FROM automation_state WHERE id = 1`,
+      ).one());
+  }
+
+  function bindings(): Promise<Record<string, string>> {
+    return runInDurableObject(automationStub(), (_instance: AutomationAgent, state) =>
+      JSON.parse(state.storage.sql.exec<{ connector_bindings_json: string }>(
+        `SELECT connector_bindings_json FROM automation_acceptance WHERE id = 1`,
+      ).one().connector_bindings_json) as Record<string, string>);
+  }
+
+  it("moves the dead personal binding and leaves the workspace one alone", async () => {
+    await seedOwnedAutomation();
+
+    const claim = await automationStub().claimExecutionPrincipal({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: CLAIMANT_ID,
+      participantOfOwningWorkstream: true,
+    });
+
+    expect(claim).toEqual({
+      principalUserId: CLAIMANT_ID,
+      reboundPluginIds: ["plugin_gmail"],
+      unboundProviders: [],
+      changed: true,
+    });
+    expect(await principalState()).toEqual({ run_as_user_id: CLAIMANT_ID });
+    // The workspace connection belongs to the workspace, not to whoever
+    // authorized it: it never broke, and rewriting it would be a write on the
+    // one thing that still worked.
+    expect(await bindings()).toEqual({
+      plugin_gmail: CLAIMANT_GMAIL,
+      plugin_slack: SHARED_SLACK,
+    });
+  });
+
+  it("moves what it can and names what it cannot", async () => {
+    await seedOwnedAutomation();
+    // The claimant has no Gmail of their own.
+    await runInDurableObject(
+      env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID))),
+      (_instance, state) => {
+        state.storage.sql.exec(`DELETE FROM connector_connections WHERE id = ?`, CLAIMANT_GMAIL);
+      },
+    );
+
+    const claim = await automationStub().claimExecutionPrincipal({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: CLAIMANT_ID,
+      participantOfOwningWorkstream: true,
+    });
+
+    // The room would rather have most of its automation back than none, so the
+    // takeover still happens and the gap is reported rather than refused.
+    expect(claim.unboundProviders).toEqual(["plugin_gmail"]);
+    expect(claim.reboundPluginIds).toEqual([]);
+    expect(claim.changed).toBe(true);
+    expect(await principalState()).toEqual({ run_as_user_id: CLAIMANT_ID });
+    expect((await bindings()).plugin_gmail).toBe(LEAVER_GMAIL);
+  });
+
+  it("is a no-op for whoever already runs it", async () => {
+    await seedOwnedAutomation();
+    await automationStub().claimExecutionPrincipal({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: CLAIMANT_ID,
+      participantOfOwningWorkstream: true,
+    });
+
+    const again = await automationStub().claimExecutionPrincipal({
+      schemaVersion: 1,
+      automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID,
+      userId: CLAIMANT_ID,
+      participantOfOwningWorkstream: true,
+    });
+
+    // A retry after a lost response must not write a second audit row.
+    expect(again.changed).toBe(false);
+    expect(await runInDurableObject(automationStub(), (_i: AutomationAgent, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM automation_principal_claims`,
+      ).one())).toEqual({ count: 1 });
+  });
+
+  it("refuses somebody who is not in the room that owns it", async () => {
+    await seedOwnedAutomation();
+
+    // Ownership is the whole authorization for a room's automation. Without
+    // participation there is nothing else to fall back on: the claimant is not
+    // the author, and the scope is not workspace.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+      await expect(instance.claimExecutionPrincipal({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: CLAIMANT_ID,
+        participantOfOwningWorkstream: false,
+      })).rejects.toThrow("automation_authority_mismatch");
+    });
+    expect(await principalState()).toEqual({ run_as_user_id: LEAVER_ID });
+  });
+});
+
+describe("whose connections a draft may bind", () => {
+  const OWNER_ID = "00000000-0000-7000-8000-0000000000f1";
+  const OTHER_ID = "00000000-0000-7000-8000-0000000000f2";
+  const OTHER_GMAIL = "00000000-0000-7000-8000-0000000000f3";
+
+  it("refuses another member's personal connection at every scope but workspace", async () => {
+    await pinWorkspaceIdentity();
+    const workspace = env.WORKSPACE_DOS
+      .get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT OR REPLACE INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, granted_scopes_json, status, cursor_json, config_json,
+            created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, 'google', 'personal', ?, 'acct', 'Their Gmail', '[]', 'healthy',
+                 '{}', '{}', 1, 1, 'plugin_gmail')`,
+        OTHER_GMAIL, WORKSPACE_ID, OTHER_ID,
+      );
+    });
+
+    // A room's automation is managed by everyone in the room and outlives
+    // whoever wrote it. Binding a colleague's personal connection to one would
+    // lend their credentials to a standing automation they never agreed to —
+    // and before `workstream` existed, neither guard covered this case.
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent) => {
+      await expect((instance as unknown as {
+        prepareAcceptance(input: unknown, definition: unknown): Promise<unknown>;
+      }).prepareAcceptance({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER_ID,
+        authorUserId: OWNER_ID,
+        scope: "workstream",
+        defaultPluginIds: ["plugin_gmail"],
+        activitySourcePluginIds: {},
+        deliveryTargets: [],
+      }, readyDefinition("Candidate intake")))
+        .rejects.toThrow("automation_personal_connection_access_denied");
     });
   });
 });

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
 import type { ElicitationData, Message } from '../lib/types';
@@ -1724,5 +1724,166 @@ describe('MessageBlock heading collapse control', () => {
     };
     render(<MessageBlock {...actions} collapseHeadings message={message} />);
     expect(screen.queryByRole('button', { name: 'Expand all sections' })).toBeNull();
+  });
+});
+
+describe('an automation result in the room', () => {
+  const activation = {
+    ...baseMessage,
+    id: 'message-activation',
+    // Appended by Rally on the automation's behalf, so it carries a machine
+    // author; what makes it an activation is the type, and the renderer has to
+    // agree with that rather than with the author.
+    authorType: 'system' as const,
+    author: undefined,
+    messageType: 'automation_activation' as const,
+    text: '## Monday agenda\n\nTwo candidates reached final round.',
+  };
+
+  it('renders as an ordinary authored message, named Automation', () => {
+    render(<MessageBlock {...actions} collapseHeadings message={activation} />);
+
+    const article = screen.getByRole('article', { name: 'Automation result' });
+    expect(article).toHaveClass('message-block', 'agent-message');
+    expect(article.querySelector('.message-author')?.textContent).toBe('Automation');
+    // Not "Rally": the room is being told what an automation found, and the
+    // name in the author slot is the whole of what marks it as one.
+    expect(article.textContent).not.toContain('Rally');
+  });
+
+  it('gets the feed treatment every other message gets', () => {
+    const { container } = render(
+      <MessageBlock {...actions} collapseHeadings message={activation} />,
+    );
+
+    // Headings fold, exactly as an assistant answer's do. An activation is a
+    // message, not a row kind with rules of its own.
+    expect(container.querySelectorAll('.markdown-collapse')).toHaveLength(1);
+    expect(screen.getByText('Two candidates reached final round.')).toBeVisible();
+    expect(container.querySelector('.transcript-event')).toBeNull();
+  });
+});
+
+describe('the card for an automation that lost its principal', () => {
+  const card = {
+    ...baseMessage,
+    id: 'message-principal',
+    authorType: 'system' as const,
+    author: undefined,
+    messageType: 'system' as const,
+    text: 'Candidate intake cannot reach Gmail.',
+    principalUnavailable: {
+      automationId: 'automation-1',
+      automationName: 'Candidate intake',
+      outgoingUserName: 'Dana Reeve',
+      unreachableProviders: ['Gmail'],
+    },
+  };
+
+  it('says what broke, who it ran as, and what still works', () => {
+    render(<MessageBlock {...actions} message={card} />);
+
+    const group = screen.getByRole('group');
+    expect(group.textContent).toContain('Candidate intake');
+    expect(group.textContent).toContain('Gmail');
+    expect(group.textContent).toContain('Dana Reeve');
+    // The reassurance is the point of naming it: a room reading "cannot reach
+    // Gmail" would otherwise assume the whole automation has stopped, when
+    // everything on the workspace's own connections is still running.
+    expect(group.textContent).toContain('workspace’s own connections is unaffected');
+  });
+
+  it('offers the takeover to the reader, and to nobody else', () => {
+    const onClaimExecutionPrincipal = vi.fn();
+    render(
+      <MessageBlock {...actions} message={card} onClaimExecutionPrincipal={onClaimExecutionPrincipal} />,
+    );
+
+    // "me", with no argument but the automation: nobody can lend a colleague's
+    // credentials to a standing automation on their behalf.
+    fireEvent.click(screen.getByRole('button', { name: 'Run these as me' }));
+
+    expect(onClaimExecutionPrincipal).toHaveBeenCalledExactlyOnceWith('automation-1');
+  });
+
+  it('is a card rather than a clamped note, so the action is not buried', () => {
+    const { container } = render(<MessageBlock {...actions} message={card} />);
+
+    // The system row it would otherwise be clamps to five lines and offers a
+    // "show more" toggle; this row's only control has to be the takeover.
+    expect(container.querySelector('.principal-unavailable-card')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Show this note in full' })).toBeNull();
+  });
+
+  it('explains itself even where nothing can act on it', () => {
+    render(<MessageBlock {...actions} message={card} />);
+
+    // No API session on this surface. The room is still better off knowing.
+    expect(screen.getByRole('button', { name: 'Run these as me' })).toBeDisabled();
+    expect(screen.getByRole('group').textContent).toContain('Candidate intake');
+  });
+});
+
+describe('the card proposing an automation drafted in this room', () => {
+  const proposal = {
+    ...baseMessage,
+    id: 'message-draft',
+    authorType: 'system' as const,
+    author: undefined,
+    messageType: 'system' as const,
+    text: 'Proposed an automation: Weekly changelog.',
+    draftProposed: {
+      automationId: 'automation-7',
+      automationName: 'Weekly changelog',
+      description: 'Summarize what shipped each week.',
+      triggerSummaries: ['Every Monday at 9:00 AM'],
+      suggestedScope: 'workstream' as const,
+      ready: true,
+    },
+  };
+
+  it('shows what it would create rather than describing it', () => {
+    render(<MessageBlock {...actions} message={proposal} />);
+
+    const group = screen.getByRole('group');
+    expect(group.textContent).toContain('Weekly changelog');
+    expect(group.textContent).toContain('Summarize what shipped each week.');
+    // The triggers are the decision. A card that said "runs on a schedule"
+    // would leave somebody accepting a schedule they never saw.
+    expect(within(group).getByRole('list', { name: 'Triggers' }).textContent)
+      .toContain('Every Monday at 9:00 AM');
+  });
+
+  it('says who will be able to manage it, which acceptance freezes', () => {
+    render(<MessageBlock {...actions} message={proposal} />);
+    expect(screen.getByRole('group').textContent).toContain('This work stream can manage it');
+
+    const personal = { ...proposal, draftProposed: { ...proposal.draftProposed, suggestedScope: 'personal' as const } };
+    const { unmount } = render(<MessageBlock {...actions} message={personal} />);
+    expect(screen.getAllByRole('group').at(-1)?.textContent).toContain('You can manage it');
+    unmount();
+  });
+
+  it('creates the automation it names', () => {
+    const onAcceptDraft = vi.fn();
+    render(<MessageBlock {...actions} message={proposal} onAcceptDraft={onAcceptDraft} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create this automation' }));
+
+    expect(onAcceptDraft).toHaveBeenCalledExactlyOnceWith('automation-7');
+  });
+
+  it('offers no accept while the agent is still asking', () => {
+    // Accepting an unfinished draft freezes the gap the agent is asking about,
+    // so the card says what is happening and offers nothing to press.
+    render(
+      <MessageBlock
+        {...actions}
+        message={{ ...proposal, draftProposed: { ...proposal.draftProposed, ready: false } }}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Create this automation' })).toBeNull();
+    expect(screen.getByRole('group').textContent).toContain('Still being drafted');
   });
 });

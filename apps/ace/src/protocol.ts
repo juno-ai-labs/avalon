@@ -117,6 +117,15 @@ export const MANAGED_MODELS = [
   },
   {
     rank: 10,
+    rankReason: 'Background · every automation result',
+    role: 'automation_result_disposition',
+    key: 'agent-model-automation-result-disposition',
+    label: 'Automation result disposition',
+    description: 'Decides whether a completed automation run is worth delivering at all, and whether its result belongs in the work stream that owns the automation or in the work stream the run itself used, made visible.',
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 11,
     rankReason: 'Specialized · dashboard refreshes',
     role: 'block_dashboard',
     key: 'agent-model-block-dashboard',

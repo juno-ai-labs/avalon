@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AutomationRunContextV1Schema } from "./automation-agent";
+import { AutomationRunContextV1Schema, AutomationScopeSchema } from "./automation-agent";
 import {
   TranscriptActivitySchema,
   PendingTranscriptInputSchema,
@@ -249,6 +249,7 @@ export const AGENT_MODEL_ROLES = [
   "work_opportunity_admission",
   "work_opportunity_ranking",
   "workstream_description",
+  "automation_result_disposition",
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
@@ -264,6 +265,7 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
   workstream_description: "agent-model-workstream-description",
+  automation_result_disposition: "agent-model-automation-result-disposition",
 };
 
 /** One task's primary OpenRouter model and its ordered fallback route. */
@@ -697,7 +699,7 @@ export const MessageSchema = z.object({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   author: MessageAuthorSchema,
-  messageType: z.enum(["text", "system", "tool", "elicitation", "suggestion"]),
+  messageType: z.enum(["text", "system", "tool", "elicitation", "suggestion", "automation_activation"]),
   textContent: z.string(),
   structuredContent: z.record(z.string(), z.unknown()).nullable(),
   mentions: z.array(MentionSchema),
@@ -1304,7 +1306,15 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
  * draft's prose — the compiler is the one thing in the system that already
  * parsed the sentence.
  */
-export const AutomationRequestedDeliverySchema = z.enum(["email", "slack_agent_dm"]);
+/**
+ * Where a draft asks to be delivered.
+ *
+ * `channel` is not a second shape: a workspace automation reaches people by
+ * acting with its connector tools, and this says the person asked for a channel
+ * rather than naming one. Which channel is decided when the automation runs,
+ * from where it was authored — nothing here carries an ID.
+ */
+export const AutomationRequestedDeliverySchema = z.enum(["email", "slack_agent_dm", "channel"]);
 export const AutomationDraftSchema = z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
@@ -1318,11 +1328,28 @@ export const AutomationDraftSchema = z.object({
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
-  suggestedScope: ScopeSchema,
+  /**
+   * Who will be able to see and change this automation, asked before it is
+   * submitted because it cannot be changed afterwards. `workstream` is the room
+   * the authoring run happened in — there is no ID to name here and none can
+   * be, because no other room is reachable.
+   */
+  suggestedScope: AutomationScopeSchema,
   followUpQuestion: z.string().nullable(),
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()
 }).superRefine((draft, context) => {
+  // Scope is the destination for a room's automation: its results land in the
+  // room that owns it, and there is nothing else for it to ask for. A draft
+  // that named one anyway would be asking for two destinations, one of which
+  // nobody chose.
+  if (draft.suggestedScope === "workstream" && draft.requestedDelivery.length > 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["requestedDelivery"],
+      message: "A work-stream automation delivers to its work stream, so it requests no delivery",
+    });
+  }
   const names = new Set<string>();
   draft.memoryTables.forEach((table, index) => {
     const normalized = table.name.toLocaleLowerCase();
@@ -1487,6 +1514,35 @@ export const AutomationSummarySchema = z.object({
   updatedAt: TimestampSchema,
   updateAvailable: z.boolean()
 });
+
+/**
+ * One automation in a work stream's rail.
+ *
+ * The sidebar summary without its scope, because every row in that list is
+ * owned by the work stream showing it. Carrying a scope here would be a second
+ * copy of a fact the list's own identity already establishes, and the only
+ * value it could hold is the one `ScopeSchema` deliberately does not offer.
+ */
+export const WorkstreamAutomationSummarySchema = AutomationSummarySchema.omit({ scope: true });
+export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSummarySchema>;
+
+/**
+ * What a takeover did.
+ *
+ * `unboundProviders` is why this is not a bare acknowledgement: the claimant may
+ * have no connection for one of the providers the last principal took with
+ * them, and the card that prompted the claim stays up naming only those. The
+ * rest of the automation moves regardless — most of it working beats none.
+ */
+export const AutomationExecutionPrincipalClaimSchema = z.strictObject({
+  principalUserId: IdSchema,
+  reboundPluginIds: z.array(z.string().min(1)),
+  unboundProviders: z.array(z.string().min(1)),
+  /** False when the caller already ran it and nothing needed rebinding. */
+  changed: z.boolean(),
+});
+export type AutomationExecutionPrincipalClaim =
+  z.infer<typeof AutomationExecutionPrincipalClaimSchema>;
 
 export const AutomationRunSchema = z.object({
   id: IdSchema,
@@ -1889,7 +1945,13 @@ export const CreateAutomationRequestSchema = z.object({
    */
   draftId: IdSchema.optional(),
   draft: AutomationDraftSchema,
-  scope: ScopeSchema,
+  /**
+   * `workstream` carries no room: the request cannot name one, because a body
+   * that could would let a caller give any room an automation. The room comes
+   * from where the draft was written, which is the only one reachable from an
+   * authoring loop anyway.
+   */
+  scope: AutomationScopeSchema,
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
   resourceIds: z.array(IdSchema).max(20).default([]),
@@ -3130,7 +3192,11 @@ export const ConnectorActivityTriggerDescriptorSchema = z.strictObject({
   eventFamilies: z.array(z.string().min(1).max(200)).default([]),
   filterFields: z.array(ConnectorActivityFilterFieldSchema).default([]),
   resourceRelationships: z.array(z.strictObject({
-    relationship: z.enum(["channel", "folder", "parent", "project", "repository", "page", "application"]),
+    // Duplicated from `ConnectorResourceRelationshipSchema` in
+    // `automation-evaluators.ts` rather than imported, and the two must be
+    // changed together: adding a value to only one type-checks and then rejects
+    // the manifest at registry construction, for every connector at once.
+    relationship: z.enum(["channel", "file", "folder", "parent", "project", "repository", "page", "thread", "application"]),
     resourceType: z.string().min(1).max(200),
   })).default([]),
   /**

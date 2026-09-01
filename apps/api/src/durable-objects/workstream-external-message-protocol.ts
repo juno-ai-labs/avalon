@@ -1,4 +1,5 @@
 import {
+  AutomationActivationV1Schema,
   ExecutionPrincipalSchema,
   ExternalActorSchema,
   IdSchema,
@@ -47,8 +48,33 @@ export const AnswerExternalElicitationInputSchema = ExternalMessageBaseSchema.ex
   answerJson: z.string(),
 }).strict();
 
+/**
+ * One automation activation, on its way to becoming a loop input.
+ *
+ * Not an extension of {@link ExternalMessageBaseSchema}, and the difference is
+ * the point: an external message carries a provider account that a person is
+ * behind, and an activation carries nobody. Everything that base schema
+ * requires about that actor — the provider, the account, the Slack origin it
+ * came from — is absent here rather than filled with a placeholder that later
+ * readers would have to recognize as one.
+ */
+export const AdmitAutomationActivationInputSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  messageId: IdSchema,
+  clientMessageId: z.string().min(1).max(120),
+  /** What the room reads: the automation's result, rendered for people. */
+  text: z.string().min(1).max(MESSAGE_MAX_CHARACTERS),
+  activation: AutomationActivationV1Schema,
+  /** Whose authority the woken run carries. The automation's, not a reader's. */
+  executionPrincipal: ExecutionPrincipalSchema,
+  origin: z.string().min(1).max(80),
+  now: z.number().int().nonnegative(),
+});
+
 export const ExternalMessageAdmissionResultSchema = WorkstreamMessageAdmissionReceiptSchema;
 
 export type AdmitExternalMessageInput = z.infer<typeof AdmitExternalMessageInputSchema>;
+export type AdmitAutomationActivationInput = z.infer<typeof AdmitAutomationActivationInputSchema>;
 export type AnswerExternalElicitationInput = z.infer<typeof AnswerExternalElicitationInputSchema>;
 export type ExternalMessageAdmissionResult = z.infer<typeof ExternalMessageAdmissionResultSchema>;
