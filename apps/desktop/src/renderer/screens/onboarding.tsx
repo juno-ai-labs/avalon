@@ -1,5 +1,5 @@
 import { Building2, Check, ExternalLink, Globe2, LoaderCircle, ShieldCheck } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import { RallyMark, Button, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
@@ -150,6 +150,7 @@ export function RegionOnboarding(): React.JSX.Element {
   const [name, setName] = useState(workspaceName);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const createOperation = useRef<{ fingerprint: string; id: string } | null>(null);
 
   const continueSetup = async (): Promise<void> => {
     // Holding Enter repeats it, and the button stays reachable while the first
@@ -159,7 +160,12 @@ export function RegionOnboarding(): React.JSX.Element {
     // per keystroke. The button's own `disabled` covers only the pointer.
     if (working) return;
     if (name.trim().length < 2) return;
-    const operationId = uuidV7();
+    const fingerprint = JSON.stringify({ name: name.trim(), region: selected });
+    const operation = createOperation.current?.fingerprint === fingerprint
+      ? createOperation.current
+      : { fingerprint, id: uuidV7() };
+    createOperation.current = operation;
+    const operationId = operation.id;
     reportTelemetryProductIntent({
       kind: 'onboarding_region_selected',
       selectedRegion: selected,
@@ -175,6 +181,7 @@ export function RegionOnboarding(): React.JSX.Element {
     setError(null);
     try {
       await finishWorkspaceSetup(name, selected, operationId);
+      createOperation.current = null;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Rally could not create this workspace.');
     } finally {

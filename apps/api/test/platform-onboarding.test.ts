@@ -724,8 +724,11 @@ describe("single-platform regional onboarding", () => {
       operation_id: retryOperationId,
       pending_expires_at: null,
     });
+    const global = new FakeRegionalGateway("global", {
+      workspaces: [workspace("global", globalWorkspaceId)],
+    });
     const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
-    const subject = service({ bindings, eu });
+    const subject = service({ bindings, global, eu });
 
     await expect(subject.value.acceptInvitation(invitationId, "eu", operationId))
       .resolves.toEqual(session("eu", euWorkspaceId));
@@ -755,6 +758,31 @@ describe("single-platform regional onboarding", () => {
       status: "active",
       operation_id: operationId,
     });
+  });
+
+  it("reconciles a stale active route before accepting a new invitation to that workspace", async () => {
+    const bindings = new MemoryBindingStore({
+      platform_user_id: platformUserId,
+      region: "eu",
+      workspace_id: euWorkspaceId,
+      placement_affinity: "weur",
+      status: "active",
+      operation_id: retryOperationId,
+      pending_expires_at: null,
+    });
+    const eu = new FakeRegionalGateway("eu", { invitations: [invitation()] });
+    eu.activate.mockRejectedValue(new ApiError(403, "workspace_access_denied", "Workspace access is unavailable"));
+    const subject = service({ bindings, eu });
+
+    await expect(subject.value.acceptInvitation(invitationId, "eu", operationId))
+      .resolves.toEqual(session("eu", euWorkspaceId));
+
+    expect(eu.accept).toHaveBeenCalledWith(expect.objectContaining({
+      invitationId,
+      operationId,
+      workspaceId: euWorkspaceId,
+    }));
+    expect(eu.activate).not.toHaveBeenCalled();
   });
 
   it("fails closed when the named EU bridge binding is unavailable", () => {

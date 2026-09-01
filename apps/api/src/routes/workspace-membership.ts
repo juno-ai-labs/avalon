@@ -1,4 +1,4 @@
-import { IdSchema, WorkspaceDepartureSchema } from "@rally/contracts";
+import { IdSchema, WorkspaceDepartureRequestSchema, WorkspaceDepartureSchema } from "@rally/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
 
@@ -23,14 +23,16 @@ export const workspaceMembershipRoutes = new Hono<HonoAppEnv>();
 workspaceMembershipRoutes.delete(
   "/:workspaceId/membership",
   zValidator("param", z.object({ workspaceId: IdSchema })),
+  zValidator("query", WorkspaceDepartureRequestSchema),
   async (c) => {
     const auth = getAuth(c);
     const { workspaceId } = c.req.valid("param");
+    const { expectedOutcome } = c.req.valid("query");
     if (workspaceId !== auth.workspaceId) {
       throw new ApiError(403, "forbidden", "That workspace is not the one you are signed in to");
     }
     return c.json(WorkspaceDepartureSchema.parse(
-      await new WorkspaceService(c.env, auth).leaveWorkspace(),
+      await new WorkspaceService(c.env, auth).leaveWorkspace(expectedOutcome),
     ));
   },
 );
