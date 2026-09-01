@@ -129,7 +129,6 @@ export const AutomationActivationV1Schema = z.strictObject({
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
 
 export const AutomationAgentSnapshotSchema = z.strictObject({
-export const AutomationAgentSnapshotSchema = z.strictObject({
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
   workspaceId: WorkspaceIdSchema,
@@ -215,7 +214,7 @@ export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
  * and the outgoing principal, and edited in place as providers are repaired, so
  * an hourly automation writes one card rather than one an hour.
  */
-export const AutomationPrincipalUnavailableV1Schema = z.object({
+export const AutomationPrincipalUnavailableV1Schema = z.strictObject({
   type: z.literal("automation_principal_unavailable"),
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
@@ -229,7 +228,7 @@ export const AutomationPrincipalUnavailableV1Schema = z.object({
    * they keep working and the automation keeps delivering on them.
    */
   unreachableProviders: z.array(z.string().min(1)).min(1),
-}).strict();
+});
 export type AutomationPrincipalUnavailableV1 =
   z.infer<typeof AutomationPrincipalUnavailableV1Schema>;
 
@@ -241,7 +240,7 @@ export type AutomationPrincipalUnavailableV1 =
  * what the card shows and the id the accept action needs, so a card that has
  * scrolled out of a long feed cannot disagree with the automation it proposes.
  */
-export const AutomationDraftProposedV1Schema = z.object({
+export const AutomationDraftProposedV1Schema = z.strictObject({
   type: z.literal("automation_draft_proposed"),
   schemaVersion: z.literal(1),
   automationId: AutomationIdSchema,
@@ -255,7 +254,7 @@ export const AutomationDraftProposedV1Schema = z.object({
    * offers no accept, because accepting an unfinished draft freezes the gap.
    */
   ready: z.boolean(),
-}).strict();
+});
 export type AutomationDraftProposedV1 = z.infer<typeof AutomationDraftProposedV1Schema>;
 
 /** Immutable, self-contained execution input frozen when an occurrence commits. */
@@ -308,12 +307,12 @@ export const AutomationRunContextV1Schema = z.strictObject({
    * Writing the id into the instructions instead would freeze a literal into
    * prose that every later edit, rename, or move would have to find and rewrite.
    */
-  authoringOrigin: z.object({
+  authoringOrigin: z.strictObject({
     kind: z.literal("slack"),
     teamId: z.string().min(1).max(255),
     channelId: z.string().min(1).max(255),
     channelName: z.string().min(1).max(255).nullable(),
-  }).strict().nullable().default(null),
+  }).nullable().default(null),
   modelOverride: z.string().min(1).nullable(),
   executionPrincipal: z.strictObject({ type: z.literal("user"), userId: UserIdSchema }),
   trigger: AutomationRunTriggerV1Schema,

@@ -287,7 +287,6 @@ export const WorkspaceDirectoryOwnedAutomationsSchema = z.strictObject({
 });
 
 export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
-export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   watchedOnly: z.boolean(),

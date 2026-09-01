@@ -58,7 +58,7 @@ export const AnswerExternalElicitationInputSchema = ExternalMessageBaseSchema.ex
  * came from — is absent here rather than filled with a placeholder that later
  * readers would have to recognize as one.
  */
-export const AdmitAutomationActivationInputSchema = z.object({
+export const AdmitAutomationActivationInputSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   workstreamId: WorkstreamIdSchema,
   messageId: IdSchema,
@@ -70,7 +70,7 @@ export const AdmitAutomationActivationInputSchema = z.object({
   executionPrincipal: ExecutionPrincipalSchema,
   origin: z.string().min(1).max(80),
   now: z.number().int().nonnegative(),
-}).strict();
+});
 
 export const ExternalMessageAdmissionResultSchema = WorkstreamMessageAdmissionReceiptSchema;
 

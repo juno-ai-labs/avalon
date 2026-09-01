@@ -3961,11 +3961,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async listWorkstreamAutomations(input: unknown): Promise<{ items: WorkstreamAutomationSummary[] }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       workspaceId: WorkspaceIdSchema,
       workstreamId: IdSchema,
       userId: UserIdSchema,
-    }).strict().parse(input);
+    }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       throw new Error("automation_directory_access_denied");
@@ -4028,11 +4028,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async unreachablePersonalBindings(input: unknown): Promise<{ providers: string[] }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       workspaceId: WorkspaceIdSchema,
       principalUserId: UserIdSchema,
       connectionIds: z.array(z.string().min(1)).max(100),
-    }).strict().parse(input);
+    }).parse(input);
     this.assertWorkspace(request.workspaceId);
     if (request.connectionIds.length === 0) return { providers: [] };
     const rows = this.state.storage.sql.exec<{
@@ -4090,11 +4090,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   async workstreamParticipation(input: unknown): Promise<{ participant: boolean }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       workspaceId: WorkspaceIdSchema,
       workstreamId: IdSchema,
       userId: UserIdSchema,
-    }).strict().parse(input);
+    }).parse(input);
     this.assertWorkspace(request.workspaceId);
     return { participant: this.isWorkstreamParticipant(request.workstreamId, request.userId) };
   }

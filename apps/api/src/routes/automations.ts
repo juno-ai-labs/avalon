@@ -23,7 +23,7 @@ import {
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
-const updateBody = z.object({ deliveryTargets: AutomationDeliveryTargetSetSchema }).strict();
+const updateBody = z.strictObject({ deliveryTargets: AutomationDeliveryTargetSetSchema });
 const SharedTemplateSchema = z.strictObject({ templateId: IdSchema });
 
 /** Envelopes this route composes; the entities inside come from the contracts. */

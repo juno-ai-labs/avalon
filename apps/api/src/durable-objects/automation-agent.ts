@@ -1058,7 +1058,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     created: boolean;
   }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       automationId: z.string().uuid(),
       workspaceId: z.string().uuid(),
@@ -1066,12 +1066,12 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       region: z.enum(["global", "eu"]),
       authoredInWorkstreamId: z.string().uuid(),
       /** Supplied by the Worker from the loop, never by the model. */
-      authoredOrigin: z.object({
+      authoredOrigin: z.strictObject({
         kind: z.literal("slack"),
         teamId: z.string().min(1).max(255),
         channelId: z.string().min(1).max(255),
         channelName: z.string().min(1).max(255).nullable(),
-      }).strict().nullable().default(null),
+      }).nullable().default(null),
       /**
        * Staged by the drafting loop and applied here rather than when the model
        * called for them: a draft's rules can be set before the first submission
@@ -1080,7 +1080,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
        */
       evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.nullable().default(null),
       draft: AutomationDraftSchema,
-    }).strict().parse(input);
+    }).parse(input);
     const now = Date.now();
     const existing = this.state.storage.sql.exec<{
       automation_id: string;
@@ -1624,12 +1624,12 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
    */
   async pauseForArchivedWorkstream(input: unknown): Promise<{ paused: boolean; outcomeCode: string }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       automationId: z.string().uuid(),
       workspaceId: z.string().uuid(),
       workstreamId: z.string().uuid(),
-    }).strict().parse(input);
+    }).parse(input);
     const identity = this.identity();
     if (identity.automation_id !== request.automationId
       || identity.workspace_id !== request.workspaceId) {
@@ -1658,12 +1658,12 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
    */
   async resumeForUnarchivedWorkstream(input: unknown): Promise<{ resumed: boolean; outcomeCode: string }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       automationId: z.string().uuid(),
       workspaceId: z.string().uuid(),
       workstreamId: z.string().uuid(),
-    }).strict().parse(input);
+    }).parse(input);
     const identity = this.identity();
     if (identity.automation_id !== request.automationId
       || identity.workspace_id !== request.workspaceId) {
@@ -2505,13 +2505,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     source: "classified" | "default";
   }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       automationId: z.string().uuid(),
       workspaceId: z.string().uuid(),
       runId: z.string().uuid(),
       result: z.string(),
-    }).strict().parse(input);
+    }).parse(input);
     const identity = this.identity();
     if (identity.automation_id !== request.automationId || identity.workspace_id !== request.workspaceId) {
       throw new Error("automation_identity_mismatch");
@@ -4139,14 +4139,14 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     changed: boolean;
   }> {
     await this.initialized;
-    const request = z.object({
+    const request = z.strictObject({
       schemaVersion: z.literal(1),
       automationId: z.string().uuid(),
       workspaceId: z.string().uuid(),
       userId: z.string().uuid(),
       actorRole: z.string().optional(),
       participantOfOwningWorkstream: z.boolean().default(false),
-    }).strict().parse(input);
+    }).parse(input);
     this.assertManager(
       request.automationId,
       request.workspaceId,
