@@ -118,6 +118,14 @@ export interface AutomationSummary {
   statusMessage?: string;
 }
 
+/**
+ * One automation in a work stream's context rail.
+ *
+ * The sidebar summary without its scope: every row in that rail belongs to the
+ * work stream showing it, and `Scope` has no value that could say so.
+ */
+export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope'>;
+
 export interface WorkstreamSummary {
   id: string;
   title: string;
