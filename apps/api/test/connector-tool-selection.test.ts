@@ -343,7 +343,7 @@ describe("connector tools selected for harness runs", () => {
     expect(withAzure.modeByTool.get("multimodal_generation_generate_audio")).toBe("write");
   });
 
-  it("authorizes every built-in plugin this run registered and denies one it did not", async () => {
+  it("authorizes every built-in plugin this run registered and denies unregistered or invented ids", async () => {
     const database = new ToolSelectionDatabase([]);
     const selected = await __integrationTesting.loadHarnessTools(createTestEnv({
       ...env(database),
@@ -361,6 +361,10 @@ describe("connector tools selected for harness runs", () => {
     expect(registeredBuiltinIds).toContain("rally:multimodal-generation");
     expect(registeredBuiltinIds).toContain("rally:web");
     expect(registeredBuiltinIds).toContain("rally:workstream");
+    // The derivation this change made load-bearing, checked against a set the
+    // test built without it: a built-in registered under a `connection:` id
+    // would be counted by one and not the other.
+    expect(selected.builtinPluginIds).toEqual(new Set(registeredBuiltinIds));
     for (const pluginId of registeredBuiltinIds) {
       expect(__integrationTesting.builtinPluginAuthorization(pluginId, selected)).toBe("authorized");
     }
