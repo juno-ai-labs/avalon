@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
-  CLOUDFLARE_GET_MAX_RETRIES,
+  CLOUDFLARE_GET_MAX_ATTEMPTS,
   ensureCloudflareLakehouses,
   ensureInferenceLakehouse,
   loadAnalyticsLakehouseManifest,
@@ -16,6 +16,17 @@ const environment = {
   CLOUDFLARE_ACCOUNT_ID: 'test-account',
   CLOUDFLARE_API_TOKEN: 'test-token',
 };
+const tenAttemptRetryDelays = [
+  500,
+  1_000,
+  2_000,
+  4_000,
+  8_000,
+  8_000,
+  8_000,
+  8_000,
+  8_000,
+];
 const userTokenId = 'a'.repeat(32);
 const accountTokenId = 'b'.repeat(32);
 function accountDouble({ tokenOwner = 'account' } = {}) {
@@ -112,7 +123,7 @@ function accountDouble({ tokenOwner = 'account' } = {}) {
   };
 }
 
-test('transient Cloudflare GET failures use the official client retry policy', async () => {
+test('transient Cloudflare GET failures recover before the ten-attempt ceiling', async () => {
   const account = accountDouble();
   const retryDelays = [];
   const retryLogs = [];
@@ -121,7 +132,7 @@ test('transient Cloudflare GET failures use the official client retry policy', a
     const url = new URL(String(input));
     if ((init.method ?? 'GET') === 'GET'
       && url.pathname.endsWith('/pipelines/v1/streams')
-      && streamListAttempts++ < CLOUDFLARE_GET_MAX_RETRIES) {
+      && streamListAttempts++ < 2) {
       return Response.json(
         { success: false, errors: [{ code: 500, message: 'Internal Server Error' }] },
         { status: 500, headers: { 'cf-ray': `retry-ray-${streamListAttempts}` } },
@@ -138,12 +149,12 @@ test('transient Cloudflare GET failures use the official client retry policy', a
     waitImpl: async (milliseconds) => retryDelays.push(milliseconds),
   });
 
-  assert.equal(CLOUDFLARE_GET_MAX_RETRIES, 2);
+  assert.equal(CLOUDFLARE_GET_MAX_ATTEMPTS, 10);
   assert.equal(streamListAttempts, 3);
   assert.deepEqual(retryDelays, [500, 1_000]);
   const retryMessages = retryLogs.filter((message) => message.includes('retrying'));
-  assert.match(retryMessages[0], /cf-ray: retry-ray-1.*retrying 1\/2 in 500 ms/u);
-  assert.match(retryMessages[1], /cf-ray: retry-ray-2.*retrying 2\/2 in 1000 ms/u);
+  assert.match(retryMessages[0], /cf-ray: retry-ray-1.*retrying attempt 2\/10 in 500 ms/u);
+  assert.match(retryMessages[1], /cf-ray: retry-ray-2.*retrying attempt 3\/10 in 1000 ms/u);
 });
 
 test('Cloudflare retry directives and Retry-After override GET status defaults', async () => {
@@ -195,7 +206,7 @@ test('Cloudflare retry directives and Retry-After override GET status defaults',
   assert.deepEqual(retryDelays, [1_500]);
 });
 
-test('persistent Cloudflare GET failures surface the final Ray ID after two retries', async () => {
+test('persistent Cloudflare GET failures surface the final Ray ID after ten attempts', async () => {
   const retryDelays = [];
   let attempts = 0;
   const fetchImpl = async () => {
@@ -214,10 +225,35 @@ test('persistent Cloudflare GET failures surface the final Ray ID after two retr
       randomImpl: () => 0,
       waitImpl: async (milliseconds) => retryDelays.push(milliseconds),
     }),
-    /HTTP 500.*cf-ray: persistent-ray-3/u,
+    /HTTP 500.*cf-ray: persistent-ray-10/u,
   );
-  assert.equal(attempts, 3);
-  assert.deepEqual(retryDelays, [500, 1_000]);
+  assert.equal(attempts, 10);
+  assert.deepEqual(retryDelays, tenAttemptRetryDelays);
+});
+
+test('connection failures get exactly ten total attempts', async () => {
+  const retryDelays = [];
+  const retryLogs = [];
+  let attempts = 0;
+
+  await assert.rejects(
+    ensureInferenceLakehouse({
+      environment,
+      fetchImpl: async () => {
+        attempts += 1;
+        throw new TypeError('connection failed');
+      },
+      log: (message) => retryLogs.push(message),
+      randomImpl: () => 0,
+      waitImpl: async (milliseconds) => retryDelays.push(milliseconds),
+    }),
+    /connection failed/u,
+  );
+
+  assert.equal(attempts, 10);
+  assert.deepEqual(retryDelays, tenAttemptRetryDelays);
+  assert.equal(retryLogs.length, 9);
+  assert.match(retryLogs.at(-1), /retrying attempt 10\/10 in 8000 ms/u);
 });
 
 test('mutating Cloudflare requests are never retried', async () => {
