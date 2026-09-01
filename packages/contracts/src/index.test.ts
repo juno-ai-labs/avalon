@@ -315,13 +315,22 @@ describe("boundary contracts", () => {
       }
       return true; // equal versions are a tie this rule does not order
     };
+    // Compared against the last id seen *for that vendor*, not the globally
+    // preceding one. A vendor's entries are not required to be contiguous —
+    // `AGENT_MODEL_GROUPS` merges a vendor mentioned in two places into one
+    // section on purpose — so an adjacent-pair walk would skip the comparison
+    // for exactly the mistake this exists to catch: `x-ai/grok-9` appended
+    // after the DeepSeek block displays under xAI as 4.6 / 4.5 / 4.3 / 9,
+    // while its only out-of-order pair never sits adjacent in this list.
+    const newestSeen = new Map<string, string>();
     const offenders: string[] = [];
-    for (let index = 1; index < AGENT_MODEL_OVERRIDES.length; index += 1) {
-      const previous = AGENT_MODEL_OVERRIDES[index - 1]!;
-      const current = AGENT_MODEL_OVERRIDES[index]!;
-      const vendor = (id: string): string => id.slice(0, id.indexOf("/"));
-      if (vendor(previous) !== vendor(current)) continue;
-      if (!descends(version(current)!, version(previous)!)) offenders.push(`${previous} precedes ${current}`);
+    for (const id of AGENT_MODEL_OVERRIDES) {
+      const vendor = id.slice(0, id.indexOf("/"));
+      const previous = newestSeen.get(vendor);
+      if (previous !== undefined && !descends(version(id)!, version(previous)!)) {
+        offenders.push(`${previous} precedes ${id}`);
+      }
+      newestSeen.set(vendor, id);
     }
     expect(offenders).toEqual([]);
   });
