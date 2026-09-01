@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { CitationTarget } from '@rally/contracts/citations';
 import { describe, expect, it, vi } from 'vitest';
 import { CitationFootnoteSection, CitationsProvider } from './markdown-citations';
@@ -25,7 +25,9 @@ function context(overrides: Partial<CitationContext> = {}): CitationContext & { 
 /** Mount a card, deliver a derivative, and return the glance node. */
 async function showPreview(derivative: string): Promise<HTMLElement> {
   let deliver: (text: string) => void = () => undefined;
-  const preview = vi.fn(() => new Promise<string>((resolve) => { deliver = resolve; }));
+  const preview = vi.fn(() => new Promise<{ kind: 'text'; text: string }>((resolve) => {
+    deliver = (text) => { resolve({ kind: 'text', text }); };
+  }));
   render(
     <MarkdownBody citations={context({ preview })}>
       {'![Q3 board deck](resource://board-deck)'}
@@ -213,7 +215,9 @@ describe('resource citations', () => {
 
   it('shows the resource\'s converted markdown in the card, under a shimmering skeleton while it converts', async () => {
     let deliver: (text: string) => void = () => undefined;
-    const preview = vi.fn(() => new Promise<string>((resolve) => { deliver = resolve; }));
+    const preview = vi.fn(() => new Promise<{ kind: 'text'; text: string }>((resolve) => {
+      deliver = (text) => { resolve({ kind: 'text', text }); };
+    }));
     render(
       <MarkdownBody citations={context({ preview })}>
         {'![Q3 board deck](resource://board-deck)'}
@@ -243,6 +247,33 @@ describe('resource citations', () => {
     // A preview is presentation: the button still announces the title alone.
     expect(excerpt).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByRole('button', { name: 'Open Q3 board deck' })).toBeInTheDocument();
+  });
+
+  it('shows image resource bytes as the card preview', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-preview');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const image = { ...DECK, title: 'Fjord Kaffe Oslo.png', resourceType: 'image', mimeType: 'image/png' };
+    const preview = vi.fn(async () => ({ kind: 'image' as const, blob: new Blob(['image'], { type: 'image/png' }) }));
+
+    const { unmount } = render(
+      <MarkdownBody citations={context({ preview, resolve: () => image })}>
+        {'![Fjord Kaffe Oslo](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    await waitFor(() => { expect(document.querySelector('.citation-card-image-preview')).not.toBeNull(); });
+    const thumbnail = document.querySelector('.citation-card-image-preview');
+    expect(thumbnail).not.toBeNull();
+    expect(thumbnail).toHaveClass('citation-card-image-preview');
+    expect(thumbnail).toHaveAttribute('src', 'blob:image-preview');
+    expect(screen.getByText('Image')).toBeInTheDocument();
+    expect(document.querySelector('.citation-card-preview')).toBeNull();
+
+    unmount();
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:image-preview');
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
   });
 
   it('keeps two paragraphs as two paragraphs instead of collapsing the seam', async () => {
@@ -312,7 +343,7 @@ describe('resource citations', () => {
   });
 
   it('asks for no preview in a still, which would keep a skeleton forever', () => {
-    const preview = vi.fn(() => new Promise<string>(() => undefined));
+    const preview = vi.fn(() => new Promise<{ kind: 'text'; text: string }>(() => undefined));
     render(
       <MarkdownBody citations={context({ preview })} still>
         {'![Q3 board deck](resource://board-deck)'}
