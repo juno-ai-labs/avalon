@@ -1677,6 +1677,17 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && inspectedResourceId && railOpen),
   });
 
+  // Taking over an automation whose principal lost access. Invalidates the
+  // rail's list because the takeover can repair an automation the room was
+  // showing as needing attention.
+  const claimExecutionPrincipal = useMutation({
+    mutationFn: (automationId: string) => api!.claimAutomationExecutionPrincipal(automationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['workstream-automations', id] });
+      void queryClient.invalidateQueries({ queryKey: ['workstream', id] });
+    },
+  });
+
   // A room's automations are listed in its rail and nowhere else, so this is
   // the only fetch that can answer "what does this work stream run". Gated on
   // the rail being open for the same reason the versions query is: a closed
@@ -2224,6 +2235,13 @@ export function WorkstreamScreen(): React.JSX.Element {
               messages={visibleTranscript}
               onAnswerElicitation={answerElicitation}
               onOpenAttachment={setAttachmentPreview}
+              {...(api ? { onClaimExecutionPrincipal: (automationId: string) => {
+                claimExecutionPrincipal.mutate(automationId);
+              } } : {})}
+              claimingExecutionPrincipalFor={claimExecutionPrincipal.isPending
+                ? claimExecutionPrincipal.variables ?? null
+                : null}
+              claimExecutionPrincipalError={claimExecutionPrincipal.error?.message}
               virtualizer={transcriptVirtualizer}
             />
           )}

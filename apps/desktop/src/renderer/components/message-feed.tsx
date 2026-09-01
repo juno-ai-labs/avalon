@@ -38,6 +38,10 @@ interface MessageFeedProps {
   messages: readonly Message[];
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
+  /** Takes over an automation whose principal lost access; see its card. */
+  onClaimExecutionPrincipal?: (automationId: string) => void;
+  claimingExecutionPrincipalFor?: string | null;
+  claimExecutionPrincipalError?: string | undefined;
   /**
    * Windowing, for the surface that pages.
    *
@@ -83,6 +87,9 @@ export function MessageFeed({
   messages,
   onAnswerElicitation,
   onOpenAttachment,
+  onClaimExecutionPrincipal,
+  claimingExecutionPrincipalFor,
+  claimExecutionPrincipalError,
   virtualizer,
 }: MessageFeedProps): React.JSX.Element {
   // Held here rather than by each adapter: which system rows a reader has
@@ -116,6 +123,9 @@ export function MessageFeed({
           onAnswerElicitation={onAnswerElicitation}
           onOpenAttachment={onOpenAttachment}
           systemRowDisclosure={systemRowDisclosure}
+          {...(onClaimExecutionPrincipal ? { onClaimExecutionPrincipal } : {})}
+          claimingExecutionPrincipalFor={claimingExecutionPrincipalFor ?? null}
+          claimExecutionPrincipalError={claimExecutionPrincipalError}
         />
       )}
     </>

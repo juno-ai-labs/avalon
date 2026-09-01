@@ -592,6 +592,39 @@ idempotent per workspace.
 
 ## Changelog
 
+### 2026-09-01 — Who an automation runs as becomes state somebody can take over
+
+**What changed:** `automation_state` gains `run_as_user_id`, and the two sites
+that built the execution principal from the identity row's `author_user_id` now
+resolve `run_as_user_id ?? author_user_id`. `claimExecutionPrincipal` takes the
+automation over for its caller, rebinds each dead personal binding to the
+claimant's own connection for the same plugin, and records what moved and what
+could not in `automation_principal_claims`. `POST
+/automations/:id/execution-principal` is the route; a system row carrying
+`automation_principal_unavailable` is the card that prompts it.
+
+**Why:** A work stream's automation outlives its author — that is the point of
+the room owning it — but the principal was derived from an immutable identity
+column, so an offboarded author took the automation down with them. Separating
+the two lets "who runs it" move while "who wrote it" stays provenance the run
+history keeps reporting.
+
+**Considered and rejected:** A body naming the claimant. That field would let
+one person lend a colleague's Gmail to a standing automation; agreeing to run
+your own credentials is something the person does themselves, so the caller is
+always the claimant and the body is empty. Also rejected: refusing a claim when
+the claimant lacks a connection for one of the dead providers. The room would
+rather have most of its automation back, so the takeover proceeds and the
+missing providers are reported for the card to keep naming.
+
+**Consequences:** Bindings to workspace-scoped connections are never rewritten —
+they belong to the workspace rather than to whoever authorized them, so they
+never broke. The claim is idempotent on "already runs it with nothing to move",
+so a retry after a lost response writes no second audit row. Filling this in
+also revealed that `assertManager`'s `participantOfOwningWorkstream` arm had no
+caller: pause and resume now resolve participation through WorkspaceDO, which is
+what makes a room's automation manageable by the room at all.
+
 ### 2026-09-01 — An owned automation follows its room into the archive
 
 **What changed:** AutomationAgent answers `pauseForArchivedWorkstream` and

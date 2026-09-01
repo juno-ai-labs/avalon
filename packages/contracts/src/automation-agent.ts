@@ -206,6 +206,33 @@ export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+/**
+ * The card a room gets when the person an automation runs as loses access.
+ *
+ * A `system` row, because this is Rally noting something that happened *to* the
+ * work stream rather than somebody speaking in it — the opposite call from an
+ * activation, which is a message with an author. Idempotent on the automation
+ * and the outgoing principal, and edited in place as providers are repaired, so
+ * an hourly automation writes one card rather than one an hour.
+ */
+export const AutomationPrincipalUnavailableV1Schema = z.object({
+  type: z.literal("automation_principal_unavailable"),
+  schemaVersion: z.literal(1),
+  automationId: AutomationIdSchema,
+  automationName: z.string().min(1).max(300),
+  /** Whose access ended. Named so the room knows why, not to attribute blame. */
+  outgoingUserId: IdSchema,
+  outgoingUserName: z.string().min(1).max(300).nullable(),
+  /**
+   * What is unreachable right now. Workspace-scoped bindings never appear here:
+   * they belong to the workspace rather than to whoever authorized them, so
+   * they keep working and the automation keeps delivering on them.
+   */
+  unreachableProviders: z.array(z.string().min(1)).min(1),
+}).strict();
+export type AutomationPrincipalUnavailableV1 =
+  z.infer<typeof AutomationPrincipalUnavailableV1Schema>;
+
 /** Immutable, self-contained execution input frozen when an occurrence commits. */
 export const AutomationRunContextV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
