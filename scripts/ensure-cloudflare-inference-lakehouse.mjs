@@ -27,12 +27,12 @@ const SAFE_TOKEN_ID = /^[a-f0-9]{32}$/u;
 const WORKER_REGIONS = ['eu', 'global'];
 const LAKEHOUSE_REGIONS = ['global'];
 
-// Cloudflare's official TypeScript API client retries retryable failures twice
-// by default with this exponential backoff and jitter. Keep this dependency-free
-// pre-install provisioner aligned with that client rather than inventing a retry
-// policy here. Verified 2026-09-01:
+// This pre-install provisioner deliberately gets ten total attempts because the
+// affected Pipelines control plane was failing most reads during the incident.
+// Its delay calculation still mirrors Cloudflare's official TypeScript client.
+// Verified 2026-09-01:
 // https://developers.cloudflare.com/api/typescript/#retries
-export const CLOUDFLARE_GET_MAX_RETRIES = 2;
+export const CLOUDFLARE_GET_MAX_ATTEMPTS = 10;
 const CLOUDFLARE_RETRY_INITIAL_DELAY_MS = 500;
 const CLOUDFLARE_RETRY_MAX_DELAY_MS = 8_000;
 const CLOUDFLARE_RETRY_JITTER = 0.25;
@@ -103,9 +103,9 @@ async function apiRequestUrl(client, path, init = {}) {
   headers.set('Authorization', `Bearer ${token}`);
   if (init.body !== undefined) headers.set('Content-Type', 'application/json');
   const method = (init.method ?? 'GET').toUpperCase();
-  const maxRetries = method === 'GET' ? CLOUDFLARE_GET_MAX_RETRIES : 0;
+  const maxAttempts = method === 'GET' ? CLOUDFLARE_GET_MAX_ATTEMPTS : 1;
 
-  for (let retryIndex = 0; ; retryIndex += 1) {
+  for (let attemptIndex = 0; ; attemptIndex += 1) {
     let response;
     try {
       response = await fetchImpl(
@@ -113,11 +113,11 @@ async function apiRequestUrl(client, path, init = {}) {
         { ...init, headers },
       );
     } catch (error) {
-      if (retryIndex >= maxRetries) throw error;
-      const delay = retryDelayMilliseconds(undefined, retryIndex, randomImpl);
+      if (attemptIndex + 1 >= maxAttempts) throw error;
+      const delay = retryDelayMilliseconds(undefined, attemptIndex, randomImpl);
       log?.(
         `Cloudflare ${method} ${path} failed before a response; retrying `
-        + `${retryIndex + 1}/${maxRetries} in ${Math.round(delay)} ms`,
+        + `attempt ${attemptIndex + 2}/${maxAttempts} in ${Math.round(delay)} ms`,
       );
       await waitImpl(delay);
       continue;
@@ -133,11 +133,12 @@ async function apiRequestUrl(client, path, init = {}) {
       + `${detail ? `: ${detail}` : ''}${cfRay ? ` [cf-ray: ${cfRay}]` : ''}`,
       { status: response.status, codes: errors.map((entry) => entry.code), cfRay },
     );
-    if (retryIndex >= maxRetries || !shouldRetryResponse(response)) throw error;
+    if (attemptIndex + 1 >= maxAttempts || !shouldRetryResponse(response)) throw error;
 
-    const delay = retryDelayMilliseconds(response, retryIndex, randomImpl);
+    const delay = retryDelayMilliseconds(response, attemptIndex, randomImpl);
     log?.(
-      `${error.message}; retrying ${retryIndex + 1}/${maxRetries} in ${Math.round(delay)} ms`,
+      `${error.message}; retrying attempt ${attemptIndex + 2}/${maxAttempts} `
+      + `in ${Math.round(delay)} ms`,
     );
     await waitImpl(delay);
   }
