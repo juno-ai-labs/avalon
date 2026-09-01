@@ -6378,6 +6378,23 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(listed.items[0]).not.toHaveProperty("scope");
     });
 
+    it("refuses a workspace member who can see the room but is not in it", async () => {
+      const stub = await seededWorkspace();
+
+      // A workspace-scoped room is listable to every member of the workspace,
+      // so gating on listability would hand the names, descriptions and
+      // schedules of its automations to people who are not in it — while
+      // `authorizeAutomationViewer` goes on refusing them the details. The
+      // wider half of that pair is the one that leaks.
+      await runInDurableObject(stub, async (instance) => {
+        await expect(instance.listWorkstreamAutomations({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: ROOM_ID,
+          userId: STRANGER_ID,
+        })).rejects.toThrow("automation_directory_access_denied");
+      });
+    });
+
     it("answers whoever may read the room, not only whoever created the automation", async () => {
       const stub = await seededWorkspace();
 

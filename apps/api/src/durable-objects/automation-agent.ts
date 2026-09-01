@@ -161,6 +161,12 @@ const AutomationAcceptDraftRequestSchema = z.strictObject({
    * request body's author: an agent cannot claim a room it is not running in.
    */
   owningWorkstreamId: z.string().uuid().nullable().default(null),
+  /**
+   * Whether the caller is an active participant of that room, resolved by the
+   * Worker against the work stream's own object. It stands in for authorship on
+   * a `workstream` acceptance, because the card is the room's to accept.
+   */
+  participantOfOwningWorkstream: z.boolean().default(false),
   defaultPluginIds: z.array(ModelPluginIdSchema),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,
   deliveryTargets: AutomationDeliveryTargetSetSchema,
@@ -730,6 +736,22 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
        OR (json_valid(authored_origin_json) AND json_type(authored_origin_json) = 'object')
      )`,
   ],
+}, {
+  version: 12,
+  description: "evaluator rules for a draft written outside the compiler loop",
+  statements: [
+    // Keyed by revision, because an authored draft has no compiler run to key
+    // by: `automation_definition_revisions.compiler_run_id` is NULL for one, so
+    // the existing set's join can never match it. Without this an event-driven
+    // draft written in a work stream is proposed as ready and then refused at
+    // acceptance for rules it had no way to record.
+    `CREATE TABLE automation_authored_evaluator_sets (
+      definition_revision INTEGER PRIMARY KEY
+        REFERENCES automation_definition_revisions(definition_revision),
+      evaluator_rules_json TEXT NOT NULL CHECK (json_valid(evaluator_rules_json)),
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+  ],
 }];
 
 /**
@@ -1083,6 +1105,31 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return this.snapshotUnchecked();
   }
 
+  /**
+   * The draft, for somebody the owning room vouches for rather than its author.
+   *
+   * `readSnapshot` asserts authorship, which is the right gate for the surface
+   * that reads a draft you are writing. A proposal card is read by the room,
+   * and the room's answer to "may this person act" is participation — resolved
+   * by the caller, because it lives in the work stream's own object.
+   */
+  async readAuthoredSnapshot(input: {
+    automationId: string;
+    workspaceId: string;
+    userId: string;
+    participantOfAuthoringWorkstream: boolean;
+  }): Promise<AutomationAgentSnapshot> {
+    await this.initialized;
+    const identity = this.identity();
+    if (identity.automation_id !== input.automationId || identity.workspace_id !== input.workspaceId) {
+      throw new Error("automation_identity_mismatch");
+    }
+    if (identity.author_user_id !== input.userId && !input.participantOfAuthoringWorkstream) {
+      throw new Error("automation_access_denied");
+    }
+    return this.snapshotUnchecked();
+  }
+
   async cancelCompilerRun(input: { automationId: string; workspaceId: string; userId: string; runId: string }): Promise<void> {
     await this.initialized;
     this.assertAuthor(input.automationId, input.workspaceId, input.userId);
@@ -1251,6 +1298,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         channelId: z.string().min(1).max(255),
         channelName: z.string().min(1).max(255).nullable(),
       }).strict().nullable().default(null),
+      /**
+       * Staged by the drafting loop and applied here rather than when the model
+       * called for them: a draft's rules can be set before the first submission
+       * has created anything to attach them to, and buffering removes the
+       * ordering question instead of answering it.
+       */
+      evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.nullable().default(null),
       draft: AutomationDraftSchema,
     }).strict().parse(input);
     const now = Date.now();
@@ -1309,6 +1363,19 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         request.draft.ready ? 1 : 0,
         now,
       );
+      if (request.evaluatorRules) {
+        this.state.storage.sql.exec(
+          `INSERT INTO automation_authored_evaluator_sets
+             (definition_revision, evaluator_rules_json, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(definition_revision) DO UPDATE SET
+             evaluator_rules_json = excluded.evaluator_rules_json,
+             updated_at = excluded.updated_at`,
+          next,
+          JSON.stringify(request.evaluatorRules),
+          now,
+        );
+      }
       this.state.storage.sql.exec(
         `UPDATE automation_state
             SET definition_revision = ?, title = ?, updated_at = ? WHERE id = 1`,
@@ -1364,7 +1431,17 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   async acceptDraft(rawInput: unknown): Promise<AutomationDetail> {
     await this.initialized;
     const input = AutomationAcceptDraftRequestSchema.parse(rawInput);
-    this.assertAuthor(input.automationId, input.workspaceId, input.authorUserId);
+    // Authorship, or the room's own vouching for a `workstream` acceptance: the
+    // proposal card is addressed to the room, and a card only its author can
+    // press is a card the room does not actually decide.
+    if (input.owningWorkstreamId && input.participantOfOwningWorkstream) {
+      const identity = this.identity();
+      if (identity.automation_id !== input.automationId || identity.workspace_id !== input.workspaceId) {
+        throw new Error("automation_authority_mismatch");
+      }
+    } else {
+      this.assertAuthor(input.automationId, input.workspaceId, input.authorUserId);
+    }
     // The role authorizes the request; it is not part of what was requested.
     // Hashing it would make an identical retry by a second admin look like a
     // changed acceptance and refuse with `automation_acceptance_conflict`.
@@ -2015,10 +2092,14 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     workspaceId: string;
     userId: string;
     actorRole?: string;
+    participantOfOwningWorkstream?: boolean;
     deliveryTargets: unknown;
   }): Promise<AutomationDetail> {
     await this.initialized;
-    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
+    this.assertManager(
+      input.automationId, input.workspaceId, input.userId, input.actorRole,
+      input.participantOfOwningWorkstream ?? false,
+    );
     if (!["active", "paused"].includes(this.lifecycle())) throw new Error("automation_not_configurable");
     const acceptance = this.acceptance();
     if (!acceptance) throw new Error("automation_acceptance_missing");
@@ -2036,9 +2117,18 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return this.detailUnchecked();
   }
 
-  async deleteAutomation(input: { automationId: string; workspaceId: string; userId: string; actorRole?: string }): Promise<void> {
+  async deleteAutomation(input: {
+    automationId: string;
+    workspaceId: string;
+    userId: string;
+    actorRole?: string;
+    participantOfOwningWorkstream?: boolean;
+  }): Promise<void> {
     await this.initialized;
-    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
+    this.assertManager(
+      input.automationId, input.workspaceId, input.userId, input.actorRole,
+      input.participantOfOwningWorkstream ?? false,
+    );
     if (this.lifecycle() === "deleted") return;
     const acceptance = this.acceptance();
     if (!acceptance) {
@@ -2152,10 +2242,14 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     workspaceId: string;
     userId: string;
     actorRole?: string;
+    participantOfOwningWorkstream?: boolean;
     idempotencyKey: string;
   }): Promise<{ runId: string; workstreamId: string; harnessRunId: string; reused: boolean }> {
     await this.initialized;
-    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
+    this.assertManager(
+      input.automationId, input.workspaceId, input.userId, input.actorRole,
+      input.participantOfOwningWorkstream ?? false,
+    );
     if (this.lifecycle() !== "active") throw new Error("automation_not_active");
     const occurrenceKey = `manual:${input.idempotencyKey}`;
     const existing = this.state.storage.sql.exec<{
@@ -2760,6 +2854,15 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     const targetKeys = new Set(context.deliveryTargets.map((target) => target.type === "email"
       ? `email:${target.emailAddress.toLocaleLowerCase()}`
       : `slack_agent_dm:${target.connectionId}:${target.slackTeamId}:${target.slackUserId}`));
+    // The owning room is a destination too, and the only one for most automations
+    // a room owns. Built from `deliveryTargets` alone this set never contained
+    // it, so every receipt for the delivery this scope exists for was refused —
+    // and refused by returning `applied: false` rather than throwing, which the
+    // settlement loop does not treat as a failure. The delivery happened, the
+    // room got its message, and nothing recorded that it had.
+    if (context.owningWorkstreamId !== null) {
+      targetKeys.add(`workstream:${context.owningWorkstreamId}`);
+    }
     if (!targetKeys.has(request.targetKey)) {
       return { applied: false, outcomeCode: "automation_delivery_target_unknown" };
     }
@@ -3454,8 +3557,18 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         WHERE definition.definition_revision = ?`,
       input.definitionRevision,
     ).toArray()[0];
-    const rules = staged?.evaluator_rules_json
-      ? AutomationSetEvaluatorRulesInputV1Schema.parse(JSON.parse(staged.evaluator_rules_json))
+    // An authored draft's rules hang off the revision, a compiled draft's off
+    // the compiler run. One of the two is always the empty side.
+    const authored = staged?.evaluator_rules_json
+      ? null
+      : this.state.storage.sql.exec<{ evaluator_rules_json: string }>(
+          `SELECT evaluator_rules_json FROM automation_authored_evaluator_sets
+            WHERE definition_revision = ?`,
+          input.definitionRevision,
+        ).toArray()[0] ?? null;
+    const rulesJson = staged?.evaluator_rules_json ?? authored?.evaluator_rules_json ?? null;
+    const rules = rulesJson
+      ? AutomationSetEvaluatorRulesInputV1Schema.parse(JSON.parse(rulesJson))
       : AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [] });
     if (externalTriggers.length > 0 && rules.evaluators.length === 0) {
       throw new Error("automation_evaluator_rules_required");
@@ -4510,14 +4623,20 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       || identity.workspace_id !== workspaceId
       || identity.region !== this.env.AVALON_REGION
     ) throw new Error("automation_authority_mismatch");
-    if (identity.author_user_id === userId) return;
     const scope = this.acceptance()?.scope;
+    // A room's automation belongs to the room, and authorship is not a share in
+    // it. Checked before the author shortcut rather than after, because after
+    // is indistinguishable from no check at all: somebody removed from the room
+    // would keep pausing, editing and deleting its automation for as long as
+    // they remained in the workspace, which is the exact tenure this scope
+    // exists to end. Participation lives in the work stream's own object, so
+    // the caller resolves it and this asserts on the answer.
+    if (scope === "workstream") {
+      if (participantOfOwningWorkstream) return;
+      throw new Error("automation_authority_mismatch");
+    }
+    if (identity.author_user_id === userId) return;
     if (scope === "workspace" && (actorRole === "owner" || actorRole === "admin")) return;
-    // A room's automation belongs to the room: every active participant may
-    // pause, resume, edit and delete it, and none of that depends on who typed
-    // it. Participation lives in the work stream's own object, so the caller
-    // resolves it and this asserts on the answer.
-    if (scope === "workstream" && participantOfOwningWorkstream) return;
     throw new Error("automation_authority_mismatch");
   }
 
@@ -4646,7 +4765,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     if (identity.automation_id !== automationId || identity.workspace_id !== workspaceId) {
       throw new Error("automation_identity_mismatch");
     }
-    if (identity.author_user_id === userId) return;
+    // Not for a room's automation: `authorizeAutomationViewer` answers that one
+    // from current participation, and letting authorship short-circuit it would
+    // leave a former participant reading a room's automation forever.
+    if (identity.author_user_id === userId && this.acceptance()?.scope !== "workstream") return;
     const result = await (await this.workspace()).authorizeAutomationViewer({
       workspaceId,
       automationId,

@@ -3810,6 +3810,71 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Tell the owning room when this occurrence's personal bindings are gone.
+   *
+   * The offboarding case the takeover card exists for: somebody leaves, their
+   * personal connections go with them, and an automation the room owns keeps
+   * running on whatever still works. Without this the room learns only from the
+   * shape of the output — a digest that quietly stopped including one source —
+   * which is the failure this whole scope was meant to end.
+   *
+   * Workspace-scoped bindings are never reported: they belong to the workspace
+   * rather than to whoever authorized them, so they did not break.
+   */
+  private async reportUnreachablePrincipal(input: {
+    region: Region;
+    workspaceId: string;
+    owningWorkstreamId: string;
+    frozen: AutomationRunContextV1;
+  }): Promise<void> {
+    const bindings = Object.values(input.frozen.connectorBindings)
+      .filter((value): value is string => typeof value === "string");
+    if (bindings.length === 0) return;
+    const principal = input.frozen.executionPrincipal.userId;
+    // Asked of WorkspaceDO, which owns `connector_connections`. Reading it on
+    // the regional binding raises `no such table`: migration 0090 dropped it
+    // from D1, and the workspace-table routing guard catches exactly that.
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(input.workspaceId),
+      workspaceDOName(input.region, asWorkspaceId(input.workspaceId)),
+    );
+    const { providers } = await workspace.unreachablePersonalBindings({
+      workspaceId: input.workspaceId,
+      principalUserId: principal,
+      connectionIds: bindings,
+    });
+    if (providers.length === 0) return;
+    const substream = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.SUBSTREAM_AGENTS,
+      asWorkspaceId(input.workspaceId),
+      substreamAgentName(
+        input.region,
+        asWorkspaceId(input.workspaceId),
+        asWorkstreamId(input.owningWorkstreamId),
+        asSubstreamId("0"),
+      ),
+    );
+    await substream.appendPrincipalUnavailableCard({
+      schemaVersion: 1,
+      workspaceId: input.workspaceId,
+      workstreamId: input.owningWorkstreamId,
+      occurredAt: Date.now(),
+      card: {
+        type: "automation_principal_unavailable",
+        schemaVersion: 1,
+        automationId: input.frozen.automationId,
+        automationName: input.frozen.definition.name,
+        outgoingUserId: principal,
+        outgoingUserName: null,
+        unreachableProviders: providers,
+      },
+    });
+  }
+
+  /**
    * Post the result into the owning work stream and start a run on it.
    *
    * The fence comes from the workspace directory rather than from the room,
@@ -4027,6 +4092,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           outcomeCode: "delivery_failed",
         }).catch(() => undefined);
       }
+    }
+    // Before anything is decided about the result: if this occurrence ran
+    // without the personal connections it was built on, the room needs to know
+    // that and to be offered the takeover, whatever the result turned out to
+    // be. Only for an automation a room owns — a personal one has nobody but
+    // its owner to tell, and they are the person who left.
+    if (frozen.owningWorkstreamId !== null) {
+      await this.reportUnreachablePrincipal({
+        region: input.region,
+        workspaceId: input.workspaceId,
+        owningWorkstreamId: frozen.owningWorkstreamId,
+        frozen,
+      }).catch((error: unknown) => {
+        // Never at the cost of the delivery. A room that does not learn its
+        // automation is degraded is worse off than one that does; a room that
+        // loses the result as well is worse off still.
+        logWarn(this.env, "automation_principal_report_failed", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      });
     }
     // An occurrence worth reading in full. Nothing is created: the run already
     // finished in its own work stream, and this stops that one row being

@@ -161,11 +161,21 @@ export class AutomationAgentService {
   async acceptAuthoredDraft(automationId: string): Promise<AutomationDetail> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
-    const snapshot: AutomationAgentSnapshot = await withAutomationErrors(() => agent.readSnapshot({
-      automationId: id,
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-    }));
+    // The room first, then the draft. `readSnapshot` asserts authorship, which
+    // would have made this card pressable only by whoever happened to ask the
+    // agent for it — and a card only its author can accept is not a card the
+    // room decides.
+    const authoringRoom = await withAutomationErrors(() => agent.authoredInWorkstreamId());
+    const participant = authoringRoom !== null
+      && await this.participantOfWorkstream(authoringRoom);
+    const snapshot: AutomationAgentSnapshot = await withAutomationErrors(
+      () => agent.readAuthoredSnapshot({
+        automationId: id,
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        participantOfAuthoringWorkstream: participant,
+      }),
+    );
     if (snapshot.definition === null) automationRefusal("automation_definition_not_ready");
     const draft = AutomationDraftSchema.parse(snapshot.definition);
     if (!draft.ready) automationRefusal("automation_definition_not_ready");
@@ -228,6 +238,17 @@ export class AutomationAgentService {
     if (input.scope === "workstream" && !owningWorkstreamId) {
       automationRefusal("automation_workstream_scope_requires_authoring_room");
     }
+    // Asked once, here, and used for both the refusal and the authority the
+    // object checks. Re-asked at acceptance rather than inherited from the
+    // draft: writing the proposal card proved participation at that moment, and
+    // somebody who has left the room in between would otherwise activate a
+    // standing automation in it — and bind their own credentials to it — after
+    // losing access. Authorship does not expire, so it cannot stand in for this.
+    const participantOfOwningWorkstream = owningWorkstreamId !== null
+      && await this.participantOfWorkstream(owningWorkstreamId);
+    if (owningWorkstreamId && !participantOfOwningWorkstream) {
+      automationRefusal("automation_workstream_participation_required");
+    }
     return withAutomationErrors(() => agent.acceptDraft({
       schemaVersion: 1,
       automationId,
@@ -236,6 +257,7 @@ export class AutomationAgentService {
       definitionRevision: snapshot.definitionRevision,
       scope: input.scope,
       owningWorkstreamId,
+      participantOfOwningWorkstream,
       defaultPluginIds: input.defaultPluginIds,
       activitySourcePluginIds: input.activitySourcePluginIds,
       deliveryTargets: input.deliveryTargets,
@@ -289,11 +311,13 @@ export class AutomationAgentService {
   async updateDeliveryTargets(automationId: string, deliveryTargets: unknown): Promise<AutomationDetail> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
+    const participant = await this.participantOfOwningWorkstream(id);
     return withAutomationErrors(() => agent.updateDeliveryTargets({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       actorRole: this.auth.role,
+      participantOfOwningWorkstream: participant,
       deliveryTargets,
     }));
   }
@@ -301,22 +325,26 @@ export class AutomationAgentService {
   async delete(automationId: string): Promise<void> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
+    const participant = await this.participantOfOwningWorkstream(id);
     await withAutomationErrors(() => agent.deleteAutomation({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       actorRole: this.auth.role,
+      participantOfOwningWorkstream: participant,
     }));
   }
 
   async runNow(automationId: string, idempotencyKey: string) {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
+    const participant = await this.participantOfOwningWorkstream(id);
     return withAutomationErrors(() => agent.runNow({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       actorRole: this.auth.role,
+      participantOfOwningWorkstream: participant,
       idempotencyKey,
     }));
   }
@@ -436,6 +464,22 @@ export class AutomationAgentService {
    * filtered by. False for every other scope, where it means nothing: the
    * automation object's own author and admin checks decide those.
    */
+  /** Whether the caller is still in this room, asked of the room itself. */
+  private async participantOfWorkstream(workstreamId: string): Promise<boolean> {
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
+    const { participant } = await workspace.workstreamParticipation({
+      workspaceId: this.auth.workspaceId,
+      workstreamId,
+      userId: this.auth.userId,
+    });
+    return participant;
+  }
+
   private async participantOfOwningWorkstream(
     automationId: ReturnType<typeof asAutomationId>,
   ): Promise<boolean> {
@@ -445,12 +489,21 @@ export class AutomationAgentService {
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
     );
-    const { authorized } = await workspace.authorizeAutomationViewer({
-      workspaceId: this.auth.workspaceId,
-      automationId,
-      userId: this.auth.userId,
-    });
-    return authorized;
+    // A grant, never a denial: `assertManager` refuses on its own when no arm
+    // matches, so a false here only withholds the room's elevation. That makes
+    // failing soft the safe direction — a workspace whose directory cannot be
+    // reached must not stop an author managing their own personal automation,
+    // and must not hand anybody the room's rights either.
+    try {
+      const { authorized } = await workspace.authorizeAutomationViewer({
+        workspaceId: this.auth.workspaceId,
+        automationId,
+        userId: this.auth.userId,
+      });
+      return authorized;
+    } catch {
+      return false;
+    }
   }
 
   private async agent(automationId: ReturnType<typeof asAutomationId>) {

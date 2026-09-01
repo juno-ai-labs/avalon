@@ -130,6 +130,12 @@ const AUTOMATION_ERROR_RESPONSES = {
     status: 422,
     message: "Only an automation drafted inside a work stream can belong to one.",
   },
+  // 403 rather than 422: the request is well formed and was valid when the
+  // draft was proposed. What changed is the caller's standing in the room.
+  automation_workstream_participation_required: {
+    status: 403,
+    message: "Only a participant of this work stream can create an automation that belongs to it.",
+  },
 } satisfies Readonly<Record<string, AutomationErrorResponse>>;
 
 /**
