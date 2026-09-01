@@ -151,7 +151,13 @@ deployment credential as account-owned, so provisioning uses the account token
 verifier directly and does not guess ownership from an API failure. Existing
 resources are read back and compared to the manifest; immutable schema, sink, or
 SQL drift fails the deployment rather than creating a parallel table or silently
-dropping fields. No resource requires a dashboard or laptop step. The existing
+dropping fields. Read-only Cloudflare API calls follow the official TypeScript
+client's default retry policy: two retries for connection failures and HTTP 408,
+409, 429, and 5xx responses, respecting a returned `Retry-After` value and
+otherwise using the client's short jittered exponential backoff. Mutating
+requests are never retried, so a lost create response cannot duplicate an
+immutable resource. The final failure includes Cloudflare's Ray ID when one was
+returned. No resource requires a dashboard or laptop step. The existing
 account-owned deployment token must have
 Workers R2 Storage Admin Read & Write, R2 Data Catalog, Pipelines, Queues, and
 Worker deployment permissions. Its token value is installed in the Global Data
@@ -320,6 +326,35 @@ while retaining queryable columns. Revisit it only with real storage cost or a
 decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
+
+### 2026-09-01 — Transient Cloudflare control-plane reads retry safely
+
+**What changed:** The merge-time lakehouse provisioner now retries GET requests
+for the same connection failures, HTTP 408 timeouts, HTTP 409 conflicts, rate
+limits, and server errors as Cloudflare's official TypeScript client. It uses
+that client's published default of two retries, honors `Retry-After`, mirrors
+its short jittered exponential backoff, and includes the final `cf-ray` value in
+an error. POST requests still execute exactly once.
+
+**Why:** Three consecutive API deploys failed before migrations or Worker upload
+while Cloudflare's Pipelines control plane intermittently returned HTTP 500.
+Authenticated probes proved identical Pipeline and sink reads alternating
+between 200 and 500 while the account, token, R2 buckets, Data Catalogs, Queues,
+streams, and running Pipeline records remained healthy. The dashboard reproduced
+the same v1 list failure and incorrectly rendered the legacy API's empty result
+as a create-first Pipeline screen.
+
+**Considered and rejected:** Lowering `per_page` from 100 to 20, because
+interleaved production probes failed 13/20 and 14/20 times respectively;
+retrying POST requests, which could duplicate a resource after a lost response;
+skipping immutable-resource verification, which could deploy stale generated
+bindings; and an unbounded custom retry policy. The selected count and backoff
+come from Cloudflare's official client rather than a Rally-specific guess.
+
+**Consequences:** A short transient control-plane fault no longer blocks an
+otherwise valid deployment on its first response. A persistent fault still
+fails closed after the provider-standard retry budget with a support-traceable
+Ray ID, and resource creation retains its existing single-attempt semantics.
 
 ### 2026-08-27 — Embedding calls join the observable OpenRouter boundary
 

@@ -27,12 +27,23 @@ const SAFE_TOKEN_ID = /^[a-f0-9]{32}$/u;
 const WORKER_REGIONS = ['eu', 'global'];
 const LAKEHOUSE_REGIONS = ['global'];
 
+// Cloudflare's official TypeScript API client retries retryable failures twice
+// by default with this exponential backoff and jitter. Keep this dependency-free
+// pre-install provisioner aligned with that client rather than inventing a retry
+// policy here. Verified 2026-09-01:
+// https://developers.cloudflare.com/api/typescript/#retries
+export const CLOUDFLARE_GET_MAX_RETRIES = 2;
+const CLOUDFLARE_RETRY_INITIAL_DELAY_MS = 500;
+const CLOUDFLARE_RETRY_MAX_DELAY_MS = 8_000;
+const CLOUDFLARE_RETRY_JITTER = 0.25;
+
 class CloudflareApiError extends Error {
-  constructor(message, { status, codes = [] } = {}) {
+  constructor(message, { status, codes = [], cfRay } = {}) {
     super(message);
     this.name = 'CloudflareApiError';
     this.status = status;
     this.codes = codes;
+    this.cfRay = cfRay;
   }
 }
 
@@ -42,22 +53,94 @@ function required(name, environment) {
   return value;
 }
 
-async function apiRequestUrl({ token, fetchImpl }, path, init = {}) {
+function wait(milliseconds) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+function shouldRetryResponse(response) {
+  const instruction = response.headers.get('x-should-retry');
+  if (instruction === 'true') return true;
+  if (instruction === 'false') return false;
+  return response.status === 408
+    || response.status === 409
+    || response.status === 429
+    || response.status >= 500;
+}
+
+function retryDelayMilliseconds(response, retryIndex, randomImpl) {
+  const retryAfterMilliseconds = Number.parseFloat(
+    response?.headers.get('retry-after-ms') ?? '',
+  );
+  if (Number.isFinite(retryAfterMilliseconds) && retryAfterMilliseconds >= 0) {
+    return retryAfterMilliseconds;
+  }
+
+  const retryAfter = response?.headers.get('retry-after');
+  if (retryAfter) {
+    const seconds = Number.parseFloat(retryAfter);
+    const headerDelay = Number.isFinite(seconds)
+      ? seconds * 1_000
+      : Date.parse(retryAfter) - Date.now();
+    if (Number.isFinite(headerDelay) && headerDelay >= 0) return headerDelay;
+  }
+
+  const exponentialDelay = Math.min(
+    CLOUDFLARE_RETRY_INITIAL_DELAY_MS * (2 ** retryIndex),
+    CLOUDFLARE_RETRY_MAX_DELAY_MS,
+  );
+  return exponentialDelay * (1 - randomImpl() * CLOUDFLARE_RETRY_JITTER);
+}
+
+async function apiRequestUrl(client, path, init = {}) {
+  const {
+    token,
+    fetchImpl,
+    log,
+    randomImpl = Math.random,
+    waitImpl = wait,
+  } = client;
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
   if (init.body !== undefined) headers.set('Content-Type', 'application/json');
-  const response = await fetchImpl(
-    `${API_BASE}${path}`,
-    { ...init, headers },
-  );
-  const body = await response.json().catch(() => null);
-  if (response.ok && body?.success === true) return body.result;
-  const errors = Array.isArray(body?.errors) ? body.errors : [];
-  const detail = errors.map((error) => `${error.message} [code: ${error.code}]`).join('; ');
-  throw new CloudflareApiError(
-    `Cloudflare ${init.method ?? 'GET'} ${path} failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`,
-    { status: response.status, codes: errors.map((error) => error.code) },
-  );
+  const method = (init.method ?? 'GET').toUpperCase();
+  const maxRetries = method === 'GET' ? CLOUDFLARE_GET_MAX_RETRIES : 0;
+
+  for (let retryIndex = 0; ; retryIndex += 1) {
+    let response;
+    try {
+      response = await fetchImpl(
+        `${API_BASE}${path}`,
+        { ...init, headers },
+      );
+    } catch (error) {
+      if (retryIndex >= maxRetries) throw error;
+      const delay = retryDelayMilliseconds(undefined, retryIndex, randomImpl);
+      log?.(
+        `Cloudflare ${method} ${path} failed before a response; retrying `
+        + `${retryIndex + 1}/${maxRetries} in ${Math.round(delay)} ms`,
+      );
+      await waitImpl(delay);
+      continue;
+    }
+
+    const body = await response.json().catch(() => null);
+    if (response.ok && body?.success === true) return body.result;
+    const errors = Array.isArray(body?.errors) ? body.errors : [];
+    const detail = errors.map((error) => `${error.message} [code: ${error.code}]`).join('; ');
+    const cfRay = response.headers.get('cf-ray') ?? undefined;
+    const error = new CloudflareApiError(
+      `Cloudflare ${method} ${path} failed with HTTP ${response.status}`
+      + `${detail ? `: ${detail}` : ''}${cfRay ? ` [cf-ray: ${cfRay}]` : ''}`,
+      { status: response.status, codes: errors.map((entry) => entry.code), cfRay },
+    );
+    if (retryIndex >= maxRetries || !shouldRetryResponse(response)) throw error;
+
+    const delay = retryDelayMilliseconds(response, retryIndex, randomImpl);
+    log?.(
+      `${error.message}; retrying ${retryIndex + 1}/${maxRetries} in ${Math.round(delay)} ms`,
+    );
+    await waitImpl(delay);
+  }
 }
 
 async function apiRequest(client, path, init = {}) {
@@ -392,7 +475,14 @@ export async function ensureInferenceLakehouse(options = {}) {
   const token = required('CLOUDFLARE_API_TOKEN', environment);
   const manifest = options.manifest ?? await loadInferenceLakehouseManifest();
   assertManifest(manifest);
-  const client = { accountId, token, fetchImpl };
+  const client = {
+    accountId,
+    token,
+    fetchImpl,
+    log,
+    randomImpl: options.randomImpl,
+    waitImpl: options.waitImpl,
+  };
   client.tokenId = await deploymentTokenId(client, manifest.deploymentTokenOwner);
   const resources = {};
 
