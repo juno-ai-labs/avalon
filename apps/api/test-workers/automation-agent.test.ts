@@ -2,9 +2,12 @@
 
 import { env } from "cloudflare:workers";
 import {
+  AutomationDraftSchema,
+  AutomationSetEvaluatorRulesInputV1Schema,
   asAutomationId,
   asUserId,
   asWorkspaceId,
+  type AutomationDraft,
 } from "@rally/contracts";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -70,6 +73,78 @@ function readyDefinition(name: string) {
     elicitation: null,
     ready: true,
   };
+}
+
+// The two definitions below go through the schema rather than a cast: an
+// activity trigger that omits its source fields parses only while a draft is
+// not ready, and these are ready.
+
+/** The same definition with a timer trigger, which needs no evaluator rules. */
+const TIMER_ONLY_DEFINITION = AutomationDraftSchema.parse({
+  ...readyDefinition("Hourly repository report"),
+  triggers: [{ type: "interval", intervalSeconds: 3_600, summary: "Every hour" }],
+});
+
+/** And with an external event trigger, which does. */
+const ACTIVITY_DEFINITION = AutomationDraftSchema.parse({
+  ...readyDefinition("Report on new issues"),
+  triggers: [{
+    type: "connector_activity",
+    connectorType: "github",
+    sourceBindingKey: "github_source",
+    suggestedSourcePluginId: "plugin_github",
+    eventTypes: ["github.issue.opened"],
+    deterministicFilters: {},
+  }],
+});
+
+/** One rule for that trigger, in the shape `automation_set_evaluator_rules` sends. */
+const ISSUE_OPENED_RULES = AutomationSetEvaluatorRulesInputV1Schema.parse({
+  schemaVersion: 1,
+  evaluators: [{
+    evaluatorKey: "issue_opened",
+    source: {
+      sourceBindingKey: "github_source",
+      suggestedSourcePluginId: "plugin_github",
+      event: { kind: "event_type", eventType: "github.issue.opened" },
+    },
+    when: { kind: "always" },
+  }],
+});
+
+/**
+ * What `settleCompilerSuccess` commits when a run finishes, written directly.
+ *
+ * The tests below drive the object's own submission and admission paths; the
+ * settle in between is the one step they cannot reach without a live provider,
+ * so it is reproduced here rather than mocked around.
+ */
+function settleRevision(
+  state: DurableObjectState,
+  revision: number,
+  runId: string,
+  definition: AutomationDraft,
+): void {
+  state.storage.sql.exec(
+    `INSERT INTO automation_definition_revisions
+       (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
+     VALUES (?, ?, ?, ?, 1, ?)`,
+    revision,
+    runId,
+    JSON.stringify(definition),
+    `sha256:definition-${revision}`,
+    revision,
+  );
+  state.storage.sql.exec(
+    `UPDATE automation_state SET definition_revision = ?, title = ? WHERE id = 1`,
+    revision,
+    definition.name,
+  );
+  state.storage.sql.exec(
+    `UPDATE automation_compiler_runs SET state = 'completed', settled_at = ? WHERE run_id = ?`,
+    revision,
+    runId,
+  );
 }
 
 /**
@@ -276,6 +351,119 @@ describe("AutomationAgent", () => {
       expect(state.storage.sql.exec<{ evaluator_rules_json: string }>(
         `SELECT evaluator_rules_json FROM automation_draft_evaluator_sets`,
       ).one().evaluator_rules_json).toBe('{"schemaVersion":1,"evaluators":[]}');
+    });
+  });
+
+  it("refuses an external-event submission whose inherited rule set is empty", async () => {
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
+
+      // Turn one asks for a timer-only automation. Submitting it takes the
+      // `clear` disposition, which writes an empty rule set rather than none.
+      const first = await instance.admitDraftTurn({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        clientMessageId: CLIENT_MESSAGE_ID,
+        content: "Every hour, report on the repository",
+        attachmentIds: [],
+        inputMode: "typed",
+      });
+      state.storage.sql.exec(
+        `UPDATE automation_compiler_runs SET state = 'running' WHERE run_id = ?`,
+        first.compilerRunId,
+      );
+      await instance.stageDraftSubmission({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        compilerRunId: first.compilerRunId,
+        providerCallId: "call-submit-timer",
+        inputHash: "sha256:submit-timer",
+        draft: TIMER_ONLY_DEFINITION,
+      });
+      expect(state.storage.sql.exec<{ json: string }>(
+        `SELECT evaluator_rules_json AS json FROM automation_draft_evaluator_sets WHERE compiler_run_id = ?`,
+        first.compilerRunId,
+      ).one().json).toBe('{"schemaVersion":1,"evaluators":[]}');
+      settleRevision(state, 1, first.compilerRunId, TIMER_ONLY_DEFINITION);
+
+      // Turn two adds an external event trigger. Admission inherits from the
+      // newest revision, and an empty set is not something to carry forward:
+      // a row here would satisfy a presence test while carrying no rule at all.
+      const second = await instance.admitDraftTurn({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        clientMessageId: "00000000-0000-7000-8000-0000000000b9",
+        content: "Also do it when a new issue is opened",
+        attachmentIds: [],
+        inputMode: "typed",
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM automation_draft_evaluator_sets WHERE compiler_run_id = ?`,
+        second.compilerRunId,
+      ).one().count).toBe(0);
+
+      // So the submission is refused here, inside the compiler loop, where a
+      // rejected submission is repaired and retried in silence — rather than
+      // settling into a ready draft whose Create button can only ever refuse.
+      state.storage.sql.exec(
+        `UPDATE automation_compiler_runs SET state = 'running' WHERE run_id = ?`,
+        second.compilerRunId,
+      );
+      await expect(instance.stageDraftSubmission({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        compilerRunId: second.compilerRunId,
+        providerCallId: "call-submit-activity",
+        inputHash: "sha256:submit-activity",
+        draft: ACTIVITY_DEFINITION,
+      })).rejects.toThrow("automation_evaluator_rules_required");
+
+      // Setting real rules is what unblocks it, and those rules do carry
+      // forward to the turn after this one.
+      await instance.setEvaluatorRules({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        compilerRunId: second.compilerRunId,
+        providerCallId: "call-rules",
+        inputHash: "sha256:rules",
+        evaluatorRules: ISSUE_OPENED_RULES,
+      });
+      expect(await instance.stageDraftSubmission({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        compilerRunId: second.compilerRunId,
+        providerCallId: "call-submit-activity-2",
+        inputHash: "sha256:submit-activity-2",
+        draft: ACTIVITY_DEFINITION,
+      })).toEqual({ accepted: true });
+      settleRevision(state, 2, second.compilerRunId, ACTIVITY_DEFINITION);
+
+      const third = await instance.admitDraftTurn({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        clientMessageId: "00000000-0000-7000-8000-0000000000ba",
+        content: "Change the wording of the summary",
+        attachmentIds: [],
+        inputMode: "typed",
+      });
+      expect(state.storage.sql.exec<{ json: string }>(
+        `SELECT evaluator_rules_json AS json FROM automation_draft_evaluator_sets WHERE compiler_run_id = ?`,
+        third.compilerRunId,
+      ).one().json).toBe(JSON.stringify(ISSUE_OPENED_RULES));
     });
   });
 

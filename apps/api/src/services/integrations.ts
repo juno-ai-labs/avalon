@@ -1620,6 +1620,7 @@ export async function compileAutomationDraft(
     messages: Array<{ role: "user" | "assistant"; content: string }>;
     attachmentIds?: string[];
     currentDraft?: AutomationDraft | null;
+    currentEvaluatorRules?: AutomationSetEvaluatorRulesInputV1 | null;
     defaultTimezones: { personal: string; workspace: string };
     requestId: string;
     workspaceId: WorkspaceId;
@@ -1760,6 +1761,7 @@ export async function compileAutomationDraft(
       ...(input.draftMutationPort ? { draftMutationPort: input.draftMutationPort } : {}),
       draftResearchPort,
       currentDraft: input.currentDraft ?? null,
+      currentEvaluatorRules: input.currentEvaluatorRules ?? null,
       defaultTimezones: input.defaultTimezones,
       pluginCatalog,
       ...(webPlugin ? { additionalPlugins: [webPlugin] } : {}),

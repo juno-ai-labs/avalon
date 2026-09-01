@@ -1145,6 +1145,35 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-01 — The compiler is told whether its draft already has evaluator rules
+
+**What changed:** `renderAutomationCompilerMessages` takes
+`currentEvaluatorRules` and renders one user-role message beside the existing
+draft state: the staged rule set, or that there is none and that submitting an
+external-event draft without calling `automation_set_evaluator_rules` is
+refused. It renders only alongside a draft — on the first turn there is nothing
+to have set rules for, and "none" there reads as a missing step rather than the
+ordinary starting state. The standing policy is unchanged, so the cached block
+and its byte ceiling are untouched.
+
+**Why:** the draft state carries a draft's triggers but not the rules that
+decide which of their events qualify; the two are staged separately, and only
+the draft was rendered. A turn that inherited no rules could not tell that from
+a turn whose rules were already set, which is how a conversation that started on
+a schedule and later gained an external trigger reached a person as a finished
+draft whose Create button could only refuse
+([`automation-lifecycle.md`](automation-lifecycle.md)). AutomationAgent now
+refuses that submission rather than deferring it, so the model needs the fact in
+order to act on the refusal rather than guess at it. The rules that exist are
+rendered in full, not summarized to a count: the tool replaces the whole set, so
+a turn that changes a trigger has to see what it is sending again.
+
+**Considered and rejected:** *a policy line* saying to check for rules — the
+policy is the one constant string every workspace shares and the block a
+prompt-cache hit is worth the most on, and this fact changes every turn. *A
+boolean* rather than the rules: it answers the guard's question but not the
+tool's, which is what the complete replacement set should now be.
+
 ### 2026-08-31 — Built-in plugin authorization is derived from registration
 
 **What changed:** `isLoadableBuiltinHarnessPlugin` now reads a

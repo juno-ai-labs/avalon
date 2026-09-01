@@ -26,6 +26,7 @@ import {
   type AutomationDraftTurnAdmissionRequest,
   type AutomationDraftTurnAdmissionResult,
   type AutomationDetail,
+  type AutomationSetEvaluatorRulesInputV1,
   type AutomationSetEvaluatorRulesMutation,
   type AutomationRunContextV1,
 } from "@rally/contracts";
@@ -821,7 +822,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       if (busy && (busy.state === "admitted" || busy.state === "running")) {
         throw new Error("automation_compiler_busy");
       }
-      const inheritedEvaluators = this.state.storage.sql.exec<{
+      // Only the newest revision's set is a candidate: an older non-empty one
+      // describes triggers the compiler has since dropped, and resurrecting it
+      // would re-register rules for a draft that no longer has the trigger.
+      const newestEvaluators = this.state.storage.sql.exec<{
         evaluator_rules_json: string;
         input_hash: string;
       }>(`SELECT evaluator.evaluator_rules_json, evaluator.input_hash
@@ -829,6 +833,17 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
             JOIN automation_draft_evaluator_sets evaluator
               ON evaluator.compiler_run_id = definition.compiler_run_id
            ORDER BY definition.definition_revision DESC LIMIT 1`).toArray()[0];
+      // An empty set is not something to carry forward. It is what a timer-only
+      // submission leaves behind, and inheriting it used to hand the next run a
+      // row that satisfied the submit-time guard without carrying a single
+      // rule — so a draft that gained an external trigger reached Create and
+      // was refused there. No row and an empty row now mean the same thing:
+      // this run has not set its rules yet.
+      const inheritedEvaluators = newestEvaluators
+        && AutomationSetEvaluatorRulesInputV1Schema
+          .parse(JSON.parse(newestEvaluators.evaluator_rules_json)).evaluators.length > 0
+        ? newestEvaluators
+        : undefined;
       const sequence = this.transcript().appendPreparedMessage(preparedMessage);
       const projectionVersion = this.nextProjectionVersion();
       this.state.storage.sql.exec(
@@ -2564,8 +2579,9 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       const identity = this.identity();
       const messages = this.compilerMessages();
       const currentDraft = this.currentDefinition();
+      const currentEvaluatorRules = this.stagedEvaluatorRules(runId);
       const attachmentIds = this.currentAttachmentIds();
-      return { identity, messages, currentDraft, attachmentIds };
+      return { identity, messages, currentDraft, currentEvaluatorRules, attachmentIds };
     });
     if (!claimed) return;
     this.broadcastLatestEvents();
@@ -2578,6 +2594,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         userId: asUserId(claimed.identity.author_user_id),
         messages: claimed.messages,
         currentDraft: claimed.currentDraft,
+        currentEvaluatorRules: claimed.currentEvaluatorRules,
         attachmentIds: claimed.attachmentIds,
         defaultTimezones: { personal: "UTC", workspace: "UTC" },
         draftMutationPort: {
@@ -3129,11 +3146,19 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       }
       const now = Date.now();
       if (input.evaluatorDisposition === "require") {
-        const evaluatorSet = this.state.storage.sql.exec<{ compiler_run_id: string }>(
-          `SELECT compiler_run_id FROM automation_draft_evaluator_sets WHERE compiler_run_id = ?`,
-          input.compilerRunId,
-        ).toArray()[0];
-        if (!evaluatorSet) throw new Error("automation_evaluator_rules_required");
+        // The row's presence is not the invariant; its contents are. Three
+        // paths write an empty set — `clear` below, the inheritance in
+        // `admitDraftTurn`, and the compiler's own documented "pass [] to
+        // clear" — so an existence test passes a submission that
+        // `prepareAcceptance` will refuse. That refusal lands on Create, where
+        // it is the last thing anybody can act on: the compiler never sees it,
+        // the next turn inherits the same empty set, and the copy asks for a
+        // description of a good result, which is not what is missing. Refusing
+        // here instead puts it back inside the loop, where a rejected
+        // submission is repaired and retried in silence.
+        if (!this.stagedEvaluatorRules(input.compilerRunId)) {
+          throw new Error("automation_evaluator_rules_required");
+        }
       } else if (input.evaluatorDisposition === "clear") {
         this.state.storage.sql.exec(
           `INSERT INTO automation_draft_evaluator_sets
@@ -4061,6 +4086,24 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
   private transcript(): ParticipantTranscriptStore {
     return new ParticipantTranscriptStore(this.state.storage.sql);
+  }
+
+  /**
+   * The external-event rules staged for one compiler run, or `null`.
+   *
+   * `null` and an empty set are the same answer to the only question anybody
+   * asks of this — has this run got rules yet — so both submission and the
+   * compiler's own context read it through here rather than testing the row's
+   * presence, which they used to disagree about.
+   */
+  private stagedEvaluatorRules(runId: string): AutomationSetEvaluatorRulesInputV1 | null {
+    const row = this.state.storage.sql.exec<{ evaluator_rules_json: string }>(
+      `SELECT evaluator_rules_json FROM automation_draft_evaluator_sets WHERE compiler_run_id = ?`,
+      runId,
+    ).toArray()[0];
+    if (!row) return null;
+    const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(JSON.parse(row.evaluator_rules_json));
+    return rules.evaluators.length === 0 ? null : rules;
   }
 
   private currentDefinition(): AutomationDraft | null {

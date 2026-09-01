@@ -2399,6 +2399,8 @@ export async function compileAutomation(input: {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   latestUserAttachmentParts?: ModelMessageContentPart[];
   currentDraft?: AutomationDraft | null;
+  /** The evaluator set this compiler run starts from, so a later turn can see whether one exists. */
+  currentEvaluatorRules?: AutomationSetEvaluatorRulesInputV1 | null;
   defaultTimezones?: { personal: string; workspace: string };
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
   /** Avalon-owned plugins available through the same progressive-disclosure catalog. */
@@ -2447,6 +2449,7 @@ export async function compileAutomation(input: {
   const rendered = renderAutomationCompilerMessages({
     messages: input.messages,
     currentDraft: input.currentDraft ?? null,
+    currentEvaluatorRules: input.currentEvaluatorRules ?? null,
     ...(input.defaultTimezones ? { defaultTimezones: input.defaultTimezones } : {}),
   });
   const conversationMessages: ModelMessage[] = rendered.slice(1);

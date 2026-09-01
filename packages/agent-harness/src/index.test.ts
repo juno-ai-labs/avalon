@@ -357,13 +357,19 @@ describe("agent harness", () => {
     expect(String(messages[0]!.content)).toContain("Once the automation is well defined, call automation_submit_draft");
     expect(messages[1]).toMatchObject({ role: "user" });
     expect(String(messages[1]!.content)).toContain(currentDraft.instructions);
-    expect(messages[2]).toEqual({
+    // The draft's staged evaluator rules ride beside the draft itself, ahead of
+    // the conversation.
+    expect(String(messages[2]!.content)).toContain("External event evaluator rules staged for this draft");
+    // The attachment parts go on the latest user turn. Found by shape rather
+    // than by index: it is the only message whose content is parts, and every
+    // context message added ahead of the conversation used to move it.
+    expect(messages.filter((message) => Array.isArray(message.content))).toEqual([{
       role: "user",
       content: [
         { type: "text", text: "Run it every morning in Pacific time." },
         { type: "text", text: "<attachment name=\"schedule.md\">Every weekday at 08:00</attachment>" },
       ],
-    });
+    }]);
     const schemaMessage = messages.find((message) =>
       message.role === "user"
       && typeof message.content === "string"

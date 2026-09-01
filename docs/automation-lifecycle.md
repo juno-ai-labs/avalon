@@ -96,6 +96,15 @@ An external-event definition must set evaluators before submission. Timer-only
 and manual-only definitions clear staged event rules rather than calling the
 evaluator tool with an empty array.
 
+That invariant is enforced on the rules themselves, not on the presence of a
+staged row: `automation_submit_draft` refuses an external-event draft whose
+staged set is absent **or empty**, which is the same condition acceptance
+applies. An empty set is therefore never carried forward — the inheritance that
+hands one run's rules to the next skips it, and a compiler run is told, beside
+the draft it is revising, whether it has rules yet. A submission is the last
+point at which a missing rule set is the compiler's problem to fix; past it, the
+refusal has nowhere to land but the person's Create button.
+
 Deleting a draft bumps the authority generation, cancels any live compiler run,
 marks the object `deleted`, and projects that lifecycle to the directory. It is
 not archived into a second draft store.
@@ -473,7 +482,7 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an external-event submission refused when the set it inherited was empty, and admitted once real rules are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
 | `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
@@ -577,6 +586,41 @@ idempotent per workspace.
 
 ## Changelog
 
+### 2026-09-01 — Enforce evaluator rules on their contents, not on a row
+
+**What changed:** The submit-time guard in `recordDraftMutation` asked whether a
+row existed in `automation_draft_evaluator_sets` for the run. It now asks
+whether that row carries a rule, through a new `stagedEvaluatorRules` helper
+that reads `null` and an empty set as the same answer. `admitDraftTurn` no
+longer inherits an empty set into the next run, and `compileAutomationDraft`
+carries `currentEvaluatorRules` into the prompt, so a revising turn is told
+beside the draft whether rules are staged and what they are.
+
+**Why:** Two guards enforced the same invariant and disagreed about what
+satisfies it. Submission tested a row's presence; `prepareAcceptance` tested
+`rules.evaluators.length === 0`. Three paths write an empty row — the `clear`
+disposition a timer-only submission takes, the inheritance above, and the
+compiler's own documented "pass `[]` to clear all rules" — so a conversation
+that started on a schedule and later gained an external trigger staged an empty
+set, passed submission, and settled into a *ready* draft. The refusal then
+landed on Create: `POST /automations` 409 `automation_evaluator_rules_required`,
+twice thirteen seconds apart on 2026-09-01, after which the draft was abandoned.
+
+Create is the wrong place for it. The compiler never sees that response, so it
+cannot repair the submission; the next turn re-inherited the same empty set; and
+the sentence the screen shows asks for a description of a good result, which is
+neither what is missing nor something a person can supply. A submission, by
+contrast, is repaired and retried in silence. Moving the check there costs a
+model turn in the rare case and cannot strand a draft.
+
+The inheritance is kept, and deliberately reads only the *newest* revision's
+set: an older non-empty set describes triggers the compiler has since dropped,
+and resurrecting it would register rules for a trigger the draft no longer has.
+Tightening the tool schema to reject `[]` was rejected — clearing is a real
+operation the timer-only path needs — as was having `prepareAcceptance` tolerate
+an empty set, which would register an external-event automation that can never
+match an event. A future change must keep the two guards testing one condition;
+they drifted once because each read the table its own way.
 ### 2026-09-01 — Abandonment fences already-addressed automations
 
 **What changed:** AutomationAgent now reads the regional workspace lifecycle

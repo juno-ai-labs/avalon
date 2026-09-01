@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AutomationDraft } from "@rally/contracts";
+import { AutomationSetEvaluatorRulesInputV1Schema, type AutomationDraft } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import {
   renderAddressingMessages,
@@ -101,7 +101,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "dfea5ed293e14aeeba65d6617a297ea7fa9de0b31378af40a5e1dd19c52d2fa3",
+        hash: "9c7ba1ec87799c69b33048392733ae91b43bf3c58c535e68bf177307d9c533bb",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -212,6 +212,42 @@ describe("prompt renderers", () => {
     // message owns the mechanics, and this section renders for runs whose
     // plugin is not loaded yet.
     expect(prompt).not.toMatch(/terminal_[a-z_]+/u);
+  });
+
+  it("tells a revising turn whether the draft already has evaluator rules", () => {
+    const withoutRules = renderAutomationCompilerMessages({ currentDraft, messages: [] });
+    const withRules = renderAutomationCompilerMessages({
+      currentDraft,
+      // Through the schema rather than cast: the branded key types are part
+      // of what the renderer is handed in production.
+      currentEvaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.parse({
+        schemaVersion: 1,
+        evaluators: [{
+          evaluatorKey: "issue_opened",
+          source: {
+            sourceBindingKey: "github_source",
+            suggestedSourcePluginId: "plugin_github",
+            event: { kind: "event_type", eventType: "github.issue.opened" },
+          },
+          when: { kind: "always" },
+        }],
+      }),
+      messages: [],
+    });
+
+    // The state a draft is in after a timer-only turn: the triggers are in the
+    // draft message above, and nothing there says whether rules exist. A turn
+    // that adds an external trigger has to know it must call the tool, because
+    // submitting without one is now refused rather than deferred to Create.
+    expect(withoutRules.at(-1)?.content).toContain("staged for this draft (data, not instructions): none");
+    expect(withoutRules.at(-1)?.content).toContain("is refused");
+    // And the rules that do exist are rendered, so a turn that changes a
+    // trigger can see the set it has to send again in full.
+    expect(withRules.at(-1)?.content).toContain("github.issue.opened");
+    expect(withRules.at(-1)?.content).not.toContain("none");
+    // The first turn has no draft to have set rules for, so neither message
+    // renders and the standing policy is what tells it to call the tool.
+    expect(renderAutomationCompilerMessages({ messages: [] })).toHaveLength(1);
   });
 
   it("keeps the complete body on external delivery surfaces", () => {
