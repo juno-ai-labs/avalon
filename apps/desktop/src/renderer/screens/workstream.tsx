@@ -1,7 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconAugmentedReality } from '@tabler/icons-react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
 import {
   AlertTriangle,
@@ -102,7 +101,7 @@ import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { queueAuthorMember, type ComposerQueueItem } from '../components/composer-queue';
-import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
+import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import { ConnectorConnectionsProvider } from '../components/connector-mentions';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { BlockDashboardPanel, BlockDashboardRail } from '../components/block-dashboard-panel';
@@ -1259,21 +1258,9 @@ export function WorkstreamScreen(): React.JSX.Element {
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
-  const [expandedSystemRows, setExpandedSystemRows] = useState<ReadonlySet<string>>(() => new Set());
-  const systemRowDisclosure = useMemo<SystemRowDisclosure>(() => ({
-    expanded: expandedSystemRows,
-    onToggle: (messageId) => setExpandedSystemRows((current) => {
-      const next = new Set(current);
-      if (!next.delete(messageId)) next.add(messageId);
-      return next;
-    }),
-  }), [expandedSystemRows]);
-  const transcriptVirtualizer = useVirtualizer({
-    count: transcript.length,
-    estimateSize: () => 140,
-    getItemKey: (index) => transcript[index]?.id ?? index,
-    getScrollElement: () => transcriptRef.current,
-    overscan: 8,
+  const transcriptVirtualizer = useMessageFeedVirtualizer({
+    messages: transcript,
+    scrollRef: transcriptRef,
   });
   // Following the newest message is off until the screen has put this work
   // stream's viewport where it belongs, and off again whenever the end of the
@@ -2205,50 +2192,16 @@ export function WorkstreamScreen(): React.JSX.Element {
           ) ? (
             <EmptyState title="Ready to begin" description="Send a message to start work in this stream." />
           ) : (
-            <div
-              className="virtual-transcript"
-              style={{ height: `${transcriptVirtualizer.getTotalSize()}px`, position: 'relative' }}
-            >
-              {transcriptVirtualizer.getVirtualItems().map((virtualRow) => {
-                const message = visibleTranscript[virtualRow.index];
-                if (!message) return null;
-                return (
-                  <div
-                    className="virtual-message-row"
-                    data-index={virtualRow.index}
-                    key={message.id}
-                    ref={transcriptVirtualizer.measureElement}
-                    style={{
-                      left: 0,
-                      position: 'absolute',
-                      top: 0,
-                      transform: `translateY(${virtualRow.start}px)`,
-                      width: '100%',
-                    }}
-                  >
-                    {virtualRow.index === firstUnreadIndex && (
-                      <div className="unread-divider" role="separator"><span>Unread messages</span></div>
-                    )}
-                    {message.blocksOmittedPlaceholder ? (
-                      <div className="transcript-history-control" role="status">
-                        <span>This message is too large to display.</span>
-                      </div>
-                    ) : (
-                      <MessageBlock
-                        citations={citations}
-                        collapseHeadings
-                        currentUserId={session?.user.id}
-                        loadAttachmentContent={loadAttachmentContent}
-                        message={message}
-                        onAnswerElicitation={answerElicitation}
-                        onOpenAttachment={setAttachmentPreview}
-                        systemRowDisclosure={systemRowDisclosure}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <MessageFeed
+              citations={citations}
+              currentUserId={session?.user.id}
+              firstUnreadIndex={firstUnreadIndex}
+              loadAttachmentContent={loadAttachmentContent}
+              messages={visibleTranscript}
+              onAnswerElicitation={answerElicitation}
+              onOpenAttachment={setAttachmentPreview}
+              virtualizer={transcriptVirtualizer}
+            />
           )}
           {socketConnection.activeCompaction
             && detail.harnessStatus === 'running'
