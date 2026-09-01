@@ -19,7 +19,7 @@ import {
   workstreamRegionalEffectHash,
 } from "../src/durable-objects/workstream-regional-effect";
 
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009a0");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009f7");
 const MEMBER = asUserId("00000000-0000-7000-8000-0000000009a1");
 let sequence = 0;
 
