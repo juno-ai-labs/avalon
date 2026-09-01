@@ -39,9 +39,10 @@ one idea:
    unreachable, and any participant can take it over for themselves. Only the
    room ending ends it.
 2. **Any work-stream agent can author one**, in the room's main feed, through a
-   deferred `rally:automations` plugin. "Every Monday at 9, build the client
-   agenda from the pipeline sheet" is something you say where the work is. The
-   agent drafts and a person accepts — acceptance stays human, because an
+   deferred `rally:automations` plugin — including the agent behind a Slack
+   mention, so "@Rally every Monday at 9am ask this channel what shipped" is a
+   workspace automation posting into that channel. You say it where the work is.
+   The agent drafts and a person accepts — acceptance stays human, because an
    automation is a standing credential grant and a model must never mint one.
 3. **A classifier decides what each result was worth.** One structured-output
    call on its own Flagship model role returns `done` (nothing worth anyone's
@@ -150,9 +151,10 @@ can tell why.
    card it can act on, and any participant can take the automation's execution
    principal over for themselves — never for anyone else.
 3. A person can author an automation by asking the agent of the work stream they
-   are in, in that work stream's main feed — scoped to themselves, to the
-   workspace, or to that work stream — and a person in that room accepts it. No
-   model, on any loop, can activate an automation by itself.
+   are in, in that work stream's main feed, or by mentioning Rally in a Slack
+   channel — scoped to themselves, to the workspace, or to that work stream —
+   and a person accepts it where they asked for it. No model, on any loop, can
+   activate an automation by itself.
 4. Every automation has a destination whose shape matches its scope: a person's
    inbox or DM for `personal`, a shared destination such as a Slack channel for
    `workspace`, and the owning room for `workstream`. No automation delivers
@@ -351,7 +353,7 @@ Scope is part of the draft, and all three are authorable from a room:
 | Scope | Whose it is | Who may manage it | Where its results go |
 | --- | --- | --- | --- |
 | `personal` | The person whose message started this run, and nobody else | Its author | Their email, their Slack Agent DM |
-| `workspace` | The workspace | Owners and admins | A Slack channel the accepting admin picked |
+| `workspace` | The workspace | Owners and admins | A Slack channel — the one it was asked in, or one picked at acceptance |
 | `workstream` | This work stream | Every active participant | The owning work stream, and nowhere else |
 
 The agent asks which one rather than picking a default. "Just for you, for the
@@ -380,6 +382,44 @@ and belongs with the rest of them (non-goal 9).
 It is listed in its room's rail and nowhere else — not in the sidebar, for its
 creator or anyone (non-goal 8). One home means no second list to keep in
 agreement.
+
+### Authoring from Slack
+
+A Slack mention already creates or continues a work stream, so nothing about the
+previous section stops being true when the conversation happens there:
+
+> **@Rally** every monday at 9am send a message to this channel asking what each
+> person shipped this weekend
+
+That is a workspace automation whose destination is the channel it was asked in,
+and it is authorable exactly as the in-room case is, with two details the Slack
+origin settles for free:
+
+- **The channel is host-supplied, not model-parsed.** The run holds its Slack
+  origin, so "this channel" resolves to the channel ID the mention arrived on.
+  The draft asks for `{kind: "channel"}` and acceptance materializes the origin
+  channel from it — the same discipline the owning work stream gets, and the
+  reason no tool exists for a model to name a channel. An automation authored
+  *outside* Slack instead gets a picker at acceptance, over the channels the
+  workspace connection can already post into.
+- **The person sees the draft in the thread.** The draft card renders as Slack
+  blocks in the thread the mention started, alongside the run's reply, and
+  accepting is a block action calling the same `acceptDraft` the feed card and
+  `/automations/:id` call. Three entry points, one authority.
+
+**Acceptance is still owner-or-admin for a workspace automation**, and that is
+worth being plain about because it is friction on the most natural version of
+this request: an ordinary member can ask for it, and the draft waits for an
+admin. Rally says so in the thread and names what is needed rather than failing
+silently. Open question 6 asks whether a member should be able to accept a
+workspace automation whose only destination is a channel they can already post
+in, which is the case where the standing grant reaches no further than the
+person asking for it already does.
+
+The run itself is unremarkable: it fires on the schedule, posts through
+`postSlackTextChunks` into the frozen channel, and its result is classified like
+any other — a Monday where the automation has nothing to say is a `done`, and
+the channel is not interrupted.
 
 ### The rail's Automations section
 
@@ -880,55 +920,76 @@ None yet.
 
 ## Data model
 
-### The scope, and the table rebuild it costs
+### The scope, and where automations actually live
 
-`workstream` joins the automation scope vocabulary in three places:
+**There is no D1 work here, and an earlier revision of this PRD had a whole
+migration for it.** `0090_drop_legacy_product_tables.sql:548` dropped
+`automation_subscriptions` from D1, along with `automation_runs`,
+`automation_templates`, `automation_template_versions`,
+`automation_delivery_targets`, `automation_email_receipts`,
+`automation_email_rate_windows`, and `automation_resources`. The regional D1
+holds identity and routing and has held no automation state since the durable
+automation lifecycle cutover. A numbered migration under
+`packages/db/migrations/` for this change would rebuild a table that is not
+there.
 
-- **Contracts.** The scope enum gains the value, and every exhaustive switch on
-  it has to answer for the new arm — the point of spelling it as an enum.
-- **The AutomationAgent Durable Object.** `automation_acceptance.scope` carries
-  `CHECK (scope IN ('personal', 'workspace'))` (`automation-agent.ts:396`) and
-  gains `'workstream'`, plus `owning_workstream_id TEXT` recorded at acceptance.
-  A DO schema migration under
-  [`durable-object-sqlite.md`](../../durable-object-sqlite.md), not a numbered
-  file under `packages/db/migrations/`.
-- **D1, and this one is a table rebuild.** `automation_subscriptions`
-  (`0001_initial.sql:178`) carries a column `CHECK` on `scope` *and* a
-  table-level `CHECK ((scope = 'personal' AND owner_user_id IS NOT NULL) OR
-  (scope = 'workspace' AND owner_user_id IS NULL))`. SQLite can alter neither in
-  place, so migration `0098` is a create-copy-drop-rename restating it:
+The live state is in two Durable Objects, and `workstream` has to be added to
+both:
 
-  ```
-  CHECK ((scope = 'personal'   AND owner_user_id IS NOT NULL AND owning_workstream_id IS NULL)
-      OR (scope = 'workspace'  AND owner_user_id IS NULL     AND owning_workstream_id IS NULL)
-      OR (scope = 'workstream' AND owner_user_id IS NULL     AND owning_workstream_id IS NOT NULL))
-  ```
+- **AutomationAgent** is the product authority. `automation_acceptance.scope`
+  carries `CHECK (scope IN ('personal', 'workspace'))`
+  (`automation-agent.ts:396`) and gains `'workstream'`, plus
+  `owning_workstream_id TEXT` recorded at acceptance. `automation_identity`
+  (`:265`) is untouched — `author_user_id` stays what it always was,
+  provenance.
+- **WorkspaceDO's `automation_directory`** is the projection the sidebar reads
+  (`workspace-do.ts:1908`), and it carries its own
+  `CHECK (scope IN ('personal', 'workspace'))` at `:1916`. It gains the value
+  and an `owning_workstream_id TEXT`, so the rail can read what a work stream
+  owns and the sidebar can exclude it. The existing
+  `automation_directory_sidebar_idx` (`:1923`) keys on
+  `(workspace_id, lifecycle, projected_at DESC, automation_id)` and does not
+  serve a per-work-stream read, so the rail gets one of its own on
+  `(owning_workstream_id, lifecycle)`.
 
-  with `owning_workstream_id TEXT REFERENCES workstreams(id) ON DELETE CASCADE`
-  and an index on `(owning_workstream_id, status)` for the rail's read. Every
-  foreign key pointing at this table has to survive the rebuild — four tables
-  reference it in `0001_initial.sql` alone, and `0014` exists because that
-  hazard has already bitten this repository once. Read
-  [`d1-baseline-migrations.md`](../../d1-baseline-migrations.md) first.
+Both are **table rebuilds inside a Durable Object**, because SQLite cannot alter
+a `CHECK` in place. Read
+[`durable-object-sqlite.md`](../../durable-object-sqlite.md) before writing
+either: rebuilds run with foreign-key enforcement on, must pass
+`foreign_key_check` before commit, and need a populated workerd upgrade test
+rather than a fresh-schema one. Neither is a numbered D1 migration and neither
+touches [`d1-baseline-migrations.md`](../../d1-baseline-migrations.md).
 
-  The cascade is the deliberate reading of non-goal 4: a room's automations end
-  with the room, and there is no orphan to re-home.
+`automation_directory` is **typed-RPC-only** (`WORKSPACE_TYPED_RPC_ONLY_TABLES`,
+`workspace-do.ts:733`): a generic statement naming it is refused by name rather
+than executed. The rail's read is therefore a typed WorkspaceDO method beside
+the existing sidebar one, not a query the rail service writes.
 
-### Archive is not a foreign key
+**WorkspaceDO still has a table called `automation_subscriptions`**
+(`workspace-domain-schema.ts:392`), and this change does not touch it. It is the
+pre-cutover shape `automation-cutover.ts` imports *from*, plus two memory joins
+that still read it. Putting the new scope there would add a value to a table
+whose job is to describe the old world.
 
-Deleting a work stream removes its automations through that cascade. Archiving
-cannot, because an archive is reversible: the automations have to be paused and
-later resumed, and nothing in the schema does that on its own. The archive path
-reads the automations naming the work stream and pauses each; unarchiving
-resumes them.
+### Deletion and archival are effects, not foreign keys
 
-That round trip needs one column, because resuming everything is wrong. An
-automation a person paused last month must not come back because somebody
-unarchived the room, so `automation_state` gains
+An earlier revision gave the D1 table an
+`owning_workstream_id REFERENCES workstreams(id) ON DELETE CASCADE` and let the
+database handle a deleted room. Nothing can: `workstreams` is a D1 table and the
+automation state is in two Durable Objects, so no foreign key spans them. Both
+directions are explicit effects on the work stream's own lifecycle path.
+
+- **Deleting** a work stream deletes the automations it owns.
+- **Archiving** one pauses them; unarchiving resumes them, because an archive is
+  reversible and so must the pause be.
+
+The resume needs one column, because resuming everything is wrong: an automation
+a person paused last month must not come back because somebody unarchived the
+room. `automation_state` gains
 `paused_reason TEXT CHECK (paused_reason IN ('person', 'workstream_archived'))`,
-and unarchive resumes only the rows saying `workstream_archived`. Both
-directions are idempotent — an archive can be replayed, and a room can be
-archived while one of its automations is mid-acceptance.
+and unarchive resumes only the rows saying `workstream_archived`. Every step is
+idempotent — an archive can be replayed, and a room can be archived while one of
+its automations is mid-acceptance.
 
 ### Ownership and management
 
@@ -936,8 +997,8 @@ Who may manage an automation is derived, not stored: `personal` is its owner,
 `workspace` is `assertManager`'s owner-or-admin check, and `workstream` is
 "active participant of `owning_workstream_id`" — one row of the participation
 table the work stream already keeps. `assertManager` gains that arm. The
-sidebar's automations query gains `AND owning_workstream_id IS NULL`, which is
-non-goal 8's one line.
+sidebar's typed directory read gains `AND owning_workstream_id IS NULL`, which
+is non-goal 8's one line, and the rail gets a typed read of its own.
 
 ### Who a run runs as
 
@@ -1002,7 +1063,10 @@ to record and nothing for delivery to re-test (**key design decision 1**).
 `channelName` is denormalized the way `automationName` is on the activation
 object: a receipt and a picker both want to say *which* channel without a Slack
 round trip, and a rename should not rewrite the record of where a past result
-went.
+went. `channelId` comes from the run's Slack origin when the automation was
+asked for in a channel, and from the acceptance-time picker otherwise. A model
+never supplies one — the same rule that keeps a work-stream ID out of a
+submission (**Authoring from Slack**).
 
 **`resolveDeliveryTargets` stops refusing non-personal automations.** Today it
 throws `automation_personal_delivery_required` whenever `scope !== "personal"`
@@ -1072,8 +1136,8 @@ earlier create-a-room design needed is a boolean here.
 ### The run's disposition
 
 Four nullable columns on the `automation_runs` table inside the
-**AutomationAgent Durable Object** (`automation-agent.ts:396`), not the
-same-named D1 table (`0001_initial.sql:214`):
+**AutomationAgent Durable Object** (`automation-agent.ts:396`) — the D1 table of
+that name was dropped with the rest of them:
 
 ```
 disposition        TEXT CHECK (disposition IN ('done', 'deliver', 'new_workstream')),
@@ -1548,12 +1612,14 @@ the direction nobody checks.
 only reason not to ship it all at once is that two pieces have blast radius
 worth isolating.
 
-1. **The migration.** The `automation_subscriptions` table rebuild, the
-   AutomationAgent schema migration, and the `automation_surfaced` column. It
-   goes alone and is verified against a copy of production data, because it is a
-   create-copy-drop-rename with four foreign keys pointing at the table and
-   `0014` exists in this repository because that exact hazard has already bitten
-   once. Nothing reads the new columns yet.
+1. **The Durable Object migrations.** The two scope rebuilds — AutomationAgent's
+   `automation_acceptance` and WorkspaceDO's `automation_directory` — plus the
+   `automation_surfaced` column on the workspace directory row. They go alone
+   because a rebuild inside a live object upgrades on wake, one object at a
+   time, and the thing to be sure of before any code reads the new columns is
+   that every object in the fleet converged. Populated workerd upgrade tests,
+   `foreign_key_check` on commit, and
+   [`durable-object-sqlite.md`](../../durable-object-sqlite.md) throughout.
 2. **The feature.** The scope, the rail, the plugin, the mutable execution
    principal and its card, the message type and its projection, the destination
    arms, the wake, and the surfacing. All of it is inert until somebody accepts
@@ -1571,8 +1637,8 @@ worth isolating.
 Reverting deploy 3 is restoring the predicate and defaulting every disposition
 to `deliver`, which is what the classifier already does when it fails; no stored
 state unwinds, because the disposition is per run. Reverting deploy 2 is
-removing the surfaces. Deploy 1 is a migration and is not reverted, which is why
-it ships first and alone.
+removing the surfaces. Deploy 1 is not reverted — a Durable Object that has
+migrated does not migrate back — which is why it ships first and alone.
 
 No product kill switch: an owner can pause any automation and a participant can
 pause a room's from the rail, and those are the controls somebody would reach
@@ -1587,10 +1653,16 @@ switch — pointing it at another model is the lever that exists.
    nobody's sidebar, and a second participant pauses and resumes it. Author a
    `personal` one from the same room and assert the opposite: in its author's
    sidebar, in no rail, invisible to the others.
-2. **Ownership outlives the creator.** Remove the creator from the work stream
+2. **Slack authoring.** Mention Rally in a channel with "every monday at 9am
+   send a message to this channel asking what each person shipped this weekend".
+   The draft appears as blocks in that thread, with the origin channel as its
+   destination and no channel ID anywhere in the submission. A non-admin's
+   accept is refused with a sentence naming what is needed; an admin's accepts.
+   The first Monday, the message posts into that channel.
+3. **Ownership outlives the creator.** Remove the creator from the work stream
    and fire the automation: it runs, delivers, and no participation check
    appears in the receipt.
-3. **Offboarding.** Offboard the creator of a room's automation holding one
+4. **Offboarding.** Offboard the creator of a room's automation holding one
    workspace-scoped binding and one personal one. Firing it: the
    workspace-scoped binding works, the step needing the personal one fails with
    the connector's own error, and one `automation_principal_unavailable` card
@@ -1599,52 +1671,54 @@ switch — pointing it at another model is the lever that exists.
    Assert the route refuses a body naming somebody else, and that a claimant
    missing one provider gets the partial takeover and a card naming only what is
    still missing.
-4. **Delivery and the wake.** Send a matching email. Exactly one activation is
+5. **Delivery and the wake.** Send a matching email. Exactly one activation is
    written, carrying the automation's name, run ID, and
    `trigger.kind: "external_event"`; the room's agent starts a run with it as
    the trigger message, holding the tools that room's runs always hold. Send the
    same email twice: still one row, one run.
-5. **The classifier's arms.** A `workstream` automation whose result is a
+6. **The classifier's arms.** A `workstream` automation whose result is a
    routine update classifies `deliver`; the room receives it and the run history
    records `disposition_source: "classified"` with the reason. One whose result
    is "no changes this week" classifies `done`: nothing in the room, a `skipped`
    receipt, the run still inspectable. Assert the schema it was given had no
    `new_workstream` arm at all.
-6. **Surfacing.** A `workspace` automation delivering to a channel: `deliver`
+7. **Surfacing.** A `workspace` automation delivering to a channel: `deliver`
    posts there, and a `new_workstream` on the next occurrence surfaces the run's
    *own* work stream — nothing created, the same ID, now `scope: "workspace"`
    and visible in a second member's sidebar. Replay the delivery: nothing
    changes. Set the daily cap to zero and fire again: the run stays hidden, the
    receipt says why, and nothing is substituted.
-7. **The failure direction.** Break the classifier with an unroutable model. The
+8. **The failure direction.** Break the classifier with an unroutable model. The
    result delivers and the run records `disposition_source: "default"`. This is
    the one direction that must never invert.
-8. **The projection.** Project a transcript containing an activation: exactly
+9. **The projection.** Project a transcript containing an activation: exactly
    one `role: "system"` message at index 0, and the activation as a
    `role: "user"` message carrying the untrusted label. A unit test over the
    projector, not an end-to-end walk — it guards a security property an
    innocent-looking edit could undo.
-9. **Delivery that cannot land.** Pause an automation mid-run: it completes,
-   delivers nothing, wakes nothing, receipt says why. Archive the owning work
-   stream: the next receipt reads skipped-archived with nothing substituted.
-   Assert `resolveDeliveryTargets` refuses a person-shaped destination on a
-   `workspace` automation and a channel on a `personal` one, both with
-   `automation_delivery_target_scope_mismatch`.
-10. **The regex is gone.** Assert `shouldSuppressAutomationResult` exists
+10. **Delivery that cannot land.** Pause an automation mid-run: it completes,
+    delivers nothing, wakes nothing, receipt says why. Archive the owning work
+    stream: the next receipt reads skipped-archived with nothing substituted.
+    Assert `resolveDeliveryTargets` refuses a person-shaped destination on a
+    `workspace` automation and a channel on a `personal` one, both with
+    `automation_delivery_target_scope_mismatch`.
+11. **The regex is gone.** Assert `shouldSuppressAutomationResult` exists
     nowhere in the tree — a grep-level assertion, because a predicate left
     exported and unused is one somebody re-wires — and that a run whose final
     message is empty still classifies rather than crashing a delivery path.
-11. **Google watches.** Attach a Sheet, enable watch, edit it: a resource-update
+12. **Google watches.** Attach a Sheet, enable watch, edit it: a resource-update
     row appears within one poll cycle. Separately, a unit test that builds the
     registry and asserts a descriptor carrying
     `{ relationship: "file", resourceType: "google_sheet" }` is accepted —
     registry construction is where a missing enum value fails, and it fails for
     every connector at once.
-12. **Archive and delete.** Archive a room holding two automations, one already
+13. **Archive and delete.** Archive a room holding two automations, one already
     paused by a person: both pause, and unarchiving resumes only the other. Then
     delete the room and assert its automations are gone — the cascade tested
-    against the rebuilt table rather than assumed from the DDL — and that no
-    scheduled occurrence of a deleted automation is later admitted.
+    through the deletion effect rather than assumed from a foreign key that
+    cannot exist — and that no scheduled occurrence of a deleted automation is
+    later admitted. Both directions run as populated workerd upgrade tests over
+    the rebuilt Durable Object schemas.
 
 ## Open questions
 
@@ -1677,7 +1751,16 @@ switch — pointing it at another model is the lever that exists.
    and all need a connector to declare that it can deliver to a *place* rather
    than to a person — the sibling declaration **Data model** describes but does
    not design.
-6. **Gmail-thread watching.** Whether to declare `resourceRelationships` for
+6. **Whether a member can accept a channel-only workspace automation.**
+   Acceptance for `workspace` scope is owner-or-admin today, and this PRD keeps
+   it. The case for relaxing it is narrow and real: an automation whose only
+   destination is a channel the requester can already post in grants no reach
+   they do not have, and the Slack path above is where the friction shows up
+   most. The case against is that a workspace automation runs on workspace
+   credentials and can *read* things the requester cannot, so the destination
+   being harmless does not make the automation harmless. Probably resolved by
+   asking what those drafts actually bind to once there are some.
+7. **Gmail-thread watching.** Whether to declare `resourceRelationships` for
    `gmail_thread` on the email event types in this pass, or ship
    Sheets/Docs/Drive first. Watching one email thread is a plausible want,
    but the email events' filter fields were not designed with per-thread
