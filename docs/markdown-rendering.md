@@ -658,14 +658,16 @@ The traps, both of which have bitten:
 **What changed:** An embed card whose resource classifies as an image keeps the
 preview route's blob as image bytes and renders it in the card. The thumbnail
 fills a fixed-height box with centered `object-fit: cover`; the card revokes its
-object URL when the resource changes or the card unmounts. Document previews
-remain markdown glances on the existing conversion-and-retry path.
+object URL when the resource changes or the card unmounts. Its badge uses the
+image glyph rather than the generic file glyph. Document previews remain
+markdown glances on the existing conversion-and-retry path.
 
 **Why:** Image bytes were decoded as text by the generic document-preview path,
 so PNG data appeared as replacement characters while the card still showed a
-file badge. The route already returns the source blob and the inspector already
-distinguishes images from readable documents; the embed needed the same
-classification at the shared read boundary.
+generic file badge. The route already returns the source blob and the inspector
+already distinguishes images from readable documents; the embed needed the
+same classification at the shared read boundary and in the shared resource-icon
+mapping.
 
 **What a future change has to respect:** keep the image preview presentational
 so the card remains the only control and its accessible name remains the title.
