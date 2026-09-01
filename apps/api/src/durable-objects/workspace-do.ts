@@ -5379,7 +5379,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           resources: [],
         });
       }
-      const placeholders = request.resourceIds.map(() => "?").join(",");
       const rows = this.state.storage.sql.exec<{
         id: string;
         connection_id: string | null;
@@ -5409,10 +5408,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
                 model_content_error_code, created_at, updated_at
            FROM resources
           WHERE workspace_id = ? AND uploaded_by_user_id = ?
-            AND attachment_status = 'draft' AND id IN (${placeholders})`,
+            AND attachment_status = 'draft'
+            AND id IN (SELECT value FROM json_each(?))`,
         request.workspaceId,
         request.userId,
-        ...request.resourceIds,
+        JSON.stringify(request.resourceIds),
       ).toArray();
       if (rows.length !== request.resourceIds.length) {
         return WorkspaceReserveDraftAttachmentsResultSchema.parse({ outcome: "unavailable" });
@@ -7622,18 +7622,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryReadableIdsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const placeholders = request.workstreamIds.map(() => "?").join(", ");
     const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
       `SELECT directory.workstream_id FROM workspace_workstream_directory directory
        LEFT JOIN workspace_workstream_viewers viewer
          ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
-       WHERE directory.workstream_id IN (${placeholders})
+       WHERE directory.workstream_id IN (SELECT value FROM json_each(?))
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
        ORDER BY directory.workstream_id`,
       request.userId,
-      ...request.workstreamIds,
+      JSON.stringify(request.workstreamIds),
     ).toArray();
     return WorkspaceDirectoryReadableIdsResultSchema.parse({
       items: rows.map((row) => row.workstream_id),
@@ -7873,14 +7872,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryLookupRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const placeholders = request.workstreamIds.map(() => "?").join(",");
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
-       WHERE directory.workstream_id IN (${placeholders})
+       WHERE directory.workstream_id IN (SELECT value FROM json_each(?))
        ORDER BY directory.last_activity_at DESC, directory.workstream_id`,
       "",
       "",
-      ...request.workstreamIds,
+      JSON.stringify(request.workstreamIds),
     ).toArray();
     return WorkspaceDirectoryLookupResultSchema.parse({
       items: rows.map(internalDirectoryItem),

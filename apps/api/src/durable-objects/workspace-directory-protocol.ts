@@ -69,8 +69,9 @@ export const WorkspaceDirectoryBatchTargetsRequestSchema = z.object({
 
 export const WorkspaceDirectoryBatchTargetsResultSchema = z.object({
   // Intentionally uncapped: the public filter may legitimately select the
-  // whole sidebar. The regional Worker chunks these ids into Queue sendBatch
-  // calls at the platform's transport boundary instead of truncating them.
+  // whole sidebar. The regional Worker chunks these ids into 50-message Queue
+  // calls, below the platform's 100-message sendBatch maximum, instead of
+  // truncating them.
   items: z.array(IdSchema),
 }).strict();
 
