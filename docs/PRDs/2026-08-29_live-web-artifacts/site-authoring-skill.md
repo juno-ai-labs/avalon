@@ -177,10 +177,13 @@ that works the first time.
   result tells you what it made — read it; if it says archive where you
   meant site, rename to the exact entry name and republish the same
   path.
-- **External `<script src>`, CDN CSS, or web fonts.** A page that
-  phones out renders differently per viewer and may not render at all.
-  Do instead: vendor the file into the directory and reference it
-  relatively.
+- **External `<script src>`, CDN CSS, or web fonts.** Not a style
+  preference — Rally serves every page under a Content-Security-Policy
+  that permits only this artifact's own origin, so an external script,
+  stylesheet, font, or `fetch` is *refused by the browser*. The page
+  renders without it, silently and wrongly. Do instead: vendor the file
+  into the directory and reference it relatively. Inline `<script>` and
+  `<style>` blocks are fine, as are `data:` images.
 - **A server for a static page.** An `index.js` that only ever falls
   through to `env.ASSETS.fetch(request)` is overhead with no behavior.
   Do instead: delete it; `index.html` alone serves faster and can never
@@ -215,9 +218,9 @@ JSON.
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    // Match the path's tail, not an absolute equality, so the same
-    // handler works under a prior-version mount.
-    if (url.pathname.endsWith("/api/search")) {
+    // Route on the exact path. Rally strips any version prefix before
+    // your handler sees the request, so this is the path you wrote.
+    if (url.pathname === "/api/search") {
       const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
       if (q.length === 0) return Response.json({ results: [] });
       const rows = await (await env.ASSETS.fetch("/signups.json")).json();
@@ -278,13 +281,13 @@ shape of `index.js`.
 
      async fetch(request) {
        const url = new URL(request.url);
-       const viewerId = request.headers.get("Rally-Viewer-Id");
+       const viewerId = request.headers.get("x-rally-viewer-id");
        if (url.pathname === "/api/rsvps" && request.method === "POST") {
          // Anonymous viewers can read but not RSVP.
          if (!viewerId)
            return Response.json({ error: "sign in to RSVP" }, { status: 401 });
          const name =
-           decodeURIComponent(request.headers.get("Rally-Viewer-Name") ?? "");
+           decodeURIComponent(request.headers.get("x-rally-viewer-name") ?? "");
          // Validate before touching SQL: bad client input is a 400,
          // never an artifact-level failure.
          let body;
@@ -361,14 +364,14 @@ shape of `index.js`.
    in-memory copy as rebuildable from storage on the next start.
 7. **The viewer arrives on every request — use it, and handle its
    absence.** Every request carries two trusted headers Rally injects
-   and nothing can forge: `Rally-Viewer-Id` (a stable member id) and
-   `Rally-Viewer-Name` (the display name, percent-encoded — decode
+   and nothing can forge: `x-rally-viewer-id` (a stable member id) and
+   `x-rally-viewer-name` (the display name, percent-encoded — decode
    with `decodeURIComponent`). So never build a login flow, a name
    field for attribution, or a seat picker: an RSVP is attributed to
    whoever sent it, one-vote-per-person is an upsert keyed on the
    viewer id, and lists show real display names for free. Always
    write the guest branch too: a missing header means an anonymous
-   viewer (`request.headers.get("Rally-Viewer-Id")` returns `null` —
+   viewer (`request.headers.get("x-rally-viewer-id")` returns `null` —
    today it never happens, but pages built now must not break the day
    guests exist), so check for `null` and decide what a guest may
    do — usually read but not submit. And record identity only where
