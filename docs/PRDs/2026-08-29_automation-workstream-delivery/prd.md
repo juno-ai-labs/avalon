@@ -43,7 +43,10 @@ one idea:
    mention, so "@Rally every Monday at 9am ask this channel what shipped" is
    something you set up where the work is. The agent drafts and a person accepts
    — acceptance stays human, because an automation is a standing credential
-   grant and a model must never mint one.
+   grant and a model must never mint one. **The standalone draft screen is
+   retired with it**, and with it a second implementation of a transcript: a
+   draft conversation becomes a work stream's, stored and projected and rendered
+   like every other.
 3. **A classifier decides what each result was worth.** One structured-output
    call on its own Flagship model role returns `done` (nothing worth anyone's
    attention), `deliver` (send it to the automation's destination), or
@@ -160,38 +163,42 @@ can tell why.
    channel — scoped to themselves, to the workspace, or to that work stream —
    and a person accepts it where they asked for it. No model, on any loop, can
    activate an automation by itself.
-4. A `deliver` disposition sends the result to whoever the automation belongs
+4. There is one conversation implementation. The standalone draft surface, its
+   flat message projection, and the client-side synthesis of tool, thought and
+   elicitation rows are deleted; a draft conversation is a work stream's
+   transcript like any other.
+5. A `deliver` disposition sends the result to whoever the automation belongs
    to — its person, or the room that owns it — and no automation delivers into a
    work stream other than the one that owns it. Where a run needs to *act*
    somewhere, it uses the connector tools it is already bound to, which is a
    different thing from delivery and stays that way.
-5. Each completed run's result is routed by a classified disposition — `done`,
+6. Each completed run's result is routed by a classified disposition — `done`,
    `deliver`, or `expose_workstream` — decided once per run by a structured-output
    classifier reading the result, never by a regex over the model's prose and
    never by the run itself. `shouldSuppressAutomationResult` and every call site
    of it are deleted.
-6. A `deliver` disposition records the result in the owning work stream exactly
+7. A `deliver` disposition records the result in the owning work stream exactly
    once per run, as a message of its own type carrying a typed activation
    object, visible to the room and projected to the model as untrusted evidence,
    and it starts a run there.
-7. An `expose_workstream` disposition exposes the work stream the run already
+8. An `expose_workstream` disposition exposes the work stream the run already
    executed in — no work stream is created — at the automation's own scope, so
    it appears in the sidebar for the people that scope covers.
-8. A delivery that cannot land — the work stream was archived or deleted, the
+9. A delivery that cannot land — the work stream was archived or deleted, the
    automation was paused or deleted mid-run — is skipped with a receipt naming
    the reason, visible on the automation's run history, and is never
    re-targeted. Nothing about the creator's continued access is one of those
    reasons.
-9. The classifier runs on its own Flagship model role with a checked-in default
+10. The classifier runs on its own Flagship model role with a checked-in default
    route, editable in Ace like every other model-using task, and a failure to
    evaluate it delivers rather than swallows.
-10. Watching an attached Google Sheet, Doc, or Drive file produces
+11. Watching an attached Google Sheet, Doc, or Drive file produces
     resource-update rows in the watching work stream when the polled Drive
     change feed reports a change.
-11. An automation's external-event trigger can be scoped to one specific Google
+12. An automation's external-event trigger can be scoped to one specific Google
     resource (a `resource_watch` trigger or a resource-scoped evaluator), and
     the compiler's validation accepts it.
-12. The recruiter scenario above is authorable end to end from inside the work
+13. The recruiter scenario above is authorable end to end from inside the work
     stream it is about, with no code written for it.
 
 ## Non-goals
@@ -240,8 +247,11 @@ can tell why.
    somebody sees without the context that explains it, in a list where pausing
    it affects people not looking at that list — rejected, because two homes is
    two lists to keep in agreement. The rail gets no editor either; opening an
-   automation goes to the existing surface, which stays the only place a
-   definition is edited. Deferred, and cheap to revisit.
+   automation goes to the `/automations/:id` overview, which stays the only
+   place a definition is edited. Deferred, and cheap to revisit. That overview
+   is not what this change retires: what goes is the standalone *draft
+   conversation* screen, whose transcript moves into the work stream (**The
+   draft conversation is a work stream**).
 9. **No per-person copy of a room's automation results.** No "email me these
    too": those destinations name a person and this object belongs to a room. The
    want is real, and its honest shape is a per-participant notification
@@ -349,13 +359,14 @@ as visible as the behavior itself: a month later, "why does this fire on
 Mondays" is answered by scrolling.
 
 The draft is proposed, never activated. It is an AutomationAgent in `draft`
-state — as one begun anywhere else is — whose author is the person whose request
-produced the run. It surfaces in the feed as a card, and **a person accepts it
-from there**: the card's action calls the same `acceptDraft`, with the same
-`assertAuthor` check, that `/automations/:id` calls today
-([`automation-lifecycle.md`](../../automation-lifecycle.md#acceptance)). One
-acceptance authority, a second entry point to it, never a second
-implementation.
+state, whose author is the person whose request produced the run. It surfaces in
+the feed as a card, and **a person accepts it from there**: the card's action
+calls `acceptDraft` with the `assertAuthor` check it has today
+([`automation-lifecycle.md`](../../automation-lifecycle.md#acceptance)).
+
+**And this is the only place a draft is ever discussed.** The standalone draft
+screen is retired with this change (**The draft conversation is a work stream**),
+so there is one conversation, in one transcript, rendered by one feed.
 
 Scope is part of the draft, and all three are authorable from a room. **Scope
 decides who can see the automation and who can change it, and nothing else:**
@@ -417,6 +428,58 @@ belongs to. A tool call's arguments come from the run, which is why
 email-triggered runs lose connector write tools entirely and why this PRD adds
 no tool that could pick an audience (non-goal 1).
 
+### The draft conversation is a work stream
+
+An automation draft has its own conversation surface today: the AutomationAgent
+stores the turns, projects them as `{turnId, role, content, attachmentIds}`, and
+`new-automation.tsx` inflates that back into messages and *synthesizes* the rows
+the server never sent — tool calls and thoughts rebuilt on the client from
+`automation_realtime_events` deltas, an elicitation rebuilt from a
+`pendingElicitation` field. It is a second implementation of a transcript.
+
+**It is retired by this change.** Authoring happens in a work stream, so the
+conversation is that work stream's substream `"0"`: the same storage, the same
+projection, the same socket, the same feed component the rest of Rally reads. No
+alignment work is needed because there is nothing left to align.
+
+What moves, and what does not:
+
+| | Where it lives after |
+| --- | --- |
+| The setting-up conversation, its tool calls, its thoughts, its elicitations | The work stream's transcript, as canonical turns |
+| The draft itself — definition revisions, staged submissions, evaluator sets, tool receipts, acceptance | AutomationAgent, unchanged. It owns the automation; it stops owning a conversation |
+| The authoring loop | An ordinary work-stream run with `rally:automations` loaded, in place of the dedicated compiler harness |
+| The definition surface for an accepted automation | `/automations/:id` overview, unchanged |
+
+What that deletes rather than builds: the flat draft-message projection and its
+schema, the client-side inflation in `automationDraftFromAgentSnapshot`, the
+synthesized tool/thought/elicitation rows in the draft screen, the screen
+itself, and the drift between two copies of
+`participant_transcript_turns` — WorkstreamDO has five columns on that table the
+AutomationAgent's copy has never had.
+
+Two consequences worth naming because they are easy to miss:
+
+- **`compileAutomation` stops being the authoring loop.** It takes
+  `messages: {role, content}[]`, which is the *model's* view of a conversation,
+  and the flat projection exists partly to feed it. A work-stream run projects
+  for the model and for people separately, which is what lets a tool call be a
+  row a person sees and a result the model reads.
+- **Windowing in `MessageFeed` becomes unconditional again.** Its `virtualizer`
+  prop is optional because the draft adapter paged nothing; with that adapter
+  gone, every surface rendering the feed is a paging one, and the prop should
+  stop being optional rather than sit there as an option nobody takes.
+
+**Drafts in flight when this ships** are the one migration question, and it does
+not have a comfortable answer. There is no work stream to move their turns
+into, and inventing one per abandoned draft would leave rooms nobody asked for.
+A draft that loses its conversation also loses the only surface that could
+continue or accept it — the definition survives in the AutomationAgent with
+nothing to open it with. So the realistic choices are to drain them before the
+deletion lands, or to delete them with the screen. Drafts are short-lived, so
+draining is probably days rather than a policy; open question 5 says to decide
+it from the number of open drafts at the time rather than from an argument.
+
 ### Authoring from Slack
 
 A Slack mention already creates or continues a work stream, so nothing about the
@@ -447,14 +510,14 @@ Two details the Slack origin settles for free:
   tool call rather than in a string somebody has to maintain.
 - **The person sees the draft in the thread.** The draft card renders as Slack
   blocks in the thread the mention started, and accepting is a block action
-  calling the same `acceptDraft` the feed card and `/automations/:id` call.
-  Three entry points, one authority.
+  calling the same `acceptDraft` the feed card calls. Two entry points, one
+  authority.
 
 **Acceptance is owner-or-admin for a workspace automation**, and that is worth
 being plain about because it is friction on the most natural version of this
 request: an ordinary member can ask for it, and the draft waits for an admin.
 Rally says so in the thread and names what is needed rather than failing
-silently. Open question 5 asks whether that is right for an automation whose
+silently. Open question 6 asks whether that is right for an automation whose
 only effect is in a channel the requester can already post in.
 
 The classifier still runs on the occurrence, and for this automation it is
@@ -475,7 +538,7 @@ Each row carries the automation's name, a one-line summary of its trigger
 gone (**When the execution principal loses access**) — and when it last ran.
 Empty state is a single line, `No automations`, matching the rail's other
 sections. Two controls, both of which every participant may use: pause/resume
-inline, and open, which goes to the existing automation surface. Editing a
+inline, and open, which goes to the `/automations/:id` overview. Editing a
 definition happens there and only there (non-goal 8).
 
 A paused automation stays listed and reads as paused; a deleted one leaves. A
@@ -550,7 +613,7 @@ uses. It inherits that path's idempotency (a `clientMessageId` derived from the
 delivery), its authority-generation fence, and its archive check. Storage,
 ordering, and transport are unchanged; only the type is new, and
 `message_type` carries no `CHECK` in the work stream's SQL, so it needs no
-migration (**key design decision 11** covers why it is not a system row).
+migration (**key design decision 12** covers why it is not a system row).
 
 Its `textContent` is the run's final message. Its `structuredContent` is a typed
 **activation object**:
@@ -610,7 +673,7 @@ Nothing about visibility needs a mechanism, and that is worth one line because
 an earlier revision of this PRD spent two changes on the transcript's hottest
 read to hide these rows: with the classifier withholding the results nobody
 needs, `messageRows` keeps its single predicate and `appendPreparedMessage` goes
-on assigning ordinals unconditionally. **Key design decision 12** keeps the two
+on assigning ordinals unconditionally. **Key design decision 13** keeps the two
 traps that revision uncovered on the record, because they are in the read path
 rather than in the design that nearly walked into them.
 
@@ -921,7 +984,23 @@ None yet.
    sees; every implementation of it says what it really does, because a reader
    who takes the name literally will write the creation path this arm has not
    got.
-7. **The prose regex is retired, and exactly one mechanism replaces it.**
+7. **The draft conversation moves into a work stream rather than the work
+   stream's transcript being rebuilt inside AutomationAgent.** Both would end
+   the split. The rejected one is parity: give AutomationAgent the columns
+   WorkstreamDO added to their shared turns table, the mention and attachment
+   link tables, a `Message`-shaped projection duplicating `messageFromRow` and
+   its hydration, and a compiler loop that writes `tool` and `thinking` blocks —
+   the shared schema already allows those block kinds, so it is less work than
+   it looks. It is still the wrong direction. It ends with two transcript
+   implementations to keep in step, against a 4,765-line storage module and an
+   84-table schema, so every later feed feature is built twice or extracted at
+   that point anyway; and it would build exactly the thing this PRD's authoring
+   change retires. Moving the conversation deletes code instead of adding it,
+   and the alignment is total by construction rather than maintained. The cost
+   is honest: it is a product change, not a refactor, and it takes the
+   standalone draft surface with it (**The draft conversation is a work
+   stream**).
+8. **The prose regex is retired, and exactly one mechanism replaces it.**
    `shouldSuppressAutomationResult` decides whether a result is worth delivering
    by pattern-matching one English phrasing about emails. Two replacements were
    rejected on the way here. Keeping it beside the new path leaves the regex
@@ -934,7 +1013,7 @@ None yet.
    have happened, and an evaluation set that has to cover both. One mechanism
    costs the run's own words in the receipt; its reasons survive in its
    transcript, on the run history.
-8. **The deciding loop is not the producing loop.** Letting the run choose its
+9. **The deciding loop is not the producing loop.** Letting the run choose its
    own disposition costs no extra inference and has the most context, and is
    rejected anyway: the run is the loop untrusted trigger content steers, so a
    disposition it chooses is one an attacker can influence in both directions —
@@ -944,19 +1023,19 @@ None yet.
    separate classifier reads the run's *output* rather than executing inside it,
    holds no tools and no credentials, answers a schema of two or three enum
    values and a sentence, and fails toward delivery.
-9. **Acceptance stays human on every loop.** Giving work-stream agents the
+10. **Acceptance stays human on every loop.** Giving work-stream agents the
    authoring plugin does not give them the ability to activate what they draft.
    A run that reads an inbound email must not be able to end with a standing
    grant of connector credentials on a schedule. Rejected: auto-accepting a
    draft the person asked for in the same turn, which is indistinguishable, at
    the point of acceptance, from a draft an injected instruction asked for.
-10. **The automations plugin is deferred, not preloaded.** Preloading would put
+11. **The automations plugin is deferred, not preloaded.** Preloading would put
     a tool family in every run's prompt in the fleet for something people ask
     for occasionally. It follows `rally:terminal` instead. Rejected: a heuristic
     that preloads it when a message looks schedule-shaped, which is a regex over
     prose making a tool-availability decision, and this document has already
     retired one of those.
-11. **The activation gets its own message type.** The system row looked like a
+12. **The activation gets its own message type.** The system row looked like a
     free ride — it already answers idempotency, ordering, archive, and authority
     generation, with typed detail in `structuredContent` the way
     `resource_update` does. But those are the *append path's* answers, and
@@ -967,7 +1046,7 @@ None yet.
     path — where the reuse actually lives — while forcing each enumerator to say
     what it does with an activation. Cost: the enumerations in **Data model**,
     and no migration, because `message_type` carries no `CHECK`.
-12. **The activation is visible, which is why no visibility mechanism is
+13. **The activation is visible, which is why no visibility mechanism is
     needed.** An earlier revision hid it, and hiding required two changes to the
     transcript's hottest read: an audience argument on `messageRows` and a
     conditional attention ordinal on the append. Both are dropped, because what
@@ -983,7 +1062,7 @@ None yet.
     run in every work stream with its activations and none of the conversation
     they are meant to inform. Codex found that in review, two lines from being
     specified as safe.
-13. **Reuse the watched-resource append shape.** The destination-side write
+14. **Reuse the watched-resource append shape.** The destination-side write
     follows `SubstreamAgent.appendWatchedResourceEvent`: an idempotent client
     message ID derived from the delivery, an authority-generation fence, and an
     archive check, through the existing delivery and receipt machinery.
@@ -991,7 +1070,7 @@ None yet.
     seductively zero-schema and wrong twice over — the inbound screen exists to
     refuse non-member senders, and a product feature routed through its own
     anti-abuse channel breaks the moment either side tightens.
-14. **Declare the Google manifest now, add granularity later.** Making
+15. **Declare the Google manifest now, add granularity later.** Making
     `sheets.spreadsheet_changed` watchable is a declarative edit the whole
     existing pipeline honors immediately. A row-granular event family
     (non-goal 5) can be added later without revisiting this, because manifests
@@ -1119,7 +1198,7 @@ run is a no-op that returns the current state.
 `automation_principal_unavailable` carrying the automation ID and name, the
 outgoing principal, and the list of unreachable providers; `message_type` is
 `system`, because this is Rally noting something that happened *to* this work
-stream, which is exactly what that row means (**key design decision 11** draws
+stream, which is exactly what that row means (**key design decision 12** draws
 the line the other way for an activation, and the contrast is the point). It is
 idempotent on `automation:<id>:principal:<outgoingUserId>` so a run that fires
 hourly writes one card, and it is edited in place — not re-appended — as
@@ -1209,7 +1288,7 @@ disposition_at     INTEGER
 constrained as an all-or-nothing group, so a half-written disposition cannot
 exist. They replace the `no_result_reason` / `no_result_reported_at` pair an
 earlier revision specified for the tool that is no longer in this design
-(**key design decision 7**).
+(**key design decision 8**).
 
 `disposition_source` has only two values because there are only two ways to get
 an answer, and it is still worth storing: "the classifier decided" and "the
@@ -1506,7 +1585,7 @@ just read is a spam engine with a human approval step in front of it. It has no
 automation tools of any kind: it does its work, writes its result, and what
 happens to that result is decided outside it (**Agent behavior 4**).
 
-**It is deferred, not preloaded** (**key design decision 10**): discovered
+**It is deferred, not preloaded** (**key design decision 11**): discovered
 through `list_plugins` / `search_plugins` and loaded with `load_plugin`, the way
 `rally:terminal` is. Loading it starts, authorizes, and persists nothing — it
 puts the drafting tools in the catalog, and the first thing that durably exists
@@ -1687,10 +1766,18 @@ worth isolating.
    [`durable-object-sqlite.md`](../../durable-object-sqlite.md) throughout.
 2. **The feature.** The scope, the rail, the plugin, the mutable execution
    principal and its card, the message type and its projection, the delivery
-   branch for a room, the wake, and the surfacing. All of it is inert until
+   branch for a room, the wake, and the exposure. All of it is inert until
    somebody accepts an automation into the new scope, so there is no ordering
    *within* this deploy to get wrong, and every piece is revertible by removing
    the surface that reaches it.
+   **One thing inside it is ordered, and it is a deletion.** The standalone
+   draft screen goes only after the plugin can carry an authoring conversation
+   in a room, because until then it is the only way to author anything. Ship it
+   as its own change at the end of this deploy — the screen, the flat
+   `AutomationDraftMessageSchema` projection, `automationDraftFromAgentSnapshot`,
+   the synthesized rows, and the `virtualizer` prop on `MessageFeed` that only
+   the draft adapter needed. Nothing else in this deploy depends on that
+   deletion, so it can also wait a release without holding anything up.
 3. **The classifier.** The only piece that changes what existing automations do:
    every result is now classified, where before every result was delivered.
    `shouldSuppressAutomationResult` was deleted ahead of this rather than with
@@ -1750,7 +1837,7 @@ switch — pointing it at another model is the lever that exists.
    is "no changes this week" classifies `done`: nothing in the room, a `skipped`
    receipt, the run still inspectable. Assert the schema it was given had no
    `expose_workstream` arm at all.
-7. **Surfacing.** Fire the `workspace` automation from check 2 on an occurrence
+7. **Exposing a run.** Fire the `workspace` automation from check 2 on an occurrence
    worth reading in full. Assert the schema it was given had no `deliver` arm,
    that `expose_workstream` surfaces the run's *own* work stream — nothing created,
    the same ID, now `scope: "workspace"` and visible in a second member's
@@ -1771,11 +1858,19 @@ switch — pointing it at another model is the lever that exists.
     non-personal automation with `automation_personal_delivery_required`, and
     that a `workstream` automation delivers to its room without any entry in its
     frozen destination set.
-11. **The regex is gone.** Assert `shouldSuppressAutomationResult` exists
+11. **One conversation implementation.** Author a draft in a room and assert the
+    turns come from the work stream's own transcript read — the same endpoint
+    and socket the room's feed already uses — with the tool calls and the
+    elicitation as canonical turns rather than rows the client built. Then
+    assert the absences, because that is what this goal is: no
+    `AutomationDraftMessageSchema` in contracts, no
+    `automationDraftFromAgentSnapshot`, no `createToolEventMessage` call in a
+    screen, and no route to a standalone draft conversation.
+12. **The regex is gone.** Assert `shouldSuppressAutomationResult` exists
     nowhere in the tree — a grep-level assertion, because a predicate left
     exported and unused is one somebody re-wires — and that a run whose final
     message is empty still classifies rather than crashing a delivery path.
-12. **Google watches, file and thread.** Attach a Sheet, enable watch, edit it:
+13. **Google watches, file and thread.** Attach a Sheet, enable watch, edit it:
     a resource-update row appears within one poll cycle. Attach a Gmail thread,
     enable watch, reply to it: the same, from that thread rather than the whole
     mailbox. Separately, a unit test that builds the registry and asserts
@@ -1783,7 +1878,7 @@ switch — pointing it at another model is the lever that exists.
     and `{ relationship: "thread", resourceType: "gmail_thread" }` are accepted —
     registry construction is where a missing enum value fails, and it fails for
     every connector at once.
-13. **Archive and delete.** Archive a room holding two automations, one already
+14. **Archive and delete.** Archive a room holding two automations, one already
     paused by a person: both pause, and unarchiving resumes only the other. Then
     delete the room and assert its automations are gone — the cascade tested
     through the deletion effect rather than assumed from a foreign key that
@@ -1816,7 +1911,15 @@ switch — pointing it at another model is the lever that exists.
    explicit "hide this again" that clears the flag, which is a second control
    doing almost the same thing. Worth revisiting only if archiving an exposed
    run turns out to read wrong on the automation's own run history.
-5. **Whether a member can accept a workspace automation that only acts where
+5. **What happens to drafts in flight when the standalone surface is retired.**
+   This PRD assumes they keep their definition and lose their transcript: there
+   is no work stream to move those turns into, and creating one per abandoned
+   draft would leave rooms nobody asked for. The alternatives are holding the
+   retirement until they drain — drafts are short-lived, so that may be days
+   rather than a policy — or importing each into a work stream created for it.
+   Worth deciding from the actual number of open drafts at the time, which is a
+   query rather than an argument.
+6. **Whether a member can accept a workspace automation that only acts where
    they already can.** Acceptance for `workspace` scope is owner-or-admin, and
    this PRD keeps it. The case for relaxing it is narrow and real: an automation
    whose only effect is a message in a channel the requester can already post in
