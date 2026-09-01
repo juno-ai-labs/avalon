@@ -27,6 +27,7 @@ let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null =
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
 let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
+let observedLeaveWorkspace: ((workspaceId: string) => Promise<unknown>) | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   consumePendingDeepLinks: vi.fn(),
@@ -40,6 +41,7 @@ const bridge = vi.hoisted(() => ({
   getRuntimeConfig: vi.fn(),
   getSession: vi.fn(),
   hasStoredCredential: vi.fn(),
+  leaveWorkspace: vi.fn(),
   logout: vi.fn(),
   onDeepLink: vi.fn(),
   onSessionChanged: vi.fn(),
@@ -83,6 +85,7 @@ function SessionProbe(): React.JSX.Element {
   const { api, booting, deepLinkError, invitationApi, pendingInvitation, region, session } = context;
   observedApi = api;
   observedSignOutIfCleared = context.signOutIfCredentialCleared;
+  observedLeaveWorkspace = context.leaveWorkspace;
   return (
     <>
       <output>
@@ -137,6 +140,7 @@ function resetDesktopBridge(): void {
   sessionListener = null;
   observedApi = null;
   observedSignOutIfCleared = null;
+  observedLeaveWorkspace = null;
   bridge.getRuntimeConfig.mockResolvedValue({
     appVersion: 'test',
     isPackaged: true,
@@ -985,6 +989,44 @@ describe('draft cache lifetime across a session', () => {
     act(() => sessionListener?.({ ...euSession, user: { ...euSession.user, id: 'user-2' } }));
 
     await waitFor(async () => expect(await readDraftText('workstream:1')).toBeNull());
+  });
+
+  it('preserves both workspace draft scopes while switching within one account', async () => {
+    const globalSession: DesktopSession = {
+      ...euSession,
+      apiBaseUrl: 'https://api.rallywith.ai',
+      workspace: { ...euSession.workspace!, id: 'workspace-global', name: 'Global Research', region: 'global' },
+    };
+    bridge.getSession.mockResolvedValue(euSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await writeDraftText('workspace:workspace-eu:workstream:1', 'eu thought');
+    await writeDraftText('workspace:workspace-global:workstream:2', 'global thought');
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+
+    act(() => sessionListener?.(globalSession));
+
+    expect(await screen.findByText('global:Global Research')).toBeVisible();
+    expect((await readDraftText('workspace:workspace-eu:workstream:1'))?.text).toBe('eu thought');
+    expect((await readDraftText('workspace:workspace-global:workstream:2'))?.text).toBe('global thought');
+  });
+
+  it('clears only the departed workspace draft scope after leave succeeds', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.leaveWorkspace.mockResolvedValue({ outcome: 'left' });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await writeDraftText('workspace:workspace-eu:workstream:1', 'eu thought');
+    await writeDraftText('workspace:workspace-global:workstream:2', 'global thought');
+    await waitFor(() => expect(observedLeaveWorkspace).not.toBeNull());
+
+    await act(async () => {
+      await observedLeaveWorkspace?.('workspace-eu');
+    });
+
+    expect(bridge.leaveWorkspace).toHaveBeenCalledWith({ workspaceId: 'workspace-eu' });
+    expect(await readDraftText('workspace:workspace-eu:workstream:1')).toBeNull();
+    expect((await readDraftText('workspace:workspace-global:workstream:2'))?.text).toBe('global thought');
   });
 
   it('cannot be repopulated by a composer flushing its draft on the way out', async () => {

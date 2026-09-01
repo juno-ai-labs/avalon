@@ -40,16 +40,17 @@ bridges, or any code that selects a Durable Object namespace.
 Every user signs in once through the Global Rally identity endpoint. After
 authentication, the Global control plane uses an authenticated named Worker RPC
 binding to discover workspace memberships and email-bound pending invitations in
-Global and EU. An existing member activates that workspace immediately. A user
+Global and EU. An existing member activates a workspace immediately. A user
 with invitations may accept or decline them. Only a user with no workspace and no
-invitations sees organization setup, where they choose `Global` or
+invitations sees workspace setup, where they choose `Global` or
 `European Union`. A workspace persists that selection and it is immutable in V1.
 
 The initial identity-only Global bootstrap session cannot access workspace data.
 Activation, creation, or invitation acceptance mints a fresh session in the
-workspace's owning region, commits an opaque Global workspace binding, and revokes
-the bootstrap session. The desktop then stores that regional API base URL and does
-not query the other region for ordinary workspace requests. Invitation acceptance
+workspace's owning region and commits an opaque Global workspace binding. The
+desktop retains the bootstrap session for future discovery beside one credential
+per activated workspace. Each regional credential addresses only its own API;
+ordinary workspace requests never query another region. Invitation acceptance
 remains email-bound, expiring, single-use, idempotent, and server-authorized; no
 second regional Google OAuth flow exists.
 
@@ -212,13 +213,14 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
 - **Identity OAuth and desktop-ticket redemption occur only through the Global
   endpoint**, and yield an identity-only bootstrap session. A bootstrap session has
   no workspace ID and cannot authorize workspace data access.
-- **Session claims and workspace rows must agree on region**, and a target-region
-  session replaces the Global bootstrap session after activation, creation, or
-  invitation acceptance. A session whose claim disagrees with its row is a
+- **Session claims and workspace rows must agree on region**, and every
+  target-region session is stored beside the Global bootstrap session after
+  activation, creation, or invitation acceptance. A session whose claim
+  disagrees with its row is a
   cross-region read with a valid signature on it.
-- **At most one active platform workspace binding may exist for an identity.**
-  Simultaneous memberships in both regions fail closed for operator
-  reconciliation.
+- **A platform identity may have one active binding per workspace, across both
+  regions.** Placement affinity is per `(platform_user_id, region)` and adding
+  an EU route never rewrites the Global route or vice versa.
 - **Repositories never choose a region from a user-controlled object ID.** Every
   service receives a fixed regional dependency container; the region comes from the
   deployment and the session, never from the request body.
@@ -326,8 +328,8 @@ Under `apps/api`, run with `pnpm --filter @rally/api exec vitest run <path>`
 | `test/rpc-contracts.test.ts` | Every bridge argument schema, including that a rejection names paths and not values. |
 | `test/env-contract.test.ts` | The region-scoped entrypoint contract — that Global requires what EU must not. |
 | `test/health-env-contract.test.ts` | That `/health` blocks on the contract and reports the offending keys. |
-| `test/organization-region-bindings.test.ts` | Activation, creation, acceptance, and the single-active-binding rule. |
-| `test/platform-onboarding.test.ts` | Bootstrap-session limits and cross-region discovery. |
+| `test/multiple-workspaces-schema.test.ts` | Plural Global/EU routes, per-region placement affinity, abandonment, and setup-operation replay schema. |
+| `test/platform-onboarding.test.ts` | Bootstrap-session limits, plural cross-region discovery, activation, create/accept replay, and route reconciliation. |
 | `test/telemetry-bootstrap.test.ts` | Cloudflare-country classification, immediate routing, capability binding, and the EU crash-saving decision. |
 | `test/telemetry-preference.test.ts`, `test/telemetry-identity-link.test.ts` | Opaque cross-region preference projection and same-region anonymous linking. |
 | `test/crash-symbolicator-config.test.ts`, `test/env-contract.test.ts` | Dedicated per-region telemetry buckets, EU jurisdiction, Container bindings, and Global-only PostHog configuration. |
@@ -378,6 +380,26 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-08-31 — Global discovery retains plural regional workspace routes
+
+**What changed:** Platform identities now retain one opaque binding per regional
+workspace, and the desktop keeps the identity bootstrap credential beside the
+regional sessions it activates. Placement affinity is scoped by identity and
+region rather than by identity alone.
+
+**Why:** A regional session cannot call the Global onboarding coordinator, so
+revoking the bootstrap credential made switching out of an EU workspace require
+a new sign-in. One active binding per identity also made legitimate Global and
+EU membership look like a placement conflict.
+
+**Considered and rejected:** Rebinding a single session and storing one server-side
+default workspace. The first crosses endpoint authority; the second introduces
+a server preference that can disagree with the device-local selection.
+
+**Consequences:** Global stores only opaque route metadata and setup replay;
+workspace content and authorization stay regional. Discovery may reconcile
+several memberships, but no request reads workspace content cross-region.
 
 ### 2026-08-30 — Admit an explicit operator SQLite inspection exception
 

@@ -11,17 +11,23 @@ import {
 describe('desktop API response errors', () => {
   it('marks only an HTTP 401 as a definitively invalid stored credential', async () => {
     const invalidToken = await responseError(new Response(JSON.stringify({
-      error: { message: 'The refresh token is invalid or expired' },
+      error: { code: 'session_revoked', message: 'The refresh token is invalid or expired' },
     }), { status: 401 }));
     const unavailable = await responseError(new Response(null, { status: 503 }));
+    const membershipEnded = await responseError(new Response(JSON.stringify({
+      error: { code: 'workspace_access_denied', message: 'Workspace access is unavailable' },
+    }), { status: 403 }));
 
     expect(invalidToken).toEqual(expect.objectContaining({
       message: 'The refresh token is invalid or expired',
       status: 401,
+      code: 'session_revoked',
     }));
     expect(definitivelyInvalidatesStoredCredential(invalidToken)).toBe(true);
     expect(definitivelyInvalidatesStoredCredential(unavailable)).toBe(false);
     expect(definitivelyInvalidatesStoredCredential(new Error('offline'))).toBe(false);
+    expect(definitivelyInvalidatesStoredCredential(membershipEnded)).toBe(false);
+    expect(refreshFailureIsTerminal(membershipEnded)).toBe(true);
   });
 
   it('treats an unusable credential as terminal even though no 401 was involved', async () => {

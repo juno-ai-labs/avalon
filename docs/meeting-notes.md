@@ -155,6 +155,13 @@ can arrive later than the cascade, and a window mid-fullscreen-transition on
 macOS is where it does. Anything the preload cannot read as `user` is treated as
 a quit.
 
+Before capture starts, the meeting renderer registers its active workspace with
+Electron main. Switching, creating, joining, or leaving a workspace is refused
+while any meeting window is recording against the workspace being left. The
+guard is released only after capture stops, and closing the meeting window
+removes it as a backstop. A recording's note, transcript, and socket authority
+therefore cannot move regions or workspaces underneath it.
+
 ### Product telemetry
 
 A newly created recording note reports its opaque note UUID, private/public
@@ -399,6 +406,26 @@ already reads it, so that step is a scheduler and a budget rather than a new
 knob.
 
 ## Changelog
+
+### 2026-08-31 — Live capture blocks active-workspace changes
+
+**What changed:** A meeting window registers capture with main before dictation
+starts and releases it after capture stops. Main refuses workspace activation,
+creation, invitation acceptance, and leave while that registration names the
+active workspace; window teardown clears a stranded registration.
+
+**Why:** Settings, the meeting window, and the main shell follow one active
+workspace. Switching mid-recording would leave one live capture writing through
+credentials and storage authority that the rest of the application had replaced.
+
+**Considered and rejected:** Letting the meeting window keep its original
+session independently. That creates a second active-workspace model and leaves
+menu, Settings, sign-out, and note navigation disagreeing about which workspace
+owns the window.
+
+**Consequences:** A person must finish or stop recording before changing
+workspaces. The guard is privileged state, but the renderer still owns capture
+and finalization; main records only a window id and workspace id.
 
 ### 2026-08-29 — Note statements become typed WorkspaceDO methods, and the privacy outbox is written by the update itself
 

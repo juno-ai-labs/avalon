@@ -331,6 +331,21 @@ export async function clearAllDrafts(): Promise<void> {
   }, undefined);
 }
 
+/** Leaving one workspace removes only keys that belong to that workspace. */
+export async function clearWorkspaceDrafts(workspaceId: string): Promise<void> {
+  epoch += 1;
+  const prefix = `workspace:${workspaceId}:`;
+  const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
+  await withStores([TEXT_STORE, ATTACHMENT_STORE], 'readwrite', async (transaction) => {
+    transaction.objectStore(TEXT_STORE).delete(range);
+    const attachmentStore = transaction.objectStore(ATTACHMENT_STORE);
+    const keys = await awaitRequest(
+      attachmentStore.index(DRAFT_KEY_INDEX).getAllKeys(range),
+    );
+    for (const key of keys) attachmentStore.delete(key);
+  }, undefined);
+}
+
 /**
  * Test seam: drops the open connection so the next call reopens the database.
  * A live IndexedDB connection keeps its implementation's task queue running,

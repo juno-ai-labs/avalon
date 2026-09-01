@@ -8,8 +8,12 @@ import {
   ProductAnalyticsPreferenceSchema,
   SessionSchema,
   WorkspaceOnboardingStateSchema,
+  WorkspaceAttentionSchema,
+  WorkspaceDepartureSchema,
   type Session as WireSession,
   type ClientFeatureFlags,
+  type WorkspaceAttention,
+  type WorkspaceDeparture,
 } from '@rally/contracts';
 import {
   DESKTOP_DEEP_LINK_PROTOCOL,
@@ -23,6 +27,7 @@ import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { WorkspaceChangeGuard } from './workspace-change-guard';
 import {
   app,
   BrowserWindow,
@@ -192,13 +197,20 @@ import {
   writeStoredSessionFile,
 } from './session-file';
 import {
-  parseStoredAuth,
-  parseStoredProfile,
+  activeStoredCredential,
+  mergeStoredSession,
+  parseStoredAuthSet,
+  parseStoredProfileSet,
+  removeStoredWorkspace,
+  selectStoredWorkspace,
   sessionFromStoredState,
   sessionsShareBinding,
   storedAuthFromSession,
-  storedProfileFromSession,
+  storedProfileForCredential,
+  storedWorkspaceCredential,
   type StoredAuth,
+  type StoredAuthSet,
+  type StoredProfileSet,
 } from './stored-auth';
 import { parseLegacyStoredSession } from './stored-session';
 import {
@@ -459,13 +471,16 @@ let deepLinkErrorNotice: DesktopDeepLinkErrorNotice | null = null;
 let deepLinkErrorNoticesShown = 0;
 const meetingWindows = new Set<BrowserWindow>();
 const meetingWindowsAllowedToClose = new WeakSet<BrowserWindow>();
+const workspaceChangeGuard = new WorkspaceChangeGuard();
 let rendererReady = false;
 let quitting = false;
-let inMemoryAuth: StoredAuth | null = null;
+let inMemoryAuthSet: StoredAuthSet | null = null;
+let inMemoryProfileSet: StoredProfileSet | null = null;
 let inMemorySession: WireSession | null = null;
 let refreshInFlight: Promise<DesktopSession> | null = null;
 let sessionMutationTail: Promise<void> = Promise.resolve();
 let sessionLifecycleEpoch = 0;
+let workspaceSelectionIntent = 0;
 let loggingOut = false;
 let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
@@ -623,6 +638,13 @@ function forceCloseMeetingWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) return;
   meetingWindowsAllowedToClose.add(window);
   window.close();
+}
+
+function assertWorkspaceChangeAllowed(targetWorkspaceId?: string): void {
+  if (workspaceChangeGuard.blocksChangeFrom(
+    inMemorySession?.workspace?.id ?? null,
+    targetWorkspaceId,
+  )) throw new Error('Finish or stop the recording before switching workspaces');
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -979,19 +1001,19 @@ async function migrateSessionEncryption(
 }
 
 async function recoverGlobalSessionWithoutKeystore(): Promise<void> {
-  if (!inMemoryAuth) {
+  if (!inMemoryAuthSet) {
     await clearCredentialsForLockdownRelogin();
     return;
   }
   await writeStoredAuthFile(
     userDataDirectory(),
-    encryptSessionValue(JSON.stringify(inMemoryAuth), 'global', safeStorage),
+    encryptSessionValue(JSON.stringify(inMemoryAuthSet), 'global', safeStorage),
   );
-  if (inMemorySession) {
+  if (inMemoryProfileSet) {
     await writeStoredProfileFile(
       userDataDirectory(),
       encryptSessionValue(
-        JSON.stringify(storedProfileFromSession(inMemorySession)),
+        JSON.stringify(inMemoryProfileSet),
         'global',
         safeStorage,
       ),
@@ -1008,7 +1030,8 @@ async function recoverGlobalSessionWithoutKeystore(): Promise<void> {
 async function clearCredentialsForLockdownRelogin(): Promise<void> {
   sessionLifecycleEpoch += 1;
   desktopAuthAttempts.clear();
-  inMemoryAuth = null;
+  inMemoryAuthSet = null;
+  inMemoryProfileSet = null;
   inMemorySession = null;
   let failure: unknown;
   const directories = [
@@ -1230,7 +1253,7 @@ const menuBarController = new MenuBarController({
   content: () => menuBarContentStore.content(),
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
-  signedIn: () => Boolean(inMemoryAuth),
+  signedIn: () => Boolean(inMemoryAuthSet),
   meetingRecordingAvailable: () => meetingRecordingAvailable,
   suggestedWorkAvailable: () => suggestedWorkAvailable,
   sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
@@ -1390,17 +1413,26 @@ async function rallyApiRequest(
   return readJsonBody(response);
 }
 
-async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
-  const auth = storedAuthFromSession(value, regionForStoredSession(value));
+async function writeSplitSessionFiles(
+  value: WireSession,
+  options: { activate?: boolean } = {},
+): Promise<StoredAuthSet> {
+  const stored = mergeStoredSession(
+    inMemoryAuthSet,
+    inMemoryProfileSet,
+    value,
+    regionForStoredSession(value),
+    options,
+  );
   // Credentials are the durable boundary. Write them before the disposable
   // profile cache so an interrupted update can always recover by refreshing.
   await writeStoredAuthFile(
     userDataDirectory(),
-    encryptStoredSessionValue(JSON.stringify(auth)),
+    encryptStoredSessionValue(JSON.stringify(stored.auth)),
   );
   await writeStoredProfileFile(
     userDataDirectory(),
-    encryptStoredSessionValue(JSON.stringify(storedProfileFromSession(value))),
+    encryptStoredSessionValue(JSON.stringify(stored.profiles)),
   );
   try {
     await removeStoredSessionFiles(userDataDirectory());
@@ -1408,11 +1440,12 @@ async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
     // The split credential is authoritative. Logout still removes or
     // tombstones every legacy location before another launch can use it.
   }
-  return auth;
+  inMemoryProfileSet = stored.profiles;
+  return stored.auth;
 }
 
 async function persistSessionUnlocked(value: WireSession): Promise<void> {
-  inMemoryAuth = await writeSplitSessionFiles(value);
+  inMemoryAuthSet = await writeSplitSessionFiles(value);
   inMemorySession = value;
   broadcastSessionChanged(value);
 }
@@ -1421,7 +1454,7 @@ async function persistSession(value: WireSession): Promise<void> {
   await withSessionMutation(() => persistSessionUnlocked(value));
 }
 
-async function migrateLegacySessionToSplitStorage(): Promise<StoredAuth | null> {
+async function migrateLegacySessionToSplitStorage(): Promise<StoredAuthSet | null> {
   try {
     const encrypted = await readStoredSessionFile(userDataDirectory());
     const parsed: unknown = JSON.parse(decryptStoredSessionValue(encrypted));
@@ -1431,7 +1464,7 @@ async function migrateLegacySessionToSplitStorage(): Promise<StoredAuth | null> 
       return null;
     }
     const auth = await writeSplitSessionFiles(legacySession);
-    inMemoryAuth = auth;
+    inMemoryAuthSet = auth;
     inMemorySession = legacySession;
     return auth;
   } catch (error) {
@@ -1442,17 +1475,23 @@ async function migrateLegacySessionToSplitStorage(): Promise<StoredAuth | null> 
   }
 }
 
-async function loadStoredAuth(): Promise<StoredAuth | null> {
-  if (inMemoryAuth) return inMemoryAuth;
+async function loadStoredAuthSet(): Promise<StoredAuthSet | null> {
+  if (inMemoryAuthSet) return inMemoryAuthSet;
   try {
     const encrypted = await readStoredAuthFile(userDataDirectory());
     const parsed: unknown = JSON.parse(decryptStoredSessionValue(encrypted));
-    const auth = parseStoredAuth(parsed);
+    const auth = parseStoredAuthSet(parsed);
     if (!auth) {
       logWarn('rally', 'the stored desktop credential did not match its durable schema');
       return null;
     }
-    inMemoryAuth = auth;
+    inMemoryAuthSet = auth;
+    if ((parsed as { version?: unknown } | null)?.version === 1) {
+      await writeStoredAuthFile(
+        userDataDirectory(),
+        encryptStoredSessionValue(JSON.stringify(auth)),
+      );
+    }
     return auth;
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return migrateLegacySessionToSplitStorage();
@@ -1461,26 +1500,29 @@ async function loadStoredAuth(): Promise<StoredAuth | null> {
   }
 }
 
-async function loadStoredSession(): Promise<WireSession | null> {
-  if (inMemorySession) return inMemorySession;
-  const auth = await loadStoredAuth();
-  if (!auth) return null;
-  if (inMemorySession) return inMemorySession;
+async function loadStoredAuth(): Promise<StoredAuth | null> {
+  const stored = await loadStoredAuthSet();
+  return stored ? activeStoredCredential(stored) : null;
+}
+
+async function loadStoredProfileSet(): Promise<StoredProfileSet | null> {
+  if (inMemoryProfileSet) return inMemoryProfileSet;
   try {
     const encrypted = await readStoredProfileFile(userDataDirectory());
     const parsed: unknown = JSON.parse(decryptStoredSessionValue(encrypted));
-    const profile = parseStoredProfile(parsed);
-    if (!profile) {
+    const profiles = parseStoredProfileSet(parsed);
+    if (!profiles) {
       logWarn('rally', 'discarding an incompatible desktop profile cache');
       return null;
     }
-    const stored = sessionFromStoredState(auth, profile, apiBaseForAuth(auth));
-    if (!stored) {
-      logWarn('rally', 'discarding a desktop profile cache with a mismatched credential binding');
-      return null;
+    inMemoryProfileSet = profiles;
+    if ((parsed as { version?: unknown } | null)?.version === 1) {
+      await writeStoredProfileFile(
+        userDataDirectory(),
+        encryptStoredSessionValue(JSON.stringify(profiles)),
+      );
     }
-    inMemorySession = stored;
-    return stored;
+    return profiles;
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') {
       logWarn('rally', 'could not restore the desktop profile cache', error);
@@ -1489,8 +1531,37 @@ async function loadStoredSession(): Promise<WireSession | null> {
   }
 }
 
+async function storedSessionForCredential(auth: StoredAuth): Promise<WireSession | null> {
+  const profiles = await loadStoredProfileSet();
+  if (!profiles) return null;
+  const profile = storedProfileForCredential(profiles, auth);
+  if (!profile) return null;
+  return sessionFromStoredState(auth, profile, apiBaseForAuth(auth));
+}
+
+async function loadStoredSession(): Promise<WireSession | null> {
+  if (inMemorySession) return inMemorySession;
+  const auth = await loadStoredAuth();
+  if (!auth) return null;
+  if (inMemorySession) return inMemorySession;
+  const stored = await storedSessionForCredential(auth);
+  if (!stored) {
+    logWarn('rally', 'discarding a desktop profile cache with a mismatched credential binding');
+    return null;
+  }
+  inMemorySession = stored;
+  return stored;
+}
+
+async function loadStoredIdentitySession(): Promise<WireSession | null> {
+  const auth = await loadStoredAuthSet();
+  if (!auth?.account) return null;
+  return storedSessionForCredential(auth.account);
+}
+
 async function clearStoredSessionUnlocked(): Promise<void> {
-  inMemoryAuth = null;
+  inMemoryAuthSet = null;
+  inMemoryProfileSet = null;
   inMemorySession = null;
   let failure: unknown;
   const directories = [
@@ -1519,6 +1590,51 @@ async function clearStoredSessionUnlocked(): Promise<void> {
 
 async function clearStoredSession(): Promise<void> {
   await withSessionMutation(clearStoredSessionUnlocked);
+}
+
+async function removeStoredCredentialUnlocked(rejected: StoredAuth): Promise<void> {
+  const auth = await loadStoredAuthSet();
+  if (!auth) return;
+  const profiles = await loadStoredProfileSet() ?? {
+    version: 2 as const,
+    account: null,
+    workspaces: [],
+  };
+  let nextAuth: StoredAuthSet;
+  let nextProfiles: StoredProfileSet;
+  if (rejected.binding.workspaceId === null) {
+    if (!auth.account || !storedAuthMatches(auth.account, rejected)) return;
+    nextAuth = { ...auth, account: null };
+    nextProfiles = { ...profiles, account: null };
+  } else {
+    const current = storedWorkspaceCredential(auth, rejected.binding.workspaceId);
+    if (!current || !storedAuthMatches(current, rejected)) return;
+    ({ auth: nextAuth, profiles: nextProfiles } = removeStoredWorkspace(
+      auth,
+      profiles,
+      rejected.binding.workspaceId,
+    ));
+  }
+  if (!nextAuth.account && nextAuth.workspaces.length === 0) {
+    await clearStoredSessionUnlocked();
+    return;
+  }
+  await writeStoredAuthFile(
+    userDataDirectory(),
+    encryptStoredSessionValue(JSON.stringify(nextAuth)),
+  );
+  await writeStoredProfileFile(
+    userDataDirectory(),
+    encryptStoredSessionValue(JSON.stringify(nextProfiles)),
+  );
+  inMemoryAuthSet = nextAuth;
+  inMemoryProfileSet = nextProfiles;
+  if (rejected.binding.workspaceId === null && inMemorySession?.workspace) return;
+  const nextCredential = activeStoredCredential(nextAuth);
+  inMemorySession = nextCredential
+    ? await storedSessionForCredential(nextCredential)
+    : null;
+  broadcastSessionChanged(inMemorySession);
 }
 
 function parseRallyBaseUrl(value: string | undefined, fallback: string): string {
@@ -1880,7 +1996,7 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
   const candidate = input as { apiBaseUrl?: unknown; workspaceName?: unknown };
   const apiBaseUrl = validatedApiBase(candidate.apiBaseUrl);
   if (typeof candidate.workspaceName !== 'string' || candidate.workspaceName.trim().length < 2 || candidate.workspaceName.length > 120) {
-    throw new Error('Invalid organization name');
+    throw new Error('Invalid workspace name');
   }
   const session = await requestSession(apiBaseUrl, '/auth/dev/session', { workspaceName: candidate.workspaceName.trim() });
   if (
@@ -1895,9 +2011,8 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
 }
 
 async function requireOnboardingIdentitySession(): Promise<WireSession> {
-  const stored = await loadStoredSession();
+  const stored = await loadStoredIdentitySession();
   if (!stored) throw new Error('Sign in to Rally before setting up a workspace');
-  if (stored.workspace) throw new Error('This Rally account already has an active workspace');
   if (stored.apiBaseUrl !== runtimeConfig().api.global) {
     throw new Error('Workspace setup requires a Rally platform identity session');
   }
@@ -1920,7 +2035,105 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
   if (parsed.data.invitations.some((invitation) => invitation.email.toLocaleLowerCase('en-US') !== accountEmail)) {
     throw new Error('Rally returned an invitation for another account');
   }
-  return parsed.data;
+  const auth = await loadStoredAuthSet();
+  const recency = new Map((auth?.workspaceRecency ?? []).map((workspaceId, index) => [workspaceId, index]));
+  const workspaces = [...parsed.data.workspaces].sort((left, right) => {
+    const leftIndex = recency.get(left.id);
+    const rightIndex = recency.get(right.id);
+    if (leftIndex === undefined && rightIndex === undefined) return 0;
+    if (leftIndex === undefined) return 1;
+    if (rightIndex === undefined) return -1;
+    return leftIndex - rightIndex;
+  });
+  return { ...parsed.data, workspaces };
+}
+
+async function refreshStoredCredential(previous: StoredAuth): Promise<WireSession> {
+  const apiBaseUrl = apiBaseForAuth(previous);
+  let session: WireSession;
+  try {
+    session = await requestSession(
+      apiBaseUrl,
+      '/auth/refresh',
+      { refreshToken: previous.refreshToken },
+      previous.accessToken,
+    );
+    if (!sessionsShareBinding(session, previous) || session.apiBaseUrl !== apiBaseUrl) {
+      throw new UnusableCredentialError('The refreshed session did not match the stored credential binding');
+    }
+  } catch (error) {
+    if (refreshFailureIsTerminal(error)) {
+      await withSessionMutation(() => removeStoredCredentialUnlocked(previous));
+    }
+    throw error;
+  }
+  return withSessionMutation(async () => {
+    const auth = await loadStoredAuthSet();
+    if (!auth) throw new Error('Rally was signed out while the session was refreshing');
+    const current = previous.binding.workspaceId === null
+      ? auth.account
+      : storedWorkspaceCredential(auth, previous.binding.workspaceId);
+    if (!current || !storedAuthMatches(current, previous)) {
+      throw new Error('A newer Rally credential replaced this refresh request');
+    }
+    const activate = previous.binding.workspaceId === auth.activeWorkspaceId;
+    inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
+    if (activate) {
+      inMemorySession = session;
+      broadcastSessionChanged(session);
+    }
+    return session;
+  });
+}
+
+async function getWorkspaceAttention(input: unknown): Promise<WorkspaceAttention> {
+  const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
+  if (!workspaceId.success || Object.keys(candidate).some((key) => key !== 'workspaceId')) {
+    throw new Error('Invalid workspace attention request');
+  }
+  const authSet = await loadStoredAuthSet();
+  const auth = authSet ? storedWorkspaceCredential(authSet, workspaceId.data) : null;
+  if (!auth) throw new Error('No credential is stored for this workspace');
+  const ask = (credential: StoredAuth) => net.fetch(`${apiBaseForAuth(credential)}/workspace/attention`, {
+    headers: { Accept: 'application/json', Authorization: `Bearer ${credential.accessToken}` },
+  });
+  let response = await ask(auth);
+  if (response.status === 401) {
+    const renewed = await refreshStoredCredential(auth);
+    response = await ask(storedAuthFromSession(renewed, regionForStoredSession(renewed)));
+  }
+  if (!response.ok) throw await responseError(response);
+  return WorkspaceAttentionSchema.parse(await readJsonBody(response));
+}
+
+async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
+  const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
+  if (!workspaceId.success || Object.keys(candidate).some((key) => key !== 'workspaceId')) {
+    throw new Error('Invalid workspace departure request');
+  }
+  assertWorkspaceChangeAllowed();
+  const authSet = await loadStoredAuthSet();
+  let credential = authSet ? storedWorkspaceCredential(authSet, workspaceId.data) : null;
+  if (!credential) throw new Error('No credential is stored for this workspace');
+  const ask = (stored: StoredAuth) => net.fetch(
+    `${apiBaseForAuth(stored)}/workspaces/${encodeURIComponent(workspaceId.data)}/membership`,
+    {
+      method: 'DELETE',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${stored.accessToken}` },
+    },
+  );
+  let response = await ask(credential);
+  if (response.status === 401) {
+    const renewed = await refreshStoredCredential(credential);
+    credential = storedAuthFromSession(renewed, regionForStoredSession(renewed));
+    response = await ask(credential);
+  }
+  if (!response.ok) throw await responseError(response);
+  const departure = WorkspaceDepartureSchema.parse(await readJsonBody(response));
+  await withSessionMutation(() => removeStoredCredentialUnlocked(credential));
+  return departure;
 }
 
 async function requestOnboardingSession(
@@ -1929,11 +2142,12 @@ async function requestOnboardingSession(
   expectedRegion: RallyRegion,
   expectedWorkspaceId?: string,
   operationId?: string,
+  selectionIntent = ++workspaceSelectionIntent,
 ): Promise<DesktopSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   const identity = await requireOnboardingIdentitySession();
   if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
-    throw new Error('Rally was signed out while organization setup was running');
+    throw new Error('Rally was signed out while workspace setup was running');
   }
   const response = await net.fetch(`${runtimeConfig().api.global}${path}`, {
     method: 'POST',
@@ -1964,29 +2178,22 @@ async function requestOnboardingSession(
   const session = { ...parsed.data, apiBaseUrl: targetApiBaseUrl };
   return withSessionMutation(async () => {
     if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
-      throw new Error('Rally was signed out while organization setup was running');
+      throw new Error('Rally was signed out while workspace setup was running');
     }
-    const current = await loadStoredSession();
-    if (!current) throw new Error('Rally was signed out while organization setup was running');
-    if (current.workspace) {
-      if (
-        current.workspace.id === session.workspace!.id
-        && current.workspace.region === session.workspace!.region
-        && current.apiBaseUrl === session.apiBaseUrl
-        && current.user.email.toLocaleLowerCase('en-US') === session.user.email.toLocaleLowerCase('en-US')
-      ) {
-        return publicSession(current);
-      }
-      throw new Error('Another organization session replaced this setup request');
+    const currentAuth = await loadStoredAuthSet();
+    if (!currentAuth?.account || currentAuth.account.binding.userId !== identity.user.id) {
+      throw new Error('The signed-in Rally account changed during workspace setup');
     }
-    if (
-      current.apiBaseUrl !== runtimeConfig().api.global
-      || current.user.email.toLocaleLowerCase('en-US') !== identity.user.email.toLocaleLowerCase('en-US')
-    ) {
-      throw new Error('The signed-in Rally account changed during organization setup');
+    const activate = selectionIntent === workspaceSelectionIntent;
+    inMemoryAuthSet = await writeSplitSessionFiles(session, { activate });
+    if (activate) {
+      inMemorySession = session;
+      broadcastSessionChanged(session);
+      return publicSession(session);
     }
-    await persistSessionUnlocked(session);
-    return publicSession(session);
+    const current = await loadStoredSession() ?? await loadStoredIdentitySession();
+    if (!current) throw new Error('Rally was signed out while workspace setup was running');
+    return publicSession(current);
   });
 }
 
@@ -1999,16 +2206,37 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
     region: candidate['region'], workspaceId: candidate['workspaceId'],
   });
   if (!parsed.success) throw new Error('Invalid workspace activation request');
+  assertWorkspaceChangeAllowed(parsed.data.workspaceId);
   const operationId = candidate['operationId'];
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
     throw new Error('Invalid workspace activation operation ID');
   }
+  const selectionIntent = ++workspaceSelectionIntent;
+  const cached = await withSessionMutation(async () => {
+    const auth = await loadStoredAuthSet();
+    if (!auth) return null;
+    const credential = storedWorkspaceCredential(auth, parsed.data.workspaceId);
+    if (!credential || credential.binding.region !== parsed.data.region) return null;
+    const session = await storedSessionForCredential(credential);
+    if (!session || selectionIntent !== workspaceSelectionIntent) return null;
+    const selected = selectStoredWorkspace(auth, parsed.data.workspaceId);
+    await writeStoredAuthFile(
+      userDataDirectory(),
+      encryptStoredSessionValue(JSON.stringify(selected)),
+    );
+    inMemoryAuthSet = selected;
+    inMemorySession = session;
+    broadcastSessionChanged(session);
+    return publicSession(session);
+  });
+  if (cached) return cached;
   return requestOnboardingSession(
     '/onboarding/workspace/activate',
     parsed.data,
     parsed.data.region,
     parsed.data.workspaceId,
     operationId as string | undefined,
+    selectionIntent,
   );
 }
 
@@ -2019,6 +2247,7 @@ async function createWorkspace(input: unknown): Promise<DesktopSession> {
   }
   const parsed = CreateWorkspaceRequestSchema.safeParse({ region: candidate['region'], name: candidate['name'] });
   if (!parsed.success) throw new Error('Invalid workspace creation request');
+  assertWorkspaceChangeAllowed();
   const operationId = candidate['operationId'];
   if (operationId !== undefined && (typeof operationId !== 'string' || !UUID_V7_PATTERN.test(operationId))) {
     throw new Error('Invalid workspace creation operation ID');
@@ -2054,6 +2283,7 @@ function parseInvitationAction(input: unknown): {
 
 async function acceptInvitation(input: unknown): Promise<DesktopSession> {
   const parsed = parseInvitationAction(input);
+  assertWorkspaceChangeAllowed();
   return requestOnboardingSession(
     `/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/accept`,
     { region: parsed.region },
@@ -2106,7 +2336,7 @@ async function refreshWireSession(): Promise<WireSession> {
       previousAuth.accessToken,
     );
     // A binding the service will never agree with cannot be retried into
-    // working. Joining the organization from another device rebinds the
+    // working. Joining the workspace from another device rebinds the
     // server session while this device's stored binding stays unbound, so
     // this must surrender the credential rather than loop on it forever.
     if (!sessionsShareBinding(session, previousAuth) || session.apiBaseUrl !== apiBaseUrl) {
@@ -2114,7 +2344,7 @@ async function refreshWireSession(): Promise<WireSession> {
     }
   } catch (error) {
     // Only a terminal failure may delete anything, and only the credential
-    // this attempt actually presented. A sign-out/sign-in, an organization
+    // this attempt actually presented. A sign-out/sign-in, a workspace
     // activation, or a lockdown relogin can persist a newer credential while
     // this request is in flight, so the generation is rechecked under the same
     // lock the success path takes. Everything else stays on disk so renderers
@@ -2126,7 +2356,7 @@ async function refreshWireSession(): Promise<WireSession> {
           if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) return;
           const currentAuth = await loadStoredAuth();
           if (!currentAuth || !storedAuthMatches(currentAuth, previousAuth)) return;
-          await clearStoredSessionUnlocked();
+          await removeStoredCredentialUnlocked(previousAuth);
         });
       } catch (cleanupError) {
         logWarn('rally', 'could not clear a rejected desktop credential', cleanupError);
@@ -2178,7 +2408,7 @@ async function logout(): Promise<void> {
   desktopAuthAttempts.clear();
   const failures: unknown[] = [];
   try {
-    const stored = await loadStoredAuth();
+    const stored = await loadStoredAuthSet();
     try {
       await clearStoredSession();
     } catch (error) {
@@ -2187,20 +2417,26 @@ async function logout(): Promise<void> {
     settingsWindow?.close();
     for (const window of meetingWindows) forceCloseMeetingWindow(window);
     if (stored) {
-      try {
-        const apiBaseUrl = apiBaseForAuth(stored);
-        const response = await net.fetch(`${apiBaseUrl}/auth/logout`, {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${stored.accessToken}`,
-          },
-          body: JSON.stringify({ refreshToken: stored.refreshToken }),
-        });
-        if (!response.ok) throw await responseError(response);
-      } catch (error) {
-        failures.push(error);
+      const credentials = [
+        ...(stored.account ? [stored.account] : []),
+        ...stored.workspaces,
+      ];
+      for (const credential of credentials) {
+        try {
+          const apiBaseUrl = apiBaseForAuth(credential);
+          const response = await net.fetch(`${apiBaseUrl}/auth/logout`, {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${credential.accessToken}`,
+            },
+            body: JSON.stringify({ refreshToken: credential.refreshToken }),
+          });
+          if (!response.ok) throw await responseError(response);
+        } catch (error) {
+          failures.push(error);
+        }
       }
     }
   } finally {
@@ -2498,7 +2734,7 @@ function registerIpc(): void {
     );
     // Nothing was fetched while the item was off, so an item just switched on
     // would open empty until the pointer next crossed it.
-    if (menuBarItemIsLive() && inMemoryAuth) void menuBarContentStore.refresh();
+    if (menuBarItemIsLive() && inMemoryAuthSet) void menuBarContentStore.refresh();
     // `state()` for the same reason as the Developer preference above: reading
     // Lockdown mode's full settings can run the keystore fallback, and adding
     // or removing a status item must never cost anyone their session.
@@ -2630,6 +2866,14 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return getOnboardingState();
   });
+  ipcMain.handle('workspace:get-attention', (event, input: unknown) => {
+    assertTrustedIpcSender(event);
+    return getWorkspaceAttention(input);
+  });
+  ipcMain.handle('workspace:leave', (event, input: unknown) => {
+    assertTrustedIpcSender(event);
+    return leaveWorkspace(input);
+  });
   ipcMain.handle('onboarding:activate-workspace', (event, input: unknown) => {
     assertTrustedIpcSender(event);
     return activateWorkspace(input);
@@ -2734,6 +2978,21 @@ function registerIpc(): void {
   ipcMain.handle('meeting-audio:get-permissions', (event) => {
     assertMeetingIpcSender(event);
     return meetingAudioPermissions(meetingAudioPermissionDependencies());
+  });
+  ipcMain.handle('meeting:set-recording-state', (event, input: unknown) => {
+    assertMeetingIpcSender(event);
+    if (!input || typeof input !== 'object') throw new Error('Invalid meeting recording state');
+    const candidate = input as Record<string, unknown>;
+    const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
+    if (
+      !workspaceId.success
+      || typeof candidate['recording'] !== 'boolean'
+      || Object.keys(candidate).some((key) => key !== 'workspaceId' && key !== 'recording')
+    ) throw new Error('Invalid meeting recording state');
+    if (candidate['recording'] && inMemorySession?.workspace?.id !== workspaceId.data) {
+      throw new Error('The meeting no longer belongs to the active workspace');
+    }
+    workspaceChangeGuard.recordingChanged(event.sender.id, workspaceId.data, candidate['recording']);
   });
   ipcMain.handle('meeting-audio:prepare-permissions', (event) => {
     assertMeetingIpcSender(event);
@@ -2955,7 +3214,7 @@ function createMenuBarTray(): MenuBarTray {
   const refreshContent = (): void => {
     // Signed out there is nothing to ask for, and every attempt would log two
     // warnings. The menu already says so, and a sign-in refreshes on its own.
-    if (!inMemoryAuth) return;
+    if (!inMemoryAuthSet) return;
     void menuBarContentStore.refreshIfStale(MENU_BAR_CONTENT_MAX_AGE_MS);
   };
   // Opening the drop-down is the moment its suggestions are seen, and seeing
@@ -2969,7 +3228,7 @@ function createMenuBarTray(): MenuBarTray {
     recordImpressions();
     const content = menuBarContentStore.content();
     void telemetryReporter?.menuBarOpened({
-      signedIn: Boolean(inMemoryAuth),
+      signedIn: Boolean(inMemoryAuthSet),
       suggestionCount: Math.min(content.suggestions.length, 4),
       recentCount: Math.min(content.recents.length, 5),
       pinnedCount: Math.min(content.pinned.length, 5),
@@ -3442,6 +3701,7 @@ async function createMeetingWindow(
       logWarn('meeting', 'Failed to stop native computer audio after window close', error);
     });
     meetingWindows.delete(meetingWindow);
+    workspaceChangeGuard.windowClosed(meetingContents.id);
     // A meeting window is the only thing that vetoes a quit, so while one is
     // still open the quit it abandoned is still the close every other meeting
     // window is answering. Once the last has gone, Rally is staying up, and

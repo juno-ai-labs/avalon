@@ -2,13 +2,13 @@
  * Every composer that caches a draft names it here, so a text draft and its
  * attachments always agree on one key and no two surfaces can collide.
  */
-export function workstreamDraftKey(workstreamId: string): string {
-  return `workstream:${workstreamId}`;
+export function workstreamDraftKey(workspaceId: string, workstreamId: string): string {
+  return `workspace:${workspaceId}:workstream:${workstreamId}`;
 }
 
 /** Scoped by workspace: the launcher is one composer per workspace, not per device. */
 export function newWorkstreamDraftKey(workspaceId: string): string {
-  return `new-workstream:${workspaceId}`;
+  return `workspace:${workspaceId}:new-workstream`;
 }
 
 /**
@@ -20,6 +20,6 @@ export function newWorkstreamDraftKey(workspaceId: string): string {
  */
 export function newAutomationDraftKey(workspaceId: string, draftAutomationId?: string | null): string {
   return draftAutomationId
-    ? `new-automation:${workspaceId}:${draftAutomationId}`
-    : `new-automation:${workspaceId}`;
+    ? `workspace:${workspaceId}:new-automation:${draftAutomationId}`
+    : `workspace:${workspaceId}:new-automation`;
 }

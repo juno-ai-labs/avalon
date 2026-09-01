@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DRAFT_CACHE_TTL_MS,
   clearAllDrafts,
+  clearWorkspaceDrafts,
   draftCacheEpoch,
   deleteDraftAttachments,
   nextDraftSortKey,
@@ -162,6 +163,20 @@ describe('draft cache', () => {
     await writeDraftText('workstream:1', 'a new session, a new draft', [], atEpoch);
 
     expect((await readDraftText('workstream:1'))?.text).toBe('a new session, a new draft');
+  });
+
+  it('clears one workspace without touching another workspace draft', async () => {
+    await writeDraftText('workspace:workspace-eu:workstream:1', 'leave this one');
+    await writeDraftText('workspace:workspace-global:workstream:2', 'keep this one');
+    await cacheAttachment('workspace:workspace-eu:workstream:1', 'eu-file', 'eu');
+    await cacheAttachment('workspace:workspace-global:workstream:2', 'global-file', 'global');
+
+    await clearWorkspaceDrafts('workspace-eu');
+
+    expect(await readDraftText('workspace:workspace-eu:workstream:1')).toBeNull();
+    expect(await readDraftAttachments('workspace:workspace-eu:workstream:1')).toEqual([]);
+    expect((await readDraftText('workspace:workspace-global:workstream:2'))?.text).toBe('keep this one');
+    expect(await readDraftAttachments('workspace:workspace-global:workstream:2')).toHaveLength(1);
   });
 
   it('degrades to empty results when IndexedDB is unavailable', async () => {
