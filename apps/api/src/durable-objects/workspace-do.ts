@@ -140,6 +140,8 @@ import {
   WorkspaceDirectoryRecentRequestSchema,
   WorkspaceDirectoryReadableIdsRequestSchema,
   WorkspaceDirectoryReadableIdsResultSchema,
+  WorkspaceDirectoryDeliveryAuthorityRequestSchema,
+  WorkspaceDirectoryDeliveryAuthoritySchema,
   WorkspaceDirectoryNotificationRequestSchema,
   WorkspaceDirectoryNotificationStateSchema,
   WorkspaceDirectoryPageSchema,
@@ -8141,6 +8143,35 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       listable: row.listable === 1,
       title: row.title,
       emailAddress: row.email_address,
+    }) : null;
+  }
+
+  /**
+   * The fence a delivery into a work stream writes behind.
+   *
+   * Read from the directory rather than from the room itself: the directory is
+   * what a re-authorization bumps, so a delivery that read the room would learn
+   * about the change only after writing into it. Returns null for a work stream
+   * this workspace does not have, which a caller must treat as "do not write"
+   * rather than "generation 1".
+   */
+  async workstreamDeliveryAuthority(
+    input: z.input<typeof WorkspaceDirectoryDeliveryAuthorityRequestSchema>,
+  ): Promise<z.infer<typeof WorkspaceDirectoryDeliveryAuthoritySchema> | null> {
+    await this.initialized;
+    const request = WorkspaceDirectoryDeliveryAuthorityRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{
+      authority_generation: number;
+      archived_at: number | null;
+    }>(
+      `SELECT authority_generation, archived_at
+         FROM workspace_workstream_directory WHERE workstream_id = ?`,
+      request.workstreamId,
+    ).toArray()[0];
+    return row ? WorkspaceDirectoryDeliveryAuthoritySchema.parse({
+      authorityGeneration: row.authority_generation,
+      archived: row.archived_at !== null,
     }) : null;
   }
 
