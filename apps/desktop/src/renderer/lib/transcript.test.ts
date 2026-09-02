@@ -2133,6 +2133,38 @@ describe('collapseSettledWorkIntoAccordion', () => {
       .toEqual(['thought-after-gap', 'plugin-web']);
   });
 
+  it('stops when the answer itself opens a newly loaded stretch', () => {
+    // The projection marks only a turn's first row, so an answer that opens its
+    // turn is where this shape appears. What sits above it is the previous
+    // island's work, and folding it in would attribute it to this answer.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      plugin('plugin-before-gap', 'Slack'),
+      thinking('thought-before-gap'),
+      answer('turn-1', { precededByTranscriptGap: true }),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType))
+      .toEqual(['plugin_activity', 'thought', 'text']);
+    // No drawer to move it to, so the total stays in the header.
+    expect(collapsed[2]!.workSummary).toEqual({ durationMs: 2_477_000 });
+  });
+
+  it('keeps the turn\'s attention ordinal, so the unread divider lands above the run', () => {
+    // The divider is placed at the first row carrying an ordinal. The rows that
+    // carried it are inside the accordion now, so the accordion carries it or
+    // an unread turn's work ends up above the divider, in the read section.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      // A grouped plugin row already carries none; the thinking row behind it
+      // is where the turn's ordinal survives, and it is the one to inherit.
+      plugin('plugin-web', 'Web', { attentionSequenceNumber: null }),
+      thinking('thought-one', { attentionSequenceNumber: 12 }),
+      answer('turn-1', { attentionSequenceNumber: 12 }),
+    ]);
+
+    expect(collapsed[0]!.messageType).toBe('work_accordion');
+    expect(collapsed[0]!.attentionSequenceNumber).toBe(12);
+  });
+
   it('leaves a running loop expanded, because its rows are the progress being watched', () => {
     // `foldSettledWorkIntoMessages` writes `workSummary` only once the response
     // timer settles, so a live run reaches this pass with nothing to collapse on.
@@ -2159,7 +2191,6 @@ describe('collapseSettledWorkIntoAccordion', () => {
     // it, and two elements answering to one `message-<id>` anchor is worse than
     // none.
     expect(collapsed[1]!.id).toBe('thought-one:work-accordion');
-    expect(collapsed[1]!.attentionSequenceNumber).toBeNull();
     // Nothing downstream should read the first row's own timing off the wrapper.
     expect(collapsed[1]!.thoughtEvent).toBeUndefined();
     expect(collapsed.map((message) => message.sequenceNumber)).toEqual([1, 2, 3]);
