@@ -471,11 +471,15 @@ of the same artifact would keep — compositing nothing while reporting success,
 which the rail reads as a live preview and so renders no fallback over the blank
 pane. Found by review.
 
-**On the tests:** each lifecycle branch is proved separately. A single guard
-reading `window.destroyed() || view.destroyed()` passes its test with either
-half deleted, so the window case and the view case get a test each — the first
-round here shipped the combined guard and only the window case, and review
-caught it.
+**On the tests:** a disjunctive lifetime check reads as covered while half of
+it is dead, so each half is falsified separately where it can be. In `destroy()`
+both halves are load-bearing — they gate different actions on objects that die
+independently — and each has its own test. In `applyBounds()` only the view half
+is falsifiable: Electron destroys a window's views with it, so a destroyed
+window implies a destroyed view and the window half can never be the one that
+returns. It is kept as the statement of what `contentSize()` needs, not as
+tested behaviour. Both gaps came out of review; the first round shipped one
+combined test and claimed more than it proved.
 
 **Consequences:** The lifecycle is now part of the two interfaces, so any future
 host or view implementation has to answer for it. A destroyed window is asked to
