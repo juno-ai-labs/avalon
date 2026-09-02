@@ -1121,18 +1121,6 @@ pre {
   font-size: var(--av-sys-font-size-meta);
   padding: 1px 5px;
 }
-.workspace-attention-count {
-  background: var(--av-sys-color-surface-subtle);
-  border-radius: var(--av-sys-size-radius-pill);
-  font-size: var(--av-sys-font-size-meta);
-  font-variant-numeric: tabular-nums;
-  min-width: 18px;
-  padding: 1px 5px;
-  text-align: center;
-}
-.workspace-attention-count.is-mentioned { color: var(--av-sys-color-workstream-mentioned); }
-.workspace-attention-count.is-needs-input { color: var(--av-sys-color-workstream-needs-input); }
-.workspace-attention-count.is-unseen { color: var(--av-sys-color-workstream-unseen); }
 .workspace-counts-stale { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
 .workspace-region-choice { border: 0; display: flex; gap: 12px; margin: 12px 0 0; padding: 0; }
 .workspace-region-choice legend { color: var(--av-sys-color-text-subtle); font-size: var(--av-sys-font-size-meta); margin-bottom: 6px; }
