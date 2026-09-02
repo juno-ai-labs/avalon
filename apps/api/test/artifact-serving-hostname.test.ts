@@ -7,6 +7,7 @@ import artifactWorker, { type ArtifactServingEnv } from "../src/artifacts/index"
 import {
   createCloudflareTestBinding,
   createTestD1Database,
+  createTestD1PreparedStatement,
   createTestDurableObjectId,
 } from "./helpers/cloudflare-test";
 
@@ -20,9 +21,19 @@ function context(): ExecutionContext {
 function fixture(route: unknown | null): {
   env: ArtifactServingEnv;
   readRoute: ReturnType<typeof vi.fn>;
+  prepare: ReturnType<typeof vi.fn>;
   idFromName: ReturnType<typeof vi.fn>;
 } {
   const readRoute = vi.fn(async () => route === null ? null : route);
+  const prepare = vi.fn((sql: string) => {
+    expect(sql).toMatch(/FROM artifact_hostname_routes\s+WHERE region = \? AND hostname_stub = \?/u);
+    return createTestD1PreparedStatement({
+      bind: (region: string, hostnameStub: string) => {
+        expect([region, hostnameStub]).toEqual(["global", STUB]);
+        return createTestD1PreparedStatement({ first: readRoute });
+      },
+    });
+  });
   const idFromName = vi.fn((name: string) => createTestDurableObjectId(name));
   const hosts = createCloudflareTestBinding<ArtifactServingEnv["ARTIFACT_HOSTS"]>({
     idFromName,
@@ -30,6 +41,7 @@ function fixture(route: unknown | null): {
   });
   return {
     readRoute,
+    prepare,
     idFromName,
     env: {
       APP_ENV: "test",
@@ -37,7 +49,7 @@ function fixture(route: unknown | null): {
       ARTIFACT_SERVING_DOMAIN: "rallyusercontent.test",
       ARTIFACT_HOSTS: hosts,
       PLATFORM_DB: createTestD1Database({
-        prepare: () => ({ bind: () => ({ first: readRoute }) }),
+        prepare,
       }),
       PAYLOADS: createCloudflareTestBinding<R2Bucket>({}),
     },

@@ -8,6 +8,7 @@ import {
   clampBounds,
   confineToArtifactOrigin,
   isArtifactUrl,
+  loadArtifactInitialUrl,
   type PreviewBounds,
 } from './artifact-viewers';
 
@@ -47,6 +48,7 @@ describe('the global navigation fence handoff', () => {
 
 const DOMAIN = 'rallyusercontent.test';
 const ARTIFACT = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+const OTHER_ARTIFACT = '00000000-0000-4000-8000-000000000002';
 const ORIGIN = `https://${ARTIFACT}-g.${DOMAIN}`;
 
 describe('what the main process will load into an artifact surface', () => {
@@ -59,6 +61,12 @@ describe('what the main process will load into an artifact surface', () => {
     // Matched on a label boundary, so a suffix attack does not pass.
     expect(isArtifactUrl(`https://${DOMAIN}.evil.test/`, DOMAIN)).toBe(false);
     expect(isArtifactUrl(`https://not${DOMAIN}/`, DOMAIN)).toBe(false);
+  });
+
+  it('refuses unrecognized and nested labels inside the serving domain', () => {
+    expect(isArtifactUrl(`https://arbitrary.${DOMAIN}/`, DOMAIN)).toBe(false);
+    expect(isArtifactUrl(`https://foo.bar.${DOMAIN}/`, DOMAIN)).toBe(false);
+    expect(isArtifactUrl(`https://${DOMAIN}/`, DOMAIN)).toBe(false);
   });
 
   it('refuses the application, the API, and anything not https', () => {
@@ -132,7 +140,10 @@ describe('the isolation contract both surfaces share', () => {
 
 describe('confining a surface to its artifact', () => {
   function contents() {
-    const handlers: { navigate?: (event: { preventDefault(): void }, url: string) => void } = {};
+    const handlers: {
+      navigate?: (event: { preventDefault(): void }, url: string) => void;
+      redirect?: (event: { preventDefault(): void }, url: string) => void;
+    } = {};
     let windowOpen: ((details: { url: string }) => { action: 'deny' }) | null = null;
     let permission: ((c: unknown, p: string, cb: (allowed: boolean) => void) => void) | null = null;
     return {
@@ -144,8 +155,12 @@ describe('confining a surface to its artifact', () => {
         return answers;
       },
       stub: {
-        on(_event: 'will-navigate', handler: (event: { preventDefault(): void }, url: string) => void) {
-          handlers.navigate = handler;
+        on(
+          event: 'will-navigate' | 'will-redirect',
+          handler: (event: { preventDefault(): void }, url: string) => void,
+        ) {
+          if (event === 'will-navigate') handlers.navigate = handler;
+          else handlers.redirect = handler;
         },
         setWindowOpenHandler(handler: (details: { url: string }) => { action: 'deny' }) {
           windowOpen = handler;
@@ -183,6 +198,18 @@ describe('confining a surface to its artifact', () => {
     }
   });
 
+  it('allows same-origin redirects and refuses redirects that leave the artifact', () => {
+    const surface = contents();
+    confineToArtifactOrigin(surface.stub as never, ORIGIN);
+    const sameOrigin = { preventDefault: vi.fn() };
+    surface.handlers.redirect?.(sameOrigin, `${ORIGIN}/__rally/redeem`);
+    expect(sameOrigin.preventDefault).not.toHaveBeenCalled();
+
+    const offOrigin = { preventDefault: vi.fn() };
+    surface.handlers.redirect?.(offOrigin, 'https://attacker.example/leak');
+    expect(offOrigin.preventDefault).toHaveBeenCalledOnce();
+  });
+
   it('denies window.open outright rather than redirecting it anywhere', () => {
     const surface = contents();
     confineToArtifactOrigin(surface.stub as never, ORIGIN);
@@ -201,7 +228,11 @@ describe('confining a surface to its artifact', () => {
 });
 
 describe('the rail preview controller', () => {
-  function harness(servingDomain = DOMAIN, loadFailure: Error | null = null) {
+  function harness(
+    servingDomain = DOMAIN,
+    loadFailure: Error | null = null,
+    load?: (url: string) => Promise<void>,
+  ) {
     const views: {
       url: string | null;
       bounds: PreviewBounds[];
@@ -221,6 +252,7 @@ describe('the rail preview controller', () => {
           setBounds: (bounds: PreviewBounds) => state.bounds.push(bounds),
           loadURL: async (url: string) => {
             state.url = url;
+            if (load) return await load(url);
             if (loadFailure) throw loadFailure;
           },
           close: () => { state.closed = true; },
@@ -255,12 +287,36 @@ describe('the rail preview controller', () => {
     expect(controller.currentArtifactId()).toBeNull();
   });
 
-  it('keeps at most one view per window, reusing it for the same artifact', () => {
+  it('keeps the view when the bootstrap replaces its load with redemption', async () => {
+    const aborted = Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 });
+    const { controller, views, removed } = harness(DOMAIN, aborted);
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/__rally/open#code`, bounds }))
+      .toBe(true);
+    expect(views[0]?.closed).toBe(false);
+    expect(removed).toHaveLength(0);
+  });
+
+  it('makes concurrent presenters await the same failed initial load', async () => {
+    let rejectLoad!: (error: Error) => void;
+    const load = new Promise<void>((_resolve, reject) => { rejectLoad = reject; });
+    const { controller, views, removed } = harness(DOMAIN, null, async () => await load);
+    const first = controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    const second = controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    expect(views).toHaveLength(1);
+    rejectLoad(new Error('ERR_NAME_NOT_RESOLVED'));
+    await expect(Promise.all([first, second])).resolves.toEqual([false, false]);
+    expect(views[0]?.closed).toBe(true);
+    expect(removed).toHaveLength(1);
+  });
+
+  it('keeps at most one view per window, reusing it for the same artifact', async () => {
     // Two would mean two artifacts painting over one rectangle, and the one
     // underneath would still be running.
     const { controller, views } = harness();
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
-    controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    await Promise.all([
+      controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds }),
+      controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds }),
+    ]);
     expect(views).toHaveLength(1);
     expect(views[0]?.closed).toBe(false);
   });
@@ -268,11 +324,15 @@ describe('the rail preview controller', () => {
   it('replaces the view when the artifact changes', () => {
     const { controller, views, removed } = harness();
     controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
-    controller.present({ artifactId: 'other', url: `https://other-g.${DOMAIN}/`, bounds });
+    controller.present({
+      artifactId: OTHER_ARTIFACT,
+      url: `https://${OTHER_ARTIFACT}-g.${DOMAIN}/`,
+      bounds,
+    });
     expect(views).toHaveLength(2);
     expect(views[0]?.closed).toBe(true);
     expect(removed).toHaveLength(1);
-    expect(controller.currentArtifactId()).toBe('other');
+    expect(controller.currentArtifactId()).toBe(OTHER_ARTIFACT);
   });
 
   it('collapses to nothing while an app overlay is open, and restores after', () => {
@@ -315,5 +375,16 @@ describe('the rail preview controller', () => {
     // Idempotent: a second close must not remove a view twice.
     controller.destroy();
     expect(removed).toHaveLength(1);
+  });
+});
+
+describe('artifact initial loading', () => {
+  it('distinguishes the bootstrap handoff from a terminal load failure', async () => {
+    await expect(loadArtifactInitialUrl(async () => {
+      throw Object.assign(new Error('aborted'), { code: 'ERR_ABORTED', errno: -3 });
+    })).resolves.toBe(true);
+    await expect(loadArtifactInitialUrl(async () => {
+      throw Object.assign(new Error('dns'), { code: 'ERR_NAME_NOT_RESOLVED', errno: -105 });
+    })).resolves.toBe(false);
   });
 });

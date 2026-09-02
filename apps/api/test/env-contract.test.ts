@@ -83,6 +83,13 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(env)).toThrow(/TELEMETRY_PAYLOADS is missing/u);
   });
 
+  it("requires the shared artifact route database", () => {
+    const env = contractCompleteEnv();
+    delete (env as Partial<Env>).PLATFORM_DB;
+
+    expect(() => assertEnvContract(env)).toThrow(/PLATFORM_DB is missing/u);
+  });
+
   it("requires both private capability service bindings", () => {
     const withoutDocuments = contractCompleteEnv();
     delete (withoutDocuments as Partial<Env>).DOCUMENT_PROCESSOR;

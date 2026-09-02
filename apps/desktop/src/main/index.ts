@@ -62,6 +62,7 @@ import {
   artifactWebPreferences,
   confineToArtifactOrigin,
   isArtifactUrl,
+  loadArtifactInitialUrl,
   type ArtifactViewHandle,
 } from './artifact-viewers';
 import type {
@@ -2776,7 +2777,9 @@ function openArtifactWindow(request: { artifactId: string; url: string; title: s
   confineToArtifactOrigin(window.webContents, new URL(request.url).origin);
   window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window.show());
-  void window.loadURL(request.url);
+  void loadArtifactInitialUrl(() => window.loadURL(request.url)).then((loaded) => {
+    if (!loaded && !window.isDestroyed()) window.close();
+  });
 }
 
 function parseArtifactPreviewBounds(raw: unknown): DesktopArtifactPreviewBounds | null {

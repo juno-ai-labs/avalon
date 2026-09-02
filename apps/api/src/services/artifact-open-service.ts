@@ -18,6 +18,7 @@
  */
 import {
   ARTIFACT_RESERVED_PREFIX,
+  ArtifactHostnameStubSchema,
   artifactOrigin,
   asArtifactId,
   asUserId,
@@ -112,10 +113,12 @@ export class ArtifactOpenService {
     // Pre-stub artifacts are migrated lazily, but only after the ordinary
     // visibility check. The platform-D1 reservation is durable before the
     // WorkspaceDO registry starts returning the public address.
-    const hostnameStub = row.hostname_stub ?? await ensureArtifactHostname(
-      this.regionalEnv,
-      { workspaceId, artifactId: row.artifact_id },
-    );
+    const hostnameStub = row.hostname_stub === null
+      ? await ensureArtifactHostname(
+          this.regionalEnv,
+          { workspaceId, artifactId: row.artifact_id },
+        )
+      : ArtifactHostnameStubSchema.parse(row.hostname_stub);
     if (row.hostname_stub === null) {
       await this.env.DB.prepare(
         `UPDATE artifact_registry SET hostname_stub = ?

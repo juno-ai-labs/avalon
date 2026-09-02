@@ -8,12 +8,13 @@
  * artifact is registered beside the resource authority, and the supervisor
  * object is pointed at the new version. Only then is the URL live.
  *
- * **The order is the contract.** Assets, then manifest, then resource row, then
- * the supervisor's pointer — each step only depends on ones that already
- * committed, so a failure anywhere leaves the artifact serving its *previous*
- * version rather than a version whose bytes a viewer cannot read. The reverse
- * order would put a pointer in front of assets that might never land, and the
- * failure would be a live URL serving 404s to everyone holding it.
+ * **The order is the contract.** Assets, then manifest, then public-hostname
+ * reservation, then resource row, then the supervisor's pointer — each step
+ * only depends on ones that already committed, so a failure anywhere leaves the
+ * artifact serving its *previous* version rather than a version whose bytes a
+ * viewer cannot read. The reverse order would put a pointer in front of assets
+ * that might never land, and moving the resource before hostname reservation
+ * would make an equal-content retry return the previous registry version.
  *
  * See `docs/live-web-artifacts.md`.
  */
@@ -25,6 +26,7 @@ import {
   asArtifactId,
   type ArtifactManifest,
   type ArtifactMode,
+  type ArtifactHostnameStub,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 
@@ -195,7 +197,7 @@ export async function registerArtifact(
   workspace: D1Database,
   input: {
     artifactId: string;
-    hostnameStub: string;
+    hostnameStub: ArtifactHostnameStub;
     workspaceId: string;
     workstreamId: string;
     resourceId: string;
@@ -227,7 +229,7 @@ export async function registerArtifact(
     input.stateful ? 1 : 0,
     input.version,
     input.manifestRef,
-    ArtifactHostnameStubSchema.parse(input.hostnameStub),
+    input.hostnameStub,
     now,
     now,
   ).run();
@@ -242,7 +244,7 @@ export async function existingArtifactForResource(
   artifactId: string;
   version: number;
   mode: ArtifactMode;
-  hostnameStub: string | null;
+  hostnameStub: ArtifactHostnameStub | null;
 } | null> {
   const row = await workspace.prepare(
     `SELECT artifact_id, current_version, mode, hostname_stub FROM artifact_registry
@@ -258,6 +260,8 @@ export async function existingArtifactForResource(
     artifactId: row.artifact_id,
     version: row.current_version,
     mode: row.mode === "active" ? "active" : "static",
-    hostnameStub: row.hostname_stub,
+    hostnameStub: row.hostname_stub === null
+      ? null
+      : ArtifactHostnameStubSchema.parse(row.hostname_stub),
   };
 }

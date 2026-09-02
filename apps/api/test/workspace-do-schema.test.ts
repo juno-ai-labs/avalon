@@ -756,6 +756,11 @@ describe("the WorkspaceDO artifact-hostname migration", () => {
     expect(() => database.exec(
       "UPDATE artifact_registry SET hostname_stub = 'another-readable-origin-stub' WHERE artifact_id = 'artifact-1'",
     )).toThrow(/immutable/iu);
+    // SQLite's `IS NOT` is deliberately null-safe: unlike `!=`, this also
+    // rejects clearing a value that has already become the public origin.
+    expect(() => database.exec(
+      "UPDATE artifact_registry SET hostname_stub = NULL WHERE artifact_id = 'artifact-1'",
+    )).toThrow(/immutable/iu);
     expect(() => database.exec(
       "INSERT INTO artifact_registry (artifact_id, workspace_id, workstream_id, resource_id, mode, stateful, current_version, manifest_ref, hostname_stub, created_at, updated_at) VALUES ('artifact-2', 'wrong', 'workstream-2', 'resource-1', 'static', 0, 1, 'x', 'only-three-words', 1, 1)",
     )).toThrow();
