@@ -303,9 +303,16 @@ The composer is built from one set of tokens either way. A card sets
 nothing and gives `rule-color` a hairline, so the composer reads as a line the
 page rests on rather than a box floating over it. Air takes the second.
 
+`rule-color` is the composer's **top** edge in both shapes, not an extra
+hairline a rule theme switches on — the stylesheet draws that edge from it
+unconditionally. A card theme therefore states it as the same line as its
+`border-color`, and a card theme that leaves it `transparent` gets a box with
+three sides. Terra did, for as long as the tokens existed.
+
 `rule-color-focus` exists because of what the first shape hides: once the border
 is gone, the rule turning warm is the only thing left saying the field is live.
-A theme that flattens the frame has to say what focus looks like.
+A theme that flattens the frame has to say what focus looks like. A card states
+it as its own `border-color-focus`, for the same reason.
 
 `send-background` follows the same frame. A flat composer carrying a raised
 button reads as two surfaces disagreeing about which one the page is.
@@ -695,6 +702,38 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-09-02 — Terra's work-stream composer closes its frame and matches the launch composer
+
+**What changed:** the two Terra themes set `cmp.composer.border-color` to
+`ref.color.line.3` rather than `line.4`, and `cmp.composer.rule-color` /
+`rule-color-focus` to `line.3` / `line.5` rather than `transparent`. Air and Air
+Dark are untouched: their composer stays the rule the tokens exist to express.
+
+**Why:** two composers ask for the same thing in the same product and did not
+look alike. The new-work-stream screen's `.launch-composer` writes its own card
+— `line.3`, `radius.xl`, `shadow.md` — while the work stream's composer draws
+from `cmp.composer.*`, which named a darker line; side by side the second read
+as the heavier control, and it is the one a person types into all day. Worse,
+the stylesheet draws the composer's top edge from `rule-color` in *both* shapes,
+so Terra's `transparent` left the card open along the top: three sides and a
+colour change where the fourth belonged. Matching the launch composer fixes both
+at once, because that screen already showed what the card is supposed to be.
+
+**Considered and rejected:** pointing `.launch-composer` at `cmp.composer.*` so
+one definition serves both. It is the better factoring on paper and the wrong
+change here — under Air the launch screen would stop being a card and become a
+rule, which is a product decision about a screen nobody asked about, made as a
+side effect of a colour fix. Also rejected: dropping the focus darkening to
+`line.5` so the two matched in every state. The launch composer holds `line.3`
+through focus only because its own selector outranks
+`.workstream-composer:focus-within`; the work stream's composer is the
+long-lived field, and taking its one focus signal away to match an accident is
+not symmetry worth having.
+
+**What a future change has to respect:** a card theme states `rule-color` as its
+own border colour. Leaving it `transparent` does not turn the rule off — it
+erases the top of the card.
 
 ### 2026-09-02 — The thinking orb follows the appearance instead of pinning dark
 

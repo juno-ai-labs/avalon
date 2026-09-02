@@ -277,3 +277,44 @@ describe('Terra Light row hover', () => {
     expect(terraLight?.tokens['cmp.row.background-hover']).toBe('{sys.color.surface.raised-hover}');
   });
 });
+
+/**
+ * A card theme draws its composer's top edge from `rule-color`.
+ *
+ * The stylesheet writes `border-top` from that token in both shapes, so the
+ * token is not a rule theme's opt-in — it is the top edge, always. Terra set it
+ * to `transparent` on the reading that it belonged to Air, and shipped a card
+ * with three sides: the work-stream composer was open along the top while the
+ * new-work-stream screen, which writes its own card, was closed. Nothing else
+ * sees this. The generated CSS is valid, every token resolves, and the missing
+ * edge is one hairline on one screen.
+ *
+ * Read from `themes.css` rather than the JSON because the generator fills in
+ * what a theme inherits: Terra Light declares no `border-color` of its own.
+ */
+describe('a card composer closes its frame', () => {
+  const themes = readFileSync(resolve(process.cwd(), 'src/renderer/styles/themes.css'), 'utf8');
+
+  function block(theme: string): string {
+    const start = themes.indexOf(`[data-theme='${theme}']`);
+    expect(start, `${theme} has no block`).toBeGreaterThan(-1);
+    return themes.slice(start, themes.indexOf('\n}', start));
+  }
+
+  function token(theme: string, name: string): string {
+    const match = new RegExp(`--av-cmp-composer-${name}:\\s*([^;]+);`, 'u').exec(block(theme));
+    expect(match, `${theme} declares no ${name}`).not.toBeNull();
+    return match![1]!.trim();
+  }
+
+  it.each(resolvedThemes.map((theme) => [theme] as const))('%s draws four edges or none', (theme) => {
+    // A rule theme zeroes the border width; a card carries one.
+    if (token(theme, 'border-width') === '0') {
+      expect(token(theme, 'border-color')).toBe('transparent');
+      return;
+    }
+
+    expect(token(theme, 'rule-color')).toBe(token(theme, 'border-color'));
+    expect(token(theme, 'rule-color-focus')).toBe(token(theme, 'border-color-focus'));
+  });
+});
