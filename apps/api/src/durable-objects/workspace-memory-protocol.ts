@@ -1,5 +1,6 @@
 import { IdSchema } from "@rally/contracts";
 import { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 /**
  * Scoped durable memory — prose items and typed tables — as questions rather
@@ -25,48 +26,48 @@ export const MemoryScopeKindSchema = z.enum(["workstream", "automation", "user",
 
 // -- Scopes -------------------------------------------------------------------
 
-export const WorkspaceMemoryScopeEnsureRequestSchema = z.strictObject({
+export const WorkspaceMemoryScopeEnsureRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   /** Used only when the scope does not exist yet; the stored id wins. */
   proposedScopeId: z.string().min(1),
   kind: MemoryScopeKindSchema,
   ownerId: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryScopeSchema = z.strictObject({
+export const WorkspaceMemoryScopeSchema = deferredZodSchema(() => z.strictObject({
   memoryScopeId: z.string().min(1),
   workspaceId: z.string().min(1),
   kind: MemoryScopeKindSchema,
   ownerId: z.string().min(1),
-});
+}));
 
 // -- Item reads ---------------------------------------------------------------
 
-export const WorkspaceMemoryFtsSearchRequestSchema = z.strictObject({
+export const WorkspaceMemoryFtsSearchRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   /** A prebuilt FTS5 MATCH expression; the service owns tokenization. */
   match: z.string().min(1),
   scopeIds: z.array(z.string().min(1)),
   now: TimestampSchema,
   limit: z.number().int().positive(),
-});
+}));
 
-export const WorkspaceMemoryCandidateListSchema = z.strictObject({
+export const WorkspaceMemoryCandidateListSchema = deferredZodSchema(() => z.strictObject({
   candidates: z.array(z.strictObject({
     memoryItemId: z.string().min(1),
     revision: z.number().int().positive(),
   })),
-});
+}));
 
-export const WorkspaceMemoryCanonicalItemsRequestSchema = z.strictObject({
+export const WorkspaceMemoryCanonicalItemsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   scopeIds: z.array(z.string().min(1)),
   memoryItemIds: z.array(z.string().min(1)),
   now: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryItemSchema = z.strictObject({
+export const WorkspaceMemoryItemSchema = deferredZodSchema(() => z.strictObject({
   memoryItemId: z.string().min(1),
   memoryScopeId: z.string().min(1),
   workspaceId: z.string().min(1),
@@ -76,41 +77,41 @@ export const WorkspaceMemoryItemSchema = z.strictObject({
   expiresAt: z.string().nullable(),
   invalidatedAt: z.string().nullable(),
   updatedAt: z.string(),
-});
+}));
 
-export const WorkspaceMemoryItemListSchema = z.strictObject({
+export const WorkspaceMemoryItemListSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(WorkspaceMemoryItemSchema),
-});
+}));
 
-export const WorkspaceMemoryAccessRecordRequestSchema = z.strictObject({
+export const WorkspaceMemoryAccessRecordRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryItemIds: z.array(z.string().min(1)),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryItemForWriteRequestSchema = z.strictObject({
+export const WorkspaceMemoryItemForWriteRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryItemId: z.string().min(1),
-});
+}));
 
-export const WorkspaceMemoryItemForWriteResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryItemForWriteResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("found"), item: WorkspaceMemoryItemSchema }),
   z.strictObject({ outcome: z.literal("not_found") }),
-]);
+]));
 
 // -- Mutation receipts --------------------------------------------------------
 
-export const WorkspaceMemoryReceiptRequestSchema = z.strictObject({
+export const WorkspaceMemoryReceiptRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   harnessRunId: z.string().min(1),
   receiptId: z.string().min(1),
-});
+}));
 
 /**
  * `none` rather than a nullable row: the service compares operation and input
  * hash itself so a mismatched replay keeps raising the service's own error.
  */
-export const WorkspaceMemoryReceiptResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryReceiptResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({
     outcome: z.literal("found"),
     operation: z.string(),
@@ -118,9 +119,9 @@ export const WorkspaceMemoryReceiptResultSchema = z.discriminatedUnion("outcome"
     resultJson: z.string(),
   }),
   z.strictObject({ outcome: z.literal("none") }),
-]);
+]));
 
-const MemoryMutationRecordSchema = z.strictObject({
+const MemoryMutationRecordSchema = deferredZodSchema(() => z.strictObject({
   memoryMutationId: z.string().min(1),
   receiptId: z.string().min(1),
   actorPrincipalJson: JsonTextSchema,
@@ -130,7 +131,7 @@ const MemoryMutationRecordSchema = z.strictObject({
   inputHash: z.string().min(1),
   mutationJson: JsonTextSchema,
   resultJson: JsonTextSchema,
-});
+}));
 
 // -- Item writes --------------------------------------------------------------
 
@@ -143,20 +144,20 @@ const MemoryMutationRecordSchema = z.strictObject({
  * which is what the D1 batch could not do — it read the receipt, lost the
  * race, and reconstructed the answer from the constraint violation.
  */
-export const WorkspaceMemoryAddResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryAddResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("added") }),
   z.strictObject({ outcome: z.literal("replayed"), resultJson: z.string() }),
   z.strictObject({ outcome: z.literal("receipt_mismatch") }),
-]);
+]));
 
-export const WorkspaceMemoryWriteResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryWriteResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("written") }),
   z.strictObject({ outcome: z.literal("replayed"), resultJson: z.string() }),
   z.strictObject({ outcome: z.literal("receipt_mismatch") }),
   z.strictObject({ outcome: z.literal("revision_conflict") }),
-]);
+]));
 
-export const WorkspaceMemoryAddRequestSchema = z.strictObject({
+export const WorkspaceMemoryAddRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryItemId: z.string().min(1),
   memoryScopeId: z.string().min(1),
@@ -165,9 +166,9 @@ export const WorkspaceMemoryAddRequestSchema = z.strictObject({
   provenanceJson: JsonTextSchema,
   mutation: MemoryMutationRecordSchema,
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryUpdateRequestSchema = z.strictObject({
+export const WorkspaceMemoryUpdateRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryItemId: z.string().min(1),
   memoryScopeId: z.string().min(1),
@@ -176,9 +177,9 @@ export const WorkspaceMemoryUpdateRequestSchema = z.strictObject({
   expiresAt: z.string().nullable(),
   mutation: MemoryMutationRecordSchema,
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryInvalidateRequestSchema = z.strictObject({
+export const WorkspaceMemoryInvalidateRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryItemId: z.string().min(1),
   memoryScopeId: z.string().min(1),
@@ -186,17 +187,17 @@ export const WorkspaceMemoryInvalidateRequestSchema = z.strictObject({
   reason: z.string().min(1),
   mutation: MemoryMutationRecordSchema,
   at: TimestampSchema,
-});
+}));
 
 // -- Embedding outbox ---------------------------------------------------------
 
-export const WorkspaceMemoryOutboxDueRequestSchema = z.strictObject({
+export const WorkspaceMemoryOutboxDueRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   now: TimestampSchema,
   limit: z.number().int().positive(),
-});
+}));
 
-export const WorkspaceMemoryOutboxRowSchema = z.strictObject({
+export const WorkspaceMemoryOutboxRowSchema = deferredZodSchema(() => z.strictObject({
   outboxId: z.string().min(1),
   memoryItemId: z.string().min(1),
   memoryScopeId: z.string().min(1),
@@ -204,47 +205,47 @@ export const WorkspaceMemoryOutboxRowSchema = z.strictObject({
   revision: z.number().int().positive(),
   operation: z.enum(["upsert", "delete"]),
   attemptCount: z.number().int().nonnegative(),
-});
+}));
 
-export const WorkspaceMemoryOutboxDueListSchema = z.strictObject({
+export const WorkspaceMemoryOutboxDueListSchema = deferredZodSchema(() => z.strictObject({
   rows: z.array(WorkspaceMemoryOutboxRowSchema),
-});
+}));
 
-export const WorkspaceMemoryOutboxClaimRequestSchema = z.strictObject({
+export const WorkspaceMemoryOutboxClaimRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   outboxId: z.string().min(1),
   leaseToken: z.string().min(1),
   leaseExpiresAt: TimestampSchema,
   now: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryOutboxClaimResultSchema = z.strictObject({
+export const WorkspaceMemoryOutboxClaimResultSchema = deferredZodSchema(() => z.strictObject({
   claimed: z.boolean(),
-});
+}));
 
-export const WorkspaceMemoryOutboxCompleteRequestSchema = z.strictObject({
+export const WorkspaceMemoryOutboxCompleteRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   outboxId: z.string().min(1),
   leaseToken: z.string().min(1),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryOutboxRetryRequestSchema = z.strictObject({
+export const WorkspaceMemoryOutboxRetryRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   outboxId: z.string().min(1),
   leaseToken: z.string().min(1),
   availableAt: TimestampSchema,
   lastError: z.string(),
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryProjectionSourceRequestSchema = z.strictObject({
+export const WorkspaceMemoryProjectionSourceRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryItemId: z.string().min(1),
   memoryScopeId: z.string().min(1),
-});
+}));
 
-export const WorkspaceMemoryProjectionSourceResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryProjectionSourceResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({
     outcome: z.literal("found"),
     text: z.string(),
@@ -255,7 +256,7 @@ export const WorkspaceMemoryProjectionSourceResultSchema = z.discriminatedUnion(
     scopeOwnerId: z.string().min(1),
   }),
   z.strictObject({ outcome: z.literal("none") }),
-]);
+]));
 
 // -- Tables: reads ------------------------------------------------------------
 
@@ -263,12 +264,12 @@ export const MemoryTableColumnTypeSchema = z.enum([
   "string", "url", "number", "integer", "boolean", "datetime", "date",
 ]);
 
-export const WorkspaceMemoryTableRequestSchema = z.strictObject({
+export const WorkspaceMemoryTableRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryTableId: z.string().min(1),
-});
+}));
 
-export const WorkspaceMemoryTableRowSchema = z.strictObject({
+export const WorkspaceMemoryTableRowSchema = deferredZodSchema(() => z.strictObject({
   memoryTableId: z.string().min(1),
   memoryScopeId: z.string().min(1),
   workspaceId: z.string().min(1),
@@ -280,9 +281,9 @@ export const WorkspaceMemoryTableRowSchema = z.strictObject({
   schemaRevision: z.number().int().positive(),
   dataRevision: z.number().int().nonnegative(),
   invalidatedAt: z.string().nullable(),
-});
+}));
 
-export const WorkspaceMemoryTableColumnSchema = z.strictObject({
+export const WorkspaceMemoryTableColumnSchema = deferredZodSchema(() => z.strictObject({
   memoryTableColumnId: z.string().min(1),
   memoryTableId: z.string().min(1),
   name: z.string(),
@@ -291,56 +292,56 @@ export const WorkspaceMemoryTableColumnSchema = z.strictObject({
   isRequired: z.boolean(),
   isSearchable: z.boolean(),
   position: z.number().int().nonnegative(),
-});
+}));
 
-export const WorkspaceMemoryTableResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryTableResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({
     outcome: z.literal("found"),
     table: WorkspaceMemoryTableRowSchema,
     columns: z.array(WorkspaceMemoryTableColumnSchema),
   }),
   z.strictObject({ outcome: z.literal("not_found") }),
-]);
+]));
 
-export const WorkspaceMemoryTableSearchRequestSchema = z.strictObject({
+export const WorkspaceMemoryTableSearchRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   scopeIds: z.array(z.string().min(1)),
   /** A prebuilt LIKE pattern, already escaped with `\`; matched NOCASE. */
   like: z.string().min(1),
   limit: z.number().int().positive(),
-});
+}));
 
-export const WorkspaceMemoryTableSearchResultSchema = z.strictObject({
+export const WorkspaceMemoryTableSearchResultSchema = deferredZodSchema(() => z.strictObject({
   memoryTableIds: z.array(z.string().min(1)),
-});
+}));
 
-export const WorkspaceMemoryTableRowRecordSchema = z.strictObject({
+export const WorkspaceMemoryTableRowRecordSchema = deferredZodSchema(() => z.strictObject({
   memoryTableRowId: z.string().min(1),
   dataJson: z.string(),
   revision: z.number().int().positive(),
   createdAt: z.string(),
   updatedAt: z.string(),
   invalidatedAt: z.string().nullable(),
-});
+}));
 
-export const WorkspaceMemoryTableRowsByIdRequestSchema = z.strictObject({
+export const WorkspaceMemoryTableRowsByIdRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryTableId: z.string().min(1),
   memoryTableRowIds: z.array(z.string().min(1)),
-});
+}));
 
-export const WorkspaceMemoryTableRowListSchema = z.strictObject({
+export const WorkspaceMemoryTableRowListSchema = deferredZodSchema(() => z.strictObject({
   rows: z.array(WorkspaceMemoryTableRowRecordSchema),
-});
+}));
 
 // The service resolves column references and value types against the schema it
 // already authorized, so a filter arrives here fully normalized: column ids
 // from the table's own rows, the physical cell field for each id, and values
 // already coerced. The object turns it into SQL without consulting the schema.
 const CellFieldSchema = z.enum(["string_value", "number_value", "boolean_value", "temporal_value"]);
-const PredicateValueSchema = z.union([z.string(), z.number(), z.null()]);
+const PredicateValueSchema = deferredZodSchema(() => z.union([z.string(), z.number(), z.null()]));
 
-const NormalizedPredicateSchema = z.discriminatedUnion("op", [
+const NormalizedPredicateSchema = deferredZodSchema(() => z.discriminatedUnion("op", [
   z.strictObject({ op: z.literal("exists"), columnId: z.string().min(1) }),
   z.strictObject({ op: z.literal("not_exists"), columnId: z.string().min(1) }),
   z.strictObject({
@@ -370,7 +371,7 @@ const NormalizedPredicateSchema = z.discriminatedUnion("op", [
     comparison: z.enum(["eq", "neq", "gt", "gte", "lt", "lte"]),
     value: PredicateValueSchema,
   }),
-]);
+]));
 
 export type WorkspaceMemoryTableFilter =
   | z.infer<typeof NormalizedPredicateSchema>
@@ -384,7 +385,7 @@ export const WorkspaceMemoryTableFilterSchema: z.ZodType<WorkspaceMemoryTableFil
     z.strictObject({ any: z.array(WorkspaceMemoryTableFilterSchema) }),
   ]));
 
-export const WorkspaceMemoryTableQueryRequestSchema = z.strictObject({
+export const WorkspaceMemoryTableQueryRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryTableId: z.string().min(1),
   exactRowIds: z.array(z.string().min(1)).nullable(),
@@ -398,25 +399,25 @@ export const WorkspaceMemoryTableQueryRequestSchema = z.strictObject({
   })),
   limit: z.number().int().positive(),
   offset: z.number().int().nonnegative(),
-});
+}));
 
 /**
  * Rows and the table's data revision, read in one object event, so the
  * revision cannot change under the page the way it could when the row read
  * and the revision re-check were two facade round trips.
  */
-export const WorkspaceMemoryTableQueryResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryTableQueryResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({
     outcome: z.literal("found"),
     dataRevision: z.number().int().nonnegative(),
     rows: z.array(WorkspaceMemoryTableRowRecordSchema),
   }),
   z.strictObject({ outcome: z.literal("not_found") }),
-]);
+]));
 
 // -- Tables: writes -----------------------------------------------------------
 
-const MemoryTableMutationRecordSchema = z.strictObject({
+const MemoryTableMutationRecordSchema = deferredZodSchema(() => z.strictObject({
   memoryTableMutationId: z.string().min(1),
   receiptId: z.string().min(1),
   operation: z.enum(["create", "insert_rows", "update_rows", "invalidate_rows"]),
@@ -427,9 +428,9 @@ const MemoryTableMutationRecordSchema = z.strictObject({
   inputHash: z.string().min(1),
   mutationJson: JsonTextSchema,
   resultJson: JsonTextSchema,
-});
+}));
 
-export const WorkspaceMemoryTableCreateRequestSchema = z.strictObject({
+export const WorkspaceMemoryTableCreateRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryTableId: z.string().min(1),
   memoryScopeId: z.string().min(1),
@@ -449,7 +450,7 @@ export const WorkspaceMemoryTableCreateRequestSchema = z.strictObject({
   })).min(1),
   mutation: MemoryTableMutationRecordSchema,
   at: TimestampSchema,
-});
+}));
 
 /**
  * `name_exists` carries the standing table's id and writes nothing: whether
@@ -457,31 +458,31 @@ export const WorkspaceMemoryTableCreateRequestSchema = z.strictObject({
  * conflict — is the service's comparison to make, against columns it reads
  * back through `memoryTableWithColumns`.
  */
-export const WorkspaceMemoryTableCreateResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryTableCreateResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("created") }),
   z.strictObject({ outcome: z.literal("replayed"), resultJson: z.string() }),
   z.strictObject({ outcome: z.literal("receipt_mismatch") }),
   z.strictObject({ outcome: z.literal("name_exists"), memoryTableId: z.string().min(1) }),
-]);
+]));
 
-export const WorkspaceMemoryTableOpenReceiptRequestSchema = z.strictObject({
+export const WorkspaceMemoryTableOpenReceiptRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryTableId: z.string().min(1),
   memoryScopeId: z.string().min(1),
   mutation: MemoryTableMutationRecordSchema,
   at: TimestampSchema,
-});
+}));
 
-const MemoryTableCellSchema = z.strictObject({
+const MemoryTableCellSchema = deferredZodSchema(() => z.strictObject({
   memoryTableColumnId: z.string().min(1),
   valueType: MemoryTableColumnTypeSchema,
   stringValue: z.string().nullable(),
   numberValue: z.number().nullable(),
   booleanValue: z.number().int().min(0).max(1).nullable(),
   temporalValue: z.string().nullable(),
-});
+}));
 
-export const WorkspaceMemoryTableInsertRowsRequestSchema = z.strictObject({
+export const WorkspaceMemoryTableInsertRowsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryTableId: z.string().min(1),
   rows: z.array(z.strictObject({
@@ -494,9 +495,9 @@ export const WorkspaceMemoryTableInsertRowsRequestSchema = z.strictObject({
   provenanceJson: JsonTextSchema,
   /** Rows the service dropped as exact duplicates inside one request. */
   duplicateInputCount: z.number().int().nonnegative(),
-  mutation: MemoryTableMutationRecordSchema.omit({ resultJson: true }),
+  mutation: MemoryTableMutationRecordSchema.unwrap().omit({ resultJson: true }),
   at: TimestampSchema,
-});
+}));
 
 /**
  * The result is assembled inside the transaction because only the insert
@@ -504,14 +505,14 @@ export const WorkspaceMemoryTableInsertRowsRequestSchema = z.strictObject({
  * `insertedRows` the caller is told, so the object builds both from the
  * `RETURNING` witnesses rather than letting the service guess.
  */
-export const WorkspaceMemoryTableInsertRowsResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryTableInsertRowsResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("inserted"), resultJson: z.string() }),
   z.strictObject({ outcome: z.literal("replayed"), resultJson: z.string() }),
   z.strictObject({ outcome: z.literal("receipt_mismatch") }),
   z.strictObject({ outcome: z.literal("table_not_found") }),
-]);
+]));
 
-export const WorkspaceMemoryTableUpdateRowsRequestSchema = z.strictObject({
+export const WorkspaceMemoryTableUpdateRowsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryTableId: z.string().min(1),
   rows: z.array(z.strictObject({
@@ -523,9 +524,9 @@ export const WorkspaceMemoryTableUpdateRowsRequestSchema = z.strictObject({
   })).min(1),
   mutation: MemoryTableMutationRecordSchema,
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryTableInvalidateRowsRequestSchema = z.strictObject({
+export const WorkspaceMemoryTableInvalidateRowsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   memoryTableId: z.string().min(1),
   rows: z.array(z.strictObject({
@@ -536,16 +537,16 @@ export const WorkspaceMemoryTableInvalidateRowsRequestSchema = z.strictObject({
   actorPrincipalJson: JsonTextSchema,
   mutation: MemoryTableMutationRecordSchema,
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceMemoryTableWriteResultSchema = z.discriminatedUnion("outcome", [
+export const WorkspaceMemoryTableWriteResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("written") }),
   z.strictObject({ outcome: z.literal("replayed"), resultJson: z.string() }),
   z.strictObject({ outcome: z.literal("receipt_mismatch") }),
   z.strictObject({ outcome: z.literal("table_not_found") }),
   z.strictObject({ outcome: z.literal("row_not_found") }),
   z.strictObject({ outcome: z.literal("row_revision_conflict") }),
-]);
+]));
 
 // -- Inferred types -----------------------------------------------------------
 

@@ -1,5 +1,6 @@
 import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
+import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
 import {
   base64,
   booleanValue,
@@ -96,19 +97,19 @@ export interface GitHubRepositoryAuthorization {
   expectedRepositoryId: string | null;
 }
 
-const githubRepositoryAccessOverrideSchema = z.strictObject({
+const githubRepositoryAccessOverrideSchema = deferredZodSchema(() => z.strictObject({
   repositoryId: z.string().trim().min(1).max(100),
   repositoryFullName: z.string().trim().regex(/^[^/\s]{1,100}\/[^/\s]{1,100}$/u),
   access: z.enum(["read_only", "full_access"]),
-});
+}));
 
-const githubRepositoryAccessPolicySchema = z.strictObject({
+const githubRepositoryAccessPolicySchema = deferredZodSchema(() => z.strictObject({
   version: z.literal(1),
   revision: z.number().int().nonnegative(),
   mode: z.enum(["all_repositories", "selected_repositories"]),
   defaultAccess: z.enum(["read_only", "full_access"]),
   repositories: z.array(githubRepositoryAccessOverrideSchema).max(1_000),
-});
+}));
 
 /**
  * Missing policy means the pre-settings behavior: every App-authorized
@@ -242,41 +243,41 @@ export interface VerifyGitHubWebhookInput {
   maxBytes?: number;
 }
 
-const repoIdentitySchema = z.strictObject({
+const repoIdentitySchema = deferredZodSchema(() => z.strictObject({
   owner: z.string().trim().min(1).max(100),
   repo: z.string().trim().min(1).max(100),
-});
+}));
 
-const paginationSchema = z.strictObject({
+const paginationSchema = deferredZodSchema(() => z.strictObject({
   perPage: z.number().int().min(1).max(100).default(30),
   page: z.number().int().min(1).max(1_000).default(1),
-});
+}));
 
-const repositoriesListSchema = z.strictObject({
+const repositoriesListSchema = deferredZodSchema(() => z.strictObject({
   perPage: z.number().int().min(1).max(100).default(50),
   page: z.number().int().min(1).max(1_000).default(1),
-});
+}));
 
-const repositoriesSearchSchema = repositoriesListSchema.extend({
+const repositoriesSearchSchema = deferredZodSchema(() => repositoriesListSchema.unwrap().extend({
   query: z.string().trim().min(1).max(200),
-}).strict();
+}).strict());
 
 const repositoryGetSchema = repoIdentitySchema;
 
-const contentsGetSchema = repoIdentitySchema.extend({
+const contentsGetSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   path: z.string().trim().min(1).max(1_000),
   ref: z.string().trim().min(1).max(250).optional(),
-}).strict();
+}).strict());
 
-const contentsListSchema = repoIdentitySchema.extend({
+const contentsListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   path: z.string().trim().max(1_000).default(""),
   ref: z.string().trim().min(1).max(250).optional(),
   recursive: z.boolean().default(false),
   offset: z.number().int().nonnegative().default(0),
   limit: z.number().int().min(1).max(TOOL_TREE_ENTRY_LIMIT).default(100),
-}).strict();
+}).strict());
 
-const commitsListSchema = repoIdentitySchema.extend({
+const commitsListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   sha: z.string().trim().min(1).max(250).optional(),
   path: z.string().trim().min(1).max(1_000).optional(),
   author: z.string().trim().min(1).max(250).optional(),
@@ -284,9 +285,9 @@ const commitsListSchema = repoIdentitySchema.extend({
   until: z.string().datetime({ offset: true }).optional(),
   perPage: z.number().int().min(1).max(100).default(30),
   page: z.number().int().min(1).max(1_000).default(1),
-}).strict();
+}).strict());
 
-const issuesListSchema = repoIdentitySchema.extend({
+const issuesListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   state: z.enum(["open", "closed", "all"]).default("open"),
   labels: z.array(z.string().trim().min(1).max(100)).max(20).default([]),
   since: z.string().datetime({ offset: true }).optional(),
@@ -294,20 +295,20 @@ const issuesListSchema = repoIdentitySchema.extend({
   direction: z.enum(["asc", "desc"]).default("desc"),
   perPage: z.number().int().min(1).max(100).default(30),
   page: z.number().int().min(1).max(1_000).default(1),
-}).strict();
+}).strict());
 
-const issueIdentitySchema = repoIdentitySchema.extend({
+const issueIdentitySchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   issueNumber: z.number().int().positive(),
-}).strict();
+}).strict());
 
-const issueCreateSchema = repoIdentitySchema.extend({
+const issueCreateSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   title: z.string().trim().min(1).max(256),
   body: z.string().max(65_000).optional(),
   labels: z.array(z.string().trim().min(1).max(100)).max(50).optional(),
   assignees: z.array(z.string().trim().min(1).max(100)).max(10).optional(),
-}).strict();
+}).strict());
 
-const issueUpdateSchema = issueIdentitySchema.extend({
+const issueUpdateSchema = deferredZodSchema(() => issueIdentitySchema.unwrap().extend({
   title: z.string().trim().min(1).max(256).optional(),
   body: z.string().max(65_000).optional(),
   state: z.enum(["open", "closed"]).optional(),
@@ -316,13 +317,13 @@ const issueUpdateSchema = issueIdentitySchema.extend({
   assignees: z.array(z.string().trim().min(1).max(100)).max(10).optional(),
 }).strict().refine((value) => Object.keys(value).some((key) => !["owner", "repo", "issueNumber"].includes(key)), {
   message: "At least one issue field must be updated",
-});
+}));
 
-const issueCommentCreateSchema = issueIdentitySchema.extend({
+const issueCommentCreateSchema = deferredZodSchema(() => issueIdentitySchema.unwrap().extend({
   body: z.string().trim().min(1).max(65_000),
-}).strict();
+}).strict());
 
-const pullRequestsListSchema = repoIdentitySchema.extend({
+const pullRequestsListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   state: z.enum(["open", "closed", "all"]).default("open"),
   head: z.string().trim().min(1).max(250).optional(),
   base: z.string().trim().min(1).max(250).optional(),
@@ -330,32 +331,32 @@ const pullRequestsListSchema = repoIdentitySchema.extend({
   direction: z.enum(["asc", "desc"]).default("desc"),
   perPage: z.number().int().min(1).max(100).default(30),
   page: z.number().int().min(1).max(1_000).default(1),
-}).strict();
+}).strict());
 
-const pullRequestIdentitySchema = repoIdentitySchema.extend({
+const pullRequestIdentitySchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   pullNumber: z.number().int().positive(),
-}).strict();
+}).strict());
 
-const pullRequestPageSchema = pullRequestIdentitySchema.extend(paginationSchema.shape).strict();
+const pullRequestPageSchema = deferredZodSchema(() => pullRequestIdentitySchema.unwrap().extend(paginationSchema.unwrap().shape).strict());
 
-const pullRequestCreateSchema = repoIdentitySchema.extend({
+const pullRequestCreateSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   title: z.string().trim().min(1).max(256),
   head: z.string().trim().min(1).max(250),
   base: z.string().trim().min(1).max(250),
   body: z.string().max(65_000).optional(),
   draft: z.boolean().default(false),
   maintainerCanModify: z.boolean().default(true),
-}).strict();
+}).strict());
 
-const pullRequestReviewCreateSchema = pullRequestIdentitySchema.extend({
+const pullRequestReviewCreateSchema = deferredZodSchema(() => pullRequestIdentitySchema.unwrap().extend({
   body: z.string().max(65_000).optional(),
   event: z.enum(["COMMENT", "APPROVE", "REQUEST_CHANGES"]),
   commitId: z.string().trim().min(1).max(100).optional(),
 }).strict().refine((value) => value.event === "APPROVE" || Boolean(value.body?.trim()), {
   message: "A review body is required for comments and change requests",
-});
+}));
 
-const workflowRunsListSchema = repoIdentitySchema.extend({
+const workflowRunsListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   branch: z.string().trim().min(1).max(250).optional(),
   event: z.string().trim().min(1).max(100).optional(),
   status: z.enum([
@@ -364,20 +365,20 @@ const workflowRunsListSchema = repoIdentitySchema.extend({
   ]).optional(),
   perPage: z.number().int().min(1).max(100).default(30),
   page: z.number().int().min(1).max(1_000).default(1),
-}).strict();
+}).strict());
 
-const workflowRunGetSchema = repoIdentitySchema.extend({
+const workflowRunGetSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   runId: z.number().int().positive(),
-}).strict();
+}).strict());
 
-const checksListSchema = repoIdentitySchema.extend({
+const checksListSchema = deferredZodSchema(() => repoIdentitySchema.unwrap().extend({
   ref: z.string().trim().min(1).max(250),
   checkName: z.string().trim().min(1).max(250).optional(),
   status: z.enum(["queued", "in_progress", "completed"]).optional(),
   filter: z.enum(["latest", "all"]).default("latest"),
   perPage: z.number().int().min(1).max(100).default(30),
   page: z.number().int().min(1).max(1_000).default(1),
-}).strict();
+}).strict());
 
 const githubToolInputSchemas = new Map<string, z.ZodType>();
 
@@ -429,13 +430,18 @@ function tool(
   schema: z.ZodType,
 ): ToolDefinition {
   githubToolInputSchemas.set(name, schema);
+  const inputSchema = memoizedValue(
+    () => z.toJSONSchema(schema) as Record<string, unknown>,
+  );
   return {
     name,
     description,
     capability,
     mode,
     idempotency: mode === "read" ? "safe" : "record_before_execute",
-    inputSchema: z.toJSONSchema(schema) as Record<string, unknown>,
+    get inputSchema() {
+      return inputSchema();
+    },
   };
 }
 
@@ -463,20 +469,20 @@ interface GitHubTokenPayload {
   error_description?: unknown;
 }
 
-const authorizationInputSchema = z.strictObject({
+const authorizationInputSchema = deferredZodSchema(() => z.strictObject({
   state: z.string().min(20).max(2_000),
   codeChallenge: z.string().min(20).max(256),
   scopes: z.array(z.string().trim().min(1).max(100)).max(30).optional(),
   installationId: z.union([z.string().regex(/^\d+$/u), z.number().int().positive()]).optional(),
   connectionScope: z.enum(["personal", "workspace"]).default("personal"),
-});
+}));
 
-const authorizationCallbackSchema = z.strictObject({
+const authorizationCallbackSchema = deferredZodSchema(() => z.strictObject({
   code: z.string().min(1).max(2_000),
   codeVerifier: z.string().min(20).max(256),
   installationId: z.union([z.string().regex(/^\d+$/u), z.number().int().positive()]),
   connectionScope: z.enum(["personal", "workspace"]),
-});
+}));
 
 /** Create a short-lived GitHub App JWT without depending on a Node-only crypto API. */
 export async function createGitHubAppJwt(input: GitHubAppJwtInput): Promise<string> {
