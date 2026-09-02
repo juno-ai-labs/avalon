@@ -69,24 +69,27 @@ export function storedWorkspaceSummaries(
  * not list, ordered by device recency with never-selected rows after.
  *
  * `discovered` may be the answer just received or the last one this run
- * received; either way a row known to both takes discovery's name and role
- * and the stored set's word that a credential is on this device.
+ * received; either way a row known to both takes discovery's name and role.
+ * Whether a credential is on this device is read from the credential set
+ * itself: a credential whose profile cache did not survive can still read
+ * that workspace's attention, and is rewritten whole on its next activation.
  */
 export function mergeWorkspaceDirectory(
   discovered: DesktopWorkspaceSummary[],
   stored: DesktopWorkspaceSummary[],
-  recency: StoredWorkspaceReference[],
+  auth: StoredAuthSet | null,
 ): DesktopWorkspaceSummary[] {
+  const credentials = new Set((auth?.workspaces ?? []).flatMap((credential) => (
+    credential.binding.workspaceId === null
+      ? []
+      : [desktopWorkspaceIdentityKey(credential.binding.region, credential.binding.workspaceId)]
+  )));
   const byKey = new Map<string, DesktopWorkspaceSummary>();
-  for (const workspace of discovered) {
-    byKey.set(summaryKey(workspace), { ...workspace, credentialStored: false });
-  }
-  for (const workspace of stored) {
+  for (const workspace of [...discovered, ...stored]) {
     const key = summaryKey(workspace);
-    const known = byKey.get(key);
-    byKey.set(key, known ? { ...known, credentialStored: true } : { ...workspace, credentialStored: true });
+    if (!byKey.has(key)) byKey.set(key, { ...workspace, credentialStored: credentials.has(key) });
   }
-  return sortByRecency([...byKey.values()], recency);
+  return sortByRecency([...byKey.values()], auth?.workspaceRecency ?? []);
 }
 
 /**

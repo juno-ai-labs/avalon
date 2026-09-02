@@ -88,7 +88,7 @@ describe('merged workspace directory', () => {
     const merged = mergeWorkspaceDirectory(
       [{ ...junoLabs, name: 'Juno Labs (renamed)' }, joinedElsewhere],
       stored,
-      auth.workspaceRecency,
+      auth,
     );
 
     expect(merged.map((row) => [row.name, row.credentialStored])).toEqual([
@@ -100,13 +100,27 @@ describe('merged workspace directory', () => {
   });
 
   it('is the stored set alone when nothing has been discovered', () => {
-    expect(mergeWorkspaceDirectory([], storedWorkspaceSummaries(auth, profiles), auth.workspaceRecency).map((row) => row.name))
+    expect(mergeWorkspaceDirectory([], storedWorkspaceSummaries(auth, profiles), auth).map((row) => row.name))
       .toEqual(['Juno Labs', 'La Cabra', 'Europe Studio']);
+  });
+
+  it('reads a credential whose profile cache is gone as stored, so its attention can still be asked for', () => {
+    const withoutEuropeProfile = {
+      ...profiles,
+      workspaces: profiles.workspaces.filter((candidate) => candidate.workspace?.id !== europe.id),
+    };
+    const merged = mergeWorkspaceDirectory([europe], storedWorkspaceSummaries(auth, withoutEuropeProfile), auth);
+
+    expect(merged.map((row) => [row.name, row.credentialStored])).toEqual([
+      ['Juno Labs', true],
+      ['La Cabra', true],
+      ['Europe Studio', true],
+    ]);
   });
 
   it('does not confuse a same-id workspace in the other region with a stored one', () => {
     const regionalTwin = { ...laCabra, region: 'eu' as const, name: 'La Cabra EU' };
-    const merged = mergeWorkspaceDirectory([regionalTwin], storedWorkspaceSummaries(auth, profiles), auth.workspaceRecency);
+    const merged = mergeWorkspaceDirectory([regionalTwin], storedWorkspaceSummaries(auth, profiles), auth);
 
     expect(merged.map((row) => [row.name, row.region, row.credentialStored])).toEqual([
       ['Juno Labs', 'global', true],

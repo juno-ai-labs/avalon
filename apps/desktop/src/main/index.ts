@@ -1472,9 +1472,17 @@ async function writeSplitSessionFiles(
   value: WireSession,
   options: { activate?: boolean } = {},
 ): Promise<StoredAuthSet> {
+  // Merge against the profile cache on disk, not against whatever this
+  // process happens to have read so far. A refresh can run before anything
+  // has loaded the profiles — a main-process task at launch whose access
+  // token had expired overnight does exactly that — and merging into an
+  // empty set here rewrote the cache with one profile, dropping the identity
+  // profile and every other workspace's. The credentials beside them were
+  // intact, but an identity without its profile reads as no identity at all.
+  const currentProfiles = inMemoryProfileSet ?? await loadStoredProfileSet();
   const stored = mergeStoredSession(
     inMemoryAuthSet,
-    inMemoryProfileSet,
+    currentProfiles,
     value,
     regionForStoredSession(value),
     options,
@@ -1604,10 +1612,23 @@ async function loadStoredSession(): Promise<WireSession | null> {
   return stored;
 }
 
+/**
+ * The stored identity session, or null when no identity credential is stored.
+ *
+ * The credential is the durable boundary; the profile beside it is a cache
+ * that an interrupted or early write can leave behind. A credential without
+ * its profile is rebuilt by refreshing it — the way `session:get` already
+ * rebuilds a workspace's — rather than read as a missing identity. A refresh
+ * that fails throws, so a caller can tell "unreachable" from "not signed in";
+ * a terminal failure has surrendered the credential by the time it throws.
+ */
 async function loadStoredIdentitySession(): Promise<WireSession | null> {
   const auth = await loadStoredAuthSet();
   if (!auth?.account) return null;
-  return storedSessionForCredential(auth.account);
+  const stored = await storedSessionForCredential(auth.account);
+  if (stored) return stored;
+  logWarn('rally', 'rebuilding the identity profile cache from its credential');
+  return refreshStoredCredential(auth.account);
 }
 
 async function clearStoredSessionUnlocked(): Promise<void> {
@@ -2188,7 +2209,7 @@ async function discoverWorkspaces(): Promise<WorkspaceDiscovery> {
 async function workspaceDirectoryRows(discovered: DesktopWorkspaceSummary[]): Promise<DesktopWorkspaceSummary[]> {
   const auth = await loadStoredAuthSet();
   const profiles = await loadStoredProfileSet();
-  return mergeWorkspaceDirectory(discovered, storedWorkspaceSummaries(auth, profiles), auth?.workspaceRecency ?? []);
+  return mergeWorkspaceDirectory(discovered, storedWorkspaceSummaries(auth, profiles), auth);
 }
 
 /**
@@ -2249,7 +2270,7 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
     // The difference between "reconnect the account" and "try again later"
     // is whether an identity credential is still on this device: a refresh
     // that just proved one dead has surrendered it by the time this runs.
-    const identityStored = await loadStoredIdentitySession() !== null;
+    const identityStored = Boolean((await loadStoredAuthSet())?.account);
     return {
       workspace: null,
       workspaces: await workspaceDirectoryRows(lastWorkspaceDiscovery?.workspaces ?? []),

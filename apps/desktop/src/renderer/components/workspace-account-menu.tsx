@@ -22,7 +22,6 @@ export interface WorkspaceAccountMenuProps {
   currentUser: WorkspaceMember;
   enabled: boolean;
   invitations: DesktopPendingWorkspaceInvitation[];
-  loadingAttention: boolean;
   promptedInvitation?: DesktopPendingWorkspaceInvitation | null;
   staleAt: string | null;
   switchingWorkspaceKey?: string | null;
@@ -53,22 +52,14 @@ function regionLabel(region: RallyRegion): string {
   return region === 'eu' ? 'European Union' : 'Global';
 }
 
-function countClass(attention: WorkspaceAttention): string {
-  return attention.waitingReason === 'mentioned'
-    ? 'is-mentioned'
-    : attention.waitingReason === 'needs_input'
-      ? 'is-needs-input'
-      : 'is-unseen';
-}
-
-/** What the green dot means: something moved, nothing is waiting on this person. */
+/** What the dot means when nothing is waiting on this person. */
 export const UNREAD_ACTIVITY_DESCRIPTION = 'New activity since you last looked. Nothing is waiting on you.';
 
 /**
- * The count is how many work streams are waiting on this person, and its
- * colour is the strongest reason among them — the same order WorkspaceDO
- * ranks them: a mention, then a run waiting for input, then a work stream
- * they are in but have never opened.
+ * One green dot marks a background workspace with any activity at all; the
+ * detail — how many work streams are waiting on this person and the
+ * strongest reason among them, in the order WorkspaceDO ranks them — is
+ * kept for the tooltip and the accessible name rather than shown as a count.
  */
 function attentionLabel(attention: WorkspaceAttention): string | null {
   const count = attention.waitingForYou;
@@ -109,7 +100,6 @@ export function WorkspaceAccountMenu({
   currentUser,
   enabled,
   invitations,
-  loadingAttention,
   promptedInvitation = null,
   staleAt,
   switchingWorkspaceKey = null,
@@ -208,8 +198,10 @@ export function WorkspaceAccountMenu({
                   const workspaceKey = desktopWorkspaceIdentityKey(workspace.region, workspace.id);
                   const active = workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region;
                   const workspaceAttention = active ? undefined : attention[workspaceKey];
-                  const count = workspaceAttention?.waitingForYou ?? 0;
                   const attentionDescription = workspaceAttention ? attentionLabel(workspaceAttention) : null;
+                  const activityDetail = workspaceAttention && workspaceAttention.waitingForYou > 0
+                    ? attentionDescription
+                    : UNREAD_ACTIVITY_DESCRIPTION;
                   const switching = workspaceKey === switchingWorkspaceKey;
                   const unavailable = !active && accountReconnectRequired;
                   const error = workspaceErrors[workspaceKey];
@@ -247,14 +239,9 @@ export function WorkspaceAccountMenu({
                       {multipleRegions && <small className="workspace-region-tag">{regionLabel(workspace.region)}</small>}
                       {switching && <LoaderCircle aria-label="Opening workspace" className="spin" size={14} />}
                       {active && <Check aria-label="Current" size={14} />}
-                      {!active && !switching && count > 0 && workspaceAttention && attentionDescription && (
-                        <IndicatorTooltip label={attentionDescription}>
-                          <span className={`workspace-attention-count ${countClass(workspaceAttention)}`}>{count}</span>
-                        </IndicatorTooltip>
-                      )}
-                      {!active && !switching && count === 0 && !loadingAttention && workspaceAttention?.hasUnreadActivity && (
-                        <IndicatorTooltip label={UNREAD_ACTIVITY_DESCRIPTION}>
-                          <span aria-label="Unread activity" className="workspace-activity-dot" />
+                      {!active && !switching && attentionDescription && activityDetail && (
+                        <IndicatorTooltip label={activityDetail}>
+                          <span aria-label={attentionDescription} className="workspace-activity-dot" />
                         </IndicatorTooltip>
                       )}
                     </DropdownMenu.Item>

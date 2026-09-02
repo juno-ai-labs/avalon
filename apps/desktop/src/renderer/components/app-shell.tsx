@@ -450,7 +450,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             currentUser={workspace.currentUser}
             enabled={multipleWorkspacesEnabled}
             invitations={workspaceDirectory.data?.invitations ?? []}
-            loadingAttention={workspaceAttention.isLoading}
             promptedInvitation={promptedInvitation}
             onAcceptInvitation={async (invitation, operationId) => {
               await acceptInvitation(invitation.region, invitation.id, operationId);
