@@ -197,18 +197,26 @@ the last part of this section.
 gh pr view <n> --json mergeable,mergeStateStatus,statusCheckRollup
 ```
 
-`mergeable` answers one question only: whether Git can produce the merge without
-a conflict. It is not permission to merge, and a `MERGEABLE` branch can still be
-held by a required review or a required check — that is what `mergeStateStatus`
-carries, so read both. `BLOCKED` is a policy gate to satisfy, `UNSTABLE` is
-checks still running or a non-required one red, and `CONFLICTING` is the case
+`mergeable` answers one question only — whether Git can produce the merge
+without a conflict — and it has three values, not two. `CONFLICTING` is the case
 the rebase above exists for: bring the branch up to date, re-run the gates,
-force-push, and merge on the replacement run. What none of those states report
-is how far behind `main` the head sits, which is the point: satisfy the
-repository's own requirements and merge.
+force-push, and merge on the replacement run. `UNKNOWN` means GitHub has not
+finished computing the merge yet, which is the state a branch is in for the
+first seconds after any push, and so the one a reader of this section is most
+likely to catch it in: poll again, and do not rebase.
+
+`MERGEABLE` is not permission to merge. That is `mergeStateStatus`, the second
+field the command fetches: `BLOCKED` means a required review or required check
+is outstanding, `UNSTABLE` means checks are still running or a non-required one
+is red, and `CLEAN` means nothing is left. A branch can be `MERGEABLE` and
+`BLOCKED` at the same time, so read both fields rather than treating the first
+as the whole answer.
 
 Leave branch protection's *Require branches to be up to date before merging*
-off, because turning it on encodes exactly the chase this section forbids.
+off, because turning it on encodes exactly the chase this section forbids. It is
+also the setting that produces the `BEHIND` state: with it off, `BEHIND` never
+appears, which is the mechanical reason this section's rule can be a binary on
+mergeability rather than a judgement about distance from `main`.
 
 Rebase before merging a *mergeable* branch only when something concrete about
 `main`'s new commits interacts with this change — a migration prefix that now
