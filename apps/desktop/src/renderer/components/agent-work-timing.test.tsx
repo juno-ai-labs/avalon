@@ -1,20 +1,33 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
 import { AgentCompactionIndicator, AgentWorkTiming } from './agent-work-timing';
 
 vi.mock('thinking-orbs', () => ({
-  ThinkingOrb: ({ paused = false, size, speed, state }: { paused?: boolean; size: number; speed?: number; state: string }) => (
+  ThinkingOrb: ({ paused = false, size, speed, state, theme }: { paused?: boolean; size: number; speed?: number; state: string; theme?: string }) => (
     <span
       data-paused={String(paused)}
       data-size={size}
       data-speed={speed}
       data-state={state}
       data-testid="thinking-orb"
+      data-theme={theme}
     />
   ),
 }));
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  window.localStorage.clear();
+});
+
+/** The appearance the window is drawn in, as the device preference stores it. */
+function pinAppearance(mode: 'light' | 'dark'): void {
+  window.localStorage.setItem(
+    DEVICE_PREFERENCES_STORAGE_KEY,
+    JSON.stringify({ version: 1, theme: { family: 'terra', mode } }),
+  );
+}
 
 describe('AgentWorkTiming', () => {
   it('announces compaction as a distinct active agent phase', () => {
@@ -150,5 +163,29 @@ describe('AgentWorkTiming', () => {
 
     expect(screen.getByText('working')).toBeInTheDocument();
     expect(screen.queryByText(/3s/u)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The orb is a canvas the stylesheet cannot reach, so the only way its ink
+ * follows the theme is the prop. Pinned to `dark`, it drew near-white dots on
+ * a light window — legible in a component assertion and all but invisible on
+ * screen.
+ */
+describe('the orb ink', () => {
+  it.each([['light'], ['dark']] as const)('draws for a %s window', (mode) => {
+    pinAppearance(mode);
+
+    render(<AgentWorkTiming active durationMs={0} startedAt={Date.now()} />);
+
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-theme', mode);
+  });
+
+  it('draws compaction for the window it is in', () => {
+    pinAppearance('light');
+
+    render(<AgentCompactionIndicator />);
+
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-theme', 'light');
   });
 });

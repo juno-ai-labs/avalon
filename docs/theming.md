@@ -578,6 +578,20 @@ depend on that:
   nowhere is invalid at computed-value time and falls back to the inherited
   colour, which for a code block is near-black on near-black. Anything else that
   serializes rendered markup out of the renderer inherits that obligation.
+- **A canvas is handed the appearance, since it cannot be handed a token.**
+  `thinking-orbs` paints its dots onto a `<canvas>` in one of two monochrome
+  inks and picks between them from a `theme="dark" | "light"` prop, so no rule
+  reaches it and no `var()` can be passed to it. `useAppearance()` is the whole
+  coupling — one hook, no colour — and it is the only thing a component may
+  branch the theme on. The library's own `auto` mode is not a substitute: it
+  looks for `data-theme="dark"` or `data-theme="light"`, ours says `terra-light`,
+  and it would fall through to `prefers-color-scheme` and draw dark-window ink
+  for somebody who pinned Light against a dark Mac. What it answers is the
+  *window's* lighting, not the nearest themed ancestor's: it reads the applied
+  appearance off `<html>`, while a rule honours `data-theme` wherever it sits —
+  and the Settings swatches put one on a descendant. Nothing draws an orb inside
+  such a subtree today, and one dropped there would take the window's ink rather
+  than the swatch's.
 - **`themeWindowBackground` equals each theme's own `--av-sys-color-surface-canvas`.** It is the one
   value written down twice, and a test compares the copies.
 - **The Tailwind palette resolves to tokens, never to literals.** It is currently
@@ -660,8 +674,9 @@ request description is not reachable from the repository.
 | `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every `var()` naming a declared token, lines coming off the line ramp, the navigation tint and the backdrop each painted once, and the duplicated window background. Runs against the files on disk. |
 | `src/main/theme-assets.test.ts` | The backdrop policy and URL parsing, and the font cache: fetch-once, integrity, the size limit, concurrent asks collapsing to one request, and a 404 for every id no theme declared. |
 | `src/common/themes.test.ts` | Resolution and parsing, including that a deliberate choice is never overridden by the Mac. |
-| `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, and the unknown-theme fallback. |
+| `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, the unknown-theme fallback, and that a reader takes the applied appearance rather than a store the broadcast has outrun. |
 | `src/renderer/components/theme-picker.test.tsx` | The picker, including that each swatch previews with its own `data-theme`. |
+| `src/renderer/components/agent-work-timing.test.tsx`, `primitives.test.tsx` | That the orb — the one surface handed an appearance rather than a token — is given the one the window is drawn in. |
 | `src/renderer/lib/device-preferences.test.ts` | That an unknown theme is dropped without discarding the record. |
 
 Run them with `pnpm --filter @rally/desktop test`.
@@ -680,6 +695,47 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-09-02 — The thinking orb follows the appearance instead of pinning dark
+
+**What changed:** every `ThinkingOrb` — the work-timing row, the compaction
+indicator, and `LoadingState`'s opening orb — takes its `theme` from
+`useAppearance()`, a new hook over `useTheme()` built on `appearanceOf()` in
+`common/themes.ts`, which answers which half of its family a resolved
+appearance is. The prop was the literal `"dark"` at all three call sites.
+
+**Why:** the library is monochrome and inverts its ink from that prop alone —
+light dots for a dark ground, dark dots for a light one. Pinned to `dark`, the
+orb drew near-white dots on Terra Light's white canvas, so the "working for 21s"
+row read as a label with a smudge beside it. Nothing caught it: the orb is a
+canvas, so the stylesheet's literal-colour and token guards cannot see inside
+it, and the component tests assert on props rather than pixels.
+
+**Considered and rejected:** the library's own `theme="auto"`, which is what a
+reader will reach for first. It resolves an ancestor `data-theme` of exactly
+`dark` or `light` and otherwise falls back to `prefers-color-scheme` — ours
+carries an appearance name like `terra-light`, so every window would take the
+fallback and a person who pinned Light against a dark Mac would keep the pale
+ink this change exists to remove. Stamping a second `dark`/`light` class on
+`<html>` would make `auto` work and was rejected for the same reason: the
+document carries one theme signal, and a second one drifts.
+
+**Also in this change:** `useTheme()` now snapshots the *document* — the three
+attributes `applyTheme` stamps — and re-reads it once inside its subscribing
+effect, rather than initializing from the device store. The store is not what is
+on screen during the window `watchThemeBroadcast` deliberately opens: it applies
+an IPC payload without waiting for the `localStorage` write behind it, so a
+surface that mounted in that gap read the previous choice and had already missed
+the announcement that would have corrected it. Every reader was exposed to it —
+Mermaid, the backdrop, the picker — but the orb is where it becomes permanent
+and visible, an inverted canvas until something else applies a theme.
+
+**What a future change has to respect:** a component still may not name a
+colour. `useAppearance()` returns a lighting, not a value, and exists for
+surfaces that paint outside CSS; anything that can name a token names one. And
+the document remains the one record of what is being drawn: do not add a second
+copy of the applied state beside it, which is the shape this fix started as and
+which drifts the moment anything sets one without the other.
 
 ### 2026-09-02 — The identity line stopped being a theme's open question
 
