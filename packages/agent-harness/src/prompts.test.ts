@@ -94,7 +94,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "RECOMPUTE",
+        hash: "2ca06344777ec650150ce224bb5fe6a5f5b340f90bae6677a8425b08dbf92fad",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -666,20 +666,23 @@ describe("prompt renderers", () => {
     });
 
     // Raised from 8,000 when the standing policy gained a second section, and
-    // raised rather than absorbed because there was nowhere left to absorb it:
-    // the Documents rewrite that made this policy standing rather than gated
-    // left about 175 bytes of headroom, and a second publish shape cannot
-    // introduce itself, name its skill, and give its one most-missed rule
-    // (publish the directory, not a file inside it) in 175 bytes.
+    // raised rather than absorbed because there was nowhere left to absorb it.
+    // The arithmetic, re-measured on this base rather than carried over from
+    // when the raise was first written: without `# Sites` the prompt is 7,827
+    // bytes, so the old ceiling left 173 bytes of headroom, and a second
+    // publish shape cannot introduce itself, name its skill, and give its one
+    // most-missed rule (publish the directory, not a file inside it) in 173.
+    // `# Sites` costs 567, which lands at 8,394 and leaves 106 under this bound.
     //
     // Per the instruction below, here is what looked misplaced rather than
     // merely long, for whoever owns that prose to decide: `# Documents` opens
     // with "Use the terminal tool to write the document in the sandbox,
     // publish it, and then present it to the user with an embedded citation",
-    // which the next two paragraphs then say again in full and in detail.
-    // Deleting that one sentence would put this back under 8,000. It was left
-    // alone because it landed in a separate change and trimming somebody
-    // else's freshly-written policy to make room is not a silent edit to make.
+    // which the next two paragraphs then say again in full and in detail. It is
+    // worth 131 bytes — not enough to get back under 8,000 on its own, which is
+    // the honest reason this is a raise and not a trim. It was left alone
+    // because it landed in a separate change and trimming somebody else's
+    // freshly-written policy to make room is not a silent edit to make.
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_500);
   });
 
