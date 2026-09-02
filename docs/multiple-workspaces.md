@@ -73,6 +73,18 @@ session. An identity request whose presented credential has already been
 replaced adopts the stored one rather than rotating a token the service has
 retired, and refreshes it only if it has itself expired.
 
+A renewal rewrites both stored files by merging the renewed session into the
+sets on disk, never into whatever this process happens to have read so far.
+The credential file is the durable boundary and the profile file beside it a
+cache; a credential whose profile is missing is rebuilt by refreshing it,
+which is how the identity session recovers as well as a workspace's. Every
+session also has a fixed life of thirty days from the moment it was minted:
+the API rotates the refresh token on each renewal but does not extend
+`expires_at`, so the identity credential minted at sign-in stops renewing
+thirty days later whatever the person did in between, and "Reconnect
+account…" is the honest outcome then. Whether renewal should slide that
+window is the team's call, not this document's.
+
 ### The account menu's directory
 
 The menu lists the union of what this device has stored and what Global
@@ -91,12 +103,13 @@ tooltip with the longer reason, and selecting one restates the reason under
 the row instead of attempting an activation that must fail. It is the same
 register as a connector that needs reconnecting in Settings, not an alarm.
 
-A background row's trailing indicator is the WorkspaceDO attention read: a
-count when work streams are waiting on the person, coloured by the strongest
-reason among them (a mention, then a run waiting for input, then a work
-stream they are in but have never opened), and the green activity dot when
-something moved but nothing is waiting on them. Both explain themselves in a
-tooltip on hover.
+A background row's trailing indicator is one green dot, shown when the
+WorkspaceDO attention read reports any activity — work streams waiting on the
+person or merely something new since they last looked — and nothing
+otherwise. The detail the read carries (how many are waiting and the
+strongest reason among them, in the order WorkspaceDO ranks them) is kept
+for the dot's tooltip and the row's accessible name rather than drawn as a
+count.
 
 ### Switching
 
@@ -344,6 +357,49 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-02 — A renewal merges into the files on disk, and an identity rebuilds its profile
+
+**What changed:** `writeSplitSessionFiles` merges a renewed session into the
+profile set read from disk when this process has not read it yet, and
+`loadStoredIdentitySession` refreshes an identity credential whose profile is
+missing instead of reporting no identity. A workspace counts as stored by its
+credential alone when the directory decides whose attention to read.
+
+**Why:** After a restart, the menu came up asking for a reconnect and listing
+only the active workspace while the credential file still held three
+credentials. The launch-time analytics preference sync had found its access
+token expired, refreshed the active credential, and rewritten both files by
+merging into an in-memory profile set nothing had loaded yet — one profile
+survived. An identity credential without its profile then read as no
+identity at all. This reproduces the reported symptom on its own, with no
+token race involved.
+
+**Considered and rejected:** Loading the auth set inside the write the same
+way. The auth set's loader falls back to migrating a legacy session file,
+which itself writes, and every caller already holds the auth set it is
+renewing; the profile set is the one nothing guaranteed had been read.
+
+**Consequences:** A write never narrows the stored sets to what one process
+has seen. A missing profile is a cache miss that a refresh fills, not a
+missing credential.
+
+### 2026-09-02 — One dot for any activity
+
+**What changed:** The account menu's background rows show a single green dot
+when the attention read reports anything at all, and nothing otherwise. The
+coloured count is gone; its detail lives on in the tooltip and the accessible
+name.
+
+**Why:** The count needed explaining — what the number was, what its colour
+meant, why one row had a dot and another a number — and the person reading
+the menu only wanted to know whether there was anything to look at.
+
+**Considered and rejected:** Keeping the count with its tooltip. A mark that
+needs a legend is not pulling its weight in a menu opened for a second.
+
+**Consequences:** The attention contract is unchanged; only its presentation
+narrowed. A future need to rank workspaces by urgency has the data already.
 
 ### 2026-09-02 — A switch dissolves, lands on the new work-stream page, and the menu explains its marks
 

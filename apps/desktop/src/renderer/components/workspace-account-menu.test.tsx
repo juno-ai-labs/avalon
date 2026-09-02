@@ -30,7 +30,6 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     currentUser,
     enabled: true,
     invitations: [],
-    loadingAttention: false,
     onAcceptInvitation: vi.fn(async () => undefined),
     onCreateWorkspace: vi.fn(async () => undefined),
     onDeclineInvitation: vi.fn(async () => undefined),
@@ -65,19 +64,21 @@ describe('workspace account menu', () => {
     expect(within(menu).getByText('Workspaces')).toBeVisible();
     expect(within(menu).getByRole('menuitem', { name: /Global Studio.*Global.*Current/u })).toBeVisible();
     const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*European Union.*3 mentions waiting for you/u });
-    expect(europe.querySelector('.workspace-attention-count')).toHaveClass('is-mentioned');
+    // One dot for any activity, never a count.
+    expect(europe.querySelector('.workspace-activity-dot')).toHaveAccessibleName('3 mentions waiting for you');
+    expect(europe).not.toHaveTextContent('3');
 
     fireEvent.click(europe);
     expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
   });
 
-  it('explains the count and the activity dot on hover', async () => {
+  it('explains the activity dot on hover', async () => {
     renderMenu();
     openMenu();
-    const count = screen.getByText('3');
-    fireEvent.pointerMove(count);
+    const waiting = screen.getByLabelText('3 mentions waiting for you');
+    fireEvent.pointerMove(waiting);
     expect(await screen.findByRole('tooltip')).toHaveTextContent('3 mentions waiting for you');
-    fireEvent.pointerLeave(count);
+    fireEvent.pointerLeave(waiting);
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
     renderMenu({
@@ -142,7 +143,7 @@ describe('workspace account menu', () => {
     openMenu();
 
     expect(screen.getByText('Counts last updated 7 minutes ago')).toBeVisible();
-    expect(screen.getByText('3')).toBeVisible();
+    expect(screen.getByLabelText('3 mentions waiting for you')).toBeVisible();
   });
 
   it('keeps the legacy one-workspace anatomy while the flag is off', () => {
