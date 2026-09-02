@@ -71,6 +71,7 @@ The same Worker source is deployed twice:
 | Worker | `avalon-api-global` | `avalon-api-eu` |
 | API | `api.rallywith.ai` | `eu.api.rallywith.ai` |
 | D1 | global database | EU-jurisdiction database |
+| Public artifact route index | shared `rally-platform` D1 with opaque stub, region, and artifact UUID only | same content-free index; artifact authorization and bytes remain regional |
 | Agent memory vectors | `avalon-global-memory` Vectorize index | `avalon-eu-memory` Vectorize index |
 | R2 | global bucket | EU-jurisdiction bucket |
 | Inference lakehouse | Global payload archive, Queue, Pipeline stream/sink, and default-jurisdiction R2 Data Catalog | Intentionally disabled; EU inference is not archived or exported for analytics |
@@ -388,6 +389,27 @@ these shared datasets rather than assuming the EU Worker binding makes them EU
 resident.
 
 ## Changelog
+
+### 2026-09-01 — Public artifact names share only opaque routing metadata
+
+**What changed:** Both regional API and artifact-serving Workers bind the same
+`rally-platform` D1 database for permanent `(region, hostname_stub)` reservations
+and stub-to-artifact-UUID lookup.
+
+**Why:** A readable public origin needs region-wide uniqueness across every
+workspace, while independently allocating in each WorkspaceDO can collide. One
+regional product D1 cannot own the other region's public names without turning
+the data plane into a cross-region dependency.
+
+**Considered and rejected:** Mirrored regional indexes can diverge and allocate
+the same origin; putting the route in Global product D1 would make EU serving
+depend on Global product state. R2 does not provide the same atomic uniqueness
+constraint for allocation.
+
+**Consequences:** The shared database is a narrow routing control plane and is
+not a workspace-content authority. It retains no workspace, user, session, or
+artifact bytes. The region in the hostname selects a regional Worker, which
+performs authorization and reads only that region's Durable Object and R2 state.
 
 ### 2026-09-01 — External routing names the region without authorizing it
 

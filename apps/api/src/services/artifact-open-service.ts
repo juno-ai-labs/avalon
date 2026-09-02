@@ -18,6 +18,7 @@
  */
 import {
   ARTIFACT_RESERVED_PREFIX,
+  ArtifactHostnameStubSchema,
   artifactOrigin,
   asArtifactId,
   asUserId,
@@ -28,6 +29,7 @@ import {
 import { artifactHostDOName, workstreamDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { ensureArtifactHostname } from "./artifact-hostname";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import {
   durableObjectStubForArtifact,
@@ -47,6 +49,7 @@ export interface ArtifactOpenResult {
 
 export class ArtifactOpenService {
   private readonly env: Env;
+  private readonly regionalEnv: Env;
 
   /**
    * `artifact_registry` lives in **WorkspaceDO**, not regional D1.
@@ -58,6 +61,7 @@ export class ArtifactOpenService {
    * takes the regional fallthrough on the same handle.
    */
   constructor(env: Env, private readonly auth: AuthContext) {
+    this.regionalEnv = env;
     this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
   }
 
@@ -75,13 +79,14 @@ export class ArtifactOpenService {
     const workspaceId = this.auth.workspaceId;
     if (!workspaceId) throw new ApiError(403, "workspace_required", "Choose a workspace before opening an artifact.");
     const row = await this.env.DB.prepare(
-      `SELECT artifact_id, workstream_id, mode, stateful FROM artifact_registry
+      `SELECT artifact_id, workstream_id, mode, stateful, hostname_stub FROM artifact_registry
         WHERE workspace_id = ? AND resource_id = ?`,
     ).bind(workspaceId, resourceId).first<{
       artifact_id: string;
       workstream_id: string;
       mode: string;
       stateful: number;
+      hostname_stub: string | null;
     }>();
     if (!row) throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
 
@@ -105,6 +110,22 @@ export class ArtifactOpenService {
       throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
     }
 
+    // Pre-stub artifacts are migrated lazily, but only after the ordinary
+    // visibility check. The platform-D1 reservation is durable before the
+    // WorkspaceDO registry starts returning the public address.
+    const hostnameStub = row.hostname_stub === null
+      ? await ensureArtifactHostname(
+          this.regionalEnv,
+          { workspaceId, artifactId: row.artifact_id },
+        )
+      : ArtifactHostnameStubSchema.parse(row.hostname_stub);
+    if (row.hostname_stub === null) {
+      await this.env.DB.prepare(
+        `UPDATE artifact_registry SET hostname_stub = ?
+          WHERE workspace_id = ? AND artifact_id = ? AND hostname_stub IS NULL`,
+      ).bind(hostnameStub, workspaceId, row.artifact_id).run();
+    }
+
     const host = durableObjectStubForArtifact(
       this.env,
       this.env.ARTIFACT_HOSTS,
@@ -123,7 +144,7 @@ export class ArtifactOpenService {
     });
 
     const origin = artifactOrigin(
-      row.artifact_id,
+      hostnameStub,
       this.env.AVALON_REGION,
       this.env.ARTIFACT_SERVING_DOMAIN,
     );

@@ -75,18 +75,15 @@ export function blockDashboardLoopId(blockId: BlockId): string {
  * One supervisor object per live web artifact.
  *
  * Unlike every other name here this one carries no workspace segment, and that
- * is what makes serving possible at all: the artifact serving Worker holds no
- * D1, so given nothing but a `Host` header it has to reach the right object
- * without a lookup. The artifact id is the hostname label, so the Worker parses
- * the id out of the host and names the object from it — no index, no directory
- * hop, no per-request database read on the hot path. The object itself holds
- * the resource linkage, so which workspace and work stream an artifact belongs
- * to is answered once it is addressed rather than before.
+ * keeps the supervisor identity stable when the public name changes. The
+ * serving Worker resolves a readable stub through the content-free platform D1
+ * index, then names this object from the returned artifact UUID. The object
+ * itself holds the resource linkage, so which workspace and work stream an
+ * artifact belongs to is answered only after the opaque route has been
+ * resolved.
  *
- * Region-wide uniqueness comes free from the id being a UUID, which is why
- * nothing allocates a label. Both segments are in the migration reporter's
- * opaque-name allowlist: a region token and the role word `artifact`, plus a
- * UUID.
+ * Every segment is in the migration reporter's opaque-name allowlist: a region
+ * token, the role word `artifact`, and a UUID.
  */
 export function artifactHostDOName(region: Region, artifactId: ArtifactId): string {
   return `${region}:artifact:${artifactId}`;

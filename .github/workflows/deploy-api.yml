@@ -511,6 +511,13 @@ jobs:
             0097_email_routes_use_full_address.sql <<< "$pending")"
           echo "$classification" >> "$GITHUB_OUTPUT"
 
+      - name: List the pending platform migrations
+        run: pnpm --filter @rally/api db:platform:migrate:remote:list
+
+      - name: Apply the shared platform D1 migrations
+        if: env.APPLY_MIGRATIONS == 'true'
+        run: pnpm --filter @rally/api db:platform:migrate:remote
+
       - name: Apply the remote D1 migrations to EU
         if: >-
           env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_EU == 'true' &&
@@ -571,12 +578,14 @@ jobs:
                 --message "Promote verified GitHub deployment $DEPLOY_SHA" \
                 --yes
             }
+            # The new serving Worker accepts both legacy UUID hosts and readable
+            # stub hosts. Promote it before the API can mint a stub URL.
+            promote_version wrangler.artifacts.eu.jsonc "${{ steps.upload_eu.outputs.eu_artifacts }}"
             promote_version wrangler.documents.eu.jsonc "${{ steps.upload_eu.outputs.eu_documents }}"
             promote_version wrangler.terminal.eu.jsonc "${{ steps.upload_eu.outputs.eu_terminal }}"
             promote_version .wrangler.lakehouses.eu.json "${{ steps.upload_eu.outputs.eu_api }}"
-            promote_version wrangler.artifacts.eu.jsonc "${{ steps.upload_eu.outputs.eu_artifacts }}"
           else
-            for config in wrangler.documents.eu.jsonc wrangler.terminal.eu.jsonc .wrangler.lakehouses.eu.json wrangler.artifacts.eu.jsonc; do
+            for config in wrangler.artifacts.eu.jsonc wrangler.documents.eu.jsonc wrangler.terminal.eu.jsonc .wrangler.lakehouses.eu.json; do
               pnpm --filter @rally/api exec wrangler deploy \
                 --config "$config" \
                 --tag "$DEPLOY_SHA" \
@@ -605,14 +614,15 @@ jobs:
                 --message "Promote verified GitHub deployment $DEPLOY_SHA" \
                 --yes
             }
+            # Keep the reader ahead of the writer during the hostname cutover.
+            promote_version wrangler.artifacts.global.jsonc "${{ steps.upload_global.outputs.global_artifacts }}"
             promote_version wrangler.documents.global.jsonc "${{ steps.upload_global.outputs.global_documents }}"
             promote_version wrangler.terminal.global.jsonc "${{ steps.upload_global.outputs.global_terminal }}"
             promote_version wrangler.telemetry.global.jsonc "${{ steps.upload_global.outputs.global_telemetry }}"
             promote_version wrangler.pricing.global.jsonc "${{ steps.upload_global.outputs.global_pricing }}"
             promote_version .wrangler.lakehouses.global.json "${{ steps.upload_global.outputs.global_api }}"
-            promote_version wrangler.artifacts.global.jsonc "${{ steps.upload_global.outputs.global_artifacts }}"
           else
-            for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc wrangler.telemetry.global.jsonc wrangler.pricing.global.jsonc .wrangler.lakehouses.global.json wrangler.artifacts.global.jsonc; do
+            for config in wrangler.artifacts.global.jsonc wrangler.documents.global.jsonc wrangler.terminal.global.jsonc wrangler.telemetry.global.jsonc wrangler.pricing.global.jsonc .wrangler.lakehouses.global.json; do
               pnpm --filter @rally/api exec wrangler deploy \
                 --config "$config" \
                 --tag "$DEPLOY_SHA" \

@@ -63,9 +63,12 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
-Both commands cover Global and EU. Run them before starting a Worker: the
-migration and seed tooling writes to the same `.wrangler/state/<region>` SQLite
-files that a running `wrangler dev` holds open.
+Both commands cover Global and EU. `db:migrate` also applies the content-free
+platform D1 migration chain into both regional local-state directories, so the
+shared `PLATFORM_DB` binding has the same route table whichever local Worker
+opens it. Run them before starting a Worker: the migration and seed tooling
+writes to the same `.wrangler/state/<region>` SQLite files that a running
+`wrangler dev` holds open.
 
 An **empty** database is created from the newest checked-in baseline in
 `packages/db/baselines/` — a snapshot of the schema as of migration 0090 — and
@@ -303,7 +306,7 @@ an older worktree so the smoke test sees both fixtures.
 | --- | --- |
 | Install dependencies | `pnpm install --frozen-lockfile` |
 | Sync development Worker vars | `pnpm env:sync` |
-| Migrate both regions | `pnpm db:migrate` |
+| Migrate both regions and their local platform bindings | `pnpm db:migrate` |
 | Regenerate the D1 baseline | `pnpm db:baseline:create <through-migration.sql>` |
 | Check the baseline against the hosted databases | `pnpm db:baseline:verify` |
 | Seed both regions | `pnpm db:seed` |

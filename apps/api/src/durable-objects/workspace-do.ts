@@ -2368,11 +2368,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     // Beside `resources`, because an artifact *is* a resource with a serving
     // side: one row here per site resource, carrying what the resource row has
     // no column for. It is a per-workspace index for listing, revocation
-    // fan-out, and cleanup — never a uniqueness authority. It cannot be one:
-    // this database is per workspace, so a UNIQUE here is unique per workspace
-    // and two workspaces could claim the same host. Region-wide uniqueness
-    // comes from `artifact_id` being a UUID, which is also the hostname label
-    // and the segment its supervisor object is named by.
+    // fan-out, and cleanup — never the region-wide public-name authority. That
+    // authority was added in platform D1 by its migration 0001; version 29 records
+    // its already-reserved stub here. The UUID remains the supervisor name and
+    // storage identity.
     `CREATE TABLE artifact_registry (
       artifact_id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
@@ -2401,6 +2400,43 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       BEFORE UPDATE OF workspace_id ON artifact_registry
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+  ],
+}, {
+  version: 29,
+  description: "give live artifacts public hostname stubs",
+  statements: [
+    // Nullable for artifacts published before stub-addressed origins shipped.
+    // Their first authorized open allocates and materializes the immutable
+    // regional route before filling this field.
+    `ALTER TABLE artifact_registry ADD COLUMN hostname_stub TEXT`,
+    `CREATE UNIQUE INDEX artifact_registry_hostname_stub_idx
+      ON artifact_registry(hostname_stub) WHERE hostname_stub IS NOT NULL`,
+    `CREATE TRIGGER artifact_registry_hostname_stub_shape_insert
+      BEFORE INSERT ON artifact_registry
+      WHEN NEW.hostname_stub IS NOT NULL AND (
+        NEW.hostname_stub <> lower(NEW.hostname_stub)
+        OR NEW.hostname_stub GLOB '*[^a-z-]*'
+        OR NEW.hostname_stub GLOB '-*'
+        OR NEW.hostname_stub GLOB '*-'
+        OR NEW.hostname_stub GLOB '*--*'
+        OR length(NEW.hostname_stub) - length(replace(NEW.hostname_stub, '-', '')) <> 3
+      )
+      BEGIN SELECT RAISE(ABORT, 'artifact_hostname_stub_invalid'); END`,
+    `CREATE TRIGGER artifact_registry_hostname_stub_shape_update
+      BEFORE UPDATE OF hostname_stub ON artifact_registry
+      WHEN NEW.hostname_stub IS NOT NULL AND (
+        NEW.hostname_stub <> lower(NEW.hostname_stub)
+        OR NEW.hostname_stub GLOB '*[^a-z-]*'
+        OR NEW.hostname_stub GLOB '-*'
+        OR NEW.hostname_stub GLOB '*-'
+        OR NEW.hostname_stub GLOB '*--*'
+        OR length(NEW.hostname_stub) - length(replace(NEW.hostname_stub, '-', '')) <> 3
+      )
+      BEGIN SELECT RAISE(ABORT, 'artifact_hostname_stub_invalid'); END`,
+    `CREATE TRIGGER artifact_registry_hostname_stub_immutable
+      BEFORE UPDATE OF hostname_stub ON artifact_registry
+      WHEN OLD.hostname_stub IS NOT NULL AND NEW.hostname_stub IS NOT OLD.hostname_stub
+      BEGIN SELECT RAISE(ABORT, 'artifact_hostname_stub_immutable'); END`,
   ],
 }];
 

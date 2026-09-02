@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // This file owns the one platform-shared D1 migration chain. It is not a
+  // deployable Worker configuration and deliberately sits outside the
+  // `wrangler.<region>.jsonc` discovery convention used for regional D1.
+  "name": "avalon-api-global",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "d1_databases": [
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "rally-platform",
+      "database_id": "39b6800c-7945-4c5b-80cb-e7cdd73af14a",
+      "migrations_dir": "../../packages/db/platform-migrations"
+    }
+  ]
+}

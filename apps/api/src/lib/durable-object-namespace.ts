@@ -297,13 +297,12 @@ export function durableObjectStubForRegionalSingleton<
  * workspace-addressed.
  *
  * The third supported resolver, and it exists because the artifact host is the
- * one object whose *name carries no workspace segment*. It cannot: the artifact
- * serving Worker holds no D1 and sees only `Host`, so every part of the name
- * has to be derivable from the hostname alone — and the hostname is the
- * artifact id. That rules out {@link durableObjectStubForWorkspace}, which
- * reads the workspace's placement affinity from D1, and there is no singleton
- * here for {@link durableObjectStubForRegionalSingleton}: one object per
- * artifact.
+ * one object whose *name carries no workspace segment*. The serving Worker
+ * resolves a public hostname stub through platform D1 to the UUID this
+ * resolver receives. That rules out {@link durableObjectStubForWorkspace},
+ * which reads the workspace's placement affinity from D1, and there is no
+ * singleton here for {@link durableObjectStubForRegionalSingleton}: one object
+ * per artifact.
  *
  * **The fallback hint is correct rather than merely tolerable, and that is
  * worth stating because it looks like a compromise.** Cloudflare honours a
