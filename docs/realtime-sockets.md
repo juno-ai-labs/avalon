@@ -193,7 +193,10 @@ connected beyond it while they retain that role. Holding a
 pointer over any sidebar work-stream row for one second warms its WorkstreamDO
 control socket and presence-free SubstreamAgent feed before navigation.
 Selection reuses that complete pair; neither socket waits for detail REST or
-the other's metadata.
+the other's metadata. A hover snapshot is explicitly speculative: it does not
+settle the participant's unseen marker. Committed navigation promotes the
+already-admitted socket with one `mark_opened` frame, after the cached snapshot
+is available, so seen-state bookkeeping adds no click-to-paint request.
 Leaving, cancelling the pointer, unmounting the row, or opening it before the
 second passes cancels the warm-up. Once the control socket opens, it can remain for up
 to five minutes, and a newly qualified hover replaces any other unopened warm
@@ -410,6 +413,8 @@ SubstreamAgent performs session/membership admission once, stores that admitted
 role in the hibernation attachment, and completes the presence-free subscription
 before returning the upgrade. An explicit client `subscribe` remains only as a
 compatibility path for an older server that did not advertise ticket bootstrap.
+Speculative hover intent is signed beside the cursor; the Worker strips both
+canonical and legacy client spellings before forwarding either trusted header.
 Revocation still closes the admitted attachment; admission reuse is not a new
 authorization lifetime.
 
@@ -662,9 +667,12 @@ misstate attention. Splitting proxy internals at guessed callback boundaries
 would make the diagnosis less reliable.
 
 **Consequences:** Hover may wake and snapshot one additional SubstreamAgent, but
-never publishes viewer presence and remains bounded to one speculative row.
-Older client/server combinations still use explicit subscribe. Revocation and
-attachment serialization remain the lifetime boundary after admission.
+never publishes viewer presence or marks the row opened, and remains bounded to
+one speculative row. Navigation promotes that retained attachment with a
+one-way `mark_opened` frame. Bootstrap failure closes the already-accepted
+server socket so reconnect cannot strand an orphan. Older client/server
+combinations still use explicit subscribe. Revocation and attachment
+serialization remain the lifetime boundary after admission.
 
 ### 2026-08-29 — Dictation admission becomes one question to WorkspaceDO
 

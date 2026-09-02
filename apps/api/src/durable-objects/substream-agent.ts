@@ -273,6 +273,9 @@ const SocketAttachmentSchema = z.object({
   // Missing means a legacy client whose feed subscription still represented
   // viewing. Current proactive clients opt out and use WorkspaceDO presence.
   publishPresence: z.boolean().default(true),
+  // A hover-warmed socket may receive canonical state but cannot settle the
+  // reader's unseen marker until the renderer commits navigation.
+  speculative: z.boolean().default(false),
   /** A `request_snapshot` from this socket is assembling; broadcasts skip it. */
   snapshotInFlight: z.boolean().default(false),
   transcriptSnapshot: z.object({
@@ -768,7 +771,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private harnessRuns!: WorkstreamHarnessRunStorage;
   /** Schema, repositories, and identity required to admit and snapshot a feed. */
   private readonly storageReady: Promise<void>;
-  private readonly initialized: Promise<void>;
+  private readonly runtimeRecoveryAttempt: () => Promise<void>;
+  private runtimeRecovery: Promise<void> | null = null;
+  private get initialized(): Promise<void> {
+    return this.startRuntimeRecovery();
+  }
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
   /** Distinguishes this live object instance from the predecessor it replaces. */
@@ -873,7 +880,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // Lease repair and alarm derivation protect execution, not feed reads. Keep
     // them durable and single-flight, but do not hold a cold socket upgrade
     // behind the storage alarm round trip once its schema is usable.
-    this.initialized = this.storageReady.then(() => inDurableObjectPhase(
+    this.runtimeRecoveryAttempt = () => this.storageReady.then(() => inDurableObjectPhase(
       this.env,
       "runtime_recovery",
       {
@@ -938,10 +945,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await this.armNextAlarm();
       },
     ));
-    this.state.waitUntil(this.initialized);
+    const initialRecovery = this.initialized;
+    this.state.waitUntil(initialRecovery.catch((error) => {
+      logWarn(this.env, "substream_runtime_recovery_failed", {
+        substream_id: this.externalSubstreamId(),
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }));
     // Exact text ping/pong frames are answered by the runtime without waking a
     // hibernated object, so keepalives do not accrue Durable Object duration.
     this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  /**
+   * Runtime repair is single-flight while it is running, but a failed attempt
+   * cannot poison this isolate. Mutating entry points see that failure; the
+   * next one retries the idempotent lease/alarm derivation. Feed reads continue
+   * to wait only for `storageReady`.
+   */
+  private startRuntimeRecovery(): Promise<void> {
+    if (this.runtimeRecovery) return this.runtimeRecovery;
+    const attempt = this.runtimeRecoveryAttempt();
+    this.runtimeRecovery = attempt;
+    void attempt.catch(() => {
+      if (this.runtimeRecovery === attempt) this.runtimeRecovery = null;
+    });
+    return attempt;
   }
 
   private ensureSubstreamIdentity(substreamId: string): void {
@@ -4563,6 +4592,21 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
 
+    if (parsed.data.type === "mark_opened") {
+      if (!attachment.speculative) return;
+      const auth = await this.socketViewerAuth(attachment);
+      if (!auth || !this.product.canRead(attachment.userId)) {
+        disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "Work stream access revoked");
+        return;
+      }
+      await this.product.markOpenedAdmitted(auth);
+      socket.serializeAttachment({
+        ...attachment,
+        speculative: false,
+      } satisfies SocketAttachment);
+      return;
+    }
+
     if (parsed.data.type === "request_snapshot") {
       await this.fulfillSnapshotRequest(socket, attachment);
       return;
@@ -5264,6 +5308,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ticketId: z.string().uuid(),
         ticketExpiresAt: z.coerce.number().int().positive(),
         afterSequence: z.coerce.number().int().nonnegative().optional(),
+        speculative: z.literal("true").transform(() => true).optional().default(false),
       })
       .safeParse({
         workspaceId:
@@ -5276,10 +5321,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         sessionId: readRallyHeader(request.headers, RALLY_HEADERS.SESSION_ID) ?? null,
         ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
         ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
-        afterSequence: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_AFTER_SEQUENCE)
-          ?? (url.searchParams.has("afterSequence")
-            ? url.searchParams.get("afterSequence")
-            : undefined)
+        afterSequence: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_AFTER_SEQUENCE),
+        speculative: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_SPECULATIVE),
       });
 
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
@@ -5293,6 +5336,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ...(identity.data.afterSequence === undefined ? {} : {
         "rally.socket.after_sequence": identity.data.afterSequence,
       }),
+      ...(identity.data.speculative ? { "rally.socket.speculative": true } : {}),
     });
 
     const currentAuthority = await span.step("workstream.room.socket.authority_read", () =>
@@ -5366,6 +5410,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       afterSequence: identity.data.afterSequence ?? 0,
       subscribed: false,
       publishPresence: identity.data.afterSequence === undefined,
+      speculative: identity.data.speculative,
       snapshotInFlight: false,
       transcriptSnapshot: null,
     };
@@ -5378,17 +5423,36 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     server.serializeAttachment(attachment);
 
     if (identity.data.afterSequence !== undefined) {
-      const subscribed = await this.fulfillSubscription(
-        server,
-        attachment.workspaceId,
-        attachment.workstreamId,
-        identity.data.afterSequence,
-        span,
-      );
-      span.setAttributes({
-        "rally.socket.subscription_bootstrap": true,
-        "rally.socket.subscription_bootstrap_outcome": subscribed ? "subscribed" : "resync",
-      });
+      try {
+        const subscribed = await this.fulfillSubscription(
+          server,
+          attachment.workspaceId,
+          attachment.workstreamId,
+          identity.data.afterSequence,
+          span,
+        );
+        span.setAttributes({
+          "rally.socket.subscription_bootstrap": true,
+          "rally.socket.subscription_bootstrap_outcome": subscribed ? "subscribed" : "resync",
+        });
+      } catch (error) {
+        // Admission and ticket consumption have already happened. Return the
+        // upgrade and close its registered server end so the client reconnects
+        // with a fresh ticket; throwing here would answer 500 while leaving an
+        // unreachable socket in the hibernation set.
+        logWarn(this.env, "substream_subscription_bootstrap_failed", {
+          workspace_id: attachment.workspaceId,
+          workstream_id: attachment.workstreamId,
+          substream_id: attachment.substreamId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+        span.setError("subscription_bootstrap_failed");
+        span.setAttributes({
+          "rally.socket.subscription_bootstrap": true,
+          "rally.socket.subscription_bootstrap_outcome": "failed",
+        });
+        server.close(1011, "Subscription bootstrap failed");
+      }
     }
 
     span.mark("workstream.room.socket.accept_connection");
@@ -5967,14 +6031,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
-  private async loadSnapshot(
-    workspaceId: string,
-    workstreamId: string,
-    socket: WebSocket,
-  ): Promise<{ auth: AuthContext; workstream: WorkstreamDetail }> {
-    const attachment = this.readAttachment(socket);
-    if (!attachment) throw new Error("Snapshot viewer socket is unavailable");
-    const auth: AuthContext | null = attachment.sessionId && attachment.role
+  private async socketViewerAuth(attachment: SocketAttachment): Promise<AuthContext | null> {
+    return attachment.sessionId && attachment.role
       ? {
           sessionId: attachment.sessionId,
           userId: attachment.userId,
@@ -5987,9 +6045,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // in its attachment. Preserve it through the rolling deploy by taking
       // the old one-time path; new sockets never repeat this regional read.
       : await this.socketAuth(attachment);
+  }
+
+  private async loadSnapshot(
+    workspaceId: string,
+    workstreamId: string,
+    socket: WebSocket,
+  ): Promise<{ auth: AuthContext; workstream: WorkstreamDetail }> {
+    const attachment = this.readAttachment(socket);
+    if (!attachment) throw new Error("Snapshot viewer socket is unavailable");
+    const auth = await this.socketViewerAuth(attachment);
     if (!auth) throw new Error("Snapshot viewer is no longer authorized");
     const viewers = await this.loadViewers(workspaceId, workstreamId);
-    return { auth, workstream: await this.product.getAdmitted(auth, viewers) };
+    return {
+      auth,
+      workstream: await this.product.getAdmitted(auth, viewers, !attachment.speculative),
+    };
   }
 
   private async loadViewers(

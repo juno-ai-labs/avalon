@@ -19,7 +19,8 @@ describe("Durable Object initialization instrumentation", () => {
       : "this.initialized = this.initializeDurableObject(async () => {";
     expect(source).toContain(timedGate);
     if (fileName === "substream-agent.ts") {
-      expect(source).toContain("this.initialized = this.storageReady.then(");
+      expect(source).toContain("this.runtimeRecoveryAttempt = () => this.storageReady.then(");
+      expect(source).toContain("if (this.runtimeRecovery === attempt) this.runtimeRecovery = null;");
     }
     expect(source).not.toContain("this.initialized = state.blockConcurrencyWhile(async () => {");
   });

@@ -103,6 +103,7 @@ const SocketTicketSchema = z.object({
 });
 const SocketTicketQuerySchema = z.object({
   afterSequence: z.coerce.number().int().nonnegative().optional(),
+  speculative: z.literal("true").transform(() => true).optional(),
 });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
@@ -369,12 +370,18 @@ workstreamRoutes.get(
   async (c) => {
     const id = c.req.valid("param").id;
     const afterSequence = c.req.valid("query").afterSequence;
+    const speculative = c.req.valid("query").speculative ?? false;
     return requestFlowSpan(c, "workstream.socket.ticket", {
       flow: "workstream_open",
       identity: { workstreamId: id, substreamId: "0" },
     }, async (span) => {
       const issued = await span.step("workstream.socket.ticket.issue", () =>
-        new WorkstreamService(c.env, getAuth(c)).socketTicket(id, "0", afterSequence));
+        new WorkstreamService(c.env, getAuth(c)).socketTicket(
+          id,
+          "0",
+          afterSequence,
+          speculative,
+        ));
       // The upgrade this authorizes is a new connection, which the platform
       // traces as its own invocation with its own trace id. The ticket id is the
       // attribute both traces carry, and the only thing that joins them.
@@ -392,6 +399,7 @@ workstreamRoutes.get(
   async (c) => {
     const param = c.req.valid("param");
     const afterSequence = c.req.valid("query").afterSequence;
+    const speculative = c.req.valid("query").speculative ?? false;
     return requestFlowSpan(c, "workstream.socket.ticket", {
       flow: "workstream_open",
       identity: { workstreamId: param.id, substreamId: param.substreamId },
@@ -401,6 +409,7 @@ workstreamRoutes.get(
           param.id,
           param.substreamId,
           afterSequence,
+          speculative,
         ));
       span.setAttributes({
         "rally.socket.ticket_id": issued.ticketId,
