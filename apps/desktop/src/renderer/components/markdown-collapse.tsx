@@ -104,11 +104,14 @@ export function MarkdownCollapseSection({
   const expanded = !(collapse?.collapsed.has(id) ?? false);
   // The faded preview is part of the same affordance as the chevron: a reader
   // who clicks the three lines they cannot finish wants the rest of them. The
-  // body itself takes no pointer events while collapsed, so the click lands
-  // here on the section. Opening only — a click inside an open body belongs to
-  // the text, never to the accordion.
+  // collapsed body is inert, so it is out of hit testing and the click lands
+  // here on the section. Attached only while collapsed, and expanding rather
+  // than toggling: a click inside an open body belongs to the text it landed
+  // on, never to the accordion.
   const openFromPreview = (event: React.MouseEvent<HTMLDivElement>): void => {
-    // The heading runs its own toggle, including its selection guard.
+    // The heading owns every click on itself, including the link and selection
+    // rules that decide it should *not* toggle; opening here would overrule
+    // them and swallow a link in a heading.
     if ((event.target as HTMLElement | null)?.closest?.('.markdown-collapse-heading')) return;
     if (window.getSelection()?.isCollapsed === false) return;
     collapse?.expand(id);
