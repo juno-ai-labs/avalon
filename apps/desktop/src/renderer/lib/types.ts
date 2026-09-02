@@ -352,7 +352,15 @@ export interface ThoughtEventData {
   durationMs: number | null;
   /** Client receipt time for the currently streaming inference attempt. */
   startedAt?: number;
-  monotonicStartedAt?: number;
+  /**
+   * One local monotonic start per still-running segment this row stands for.
+   *
+   * A projected row has exactly one. A collapsed run of thinking rows has as
+   * many as it summed, for the same reason a plugin group does: its total
+   * counts every segment, so the live number has to advance by every one of
+   * them or it jumps to the real figure the moment they settle.
+   */
+  monotonicStartedAt?: number | readonly number[];
   timingAccuracy?: 'observed' | 'upper_bound';
   activeVerb?: string;
   completedVerb?: string;
@@ -467,6 +475,18 @@ export interface Message {
    * realtime frame budget and are deliberately not delivered.
    */
   blocksOmittedPlaceholder?: boolean;
+  /**
+   * Set on the first row after a stretch of transcript this client has not
+   * loaded.
+   *
+   * A snapshot's coverage is not one interval: the opening one commonly holds
+   * an unread island and a separate latest island, and the projection flattens
+   * both into one list. Two rows either side of that seam look adjacent and are
+   * not — anything between them, a sentence from Rally included, is simply
+   * absent. Every pass that reasons about a *run* of adjacent rows has to stop
+   * at this flag, or it will join work across turns nobody has seen.
+   */
+  precededByTranscriptGap?: boolean;
   statusEvent?: {
     kind: 'assistant_turn_failed' | 'assistant_turn_stopped';
     code: string;
