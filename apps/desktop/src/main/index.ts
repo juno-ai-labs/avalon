@@ -2768,13 +2768,19 @@ function openArtifactWindow(request: { artifactId: string; url: string; title: s
     show: false,
     backgroundColor: windowBackgroundColor(),
     title: request.title,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 18, y: 17 },
+    // Artifact markup owns the whole document and cannot be expected to leave
+    // room for native window controls. Keep a compact native title area so the
+    // macOS traffic lights never sit on top of model-authored navigation.
+    titleBarStyle: 'default',
     ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
     webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
   });
   artifactWebContents.add(window.webContents);
   confineToArtifactOrigin(window.webContents, new URL(request.url).origin);
+  // The artifact controls document.title, but this strip belongs to Rally's
+  // window. Keep the bounded resource title instead of letting remote markup
+  // rename the native chrome after it loads.
+  window.on('page-title-updated', (event) => event.preventDefault());
   window.setMenuBarVisibility(false);
   window.once('ready-to-show', () => window.show());
   void loadArtifactInitialUrl(() => window.loadURL(request.url)).then((loaded) => {
