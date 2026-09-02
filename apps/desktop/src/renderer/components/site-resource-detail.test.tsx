@@ -28,8 +28,8 @@ function surface(overrides: Partial<SiteResourceDetailProps['surface']> = {}) {
 /**
  * Every mint returns a *different* code, because the real one is single-use.
  * A surface that reused an earlier code would be indistinguishable from a
- * correct one against a constant fixture — and that is the bug this file now
- * pins, so the fixture has to be able to tell them apart.
+ * correct one against a constant fixture — and that is the single-use URL bug
+ * these navigation tests pin, so the fixture must tell them apart.
  */
 function mintingAccess() {
   let minted = 0;
@@ -98,6 +98,35 @@ describe('showing a live artifact in the rail', () => {
 
     expect(presented).toBeDefined();
     expect(new Set([presented, poppedOut, external]).size).toBe(3);
+  });
+
+  it('pairs a navigation URL with the artifact identity minted alongside it', async () => {
+    // The URL origin and artifact id enforce different halves of the native
+    // viewer's isolation. They must come from one access response rather than
+    // combining a fresh URL with identity retained from an earlier response.
+    const navigationArtifact = '3f2504e0-4f89-41d3-9a0c-0305e82c3399';
+    const openArtifact = vi.fn()
+      .mockResolvedValueOnce({
+        openUrl: OPEN_URL,
+        canonicalUrl: CANONICAL,
+        artifactId: ARTIFACT,
+        mode: 'active' as const,
+        stateful: true,
+      })
+      .mockResolvedValueOnce({
+        openUrl: `https://${navigationArtifact}-g.rallyusercontent.test/__rally/open#fresh-code`,
+        canonicalUrl: `https://${navigationArtifact}-g.rallyusercontent.test`,
+        artifactId: navigationArtifact,
+        mode: 'active' as const,
+        stateful: true,
+      });
+    const { props } = setup({ openArtifact });
+
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    expect(props.surface.present).toHaveBeenCalledWith(expect.objectContaining({
+      artifactId: navigationArtifact,
+      url: expect.stringContaining(navigationArtifact),
+    }));
   });
 
   it('shows the unavailable state when the preview cannot be presented at all', async () => {
@@ -181,6 +210,8 @@ describe('showing a live artifact in the rail', () => {
       stateful: true,
     }));
 
+    // Exactly one close proves cleanup ran without a late continuation trying
+    // to compensate by closing a second time after stale content was shown.
     expect(previewSurface.close).toHaveBeenCalledOnce();
     expect(previewSurface.present).not.toHaveBeenCalled();
   });

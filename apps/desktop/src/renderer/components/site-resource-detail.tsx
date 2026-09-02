@@ -105,14 +105,14 @@ export function SiteResourceDetail({
    * lands on Rally's neutral page instead of the site. The code also lives 60
    * seconds, so one held from mount is stale by the time somebody clicks.
    */
-  const mintOpenUrl = React.useCallback(
-    async (): Promise<string> => (await openArtifact(resourceId)).openUrl,
+  const mintAccess = React.useCallback(
+    async (): Promise<SiteArtifactAccess> => await openArtifact(resourceId),
     [openArtifact, resourceId],
   );
 
   // Once per artifact, for what the detail renders from — the canonical URL,
   // the mode, and whether it keeps data. The code this also mints is not the
-  // one any navigation uses; `mintOpenUrl` gets a fresh one at the click.
+  // one any navigation uses; `mintAccess` gets a fresh one at the click.
   React.useEffect(() => {
     let cancelled = false;
     setAccess(null);
@@ -147,13 +147,17 @@ export function SiteResourceDetail({
     const bounds = measure();
     if (!bounds) return undefined;
     let cancelled = false;
-    void mintOpenUrl()
-      .then(async (url) => {
+    void mintAccess()
+      .then(async (navigation) => {
         // Minting crosses the API and can finish after a work-stream switch has
         // unmounted this detail. Its cleanup has already closed the native view
         // by then, so presenting here would resurrect an ownerless old preview.
         if (cancelled) return false;
-        return await surface.present({ artifactId: access.artifactId, url, bounds });
+        return await surface.present({
+          artifactId: navigation.artifactId,
+          url: navigation.openUrl,
+          bounds,
+        });
       })
       .then((shown) => { if (!cancelled) setPreviewShown(shown); })
       // A refused mint or a main process that cannot composite both land here.
@@ -164,7 +168,7 @@ export function SiteResourceDetail({
       cancelled = true;
       void surface.close();
     };
-  }, [access, measure, mintOpenUrl, panel, surface]);
+  }, [access, measure, mintAccess, panel, surface]);
 
   // Layout changes only. A composited view that chases a scrolling rectangle
   // jitters, so the pane is a fixed region of the detail rather than content
@@ -238,8 +242,12 @@ export function SiteResourceDetail({
           disabled={!access}
           onClick={() => {
             if (!access) return;
-            void mintOpenUrl().then(
-              async (url) => await surface.popOut({ artifactId: access.artifactId, url, title }),
+            void mintAccess().then(
+              async (navigation) => await surface.popOut({
+                artifactId: navigation.artifactId,
+                url: navigation.openUrl,
+                title,
+              }),
             );
           }}
         >
@@ -261,7 +269,9 @@ export function SiteResourceDetail({
         </Button>
         <Button
           disabled={!access}
-          onClick={() => void mintOpenUrl().then(async (url) => await surface.openExternal(url))}
+          onClick={() => void mintAccess().then(
+            async (navigation) => await surface.openExternal(navigation.openUrl),
+          )}
         >
           <ExternalLink size={14} /> Open in browser
         </Button>

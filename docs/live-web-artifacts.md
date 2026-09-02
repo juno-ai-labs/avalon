@@ -236,7 +236,9 @@ is the only place that can forward into it.
   navigation-specific access mint crosses the API and can settle after a work-
   stream switch has unmounted the detail. A cancelled detail must refuse to
   call the main process after cleanup, or it recreates an ownerless old preview
-  over the newly selected stream.
+  over the newly selected stream. The presentation's artifact ID and open URL
+  must also come from that same navigation mint: the ID selects its isolated
+  storage partition while the URL selects its confined origin.
 - **Everything the renderer measures is a request, not an instruction.** The
   preview rectangle is clamped to the window, because a wrong or hostile one
   would paint artifact content over the chrome a person needs to escape it. And
@@ -435,8 +437,9 @@ rather than workspace authority.
 
 **What changed:** The live-site detail now checks its ownership again after a
 navigation access mint settles and before asking Electron to present the native
-preview. A regression test holds that mint across unmount and proves no late
-presentation occurs.
+preview. It also carries the artifact ID and URL from the same mint into preview
+and pop-out requests. Regression tests hold a mint across unmount to prove no
+late presentation and reject an identity/URL pair from different mints.
 
 **Why:** Switching work streams closes the preview while the old detail unmounts,
 but minting the preview's single-use access URL is asynchronous. When that mint
@@ -448,8 +451,10 @@ would still let stale artifact content appear briefly and could close a newer
 detail's valid preview. The cancelled owner instead never presents.
 
 **Consequences:** Every asynchronous step before native presentation must keep
-the detail's cancellation fence. Work-stream switches can no longer leave an old
-site composited over the newly selected feed.
+the detail's cancellation fence, and every privileged navigation request must
+carry identity and URL from one access response. Work-stream switches can no
+longer leave an old site composited over the newly selected feed or rely on
+React effect timing to preserve the artifact storage boundary.
 
 ### 2026-09-02 — Sites become public by default; protection becomes active code
 
