@@ -243,7 +243,8 @@ describe('token references', () => {
   // theme. Each is set by a rule in this same file.
   const RULE_LOCAL = ['--sidebar-row-background', '--pill-overhang', '--rail-slot',
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
-    '--tw-fade-scrollbar-thumb', '--tw-fade-scrollbar-width', '--av-cmp-sidebar-width'];
+    '--tw-fade-scrollbar-thumb', '--tw-fade-scrollbar-width', '--av-cmp-sidebar-width',
+    '--turn-bubble-radius'];
 
   // Set at runtime rather than in CSS: two by components as inline styles, three
   // by libraries on their own elements. They cannot be checked from this file,
