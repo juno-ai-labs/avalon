@@ -36,6 +36,7 @@ import {
 import { uuidV7 } from "../lib/uuid-v7";
 
 const encoder = new TextEncoder();
+export const WORKSTREAM_SOCKET_TICKET_TTL_SECONDS = 60;
 
 interface SocketClaims {
   sessionId: string;
@@ -48,6 +49,19 @@ interface SocketClaims {
   expiresAt: number;
   afterSequence?: number;
   speculative?: true;
+  admission?: WorkstreamSocketAdmission;
+}
+
+export interface WorkstreamSocketAdmission {
+  version: 1;
+  authorityGeneration: number;
+  role: AuthContext["role"];
+  analyticsWorkspaceId: string | null;
+}
+
+export interface IssueWorkstreamSocketTicketOptions {
+  admission?: Omit<WorkstreamSocketAdmission, "version">;
+  issuedAt?: number;
 }
 
 interface WorkspaceSocketClaims {
@@ -121,9 +135,10 @@ export async function issueSocketTicket(
   ticketId: string = uuidV7(),
   afterSequence?: number,
   speculative = false,
+  options: IssueWorkstreamSocketTicketOptions = {},
 ): Promise<string> {
   assertSessionPrincipal(auth);
-  const now = Math.floor(Date.now() / 1_000);
+  const now = options.issuedAt ?? Math.floor(Date.now() / 1_000);
   return new SignJWT({
     purpose: "workstream_socket",
     sid: auth.sessionId,
@@ -133,6 +148,12 @@ export async function issueSocketTicket(
     region: auth.region,
     ...(afterSequence === undefined ? {} : { after: afterSequence }),
     ...(speculative ? { warm: true } : {}),
+    ...(options.admission ? {
+      admission: 1,
+      authority_generation: options.admission.authorityGeneration,
+      role: options.admission.role,
+      analytics_workspace_id: options.admission.analyticsWorkspaceId,
+    } : {}),
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
@@ -140,7 +161,7 @@ export async function issueSocketTicket(
     .setIssuer("avalon-api")
     .setAudience("avalon-workstream-socket")
     .setIssuedAt(now)
-    .setExpirationTime(now + 60)
+    .setExpirationTime(now + WORKSTREAM_SOCKET_TICKET_TTL_SECONDS)
     .sign(signingKey(env));
 }
 
@@ -236,6 +257,24 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       ? payload.after
       : undefined;
     const speculative = payload.warm === true;
+    let admission: WorkstreamSocketAdmission | undefined;
+    if (payload.admission !== undefined) {
+      if (
+        payload.admission !== 1
+        || typeof payload.authority_generation !== "number"
+        || !Number.isInteger(payload.authority_generation)
+        || payload.authority_generation < 0
+        || (payload.role !== "owner" && payload.role !== "admin" && payload.role !== "member")
+        || (payload.analytics_workspace_id !== null
+          && typeof payload.analytics_workspace_id !== "string")
+      ) throw new Error("Incomplete socket admission claims");
+      admission = {
+        version: 1,
+        authorityGeneration: payload.authority_generation,
+        role: payload.role,
+        analyticsWorkspaceId: payload.analytics_workspace_id,
+      };
+    }
     return {
       sessionId: payload.sid,
       userId: asUserId(payload.sub),
@@ -247,6 +286,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       expiresAt: payload.exp,
       ...(afterSequence === undefined ? {} : { afterSequence }),
       ...(speculative ? { speculative: true as const } : {}),
+      ...(admission ? { admission } : {}),
     };
   } catch {
     throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
@@ -553,6 +593,10 @@ export class SocketService {
       // smuggle an unsigned cursor or speculative mode through the copied
       // upgrade headers when the corresponding claim is absent.
       for (const name of [
+        ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ADMISSION_AUTHORITY_GENERATION),
+        ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ADMISSION_ROLE),
+        ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ADMISSION_VERSION),
+        ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_ANALYTICS_WORKSPACE_ID),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE),
         ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_SPECULATIVE),
       ]) headers.delete(name);
@@ -560,6 +604,20 @@ export class SocketService {
         headers.set(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE, String(claims.afterSequence));
       }
       if (claims.speculative) headers.set(RALLY_HEADERS.SOCKET_SPECULATIVE, "true");
+      if (claims.admission) {
+        headers.set(RALLY_HEADERS.SOCKET_ADMISSION_VERSION, String(claims.admission.version));
+        headers.set(
+          RALLY_HEADERS.SOCKET_ADMISSION_AUTHORITY_GENERATION,
+          String(claims.admission.authorityGeneration),
+        );
+        headers.set(RALLY_HEADERS.SOCKET_ADMISSION_ROLE, claims.admission.role);
+        if (claims.admission.analyticsWorkspaceId !== null) {
+          headers.set(
+            RALLY_HEADERS.SOCKET_ANALYTICS_WORKSPACE_ID,
+            claims.admission.analyticsWorkspaceId,
+          );
+        }
+      }
       // No trace header is written: the room's spans are already children of
       // this one, because a Durable Object call is a traced binding call and
       // everything inside it runs in this span's async context.

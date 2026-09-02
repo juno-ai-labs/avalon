@@ -267,6 +267,10 @@ const SocketAttachmentSchema = z.object({
   workstreamId: WorkstreamIdSchema,
   substreamId: SubstreamIdSchema,
   userId: UserIdSchema,
+  // Present on current connections so a prepared ticket-transit snapshot can
+  // be claimed by exactly the socket that consumed that ticket. Older
+  // hibernation attachments legitimately lack it.
+  ticketId: z.string().uuid().optional(),
   // Absent only on a socket accepted by a pre-command-gateway deployment. A
   // command on that socket triggers a normal reconnect for a fresh ticket.
   sessionId: z.string().min(1).max(200).optional(),
@@ -292,6 +296,42 @@ const SocketAttachmentSchema = z.object({
     snapshotAtUtc: z.string().datetime({ offset: true }),
   }).nullable().default(null),
 });
+
+const SocketAdmissionPreparationSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  substreamId: SubstreamIdSchema,
+  userId: UserIdSchema,
+  sessionId: z.string().min(1).max(200),
+  ticketId: z.string().uuid(),
+  ticketIssuedAt: z.number().int().positive(),
+  ticketExpiresAt: z.number().int().positive(),
+  authorityGeneration: z.number().int().nonnegative(),
+  role: z.enum(["owner", "admin", "member"]),
+  analyticsWorkspaceId: z.string().nullable(),
+  afterSequence: z.number().int().nonnegative().optional(),
+  speculative: z.boolean(),
+});
+
+export type SocketAdmissionPreparation = z.infer<typeof SocketAdmissionPreparationSchema>;
+
+const SocketUpgradeIdentitySchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  substreamId: SubstreamIdSchema,
+  userId: UserIdSchema,
+  sessionId: z.string().min(1).max(200),
+  ticketId: z.string().uuid(),
+  ticketExpiresAt: z.coerce.number().int().positive(),
+  afterSequence: z.coerce.number().int().nonnegative().optional(),
+  speculative: z.literal("true").transform(() => true).optional().default(false),
+  admissionVersion: z.coerce.number().int().optional(),
+  authorityGeneration: z.coerce.number().int().nonnegative().optional(),
+  role: z.enum(["owner", "admin", "member"]).optional(),
+  analyticsWorkspaceId: z.string().optional(),
+});
+
+type SocketUpgradeIdentity = z.infer<typeof SocketUpgradeIdentitySchema>;
 
 const BroadcastRequestSchema = z.strictObject({
   event: z.unknown(),
@@ -402,6 +442,7 @@ function recoveredToolReceiptError(value: string | null): {
 interface AuthRoleRow {
   role: AuthContext["role"];
   analytics_workspace_id?: string | null;
+  session_expires_at?: string;
 }
 
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
@@ -697,6 +738,26 @@ export type SocketReplayPlan =
   | { type: "replay"; events: ServerSocketEvent[] }
   | { type: "resync_required"; reason: "history_unavailable" | "sequence_ahead" };
 
+type SocketSnapshotEvent = Extract<ServerSocketEvent, { type: "snapshot" }>;
+
+interface PreparedSocketSnapshot {
+  event: SocketSnapshotEvent;
+  pendingInputChunks: WorkstreamTranscriptSnapshot["pendingInputs"][];
+  encodedBytes: number;
+  transcriptSnapshot: SocketAttachment["transcriptSnapshot"];
+  settleUnseen: boolean;
+}
+
+interface PreparedSocketAdmission {
+  input: SocketAdmissionPreparation;
+  auth: AuthContext;
+  sessionExpiresAt: number | null;
+  snapshot: PreparedSocketSnapshot | null;
+  snapshotReason: "initial" | "history_unavailable" | null;
+  snapshotSequence: number | null;
+  snapshotRevision: number | null;
+}
+
 /**
  * The replay window intentionally lives only in object memory. Persisting every
  * token event would turn an ephemeral optimization into storage write cost.
@@ -770,6 +831,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly recentEvents: ServerSocketEvent[] = [];
   private recentEventBytes = 0;
   private replayFloorSequence: number | null = null;
+  /** Ticket-scoped admission and snapshot work prepared during ticket transit. */
+  private readonly preparedSocketAdmissions = new Map<string, PreparedSocketAdmission>();
+  /** Newer tickets supersede the one preparation retained by this room. */
+  private preparedSocketAdmissionTicketId: string | null = null;
+  /** Only the most recently completed room snapshot stays resident. */
+  private preparedSocketSnapshotTicketId: string | null = null;
+  /** Object-local product mutations invalidate snapshot reuse without a realtime event. */
+  private socketSnapshotRevision = 0;
+  /** Latest delivered retraction prevents an older in-flight preparation from reappearing. */
+  private latestSocketRevocationAt = 0;
   /** Avoid a durable-outbox point read on every high-frequency token frame. */
   private semanticRealtimePending = false;
   /**
@@ -1100,6 +1171,226 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    */
   async wake(): Promise<void> {
     await this.storageReady;
+  }
+
+  /**
+   * Prepare one feed admission while its already-issued ticket is in transit.
+   *
+   * The Worker calls this only with values it signed into that ticket. Nothing
+   * is durable here: losing the isolate loses the optimization and the upgrade
+   * takes the ordinary D1-backed path. The ticket receipt remains the one-time
+   * authority and is consumed only by the real WebSocket upgrade.
+   */
+  async prepareSocketAdmission(
+    input: SocketAdmissionPreparation,
+  ): Promise<{ outcome: "snapshot_prepared" | "admission_prepared" | "refused" }> {
+    await this.storageReady;
+    const parsed = SocketAdmissionPreparationSchema.safeParse(input);
+    if (!parsed.success) return { outcome: "refused" };
+    const preparation = parsed.data;
+    this.prunePreparedSocketAdmissions();
+    if (
+      preparation.ticketIssuedAt >= preparation.ticketExpiresAt
+      || preparation.ticketExpiresAt <= Math.floor(Date.now() / 1_000)
+      || this.socketPreparationWasRevoked(preparation)
+    ) {
+      return { outcome: "refused" };
+    }
+
+    try {
+      this.ensureSubstreamIdentity(preparation.substreamId);
+      this.objectStore.ensureIdentity({
+        workspaceId: preparation.workspaceId,
+        workstreamId: preparation.workstreamId,
+      }, this.env.AVALON_REGION);
+    } catch {
+      return { outcome: "refused" };
+    }
+    if (
+      this.objectStore.realtimeAuthorityGeneration() !== preparation.authorityGeneration
+      || !this.objectStore.isRealtimeWritable()
+      || !this.product.canRead(preparation.userId)
+    ) return { outcome: "refused" };
+
+    // Ticket issue authenticated this session, but the deferred call can arrive
+    // after a logout or membership removal. Recheck during ticket transit so
+    // the upgrade can safely reuse the result without paying this D1 join.
+    const admission = await this.socketAdmissionAuth(preparation);
+    if (
+      !admission
+      || admission.auth.role !== preparation.role
+      || (admission.auth.analyticsWorkspaceId ?? null) !== preparation.analyticsWorkspaceId
+      // The revocation handler can interleave while the D1 query above yields.
+      // Its latest-per-reader fence closes that ordering before insertion.
+      || this.socketPreparationWasRevoked(preparation)
+      || this.objectStore.realtimeAuthorityGeneration() !== preparation.authorityGeneration
+      || !this.objectStore.isRealtimeWritable()
+      || !this.product.canRead(preparation.userId)
+    ) return { outcome: "refused" };
+
+    const entry: PreparedSocketAdmission = {
+      input: preparation,
+      auth: admission.auth,
+      sessionExpiresAt: admission.sessionExpiresAt,
+      snapshot: null,
+      snapshotReason: null,
+      snapshotSequence: null,
+      snapshotRevision: null,
+    };
+    this.storePreparedSocketAdmission(entry);
+
+    const sequence = await this.currentSequence();
+    const plan = planSocketReplay(
+      preparation.afterSequence ?? 0,
+      sequence,
+      this.replayFloorSequence,
+      this.recentEvents,
+    );
+    // A speculative hover can remain unused for most of the ticket window.
+    // Keep its admission warm, but assemble viewer-specific detail only for an
+    // immediate non-speculative dial so time-derived and external D1 fields do
+    // not sit stale behind the realtime sequence fence.
+    if (plan.type !== "snapshot" || preparation.speculative) {
+      return { outcome: "admission_prepared" };
+    }
+
+    try {
+      const snapshotRevision = this.socketSnapshotRevision;
+      const snapshot = await this.assembleSocketSnapshot(
+        preparation.workspaceId,
+        preparation.workstreamId,
+        admission.auth,
+        preparation.speculative,
+        plan.reason,
+        sequence,
+        false,
+      );
+      // A revocation or local visibility change may have removed the entry
+      // while snapshot assembly yielded to D1. Never resurrect it afterward.
+      if (
+        this.preparedSocketAdmissions.get(preparation.ticketId) === entry
+        && preparation.ticketExpiresAt > Math.floor(Date.now() / 1_000)
+        && !this.socketPreparationWasRevoked(preparation)
+        && this.objectStore.realtimeAuthorityGeneration() === preparation.authorityGeneration
+        && this.product.canRead(preparation.userId)
+        && this.socketSnapshotRevision === snapshotRevision
+      ) {
+        // Pending-input spill is intentionally unbounded by aggregate transport
+        // size. It must stay a streaming delivery path, never retained as a
+        // prepared array of encoded frames.
+        if (snapshot.pendingInputChunks.length > 0) {
+          return { outcome: "admission_prepared" };
+        }
+        this.clearPreparedSocketSnapshot();
+        entry.snapshot = snapshot;
+        entry.snapshotReason = plan.reason;
+        entry.snapshotSequence = sequence;
+        entry.snapshotRevision = snapshotRevision;
+        this.preparedSocketSnapshotTicketId = preparation.ticketId;
+        return { outcome: "snapshot_prepared" };
+      }
+    } catch (error) {
+      logWarn(this.env, "substream_socket_snapshot_prepare_failed", {
+        workspace_id: preparation.workspaceId,
+        workstream_id: preparation.workstreamId,
+        substream_id: preparation.substreamId,
+        ticket_id: preparation.ticketId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
+    return {
+      outcome: this.preparedSocketAdmissions.get(preparation.ticketId) === entry
+        ? "admission_prepared"
+        : "refused",
+    };
+  }
+
+  private prunePreparedSocketAdmissions(now = Math.floor(Date.now() / 1_000)): void {
+    for (const [ticketId, prepared] of this.preparedSocketAdmissions) {
+      if (prepared.input.ticketExpiresAt <= now) this.deletePreparedSocketAdmission(ticketId);
+    }
+  }
+
+  private storePreparedSocketAdmission(entry: PreparedSocketAdmission): void {
+    const olderTicketId = this.preparedSocketAdmissionTicketId;
+    if (olderTicketId) this.deletePreparedSocketAdmission(olderTicketId);
+    this.preparedSocketAdmissions.set(entry.input.ticketId, entry);
+    this.preparedSocketAdmissionTicketId = entry.input.ticketId;
+  }
+
+  private deletePreparedSocketAdmission(ticketId: string): void {
+    const prepared = this.preparedSocketAdmissions.get(ticketId);
+    this.preparedSocketAdmissions.delete(ticketId);
+    if (prepared && this.preparedSocketAdmissionTicketId === ticketId) {
+      this.preparedSocketAdmissionTicketId = null;
+    }
+    if (this.preparedSocketSnapshotTicketId === ticketId) {
+      this.preparedSocketSnapshotTicketId = null;
+    }
+  }
+
+  private clearPreparedSocketSnapshot(): void {
+    const ticketId = this.preparedSocketSnapshotTicketId;
+    if (!ticketId) return;
+    const prepared = this.preparedSocketAdmissions.get(ticketId);
+    if (prepared) {
+      prepared.snapshot = null;
+      prepared.snapshotReason = null;
+      prepared.snapshotSequence = null;
+      prepared.snapshotRevision = null;
+    }
+    this.preparedSocketSnapshotTicketId = null;
+  }
+
+  private invalidatePreparedSocketSnapshots(): void {
+    this.socketSnapshotRevision += 1;
+    this.clearPreparedSocketSnapshot();
+  }
+
+  private socketPreparationWasRevoked(
+    preparation: Pick<SocketAdmissionPreparation, "ticketIssuedAt">,
+  ): boolean {
+    return this.latestSocketRevocationAt >= preparation.ticketIssuedAt;
+  }
+
+  private rememberSocketRevocation(): void {
+    this.latestSocketRevocationAt = Math.floor(Date.now() / 1_000);
+  }
+
+  private preparedSocketAdmission(identity: SocketUpgradeIdentity): PreparedSocketAdmission | null {
+    this.prunePreparedSocketAdmissions();
+    if (
+      identity.admissionVersion !== 1
+      || identity.authorityGeneration === undefined
+      || identity.role === undefined
+    ) return null;
+    const prepared = this.preparedSocketAdmissions.get(identity.ticketId);
+    if (!prepared) return null;
+    const input = prepared.input;
+    const matches = input.workspaceId === identity.workspaceId
+      && input.workstreamId === identity.workstreamId
+      && input.substreamId === identity.substreamId
+      && input.userId === identity.userId
+      && input.sessionId === identity.sessionId
+      && input.ticketId === identity.ticketId
+      && input.ticketExpiresAt === identity.ticketExpiresAt
+      && input.afterSequence === identity.afterSequence
+      && input.speculative === identity.speculative
+      && input.authorityGeneration === identity.authorityGeneration
+      && input.role === identity.role
+      && input.analyticsWorkspaceId === (identity.analyticsWorkspaceId ?? null);
+    if (
+      !matches
+      || this.socketPreparationWasRevoked(input)
+      || (prepared.sessionExpiresAt !== null && prepared.sessionExpiresAt <= Date.now())
+      || this.objectStore.realtimeAuthorityGeneration() !== input.authorityGeneration
+      || !this.objectStore.isRealtimeWritable()
+      || !this.product.canRead(input.userId)
+    ) {
+      this.deletePreparedSocketAdmission(identity.ticketId);
+      return null;
+    }
+    return prepared;
   }
 
   async keepAlive(): Promise<() => void> {
@@ -2529,6 +2820,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     span.setAttributes(identityAttributes({
       analyticsWorkspaceId: current.analyticsWorkspaceId,
     }));
+    // Several product reads settle per-reader state, and several mutations do
+    // not allocate a realtime sequence. Clearing the one prepared snapshot at
+    // this common admitted boundary prevents either kind from being hidden by
+    // an unchanged transcript cursor. A raced assembly also observes the
+    // incremented revision before it can install its result.
+    this.invalidatePreparedSocketSnapshots();
     try {
       if (request.operation === "initialize") {
         const input = request.input;
@@ -5106,7 +5403,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     ).bind(workspaceId, userId, this.env.AVALON_REGION).first<AuthRoleRow>();
   }
 
-  private async socketAuth(attachment: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
+  private async socketAdmissionAuth(
+    attachment: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">,
+  ): Promise<{ auth: AuthContext; sessionExpiresAt: number | null } | null> {
     const role = this.env.APP_ENV === "development"
       && this.env.RALLY_DEV_AUTH === "true"
       && attachment.sessionId === "development"
@@ -5118,7 +5417,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // surrogate is deliberately not fetched here: it would mean joining
         // `users` from a Durable Object, and no diagnostic is worth widening
         // what a socket's authorization depends on.
-        `SELECT member.role, workspace.analytics_workspace_id
+        `SELECT member.role, workspace.analytics_workspace_id,
+                session.expires_at AS session_expires_at
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
@@ -5138,14 +5438,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.env.AVALON_REGION,
       ).first<AuthRoleRow>();
     if (!role) return null;
+    const sessionExpiresAt = role.session_expires_at === undefined
+      ? null
+      : Date.parse(role.session_expires_at);
+    if (sessionExpiresAt !== null && !Number.isFinite(sessionExpiresAt)) return null;
     return {
-      sessionId: attachment.sessionId!,
-      userId: attachment.userId,
-      workspaceId: attachment.workspaceId,
-      region: this.env.AVALON_REGION,
-      role: role.role,
-      analyticsWorkspaceId: role.analytics_workspace_id ?? null,
+      auth: {
+        sessionId: attachment.sessionId!,
+        userId: attachment.userId,
+        workspaceId: attachment.workspaceId,
+        region: this.env.AVALON_REGION,
+        role: role.role,
+        analyticsWorkspaceId: role.analytics_workspace_id ?? null,
+      },
+      sessionExpiresAt,
     };
+  }
+
+  private async socketAuth(
+    attachment: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">,
+  ): Promise<AuthContext | null> {
+    return (await this.socketAdmissionAuth(attachment))?.auth ?? null;
   }
 
   /**
@@ -5489,6 +5802,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     void reason;
     void wasClean;
     const attachment = this.readAttachment(socket);
+    if (attachment?.ticketId) this.deletePreparedSocketAdmission(attachment.ticketId);
     if (attachment?.subscribed && attachment.publishPresence) {
       await this.broadcastPresence(attachment.workspaceId, attachment.workstreamId, socket);
     }
@@ -5496,6 +5810,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   override async webSocketError(socket: WebSocket): Promise<void> {
     const attachment = this.readAttachment(socket);
+    if (attachment?.ticketId) this.deletePreparedSocketAdmission(attachment.ticketId);
     try {
       socket.close(1011, "Realtime connection failed");
     } catch {
@@ -5532,19 +5847,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return jsonResponse({ error: "websocket_upgrade_required" }, 426);
     }
 
-    const identity = z
-      .object({
-        workspaceId: WorkspaceIdSchema,
-        workstreamId: WorkstreamIdSchema,
-        substreamId: SubstreamIdSchema,
-        userId: UserIdSchema,
-        sessionId: z.string().min(1).max(200),
-        ticketId: z.string().uuid(),
-        ticketExpiresAt: z.coerce.number().int().positive(),
-        afterSequence: z.coerce.number().int().nonnegative().optional(),
-        speculative: z.literal("true").transform(() => true).optional().default(false),
-      })
-      .safeParse({
+    const identity = SocketUpgradeIdentitySchema.safeParse({
         workspaceId:
           readRallyHeader(request.headers, RALLY_HEADERS.WORKSPACE_ID) ?? url.searchParams.get("workspaceId"),
         workstreamId:
@@ -5557,6 +5860,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
         afterSequence: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_AFTER_SEQUENCE),
         speculative: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_SPECULATIVE),
+        admissionVersion: readRallyHeader(
+          request.headers,
+          RALLY_HEADERS.SOCKET_ADMISSION_VERSION,
+        ),
+        authorityGeneration: readRallyHeader(
+          request.headers,
+          RALLY_HEADERS.SOCKET_ADMISSION_AUTHORITY_GENERATION,
+        ),
+        role: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_ADMISSION_ROLE),
+        analyticsWorkspaceId: readRallyHeader(
+          request.headers,
+          RALLY_HEADERS.SOCKET_ANALYTICS_WORKSPACE_ID,
+        ),
       });
 
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
@@ -5573,17 +5889,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ...(identity.data.speculative ? { "rally.socket.speculative": true } : {}),
     });
 
-    const currentAuthority = await span.step("workstream.room.socket.authority_read", () =>
-      readWorkstreamAuthorityControl(this.env));
-    if (!acceptsNewWorkstreamWork(currentAuthority)) {
-      span.setError("workstream_maintenance");
-      return jsonResponse({
-        error: "workstream_maintenance",
-        phase: currentAuthority.phase,
-        generation: currentAuthority.generation,
-      }, 503);
-    }
-
     try {
       this.ensureSubstreamIdentity(identity.data.substreamId);
       this.objectStore.ensureIdentity({
@@ -5598,15 +5903,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       span.setError("socket_identity_failed");
       throw error;
     }
-    const auth = await span.step(
-      "workstream.room.socket.member_authorize",
-      () => this.socketAuth(identity.data),
-    );
-    if (!auth || !this.product.canRead(identity.data.userId)) {
-      span.setError("forbidden");
-      return jsonResponse({ error: "forbidden" }, 403);
-    }
-    if (!this.objectStore.isRealtimeWritable()) {
+
+    // A generation identifies the object graph, but maintenance can close the
+    // current generation in place. Preserve the pre-existing phase fence on
+    // both prepared and fallback admissions.
+    const currentAuthority = await span.step("workstream.room.socket.authority_read", () =>
+      readWorkstreamAuthorityControl(this.env));
+    if (!acceptsNewWorkstreamWork(currentAuthority)) {
       span.setError("workstream_maintenance");
       return jsonResponse({
         error: "workstream_maintenance",
@@ -5615,10 +5918,40 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }, 503);
     }
 
+    let prepared = this.preparedSocketAdmission(identity.data);
+    if (prepared && prepared.input.authorityGeneration !== currentAuthority.generation) {
+      this.deletePreparedSocketAdmission(identity.data.ticketId);
+      prepared = null;
+    }
+    let auth: AuthContext | null;
+    if (prepared) {
+      auth = prepared.auth;
+      span.setAttributes({ "rally.socket.admission_source": "ticket_preparation" });
+    } else {
+      span.setAttributes({ "rally.socket.admission_source": "regional_fallback" });
+      auth = await span.step(
+        "workstream.room.socket.member_authorize",
+        () => this.socketAuth(identity.data),
+      );
+      if (!this.objectStore.isRealtimeWritable()) {
+        span.setError("workstream_maintenance");
+        return jsonResponse({
+          error: "workstream_maintenance",
+          phase: currentAuthority.phase,
+          generation: currentAuthority.generation,
+        }, 503);
+      }
+    }
+    if (!auth || !this.product.canRead(identity.data.userId)) {
+      span.setError("forbidden");
+      return jsonResponse({ error: "forbidden" }, 403);
+    }
+
     if (!this.objectStore.consumeSocketTicket(
       identity.data.ticketId,
       identity.data.ticketExpiresAt,
     )) {
+      this.deletePreparedSocketAdmission(identity.data.ticketId);
       span.setError("socket_ticket_replayed");
       return jsonResponse({ error: "socket_ticket_replayed" }, 401);
     }
@@ -5637,6 +5970,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       workstreamId: identity.data.workstreamId,
       substreamId: identity.data.substreamId,
       userId: identity.data.userId,
+      ticketId: identity.data.ticketId,
       sessionId: identity.data.sessionId,
       role: auth.role,
       analyticsWorkspaceId: auth.analyticsWorkspaceId ?? null,
@@ -6016,6 +6350,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     span: FlowSpan = noFlowSpan,
     snapshotReasonOverride?: "reconciliation",
   ): Promise<boolean> {
+    const preparedTicketId = this.readAttachment(socket)?.ticketId;
     let deliveredThrough = await span.step("workstream.room.subscribe.current_sequence", () =>
       this.currentSequence());
     const plan = planSocketReplay(
@@ -6045,7 +6380,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         span,
         snapshotReasonOverride,
       ));
-    if (!delivered) return false;
+    if (!delivered) {
+      if (preparedTicketId) this.deletePreparedSocketAdmission(preparedTicketId);
+      return false;
+    }
 
     // Loading a snapshot awaits object storage and can yield to a concurrently
     // published event. Keep this socket out of broadcasts until one in-memory
@@ -6069,7 +6407,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             false,
           ),
         ));
-      if (!caughtUp) return false;
+      if (!caughtUp) {
+        if (preparedTicketId) this.deletePreparedSocketAdmission(preparedTicketId);
+        return false;
+      }
       deliveredThrough = catchUpSequence;
     }
 
@@ -6080,6 +6421,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       afterSequence: deliveredThrough,
       subscribed: true,
     } satisfies SocketAttachment);
+    if (preparedTicketId) this.deletePreparedSocketAdmission(preparedTicketId);
     return true;
   }
 
@@ -6143,121 +6485,81 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     try {
       const attachment = this.readAttachment(socket);
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
-      const admitted = await span.step("workstream.room.snapshot.detail", () =>
-        this.loadSnapshot(workspaceId, workstreamId, socket));
-      const { workstream } = admitted;
-      let transcript = this.transcript.createOpeningSnapshot({
-        unreadHighWaterAttentionOrdinal: reason === "initial"
-          ? workstream.firstUnreadSequenceNumber
-          : null,
-      });
       const sequence = knownSequence ?? await this.currentSequence();
-      const storedCheckpoints = this.objectStore.activeStreamCheckpoints();
-      const activeStreams = workstream.harnessStatus === "running"
-        ? storedCheckpoints.filter((checkpoint) =>
-            checkpoint.harnessRunId === workstream.latestHarnessRunId)
-        : [];
-      const storedCompaction = this.objectStore.activeCompaction();
-      const activeCompaction = workstream.harnessStatus === "running"
-        && storedCompaction?.harnessRunId === workstream.latestHarnessRunId
-        ? storedCompaction
-        : null;
-      const occurredAt = new Date().toISOString();
-      let pendingInputChunks: WorkstreamTranscriptSnapshot["pendingInputs"][] = [];
-      const snapshotEvent = (): ServerSocketEvent => ServerSocketEventSchema.parse({
-          type: "snapshot",
-          reason,
-          sequence,
-          occurredAt,
-          workstream,
-          transcript,
-          pendingInputChunkCount: pendingInputChunks.length,
-          activeStreams,
-          activeCompaction,
-        });
-      let encoded = JSON.stringify(snapshotEvent());
-      let encodedBytes = textEncoder.encode(encoded).byteLength;
-      if (encodedBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES && transcript.pendingInputs.length > 0) {
-        // Pending inputs are server-authoritative and cannot be dropped merely
-        // to fit one WebSocket frame. Split them into ordered snapshot chunks;
-        // one admitted message is bounded far below the frame ceiling, while
-        // the complete queue is intentionally unbounded by transport size.
-        pendingInputChunks = transcript.pendingInputs.map((input) => [input]);
-        transcript = { ...transcript, pendingInputs: [] };
-        encoded = JSON.stringify(snapshotEvent());
-        encodedBytes = textEncoder.encode(encoded).byteLength;
-      }
-      while (encodedBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
-        const canonicalTurns = [
-          ...transcript.ranges.flatMap((range) => range.turns),
-          ...transcript.activeTurns,
-        ];
-        const uniqueTurns = new Map(canonicalTurns.map((turn) => [turn.turnId, turn]));
-        if (uniqueTurns.size === 1) {
-          const turn = [...uniqueTurns.values()][0]!;
-          if (turn.blocksOmitted !== true) {
-            logWarn(this.env, "substream_transcript_turn_oversized", {
-              workspace_id: workspaceId,
-              workstream_id: workstreamId,
-              turn_id: turn.turnId,
-            });
-            const envelope = this.transcript.omittedTurnEnvelope(turn);
-            transcript = {
-              ...transcript,
-              ranges: transcript.ranges.map((range) => ({
-                ...range,
-                turns: range.turns.map((candidate) =>
-                  candidate.turnId === turn.turnId ? envelope : candidate),
-              })),
-              activeTurns: transcript.activeTurns.map((candidate) =>
-                candidate.turnId === turn.turnId ? envelope : candidate),
-            };
-            encoded = JSON.stringify(snapshotEvent());
-            encodedBytes = textEncoder.encode(encoded).byteLength;
-            if (encodedBytes <= WORKSTREAM_REALTIME_MAX_FRAME_BYTES) break;
-          }
+      const prepared = attachment.ticketId
+        ? this.preparedSocketAdmissions.get(attachment.ticketId)
+        : undefined;
+      let snapshot: PreparedSocketSnapshot;
+      if (
+        prepared?.snapshot
+        && prepared.snapshotReason === reason
+        && prepared.snapshotSequence === sequence
+        && prepared.snapshotRevision === this.socketSnapshotRevision
+      ) {
+        snapshot = prepared.snapshot;
+        if (!attachment.speculative && snapshot.settleUnseen) {
+          const settled = await span.step("workstream.room.snapshot.mark_opened", () =>
+            this.product.markOpenedAdmitted(prepared.auth));
+          snapshot = {
+            ...snapshot,
+            event: {
+              ...snapshot.event,
+              workstream: { ...snapshot.event.workstream, unseen: !settled },
+            },
+          };
         }
-        const narrowed = narrowSocketTranscriptSnapshot(transcript);
-        if (!narrowed) throw new Error("substream_snapshot_frame_too_large");
-        transcript = narrowed;
-        encoded = JSON.stringify(snapshotEvent());
-        encodedBytes = textEncoder.encode(encoded).byteLength;
+        span.setAttributes({ "rally.snapshot.source": "ticket_preparation" });
+      } else {
+        const auth = await this.socketViewerAuth(attachment);
+        if (!auth) throw new Error("Snapshot viewer is no longer authorized");
+        snapshot = await span.step("workstream.room.snapshot.detail", () =>
+          this.assembleSocketSnapshot(
+            workspaceId,
+            workstreamId,
+            auth,
+            attachment.speculative,
+            reason,
+            sequence,
+            true,
+          ));
+        span.setAttributes({
+          "rally.snapshot.source": prepared
+            ? "ticket_preparation_incomplete"
+            : "room_assembly",
+        });
       }
+      if (attachment.ticketId) this.deletePreparedSocketAdmission(attachment.ticketId);
       span.mark("workstream.room.snapshot.encode");
       span.setAttributes({
         // Bytes, not `encoded.length`: that counts UTF-16 code units, so any
         // non-ASCII transcript under-reported against a cap measured in UTF-8.
-        "rally.snapshot.bytes": encodedBytes,
-        "rally.snapshot.turn_count": transcript.ranges.reduce(
+        "rally.snapshot.bytes": snapshot.encodedBytes,
+        "rally.snapshot.turn_count": snapshot.event.transcript.ranges.reduce(
           (count, range) => count + range.turns.length,
-          transcript.activeTurns.length,
+          snapshot.event.transcript.activeTurns.length,
         ),
       });
-      socket.send(encoded);
-      for (const [chunkIndex, inputs] of pendingInputChunks.entries()) {
-        const chunk = JSON.stringify(ServerSocketEventSchema.parse({
+      socket.send(JSON.stringify(snapshot.event));
+      for (const [chunkIndex, inputs] of snapshot.pendingInputChunks.entries()) {
+        const frame = JSON.stringify(ServerSocketEventSchema.parse({
           type: "pending_inputs_snapshot_chunk",
           sequence,
-          occurredAt,
-          snapshotId: transcript.snapshotId,
+          occurredAt: snapshot.event.occurredAt,
+          snapshotId: snapshot.event.transcript.snapshotId,
           chunkIndex,
-          chunkCount: pendingInputChunks.length,
+          chunkCount: snapshot.pendingInputChunks.length,
           inputs,
         }));
-        if (textEncoder.encode(chunk).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+        if (textEncoder.encode(frame).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
           throw new Error("substream_pending_input_snapshot_chunk_too_large");
         }
-        socket.send(chunk);
+        socket.send(frame);
       }
       const currentAttachment = this.readAttachment(socket);
       if (currentAttachment) {
         socket.serializeAttachment({
           ...currentAttachment,
-          transcriptSnapshot: {
-            snapshotId: transcript.snapshotId,
-            snapshotThrough: transcript.snapshotThrough,
-            snapshotAtUtc: transcript.snapshotAtUtc,
-          },
+          transcriptSnapshot: snapshot.transcriptSnapshot,
         } satisfies SocketAttachment);
       }
       return true;
@@ -6277,6 +6579,134 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
+  private async assembleSocketSnapshot(
+    workspaceId: string,
+    workstreamId: string,
+    auth: AuthContext,
+    speculative: boolean,
+    reason: "initial" | "reconciliation" | "history_unavailable",
+    sequence: number,
+    markOpened: boolean,
+  ): Promise<PreparedSocketSnapshot> {
+    const viewers = await this.loadViewers(workspaceId, workstreamId);
+    const loadedWorkstream = await this.product.getAdmitted(
+      auth,
+      viewers,
+      markOpened && !speculative,
+    );
+    // Preparation must not settle unseen state before a socket actually opens,
+    // but the frame it prepares is the post-open view the accepted socket will
+    // receive. The accept path performs the real idempotent settlement before
+    // sending this frame.
+    const workstream = !markOpened && !speculative && loadedWorkstream.unseen
+      ? { ...loadedWorkstream, unseen: false }
+      : loadedWorkstream;
+    let transcript = this.transcript.createOpeningSnapshot({
+      unreadHighWaterAttentionOrdinal: reason === "initial"
+        ? workstream.firstUnreadSequenceNumber
+        : null,
+    });
+    const storedCheckpoints = this.objectStore.activeStreamCheckpoints();
+    const activeStreams = workstream.harnessStatus === "running"
+      ? storedCheckpoints.filter((checkpoint) =>
+          checkpoint.harnessRunId === workstream.latestHarnessRunId)
+      : [];
+    const storedCompaction = this.objectStore.activeCompaction();
+    const activeCompaction = workstream.harnessStatus === "running"
+      && storedCompaction?.harnessRunId === workstream.latestHarnessRunId
+      ? storedCompaction
+      : null;
+    const occurredAt = new Date().toISOString();
+    let pendingInputChunks: WorkstreamTranscriptSnapshot["pendingInputs"][] = [];
+    const snapshotEvent = (): SocketSnapshotEvent => ServerSocketEventSchema.parse({
+      type: "snapshot",
+      reason,
+      sequence,
+      occurredAt,
+      workstream,
+      transcript,
+      pendingInputChunkCount: pendingInputChunks.length,
+      activeStreams,
+      activeCompaction,
+    }) as SocketSnapshotEvent;
+    let event = snapshotEvent();
+    let encodedBytes = textEncoder.encode(JSON.stringify(event)).byteLength;
+    if (encodedBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES && transcript.pendingInputs.length > 0) {
+      // Pending inputs are server-authoritative and cannot be dropped merely
+      // to fit one WebSocket frame. Split them into ordered snapshot chunks;
+      // one admitted message is bounded far below the frame ceiling, while
+      // the complete queue is intentionally unbounded by transport size.
+      pendingInputChunks = transcript.pendingInputs.map((input) => [input]);
+      transcript = { ...transcript, pendingInputs: [] };
+      event = snapshotEvent();
+      encodedBytes = textEncoder.encode(JSON.stringify(event)).byteLength;
+    }
+    while (encodedBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+      const canonicalTurns = [
+        ...transcript.ranges.flatMap((range) => range.turns),
+        ...transcript.activeTurns,
+      ];
+      const uniqueTurns = new Map(canonicalTurns.map((turn) => [turn.turnId, turn]));
+      if (uniqueTurns.size === 1) {
+        const turn = [...uniqueTurns.values()][0]!;
+        if (turn.blocksOmitted !== true) {
+          logWarn(this.env, "substream_transcript_turn_oversized", {
+            workspace_id: workspaceId,
+            workstream_id: workstreamId,
+            turn_id: turn.turnId,
+          });
+          const envelope = this.transcript.omittedTurnEnvelope(turn);
+          transcript = {
+            ...transcript,
+            ranges: transcript.ranges.map((range) => ({
+              ...range,
+              turns: range.turns.map((candidate) =>
+                candidate.turnId === turn.turnId ? envelope : candidate),
+            })),
+            activeTurns: transcript.activeTurns.map((candidate) =>
+              candidate.turnId === turn.turnId ? envelope : candidate),
+          };
+          event = snapshotEvent();
+          encodedBytes = textEncoder.encode(JSON.stringify(event)).byteLength;
+          if (encodedBytes <= WORKSTREAM_REALTIME_MAX_FRAME_BYTES) break;
+        }
+      }
+      const narrowed = narrowSocketTranscriptSnapshot(transcript);
+      if (!narrowed) throw new Error("substream_snapshot_frame_too_large");
+      transcript = narrowed;
+      event = snapshotEvent();
+      encodedBytes = textEncoder.encode(JSON.stringify(event)).byteLength;
+    }
+    // Validate each spill frame without retaining its serialized form. The
+    // complete pending-input queue is intentionally not aggregate-size-bound,
+    // so delivery below must hold only one encoded chunk at a time.
+    for (const [chunkIndex, inputs] of pendingInputChunks.entries()) {
+      const frame = JSON.stringify(ServerSocketEventSchema.parse({
+        type: "pending_inputs_snapshot_chunk",
+        sequence,
+        occurredAt,
+        snapshotId: transcript.snapshotId,
+        chunkIndex,
+        chunkCount: pendingInputChunks.length,
+        inputs,
+      }));
+      if (textEncoder.encode(frame).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+        throw new Error("substream_pending_input_snapshot_chunk_too_large");
+      }
+    }
+    return {
+      event,
+      pendingInputChunks,
+      encodedBytes,
+      transcriptSnapshot: {
+        snapshotId: transcript.snapshotId,
+        snapshotThrough: transcript.snapshotThrough,
+        snapshotAtUtc: transcript.snapshotAtUtc,
+      },
+      settleUnseen: !markOpened && !speculative && loadedWorkstream.unseen,
+    };
+  }
+
   private async socketViewerAuth(attachment: SocketAttachment): Promise<AuthContext | null> {
     return attachment.sessionId && attachment.role
       ? {
@@ -6291,22 +6721,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // in its attachment. Preserve it through the rolling deploy by taking
       // the old one-time path; new sockets never repeat this regional read.
       : await this.socketAuth(attachment);
-  }
-
-  private async loadSnapshot(
-    workspaceId: string,
-    workstreamId: string,
-    socket: WebSocket,
-  ): Promise<{ auth: AuthContext; workstream: WorkstreamDetail }> {
-    const attachment = this.readAttachment(socket);
-    if (!attachment) throw new Error("Snapshot viewer socket is unavailable");
-    const auth = await this.socketViewerAuth(attachment);
-    if (!auth) throw new Error("Snapshot viewer is no longer authorized");
-    const viewers = await this.loadViewers(workspaceId, workstreamId);
-    return {
-      auth,
-      workstream: await this.product.getAdmitted(auth, viewers, !attachment.speculative),
-    };
   }
 
   private async loadViewers(
@@ -6452,6 +6866,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    */
   private evictReadersWhoLostLocalAccess(): boolean {
     let evicted = false;
+    for (const [ticketId, prepared] of this.preparedSocketAdmissions) {
+      if (this.product.canRead(prepared.input.userId)) continue;
+      this.deletePreparedSocketAdmission(ticketId);
+    }
     for (const socket of this.state.getWebSockets()) {
       const attachment = this.readAttachment(socket);
       if (!attachment || this.product.canRead(attachment.userId)) continue;
@@ -6464,7 +6882,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<void> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
+    // Keep the newest retraction per reader even when no socket or preparation
+    // exists yet. An older deferred preparation may be suspended in its D1
+    // authorization query and must not recreate access after this call.
+    this.rememberSocketRevocation();
     let evicted = false;
+    for (const [ticketId, prepared] of this.preparedSocketAdmissions) {
+      if (!revocationClosesSocket(request, prepared.input)) continue;
+      this.deletePreparedSocketAdmission(ticketId);
+    }
     for (const socket of this.state.getWebSockets()) {
       const attachment = this.readAttachment(socket);
       // This schema alone makes `sessionId` optional, which is why the rule is

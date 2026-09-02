@@ -1,6 +1,6 @@
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
-import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
+import { HarnessFailureCodeSchema, asHarnessRunId, asSubstreamId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -29,6 +29,7 @@ import {
   issueBlockDashboardBlockSocketTicket,
   issueSocketTicket,
   issueWorkstreamControlSocketTicket,
+  WORKSTREAM_SOCKET_TICKET_TTL_SECONDS,
 } from "./socket-service";
 import { loadBlockDashboard } from "./block-dashboard-service";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
@@ -49,7 +50,7 @@ import {
   wakeupExecutionPrincipal,
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
-import { requireOpenWorkstreamAuthority } from "./workstream-authority";
+import { requireOpenWorkstreamAuthority, requireWorkstreamIngress } from "./workstream-authority";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 import { rpcResultBody } from "../durable-objects/rpc-result";
@@ -553,16 +554,24 @@ export class WorkstreamService {
   ) {}
 
   /**
-   * Use the ticket-to-upgrade interval to pay the room's storage-ready wake.
+   * Use ticket transit to prepare the exact room admission and first snapshot.
    *
-   * The ticket remains the authorization boundary and this is deliberately
-   * best effort: an unavailable warm-up must leave the later upgrade to take
-   * the same cold path it took before, never turn a usable ticket into an API
-   * failure. `defer` is request-owned `waitUntil`, so the Worker keeps the
-   * binding call alive after sending the ticket without adding it to ticket
-   * latency.
+   * The signed ticket and durable one-use receipt remain the authorization
+   * boundary. This in-memory work is deliberately best effort: an unavailable
+   * preparation leaves the later upgrade on its existing regional fallback,
+   * never turns a usable ticket into an API failure. `defer` is request-owned
+   * `waitUntil`, so the Worker keeps the binding call alive after sending the
+   * ticket without adding the preparation to ticket latency.
    */
-  private warmMainSocketSubstream(workstreamId: string, ticketId: string): void {
+  private warmMainSocketSubstream(input: {
+    workstreamId: WorkstreamId;
+    ticketId: string;
+    ticketIssuedAt: number;
+    ticketExpiresAt: number;
+    afterSequence?: number;
+    speculative: boolean;
+    authorityGeneration: number;
+  }): void {
     if (!this.defer) return;
     const startedAt = Date.now();
     this.defer((async () => {
@@ -574,24 +583,39 @@ export class WorkstreamService {
           substreamAgentName(
             this.env.AVALON_REGION,
             this.auth.workspaceId,
-            asWorkstreamId(workstreamId),
+            input.workstreamId,
           ),
         );
-        await stub.wake();
+        const prepared = await stub.prepareSocketAdmission({
+          workspaceId: this.auth.workspaceId,
+          workstreamId: input.workstreamId,
+          substreamId: asSubstreamId("0"),
+          userId: this.auth.userId,
+          sessionId: this.auth.sessionId,
+          ticketId: input.ticketId,
+          ticketIssuedAt: input.ticketIssuedAt,
+          ticketExpiresAt: input.ticketExpiresAt,
+          authorityGeneration: input.authorityGeneration,
+          role: this.auth.role,
+          analyticsWorkspaceId: this.auth.analyticsWorkspaceId ?? null,
+          ...(input.afterSequence === undefined ? {} : { afterSequence: input.afterSequence }),
+          speculative: input.speculative,
+        });
         logStructuredEvent(this.env, "info", "workstream_socket_ticket_warm_finished", {
           workspace_id: this.auth.workspaceId,
-          workstream_id: workstreamId,
+          workstream_id: input.workstreamId,
           substream_id: "0",
-          ticket_id: ticketId,
+          ticket_id: input.ticketId,
           duration_ms: Math.max(0, Date.now() - startedAt),
           outcome: "success",
+          preparation_outcome: prepared.outcome,
         });
       } catch (error) {
         logWarn(this.env, "workstream_socket_ticket_warm_finished", {
           workspace_id: this.auth.workspaceId,
-          workstream_id: workstreamId,
+          workstream_id: input.workstreamId,
           substream_id: "0",
-          ticket_id: ticketId,
+          ticket_id: input.ticketId,
           duration_ms: Math.max(0, Date.now() - startedAt),
           outcome: "failure",
           error_name: error instanceof Error ? error.name : "UnknownError",
@@ -789,10 +813,15 @@ export class WorkstreamService {
     afterSequence?: number,
     speculative = false,
   ) {
-    await this.requireVisibleWorkstream(id);
+    const workstreamId = asWorkstreamId(id);
+    const [, authority] = await Promise.all([
+      this.requireVisibleWorkstream(id),
+      requireWorkstreamIngress(this.env),
+    ]);
     // Minted here rather than inside the issuer so the route can log the id the
     // room will report consuming; see `docs/performance-tracing.md`.
     const ticketId = newId();
+    const issuedAt = Math.floor(Date.now() / 1_000);
     const ticket = await issueSocketTicket(
       this.env,
       this.auth,
@@ -801,11 +830,29 @@ export class WorkstreamService {
       ticketId,
       afterSequence,
       speculative,
+      {
+        issuedAt,
+        admission: {
+          authorityGeneration: authority.generation,
+          role: this.auth.role,
+          analyticsWorkspaceId: this.auth.analyticsWorkspaceId ?? null,
+        },
+      },
     );
     // The main feed is recorded by work-stream creation. Non-main creation is
     // not a product surface yet, so an arbitrary child UUID must not
     // materialize an object merely because its parent work stream is visible.
-    if (substreamId === "0") this.warmMainSocketSubstream(id, ticketId);
+    if (substreamId === "0") {
+      this.warmMainSocketSubstream({
+        workstreamId,
+        ticketId,
+        ticketIssuedAt: issuedAt,
+        ticketExpiresAt: issuedAt + WORKSTREAM_SOCKET_TICKET_TTL_SECONDS,
+        ...(afterSequence === undefined ? {} : { afterSequence }),
+        speculative,
+        authorityGeneration: authority.generation,
+      });
+    }
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/workstreams/${id}/substreams/${substreamId}`;

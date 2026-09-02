@@ -1061,7 +1061,7 @@ misrouted product statement now fails because the table or column is absent.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** RPC retries, Queue ordering, and delivery uniqueness are not trusted.
 - **Nothing may `await` between a sync waterline's allocation and its send.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. `publishSync` allocates in `transactionSync` and sends in the same synchronous run, which is what makes that true; an `await` between the two opens the input gate and lets a later publication overtake, and the desktop then silently drops the parked payload along with every topic it named. This is not hypothetical — it is the bug the revalidation sweep shipped, recorded in the changelog.
 - **No publish path asks D1 anything.** Losing workspace access is carried by the queue in [`access-revocation.md`](access-revocation.md) and by nothing else — no object polls, revalidates on a timer, or re-reads `workspace_members` before sending. Putting a D1 query back on a publish path is where the waterline ordering bug came from, and the transcript feed would pay it per token frame. An object enforcing its *own* SQL — `canRead`, `product.canRead` — is not that: it is synchronous, local, and answers a question no queue message carries.
-- **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
+- **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO/BlockDashboardAgent admission.** SubstreamAgent's fallback admission does the same. Its prepared fast path rechecks session/membership during ticket transit and spends that result only when the signed identity, role, one-time ticket, expiry, cursor, and authority generation exactly match the room's single request-scoped in-memory preparation; every upgrade still reads current regional maintenance authority. A constant-size revocation fence prevents older in-flight preparation from reappearing. The accepted post-preparation/pre-fan-out revocation window is recorded in [`security.md`](security.md). A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. Sockets never carry a connector principal; tickets are issued to login sessions only.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
@@ -1504,6 +1504,40 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-02 — Main-feed preparation is capability-scoped and disposable
+
+**What changed:** SubstreamAgent exposes a typed preparation RPC for one signed
+feed ticket. It validates object identity, local visibility, and the object's
+authority generation, rechecks D1 session/membership, retains at most the newest
+admission and completed snapshot in memory, and assembles only an eligible
+non-speculative initial snapshot without settling unseen state. Acceptance uses
+that work only when every forwarded verified claim matches; current maintenance
+authority is always re-read, while revocation, expiry, mismatch, local product
+mutation, or eviction removes or invalidates it. Pending-input spill is streamed
+one frame at a time rather than retained. The durable ticket receipt is still
+consumed only by the actual upgrade.
+
+**Why:** The storage-ready wake removed constructor work but left two regional
+authorization reads and viewer-specific detail assembly on the first-frame
+path. All were already knowable after authenticated ticket issue and could run
+during network transit.
+
+**Considered and rejected:** Durable prepared rows would duplicate canonical
+content and require a new deletion protocol. A capability usable without local
+request-scoped preparation would survive a revocation message that arrived
+between issue and upgrade. Performing `markOpened` during preparation would
+turn an abandoned ticket into product attention.
+
+**Consequences:** A successful prepared open performs the current regional
+maintenance read, local generation/visibility checks, one synchronous
+ticket-receipt transaction, and socket/frame delivery. It omits the regional
+session/membership join and eligible snapshot detail. The existing full
+admission and room snapshot remain the fallback for superseded tickets,
+speculation, pending-input spill, eviction, races, and failures. Real-workerd
+tests prove fallback methods stay off the exact fast path, maintenance still
+closes it, revocation cannot reorder behind preparation, local product changes
+invalidate snapshots, and spill delivery remains streaming.
 
 ### 2026-09-01 — Feed acceptance bootstraps one admitted snapshot
 
