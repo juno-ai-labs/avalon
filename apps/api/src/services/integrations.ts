@@ -27,6 +27,8 @@ import {
   renderCompactionCheckpointContent,
   rejectToolModesBeforeCall,
   repairRootUnionForProviders,
+  rememberAutomationPeopleSearchResult,
+  rememberAutomationResourceSearchResult,
   runHarness,
   type AddressingContextMessage,
   type BindLoopProjectionState,
@@ -1770,27 +1772,106 @@ function automationTriggerLine(trigger: AutomationDraft["triggers"][number]): st
 function createAvalonAutomationsPlugin(
   env: Env,
   input: WorkstreamWorkflowInput,
+  loadedPluginIds: Set<string>,
 ): HarnessPlugin {
   const catalog: AutomationCreatorPluginCatalogEntry[] = [];
+  const inspectedPluginIds = new Set<string>();
+  const resolvedResources = new Map<string, {
+    pluginId: string;
+    resourceType: string;
+    sourceBindingKeys: readonly string[];
+  }>();
+  const resolvedPersonIds = new Set<string>();
   const authorUserId = input.executionPrincipal?.type === "user"
     ? input.executionPrincipal.userId
     : null;
-  const draftState: { submitted: AutomationDraft | null } = { submitted: null };
   /**
    * The evaluator rules the model set, waiting for a submission to attach them
    * to. Null until it sets any; a draft with no event trigger never needs them.
    */
-  let stagedEvaluatorRules: AutomationSetEvaluatorRulesInputV1 | null = null;
+  const draftState: {
+    submitted: AutomationDraft | null;
+    evaluatorRules: AutomationSetEvaluatorRulesInputV1 | null;
+  } = { submitted: null, evaluatorRules: null };
   // One automation per authoring loop. Held here so a second submission
   // refines the first rather than creating another: an agent that asked a
   // clarifying question and submitted again has one proposal, not two.
-  let authoredAutomationId: string | null = null;
+  const authoredAutomationId = asAutomationId(input.harnessRunId);
+  let preparation: Promise<void> | null = null;
+  const prepare = async (): Promise<void> => {
+    if (!authorUserId) return;
+    if (preparation) return preparation;
+    preparation = (async () => {
+      if (catalog.length === 0) {
+        catalog.push(...await loadAutomationCreatorPluginCatalog(
+          env,
+          asWorkspaceId(input.workspaceId),
+          asUserId(authorUserId),
+        ));
+      }
+      const receipts = await createToolReceiptObjectPort(
+        env,
+        input.workspaceId,
+        input.workstreamId,
+      ).receiptsForRun({
+        runId: input.harnessRunId,
+        capabilities: [
+          "rally.automation.plugins.inspect",
+          "rally.automation.people.search",
+          "rally.automation.resources.search",
+          "rally.automation.evaluators.set",
+        ],
+      });
+      const replayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
+      for (const receipt of receipts) {
+        if (receipt.status !== "completed") continue;
+        const plan = parseJson<{ canonicalToolName?: unknown }>(
+          receipt.executionPlanJson,
+          {},
+        );
+        const raw = parseJson<unknown>(receipt.inputJson, null);
+        if (plan.canonicalToolName === "plugin_inspect") {
+          const pluginId = typeof raw === "object" && raw !== null && "pluginId" in raw
+            ? String(raw.pluginId)
+            : "";
+          if (catalog.some((entry) => entry.pluginId === pluginId)) {
+            inspectedPluginIds.add(pluginId);
+          }
+        } else if (plan.canonicalToolName === "set_evaluator_rules") {
+          const restored = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
+          if (restored.success) {
+            draftState.evaluatorRules = restored.data;
+          }
+        } else if (receipt.outputRef && plan.canonicalToolName === "people_search") {
+          rememberAutomationPeopleSearchResult(
+            await loadToolReplayOutput(env, receipt.outputRef, replayDeadline),
+            resolvedPersonIds,
+          );
+        } else if (receipt.outputRef && plan.canonicalToolName === "resources_search") {
+          rememberAutomationResourceSearchResult(
+            await loadToolReplayOutput(env, receipt.outputRef, replayDeadline),
+            resolvedResources,
+          );
+        }
+      }
+    })();
+    try {
+      await preparation;
+    } catch (error) {
+      preparation = null;
+      throw error;
+    }
+  };
   const plugin = createAutomationsPlugin({
     catalog,
-    inspectedPluginIds: new Set<string>(),
-    resolvedResources: new Map(),
-    loadedPluginIds: new Set<string>(),
-    resolvedPersonIds: new Set<string>(),
+    inspectedPluginIds,
+    resolvedResources,
+    // Shared with the work-stream plugin activation receipts below. The
+    // automation tools use model-facing ids, while the durable activation uses
+    // canonical connection ids, so the host bridges them when activation is
+    // persisted.
+    loadedPluginIds,
+    resolvedPersonIds,
     draftState,
     // Telemetry only: the diagnostics these tools emit name the model that
     // produced the arguments, and a work-stream run does not fix one here.
@@ -1798,7 +1879,6 @@ function createAvalonAutomationsPlugin(
     draftMutationPort: {
       submitDraft: async (draft: AutomationDraft) => {
         if (!authorUserId) throw new Error("automation_draft_author_unavailable");
-        authoredAutomationId ??= crypto.randomUUID();
         const agent = await durableObjectStubForWorkspace(
           env,
           env.AUTOMATION_AGENTS,
@@ -1819,7 +1899,7 @@ function createAvalonAutomationsPlugin(
           // Only a real channel. A DM is where somebody asked, not somewhere a
           // standing automation should speak from, and a mention with no
           // channel has nothing to record.
-          evaluatorRules: stagedEvaluatorRules,
+          evaluatorRules: draftState.evaluatorRules,
           authoredOrigin: input.slackOrigin?.channelId
             && input.slackOrigin.channelType !== "im"
             ? {
@@ -1871,21 +1951,24 @@ function createAvalonAutomationsPlugin(
       // every event-driven draft authored in a room impossible to accept:
       // `prepareAcceptance` requires evaluators for exactly those triggers.
       setEvaluatorRules: async (rules) => {
-        stagedEvaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse(rules);
+        draftState.evaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse(rules);
         return { accepted: true as const };
       },
     },
   });
   return {
     ...plugin,
-    onActivate: async () => {
-      if (!authorUserId || catalog.length > 0) return;
-      catalog.push(...await loadAutomationCreatorPluginCatalog(
-        env,
-        asWorkspaceId(input.workspaceId),
-        asUserId(authorUserId),
-      ));
-    },
+    // Restored durable activations deliberately skip onActivate, so every tool
+    // also passes through this single-flight preparation. That is what restores
+    // the inspection/evaluator facts a replacement object lost from memory.
+    tools: plugin.tools.map((tool) => ({
+      ...tool,
+      execute: async (raw, context) => {
+        await prepare();
+        return tool.execute(raw, context);
+      },
+    })),
+    onActivate: async () => prepare(),
   };
 }
 
@@ -2266,6 +2349,7 @@ export async function runWorkstreamHarness(
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
       projection: BindLoopProjectionState | null;
+      modelIterationsUsed: number;
       transcriptThrough: number;
       /** Extends the singleton loop lease after its subordinate attempt heartbeat commits. */
       heartbeat?(): void | Promise<void>;
@@ -2632,7 +2716,12 @@ export async function runWorkstreamHarness(
         pluginId,
         harnessTools,
       );
-      if (harnessTools.frozenConnections.has(pluginId)) activeCredentialPluginIds.add(pluginId);
+      recordCredentialPluginActivation(
+        pluginId,
+        harnessTools.frozenConnections,
+        activeCredentialPluginIds,
+        harnessTools.loadedAutomationPluginIds,
+      );
     },
     async (pluginId) => {
       const plugin = pluginById.get(pluginId);
@@ -2884,6 +2973,7 @@ export async function runWorkstreamHarness(
         : modelMessages,
       ...(!blockDashboardRun && runtime?.persistentLoop ? {
         bindLoopProjection: runtime.persistentLoop.projection,
+        modelIterationsUsed: runtime.persistentLoop.modelIterationsUsed,
         activationInputs,
         onActivationBoundary: (activation) =>
           runtime.persistentLoop!.commitActivationInputs(activation),
@@ -2997,9 +3087,20 @@ export async function runWorkstreamHarness(
       },
     persistActivation: async (pluginId) => {
       await persistWorkstreamPluginActivation(env, input, liveness.lease, pluginId, harnessTools);
-      if (harnessTools.frozenConnections.has(pluginId)) activeCredentialPluginIds.add(pluginId);
+      recordCredentialPluginActivation(
+        pluginId,
+        harnessTools.frozenConnections,
+        activeCredentialPluginIds,
+        harnessTools.loadedAutomationPluginIds,
+      );
     },
     onActivationDropped: (drop) => {
+      forgetCredentialPluginActivation(
+        drop,
+        harnessTools.frozenConnections,
+        activeCredentialPluginIds,
+        harnessTools.loadedAutomationPluginIds,
+      );
       logStructuredEvent(env, "warn", "harness_plugin_activation_dropped", {
         request_id: input.harnessRunId,
         workspace_id: input.workspaceId,
@@ -4390,6 +4491,9 @@ async function createInlineChildHarnessSurface(options: {
     ],
     plugins: childPlugins,
     builtinPluginIds: new Set(childBuiltinPlugins.map((plugin) => plugin.canonicalId)),
+    // Read-only children cannot draft automations, but the shared surface type
+    // carries this run-local bookkeeping for root authoring loops.
+    loadedAutomationPluginIds: new Set(),
     frozenConnections: childFrozenConnections,
     pluginSurfaceHashes: childPluginSurfaceHashes,
     legacyPluginSurfaceHashes: childLegacyPluginSurfaceHashes,
@@ -5798,6 +5902,8 @@ async function loadHarnessTools(
   plugins: HarnessPlugin[];
   /** Canonical IDs of the built-in plugins this run registered. */
   builtinPluginIds: ReadonlySet<string>;
+  /** Model-facing connector ids whose activation is durable for this run. */
+  loadedAutomationPluginIds: Set<string>;
   frozenConnections: Map<string, FrozenConnectorPlugin>;
   pluginSurfaceHashes: Map<string, string>;
   legacyPluginSurfaceHashes: Map<string, string>;
@@ -5854,9 +5960,10 @@ async function loadHarnessTools(
   // one that could draft automations from the email it just read is a spam
   // engine with a human approval step in front of it. It does its work, writes
   // its result, and what happens to that result is decided outside it.
+  const loadedAutomationPluginIds = new Set<string>();
   const automationsPlugin = input.automationRunContext
     ? null
-    : createAvalonAutomationsPlugin(env, input);
+    : createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds);
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
@@ -6100,6 +6207,7 @@ async function loadHarnessTools(
     // every `load_plugin` denied from the day it shipped, because it was absent
     // from the literal list this set replaces.
     builtinPluginIds: new Set(builtinPlugins.map((plugin) => plugin.canonicalId)),
+    loadedAutomationPluginIds,
     frozenConnections,
     pluginSurfaceHashes,
     legacyPluginSurfaceHashes,
@@ -6107,6 +6215,44 @@ async function loadHarnessTools(
     idempotencyByTool,
     modeByTool,
   };
+}
+
+/**
+ * Record one credential activation in both vocabularies that consume it.
+ * Bind and the durable receipt use the canonical connection id; automation
+ * drafts name the same plugin by its model-facing id.
+ */
+function recordCredentialPluginActivation(
+  pluginId: string,
+  frozenConnections: ReadonlyMap<string, FrozenConnectorPlugin>,
+  activeCredentialPluginIds: Set<string>,
+  loadedAutomationPluginIds: Set<string>,
+): void {
+  const frozen = frozenConnections.get(pluginId);
+  if (!frozen) return;
+  activeCredentialPluginIds.add(pluginId);
+  loadedAutomationPluginIds.add(frozen.modelPluginId);
+}
+
+/** Remove both names when Bind drops a credential from the active surface. */
+function forgetCredentialPluginActivation(
+  drop: unknown,
+  frozenConnections: ReadonlyMap<string, FrozenConnectorPlugin>,
+  activeCredentialPluginIds: Set<string>,
+  loadedAutomationPluginIds: Set<string>,
+): void {
+  const pluginId = typeof drop === "object" && drop !== null && "name" in drop
+    && typeof drop.name === "string"
+    ? drop.name
+    : null;
+  if (!pluginId) return;
+  const frozen = frozenConnections.get(pluginId);
+  if (!frozen) return;
+  activeCredentialPluginIds.delete(pluginId);
+  const sameModelIdRemains = [...activeCredentialPluginIds].some(
+    (activeId) => frozenConnections.get(activeId)?.modelPluginId === frozen.modelPluginId,
+  );
+  if (!sameModelIdRemains) loadedAutomationPluginIds.delete(frozen.modelPluginId);
 }
 
 /**
@@ -8414,6 +8560,8 @@ export const __integrationTesting = {
   storedToolPolicyMatches,
   eligibleConnectionCapabilityMap,
   persistInitialPluginActivations,
+  recordCredentialPluginActivation,
+  forgetCredentialPluginActivation,
   publishRuntimeEventBestEffort,
   advanceHarnessStreamText,
   applyHarnessAttachmentBoundary,

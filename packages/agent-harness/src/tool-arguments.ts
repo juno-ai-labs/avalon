@@ -6,23 +6,72 @@ const MAX_VALIDATION_ISSUES = 5;
 const MAX_VALIDATION_ERROR_CHARACTERS = 1_200;
 const JSON_NUMBER_TEXT = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u;
 const UNSAFE_REFERENCE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+/** JSON Schema keywords that can require a key only for a particular instance. */
+const CONDITIONAL_REQUIREDNESS_KEYWORDS = [
+  "if",
+  "then",
+  "else",
+  "dependentRequired",
+  "dependentSchemas",
+] as const;
 
 type JsonObject = Record<string, unknown>;
 type NumericKind = "integer" | "number";
 type Normalized = { value: unknown; changed: boolean };
 type SchemaVisitBudget = { remaining: number };
+/**
+ * The property names an object value must carry, gathered from every schema
+ * composed into the node describing it. `complete` is false when the walk hit
+ * its depth or visit bound before it could finish, which is treated as "every
+ * key might be required" rather than as an empty set.
+ */
+type RequiredKeys = { keys: ReadonlySet<string>; complete: boolean };
+
+const NO_REQUIRED_KEYS: RequiredKeys = { keys: new Set(), complete: true };
+/**
+ * What a caller gets where requiredness cannot be established. Every blank is
+ * kept under it, so it is also how the walk refuses to strip inside a nested
+ * value: `required` for a nested object can be split across composition
+ * branches of an ancestor, and merging those is a schema evaluator's job.
+ */
+const UNPROVEN_REQUIRED_KEYS: RequiredKeys = { keys: new Set(), complete: false };
+
+/** A tool's declared `mode`; the blank-argument rule below applies only to reads. */
+export type ToolArgumentMode = "read" | "write";
 
 /**
- * Apply the one model-tolerance rule shared by every harness tool: a string may
- * stand in for a schema-declared number only when the complete string is a
- * finite JSON number and JavaScript can represent any integral value safely.
+ * Apply the model-tolerance rules shared by every harness tool.
  *
- * The provider-facing schema remains numeric so models still learn the
- * preferred shape. String alternatives remain strings: identifiers and free
- * text must not change meaning merely because their characters look numeric.
+ * 1. A string may stand in for a schema-declared number only when the complete
+ *    string is a finite JSON number and JavaScript can represent any integral
+ *    value safely. The provider-facing schema remains numeric so models still
+ *    learn the preferred shape. String alternatives remain strings: identifiers
+ *    and free text must not change meaning merely because their characters look
+ *    numeric.
+ * 2. On a **read**, an optional property of the **top-level** arguments object
+ *    given `""` is treated as absent when the property's own schema says the
+ *    empty string is not one of its values.
+ *    Models blank out optional cursors, ids, and filters rather than omitting
+ *    them, and the tool then either rejects the call or forwards the blank to a
+ *    provider that rejects it. On a read there is nothing else a blank could
+ *    have meant: absence is the only alternative to a value.
+ *
+ * The second rule never reaches a value a tool would have accepted. A field
+ * where the empty string means something — clearing a description, listing a
+ * repository's root — does not declare it invalid, so it is left alone. And it
+ * does not apply to a write at all, because there a blank is genuinely
+ * ambiguous: `assigneeId: null` clears an assignee while omitting it leaves the
+ * assignee alone, so reading the blank as either one silently picks an intent
+ * the model did not state. A write keeps the blank and its executor rejects it,
+ * naming the field, which is one correction away from `null`. Both halves are
+ * why this is not the silent drop `docs/agent-tools.md` forbids.
  */
-export function normalizeToolArguments(input: unknown, schema: Record<string, unknown>): unknown {
-  return normalizeValue(input, schema, schema, 0, { remaining: MAX_SCHEMA_VISITS }).value;
+export function normalizeToolArguments(
+  input: unknown,
+  schema: Record<string, unknown>,
+  mode: ToolArgumentMode = "write",
+): unknown {
+  return normalizeValue(input, schema, schema, 0, { remaining: MAX_SCHEMA_VISITS }, NO_REQUIRED_KEYS, mode).value;
 }
 
 /**
@@ -62,6 +111,8 @@ function normalizeValue(
   rootSchema: JsonObject,
   depth: number,
   budget: SchemaVisitBudget,
+  inheritedRequired: RequiredKeys = NO_REQUIRED_KEYS,
+  mode: ToolArgumentMode = "write",
 ): Normalized {
   if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue) || !consumeSchemaVisit(budget)) {
     return { value: input, changed: false };
@@ -69,16 +120,23 @@ function normalizeValue(
   const schema = schemaValue;
   let current: Normalized = { value: input, changed: false };
 
+  // `required` can sit on any schema composed into this node while `properties`
+  // sits on another, so requiredness is resolved once for the value and carried
+  // into every branch rather than read off whichever node declares the property.
+  const required = isObject(input)
+    ? mergeRequiredKeys(inheritedRequired, collectRequiredKeys(schema, rootSchema, depth, budget))
+    : inheritedRequired;
+
   const reference = typeof schema.$ref === "string" ? resolveLocalReference(rootSchema, schema.$ref) : null;
   if (reference) {
-    current = mergeNormalized(current, normalizeValue(current.value, reference, rootSchema, depth + 1, budget));
+    current = mergeNormalized(current, normalizeValue(current.value, reference, rootSchema, depth + 1, budget, required, mode));
   }
 
-  current = mergeNormalized(current, normalizeDirect(current.value, schema, rootSchema, depth + 1, budget));
+  current = mergeNormalized(current, normalizeDirect(current.value, schema, rootSchema, depth + 1, budget, required, mode));
 
   if (Array.isArray(schema.allOf)) {
     for (const branch of schema.allOf) {
-      current = mergeNormalized(current, normalizeValue(current.value, branch, rootSchema, depth + 1, budget));
+      current = mergeNormalized(current, normalizeValue(current.value, branch, rootSchema, depth + 1, budget, required, mode));
     }
   }
 
@@ -89,7 +147,7 @@ function normalizeValue(
       : null;
   if (alternatives?.length) {
     const candidates = alternatives.map((branch, index) => {
-      const normalized = normalizeValue(current.value, branch, rootSchema, depth + 1, budget);
+      const normalized = normalizeValue(current.value, branch, rootSchema, depth + 1, budget, required, mode);
       return {
         ...normalized,
         index,
@@ -114,6 +172,8 @@ function normalizeDirect(
   rootSchema: JsonObject,
   depth: number,
   budget: SchemaVisitBudget,
+  required: RequiredKeys = NO_REQUIRED_KEYS,
+  mode: ToolArgumentMode = "write",
 ): Normalized {
   const numericKind = exclusiveNumericKind(schema);
   if (numericKind && typeof input === "string") {
@@ -126,7 +186,7 @@ function normalizeDirect(
     const prefixItems = Array.isArray(schema.prefixItems) ? schema.prefixItems : [];
     const values = input.map((item, index) => {
       const itemSchema = prefixItems[index] ?? schema.items;
-      const normalized = normalizeValue(item, itemSchema, rootSchema, depth + 1, budget);
+      const normalized = normalizeValue(item, itemSchema, rootSchema, depth + 1, budget, UNPROVEN_REQUIRED_KEYS, mode);
       changed ||= normalized.changed;
       return normalized.value;
     });
@@ -139,17 +199,142 @@ function normalizeDirect(
   let changed = false;
 
   for (const [key, value] of Object.entries(input)) {
+    const declared = Object.prototype.hasOwnProperty.call(properties, key);
+    if (
+      value === ""
+      && mode === "read"
+      && declared
+      && required.complete
+      && !required.keys.has(key)
+      && schemaRejectsEmptyString(properties[key], rootSchema, depth + 1, budget)
+    ) {
+      changed = true;
+      continue;
+    }
     let normalized: Normalized = { value, changed: false };
-    if (Object.prototype.hasOwnProperty.call(properties, key)) {
-      normalized = normalizeValue(value, properties[key], rootSchema, depth + 1, budget);
+    if (declared) {
+      normalized = normalizeValue(value, properties[key], rootSchema, depth + 1, budget, UNPROVEN_REQUIRED_KEYS, mode);
     } else if (isObject(schema.additionalProperties)) {
-      normalized = normalizeValue(value, schema.additionalProperties, rootSchema, depth + 1, budget);
+      normalized = normalizeValue(value, schema.additionalProperties, rootSchema, depth + 1, budget, UNPROVEN_REQUIRED_KEYS, mode);
     }
     changed ||= normalized.changed;
     entries.push([key, normalized.value]);
   }
 
   return changed ? { value: Object.fromEntries(entries), changed: true } : { value: input, changed: false };
+}
+
+/**
+ * Every property name required of an object described by this schema, gathered
+ * across `$ref`, `allOf`, and each `anyOf`/`oneOf` branch rather than from the
+ * node that happens to carry `properties`.
+ *
+ * Union branches are collected together rather than per selected branch: a key
+ * required by any branch is treated as required, which errs toward keeping a
+ * value. Running out of depth or visits returns `complete: false`, and the
+ * caller then keeps every blank, so an exhausted budget can never widen what is
+ * dropped.
+ */
+function collectRequiredKeys(
+  schemaValue: unknown,
+  rootSchema: JsonObject,
+  depth: number,
+  budget: SchemaVisitBudget,
+): RequiredKeys {
+  // A schema that is not an object requires nothing, and that is provable. The
+  // two bounds are not: what they cut off may have required a key.
+  if (!isObject(schemaValue)) return NO_REQUIRED_KEYS;
+  if (depth > MAX_SCHEMA_DEPTH || !consumeSchemaVisit(budget)) return UNPROVEN_REQUIRED_KEYS;
+  const schema = schemaValue;
+  const keys = new Set<string>();
+  let complete = true;
+
+  if (Array.isArray(schema.required)) {
+    for (const value of schema.required) if (typeof value === "string") keys.add(value);
+  }
+
+  const compose = (branch: unknown): void => {
+    const nested = collectRequiredKeys(branch, rootSchema, depth + 1, budget);
+    for (const key of nested.keys) keys.add(key);
+    complete &&= nested.complete;
+  };
+
+  if (typeof schema.$ref === "string") {
+    const reference = resolveLocalReference(rootSchema, schema.$ref);
+    // An unresolvable reference may still require a key this cannot see.
+    if (reference === null) complete = false;
+    else compose(reference);
+  }
+  for (const branch of Array.isArray(schema.allOf) ? schema.allOf : []) compose(branch);
+  for (const branch of Array.isArray(schema.anyOf) ? schema.anyOf : []) compose(branch);
+  for (const branch of Array.isArray(schema.oneOf) ? schema.oneOf : []) compose(branch);
+
+  // Conditional requiredness answers "is this key required" only against the
+  // instance being validated, which is a schema evaluator's job rather than
+  // this walk's. A schema carrying any of it is therefore unproven, not
+  // unrequiring.
+  if (CONDITIONAL_REQUIREDNESS_KEYWORDS.some((keyword) => Object.hasOwn(schema, keyword))) {
+    complete = false;
+  }
+
+  return { keys, complete };
+}
+
+/** Union of two required-key sets; unproven on either side stays unproven. */
+function mergeRequiredKeys(left: RequiredKeys, right: RequiredKeys): RequiredKeys {
+  if (left.keys.size === 0 && left.complete) return right;
+  if (right.keys.size === 0 && right.complete) return left;
+  return {
+    keys: new Set([...left.keys, ...right.keys]),
+    complete: left.complete && right.complete,
+  };
+}
+
+/**
+ * Whether the schema proves the empty string is not one of this property's
+ * values. Unproven means false: a schema this cannot read keeps `""` and the
+ * ordinary validation path decides, so a new JSON Schema idiom can never turn
+ * into a silent drop here.
+ *
+ * `pattern` and `format` are deliberately not consulted. Both would need the
+ * regex or format vocabulary evaluated to answer, and a field that must not be
+ * empty can say so with `minLength`, which is also the constraint the model
+ * reads.
+ */
+function schemaRejectsEmptyString(
+  schemaValue: unknown,
+  rootSchema: JsonObject,
+  depth: number,
+  budget: SchemaVisitBudget,
+): boolean {
+  if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue) || !consumeSchemaVisit(budget)) return false;
+  const schema = schemaValue;
+
+  const types = typeof schema.type === "string"
+    ? [schema.type]
+    : Array.isArray(schema.type)
+      ? schema.type.filter((value): value is string => typeof value === "string")
+      : [];
+  if (types.length > 0 && !types.includes("string")) return true;
+  if (typeof schema.minLength === "number" && schema.minLength >= 1) return true;
+  if (Object.prototype.hasOwnProperty.call(schema, "const") && schema.const !== "") return true;
+  if (Array.isArray(schema.enum) && !schema.enum.includes("")) return true;
+
+  if (typeof schema.$ref === "string") {
+    const reference = resolveLocalReference(rootSchema, schema.$ref);
+    if (schemaRejectsEmptyString(reference, rootSchema, depth + 1, budget)) return true;
+  }
+  if (Array.isArray(schema.allOf)
+    && schema.allOf.some((branch) => schemaRejectsEmptyString(branch, rootSchema, depth + 1, budget))) {
+    return true;
+  }
+  const alternatives = Array.isArray(schema.anyOf)
+    ? schema.anyOf
+    : Array.isArray(schema.oneOf)
+      ? schema.oneOf
+      : null;
+  if (!alternatives?.length) return false;
+  return alternatives.every((branch) => schemaRejectsEmptyString(branch, rootSchema, depth + 1, budget));
 }
 
 function exclusiveNumericKind(schema: JsonObject): NumericKind | null {

@@ -27,7 +27,7 @@ internal `block_dashboard` / `BlockDashboardAgent` name.
 | Path | Responsibility |
 | --- | --- |
 | `packages/agent-harness/src/bind-runtime.ts` | The Bind adapter itself — registry construction, the tool loop's hooks, streaming. |
-| `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization and bounded model-visible argument errors. |
+| `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization, blanked-optional-argument stripping, and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
 | `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the three skills the package ships. |
@@ -112,11 +112,16 @@ index, stable turn ID, and exact participant transcript sequence, then Bind
 commits `assistant_reserved` to its durable projection. Provider I/O may begin
 only after both commits. The host repairs an unresolved reservation before
 calling the harness again; Bind refuses to infer from a projection that still
-contains one. A failed or stopped harness outcome settles that reservation
-before execution terminalization and replaces ephemeral partial output with a
-canonical status pill. If the host reservation survived but `assistant_reserved`
-did not, recovery commits that missing edge first and then settles it; neither
-step invokes the provider, and either may be safely resumed after a crash.
+contains one. On takeover, an explicit stop settles the reservation and ends the
+execution. Otherwise the host replaces the lost preview with a canonical
+interruption status pill and resumes the same execution at the next model-turn
+index. That retry is safe because a pending reservation means no assistant
+response was durably accepted and therefore no tool from it could have started.
+A failed or stopped outcome in the still-live harness settles its reservation
+before execution terminalization. If the host reservation survived but
+`assistant_reserved` did not, recovery commits that missing edge first and then
+settles it; neither step invokes the provider, and either may be safely resumed
+after a crash.
 Stream and checkpoint events for participant loops carry that
 same sequence. A generic host such as HyperSight has no participant sequence
 but still keeps one stable loop identity.
@@ -258,6 +263,17 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 
 Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. An explicit load may run a convergent host-owned `onActivate` preparation hook after reauthorization and dynamic tool loading. Successful preparation is single-flighted for the run, then activation is durably recorded before the plugin's tools or trusted guidance become visible. Failed preparation remains retryable only when the host returns model-safe retry guidance; provider details are not exposed.
 
+When that durable activation belongs to a credential plugin, the work-stream
+host also records its model-facing `plugin_*` ID in the automation-drafting
+state for the run. Explicit loads, preloads, and restored hints all cross the
+same bridge. `automation_submit_draft` can therefore enforce that a ready
+definition names only connectors the model both loaded through discovery and
+inspected through the automation catalog, without maintaining an unrelated
+second notion of “loaded.” Because restored durable activations deliberately
+skip `onActivate`, the Automations plugin prepares itself on its first tool call
+too: it rebuilds completed plugin inspections and staged evaluator rules from
+the run's tool receipts before validating a resumed draft.
+
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
 catalog entry. After `load_plugin` reauthorizes the connection, the harness
@@ -271,7 +287,7 @@ returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
-Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation, and `rally_automation_architect` owns automation research and draft submission. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
+Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_automation_architect` owns automation research and draft submission. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
 deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
@@ -397,7 +413,8 @@ tool batch and then fails the current cycle visibly without retrying the
 provider or pretending that human input was requested.
 
 Before the input hash or any host hook sees arguments, the harness walks the
-tool's provider-facing JSON Schema and normalizes a string only where the field
+tool's provider-facing JSON Schema and applies two normalizations. It normalizes
+a string only where the field
 is exclusively numeric and the complete string is a finite JSON number. Unsafe
 integers and ambiguous string-or-number fields remain strings and fail or parse
 under the executor's normal contract. A redundant `number` plus `integer` type
@@ -406,7 +423,26 @@ uses number semantics, because number already contains integer. One shared
 addition to the depth cap, so a provider-controlled recursive branching schema
 cannot turn the walk exponential. This makes a medium model's `"0"` and the
 preferred `0` one canonical receipt identity without turning numeric-looking
-resource ids or free text into numbers. Executors remain the enforcement point.
+resource ids or free text into numbers. On a tool whose `mode` is `read`, it also drops an
+**optional** property whose value is `""` when that property's schema declares
+the empty string is not one of its values — `minLength` of at least 1, a `type` without `string`, or an
+`enum`/`const` excluding it, composed through `$ref`, `allOf`, and every branch
+of an `anyOf`/`oneOf`. A required property keeps the blank so validation names
+the field, an undeclared key keeps it so a strict parse still reports it, and a
+schema this walk cannot read keeps it too. A **write** keeps every blank,
+because there `null` and absence are different requests — clearing a field
+versus leaving it alone — and choosing between them is the executor's to refuse
+by name, not the harness's to guess. So does anything nested inside a value,
+and any schema carrying `if`, `then`, `else`, `dependentRequired`, or
+`dependentSchemas`: requiredness there is answerable only per instance or by
+merging an ancestor's branches, which is a schema evaluator's job. Requiredness is itself resolved
+across the composed schema rather than read from the node carrying `properties`,
+since a generated schema commonly separates the two, and a walk that cannot
+finish drops nothing. `{}` and `{ after: "" }` are
+therefore one receipt identity. What that is for, and the obligation it puts on
+a tool's schema, is
+[`agent-tools.md`](agent-tools.md#1-fail-loud-never-silently-ignore-an-input).
+Executors remain the enforcement point.
 When one throws a Zod error, the harness checks the normalized input against the
 same JSON Schema the model saw and any code-authored `validateInput` refinement:
 a mismatch becomes a bounded `kind: "validation"` result from the closest union
@@ -1198,6 +1234,88 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-02 — A blanked optional argument is normalized to an omission
+
+**What changed:** `normalizeToolArguments` gained a second rule beside
+numeric-string normalization: on a tool whose `mode` is `read`, an optional
+property of the top-level arguments object given `""` is removed when its
+declared schema says the empty string is not one of its values. It takes the
+tool's mode from the call site for that reason. It runs in
+the same walk, under the same depth and visit budgets, and therefore before the
+input hash, `beforeToolCall`, receipt planning, and execution. The three
+functions in `tool-arguments.ts` are now exported from the package so the
+composition of harness rule and connector schema can be tested against the real
+tool registries.
+
+**Why:** A production run could not file a Linear ticket because it sent
+`after: ""` as a pagination cursor; Linear answered `Argument Validation Error`
+with no field named, and the model retried unchanged until it gave up. Blanking
+an optional parameter rather than omitting it is ordinary small-model behavior,
+and the harness is the one place that can absorb it for every tool at once
+instead of each connector rediscovering it.
+
+**Considered and rejected:** Fixing it inside each connector executor, which
+leaves the next connector to repeat it and still spends a round trip on an error
+the model may not recover from. Also rejected: applying the rule to writes. A
+blanked `assigneeId` dropped from `linear_update_issue` leaves the issue's
+assignee untouched and reports the update as complete, while `null` there
+clears it — two different requests the harness cannot choose between, so the
+executor refuses the call by name instead. Also rejected: treating what the
+walk cannot read as requiring nothing. A depth or visit bound, an unresolvable
+`$ref`, a nested value whose requiredness an ancestor's branches split between
+them, and the conditional requiredness keywords are each unproven rather than
+unrequiring, and each keeps every blank. Also rejected: reading `required` from the node
+that declares `properties`. A generated or hosted-MCP schema separates the two,
+so that would have dropped a required blank from a tool whose arguments Rally
+forwards without a local parse — the argument would have gone missing instead of
+being refused. Also rejected: stripping every empty string,
+which would silently discard values that mean something — a cleared description,
+a repository root path — and is the silent drop `agent-tools.md` principle 1
+forbids. Gating on what the schema itself declares is what keeps the two apart,
+and it is deliberately narrow: `pattern` and `format` are not consulted, so a
+field that must not be empty says so with `minLength`.
+
+**Consequences:** The tolerance is opt-in per field through the declared schema,
+so a tool that omits `minLength: 1` on a never-empty string still forwards the
+blank. Receipt identity for a call with a blanked optional argument now matches
+the same call without it, which is a change in `inputHash` for that shape.
+
+### 2026-09-02 — Automation authoring and interrupted turns share durable truth
+
+**What changed:** `core_request_elicitation` now declares `provider_key`
+idempotency, matching the receipt-derived key its executor requires. A persisted
+credential activation now records both the canonical `connection:<uuid>` and
+the model-facing `plugin_*` identity consumed by ready-draft validation,
+including preloaded and restored activation hints; a dropped activation removes
+both identities again. Completed inspection, people/resource search, and
+evaluator receipts rebuild the Automations plugin's otherwise in-memory state
+after eviction in durable tool order. The authoring run ID is also the stable
+automation ID, so recreating the plugin cannot fork a second automation. On
+object takeover, a pending assistant reservation is settled visibly and the
+Bind loop continues at the next model turn instead of terminalizing the
+execution, while the configured model-turn ceiling continues counting across
+takeovers.
+
+**Why:** One production automation-authoring run exposed all three mismatches.
+The elicitation definition withheld the key its executor required; loading and
+inspecting Granola could never satisfy submission because the draft tools held
+an unrelated empty loaded set; and the replacement `SubstreamAgent` reclaimed
+the attempt only to close it as `assistant_turn_interrupted`. Each durable fact
+already existed, but its next consumer used a disconnected representation.
+
+**Considered and rejected:** Removing the ready-draft load requirement would
+allow a definition to name a connector the model never activated. Weakening the
+elicitation executor to invent an ID would lose replay convergence. Retrying an
+accepted assistant/tool turn after eviction would risk repeating an external
+effect; only an unaccepted reservation is retried.
+
+**Consequences:** Elicitations converge on one durable question; ready drafts
+recognize only live connector activations plus the inspection, research, and
+evaluator facts the harness actually persisted; and an instance/socket reset
+self-heals when the abandoned model turn has no accepted side effects. Repeated
+takeovers cannot reset the run's model-turn budget. Existing ambiguous-tool
+recovery and explicit cancellation remain fail-closed.
 
 ### 2026-09-02 — GPT-5.6 Sol is Azure-only
 

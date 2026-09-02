@@ -216,7 +216,8 @@ moved on its own.
 The set of ids a pin may name is closed — `AGENT_MODEL_OVERRIDES` in
 `@rally/contracts` — because a pin bypasses the rollout, so what it can reach
 is a reviewed product decision rather than whatever string a client sends. The
-OpenAI family is ordered by capability: Sol appears above Terra and Luna. The
+Google family is ordered newest first, with 3.8 Flash above 3.7 Flash; the
+OpenAI family is ordered by capability, with Sol above Terra and Luna. The
 API validates it on write and again on read, which is what lets a model be
 retired from the list without a migration: the work streams still naming it log
 `workstream_model_override_unknown` and return to the flag. `resolveWorkstreamModelRouting`
@@ -1136,6 +1137,28 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-09-02 — Gemini 3.8 Flash joins with the same access as 3.7 Flash
+
+**What changed:** `google/gemini-3.8-flash` was added above 3.7 Flash in the
+shared pinnable-model contract and gained its desktop presentation. The
+contract-derived developer selector and Ace suggestions expose it for every
+managed role, and the pricing inventory now refreshes its OpenRouter key.
+
+**Why:** Google released 3.8 Flash as the new strongest Flash model. Its stable
+OpenRouter identity is already served across Google Vertex and AI Studio with
+the multimodal, tool-calling, structured-output, and reasoning capabilities
+Rally expects from 3.7 Flash, so it should have the same unrestricted access.
+
+**Considered and rejected:** Adding separate Ace or pricing-cron registrations.
+Both surfaces derive from `AGENT_MODEL_OVERRIDES`; duplicating the ID would
+create catalogs that can drift instead of proving the shared contract reaches
+each consumer.
+
+**Consequences:** A developer can pin a new work stream to 3.8 Flash, every Ace
+model role can select it, and the hourly pricing job writes its canonical KV
+record. It remains OpenRouter-routed like 3.7 Flash and has no Azure binding or
+provider restriction.
 
 ### 2026-09-02 — GPT-5.6 Sol joins the closed pin list above Terra and Luna
 
