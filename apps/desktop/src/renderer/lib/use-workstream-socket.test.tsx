@@ -10,7 +10,7 @@ import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BlockDashboard, BlockDashboardPreference, Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
-import { setCachedWorkstreams } from './workstreams-cache';
+import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import {
   applyActiveStreamCheckpoints,
   applyStreamingOverlayEvent,
@@ -161,6 +161,7 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
     throw new Error('Unexpected socket API call.');
   };
   return {
+    viewerUserId: null,
     getSocketTicket: vi.fn(unexpected),
     getWorkstreamControlSocketTicket: vi.fn(unexpected),
     getWorkstream: vi.fn(unexpected),
@@ -1778,6 +1779,133 @@ describe('useWorkstreamSocket', () => {
       statusEvent: { kind: 'assistant_turn_failed', code: 'provider_failed' },
     }]);
     expect(canonical.map((message) => message.text)).not.toContain('observable partial');
+  });
+
+  it('does not mark a work stream unread for the reader\'s own arriving turn', async () => {
+    // The room advances the author's own read waterline in the write that
+    // stores their message, so a client that guessed "unread" here would draw
+    // an Unread messages divider above the turn the person just sent and light
+    // their own sidebar dot for it, for as long as that state took to arrive.
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-00000000070a';
+    const viewerUserId = '00000000-0000-7000-8000-00000000070b';
+    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+      emptyTranscriptSnapshot(),
+    );
+    queryClient.setQueryData(
+      ['workstream', workstreamId],
+      workstreamDetail({ id: workstreamId, latestAttentionSequenceNumber: 4, readThroughSequenceNumber: 4 }),
+    );
+    setCachedWorkstreams(queryClient, [
+      workstreamSummary({ id: workstreamId, latestAttentionSequenceNumber: 4, readThroughSequenceNumber: 4 }),
+    ]);
+    const api = socketApiWith({
+      viewerUserId,
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'transcript_turn_upserted',
+      sequence: 1,
+      occurredAt: '2026-08-23T12:00:00.000Z',
+      turn: {
+        transcriptSequence: 1,
+        turnId: 'own-turn',
+        entryKind: 'conversation',
+        actor: 'human',
+        authorUserId: viewerUserId,
+        authorSnapshot: { userId: viewerUserId, displayName: 'Adam', avatarUrl: null },
+        attentionOrdinal: 5,
+        createdAtUtc: '2026-08-23T12:00:00.000Z',
+        revision: 1,
+        blocks: [{
+          type: 'text', blockId: 'own-turn:text:0', blockIndex: 0, text: 'noice', streaming: false,
+        }],
+        activityId: null,
+      },
+    }));
+    await flushPromises();
+
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])).toMatchObject({
+      latestAttentionSequenceNumber: 5,
+      readThroughSequenceNumber: 5,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+    });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+    });
+  });
+
+  it('marks a work stream unread for a coworker\'s arriving turn', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-00000000070c';
+    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+      emptyTranscriptSnapshot(),
+    );
+    queryClient.setQueryData(
+      ['workstream', workstreamId],
+      workstreamDetail({ id: workstreamId, latestAttentionSequenceNumber: 4, readThroughSequenceNumber: 4 }),
+    );
+    const api = socketApiWith({
+      viewerUserId: '00000000-0000-7000-8000-00000000070b',
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'transcript_turn_upserted',
+      sequence: 1,
+      occurredAt: '2026-08-23T12:00:00.000Z',
+      turn: {
+        transcriptSequence: 1,
+        turnId: 'coworker-turn',
+        entryKind: 'conversation',
+        actor: 'human',
+        authorUserId: '00000000-0000-7000-8000-00000000070d',
+        authorSnapshot: {
+          userId: '00000000-0000-7000-8000-00000000070d', displayName: 'Sam', avatarUrl: null,
+        },
+        attentionOrdinal: 5,
+        createdAtUtc: '2026-08-23T12:00:00.000Z',
+        revision: 1,
+        blocks: [{
+          type: 'text', blockId: 'coworker-turn:text:0', blockIndex: 0, text: 'take a look', streaming: false,
+        }],
+        activityId: null,
+      },
+    }));
+    await flushPromises();
+
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])).toMatchObject({
+      readThroughSequenceNumber: 4,
+      hasUnread: true,
+      firstUnreadSequenceNumber: 5,
+    });
   });
 
   it('ignores completion for an older stream without closing the active stream', async () => {

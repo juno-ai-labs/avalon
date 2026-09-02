@@ -69,6 +69,34 @@ prove layout, focus, scroll position, or overlap.
 
 ## Changelog
 
+### 2026-09-02 — An in-flight turn is the bubble it is about to become
+
+**What changed:** `MessageBlock` no longer swaps a turn being sent for a
+placeholder. `deliveryState: 'sending'` renders the ordinary human row —
+attachments, bubble, text, header when a `contextLabel` needs one — and says it
+is still going with the dimming a queued turn already uses plus a shimmer inside
+the bubble. The fixed `176 × 40` box and `.message-skeleton` are gone.
+
+**Why:** the placeholder was one size for every message, so the moment the room
+accepted a turn the box jumped to the shape of the text it had been standing in
+for — a resize on every send, and a long message resized a lot. It was also
+hiding words the person had just typed and could still see in the composer they
+came from, and hiding them from nobody else: the accepted overlay that replaces
+it a few hundred milliseconds later renders that same client text, mentions
+included, before the canonical turn lands.
+
+**Considered and rejected:** keeping the placeholder but measuring the text to
+size it. That is the bubble, drawn twice, with the second copy free to drift
+from the first. Also rejected: leaving the row visually identical to a settled
+one — a send can fail, and a turn that has not been admitted should not claim it
+has.
+
+**Consequences:** the in-flight row is the settled row's layout, so a change to
+the human bubble now reaches the sending state without being asked to. The
+sending state's only geometry is `overflow`/`position` on the bubble, for the
+shimmer to clip against; anything else written under `.is-sending` will drift
+from the row it is supposed to be indistinguishable from.
+
 ### 2026-09-01 — An automation's result is a message in the room, named Automation
 
 **What changed:** `automation_activation` is a participant message type, and

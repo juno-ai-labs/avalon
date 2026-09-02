@@ -63,6 +63,7 @@ function socketApi(): WorkstreamSocketApi & {
     throw new Error('Unexpected socket API call.');
   };
   return {
+    viewerUserId: 'user-adam',
     getSocketTicket: vi.fn(async (workstreamId: string) => ({
       url: `wss://api.rally.test/workstreams/${workstreamId}/feed`,
       ticket: `feed-ticket-${workstreamId}`,
