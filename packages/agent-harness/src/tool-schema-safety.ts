@@ -18,9 +18,10 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
 /**
  * Whether xAI will read one branch of a **root** union as an object.
  *
- * Shared by the report and the repair below so the two cannot drift: a rule
- * that only half the codebase enforces is worse than one nobody does, because
- * the guard goes green on exactly the schema the repair lets through.
+ * Read only by {@link nonObjectRootUnionBranches} now. The repair below no
+ * longer consults either, because the rule it enforces is strictly stronger:
+ * a root union is fatal whether or not xAI could read its branches, so knowing
+ * which of the two rules a schema broke does not change what is done about it.
  *
  * Every clause was measured against grok-4.3/4.5/4.6, and confirmed harmless on
  * gemini-3.5/3.6/3.7-flash and gpt-5.6-terra/sol/luna:
@@ -232,72 +233,114 @@ export function repairRootSchemaForProviders(schema: Record<string, unknown>): R
   // handling, without anyone having to notice.
   if (nonObjectRootSchema(schema).length === 0) return schema;
 
-  // Every distinct declaration of each property name, in the order met. A
-  // discriminated union — the commonest root union a hosted MCP server serves —
-  // redeclares its discriminator per branch with a different `const`, so
+  // Every distinct declaration of each property name, kept apart by whether the
+  // keyword that carried it was conjunctive or disjunctive, because the two
+  // recombine differently and mixing them states something the schema did not.
+  //
+  // A discriminated union — the commonest root union a hosted MCP server serves
+  // — redeclares its discriminator per branch with a different `const`, so
   // first-declaration-wins would advertise one branch's value as the only legal
   // one and silently delete the rest. That is a schema the model cannot argue
   // with and no log would ever show, which is the failure this repository asks
   // to be traded away rather than kept.
-  const variants = new Map<string, unknown[]>();
-  const declare = (name: string, subschema: unknown): void => {
-    const seen = variants.get(name);
+  const unionVariants = new Map<string, unknown[]>();
+  const intersectionVariants = new Map<string, unknown[]>();
+  const declare = (into: Map<string, unknown[]>, name: string, subschema: unknown): void => {
+    const seen = into.get(name);
     if (!seen) {
-      variants.set(name, [subschema]);
+      into.set(name, [subschema]);
       return;
     }
     // A branch that repeats a declaration verbatim is the same constraint, not
-    // an alternative; only genuinely different shapes become a union.
+    // an alternative; only genuinely different shapes recombine.
     if (!seen.some((entry) => stableKey(entry) === stableKey(subschema))) seen.push(subschema);
   };
+  // A root `properties` applies to the instance whatever branch it satisfies,
+  // so it is conjunctive with every branch declaration rather than one more
+  // alternative beside them.
   if (isPlainObject(schema.properties)) {
-    for (const [name, subschema] of Object.entries(schema.properties)) declare(name, subschema);
+    for (const [name, subschema] of Object.entries(schema.properties)) {
+      declare(intersectionVariants, name, subschema);
+    }
   }
-  // `required` is intersected across the branches of a union and unioned across
-  // an intersection, which is the most the flattened root can still assert. A
-  // union's branches are alternatives, so only a name *every* branch demands is
-  // demanded by the whole; taking their union instead would invent a
-  // requirement no branch stated and make the tool uncallable.
-  const rootRequired = requiredNames(schema);
-  let unionRequired: string[] | null = null;
-  const intersectionRequired = new Set<string>(rootRequired);
+
+  // `required` is intersected within each union keyword and unioned across
+  // keywords, which is the most the flattened root can still assert. Within one
+  // union the branches are alternatives, so only a name *every* branch demands
+  // is demanded by the whole. Across keywords they are conjunctive: sibling
+  // `anyOf` and `oneOf` must both be satisfied, so a name each of them demands
+  // in its own right is still demanded. One accumulator shared by both would
+  // intersect the two keywords against each other and emit neither.
+  const intersectionRequired = new Set<string>(requiredNames(schema));
+  // `$defs` and `definitions` are carried up from every branch. A branch may
+  // declare its own and reference it from a property the merge hoists to the
+  // root; deleting the branch would leave that `$ref` pointing into a subtree
+  // that no longer exists, and an unresolvable `$ref` in a tool's `parameters`
+  // is the same class of provider rejection this corrector exists to prevent.
+  const definitions = new Map<string, Record<string, unknown>>();
+  // Carried up only when *every* branch declared it and they agreed. A merged
+  // object admits any branch's properties, so one branch's `false` cannot be
+  // asserted over another's members — and a branch that said nothing is a
+  // branch that did not agree, which is why the count is compared rather than
+  // just the values collected.
+  const additionalProperties: unknown[] = [];
+  let mergedBranchCount = 0;
 
   for (const keyword of ROOT_COMPOSITION_KEYWORDS) {
     const branches = schema[keyword];
     if (!Array.isArray(branches)) continue;
+    const conjunctive = keyword === "allOf";
+    let unionRequired: string[] | null = null;
     for (const branch of branches) {
       if (!isPlainObject(branch)) continue;
+      mergedBranchCount += 1;
       if (isPlainObject(branch.properties)) {
-        for (const [name, subschema] of Object.entries(branch.properties)) declare(name, subschema);
+        for (const [name, subschema] of Object.entries(branch.properties)) {
+          declare(conjunctive ? intersectionVariants : unionVariants, name, subschema);
+        }
       }
+      for (const key of ["$defs", "definitions"] as const) {
+        const carried = branch[key];
+        if (isPlainObject(carried)) definitions.set(key, { ...definitions.get(key), ...carried });
+      }
+      if ("additionalProperties" in branch) additionalProperties.push(branch.additionalProperties);
       const names = requiredNames(branch);
-      if (keyword === "allOf") {
+      if (conjunctive) {
         for (const name of names) intersectionRequired.add(name);
         continue;
       }
-      unionRequired = unionRequired === null
-        ? [...names]
-        : unionRequired.filter((name) => names.includes(name));
+      unionRequired = unionRequired === null ? [...names] : unionRequired.filter((name) => names.includes(name));
     }
+    for (const name of unionRequired ?? []) intersectionRequired.add(name);
   }
-  for (const name of unionRequired ?? []) intersectionRequired.add(name);
 
-  // A name declared differently by different branches becomes a union *under*
-  // the property, which is the one place a provider accepts one: the same
-  // deployment that rejects a root `anyOf` accepts `table_query`'s nested
-  // recursive `$ref` union and `core_request_elicitation`'s nested nullable
-  // union. The model is then told every shape some branch allowed, which is a
-  // wider statement than the union made and an honest one, rather than a
-  // narrower statement that is false.
-  const properties = Object.fromEntries(
-    [...variants].map(([name, entries]) => [name, entries.length === 1 ? entries[0] : { anyOf: entries }]),
-  );
+  // A name declared more than one way recombines *under* the property, which is
+  // the one place a provider accepts a composition: the same deployment that
+  // rejects a root `anyOf` accepts `table_query`'s nested recursive `$ref` union
+  // and `core_request_elicitation`'s nested nullable union. Alternatives become
+  // an `anyOf` and constraints that all apply become an `allOf`, so a union's
+  // branches are not silently narrowed to one and an intersection's are not
+  // silently widened to any.
+  const properties = Object.fromEntries([...new Set([...intersectionVariants.keys(), ...unionVariants.keys()])]
+    .map((name) => {
+      const union = unionVariants.get(name) ?? [];
+      const all = [
+        ...(intersectionVariants.get(name) ?? []),
+        ...(union.length === 0 ? [] : [union.length === 1 ? union[0] : { anyOf: union }]),
+      ];
+      return [name, all.length === 1 ? all[0] : { allOf: all }];
+    }));
 
   // Only names the flattened root actually declares. A branch may require a
   // property whose subschema lived on a sibling the merge could not read, and a
   // `required` naming a property that is not there is the very shape Bind's
   // sanitizer prunes away.
   const required = [...intersectionRequired].filter((name) => name in properties);
+  const agreedAdditionalProperties = additionalProperties.length > 0
+    && additionalProperties.length === mergedBranchCount
+    && additionalProperties.every((entry) => stableKey(entry) === stableKey(additionalProperties[0]))
+    ? { additionalProperties: additionalProperties[0] }
+    : {};
 
   return {
     ...Object.fromEntries(
@@ -306,6 +349,11 @@ export function repairRootSchemaForProviders(schema: Record<string, unknown>): R
         && !ROOT_FORBIDDEN_KEYWORDS.some((keyword) => keyword === key)
       )),
     ),
+    ...agreedAdditionalProperties,
+    ...Object.fromEntries([...definitions].map(([key, value]) => [
+      key,
+      { ...(isPlainObject(schema[key]) ? schema[key] : {}), ...value },
+    ])),
     type: "object",
     properties,
     ...(required.length > 0 ? { required } : {}),
