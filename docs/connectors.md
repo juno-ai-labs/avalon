@@ -905,6 +905,41 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-02 — Every connector declares which of its strings cannot be empty
+
+**What changed:** Across all seven adapters, the string parameters whose empty
+value is not a value — pagination cursors, identifiers, handles, and date
+filters — declare `minLength: 1` in the `inputSchema` the model reads. Three
+executor parses that did not enforce what they declared now do: Linear's
+`after`, Granola's `cursor`, and Gmail's `threadId`. Content parameters are
+deliberately untouched, because `description: ""` on `linear_update_issue` and
+`path: ""` on GitHub's `contents.list` are real requests. X additionally maps
+its own `next_cursor: ""` to absence, that empty cursor being one its API emits
+rather than one a model invented.
+
+**Why:** A run failed to file a Linear ticket after sending `after: ""` on
+`linear_list_teams` and `linear_search_issues`. The declared schema said only
+`{ "type": ["string", "null"], "maxLength": 500 }`, the executor's parse agreed,
+and the blank cursor went out as the GraphQL argument; Linear rejected it with a
+bare `Argument Validation Error` naming no field, and the model retried the same
+arguments five times before giving up. The declaration is half of the repair —
+the harness now drops a blanked optional argument whose schema says the empty
+string is invalid, which it can only know if the schema says so
+([`agent-tools.md`](agent-tools.md#1-fail-loud-never-silently-ignore-an-input)).
+
+**Considered and rejected:** Guarding each provider call site the way Notion
+already guarded its cursor, which fixes one connector per incident and leaves
+the model an error to recover from rather than a call that works. Also rejected:
+tightening the executor parses alone, which converts a provider error into a
+Rally validation error and still costs the round trip.
+
+**Consequences:** A connector adding a string parameter whose empty value is
+meaningless must declare `minLength: 1` or the blank still reaches the provider;
+for a parameter named like a cursor, `tool-argument-empty-strings.test.ts` walks
+every registered connector and fails until it does. Adapters that derive
+`inputSchema` from zod with `z.toJSONSchema`, as GitHub does, get the
+declaration from the parse and cannot drift.
+
 ### 2026-09-02 — Every shipped connector gets public support coverage
 
 **What changed:** The public Support Center now mirrors the product connector

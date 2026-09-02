@@ -37,6 +37,86 @@ describe("tool argument normalization", () => {
     });
   });
 
+  it("drops a blanked optional field the schema says cannot be empty", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 1 },
+        after: { type: ["string", "null"], minLength: 1, maxLength: 500 },
+        teamId: { type: ["string", "null"], minLength: 1 },
+        first: { type: "integer", minimum: 1 },
+        sort: { type: "string", enum: ["score", "recency"] },
+      },
+      required: ["query"],
+    };
+
+    expect(normalizeToolArguments({
+      query: "flaky rebase test",
+      after: "",
+      teamId: "",
+      first: "",
+      sort: "",
+    }, schema)).toEqual({ query: "flaky rebase test" });
+  });
+
+  it("keeps an empty string wherever it is a value the tool accepts", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        // A cleared description and a repository root are both real requests.
+        description: { type: ["string", "null"], maxLength: 40_000 },
+        path: { type: "string", maxLength: 1_000 },
+        label: { enum: ["", "draft"] },
+        note: { description: "A schema this normalizer cannot read." },
+      },
+    };
+    const input = { description: "", path: "", label: "", note: "" };
+
+    expect(normalizeToolArguments(input, schema)).toBe(input);
+  });
+
+  it("keeps a blanked required field so validation names it", () => {
+    const schema = {
+      type: "object",
+      properties: { query: { type: "string", minLength: 1 } },
+      required: ["query"],
+    };
+
+    expect(normalizeToolArguments({ query: "" }, schema)).toEqual({ query: "" });
+    const error = validateToolArguments({ query: "" }, schema);
+    expect(error).not.toBeNull();
+    expect(formatToolArgumentValidationError(error!)).toContain("query");
+  });
+
+  it("drops a blank only when every branch of a composed schema rejects it", () => {
+    const rejecting = {
+      type: "object",
+      properties: {
+        ref: { anyOf: [{ type: "string", minLength: 1 }, { type: "integer" }] },
+      },
+    };
+    const accepting = {
+      type: "object",
+      properties: {
+        ref: { anyOf: [{ type: "string", minLength: 1 }, { type: "string", maxLength: 10 }] },
+      },
+    };
+
+    expect(normalizeToolArguments({ ref: "" }, rejecting)).toEqual({});
+    expect(normalizeToolArguments({ ref: "" }, accepting)).toEqual({ ref: "" });
+  });
+
+  it("leaves an undeclared blank alone so a strict parse still reports it", () => {
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: { query: { type: "string", minLength: 1 } },
+    };
+
+    expect(normalizeToolArguments({ query: "release notes", preview: "" }, schema))
+      .toEqual({ query: "release notes", preview: "" });
+  });
+
   it("selects the structurally matching union branch before normalizing", () => {
     const schema = {
       anyOf: [
