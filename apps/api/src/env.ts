@@ -41,6 +41,8 @@ export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
 
 export interface Env {
   DB: D1Database;
+  /** Shared, content-free routing authority available to both product regions. */
+  PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
   TELEMETRY_PAYLOADS: R2Bucket;
   /** One globally replicated cache shared by the Global and EU Workers. */
