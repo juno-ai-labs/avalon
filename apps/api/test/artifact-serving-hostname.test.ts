@@ -72,6 +72,29 @@ describe("artifact serving hostname routes", () => {
     expect(idFromName).toHaveBeenCalledWith(expect.stringContaining(ARTIFACT));
   });
 
+  it("keeps the Rally bootstrap same-origin without weakening artifact responses", async () => {
+    const { env } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    });
+    const origin = `https://${STUB}-g.rallyusercontent.test`;
+
+    const bootstrap = await artifactWorker.fetch(
+      new Request(`${origin}/__rally/open`),
+      env,
+      context(),
+    );
+    const refusedArtifact = await artifactWorker.fetch(
+      new Request(`${origin}/`),
+      env,
+      context(),
+    );
+
+    expect(bootstrap.headers.get("referrer-policy")).toBe("same-origin");
+    expect(refusedArtifact.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
   it("returns the neutral 404 when the route is absent or crosses regions", async () => {
     const absent = fixture(null);
     expect((await artifactWorker.fetch(new Request(
