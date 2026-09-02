@@ -18,7 +18,7 @@ switching, background attention, leaving, or abandonment.
 | `apps/api/src/services/workspace-service.ts` | Ordinary self-leave, sole-owner refusal, and atomic final-member abandonment. |
 | `apps/api/src/services/workspace-attention-service.ts`, `durable-objects/workspace-do.ts` | The regional attention read and WorkspaceDO projection. |
 | `apps/desktop/src/main/stored-auth.ts`, `index.ts` | Versioned credential/profile sets, device-local recency, exact-credential refresh and removal, activation races, and complete sign-out. |
-| `apps/desktop/src/main/workspace-selection.ts`, `workspace-activation.ts` | Local selection of a stored workspace credential, and the platform activation an addressed link falls back to when nothing is stored. |
+| `apps/desktop/src/main/workspace-selection.ts`, `workspace-activation.ts` | The local claim that answers a link to the active workspace, and the platform activation every other addressed link takes. |
 | `apps/desktop/src/renderer/components/workspace-account-menu.tsx`, `app-shell.tsx` | Flagged switcher, invitations, creation, attention states, and switching presentation. |
 | `apps/desktop/src/renderer/lib/draft-keys.ts`, `draft-cache.ts`, `app-session.tsx` | Workspace-scoped composer drafts and exact cleanup when one membership ends. |
 
@@ -69,18 +69,23 @@ Its distinct host makes a desktop build from before this contract reject the
 link; a query-addressed shape is forbidden because an older work-stream parser
 would ignore those coordinates and open relative to the active workspace.
 
-When a person opens one, the desktop asks main to revalidate the exact target
-through Global discovery and regional activation—even when the target is already
-active—verifies the returned binding, clears the previous
-workspace cache, and only then applies the resource, connector result, Slack
-identity challenge, settings section, or automation route.
+When a person opens one, the desktop first asks main whether the target is the
+active workspace. If it is, main answers with the session already in use and
+takes a selection intent, and the destination applies at once with no request
+and no cache reset. Otherwise the desktop asks main to revalidate the exact
+target through Global discovery and regional activation, verifies the returned
+binding, clears the previous workspace cache, and only then applies the
+resource, connector result, Slack identity challenge, settings section, or
+automation route.
 
 An explicit handoff is allowed to change the foreground workspace because the
 person followed a destination. Background attention and reconciliation never do.
-If the meeting guard refuses the change, the credential is missing, or regional
-membership has been revoked, activation fails closed: the current workspace and
-route remain unchanged and the deep-link failure window explains that the target
-could not be accessed. The target pair never substitutes for the regional API's
+For a handoff into another workspace, if the meeting guard refuses the change,
+the credential is missing, or regional membership has been revoked, activation
+fails closed: the current workspace and route remain unchanged and the deep-link
+failure window explains that the target could not be accessed. A handoff into
+the active workspace whose membership has ended is refused by the regional API
+on its first read, as any other request under that credential would be. The target pair never substitutes for the regional API's
 membership check. The regional denial text includes “access is unavailable,” so
 the desktop classifies that exact denial before its broader transient-outage
 wording and does not tell a revoked member to check their connection.
@@ -91,22 +96,21 @@ workspace's new-work-stream landing page; closing Settings can therefore never
 reveal a resource route retained from the previous workspace. A handoff to the
 already-active workspace preserves the main window's route.
 
-An addressed link's target is routing, not authority, and the desktop enters
-it the cheapest honest way. A target that is already the active workspace is
-used as it stands, with no request and no cache reset, so a work-stream link
-opens as one navigation. A target the device holds a credential for is selected
-locally through `workspace:select`, which rewrites only the active binding and
-bumps the selection intent so a late network activation cannot take over the
-window. Only a target with nothing stored reaches platform activation, the one
-path that can mint a credential that does not exist yet; that path can start
-from an identity-only session because the platform identity, not a current
-regional workspace, authorizes discovery. In every case the regional API
-re-checks membership on each request the credential makes, and a revoked
-credential is surrendered on its first rejection. Delivery is serialized across
-main's cold-start queue and live operating-system callbacks, so two links cannot
-finish in the opposite order. A target API also owns normal credential renewal;
-an access token expiring between activation and a Slack or connector request
-does not change the workspace binding.
+An addressed link's target is routing, not authority. A link to the active
+workspace is answered by main through `workspace:reselect-active`, which returns
+the session in use and takes a selection intent so a late network activation
+cannot take over the window; the regional API re-checks membership on each
+request that credential makes, which is the same check a fresh activation would
+have minted a credential for. A link to any other workspace, including one this
+device holds a credential for, goes through platform activation, because a
+membership that ended leaves its session row alive and only the platform
+refuses the link before the window moves. That path can start from an
+identity-only session because the platform identity, not a current regional
+workspace, authorizes discovery. Delivery is serialized across main's cold-start
+queue and live operating-system callbacks, so two links cannot finish in the
+opposite order. A target API also owns normal credential renewal; an access
+token expiring between activation and a Slack or connector request does not
+change the workspace binding.
 
 Addressed connector results are delivered only to the main renderer, which owns
 the serialized activation and then opens Connections. Legacy unaddressed results
@@ -176,10 +180,10 @@ active workspace.
 - Background workspaces expose aggregate attention only, never directory rows or
   content, and open no sockets.
 - A late activation may be retained but cannot replace a newer selection.
-- A locally stored credential selects a workspace but never authorizes a read;
-  the regional API re-checks membership on every request, so an addressed link
-  gains nothing from a platform round trip when the device already holds the
-  target's credential.
+- An addressed link into a workspace that is not active always revalidates
+  membership through platform activation; a locally stored credential is never
+  enough to switch on. A link into the active workspace opens with the
+  credential in use, which the regional API re-checks on every request.
 - Leaving one workspace cannot delete another workspace's credential, profile,
   query state, or draft.
 - Abandonment retains data and is reversible only by a paired operator action;
@@ -203,9 +207,8 @@ never acquire a product WebSocket.
 - Failed attention reads keep the last values and label their relative update
   time. Discovery reconciliation removes a membership that has actually ended.
 - An unreachable target region leaves the active workspace intact and reports
-  that connectivity is required. Only a link whose target has no stored
-  credential needs connectivity to enter it; a stored target opens offline and
-  fails on its first read like any other request.
+  that connectivity is required. A link into the active workspace needs no
+  connectivity to open and fails on its first read like any other request.
 - Setup requests use UUIDv7 operation IDs. Reusing one with identical input
   returns the journaled result; changing action or payload under it is refused.
   The desktop keeps that ID across identity refresh and transport retries.
@@ -215,7 +218,8 @@ never acquire a product WebSocket.
 ## Testing
 
 Node tests cover plural schema, setup replay, departure races, stored-set
-migration, activation intent ordering, draft scoping, and component states. The
+migration, activation intent ordering, the active-workspace claim a link takes
+before activating, session cache scope, draft scoping, and component states. The
 attention aggregation and object admission fences run in the real workerd suite.
 Local environment synchronization gives Global the local EU API route, and
 `pnpm db:open-authority` opens and seeds both regional authorities so the same-ID
@@ -258,37 +262,43 @@ best-effort remote revocation.
 
 ## Changelog
 
-### 2026-09-01 — Addressed links open with the credential already held
+### 2026-09-02 — A link to the active workspace opens without re-activating it
 
-**What changed:** A workspace-addressed link no longer asks the platform to
-re-activate its target before opening. A target that is already active opens
-directly; a target this device holds a credential for is selected locally
-through a new `workspace:select` bridge call; only a target with nothing stored
-falls back to platform activation. The renderer also stops clearing its query
-cache when an applied session names the same user and workspace as the one it
-replaces.
+**What changed:** A workspace-addressed link whose target is the active
+workspace no longer asks the platform to re-activate it. Main answers through a
+new `workspace:reselect-active` bridge call with the session already in use and
+takes a selection intent; the destination applies at once. A link to any other
+workspace still goes through platform activation. The renderer also stops
+clearing its query cache when an applied session names the same user,
+workspace, region, and role as the one it replaces.
 
 **Why:** Opening a work-stream link to the current workspace took two visible
 steps: a platform round trip that minted a fresh credential, then a full shell
 reload because the new session cleared every cached list, and only then the
-work stream. The round trip bought no enforcement — the regional API already
-re-checks membership on every request, and a revoked credential is surrendered
-on its first rejection either way — so the cost was paid for nothing. The
-unconditional cache clear also made every credential renewal reload the shell.
+work stream. For the active workspace the round trip bought no enforcement —
+the regional API re-checks membership on every request the credential in use
+makes, and a fresh credential goes through the identical check — so the cost
+was paid for nothing. The unconditional cache clear also made every credential
+renewal reload the shell.
 
-**Considered and rejected:** Keeping the round trip but skipping the cache
-clear, which still left a network wait in front of a link to the workspace in
-front of the person; and trusting a stored credential *as* authorization, which
-would let local state stand in for membership. Selection is local; authority
-stays with the regional API on each request.
+**Considered and rejected:** Selecting a stored credential locally for a link
+into *another* workspace. Review showed a membership that ends leaves its
+session row alive and `/auth/refresh` has no membership join, so the desktop
+would persist a switch into a workspace it can no longer load and, offline,
+into one it cannot leave; the platform round trip is what refuses that link
+before the window moves, and it stays. Also rejected: keeping the round trip
+for the active workspace but skipping the cache clear, which still left a
+network wait in front of the workspace already on screen.
 
-**Consequences:** A removed member following a link now learns of the removal
-on the work stream's first read rather than before navigating, with the same
-credential surrender either way. The 2026-09-01 "revalidate membership" rule
-below is superseded for stored targets; the fail-closed behavior on old builds
-and the ordering guarantees are unchanged. The deep-link failure copy still
+**Consequences:** The 2026-09-01 "Addressed links revalidate membership and
+fail closed on old builds" entry below is narrowed: revalidation is for a link
+into a workspace that is not active. The ordering guarantee is kept because the
+local claim takes a selection intent, so an activation still in flight cannot
+take over the window after a link opened. The deep-link failure copy still
 folds a missing identity credential into the connectivity message; that is
 deferred, not fixed here.
+
+Shipped in #484.
 
 ### 2026-09-01 — Targeted Settings leaves a safe workspace landing page
 

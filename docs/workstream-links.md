@@ -64,12 +64,14 @@ A work-stream id, region, and workspace id are not secrets and are not a
 capability: opening the canonical link grants nothing on its own. The pair is
 routing context. The distinct `workspace` host is a version boundary: desktop
 builds that predate addressed links reject it instead of silently discarding a
-query target and opening the resource in the active workspace. The desktop asks
-its native session layer to revalidate and activate that exact workspace through
-the platform service, verifies the returned session matches, and only then navigates. The
-regional API still applies membership and work-stream authorization on the read.
-If activation is refused, the active workspace stays unchanged and no resource
-route opens.
+query target and opening the resource in the active workspace. When the link
+names the active workspace, the desktop opens it with the session already in
+use and navigates at once. Otherwise it asks its native session layer to
+revalidate and activate that exact workspace through the platform service,
+verifies the returned session matches, and only then navigates; if activation is
+refused, the active workspace stays unchanged and no resource route opens. The
+regional API applies membership and work-stream authorization on the read under
+either path. `multiple-workspaces.md` owns the entry behavior.
 
 No asset can exist per work-stream id, so the site — a pure static-assets Worker —
 serves every id under the prefix from one page through a 200 rewrite in
@@ -317,6 +319,15 @@ copied into this table; they come from `WorkspaceDO.workspace_workstream_directo
 [`data-model.md`](data-model.md) is authoritative for the columns.
 
 ## Changelog
+
+### 2026-09-02 — A link to the active workspace navigates without re-activating
+
+**What changed:** The desktop opens a link that names the active workspace with
+the session already in use; only a link into another workspace revalidates
+through the platform. **Why:** the round trip re-minted a credential that went
+through the same per-request membership check, and cost a full shell reload on
+every link to the workspace on screen. Entry behavior is owned by
+`multiple-workspaces.md`. Shipped in #484.
 
 ### 2026-09-01 — The addressed native hop has an old-client rejection boundary
 

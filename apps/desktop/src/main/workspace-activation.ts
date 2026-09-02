@@ -22,8 +22,11 @@ interface WorkspaceActivationDependencies<Result> {
   request(input: WorkspaceActivationRequest): Promise<Result>;
 }
 
-/** Every addressed activation crosses the control plane, even when the target
- * matches the cached current workspace. The response is the authorization. */
+/** Every activation crosses the control plane. It is the path a link takes
+ * into a workspace that is not the active one — including one this device
+ * already holds a credential for — because only the platform revalidates the
+ * membership before the window moves; a link to the active workspace is
+ * answered locally instead (see `workspace-selection.ts`). */
 export async function revalidateWorkspaceActivation<Result>(
   target: WorkspaceActivationTarget,
   operationId: string | undefined,

@@ -400,10 +400,11 @@ const browserBridge: RallyDesktopBridge = {
     notifyBrowserSession();
     return null;
   },
-  async selectWorkspace() {
-    // The browser bridge keeps one session and stores no others, so there is
-    // never a cached credential to select; activation is the only way in.
-    return null;
+  async reselectActiveWorkspace({ region, workspaceId }) {
+    const workspace = browserSession?.workspace;
+    return workspace && workspace.id === workspaceId && workspace.region === region
+      ? browserSession
+      : null;
   },
   async activateWorkspace({ region, workspaceId }) {
     return browserOnboardingSession(
