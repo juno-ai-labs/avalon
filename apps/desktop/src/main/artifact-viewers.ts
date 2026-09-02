@@ -274,6 +274,13 @@ export class ArtifactPreviewController {
   async present(request: ArtifactPresentation): Promise<boolean> {
     if (!isArtifactUrl(request.url, this.servingDomain)) return false;
     if (this.window.destroyed()) return false;
+    // A view whose contents closed themselves — an artifact page calling
+    // `window.close()` — is still held here, and still counts as *this*
+    // artifact. Discarding it before the comparison below is what stops a
+    // repeat presentation reusing it: nothing would be composited, but this
+    // would report success, and the rail reads that as a live preview and
+    // renders no fallback over the blank pane.
+    if (this.view?.destroyed()) this.destroy();
     if (this.artifactId !== request.artifactId) this.destroy();
     this.bounds = request.bounds;
     if (!this.view) {

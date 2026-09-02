@@ -416,6 +416,20 @@ describe('the rail preview controller', () => {
     expect(views[0]?.closed).toBe(false);
   });
 
+  it('replaces a view whose contents closed themselves rather than reporting it live', async () => {
+    const { controller, views, removed } = harness();
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
+    // An artifact page calling `window.close()`. The handle stays, and it is
+    // still this artifact's, so the artifact-ID comparison alone would keep it.
+    views[0]!.destroyed = true;
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
+    expect(views).toHaveLength(2);
+    expect(views[1]?.url).toBe(`${ORIGIN}/`);
+    expect(views[1]?.bounds.at(-1)).toEqual(bounds);
+    // The dead one is detached from the window that is still holding it.
+    expect(removed).toHaveLength(1);
+  });
+
   it('refuses to lay out or present over a window that is gone', async () => {
     const { controller, views, host } = harness();
     await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
