@@ -196,6 +196,25 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     expect(useUiStore.getState().inspector).toBeNull();
   });
 
+  // The rail's own close animation dissolves it over the panel that took the
+  // slot. A switch has no such panel: the fade would run over another work
+  // stream's transcript, with the shell holding that stream's feed narrow for
+  // as long as it lasted.
+  it('leaves no panel fading over the work stream switched to', async () => {
+    renderScreen();
+    await screen.findByText('First work stream');
+    useUiStore.setState({ railOpen: true, inspector: null });
+    await waitFor(() => expect(document.querySelector('.rail-surface')).not.toBeNull());
+
+    switchWorkstream();
+
+    await screen.findByText('Second work stream');
+    expect(document.querySelector('.rail-surface')).toBeNull();
+    // What AppShell lays the feed out against, so a leaking value here reserves
+    // the sidebar's width over a work stream that has no sidebar.
+    expect(useUiStore.getState().railLeaving).toBeNull();
+  });
+
   it('leaves HyperSight closed in the work stream switched to, whatever its stored preference says', async () => {
     renderScreen((queryClient) => {
       queryClient.setQueryData<BlockDashboardPreference>(

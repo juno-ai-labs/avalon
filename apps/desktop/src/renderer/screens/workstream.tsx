@@ -917,7 +917,8 @@ export function WorkstreamScreen(): React.JSX.Element {
   const inspect = useUiStore((state) => state.inspect);
   const inspector = useUiStore((state) => state.inspector);
   const openRail = useUiStore((state) => state.openRail);
-  const railOpen = useUiStore((state) => state.railOpen);
+  const storeRailOpen = useUiStore((state) => state.railOpen);
+  const railScope = useUiStore((state) => state.railScope);
   const setBlockDashboardOpen = useUiStore((state) => state.setBlockDashboardOpen);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
@@ -975,17 +976,20 @@ export function WorkstreamScreen(): React.JSX.Element {
   // be showing, which is a detail it can no longer find. A layout effect so the
   // close lands in the commit that changes the route, rather than a frame after
   // the work stream underneath it has already been painted.
-  useLayoutEffect(() => () => {
-    closeRail();
-    inspect(null);
-  }, [closeRail, id, inspect]);
-
-  // Each work stream keeps its own width for each panel, so the sidebar opens
-  // at the width this stream was last left at rather than the last one visited.
-  useEffect(() => {
+  //
+  // The scope moves in the same effect rather than a passive one of its own. It
+  // is what each work stream's panel widths are stored under, and it is also
+  // this screen's answer to whose rail the store is describing; the two have to
+  // move together, or the render that changes the route reads an open rail that
+  // belongs to the stream it just left.
+  useLayoutEffect(() => {
     setRailScope(id);
-    return () => setRailScope(null);
-  }, [id, setRailScope]);
+    return () => {
+      closeRail();
+      inspect(null);
+      setRailScope(null);
+    };
+  }, [closeRail, id, inspect, setRailScope]);
 
   useEffect(() => {
     activeWorkstreamIdRef.current = id;
@@ -1188,6 +1192,13 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id && routedDetail && orderedTranscript.data),
     staleTime: 5_000,
   });
+  // The store holds the rail's open state, but on the render that changes the
+  // route it is still describing the previous work stream — the effect above
+  // has not run yet. Reading it through the scope is what keeps that render
+  // from laying out, or starting a fade for, a panel belonging to the stream
+  // just left; every path that opens the rail writes the store, and each is
+  // honoured from the moment the scope names this stream.
+  const railOpen = storeRailOpen && railScope === id;
   // No request and no open gate of its own. The independently-started control
   // socket writes the preference when it arrives; until then the dashboard is
   // simply closed and the feed remains fully usable.
@@ -1204,8 +1215,14 @@ export function WorkstreamScreen(): React.JSX.Element {
     && blockDashboardHoldsSidebar(blockDashboardPreferred, railOpen, blockDashboardOpenedThisVisit);
   // Handing the sidebar from one panel to the other keeps the panel that lost
   // it on screen a moment longer, fading out over the one that took it while
-  // the slot animates between their two widths.
-  const railLeaving = useRailCrossFade<RailPanel>(blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : null);
+  // the slot animates between their two widths. Scoped to the work stream, so
+  // that a switch is not a hand-off: there is no panel taking the slot in the
+  // stream arrived at, and dissolving the previous stream's panel over its feed
+  // would lay that feed out around a sidebar for as long as the fade lasts.
+  const railLeaving = useRailCrossFade<RailPanel>(
+    blockDashboardOpen ? 'block-dashboard' : railOpen ? 'inspector' : null,
+    id,
+  );
   const blockDashboard = useQuery({
     queryKey: ['block-dashboard', id],
     queryFn: ({ signal }) => api!.getBlockDashboard(id, signal),
@@ -1643,8 +1660,10 @@ export function WorkstreamScreen(): React.JSX.Element {
   // HyperSight and the inspector rail share the right sidebar and are never
   // open together. HyperSight's visibility is a stored personal preference
   // rather than window state, so yielding the sidebar to the rail is written
-  // back the same way the toggle is: the next visit opens where this one left
-  // off.
+  // back the same way the toggle is. What that preference no longer decides is
+  // arrival: it is recorded against this visit as well, so the stream this
+  // toggle is used in opens the panel and the next stream reached from it does
+  // not.
   const setBlockDashboardVisible = useCallback((visible: boolean): void => {
     if (visible) closeRail();
     setBlockDashboardVisit({ workstreamId: id, opened: visible });
