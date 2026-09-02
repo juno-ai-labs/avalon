@@ -1,4 +1,5 @@
 /** Public hostname routing at the isolated artifact Worker boundary. */
+import { asArtifactId, type ArtifactManifest } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("cloudflare:workers", () => ({ WorkerEntrypoint: class {} }));
@@ -13,17 +14,47 @@ import {
 
 const ARTIFACT = "00000000-0000-7000-8000-0000000000b1";
 const STUB = "level-luminous-sequential-schrodinger";
+const INDEX_HTML = "<h1>Public artifact</h1>";
+
+const MANIFEST: ArtifactManifest = {
+  version: 1,
+  artifactId: asArtifactId(ARTIFACT),
+  artifactVersion: 1,
+  mode: "static",
+  stateful: false,
+  serverModuleSha256: null,
+  assets: [{
+    path: "index.html",
+    contentType: "text/html; charset=utf-8",
+    sizeBytes: INDEX_HTML.length,
+    sha256: "0".repeat(64),
+  }],
+  totalBytes: INDEX_HTML.length,
+  publishedAt: "2026-09-02T00:00:00.000Z",
+};
+const ACTIVE_MANIFEST: ArtifactManifest = {
+  ...MANIFEST,
+  mode: "active",
+  serverModuleSha256: "1".repeat(64),
+};
 
 function context(): ExecutionContext {
   return { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext;
 }
 
-function fixture(route: unknown | null): {
+function fixture(route: unknown | null, options: {
+  checkSessionResult?: unknown;
+  checkSessionError?: Error;
+  currentStateResult?: unknown;
+  loaderFetch?: (request: Request) => Promise<Response>;
+} = {}): {
   env: ArtifactServingEnv;
   readRoute: ReturnType<typeof vi.fn>;
   prepare: ReturnType<typeof vi.fn>;
   idFromName: ReturnType<typeof vi.fn>;
   redeemCode: ReturnType<typeof vi.fn>;
+  checkSession: ReturnType<typeof vi.fn>;
+  currentState: ReturnType<typeof vi.fn>;
 } {
   const readRoute = vi.fn(async () => route === null ? null : route);
   const prepare = vi.fn((sql: string) => {
@@ -37,15 +68,22 @@ function fixture(route: unknown | null): {
   });
   const idFromName = vi.fn((name: string) => createTestDurableObjectId(name));
   const redeemCode = vi.fn();
+  const checkSession = vi.fn(async () => {
+    if (options.checkSessionError) throw options.checkSessionError;
+    return options.checkSessionResult ?? null;
+  });
+  const currentState = vi.fn(async () => options.currentStateResult ?? null);
   const hosts = createCloudflareTestBinding<ArtifactServingEnv["ARTIFACT_HOSTS"]>({
     idFromName,
-    get: () => ({ redeemCode }),
+    get: () => ({ redeemCode, checkSession, currentState }),
   });
   return {
     readRoute,
     prepare,
     idFromName,
     redeemCode,
+    checkSession,
+    currentState,
     env: {
       APP_ENV: "test",
       AVALON_REGION: "global",
@@ -54,7 +92,21 @@ function fixture(route: unknown | null): {
       PLATFORM_DB: createTestD1Database({
         prepare,
       }),
-      PAYLOADS: createCloudflareTestBinding<R2Bucket>({}),
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({
+        get: async () => ({
+          body: new TextEncoder().encode(INDEX_HTML),
+          text: async () => INDEX_HTML,
+        }),
+      }),
+      ...(options.loaderFetch
+        ? {
+            ARTIFACT_LOADER: {
+              get: () => ({
+                getEntrypoint: () => ({ fetch: options.loaderFetch! }),
+              }),
+            },
+          }
+        : {}),
     },
   };
 }
@@ -88,7 +140,7 @@ describe("artifact serving hostname routes", () => {
       env,
       context(),
     );
-    const refusedArtifact = await artifactWorker.fetch(
+    const missingArtifact = await artifactWorker.fetch(
       new Request(`${origin}/`),
       env,
       context(),
@@ -115,9 +167,223 @@ describe("artifact serving hostname routes", () => {
     expect(bootstrap.headers.get("x-content-type-options")).toBe("nosniff");
     expect(bootstrap.headers.get("x-frame-options")).toBe("DENY");
     expect(bootstrap.headers.get("cache-control")).toContain("private");
-    expect(refusedArtifact.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(missingArtifact.status).toBe(404);
+    expect(missingArtifact.headers.get("referrer-policy")).toBe("no-referrer");
     expect(refusedOpaqueRedeem.status).toBe(403);
     expect(redeemCode).not.toHaveBeenCalled();
+  });
+
+  it("serves a public artifact to a crawler without a Rally session", async () => {
+    const { env, checkSession, currentState } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    }, {
+      currentStateResult: {
+        artifactId: ARTIFACT,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
+        workstreamId: "00000000-0000-7000-8000-0000000000d1",
+        resourceId: "00000000-0000-7000-8000-0000000000e1",
+        version: 1,
+        mode: "static",
+        stateful: false,
+        manifest: MANIFEST,
+      },
+    });
+
+    const response = await artifactWorker.fetch(
+      new Request(`https://${STUB}-g.rallyusercontent.test/`),
+      env,
+      context(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(INDEX_HTML);
+    expect(response.headers.get("content-security-policy")).toBeTruthy();
+    expect(checkSession).not.toHaveBeenCalled();
+    expect(currentState).toHaveBeenCalledOnce();
+  });
+
+  it("does not attach a Rally session to a cross-site public read", async () => {
+    const forwarded = vi.fn(async (request: Request) => Response.json({
+      cookie: request.headers.get("cookie"),
+      viewerId: request.headers.get("x-rally-viewer-id"),
+      viewerName: request.headers.get("x-rally-viewer-name"),
+    }));
+    const { env, checkSession, currentState } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    }, {
+      currentStateResult: {
+        artifactId: ARTIFACT,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
+        workstreamId: "00000000-0000-7000-8000-0000000000d1",
+        resourceId: "00000000-0000-7000-8000-0000000000e1",
+        version: 1,
+        mode: "active",
+        stateful: false,
+        manifest: ACTIVE_MANIFEST,
+      },
+      loaderFetch: forwarded,
+    });
+
+    const response = await artifactWorker.fetch(new Request(
+      `https://${STUB}-g.rallyusercontent.test/`,
+      {
+        headers: {
+          cookie: "__rally_artifact_session=secret",
+          origin: "https://other-g.rallyusercontent.test",
+          "sec-fetch-site": "same-site",
+          "x-rally-viewer-id": "forged",
+          "x-rally-viewer-name": "Forged",
+        },
+      },
+    ), env, context());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      cookie: null,
+      viewerId: null,
+      viewerName: null,
+    });
+    expect(forwarded).toHaveBeenCalledOnce();
+    expect(checkSession).not.toHaveBeenCalled();
+    expect(currentState).toHaveBeenCalledOnce();
+  });
+
+  it("keeps prior versions behind a valid Rally viewer session", async () => {
+    const { env, checkSession } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    }, {
+      currentStateResult: {
+        artifactId: ARTIFACT,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
+        workstreamId: "00000000-0000-7000-8000-0000000000d1",
+        resourceId: "00000000-0000-7000-8000-0000000000e1",
+        version: 2,
+        mode: "static",
+        stateful: false,
+        manifest: { ...MANIFEST, artifactVersion: 2 },
+      },
+    });
+
+    const response = await artifactWorker.fetch(
+      new Request(`https://${STUB}-g.rallyusercontent.test/__rally/v1/`),
+      env,
+      context(),
+    );
+
+    expect(response.status).toBe(401);
+    expect(checkSession).not.toHaveBeenCalled();
+  });
+
+  it("fails a stateless active site closed when its handler cannot run", async () => {
+    const { env } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    }, {
+      currentStateResult: {
+        artifactId: ARTIFACT,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
+        workstreamId: "00000000-0000-7000-8000-0000000000d1",
+        resourceId: "00000000-0000-7000-8000-0000000000e1",
+        version: 1,
+        mode: "active",
+        stateful: false,
+        manifest: ACTIVE_MANIFEST,
+      },
+    });
+
+    const response = await artifactWorker.fetch(
+      new Request(`https://${STUB}-g.rallyusercontent.test/`),
+      env,
+      context(),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain(INDEX_HTML);
+  });
+
+  it("attaches trusted identity only after validating a same-origin Rally session", async () => {
+    const forwarded = vi.fn(async (request: Request) => Response.json({
+      cookie: request.headers.get("cookie"),
+      viewerId: request.headers.get("x-rally-viewer-id"),
+      viewerName: request.headers.get("x-rally-viewer-name"),
+    }));
+    const { env, checkSession, currentState } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    }, {
+      checkSessionResult: {
+        ok: true,
+        viewerId: "user-1",
+        viewerName: "Ada Lovelace",
+        version: 1,
+        mode: "active",
+        stateful: false,
+        manifest: ACTIVE_MANIFEST,
+      },
+      loaderFetch: forwarded,
+    });
+
+    const response = await artifactWorker.fetch(new Request(
+      `https://${STUB}-g.rallyusercontent.test/`,
+      {
+        headers: {
+          cookie: "__rally_artifact_session=secret",
+          origin: `https://${STUB}-g.rallyusercontent.test`,
+          "sec-fetch-site": "same-origin",
+        },
+      },
+    ), env, context());
+
+    expect(await response.json()).toEqual({
+      cookie: null,
+      viewerId: "user-1",
+      viewerName: "Ada%20Lovelace",
+    });
+    expect(checkSession).toHaveBeenCalledWith("secret", 0);
+    expect(currentState).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the public representation when identity validation is unavailable", async () => {
+    const { env, checkSession, currentState } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    }, {
+      checkSessionError: new Error("visibility unavailable"),
+      currentStateResult: {
+        artifactId: ARTIFACT,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
+        workstreamId: "00000000-0000-7000-8000-0000000000d1",
+        resourceId: "00000000-0000-7000-8000-0000000000e1",
+        version: 1,
+        mode: "static",
+        stateful: false,
+        manifest: MANIFEST,
+      },
+    });
+
+    const response = await artifactWorker.fetch(new Request(
+      `https://${STUB}-g.rallyusercontent.test/`,
+      {
+        headers: {
+          cookie: "__rally_artifact_session=stale",
+          origin: `https://${STUB}-g.rallyusercontent.test`,
+          "sec-fetch-site": "same-origin",
+        },
+      },
+    ), env, context());
+
+    expect(response.status).toBe(200);
+    expect(checkSession).toHaveBeenCalledOnce();
+    expect(currentState).toHaveBeenCalledOnce();
   });
 
   it("returns the neutral 404 when the route is absent or crosses regions", async () => {
