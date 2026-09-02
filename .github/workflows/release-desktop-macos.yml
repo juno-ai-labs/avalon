@@ -119,6 +119,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    # This keeps the repository's existing 30-minute CI verification ceiling;
+    # without it a wedged suite holds the singleton release queue for six hours.
+    timeout-minutes: 30
     permissions:
       contents: write
     outputs:
