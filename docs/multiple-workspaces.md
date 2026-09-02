@@ -77,13 +77,18 @@ A renewal rewrites both stored files by merging the renewed session into the
 sets on disk, never into whatever this process happens to have read so far.
 The credential file is the durable boundary and the profile file beside it a
 cache; a credential whose profile is missing is rebuilt by refreshing it,
-which is how the identity session recovers as well as a workspace's. Every
-session also has a fixed life of thirty days from the moment it was minted:
-the API rotates the refresh token on each renewal but does not extend
-`expires_at`, so the identity credential minted at sign-in stops renewing
-thirty days later whatever the person did in between, and "Reconnect
-account…" is the honest outcome then. Whether renewal should slide that
-window is the team's call, not this document's.
+which is how the identity session recovers as well as a workspace's.
+
+A session's life slides with use. Each renewal moves `expires_at` to thirty
+days from that moment, so a person who opens Rally at least once a month is
+never signed out by expiry alone, and a session that stops being renewed dies
+thirty days after its last renewal. The ceiling is absolute: ninety days from
+the session's creation a fresh sign-in is required whatever happened in
+between, and a renewal past that ceiling is refused rather than handed a
+token the bearer check would reject. The identity credential minted at
+sign-in and every workspace credential minted at activation follow the same
+rule, so "Reconnect account…" is expected after ninety days, or after a
+month away, and at no other time short of a sign-out or a revocation.
 
 ### The account menu's directory
 
@@ -357,6 +362,29 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-02 — A session's life slides with use, under a ninety-day ceiling
+
+**What changed:** `AuthService.refresh` moves `expires_at` to thirty days
+from the renewal, never past ninety days from the session's creation, and
+refuses a renewal for a session already past that ceiling.
+
+**Why:** Every session had a fixed thirty-day life stamped at creation, so a
+daily user was still signed out — and asked to reconnect the account for
+switching — thirty days after their last Google sign-in, on a schedule that
+had nothing to do with how they used Rally. Both numbers are the team's:
+thirty days of inactivity before a session lapses, ninety days at most before
+a fresh sign-in regardless.
+
+**Considered and rejected:** A pure sliding window with no ceiling, which lets
+a leaked refresh token keep itself alive indefinitely. Sliding on every
+request rather than on renewal, which would write the sessions table on every
+call for no gain over a fifteen-minute access token.
+
+**Consequences:** The ceiling is enforced in the renewal statement itself, so
+no code path can extend a session past it. A session created before this
+change carries its original thirty-day expiry until its first renewal, which
+slides it like any other.
 
 ### 2026-09-02 — A renewal merges into the files on disk, and an identity rebuilds its profile
 
