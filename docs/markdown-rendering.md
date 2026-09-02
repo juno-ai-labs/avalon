@@ -787,8 +787,13 @@ feed's one text column starting at two different places depending on whether a
 turn had headings.
 
 **What a future change has to respect:** the chevron is now outside the content
-column, so a surface that reduces the transcript's left padding below 20px clips
-it. At the narrowest window the shell allows there is 18px of room beyond it.
+column, so the transcript's left padding is load-bearing — it has to clear the
+20px outdent *plus* the 3px this chevron's `:focus-visible` ring reaches beyond
+its own box, and `.transcript-scroll` is `overflow-x: hidden`, so anything less
+is cut off rather than scrolled to. Every padding on that column is currently
+above that floor, but only because the `max-width: 760px` override was raised
+from 18px to 24px in this change; it is the one to check when either number
+moves.
 The work accordion's chevron
 ([`plugin-activity-rows.md`](plugin-activity-rows.md)) hangs at the same offset
 for the same reason; the two are meant to line up, and they do.
