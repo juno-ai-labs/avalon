@@ -681,6 +681,39 @@ Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-09-02 — The identity line stopped being a theme's open question
+
+**What changed:** `MessageBlock` renders the author dot, name, and time over
+every human turn, the signed-in reader's own included. The
+[2026-08-19 entry below](#2026-08-19--where-a-persons-own-turn-sits-is-a-themes-decision)
+left that suppression in place and named the follow-up it implied — a
+`You · <time>` line for a theme that left-aligns and drops the bubble, "a
+component change gated on a fourth token". That component change has now
+happened, and **without** a fourth token: the line renders in every theme
+rather than in the ones whose geometry needs it. That earlier entry stands as
+written, as a dated record of the reasoning at the time; this one supersedes its
+"one to watch".
+
+**Why:** the question turned out not to be a theme's. Suppression was argued
+from geometry — a right-aligned bubble is its own attribution — but the thing it
+withheld is a *timestamp*, which no geometry supplies. Under Terra, where the
+bubble does attribute the turn, the reader's own messages were still the only
+rows in the feed carrying no time. Making that conditional on the theme would
+have given the two designs different information, not just different shapes,
+and a token whose real job is "does this theme tell you when you said it" is not
+a theming decision.
+
+**Consequences:** a theme no longer has to reason about whether the reader can
+identify their own turn; it can assume the line is there. The header's trailing
+inset is stated as `padding-inline-end` from the human bubble's own corner
+radius (`--turn-bubble-radius` in `app.css`), so a theme that aligns turns to
+the leading edge — Air — leaves the header flush there and the inset inert,
+without stating anything of its own. A theme that wants the line to read
+differently should change how it is *painted*: `--av-sys-color-person-1`
+through `-6` are the accent it and the dot resolve through.
+[`conversation-surfaces.md`](conversation-surfaces.md) owns the row itself and
+carries the full entry.
+
 ### 2026-08-30 — Mermaid resolves the active design tokens
 
 **What changed:** Mermaid's base theme now receives concrete values resolved
