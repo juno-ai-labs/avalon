@@ -538,9 +538,13 @@ offset, a flat `left: -20px` in both rules, and they are meant to line up — so
 an alignment change has to move both or it breaks the thing this entry exists
 to establish. Only their vertical boxes differ, the heading's sized in `em`
 against a heading's line and this one's against a fixed 20px row. And the
-chevron sits outside the content column, so any surface that reduces the
-transcript's left padding below 20px clips it; at the narrowest window the
-shell allows it still has 18px of room.
+chevron sits outside the content column, so the transcript's left padding is
+now load-bearing: it has to clear the 20px outdent *plus* the 3px a focused
+heading chevron's ring reaches beyond its own box, and `.transcript-scroll` is
+`overflow-x: hidden`, so anything less is cut off rather than scrolled to. The
+`max-width: 760px` override was 18px and had to be raised to 24px in this
+change for exactly that reason — review caught it clipping 2px off both
+chevrons and 5px off the focus ring.
 
 ### 2026-09-02 — Automations draws Tabler's keyframes glyph
 

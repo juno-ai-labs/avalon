@@ -5224,9 +5224,15 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 @media (max-width: 760px) {
+  /* 24px, not the 18px this used to be, because the transcript's two collapse
+     chevrons hang outside the column: 20px of outdent, plus the 3px a
+     `.markdown-collapse-chevron:focus-visible` ring reaches beyond its own box
+     (2px wide at `outline-offset: 1px`), is 23 — so 18px clipped 2px off every
+     chevron and 5px off the focus ring a keyboard user needs to see. Raise the
+     outdent or the ring and this number moves with them. */
   .workstream-screen .transcript-column {
-    padding-left: 18px;
-    padding-right: 18px;
+    padding-left: 24px;
+    padding-right: 24px;
   }
 
   .workstream-screen .human-message {
