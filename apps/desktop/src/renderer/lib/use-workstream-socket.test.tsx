@@ -44,10 +44,6 @@ function overlayMessages(queryClient: QueryClient, workstreamId: string): Messag
     .map((overlay) => overlay.message);
 }
 
-const workspaceCreateMessage = vi.hoisted(() => vi.fn());
-vi.mock('./workspace-socket', () => ({
-  useWorkspaceSocket: () => ({ state: 'connected', createMessage: workspaceCreateMessage }),
-}));
 vi.mock('./use-workstream-control-socket', () => ({ useWorkstreamControlSocket: vi.fn() }));
 
 import type * as TelemetryModule from './telemetry';
@@ -378,7 +374,6 @@ function sentFrames(socket: FakeWebSocket): ClientSocketEvent[] {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  workspaceCreateMessage.mockReset();
   reportTelemetryProductIntent.mockClear();
   FakeWebSocket.instances = [];
 });
@@ -813,24 +808,19 @@ describe('useWorkstreamSocket', () => {
     expect(firstClose).toHaveBeenCalledTimes(1);
   });
 
-  it('routes a message command through the shared workspace connection', async () => {
+  it('queues a message on the authenticated room socket and resolves its private receipt', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-000000000601';
-    const messageId = '00000000-0000-7000-8000-000000000604';
+    const turnId = '00000000-0000-7000-8000-000000000604';
     const clientMessageId = 'client-message-reconnect';
-    const savedMessage: Message = {
-      id: messageId,
+    const acceptedTurn = {
+      turnId,
       clientMessageId,
-      workstreamId,
-      sequenceNumber: 9,
-      authorType: 'human',
-      messageType: 'text',
-      text: 'Please continue.',
-      mentions: [],
-      attachments: [],
       createdAt: '2026-08-17T12:00:01.000Z',
+      deliveryState: 'canonical' as const,
     };
-    workspaceCreateMessage.mockResolvedValue(savedMessage);
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -845,16 +835,18 @@ describe('useWorkstreamSocket', () => {
 
     await flushPromises();
     expect(result.current.sendReady).toBe(true);
-    expect(result.current.workspaceSocketState).toBe('connected');
-    await expect(result.current.createMessage({
+    expect(result.current.workspaceSocketState).toBe('connecting');
+    const admission = result.current.createMessage({
         text: 'Please continue.',
         clientId: clientMessageId,
         runMode: 'queue',
-      })).resolves.toEqual(savedMessage);
-    expect(workspaceCreateMessage).toHaveBeenCalledWith(expect.objectContaining({
+      });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const firstCommand = sentFrames(socket).find((frame) => frame.type === 'create_message');
+    expect(firstCommand).toEqual(expect.objectContaining({
       type: 'create_message',
-      workstreamId,
-      substreamId: '0',
       payload: {
         text: 'Please continue.',
         clientMessageId,
@@ -864,6 +856,60 @@ describe('useWorkstreamSocket', () => {
         runMode: 'queue',
       },
     }));
+    act(() => socket.close(1006));
+    act(() => vi.advanceTimersByTime(750));
+    await flushPromises();
+    const reconnectedSocket = FakeWebSocket.instances[1]!;
+    act(() => reconnectedSocket.open());
+    expect(sentFrames(reconnectedSocket).find((frame) => frame.type === 'create_message'))
+      .toEqual(firstCommand);
+    act(() => reconnectedSocket.message({
+      type: 'client_command_succeeded',
+      command: 'create_message',
+      clientMessageId,
+      turn: {
+        turnId,
+        clientMessageId,
+        createdAt: acceptedTurn.createdAt,
+      },
+      deliveryState: 'canonical',
+    }));
+    await expect(admission).resolves.toEqual(acceptedTurn);
+  });
+
+  it('rejects a pending message when an older worker returns an uncorrelated command error', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000605';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+      messageMentionPayload: vi.fn(async () => []),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const admission = result.current.createMessage({
+      text: 'Please continue.',
+      clientId: 'client-message-old-worker-error',
+      runMode: 'queue',
+    });
+    await flushPromises();
+    act(() => socket.message({
+      type: 'error',
+      sequence: 0,
+      occurredAt: '2026-09-01T12:00:00.000Z',
+      code: 'workspace_socket_required',
+      message: 'Reconnect before sending messages.',
+    }));
+
+    await expect(admission).rejects.toMatchObject({ code: 'workspace_socket_required' });
   });
 
   it('shows durable compaction activity and ignores a stale finish', async () => {

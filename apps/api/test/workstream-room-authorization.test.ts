@@ -110,6 +110,8 @@ function fakeSocket(userId: string): FakeSocket {
     substreamId: "0",
     userId,
     sessionId: SESSION,
+    role: "owner",
+    analyticsWorkspaceId: null,
     connectedAt: at,
     afterSequence: 0,
     subscribed: true,
@@ -206,7 +208,7 @@ function roomFor(
 }
 
 describe("message commands over the SubstreamAgent socket", () => {
-  it("rejects writes because user messages enter through the WorkspaceDO socket", async () => {
+  it("admits a participant write through the identity already attached to the room socket", async () => {
     const socket = fakeSocket(PARTICIPANT);
     const operationId = "00000000-0000-7000-8000-0000000000c7";
     const clientMessageId = "socket-client-message";
@@ -225,8 +227,13 @@ describe("message commands over the SubstreamAgent socket", () => {
     }));
 
     expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({
-      type: "error",
-      code: "workspace_socket_required",
+      type: "client_command_succeeded",
+      command: "create_message",
+      clientMessageId,
+      turn: {
+        clientMessageId,
+        turnId: expect.any(String),
+      },
     });
     expect(socket.closes).toEqual([]);
   });

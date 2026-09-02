@@ -438,13 +438,16 @@ describe("scheduling authority on real workerd", () => {
       });
       const message = await (instance as unknown as {
         product: WorkstreamObjectProductService;
-      }).product.openElicitationMessageForRuntime();
+      }).product.elicitationMessageForRunForRuntime(RUN);
       expect(message).toMatchObject({
         id: elicitation().messageId,
         clientMessageId: `elicitation:${ELICITATION}`,
         messageType: "elicitation",
         structuredContent: { kind: "elicitation" },
       });
+      expect(await (instance as unknown as {
+        product: WorkstreamObjectProductService;
+      }).product.elicitationMessageForRunForRuntime("another-run")).toBeNull();
       const envelope = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
         `SELECT payload_json FROM durable_outbox WHERE partition_key = 'common'`,
       ).one().payload_json) as { effect: { state: string; updatedAt: string } };
@@ -466,6 +469,13 @@ describe("scheduling authority on real workerd", () => {
 
     const first = await scheduling(stub, "answerElicitationExternally", answer("event:first"));
     const second = await scheduling(stub, "answerElicitationExternally", answer("event:second"));
+
+    await runInDurableObject(stub, async (instance) => {
+      const message = await (instance as unknown as {
+        product: WorkstreamObjectProductService;
+      }).product.elicitationMessageForRunForRuntime(RUN);
+      expect(message?.clientMessageId).toBe(`elicitation:${ELICITATION}`);
+    });
 
     // The routed update fenced on `status = 'open'` and the caller read
     // `meta.changes` to learn whether it had won. Losing is an ordinary

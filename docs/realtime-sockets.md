@@ -38,17 +38,17 @@ connection lifecycle around that admission protocol.
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and `create_message` commands, consumes its distinct ticket in SQL, and admits writes from the identity serialized when the socket was authorized. |
 | `apps/api/src/durable-objects/automation-agent.ts` | Accepts one hibernating socket per automation draft, consumes its ticket in `automation_socket_ticket_receipts`, re-reads the session and membership from D1, and admits only the automation's author. |
 | `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | The automation draft feed: ticket request, snapshot fence against the compiler stream, folded narration, heartbeat, and reconnect backoff. |
-| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, and invalidates workspace query surfaces. |
 | `apps/api/src/services/sidebar-reads.ts` | The automation and note statements plus row mappings the sidebar opens with, shared by WorkspaceDO's batch and the REST services so the two readings of one table cannot drift. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts` | The one receiver for the sidebar's two pushed lists: the opening batch and every push compare against its per-list waterline ledger rather than writing the caches directly. |
 | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` | Pages the work-stream directory beyond the first, which the connect payload delivers; it does not fetch page one and widens the list only when Debug enabled asks for system rows. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled SubstreamAgent feed, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled SubstreamAgent feed, resends idempotent message commands after reconnect, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
 | `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free control/feed pair after a one-second sidebar hover, and retains recently viewed pairs without remounting their connection hooks. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Preserves the browser `WebSocket` event/readiness contract for the work-stream hooks while routing Electron transport through one socket-ID-multiplexed privileged-bridge listener; browser development keeps the native constructor. |
@@ -592,8 +592,9 @@ verifying it, and answering the handshake. It exposes the transport helpers in
 `@rally/contracts/socket-tickets` to both the Worker and the renderer, and
 `issueSocketTicket` / `verifySocketTicket` to the services that need them.
 
-It does not own what happens next. Workspace command authorization/routing and
-child subscription, event replay, presence, and `resync_required` are described in
+It does not own what happens next. Workspace synchronization, direct room
+command admission, child subscription, event replay, presence, and
+`resync_required` are described in
 [`architecture.md`](architecture.md); the reconnect and heartbeat behavior of
 the client is in [`runbook.md`](runbook.md), and how often that reconnect
 actually happens is measured by `realtime_socket_state` in
@@ -655,8 +656,8 @@ keeping correct for whoever reads the logs.
 Directory pages are read-only and are not reconnect-resend commands. If
 Electron receives the browser `offline` signal while a page is in flight, it
 clears that request's 120-second timer and rejects immediately with
-`workspace_directory_offline`. Message commands remain pending because their
-client message IDs make reconnect resend idempotent.
+`workspace_directory_offline`. Room message commands remain pending because
+their client message IDs make reconnect resend idempotent.
 
 ## Testing
 
@@ -665,12 +666,13 @@ client message IDs make reconnect resend idempotent.
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @rally/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @rally/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; and ticket replay on real workerd. |
+| `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated SubstreamAgent socket, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @rally/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial-read admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent feed reconnect/resync, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, scroll thresholds/anchor preservation, and workspace-command routing. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent command/feed reconnect, private message receipts, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, and scroll thresholds/anchor preservation. |
 | `apps/desktop/src/renderer/lib/use-automation-agent-socket.test.tsx` | `pnpm --filter @rally/desktop test` | The automation draft feed: closing a socket serving another automation and applying nothing it sent, clearing state the moment the subject changes, the agent's own sequence fencing snapshots against the compiler stream, one read per burst of durable events, ping/pong timeout, reconnect backoff, and timer cleanup on unmount. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
@@ -831,6 +833,26 @@ one-way `mark_opened` frame. Bootstrap failure closes the already-accepted
 server socket so reconnect cannot strand an orphan. Older client/server
 combinations still use explicit subscribe. Revocation and attachment
 serialization remain the lifetime boundary after admission.
+### 2026-09-01 — The admitted room socket carries its own message commands
+
+**What changed:** `create_message` and its private success/failure receipt moved
+from the persistent WorkspaceDO socket to the retained SubstreamAgent socket.
+The room attachment now persists the admitted role and analytics workspace
+surrogate through hibernation; an attachment from before this protocol reconnects
+with code 1012 before sending.
+
+**Why:** The room socket already fixes the entire routing tuple and access
+revocation closes it when that authority ends. Sending through the parent added
+authorization and routing work without making the child transaction safer.
+
+**Considered and rejected:** A fresh D1 session query per message would make an
+admitted socket only half-authorized and retain the measured delay. Removing the
+legacy parent handler in the same deploy would break released clients.
+
+**Consequences:** The desktop keeps an unacknowledged command across ordinary
+disconnects and resends the same client message identity. Private receipts do
+not advance room sequence, and all other product mutations still return
+`rest_required` on this socket.
 
 ### 2026-08-29 — Dictation admission becomes one question to WorkspaceDO
 

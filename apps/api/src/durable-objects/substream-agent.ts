@@ -10,6 +10,8 @@ import {
   ExecutionPrincipalSchema,
   ClientSocketEventSchema,
   IdSchema,
+  MESSAGE_MAX_CHARACTERS,
+  MESSAGE_TOO_LONG_MESSAGE,
   PersonalSocketEventSchema,
   ResourceRelationshipTypeSchema,
   SubstreamIdSchema,
@@ -32,6 +34,7 @@ import {
   UpdateWorkstreamRequestSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema,
   type PersonalSocketEvent,
   type ServerSocketEvent,
@@ -39,6 +42,7 @@ import {
   type TranscriptTurn,
   type User,
   type WorkstreamDetail,
+  type WorkstreamMessageAdmissionReceipt,
   type WorkstreamTranscriptSnapshot,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
@@ -220,6 +224,7 @@ import {
   InitializeWorkstreamObjectInputSchema,
   WorkstreamObjectCreateMessageInputSchema,
   WorkstreamObjectProductService,
+  type WorkstreamObjectCreateMessageInput,
   type WorkstreamLoopActivationRequest,
 } from "./workstream-object-product";
 import {
@@ -265,6 +270,9 @@ const SocketAttachmentSchema = z.object({
   // Absent only on a socket accepted by a pre-command-gateway deployment. A
   // command on that socket triggers a normal reconnect for a fresh ticket.
   sessionId: z.string().min(1).max(200).optional(),
+  // The socket upgrade authorizes the member once. Access-revocation delivery
+  // closes this socket when that authorization ends, so commands use the
+  // admitted role instead of paying for a second D1 session lookup.
   role: z.enum(["owner", "admin", "member"]).optional(),
   analyticsWorkspaceId: z.string().nullable().optional(),
   connectedAt: z.string().datetime({ offset: true }),
@@ -541,6 +549,25 @@ const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
 
+function recognizableSocketCreateMessage(decoded: unknown): {
+  clientMessageId: string;
+  overLong: boolean;
+} | null {
+  if (decoded === null || typeof decoded !== "object") return null;
+  const frame = decoded as { type?: unknown; payload?: unknown };
+  if (frame.type !== "create_message" || frame.payload === null || typeof frame.payload !== "object") {
+    return null;
+  }
+  const payload = frame.payload as { text?: unknown; clientMessageId?: unknown };
+  if (typeof payload.clientMessageId !== "string"
+    || payload.clientMessageId.length < 1
+    || payload.clientMessageId.length > 120) return null;
+  return {
+    clientMessageId: payload.clientMessageId,
+    overLong: typeof payload.text === "string" && payload.text.length > MESSAGE_MAX_CHARACTERS,
+  };
+}
+
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
   return socketUserId === audienceUserId;
 }
@@ -778,6 +805,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  /** Post-run delivery/maintenance proceeds independently of inference. */
+  private readonly externalSettlementDrain = new DurableAgentDrain();
+  /** Fresh terminal outcomes retain metrics that are not part of the durable receipt. */
+  private readonly freshTerminalOutcomes = new Map<string, AgentTerminalOutcome>();
   /** Distinguishes this live object instance from the predecessor it replaces. */
   private readonly harnessLeaseOwnerNonce = uuidV7();
   private readonly recoverableHarnessAttempts = new Map<string, string>();
@@ -2549,22 +2580,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(await this.product.markUnread(current));
       }
       if (request.operation === "create_message") {
-        const input = request.input;
-        const result = await span.step("workstream.room.product.create_message", () =>
-          this.product.createMessage(current, input));
-        if (result.activationRequest !== null) {
-          const activationRequest = result.activationRequest;
-          await span.step("workstream.room.loop.activate", () =>
-            this.requestPersistentLoopActivation(activationRequest));
-        }
-        if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
-        span.setAttributes({
-          "rally.message.deduplicated": !result.inserted,
-        });
-        return jsonResponse({
-          turn: result.turn,
-          deliveryState: result.deliveryState,
-        });
+        return jsonResponse(await this.admitMessage(current, request.input, span));
       }
       if (request.operation === "add_participant") {
         const participant = await this.product.addParticipant(current, request.userId);
@@ -2724,27 +2740,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.agentDrain.touch();
       await this.flushDueRegionalEffects();
       if (!ownsDrain()) return;
-
-      const settlement = this.loop.loop()?.status === "idle"
-        ? this.nextUnsettledExecutionReceipt(Date.now())
-        : null;
-      if (settlement) {
-        const parsed = WorkstreamWorkflowInputSchema.safeParse(JSON.parse(settlement.execution_context_json));
-        if (!parsed.success) {
-          this.deferExecutionReceipt(settlement.run_id, Date.now() + MAINTENANCE_RECHECK_MS,
-            "substream_loop_execution_context_invalid");
-          return;
-        }
-        const executionEnv = this.localRuntimeEnvironment(
-          parsed.data.workspaceId,
-          parsed.data.workstreamId,
-          parsed.data.substreamId ?? "0",
-        );
-        const outcome = await this.loadTerminalOutcome(executionEnv, parsed.data, settlement.status);
-        const result = await this.settleAgentRunWithRetry(executionEnv, parsed.data, outcome);
-        if (result.retryAt !== null) return;
-        continue;
-      }
 
       const preparation = await this.product.resumeOldestInputPreparation();
       if (preparation === "active") return;
@@ -2975,20 +2970,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     run_id: string;
     execution_context_json: string;
     status: "completed" | "needs_input" | "failed" | "stopped";
+    execution_available_at: number | null;
   } | null {
     const row = this.state.storage.sql.exec<{
       run_id: string;
       execution_context_json: string;
       status: string;
+      execution_available_at: number | null;
     }>(
-      `SELECT run_id, execution_context_json, status FROM runs
+      `SELECT run_id, execution_context_json, status, execution_available_at FROM runs
         WHERE execution_context_json IS NOT NULL AND terminalized_at IS NOT NULL
           AND external_settled_at IS NULL
-          AND (execution_available_at IS NULL OR execution_available_at <= ?)
-        ORDER BY COALESCE(execution_available_at, terminalized_at), run_id LIMIT 1`,
-      now,
+        ORDER BY terminalized_at, run_id LIMIT 1`,
     ).toArray()[0];
     if (!row) return null;
+    // External destinations observe run order. A failed older delivery holds
+    // only this lane until its retry time; it never lets a later result pass it
+    // and it never holds the inference loop.
+    if (row.execution_available_at !== null && row.execution_available_at > now) return null;
     const status = row.status === "cancelled" ? "stopped" : row.status;
     if (!["completed", "needs_input", "failed", "stopped"].includes(status)) {
       throw new Error("substream_loop_terminal_receipt_invalid");
@@ -3005,6 +3004,81 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       Date.now(),
       runId,
     );
+  }
+
+  /**
+   * Start the independent post-run lane without joining it to inference.
+   *
+   * `external_settled_at IS NULL` is the restart authority; this in-memory
+   * drain only avoids two continuations delivering the same oldest receipt in
+   * one isolate. `waitUntil` gives the eager attempt room to finish, while the
+   * object's alarm remains the recovery path after eviction or cancellation.
+   */
+  private resumeExternalSettlementDrain(): void {
+    const drain = this.externalSettlementDrain.resume(
+      (ownsDrain) => this.drainExternalSettlements(ownsDrain).catch((error: unknown) => {
+        logWarn(this.env, "substream_external_settlement_drain_failed", {
+          workspace_id: this.objectStore.identity()?.workspaceId,
+          workstream_id: this.objectStore.identity()?.workstreamId,
+          substream_id: this.externalSubstreamId(),
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }),
+      async () => { await this.armNextAlarm(); },
+    );
+    this.ctx.waitUntil(drain);
+  }
+
+  private async drainExternalSettlements(ownsDrain: () => boolean): Promise<void> {
+    while (ownsDrain()) {
+      this.externalSettlementDrain.touch();
+      const settlement = this.nextUnsettledExecutionReceipt(Date.now());
+      if (!settlement) return;
+      const claimNow = Date.now();
+      const claimed = this.state.storage.sql.exec<{ run_id: string }>(
+        `UPDATE runs SET execution_available_at = ?, updated_at = ?
+          WHERE run_id = ? AND terminalized_at IS NOT NULL AND external_settled_at IS NULL
+            AND (execution_available_at IS NULL OR execution_available_at <= ?)
+          RETURNING run_id`,
+        claimNow + MAINTENANCE_RECHECK_MS,
+        claimNow,
+        settlement.run_id,
+        claimNow,
+      ).toArray()[0];
+      if (!claimed) continue;
+      let encoded: unknown;
+      try {
+        encoded = JSON.parse(settlement.execution_context_json);
+      } catch {
+        this.deferExecutionReceipt(settlement.run_id, Date.now() + MAINTENANCE_RECHECK_MS,
+          "substream_loop_execution_context_invalid");
+        return;
+      }
+      const parsed = WorkstreamWorkflowInputSchema.safeParse(encoded);
+      if (!parsed.success) {
+        this.deferExecutionReceipt(settlement.run_id, Date.now() + MAINTENANCE_RECHECK_MS,
+          "substream_loop_execution_context_invalid");
+        return;
+      }
+      const executionEnv = this.localRuntimeEnvironment(
+        parsed.data.workspaceId,
+        parsed.data.workstreamId,
+        parsed.data.substreamId ?? "0",
+      );
+      let outcome: AgentTerminalOutcome;
+      try {
+        outcome = this.freshTerminalOutcomes.get(settlement.run_id)
+          ?? await this.loadTerminalOutcome(executionEnv, parsed.data, settlement.status);
+      } catch (error) {
+        this.deferExecutionReceipt(settlement.run_id, Date.now() + MAINTENANCE_RECHECK_MS,
+          diagnosticErrorCode(error, "agent_terminal_outcome_missing"));
+        return;
+      }
+      if (!ownsDrain()) return;
+      this.freshTerminalOutcomes.delete(settlement.run_id);
+      const result = await this.settleAgentRunWithRetry(executionEnv, parsed.data, outcome);
+      if (result.retryAt !== null) return;
+    }
   }
 
   /**
@@ -3151,7 +3225,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           claim_status: claim.status,
           recovered_status: recovered.status,
         });
-        return this.persistAndSettleAgentRun(executionEnv, input, recovered);
+        return this.persistAgentRunForExternalSettlement(input, recovered);
       } catch (error) {
         logWarn(this.env, "substream_agent_terminal_recovery_failed", {
           workspace_id: input.workspaceId,
@@ -3193,7 +3267,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           "stopped",
         );
       }
-      return this.persistAndSettleAgentRun(executionEnv, input, stopped);
+      return this.persistAgentRunForExternalSettlement(input, stopped);
     }
 
     let outcome: WorkstreamHarnessResult;
@@ -3289,7 +3363,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       type: "harness_status_changed",
       status: root,
     });
-    return this.persistAndSettleAgentRun(executionEnv, input, outcome);
+    return this.persistAgentRunForExternalSettlement(input, outcome);
   }
 
   /**
@@ -3677,8 +3751,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return { transitions: settled.transitions, stop: settled.stop };
   }
 
-  private async persistAndSettleAgentRun(
-    executionEnv: Env,
+  private persistAgentRunForExternalSettlement(
     input: WorkstreamWorkflowInput,
     rawOutcome: AgentTerminalOutcome,
   ): Promise<{
@@ -3687,15 +3760,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     retryAt: number | null;
   }> {
     const outcome = AgentTerminalOutcomeSchema.parse(rawOutcome);
-    this.state.storage.sql.exec(
+    const scheduled = this.state.storage.sql.exec<{ run_id: string }>(
       `UPDATE runs SET execution_available_at = ?, external_settled_at = NULL,
               last_settlement_error_code = NULL, updated_at = ?
-        WHERE run_id = ? AND terminalized_at IS NOT NULL`,
+        WHERE run_id = ? AND terminalized_at IS NOT NULL AND external_settled_at IS NULL
+        RETURNING run_id`,
       Date.now(),
       Date.now(),
       input.harnessRunId,
-    );
-    return this.settleAgentRunWithRetry(executionEnv, input, outcome);
+    ).toArray()[0];
+    // This continuation is deliberately not awaited by the persistent loop.
+    // The terminal transcript and loop fence are already durable; external
+    // delivery plus metadata maintenance have their own receipt and alarm.
+    if (scheduled) {
+      this.freshTerminalOutcomes.set(input.harnessRunId, outcome);
+      this.resumeExternalSettlementDrain();
+    }
+    return Promise.resolve({
+      status: outcome.status,
+      errorCode: outcome.error?.code ?? null,
+      retryAt: null,
+    });
   }
 
   private async settleAgentRunWithRetry(
@@ -3790,7 +3875,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
   ): Promise<string | null> {
-    await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
     if (outcome.metrics) {
       recordHarnessRunObservation(this.env, {
         workspaceId: input.workspaceId,
@@ -3802,6 +3886,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         metrics: outcome.metrics,
       });
     }
+    await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
 
     await this.finalizeAutomation(executionEnv, input, outcome);
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
@@ -4038,7 +4123,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     }
     const elicitationMessage = outcome.status === "needs_input"
-      ? await this.product.openElicitationMessageForRuntime()
+      ? await this.product.elicitationMessageForRunForRuntime(input.harnessRunId)
       : null;
     const message = elicitationMessage ?? finalMessage;
     // External platforms are projections of durable transcript state. Status
@@ -4536,8 +4621,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
 
+    const recognizableCreate = recognizableSocketCreateMessage(decoded);
+    if (recognizableCreate?.overLong) {
+      socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+        type: "client_command_failed",
+        command: "create_message",
+        clientMessageId: recognizableCreate.clientMessageId,
+        error: { status: 400, code: "message_too_long", message: MESSAGE_TOO_LONG_MESSAGE },
+      })));
+      return;
+    }
+
     const parsed = ClientSocketEventSchema.safeParse(decoded);
     if (!parsed.success) {
+      if (recognizableCreate) {
+        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+          type: "client_command_failed",
+          command: "create_message",
+          clientMessageId: recognizableCreate.clientMessageId,
+          error: { status: 400, code: "invalid_event", message: "The socket event is not valid." },
+        })));
+        return;
+      }
       this.sendError(socket, "invalid_event", "The socket event is not valid.");
       return;
     }
@@ -4618,11 +4723,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
 
     if (parsed.data.type === "create_message") {
-      this.sendError(
-        socket,
-        "workspace_socket_required",
-        "Send new user messages through the workspace command socket.",
-      );
+      await this.createSocketMessage(socket, attachment, parsed.data);
       return;
     }
 
@@ -4633,6 +4734,125 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       "rest_required",
       "Persist this action through the work-stream API before publishing it."
     );
+  }
+
+  private async createSocketMessage(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    command: Extract<z.infer<typeof ClientSocketEventSchema>, { type: "create_message" }>,
+  ): Promise<void> {
+    await inFlowSpan(this.env, "workstream.room.create_message", {
+      flow: "workstream_message_send",
+      component: "substream_do",
+      identity: {
+        workspaceId: attachment.workspaceId,
+        workstreamId: attachment.workstreamId,
+        substreamId: attachment.substreamId,
+        userId: attachment.userId,
+        sessionId: attachment.sessionId,
+      },
+      attributes: {
+        "rally.transport": "substream_socket",
+        "rally.socket.connection_id": attachment.connectionId,
+        "rally.message.client_id": command.payload.clientMessageId,
+        "rally.message.attachment_count": command.payload.attachmentIds?.length ?? 0,
+      },
+    }, async (span) => {
+      try {
+        if (!this.objectStore.isRealtimeWritable()) {
+          throw new ApiError(503, "workstream_maintenance", "Work streams are temporarily unavailable");
+        }
+        if (!attachment.sessionId || !attachment.role) {
+          // A socket admitted before this command path existed has no role in
+          // its hibernation attachment. A normal reconnect obtains a fresh
+          // ticket and the complete admitted identity.
+          disconnect(socket, 1012, "Reconnect for message commands");
+          return;
+        }
+        const auth: AuthContext = {
+          sessionId: attachment.sessionId,
+          userId: attachment.userId,
+          workspaceId: attachment.workspaceId,
+          region: this.env.AVALON_REGION,
+          role: attachment.role,
+          analyticsWorkspaceId: attachment.analyticsWorkspaceId ?? null,
+        };
+        span.setAttributes(identityAttributes({
+          analyticsWorkspaceId: auth.analyticsWorkspaceId,
+        }));
+        const result = await this.admitMessage(auth, {
+          ...command.payload,
+          telemetryOperationId: command.operationId,
+        }, span, true);
+        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+          type: "client_command_succeeded",
+          command: "create_message",
+          clientMessageId: command.payload.clientMessageId,
+          turn: result.turn,
+          deliveryState: result.deliveryState,
+        })));
+        span.mark("workstream.room.create_message.respond");
+      } catch (error) {
+        const safe = error instanceof ApiError
+          ? error
+          : new ApiError(500, "message_write_failed", "The message could not be sent");
+        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+          type: "client_command_failed",
+          command: "create_message",
+          clientMessageId: command.payload.clientMessageId,
+          error: {
+            status: safe.status,
+            code: safe.code,
+            message: safe.message,
+            ...(safe.details ? { details: safe.details } : {}),
+          },
+        })));
+        if (!(error instanceof ApiError)) {
+          logWarn(this.env, "substream_socket_create_message_failed", {
+            workspace_id: attachment.workspaceId,
+            workstream_id: attachment.workstreamId,
+            substream_id: attachment.substreamId,
+            user_id: attachment.userId,
+            client_message_id: command.payload.clientMessageId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+        span.setError(safe.code, safe.message);
+        span.setAttributes({ "http.response.status_code": safe.status });
+      }
+    });
+  }
+
+  private async admitMessage(
+    auth: AuthContext,
+    input: WorkstreamObjectCreateMessageInput,
+    span: FlowSpan,
+    admittedSocket = false,
+  ): Promise<WorkstreamMessageAdmissionReceipt> {
+    const result = await span.step("workstream.room.product.create_message", () =>
+      admittedSocket
+        ? this.product.createMessageForAdmittedSocket(auth, input)
+        : this.product.createMessage(auth, input));
+    const activationRequest = result.activationRequest;
+    if (activationRequest !== null) {
+      try {
+        await span.step("workstream.room.loop.activate", () =>
+          this.requestPersistentLoopActivation(activationRequest));
+      } catch (error) {
+        // Admission arms cancellation recovery before its durable input row.
+        // An eager wake-up failure must not turn that committed message into a
+        // client-visible failure whose retry can only replay the same row.
+        logWarn(this.env, "substream_message_activation_wakeup_failed", {
+          workspace_id: auth.workspaceId,
+          workstream_id: this.objectStore.identity()?.workstreamId,
+          client_message_id: input.clientMessageId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
+    if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
+    span.setAttributes({ "rally.message.deduplicated": !result.inserted });
+    return { turn: result.turn, deliveryState: result.deliveryState };
   }
 
   /**
@@ -5024,6 +5244,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.objectStore.nextRegionalEffectDueAt() !== null
       || this.objectStore.nextSemanticRealtimeDueAt() !== null
       || this.nextLoopWorkAt(now) !== null
+      || this.nextExternalSettlementAt() !== null
       || this.scheduledAlarms.due(now, 1).length > 0;
   }
 
@@ -5100,9 +5321,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
     const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
     const hasLoopWork = this.nextLoopWorkAt() !== null;
+    const nextExternalSettlementAt = this.nextExternalSettlementAt();
     // A timer that fired above may have left the index behind the table.
     this.syncAgentTimerAlarms();
-    if (!pending && nextEffectAt === null && nextSemanticRealtimeAt === null && !hasLoopWork) return;
+    if (!pending && nextEffectAt === null && nextSemanticRealtimeAt === null
+      && !hasLoopWork && nextExternalSettlementAt === null) return;
+
+    if (nextExternalSettlementAt !== null && nextExternalSettlementAt <= Date.now()) {
+      if (this.externalSettlementDrain.abandonActive()) {
+        logWarn(this.env, "substream_external_settlement_stale_drain_reclaimed", {
+          workspace_id: this.objectStore.identity()?.workspaceId,
+          workstream_id: this.objectStore.identity()?.workstreamId,
+          substream_id: this.externalSubstreamId(),
+        });
+      }
+      this.resumeExternalSettlementDrain();
+    }
 
     if (nextSemanticRealtimeAt !== null && nextSemanticRealtimeAt <= Date.now()) {
       await this.flushSemanticRealtimeOutboxBestEffort();
@@ -5673,7 +5907,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   protected override armAlarmAfterDueWork(): Promise<unknown> {
-    return this.loopDrainDeferred ? this.armAlarmDuringRunDrain() : this.armNextAlarm();
+    return this.loopDrainDeferred
+      ? this.armAlarmDuringRunDrain()
+      : this.armNextAlarm();
   }
 
   /**
@@ -5694,6 +5930,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.objectStore.nextRegionalEffectDueAt(),
         this.objectStore.nextSemanticRealtimeDueAt(),
         this.objectStore.nextBlockDashboardDueAt(),
+        this.nextExternalSettlementAt(),
         now + KEEP_ALIVE_INTERVAL_MS,
       ],
     });
@@ -5733,13 +5970,21 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const receipt = this.state.storage.sql.exec<{ due_at: number | null }>(
       `SELECT MIN(COALESCE(execution_available_at, created_at)) AS due_at FROM runs
         WHERE execution_context_json IS NOT NULL
-          AND (
-            (substream_loop_id IS NULL AND terminalized_at IS NULL
-              AND status IN ('admitted', 'running'))
-            OR (terminalized_at IS NOT NULL AND external_settled_at IS NULL)
-          )`,
+          AND substream_loop_id IS NULL AND terminalized_at IS NULL
+          AND status IN ('admitted', 'running')`,
     ).toArray()[0]?.due_at ?? null;
     return receipt === null ? null : Math.max(now, Number(receipt));
+  }
+
+  /** Oldest post-run receipt, ordered independently from executable work. */
+  private nextExternalSettlementAt(): number | null {
+    const row = this.state.storage.sql.exec<{ due_at: number }>(
+      `SELECT COALESCE(execution_available_at, terminalized_at) AS due_at FROM runs
+        WHERE execution_context_json IS NOT NULL AND terminalized_at IS NOT NULL
+          AND external_settled_at IS NULL
+        ORDER BY terminalized_at, run_id LIMIT 1`,
+    ).toArray()[0];
+    return row ? Number(row.due_at) : null;
   }
 
   /**
@@ -5757,6 +6002,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.objectStore.nextSemanticRealtimeDueAt(),
       this.objectStore.nextBlockDashboardDueAt(),
       this.nextLoopWorkAt(now),
+      this.nextExternalSettlementAt(),
     ];
     if (this.keepAliveLease.active) candidates.push(now + KEEP_ALIVE_INTERVAL_MS);
     return candidates.filter((candidate): candidate is number => candidate !== null);
