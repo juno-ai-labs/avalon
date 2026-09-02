@@ -535,7 +535,10 @@ and executes traversal. `x-ai/grok-4.3` and `x-ai/grok-4.6` are Azure-bound:
 their same-model route is Azure first and OpenRouter second.
 `openai/gpt-5.6-sol` is hard-fenced to Azure only; an Azure outage or missing
 price fails that model stage instead of sending the expensive same-model call
-to OpenRouter. Other canonical models remain OpenRouter-only. A file-parser request, audio input, or another
+to OpenRouter. That fence has no slack in it, so a request Azure *rejects* ends
+the run rather than degrading: every tool schema is corrected to a plain object
+root at `toModelToolDefinitions` for that reason, and
+[`agent-tools.md`](agent-tools.md) carries the rule an author has to follow. Other canonical models remain OpenRouter-only. A file-parser request, audio input, or another
 capability an Azure binding has not proved skips that candidate before any
 network request rather than sending a body the deployment may reject.
 
@@ -1234,6 +1237,33 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-02 — Every tool schema is corrected to a plain object root at the wire
+
+**What changed:** `toModelToolDefinitions` now runs
+`repairRootSchemaForProviders` over each tool's `parameters` on the way to the
+provider. It was previously applied at one call site, over dynamic connector
+tools only, and it deleted the root union rather than merging it.
+[`agent-tools.md`](agent-tools.md#changelog) carries the measured rule, the two
+Azure error strings behind it, and the authoring consequence.
+
+**Why:** A root-level combinator on a tool's `parameters` fails the whole
+request on Azure OpenAI, every tool in it, and `openai/gpt-5.6-sol` is fenced to
+Azure with no second candidate to fall back to — so the first production run to
+choose it died before its first turn. Tool schemas reach this function from four
+independent places: this repository, a connector adapter, a hosted MCP server,
+and a skill. Only two of those are visible to a build-time test, and a rule that
+three sets of authors have to remember is one that will be forgotten. The single
+chokepoint every tool already passes through is the only place a guarantee can
+actually be made.
+
+**What a future change has to respect:** the correction belongs here rather than
+at the sources, and the build-time gate in
+`apps/api/test/tool-schema-sanitization.test.ts` stays anyway. They are not
+redundant — the corrector keeps a third-party schema from taking down a run, and
+the gate keeps this repository's own tools from silently depending on the
+corrector to be shippable. Removing either one leaves a gap the other does not
+cover.
 
 ### 2026-09-02 — A blanked optional argument is normalized to an omission
 

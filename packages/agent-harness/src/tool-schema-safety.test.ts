@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   nonObjectRootUnionBranches,
   readableRootUnionBranch,
-  repairRootUnionForProviders,
+  repairRootSchemaForProviders,
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
 
@@ -273,40 +273,12 @@ describe("nonObjectRootUnionBranches", () => {
  * The version-independent coverage of the rules themselves is the
  * `readableRootUnionBranch` block below.
  */
-describe("repairRootUnionForProviders", () => {
-  it("defers to the sanitizer when the sanitizer already handles the shape", () => {
-    // Repairing this unconditionally is now WORSE than doing nothing. Bind 13
-    // turns it into self-sufficient object branches that every provider accepts
-    // and the model can actually read; dropping the composition first throws
-    // that constraint away and tells the model nothing. Under bind 11 and 12
-    // the drop was the only thing between a remote schema and a 400.
-    const remote = {
-      type: "object",
-      properties: { pageId: { type: "string" }, discussionId: { type: "string" } },
-      oneOf: [{ required: ["pageId"] }, { required: ["discussionId"] }],
-    };
-
-    expect(repairRootUnionForProviders(remote)).toBe(remote);
-  });
-
-  it("leaves the annotation-only and conflicting-`type` shapes to the sanitizer too", () => {
-    const annotationOnly = {
-      type: "object",
-      properties: { a: { type: "string" } },
-      anyOf: [{ description: "choose a" }, { description: "or not" }],
-    };
-    const conflictingType = {
-      type: "object",
-      properties: { a: { type: "string" } },
-      oneOf: [{ type: "string", properties: { a: { type: "string" } } }],
-    };
-
-    expect(repairRootUnionForProviders(annotationOnly)).toBe(annotationOnly);
-    expect(repairRootUnionForProviders(conflictingType)).toBe(conflictingType);
-  });
-
-  it("leaves a root union whose branches are already objects untouched", () => {
-    // Repairing this would throw away a constraint every provider honours.
+describe("repairRootSchemaForProviders", () => {
+  it("merges a root union into one object instead of deleting it", () => {
+    // The shape `z.union` emits, and the one that took `workstream_list_resources`
+    // down: the root is *only* the union, so the previous drop-the-keyword
+    // repair left `{}` — a tool advertising no parameters at all, whose
+    // executor still requires them. Every property has to survive.
     const schema = {
       anyOf: [
         { type: "object", properties: { resourceId: { type: "string" } }, required: ["resourceId"] },
@@ -314,24 +286,105 @@ describe("repairRootUnionForProviders", () => {
       ],
     };
 
-    expect(repairRootUnionForProviders(schema)).toBe(schema);
+    expect(repairRootSchemaForProviders(schema)).toEqual({
+      type: "object",
+      properties: { resourceId: { type: "string" }, cursor: { type: "string" } },
+    });
   });
 
-  it("leaves a root `allOf` and a nested union untouched", () => {
-    // Both are accepted by all nine models measured; rewriting either would
-    // discard a constraint to fix a problem that does not exist.
-    const allOf = {
-      type: "object",
-      properties: { a: { type: "string" } },
-      allOf: [{ required: ["a"] }],
-    };
-    const nested = {
-      type: "object",
-      properties: { filter: { type: "object", oneOf: [{ required: ["a"] }] } },
+  it("keeps only what every branch of a union requires", () => {
+    // `required` is what a merge most easily gets backwards. The branches are
+    // alternatives, so their union of `required` would demand both names at
+    // once and make the tool uncallable; only a name every branch demands
+    // survives, and `workspaceId` is the one both do.
+    const schema = {
+      anyOf: [
+        { type: "object", properties: { workspaceId: { type: "string" }, pageId: { type: "string" } }, required: ["workspaceId", "pageId"] },
+        { type: "object", properties: { workspaceId: { type: "string" }, discussionId: { type: "string" } }, required: ["workspaceId", "discussionId"] },
+      ],
     };
 
-    expect(repairRootUnionForProviders(allOf)).toBe(allOf);
-    expect(repairRootUnionForProviders(nested)).toBe(nested);
+    expect(repairRootSchemaForProviders(schema)).toEqual({
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        pageId: { type: "string" },
+        discussionId: { type: "string" },
+      },
+      required: ["workspaceId"],
+    });
+  });
+
+  it("repairs a root union the sanitizer is happy to leave, because Azure is not", () => {
+    // This is the case the rule changed on. Bind 13 turns it into
+    // self-sufficient object branches that xAI reads, so the previous gate
+    // passed it through by identity — and Azure OpenAI still answers
+    // `invalid_function_parameters` for the root `oneOf` alone. The exclusivity
+    // is lost here knowingly; a constraint one provider can read is worth less
+    // than a request the other does not reject outright.
+    const remote = {
+      type: "object",
+      properties: { pageId: { type: "string" }, discussionId: { type: "string" } },
+      oneOf: [{ required: ["pageId"] }, { required: ["discussionId"] }],
+    };
+
+    expect(repairRootSchemaForProviders(remote)).toEqual({
+      type: "object",
+      properties: { pageId: { type: "string" }, discussionId: { type: "string" } },
+    });
+  });
+
+  it("unions what a root `allOf` requires rather than intersecting it", () => {
+    // An intersection means every branch applies at once, so the opposite rule
+    // to a union's. Azure rejects a root `allOf` as readily as a root `anyOf`,
+    // so it is merged rather than left alone as the xAI-only rule allowed.
+    const schema = {
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      allOf: [{ required: ["a"] }, { required: ["b"] }],
+    };
+
+    expect(repairRootSchemaForProviders(schema)).toEqual({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      required: ["a", "b"],
+    });
+  });
+
+  it("gives a root that declares no type one, and keeps the rest of the schema", () => {
+    const schema = {
+      description: "kept",
+      properties: { a: { type: "string" } },
+      required: ["a"],
+    };
+
+    expect(repairRootSchemaForProviders(schema)).toEqual({
+      type: "object",
+      description: "kept",
+      properties: { a: { type: "string" } },
+      required: ["a"],
+    });
+  });
+
+  it("drops a `required` naming a property the merge could not produce", () => {
+    // A branch may require a name whose subschema lived somewhere the merge
+    // cannot read. A `required` pointing at a property that is not there is
+    // exactly what Bind's sanitizer prunes, so it must not be emitted.
+    const schema = {
+      anyOf: [{ type: "object", required: ["ghost"] }],
+    };
+
+    expect(repairRootSchemaForProviders(schema)).toEqual({ type: "object", properties: {} });
+  });
+
+  it("leaves a schema that is already a plain object untouched", () => {
+    const schema = {
+      type: "object",
+      properties: { filter: { type: "object", oneOf: [{ required: ["a"] }] } },
+      required: ["filter"],
+    };
+
+    expect(repairRootSchemaForProviders(schema)).toBe(schema);
   });
 
   it("does not mutate the schema it was given", () => {
@@ -341,9 +394,10 @@ describe("repairRootUnionForProviders", () => {
       oneOf: [{ required: ["a"] }],
     };
 
-    repairRootUnionForProviders(schema);
+    repairRootSchemaForProviders(schema);
 
     expect(schema.oneOf).toEqual([{ required: ["a"] }]);
+    expect(schema.properties).toEqual({ a: { type: "string" } });
   });
 });
 
