@@ -405,12 +405,13 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    // Three for the automations, then two groups of four and three.
-    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(10);
+    // Three for the projects, three for the automations, then two groups of
+    // four and three.
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(13);
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByText('Loading your work streams, automations and notes')).toBeInTheDocument();
+    expect(screen.getByText('Loading your projects, work streams, automations and notes')).toBeInTheDocument();
     // Nothing claims the sidebar is empty while it is still arriving.
     expect(screen.queryByText('No active automations')).not.toBeInTheDocument();
     expect(screen.queryByText('No work streams or notes yet')).not.toBeInTheDocument();
@@ -434,6 +435,36 @@ describe('Sidebar work-stream markers', () => {
     expect(container.querySelectorAll('.skeleton-row')).toHaveLength(0);
     expect(screen.getByText('Launch brief')).toBeInTheDocument();
     expect(screen.getByText('Standup')).toBeInTheDocument();
+  });
+
+  // The three lists finish at different moments. A person who already has a
+  // note but no work streams sees this section's own list while the projects
+  // and automations above are still placeholders, and an announcement nested in
+  // the work-stream skeleton's branch would have gone with it.
+  it('keeps the one loading announcement while a section that has arrived shows its list', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            loading
+            notes={[note('00000000-0000-4000-8000-000000000032', 'Standup', '2026-07-31T19:00:00.000Z')]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    // The note is listed, so this section shows no placeholder of its own —
+    // while the projects and automations above still do.
+    expect(screen.getByText('Standup')).toBeInTheDocument();
+    expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(0);
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(6);
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(screen.getByText('Loading your projects, work streams, automations and notes')).toBeInTheDocument();
   });
 
   it('does not render the disabled onboarding checklist', () => {
