@@ -245,6 +245,16 @@ carrying that total, sitting where the run's first row sat, directly above the
 answer. A reader who wants the breakdown opens it and gets the same rows,
 unchanged, drawn by the same components.
 
+The control is the markdown headings' collapse chevron — the same `ChevronRight`
+at 14px and 1.8, the same muted neutral, the same quarter turn on the same
+140ms — because the reader has already learned it on the answer immediately
+below, and a second collapse drawn a second way a few pixels above the first
+reads as a different kind of thing. Its gutter is this column's own rather than
+the heading's negative offset: the chevron takes `.plugin-face`'s 20px box and
+the timing row's 7px gap, so it lands in the same column as the marks of the
+rows it hides and the total lands in the same column as their labels — which
+puts it within three pixels of the heading chevrons below it anyway.
+
 Three things about it are decisions rather than details:
 
 - **The total moves; it is not copied.** `foldSettledWorkIntoMessages` has
@@ -468,8 +478,9 @@ projection, composition, grouping, and render path from real inputs.
 **What changed:** `collapseSettledWorkIntoAccordion` is a fourth pass in
 `workstream.tsx`'s pipeline, after `foldSettledWorkIntoMessages`. Once a turn's
 response timer has settled, the plugin and thinking rows immediately above that
-turn's answer fold into one `work_accordion` row — "Worked for 41m 17s" with a
-chevron — sitting where the run's first row sat, holding those rows in
+turn's answer fold into one `work_accordion` row — "Worked for 41m 17s" behind
+the markdown headings' own collapse chevron, in this column's 20px glyph
+gutter — sitting where the run's first row sat, holding those rows in
 `workAccordion.rows` and drawing them through `PluginActivityBlock` and
 `ThoughtBlock` when a reader opens it. The total it prints is the answer's
 `workSummary`, taken off the message rather than copied, so the header prints it
@@ -502,6 +513,14 @@ The transcript is virtualized: hidden rows still cost one measured item each,
 and opening a drawer would grow N items whose heights the size cache has to be
 told about separately. Nesting them makes an accordion one row, one measurement,
 and one thing for `RowDisclosure` to remember.
+
+Also rejected: a chevron of this row's own, inline after the total. The reader
+meets two collapses within a few pixels of each other — this one and the
+heading sections of the answer under it — and drawing them differently makes
+them read as unrelated affordances. The heading's `em`-based gutter offset is
+the one thing not copied: it is measured against a heading's line box and lands
+a few pixels off on a 20px timing row, so the chevron takes the mark column
+this feed already has.
 
 **What a future change has to respect:** the collapse keys on the settled
 response total and nothing else — that is the loop's completion signal, and a

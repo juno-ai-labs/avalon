@@ -1651,6 +1651,15 @@ function WorkAccordionRow({ message }: { message: Message }): React.JSX.Element 
  * for it. See `collapseSettledWorkIntoAccordion` for what goes in and why the
  * total moved out of the message header to get here.
  *
+ * The control is the markdown headings' collapse: the same `ChevronRight` at
+ * the same size and weight, in the same muted neutral, rotating a quarter turn
+ * when the drawer opens. A reader has already learned that chevron on the
+ * answer below — every agent message folds its sections with it — and a second
+ * collapse affordance drawn a second way, a few pixels above the first, would
+ * read as a different kind of thing. It sits in this column's own glyph gutter
+ * rather than the heading's negative offset, so it lands in the marks' column
+ * and the total lands in their labels'; `.work-accordion-chevron` has why.
+ *
  * The open flag comes from the feed where there is one, because this row is
  * exactly the shape the virtualizer mismeasures: it grows by a run's worth of
  * rows when opened, and a row that scrolls away open and returns closed leaves
@@ -1668,7 +1677,6 @@ function WorkAccordionBlock({ disclosure, message }: {
   // The same sentence the message header printed before this row existed, from
   // the same function: the total did not change, only where it is written.
   const label = workSummaryLabel(accordion);
-  const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
     <div className="work-accordion">
       <button
@@ -1680,8 +1688,13 @@ function WorkAccordionBlock({ disclosure, message }: {
         }}
         type="button"
       >
+        {/* One chevron, rotated by CSS, exactly as a heading's is: swapping the
+            glyph for a down-pointing one would lose the quarter turn the reader
+            watches, which is the part that says the two states are one thing. */}
+        <span aria-hidden="true" className="work-accordion-chevron">
+          <ChevronRight size={14} strokeWidth={1.8} />
+        </span>
         <span className="work-accordion-total">{label}</span>
-        <Chevron aria-hidden="true" size={14} />
       </button>
       {expanded && (
         <div className="work-accordion-rows">
