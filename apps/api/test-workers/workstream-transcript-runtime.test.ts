@@ -277,6 +277,172 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
+  it("keeps an interrupted assistant reservation recoverable after eviction", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const receiptRunId = "00000000-0000-7000-8000-000000000705";
+    const now = Date.now();
+    const workflowInput = WorkstreamWorkflowInputSchema.parse({
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      substreamId: "0",
+      loopId: LOOP_ID,
+      harnessRunId: receiptRunId,
+      triggerMessageId: null,
+      automationSubscriptionId: null,
+      activityId: null,
+      executionPrincipal: { type: "user", userId: USER_ID },
+      reason: "user_message",
+    });
+    const reservedTurnId = `${LOOP_ID}:turn:1`;
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      await transcript.commitBindTransition({
+        kind: "state_initialized",
+        loopId: LOOP_ID,
+        generation: 1,
+        stateRevision: 1,
+        systemProjection: {
+          revision: 1,
+          rendererVersion: "workstream-system-v1",
+          inputHash: "system-input",
+          message: { role: "system", content: "System" },
+        },
+        nonSystemMessages: [{ role: "user", content: "Question" }],
+        nonSystemMessageOrigins: [{
+          originKind: "derived",
+          sourceKind: "participant_turn",
+          sourceId: "message-1",
+          sourceRevision: 1,
+        }],
+      });
+      const runs = new WorkstreamHarnessRunStorage(state.storage);
+      expect(runs.admitRun({
+        runId: receiptRunId,
+        origin: "member_message",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+        status: "running",
+        startedAt: now,
+        model: "test/model",
+        triggerPartId: null,
+        parentRunId: null,
+        expectedLatestRunId: null,
+        now,
+      })).toEqual({ outcome: "admitted" });
+      state.storage.sql.exec(
+        `UPDATE runs SET execution_context_json = ? WHERE run_id = ?`,
+        JSON.stringify(workflowInput),
+        receiptRunId,
+      );
+      const loop = new SubstreamLoopStorage(state.storage);
+      loop.ensureLoop({ loopId: LOOP_ID, bindStateRevision: 1, now });
+      expect(loop.activateExecutionReceipt({
+        runId: receiptRunId,
+        loopId: LOOP_ID,
+        executionEpoch: 1,
+        leaseOwner: "owner-that-will-be-evicted",
+        leaseExpiresAt: now + 60_000,
+        expectedLoopRevision: loop.loop()!.revision,
+        expectedBindStateRevision: 1,
+        now,
+      }).outcome).toBe("activated");
+      expect(runs.claimAttempt({
+        runId: receiptRunId,
+        attemptId: "attempt-that-will-be-evicted",
+        owner: "attempt-owner-that-will-be-evicted",
+        leaseSeconds: 60,
+        lifecycleEventId: "interrupted-assistant-attempt",
+        now,
+      }).outcome).toBe("claimed");
+      const reservation = loop.reserveAssistantTurn({
+        executionId: receiptRunId,
+        executionEpoch: 1,
+        leaseOwner: "owner-that-will-be-evicted",
+        expectedLoopRevision: loop.loop()!.revision,
+        receiptRunId,
+        turnId: reservedTurnId,
+        modelTurnIndex: 1,
+        streamId: "interrupted-stream",
+        now,
+      });
+      expect(reservation.outcome).toBe("reserved");
+      await transcript.commitBindTransition({
+        kind: "assistant_reserved",
+        loopId: LOOP_ID,
+        generation: 1,
+        stateRevision: 2,
+        turnId: reservedTurnId,
+        modelTurnIndex: 1,
+        transcriptSequence: reservation.reservation.transcript_sequence,
+      }, now, {
+        executionId: receiptRunId,
+        executionEpoch: 1,
+        leaseOwner: "owner-that-will-be-evicted",
+        expectedBindStateRevision: 1,
+      });
+      expect(loop.startAssistantTurn({
+        executionId: receiptRunId,
+        executionEpoch: 1,
+        leaseOwner: "owner-that-will-be-evicted",
+        expectedLoopRevision: loop.loop()!.revision,
+        turnId: reservedTurnId,
+        now,
+      })).toBe("started");
+    });
+
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (instance, state) => {
+      await state.storage.deleteAlarm();
+      const resident = instance as unknown as {
+        activeLoopExecution: {
+          runId: string;
+          leaseOwner: string;
+          executionEpoch: number;
+        } | null;
+        claimPersistentLoopExecution(): Promise<{
+          input: WorkstreamWorkflowInput;
+          execution: { runId: string; leaseOwner: string; executionEpoch: number };
+        } | null>;
+        settleInterruptedAssistantReservation(
+          input: WorkstreamWorkflowInput,
+        ): Promise<"retry" | "stopped" | null>;
+      };
+      const replacementClaim = await resident.claimPersistentLoopExecution();
+      expect(replacementClaim).toMatchObject({
+        input: { harnessRunId: receiptRunId },
+        execution: { runId: receiptRunId, executionEpoch: 2 },
+      });
+      if (!replacementClaim) throw new Error("replacement_loop_claim_missing");
+      resident.activeLoopExecution = replacementClaim.execution;
+
+      await expect(resident.settleInterruptedAssistantReservation(replacementClaim.input))
+        .resolves.toBe("retry");
+
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      expect(new SubstreamLoopStorage(state.storage).loop()).toMatchObject({
+        status: "executing",
+        active_execution_id: receiptRunId,
+        active_execution_epoch: 2,
+      });
+      expect(transcript.readBindProjection(LOOP_ID)?.lastAssistantReservation).toMatchObject({
+        turnId: reservedTurnId,
+        modelTurnIndex: 1,
+        status: "failed",
+      });
+      expect(transcript.participantTurn(reservedTurnId)).toMatchObject({
+        actor: "system",
+        blocks: [expect.objectContaining({
+          type: "text",
+          text: "Response interrupted before it completed",
+        })],
+      });
+    });
+  });
+
   it("reports plugin runs for a turn whose blocks carry no activity id", async () => {
     // The shape that rendered "Rally worked for 0ms" in production. The
     // snapshot's activity walk seeds from `turn.activity_id` and

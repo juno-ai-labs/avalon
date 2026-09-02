@@ -73,6 +73,7 @@ interface ConnectionRow extends Record<string, unknown> {
 class ToolSelectionDatabase {
   readonly binding: D1Database;
   readonly connections: ConnectionRow[];
+  readonly admittedAutomationDrafts: Array<Record<string, unknown>> = [];
   memberStatus = "active";
 
   constructor(
@@ -111,7 +112,9 @@ class ToolSelectionDatabase {
   }
 
   readonly objectStore = testWorkstreamObjectStore();
-  readonly agents = testSubstreamAgentsBinding(this.objectStore);
+  readonly agents = testSubstreamAgentsBinding(this.objectStore, {
+    extra: { appendDraftProposedCard: vi.fn(async () => undefined) },
+  });
 }
 
 /** The one resource standing in for an attached connection. */
@@ -226,6 +229,14 @@ function env(database: ToolSelectionDatabase): Env {
   return createTestEnv({
     DB: database.binding,
     SUBSTREAM_AGENTS: database.agents,
+    AUTOMATION_AGENTS: testSubstreamAgentsBinding(database.objectStore, {
+      extra: {
+        admitAuthoredDraft: vi.fn(async (request: Record<string, unknown>) => {
+          database.admittedAutomationDrafts.push(request);
+          return { definitionRevision: 1 };
+        }),
+      },
+    }),
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-connector-client",
     GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-connector-secret",
@@ -646,6 +657,127 @@ describe("connector tools selected for harness runs", () => {
       [WORKSPACE_CONNECTION_ID]: childTools.plugins[2]?.tools.map((tool) =>
         tool.definition.capability),
     });
+  });
+
+  it("shares a durable connector activation with ready automation validation", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+    ]);
+    database.objectStore.prepare(
+      `INSERT INTO runs
+         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+          next_action_cursor, input_fence_seq, revision, started_at,
+          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count,
+          retry_count, tool_count, input_tokens, output_tokens, cost_micros,
+          output_bytes, created_at, updated_at)
+       VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, 1,
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1)`,
+    ).run(HARNESS_RUN_ID);
+    database.objectStore.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          connection_id, input_json, output_summary, execution_plan_json,
+          started_at, settled_at)
+       VALUES (?, ?, 0, 1, ?, 'automation_plugin_inspect', 'read', ?,
+               'development_fixture', 'completed', 'inspect-before-eviction',
+               NULL, ?, 'Inspected Google', ?, 1, 2)`,
+    ).run(
+      "persisted-automation-inspection",
+      HARNESS_RUN_ID,
+      "development_fixture:persisted-automation-inspection",
+      "persisted-inspection-input",
+      JSON.stringify({ pluginId: "plugin_google" }),
+      JSON.stringify({
+        canonicalToolName: "plugin_inspect",
+        capability: "rally.automation.plugins.inspect",
+      }),
+    );
+    const evaluatorRules = {
+      schemaVersion: 1,
+      evaluators: [{
+        evaluatorKey: "mail_received",
+        source: {
+          sourceBindingKey: "google_source",
+          suggestedSourcePluginId: "plugin_google",
+          event: { kind: "event_type", eventType: "email.received" },
+        },
+        when: { kind: "always" },
+      }],
+    };
+    database.objectStore.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          connection_id, input_json, output_summary, execution_plan_json,
+          started_at, settled_at)
+       VALUES (?, ?, 0, 2, ?, 'automation_set_evaluator_rules', 'write', ?,
+               'development_fixture', 'completed', 'rules-before-eviction',
+               NULL, ?, 'Stored evaluator rules', ?, 2, 3)`,
+    ).run(
+      "persisted-automation-evaluators",
+      HARNESS_RUN_ID,
+      "development_fixture:persisted-automation-evaluators",
+      "persisted-evaluator-input",
+      JSON.stringify(evaluatorRules),
+      JSON.stringify({
+        canonicalToolName: "set_evaluator_rules",
+        capability: "rally.automation.evaluators.set",
+      }),
+    );
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const automations = selected.plugins.find((plugin) =>
+      plugin.canonicalId === "rally:automations"
+    );
+    if (!automations) throw new Error("automations_plugin_missing");
+    // A restored durable activation skips onActivate. Its first tool still has
+    // to rebuild completed authoring facts before validating the draft.
+    const submit = automations.tools.find((tool) =>
+      tool.definition.name === "submit_draft"
+    );
+    if (!submit) throw new Error("automation_creator_tools_missing");
+
+    const readyDraft = {
+      name: "New mail summary",
+      description: "Summarize new mail.",
+      overview: "Reports newly received messages.",
+      instructions: "Summarize the message.",
+      triggers: [{
+        type: "connector_activity",
+        connectorType: "google",
+        sourceBindingKey: "google_source",
+        suggestedSourcePluginId: "plugin_google",
+        eventTypes: ["email.received"],
+        deterministicFilters: {},
+      }],
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      requestedDelivery: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    await expect(submit.execute(readyDraft, { toolCallId: "submit-before-load" } as never))
+      .rejects.toThrow("Load and inspect plugin_google");
+
+    const activeCredentialPluginIds = new Set<string>();
+    __integrationTesting.recordCredentialPluginActivation(
+      `connection:${WORKSPACE_CONNECTION_ID}`,
+      selected.frozenConnections,
+      activeCredentialPluginIds,
+      selected.loadedAutomationPluginIds,
+    );
+
+    expect(activeCredentialPluginIds).toEqual(new Set([`connection:${WORKSPACE_CONNECTION_ID}`]));
+    expect(selected.loadedAutomationPluginIds).toEqual(new Set(["plugin_google"]));
+    await expect(submit.execute(readyDraft, { toolCallId: "submit-after-load" } as never))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(database.admittedAutomationDrafts).toHaveLength(1);
+    expect(database.admittedAutomationDrafts[0]).toMatchObject({ evaluatorRules });
   });
 
   it("inherits tools committed into a deferred parent plugin after activation", async () => {
