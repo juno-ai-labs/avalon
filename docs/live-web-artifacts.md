@@ -352,6 +352,13 @@ facet that holds a stateful artifact's data. It does not own:
   tell it apart from one the current page made, so the escape cannot be closed
   at the request path. What remains is a page whose client script may read the
   current version's data — a wrong reading rather than an unauthorized one.
+- **The window goes before the preview does.** A rail preview is a
+  `WebContentsView` in a window Electron can destroy at any moment — quitting to
+  install an update is the ordinary way — and the teardown that follows runs
+  from that window's own `closed` event, after the view tree is already gone.
+  Both surfaces are therefore asked whether they still exist before they are
+  detached or closed; the window and the view are asked separately, because a
+  view whose contents closed themselves is still attached to a live window.
 - **Numeric limits.** Viewer session lifetime is 24 hours, fixed from mint and
   never sliding — the shape, not just the number, is the sleep guarantee, since
   compute per open is bounded by rate ceiling × lifetime. The open code lives 60
@@ -368,7 +375,8 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The rail detail: that it measures and hands over rather than embedding, that Copy link carries no code, that the Data panel only exists for a site that keeps data, and that the pane never flashes its unavailable state. |
-| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, and the overlay collapse. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp, the isolation contract, the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
+| `pnpm --filter @rally/desktop exec vitest run src/main/artifact-preview-wiring.test.ts` | The per-window registry in `index.ts`, which the controller's own suite cannot see: one controller and so one `closed` listener per window, the entry removed only by that listener, and the adapter reporting lifecycle rather than assuming it. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
@@ -432,6 +440,54 @@ compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-02 — Preview teardown asks whether its surfaces still exist
+
+**What changed:** `ArtifactViewHandle` and `ArtifactHostWindow` gained a
+`destroyed()` predicate, and `ArtifactPreviewController` consults it before
+detaching, closing, laying out, or presenting.
+
+**Why:** Quitting with an artifact open in the rail crashed the app instead of
+quitting it. `electron-updater` closes every window to install; the window's
+`closed` handler then tore the preview down, and reading `contentView` off a
+window Electron had already destroyed threw `TypeError: Object has been
+destroyed` from inside an event handler — which the main process reports as an
+uncaught exception dialog. The teardown was correct about *what* to clean up and
+wrong about *when* it was still possible.
+
+**Considered and rejected:** Tearing down on `close` instead of `closed`, which
+would run while the window still exists — but `close` is cancellable and can
+fire more than once, so the preview would be destroyed under a person who then
+kept the window. Wrapping the teardown in `try`/`catch` would hide the same
+class of ordering bug everywhere else it occurs. Guarding inside the Electron
+adapter in `index.ts` would have worked and been untestable: this module holds
+no `electron` import precisely so its decisions can be unit tested, and *when a
+surface may be touched* is a decision.
+
+**Also:** `present()` discards a view whose contents closed themselves before
+deciding whether to reuse it. Reuse was keyed on the artifact ID alone, so a
+page that called `window.close()` left a dead handle that the next presentation
+of the same artifact would keep — compositing nothing while reporting success,
+which the rail reads as a live preview and so renders no fallback over the blank
+pane. Found by review.
+
+**On the tests:** a disjunctive lifetime check reads as covered while half of
+it is dead, so each half is falsified separately where it can be. In `destroy()`
+both halves are load-bearing — they gate different actions on objects that die
+independently — and each has its own test. In `applyBounds()` only the view half
+is falsifiable: Electron destroys a window's views with it, so a destroyed
+window implies a destroyed view and the window half can never be the one that
+returns. It is kept as the statement of what `contentSize()` needs, not as
+tested behaviour. Both gaps came out of review; the first round shipped one
+combined test and claimed more than it proved.
+
+**Consequences:** The lifecycle is now part of the two interfaces, so any future
+host or view implementation has to answer for it. A destroyed window is asked to
+detach nothing, because destroying it already destroyed its children; the view
+is asked separately, so one that closed itself is still detached from the live
+window holding it. Closing the preview over IPC also stops dropping the
+controller from the per-window map, which was adding a second `closed` listener
+to the same window on every subsequent presentation.
 
 ### 2026-09-02 — A cancelled detail cannot resurrect its preview
 

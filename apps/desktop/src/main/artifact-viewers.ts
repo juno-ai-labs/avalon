@@ -31,12 +31,26 @@ import type { Session } from 'electron';
  * from the objects it drives. `index.ts` supplies the real thing.
  */
 export interface ArtifactViewHandle {
+  /**
+   * Whether the surface behind this handle is already gone.
+   *
+   * Part of the contract because a preview outlives nothing: Electron destroys
+   * a window's whole view tree with the window, and the window can go at any
+   * moment — quitting to install an update closes it out from under a live
+   * artifact. Every other method here throws `Object has been destroyed` once
+   * that has happened, and thrown from a `closed` handler that is an uncaught
+   * exception in the main process, which is a crash dialog rather than a quit.
+   * So the controller asks before it acts instead of tearing down blind.
+   */
+  destroyed(): boolean;
   setBounds(bounds: PreviewBounds): void;
   loadURL(url: string): Promise<void>;
   close(): void;
 }
 
 export interface ArtifactHostWindow {
+  /** Whether the window is gone; see `ArtifactViewHandle.destroyed`. */
+  destroyed(): boolean;
   contentSize(): { width: number; height: number };
   removeView(view: ArtifactViewHandle): void;
 }
@@ -259,6 +273,14 @@ export class ArtifactPreviewController {
   /** Show one artifact in the rail's preview region. */
   async present(request: ArtifactPresentation): Promise<boolean> {
     if (!isArtifactUrl(request.url, this.servingDomain)) return false;
+    if (this.window.destroyed()) return false;
+    // A view whose contents closed themselves — an artifact page calling
+    // `window.close()` — is still held here, and still counts as *this*
+    // artifact. Discarding it before the comparison below is what stops a
+    // repeat presentation reusing it: nothing would be composited, but this
+    // would report success, and the rail reads that as a live preview and
+    // renders no fallback over the blank pane.
+    if (this.view?.destroyed()) this.destroy();
     if (this.artifactId !== request.artifactId) this.destroy();
     this.bounds = request.bounds;
     if (!this.view) {
@@ -301,23 +323,39 @@ export class ArtifactPreviewController {
   }
 
   destroy(): void {
-    if (!this.view) return;
-    this.window.removeView(this.view);
-    this.view.close();
+    const view = this.view;
     this.view = null;
     this.artifactId = null;
     this.pendingLoad = null;
     this.bounds = null;
     this.hiddenByOverlay = false;
+    if (!view) return;
+    // Each guard is about its own object, because the two die independently.
+    // A destroyed window has already taken its children with it, so there is
+    // nothing to detach — and asking it to would throw. A view whose contents
+    // closed themselves is still attached to a live window, so it still has to
+    // be detached; it is only closing it a second time that would throw.
+    if (!this.window.destroyed()) this.window.removeView(view);
+    if (!view.destroyed()) view.close();
   }
 
-  /** For tests and diagnostics: which artifact this window is showing. */
+  /**
+   * For tests and diagnostics: which artifact this window is showing, or
+   * `null` once `destroy()` has run.
+   */
   currentArtifactId(): string | null {
     return this.artifactId;
   }
 
   private applyBounds(): void {
     if (!this.view || !this.bounds) return;
+    // Two halves gating two different calls: `contentSize()` below reads the
+    // window, `setBounds()` reads the view. Only the view half is falsifiable,
+    // here and in production — Electron destroys a window's views with it, so
+    // a destroyed window implies a destroyed view and the first half can never
+    // be the one that returns. It stays because it names what `contentSize()`
+    // needs, and that stops the day the two stop dying together.
+    if (this.window.destroyed() || this.view.destroyed()) return;
     if (this.hiddenByOverlay) {
       // Collapsed rather than detached: a zero rectangle keeps the page loaded
       // and its state intact, so closing a dialog restores what the person was
