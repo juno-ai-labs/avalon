@@ -484,3 +484,50 @@ test('every theme keeps its markdown headings above its prose', () => {
     );
   }
 });
+
+/**
+ * A composer is a card or a rule, and either way its top edge is `rule-color`.
+ *
+ * `app.css` writes `border-top` from that token unconditionally — the renderer
+ * suite anchors that declaration — so the token is not a rule theme's opt-in.
+ * Terra read it as one, set it to `transparent`, and shipped a card with three
+ * sides: the work-stream composer was open along the top while the launch
+ * screen, which writes its own card, was closed. Nothing else sees this. The
+ * generated CSS is valid, every token resolves, and the missing edge is one
+ * hairline on one screen.
+ *
+ * Read through `resolvedTokens` rather than the theme JSON, because a theme
+ * inherits what it was content not to restate: Terra Light declares no
+ * `border-color` of its own and takes Terra's.
+ */
+test('a card composer states its top edge as its frame, and a rule keeps a visible one', () => {
+  for (const theme of themes) {
+    const values = resolvedTokens(theme, themes);
+    const token = (name) => values[`cmp.composer.${name}`];
+    // `0`, `0px`, `0rem` — a zeroed width is the rule shape however it is spelt.
+    const rule = /^0(?:[a-z%]+)?$/u.test(String(token('border-width')));
+
+    if (rule) {
+      // The hairline is the whole shape, and `rule-color-focus` is the only
+      // thing left saying the field is live once the frame is gone. Either one
+      // going transparent leaves a composer with no edge at all, which is the
+      // card's missing top read from the other side.
+      assert.equal(token('border-color'), 'transparent', `${theme.id} zeroes its composer border but keeps a colour on it`);
+      assert.equal(token('border-color-focus'), 'transparent', `${theme.id} draws a focus-only frame on a rule composer`);
+      assert.notEqual(token('rule-color'), 'transparent', `${theme.id} is a rule composer with no rule`);
+      assert.notEqual(token('rule-color-focus'), 'transparent', `${theme.id} leaves a rule composer with no focus signal`);
+      continue;
+    }
+
+    assert.equal(
+      token('rule-color'),
+      token('border-color'),
+      `${theme.id}'s card composer draws its top edge from something other than its frame`,
+    );
+    assert.equal(
+      token('rule-color-focus'),
+      token('border-color-focus'),
+      `${theme.id}'s card composer keeps a different top edge on focus`,
+    );
+  }
+});
