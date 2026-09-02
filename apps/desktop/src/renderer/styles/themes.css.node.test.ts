@@ -295,15 +295,23 @@ describe('Terra Light row hover', () => {
 describe('a card composer closes its frame', () => {
   const themes = readFileSync(resolve(process.cwd(), 'src/renderer/styles/themes.css'), 'utf8');
 
-  // A theme block runs to the first `}` in the first column, which holds while
-  // the generator emits one flat declaration list per block and no token value
-  // spans a line. Should either change, this reads the wrong span rather than
-  // failing — so the guard below asserts on tokens it looked up by name, and a
-  // block that lost its declarations fails the lookup rather than passing empty.
+  // Balanced to the block's own closing brace rather than to the first one at
+  // the start of a line. The generated file is flat today, so the two agree —
+  // but a nested at-rule or a reflowed brace would end the naive span early and
+  // silently, in the middle of the declarations this guard reads.
   function block(theme: string): string {
     const start = themes.indexOf(`[data-theme='${theme}']`);
     expect(start, `${theme} has no block`).toBeGreaterThan(-1);
-    return themes.slice(start, themes.indexOf('\n}', start));
+
+    let depth = 0;
+    for (let index = start; index < themes.length; index += 1) {
+      if (themes[index] === '{') depth += 1;
+      if (themes[index] !== '}') continue;
+      depth -= 1;
+      if (depth === 0) return themes.slice(start, index + 1);
+    }
+
+    throw new Error(`${theme}'s block is never closed`);
   }
 
   function token(theme: string, name: string): string {
