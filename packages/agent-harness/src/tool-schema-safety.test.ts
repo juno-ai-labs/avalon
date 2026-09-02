@@ -292,6 +292,47 @@ describe("repairRootSchemaForProviders", () => {
     });
   });
 
+  it("keeps every variant of a property the branches declare differently", () => {
+    // A discriminated union is the commonest root union a hosted MCP server
+    // serves, and the one first-declaration-wins gets silently wrong: it would
+    // advertise `action` as `const: "create"` and delete the `delete` branch,
+    // telling the model an action it supports is invalid. The union moves under
+    // the property, where every provider measured accepts one.
+    const schema = {
+      anyOf: [
+        { type: "object", properties: { action: { const: "create" }, name: { type: "string" } }, required: ["action", "name"] },
+        { type: "object", properties: { action: { const: "delete" }, id: { type: "string" } }, required: ["action", "id"] },
+      ],
+    };
+
+    expect(repairRootSchemaForProviders(schema)).toEqual({
+      type: "object",
+      properties: {
+        action: { anyOf: [{ const: "create" }, { const: "delete" }] },
+        name: { type: "string" },
+        id: { type: "string" },
+      },
+      required: ["action"],
+    });
+  });
+
+  it("does not turn a property every branch declares identically into a union", () => {
+    // Key order carries no meaning in JSON Schema, so the two declarations here
+    // are the same constraint. Emitting `anyOf` of a schema with itself would
+    // be noise the model has to read on every call.
+    const schema = {
+      anyOf: [
+        { type: "object", properties: { workspaceId: { type: "string", format: "uuid" } } },
+        { type: "object", properties: { workspaceId: { format: "uuid", type: "string" } } },
+      ],
+    };
+
+    expect(repairRootSchemaForProviders(schema)).toEqual({
+      type: "object",
+      properties: { workspaceId: { type: "string", format: "uuid" } },
+    });
+  });
+
   it("keeps only what every branch of a union requires", () => {
     // `required` is what a merge most easily gets backwards. The branches are
     // alternatives, so their union of `required` would demand both names at
