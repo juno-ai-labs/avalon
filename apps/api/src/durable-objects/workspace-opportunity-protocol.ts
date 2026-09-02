@@ -1,19 +1,20 @@
 import { IdSchema, RegionSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES } from "@rally/contracts/telemetry";
 import { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 import { WorkspaceConnectorEventSchema } from "./workspace-connector-event-protocol";
 
-export const OpportunityAudienceSchema = z.strictObject({
+export const OpportunityAudienceSchema = deferredZodSchema(() => z.strictObject({
   scope: z.enum(["personal", "workspace"]),
   userId: IdSchema.nullable(),
 }).superRefine((value, context) => {
   if ((value.scope === "personal") !== (value.userId !== null)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Opportunity audience is inconsistent" });
   }
-});
+}));
 
-export const WorkspaceOpportunityEnqueueRequestSchema = z.strictObject({
+export const WorkspaceOpportunityEnqueueRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   partitionKey: z.string().min(1).max(500),
   audience: OpportunityAudienceSchema,
@@ -21,15 +22,15 @@ export const WorkspaceOpportunityEnqueueRequestSchema = z.strictObject({
   sourceId: z.string().min(1).max(200),
   occurredAt: z.string().datetime(),
   inputCharacters: z.number().int().nonnegative(),
-});
+}));
 
-export const WorkspaceOpportunityEnqueueResultSchema = z.strictObject({
+export const WorkspaceOpportunityEnqueueResultSchema = deferredZodSchema(() => z.strictObject({
   windowId: IdSchema,
   processAfter: z.string().datetime(),
   inserted: z.boolean(),
-});
+}));
 
-export const WorkspaceOpportunityWorkflowInputSchema = z.discriminatedUnion("kind", [
+export const WorkspaceOpportunityWorkflowInputSchema = deferredZodSchema(() => z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("admission"),
     region: RegionSchema,
@@ -46,15 +47,15 @@ export const WorkspaceOpportunityWorkflowInputSchema = z.discriminatedUnion("kin
     requestSeq: z.number().int().nonnegative(),
     leaseId: IdSchema,
   }),
-]);
+]));
 
-export const WorkspaceOpportunityWindowRequestSchema = z.strictObject({
+export const WorkspaceOpportunityWindowRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   windowId: IdSchema,
   leaseId: IdSchema,
-});
+}));
 
-export const WorkspaceOpportunityWindowSchema = z.strictObject({
+export const WorkspaceOpportunityWindowSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   partitionKey: z.string(),
   audience: OpportunityAudienceSchema,
@@ -68,26 +69,26 @@ export const WorkspaceOpportunityWindowSchema = z.strictObject({
     inputCharacters: z.number().int().nonnegative(),
     attemptCount: z.number().int().nonnegative(),
   })).max(5_000),
-});
+}));
 
-export const WorkspaceOpportunityBatchEventsRequestSchema = WorkspaceOpportunityWindowRequestSchema.extend({
+export const WorkspaceOpportunityBatchEventsRequestSchema = deferredZodSchema(() => WorkspaceOpportunityWindowRequestSchema.unwrap().extend({
   eventIds: z.array(IdSchema).min(1).max(100),
   outcome: z.enum(["processing", "completed", "failed", "missing"]),
   error: z.string().max(1_000).nullable(),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityWindowSettleRequestSchema = WorkspaceOpportunityWindowRequestSchema.extend({
+export const WorkspaceOpportunityWindowSettleRequestSchema = deferredZodSchema(() => WorkspaceOpportunityWindowRequestSchema.unwrap().extend({
   retryDelayMs: z.number().int().min(1_000).max(60 * 60_000),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityExistingRequestSchema = z.strictObject({
+export const WorkspaceOpportunityExistingRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   audience: OpportunityAudienceSchema,
   now: z.string().datetime(),
   limit: z.number().int().min(1).max(100),
-});
+}));
 
-export const WorkspaceOpportunitySourceSchema = z.strictObject({
+export const WorkspaceOpportunitySourceSchema = deferredZodSchema(() => z.strictObject({
   id: z.string().min(1).max(200),
   kind: z.enum(["activity", "message"]),
   provider: z.string().min(1).max(120),
@@ -103,9 +104,9 @@ export const WorkspaceOpportunitySourceSchema = z.strictObject({
   canonicalUrl: z.string().max(2_000).nullable(),
   workstreamId: IdSchema.nullable(),
   occurredAt: z.string().datetime(),
-});
+}));
 
-export const WorkspaceOpportunityPersistLinkSchema = z.strictObject({
+export const WorkspaceOpportunityPersistLinkSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   sourceId: z.string().min(1).max(200),
   userId: IdSchema.nullable(),
@@ -120,9 +121,9 @@ export const WorkspaceOpportunityPersistLinkSchema = z.strictObject({
     provider: z.string().max(120),
     providerTenantId: z.string().max(500),
   }).nullable(),
-});
+}));
 
-export const WorkspaceOpportunityPersistRequestSchema = z.strictObject({
+export const WorkspaceOpportunityPersistRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   audience: OpportunityAudienceSchema,
   proposedId: IdSchema,
@@ -141,68 +142,68 @@ export const WorkspaceOpportunityPersistRequestSchema = z.strictObject({
   rankUserIds: z.array(IdSchema).max(10_000),
   eagerUserIds: z.array(IdSchema).max(30),
   rankDueAt: z.string().datetime(),
-});
+}));
 
-export const WorkspaceOpportunityPersistResultSchema = z.strictObject({
+export const WorkspaceOpportunityPersistResultSchema = deferredZodSchema(() => z.strictObject({
   opportunityId: IdSchema,
   version: z.number().int().positive(),
   eagerUserIds: z.array(IdSchema),
-});
+}));
 
-export const WorkspaceOpportunityUserRequestSchema = z.strictObject({
+export const WorkspaceOpportunityUserRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
-});
+}));
 
-export const WorkspaceOpportunityRankingCandidatesRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
+export const WorkspaceOpportunityRankingCandidatesRequestSchema = deferredZodSchema(() => WorkspaceOpportunityUserRequestSchema.unwrap().extend({
   now: z.string().datetime(),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityRankingStateSchema = z.strictObject({
+export const WorkspaceOpportunityRankingStateSchema = deferredZodSchema(() => z.strictObject({
   candidateFingerprint: z.string(),
   opportunityIds: z.array(IdSchema),
   status: z.enum(["stale", "ready", "failed"]),
-}).nullable();
+}).nullable());
 
-export const WorkspaceOpportunityRankingRoundRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
+export const WorkspaceOpportunityRankingRoundRequestSchema = deferredZodSchema(() => WorkspaceOpportunityUserRequestSchema.unwrap().extend({
   roundId: IdSchema,
   candidateIds: z.array(IdSchema).max(60),
   selectedIds: z.array(IdSchema).max(4),
   reasoning: z.string().max(20_000),
   model: z.string().max(200).nullable(),
   roundNumber: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityStoreRankingRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
+export const WorkspaceOpportunityStoreRankingRequestSchema = deferredZodSchema(() => WorkspaceOpportunityUserRequestSchema.unwrap().extend({
   candidateFingerprint: z.string().max(64),
   opportunityIds: z.array(IdSchema).max(4),
   reasoning: z.string().max(20_000),
   model: z.string().max(200).nullable(),
   status: z.enum(["ready", "failed"]),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityRankingSettleRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
+export const WorkspaceOpportunityRankingSettleRequestSchema = deferredZodSchema(() => WorkspaceOpportunityUserRequestSchema.unwrap().extend({
   leaseId: IdSchema,
   requestSeq: z.number().int().nonnegative(),
   outcome: z.enum(["completed", "failed"]),
   retryAt: z.string().datetime().nullable(),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityListRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
+export const WorkspaceOpportunityListRequestSchema = deferredZodSchema(() => WorkspaceOpportunityUserRequestSchema.unwrap().extend({
   now: z.string().datetime(),
   limit: z.number().int().min(1).max(4),
   scheduleAt: z.string().datetime(),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityPublicSchema = z.strictObject({
+export const WorkspaceOpportunityPublicSchema = deferredZodSchema(() => z.strictObject({
   id: IdSchema,
   version: z.number().int().positive(),
   displayPrompt: z.string(),
   icon: z.string(),
   sourceLabel: z.string(),
-});
+}));
 
-export const WorkspaceOpportunityRankingCandidatesResultSchema = z.array(z.strictObject({
+export const WorkspaceOpportunityRankingCandidatesResultSchema = deferredZodSchema(() => z.array(z.strictObject({
   id: IdSchema,
   version: z.number().int().positive(),
   displayPrompt: z.string(),
@@ -236,19 +237,19 @@ export const WorkspaceOpportunityRankingCandidatesResultSchema = z.array(z.stric
   }),
   currentlySuggested: z.boolean(),
   public: WorkspaceOpportunityPublicSchema,
+})));
+
+export const WorkspaceOpportunityListResultSchema = deferredZodSchema(() => z.strictObject({
+  items: z.array(WorkspaceOpportunityPublicSchema).max(4),
 }));
 
-export const WorkspaceOpportunityListResultSchema = z.strictObject({
-  items: z.array(WorkspaceOpportunityPublicSchema).max(4),
-});
-
-export const WorkspaceOpportunityImpressionsRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
+export const WorkspaceOpportunityImpressionsRequestSchema = deferredZodSchema(() => WorkspaceOpportunityUserRequestSchema.unwrap().extend({
   opportunityIds: z.array(IdSchema).max(4),
   now: z.string().datetime(),
   rerankBefore: z.string().datetime(),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityTelemetryContextSchema = z.strictObject({
+export const WorkspaceOpportunityTelemetryContextSchema = deferredZodSchema(() => z.strictObject({
   opportunityId: IdSchema,
   version: z.number().int().positive(),
   audienceScope: z.enum(["personal", "workspace"]),
@@ -256,53 +257,53 @@ export const WorkspaceOpportunityTelemetryContextSchema = z.strictObject({
   impressionCount: z.number().int().nonnegative(),
   firstImpressedAt: z.string().datetime().nullable(),
   connectorTypes: z.array(z.enum(TELEMETRY_CONNECTOR_TYPES)).max(TELEMETRY_CONNECTOR_TYPES.length),
-});
+}));
 
-export const WorkspaceOpportunityTelemetryContextsSchema = z.array(
+export const WorkspaceOpportunityTelemetryContextsSchema = deferredZodSchema(() => z.array(
   WorkspaceOpportunityTelemetryContextSchema,
-).max(4);
+).max(4));
 
-export const WorkspaceOpportunityDismissResultSchema = z.strictObject({
+export const WorkspaceOpportunityDismissResultSchema = deferredZodSchema(() => z.strictObject({
   dismissed: z.boolean(),
   telemetryContext: WorkspaceOpportunityTelemetryContextSchema.nullable(),
-});
+}));
 
-export const WorkspaceOpportunityDismissRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
+export const WorkspaceOpportunityDismissRequestSchema = deferredZodSchema(() => WorkspaceOpportunityUserRequestSchema.unwrap().extend({
   opportunityId: IdSchema,
   now: z.string().datetime(),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityGetRequestSchema = WorkspaceOpportunityUserRequestSchema.extend({
+export const WorkspaceOpportunityGetRequestSchema = deferredZodSchema(() => WorkspaceOpportunityUserRequestSchema.unwrap().extend({
   opportunityId: IdSchema,
   now: z.string().datetime(),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityOriginEventsRequestSchema = WorkspaceOpportunityGetRequestSchema.extend({
+export const WorkspaceOpportunityOriginEventsRequestSchema = deferredZodSchema(() => WorkspaceOpportunityGetRequestSchema.unwrap().extend({
   limit: z.number().int().min(1).max(8).default(8),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityOriginEventsResultSchema = z.array(
+export const WorkspaceOpportunityOriginEventsResultSchema = deferredZodSchema(() => z.array(
   WorkspaceConnectorEventSchema,
-).max(8);
+).max(8));
 
-export const WorkspaceOpportunityClaimStartRequestSchema = WorkspaceOpportunityGetRequestSchema.extend({
+export const WorkspaceOpportunityClaimStartRequestSchema = deferredZodSchema(() => WorkspaceOpportunityGetRequestSchema.unwrap().extend({
   version: z.number().int().positive(),
   idempotencyKey: z.string().min(1).max(200),
-}).strict();
+}).strict());
 
-export const WorkspaceOpportunityClaimStartResultSchema = z.strictObject({
+export const WorkspaceOpportunityClaimStartResultSchema = deferredZodSchema(() => z.strictObject({
   outcome: z.enum(["not_found", "stale", "claimed", "busy", "replay"]),
   opportunity: z.record(z.string(), z.unknown()).nullable(),
   telemetryContext: WorkspaceOpportunityTelemetryContextSchema.nullable(),
-});
+}));
 
 export const WorkspaceOpportunityReleaseStartRequestSchema = WorkspaceOpportunityClaimStartRequestSchema;
 
-export const WorkspaceOpportunityCompleteStartRequestSchema = WorkspaceOpportunityClaimStartRequestSchema.extend({
+export const WorkspaceOpportunityCompleteStartRequestSchema = deferredZodSchema(() => WorkspaceOpportunityClaimStartRequestSchema.unwrap().extend({
   workstreamId: IdSchema,
   messageId: IdSchema,
   snapshotId: IdSchema,
-}).strict();
+}).strict());
 
 export type WorkspaceOpportunityEnqueueRequest = z.infer<typeof WorkspaceOpportunityEnqueueRequestSchema>;
 export type WorkspaceOpportunityWorkflowInput = z.infer<typeof WorkspaceOpportunityWorkflowInputSchema>;

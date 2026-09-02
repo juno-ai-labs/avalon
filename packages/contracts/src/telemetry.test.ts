@@ -56,7 +56,7 @@ describe("telemetry registry", () => {
       expect(entry.sampleRate).toBeGreaterThan(0);
       expect(entry.sampleRate).toBeLessThanOrEqual(1);
       expect(Object.keys(entry.propertyClassifications).sort()).toEqual(
-        Object.keys(entry.properties.shape).sort(),
+        Object.keys(entry.properties.unwrap().shape).sort(),
       );
       expect(entry.compatibilityNote.length).toBeGreaterThan(10);
       expect(entry.destination).toMatch(/^(posthog-and-eu-internal|internal-only)$/u);

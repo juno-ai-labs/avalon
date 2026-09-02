@@ -240,6 +240,20 @@ at 183.6 ms versus 162.7 ms, and mean garbage collection at 83.0 ms versus
 61.6 ms. The paired result supports the allocation mechanism; like the broader
 ranges above, it is diagnostic evidence rather than a platform-time promise.
 
+The remaining cold, capability-specific schema graphs use regular Zod 4 lazy
+shells backed by memoized factories. Static imports and exported schema
+contracts stay intact, but telemetry property schemas, WorkspaceDO protocol
+families, engineering inspection, object-port envelopes, and selected tool
+catalog schemas no longer construct their inner graphs together at module
+evaluation. Tool JSON Schema conversion follows the same first-use boundary.
+Twelve sequential Wrangler 4.126.0 profiles of the exact API bundle before and
+after this change measured median active startup at 154.2 ms and 131.5 ms,
+respectively; median garbage collection was 60.8 ms and 59.6 ms. The new bundle
+was 7,169.37 KiB uncompressed versus 7,155.96 KiB before. These local values
+diagnose the trade: a small code-size increase and a first-use cost for each
+capability in exchange for less startup evaluation. They are not Cloudflare CPU
+limits or production latency predictions.
+
 Service Bindings add no monetary charge or network hop by default. A document,
 Terminal, or Global telemetry-destination operation adds a Worker invocation
 and subrequest, while ordinary API requests no longer initialize those provider
@@ -250,6 +264,33 @@ catalog reads plus fourteen small KV writes; inference performs only the KV read
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-01 — Defer cold schema graphs to capability use
+
+**What changed:** The API startup graph now constructs large telemetry,
+WorkspaceDO protocol, engineering inspection, GitHub, object-port, multimodal,
+and harness schema families through memoized regular-Zod lazy shells. GitHub and
+model-tool JSON Schema conversion is also deferred and cached. The schema
+exports, inferred TypeScript types, validation rules, refinements, issue paths,
+and regular Zod English messages remain unchanged.
+
+**Why:** After direct object construction removed one intermediate allocation
+per eligible schema, the retained profile still showed substantial Zod work at
+module evaluation. The remaining largest families belonged to mutually
+independent capabilities, so constructing all of them before any request paid
+for work no individual startup needed.
+
+**Considered and rejected:** Dynamic imports obscure the deployable graph and
+remain prohibited. Zod Mini changes default error localization. Per-request
+schema factories repeat the same work. A proxy pretending to be a Zod schema
+would depend on private internals; the public `z.lazy()` surface preserves Zod
+behavior instead.
+
+**Consequences:** Each deferred inner graph is built on its first parse, unwrap,
+or JSON Schema conversion and then reused within the isolate. The cache contains
+only deterministic schema data, never request or environment state. Twelve
+before-and-after local profiles reduced median active startup from 154.2 ms to
+131.5 ms; this is diagnostic evidence, not a platform timing guarantee.
 
 ### 2026-09-01 — Remove intermediate Zod object schemas from API startup
 

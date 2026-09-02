@@ -1,5 +1,6 @@
 import { MESSAGE_MAX_CHARACTERS } from "@rally/contracts";
 import { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 import {
   type Exhaustive,
@@ -113,9 +114,9 @@ export function mutatesWakeups(operation: SchedulingOperation): boolean {
 
 export const isSchedulingOperation = operationGuard(SCHEDULING_OPERATIONS);
 
-export const SchedulingOperationRequestSchema = objectPortRequestSchema(
+export const SchedulingOperationRequestSchema = deferredZodSchema(() => objectPortRequestSchema(
   isSchedulingOperation,
   "unknown_scheduling_operation",
-);
+));
 
 export type SchedulingOperationRequest = z.infer<typeof SchedulingOperationRequestSchema>;

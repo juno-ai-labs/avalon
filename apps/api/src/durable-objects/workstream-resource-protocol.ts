@@ -6,6 +6,7 @@ import {
 } from "./object-port-protocol";
 import type { WorkstreamResourceStorage } from "./workstream-resource-storage";
 import type { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 /**
  * The wire contract for one work stream's resource attachments.
@@ -49,9 +50,9 @@ export function mutatesInventory(operation: ResourceOperation): boolean {
 
 export const isResourceOperation = operationGuard(RESOURCE_OPERATIONS);
 
-export const ResourceOperationRequestSchema = objectPortRequestSchema(
+export const ResourceOperationRequestSchema = deferredZodSchema(() => objectPortRequestSchema(
   isResourceOperation,
   "unknown_resource_operation",
-);
+));
 
 export type ResourceOperationRequest = z.infer<typeof ResourceOperationRequestSchema>;

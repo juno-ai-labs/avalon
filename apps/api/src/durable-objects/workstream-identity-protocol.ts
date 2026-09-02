@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 import {
   type Exhaustive,
@@ -72,9 +73,9 @@ export function mutatesIdentity(operation: IdentityOperation): boolean {
 
 export const isIdentityOperation = operationGuard(IDENTITY_OPERATIONS);
 
-export const IdentityOperationRequestSchema = objectPortRequestSchema(
+export const IdentityOperationRequestSchema = deferredZodSchema(() => objectPortRequestSchema(
   isIdentityOperation,
   "unknown_identity_operation",
-);
+));
 
 export type IdentityOperationRequest = z.infer<typeof IdentityOperationRequestSchema>;

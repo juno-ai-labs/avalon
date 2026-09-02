@@ -6,6 +6,7 @@ import {
 } from "./object-port-protocol";
 import type { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
 import type { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 type LocalOnlyTranscriptOperation =
   | "prepareParticipantMessage"
@@ -54,8 +55,8 @@ export const TRANSCRIPT_OPERATIONS:
   Exhaustive<TranscriptOperation, typeof DISPATCHED_OPERATIONS> = DISPATCHED_OPERATIONS;
 
 export const isTranscriptOperation = operationGuard(TRANSCRIPT_OPERATIONS);
-export const TranscriptOperationRequestSchema = objectPortRequestSchema(
+export const TranscriptOperationRequestSchema = deferredZodSchema(() => objectPortRequestSchema(
   isTranscriptOperation,
   "unknown_transcript_operation",
-);
+));
 export type TranscriptOperationRequest = z.infer<typeof TranscriptOperationRequestSchema>;

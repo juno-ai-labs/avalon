@@ -8,28 +8,29 @@ import {
   WorkstreamSchema,
 } from "@rally/contracts";
 import { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 import { WorkstreamRegionalEffectEnvelopeSchema } from "./workstream-regional-effect";
 
 const TimestampSchema = z.string().datetime({ offset: true });
 const UuidV7Schema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
 
-export const WorkspaceAttentionRequestSchema = z.strictObject({
+export const WorkspaceAttentionRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
-});
+}));
 
-export const WorkspaceAttentionResultSchema = WorkspaceAttentionSchema.strict();
+export const WorkspaceAttentionResultSchema = deferredZodSchema(() => WorkspaceAttentionSchema.strict());
 
-export const WorkspaceDirectoryListRequestSchema = z.strictObject({
+export const WorkspaceDirectoryListRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   limit: z.number().int().min(1).max(250),
   before: WorkspaceWorkstreamCursorSchema.optional(),
   includeSystem: z.boolean(),
-});
+}));
 
-export const WorkspaceDirectoryPageSchema = z.strictObject({
+export const WorkspaceDirectoryPageSchema = deferredZodSchema(() => z.strictObject({
   // Pins and running connection targets are returned in addition to the
   // requested recent-work page. They remain available without consuming its
   // infinite-scroll cursor budget. Pins have their own product limit, while
@@ -52,31 +53,31 @@ export const WorkspaceDirectoryPageSchema = z.strictObject({
       message: "must contain exactly one state version for every work stream item",
     });
   }
-});
+}));
 
-export const WorkspaceDirectoryVisibilityRequestSchema = z.strictObject({
+export const WorkspaceDirectoryVisibilityRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   workstreamId: IdSchema,
-});
+}));
 
-export const WorkspaceDirectoryReadableIdsRequestSchema = z.strictObject({
+export const WorkspaceDirectoryReadableIdsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   workstreamIds: z.array(IdSchema).min(1).max(100),
-});
+}));
 
-export const WorkspaceDirectoryReadableIdsResultSchema = z.strictObject({
+export const WorkspaceDirectoryReadableIdsResultSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(IdSchema).max(100),
-});
+}));
 
-export const WorkspaceDirectoryBatchTargetsRequestSchema = z.strictObject({
+export const WorkspaceDirectoryBatchTargetsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   filter: WorkstreamBatchFilterSchema,
-});
+}));
 
-export const WorkspaceDirectoryBatchTargetsResultSchema = z.strictObject({
+export const WorkspaceDirectoryBatchTargetsResultSchema = deferredZodSchema(() => z.strictObject({
   // Intentionally uncapped: the public filter may legitimately select the
   // whole sidebar. The regional Worker chunks these ids into 50-message Queue
   // calls, below the platform's 100-message sendBatch maximum, instead of
@@ -91,12 +92,12 @@ export const WorkspaceDirectoryBatchTargetsResultSchema = z.strictObject({
   // for — would make one filter resolution answer differently depending on a
   // mutation it does not perform.
   noteIds: z.array(IdSchema),
-});
+}));
 
 const WorkstreamBatchRequestHashSchema = z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u);
 
 /** Freeze one generic filtered batch so transport retries cannot widen its target set. */
-export const WorkspaceBatchDispatchBeginRequestSchema = z.strictObject({
+export const WorkspaceBatchDispatchBeginRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   operationId: IdSchema,
@@ -107,24 +108,24 @@ export const WorkspaceBatchDispatchBeginRequestSchema = z.strictObject({
    * has a target set at all. Only `archive` reaches notes.
    */
   update: WorkstreamBatchUpdateSchema,
-});
+}));
 
-export const WorkspaceBatchDispatchBeginResultSchema = z.strictObject({
+export const WorkspaceBatchDispatchBeginResultSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(IdSchema),
   targetCount: z.number().int().nonnegative(),
-});
+}));
 
 /** Record one successfully published Queue chunk for a frozen generic batch. */
-export const WorkspaceBatchDispatchAdvanceRequestSchema = z.strictObject({
+export const WorkspaceBatchDispatchAdvanceRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   operationId: IdSchema,
   requestHash: WorkstreamBatchRequestHashSchema,
   workstreamIds: z.array(IdSchema).min(1).max(100),
-});
+}));
 
-export const WorkspaceBatchDispatchAdvanceResultSchema = z.strictObject({
+export const WorkspaceBatchDispatchAdvanceResultSchema = deferredZodSchema(() => z.strictObject({
   remainingCount: z.number().int().nonnegative(),
-});
+}));
 
 /**
  * Archive the notes one frozen batch selected, in the object that owns them.
@@ -137,52 +138,52 @@ export const WorkspaceBatchDispatchAdvanceResultSchema = z.strictObject({
  * the count the first call archived rather than sweeping in whatever has since
  * entered the range.
  */
-export const WorkspaceBatchNoteArchiveRequestSchema = z.strictObject({
+export const WorkspaceBatchNoteArchiveRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   operationId: IdSchema,
   requestHash: WorkstreamBatchRequestHashSchema,
   at: TimestampSchema,
-});
+}));
 
-export const WorkspaceBatchNoteArchiveResultSchema = z.strictObject({
+export const WorkspaceBatchNoteArchiveResultSchema = deferredZodSchema(() => z.strictObject({
   archivedNoteCount: z.number().int().nonnegative(),
   /** True when the receipt already existed, so this call archived nothing. */
   replayed: z.boolean(),
-});
+}));
 
-export const WorkspaceDirectoryVisibleIdsRequestSchema = z.strictObject({
+export const WorkspaceDirectoryVisibleIdsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   includeSystem: z.boolean(),
   participantsOnly: z.boolean(),
   after: IdSchema.optional(),
   limit: z.number().int().min(1).max(250),
-});
+}));
 
-export const WorkspaceDirectoryVisibleIdsPageSchema = z.strictObject({
+export const WorkspaceDirectoryVisibleIdsPageSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(IdSchema).max(250),
   nextCursor: IdSchema.nullable(),
-});
+}));
 
-export const WorkspaceDirectoryExistsRequestSchema = z.strictObject({
+export const WorkspaceDirectoryExistsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
-});
+}));
 
-export const WorkspaceDirectoryPlannedRequestSchema = z.strictObject({
+export const WorkspaceDirectoryPlannedRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   automationSubscriptionId: IdSchema,
   plannedFor: TimestampSchema,
-});
+}));
 
 /** Internal scheduler lookup; unlike the member-facing lookup it is not visibility-filtered. */
-export const WorkspaceDirectoryPlannedAutomationRequestSchema = z.strictObject({
+export const WorkspaceDirectoryPlannedAutomationRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   automationSubscriptionId: IdSchema,
   plannedFor: TimestampSchema,
-});
+}));
 
 /**
  * An automation's current title, for the origin label on a work stream it made.
@@ -196,41 +197,41 @@ export const WorkspaceDirectoryPlannedAutomationRequestSchema = z.strictObject({
  * automation's run work stream returned 500. A method names its tables in the
  * object that has them, and cannot be routed anywhere else.
  */
-export const WorkspaceAutomationOriginLabelRequestSchema = z.strictObject({
+export const WorkspaceAutomationOriginLabelRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   automationId: IdSchema,
-});
+}));
 
-export const WorkspaceAutomationOriginLabelSchema = z.strictObject({
+export const WorkspaceAutomationOriginLabelSchema = deferredZodSchema(() => z.strictObject({
   /**
    * The automation's title, or null when the workspace has no live directory
    * row for it. The caller truncates for display; this carries what the
    * directory holds.
    */
   title: z.string().nullable(),
-});
+}));
 
 export const WorkspaceDirectoryPinRequestSchema = WorkspaceDirectoryVisibilityRequestSchema;
 
-export const WorkspaceDirectoryReorderPinsRequestSchema = z.strictObject({
+export const WorkspaceDirectoryReorderPinsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   userId: IdSchema,
   workstreamIds: z.array(IdSchema).max(1_000),
-});
+}));
 
-export const WorkspaceDirectoryNotificationRequestSchema = z.strictObject({
+export const WorkspaceDirectoryNotificationRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   workstreamId: IdSchema,
   userId: IdSchema,
-});
+}));
 
-export const WorkspaceDirectoryNotificationStateSchema = z.strictObject({
+export const WorkspaceDirectoryNotificationStateSchema = deferredZodSchema(() => z.strictObject({
   authorityGeneration: z.number().int().positive(),
   viewerVersion: z.number().int().positive(),
   listable: z.boolean(),
   title: z.string().min(1).max(500),
   emailAddress: z.string().email().max(254).nullable(),
-});
+}));
 
 /**
  * What a delivery into a work stream needs to know before it writes.
@@ -286,17 +287,17 @@ export const WorkspaceDirectoryOwnedAutomationsSchema = z.strictObject({
   }).strict()),
 });
 
-export const WorkspaceDirectoryResourceRequestSchema = z.strictObject({
+export const WorkspaceDirectoryResourceRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   watchedOnly: z.boolean(),
-});
+}));
 
-export const WorkspaceDirectoryResourceResultSchema = z.strictObject({
+export const WorkspaceDirectoryResourceResultSchema = deferredZodSchema(() => z.strictObject({
   workstreamIds: z.array(IdSchema).max(10_000),
-});
+}));
 
-export const WorkspaceDirectoryInternalItemSchema = z.strictObject({
+export const WorkspaceDirectoryInternalItemSchema = deferredZodSchema(() => z.strictObject({
   workstreamId: IdSchema,
   title: z.string().min(1).max(500),
   description: z.string().max(10_000),
@@ -312,56 +313,56 @@ export const WorkspaceDirectoryInternalItemSchema = z.strictObject({
   automationSubscriptionId: IdSchema.nullable(),
   automationRunId: IdSchema.nullable(),
   plannedFor: TimestampSchema.nullable(),
-});
+}));
 
-export const WorkspaceDirectoryLookupRequestSchema = z.strictObject({
+export const WorkspaceDirectoryLookupRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   workstreamIds: z.array(IdSchema).min(1).max(250),
-});
+}));
 
-export const WorkspaceDirectoryLookupResultSchema = z.strictObject({
+export const WorkspaceDirectoryLookupResultSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(WorkspaceDirectoryInternalItemSchema).max(250),
-});
+}));
 
-export const WorkspaceDirectoryAudienceSchema = z.discriminatedUnion("scope", [
+export const WorkspaceDirectoryAudienceSchema = deferredZodSchema(() => z.discriminatedUnion("scope", [
   z.strictObject({ scope: z.literal("workspace") }),
   z.strictObject({ scope: z.literal("user"), userId: IdSchema }),
-]);
+]));
 
-export const WorkspaceDirectoryRecentRequestSchema = z.strictObject({
+export const WorkspaceDirectoryRecentRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   audience: WorkspaceDirectoryAudienceSchema,
   includeSystem: z.boolean(),
   participantsOnly: z.boolean(),
   limit: z.number().int().min(1).max(250),
-});
+}));
 
-export const WorkspaceDirectoryDueRequestSchema = z.strictObject({
+export const WorkspaceDirectoryDueRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   kind: z.enum(["terminal", "wakeup"]),
   through: TimestampSchema,
   limit: z.number().int().min(1).max(250),
-});
+}));
 
-export const WorkspaceDirectoryScheduleTargetsRequestSchema = z.strictObject({
+export const WorkspaceDirectoryScheduleTargetsRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
-});
+}));
 
-export const WorkspaceDirectoryScheduleTargetsResultSchema = z.strictObject({
+export const WorkspaceDirectoryScheduleTargetsResultSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(z.strictObject({
     kind: z.enum(["wakeup", "terminal"]),
     workstreamId: IdSchema,
     dueAt: TimestampSchema,
   })).max(20_000),
-});
+}));
 
-export const WorkspaceDirectoryResourceAccessRequestSchema = z.strictObject({
+export const WorkspaceDirectoryResourceAccessRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   resourceId: IdSchema,
   userId: IdSchema,
-});
+}));
 
-export const WorkspaceDirectoryResourceAccessResultSchema = z.strictObject({
+export const WorkspaceDirectoryResourceAccessResultSchema = deferredZodSchema(() => z.strictObject({
   items: z.array(z.strictObject({
     workstreamId: IdSchema,
     scope: z.enum(["personal", "workspace"]),
@@ -369,9 +370,9 @@ export const WorkspaceDirectoryResourceAccessResultSchema = z.strictObject({
     automationSubscriptionId: IdSchema.nullable(),
     isParticipant: z.boolean(),
   })).max(10_000),
-});
+}));
 
-export const WorkspaceDirectoryApplyRequestSchema = z.strictObject({
+export const WorkspaceDirectoryApplyRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   envelopes: z.array(WorkstreamRegionalEffectEnvelopeSchema).min(1).max(25),
 }).superRefine((request, context) => {
@@ -401,15 +402,15 @@ export const WorkspaceDirectoryApplyRequestSchema = z.strictObject({
       });
     }
   }
-});
+}));
 
-export const WorkspaceDirectoryApplyResultSchema = z.strictObject({
+export const WorkspaceDirectoryApplyResultSchema = deferredZodSchema(() => z.strictObject({
   accepted: z.array(z.strictObject({
     messageId: z.string().min(1).max(500),
     payloadHash: z.string().regex(/^fnv1a64:[0-9a-f]{16}$/u),
   })).max(25),
   directoryChanged: z.boolean(),
-});
+}));
 
 /**
  * One WorkstreamDO activity/mention effect, applied with its receipt in a
@@ -418,7 +419,7 @@ export const WorkspaceDirectoryApplyResultSchema = z.strictObject({
  * commits only what it was handed, so the effect and its idempotency receipt
  * can never land in different authorities.
  */
-export const WorkspaceRegionalEffectApplyRequestSchema = z.strictObject({
+export const WorkspaceRegionalEffectApplyRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   envelope: WorkstreamRegionalEffectEnvelopeSchema,
   actorUserId: IdSchema.nullable(),
@@ -440,12 +441,12 @@ export const WorkspaceRegionalEffectApplyRequestSchema = z.strictObject({
       message: "Only activity and person-notification effects may use the regional apply handoff",
     });
   }
-});
+}));
 
-export const WorkspaceRegionalEffectApplyResultSchema = z.strictObject({
+export const WorkspaceRegionalEffectApplyResultSchema = deferredZodSchema(() => z.strictObject({
   replayed: z.boolean(),
   notificationIntentId: z.string().min(1).max(300).nullable(),
-});
+}));
 
 export type WorkspaceDirectoryListRequest = z.infer<typeof WorkspaceDirectoryListRequestSchema>;
 export type WorkspaceAttentionRequest = z.infer<typeof WorkspaceAttentionRequestSchema>;
