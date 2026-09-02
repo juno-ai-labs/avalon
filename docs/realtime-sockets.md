@@ -207,6 +207,19 @@ close with the panel and recover from durable checkpoints when it is opened
 again. Access revocation is not delayed: the server closes every affected
 retained socket immediately, and that socket permanently stops reconnecting.
 
+A cold feed open is bounded until the first authoritative server frame can
+populate the work-stream caches. The first attempt covers ticket issue, PAC
+resolution, handshake, subscribe, and first frame with a 10-second deadline;
+two timeout retries use 20- and 40-second deadlines. A timeout closes the
+broker-owned transport and aborts an in-flight ticket before reconnect jitter
+runs. After the third total attempt, the socket stops reconnecting and the
+opening screen shows a terminal error. Its **Try again** action starts a fresh
+three-attempt sequence while retaining the existing REST recovery path. Once a
+canonical feed frame has arrived—or route-matching detail and transcript caches
+already exist—the opening deadline is disabled; ordinary background reconnects
+remain governed by heartbeat and reconnect behavior rather than this cold-open
+limit.
+
 Opening telemetry treats the composer as send-ready only after its active
 work-stream handler is installed and the committed composer crosses a paint.
 That handler submits through the workspace socket's command queue, not either
@@ -705,6 +718,32 @@ double for the feed declares who is reading; passing `null` reproduces the old
 behavior and is what an unauthenticated client does. The rule is the client's
 mirror of a server rule, so a change to how the room treats an author's own
 message has a second place to follow.
+
+### 2026-09-01 — Cold feed opening fails visibly after three timed attempts
+
+**What changed:** Initial work-stream feed opening now has three total timed
+attempts: 10 seconds, 20 seconds, and 40 seconds. Each deadline includes the
+ticket request through the first authoritative frame, cancels both pending
+ticket and broker transport work, and the third timeout shows a terminal error.
+The error's **Try again** action starts a new bounded sequence.
+
+**Why:** A ticket, PAC lookup, handshake, subscribe, or first snapshot could
+stall without producing a close or error, leaving the product on “Opening work
+stream…” indefinitely. The person explicitly chose these deadlines and two
+retries so the failure becomes visible without mistaking a slow cold wake for
+an immediate transport failure.
+
+**Considered and rejected:** A single fixed deadline would give later cold-wake
+attempts no additional room. Continuing silently after the third timeout would
+preserve the indefinite-spinner failure under a different state. Applying the
+same cap to a feed that has already populated caches would unnecessarily stop
+background live-update recovery.
+
+**Consequences:** A cold open can spend at most 70 seconds in timed attempts,
+plus reconnect jitter between attempts, before presenting the error. Successful
+first-frame delivery permanently removes the opening deadline for that retained
+connection. Closing during PAC resolution must complete immediately so a timed
+attempt cannot leave a main-process socket behind.
 
 ### 2026-09-01 — Hover warms the complete pair and upgrade bootstraps the feed
 

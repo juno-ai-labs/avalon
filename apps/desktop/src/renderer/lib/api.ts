@@ -1902,6 +1902,7 @@ export class RallyApi {
     requestId?: string,
     afterSequence?: number,
     speculative = false,
+    signal?: AbortSignal,
   ): Promise<SocketTicket> {
     const queryParams = new URLSearchParams();
     if (afterSequence !== undefined) queryParams.set('afterSequence', String(afterSequence));
@@ -1910,7 +1911,7 @@ export class RallyApi {
     const query = encodedQuery === '' ? '' : `?${encodedQuery}`;
     return this.request(
       `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
-      { schema: socketTicketSchema, ...(requestId ? { requestId } : {}) },
+      { schema: socketTicketSchema, signal, ...(requestId ? { requestId } : {}) },
     );
   }
 
