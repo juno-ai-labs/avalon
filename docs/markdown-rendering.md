@@ -157,6 +157,15 @@ citation chip's icon uses), and carries a tooltip. Clicking the heading or
 the chevron toggles the section; a click that follows a text selection does
 not, so copying a heading does not collapse it.
 
+Clicking the faded preview opens the section too, and only ever opens it:
+a click inside an open body belongs to the text it landed on, never to the
+accordion. The collapsed body takes no pointer events, so the click lands on
+the section itself rather than on the paragraph under the fade — which is
+also why the collapsed section, not its body, carries the pointer cursor. The
+chevron remains the keyboard and assistive-technology control; the preview is
+a pointer affordance only, and adds no second button to the accessibility
+tree.
+
 A glance is already a four-line clamp inside a button, and a still is a
 picture that cannot be toggled, so neither grows accordions. The exported
 card therefore prints the document in full, without chevrons.
@@ -654,6 +663,26 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-02 — Clicking a collapsed preview opens its section
+
+**What changed:** A click anywhere on a collapsed section's faded preview
+expands it. There is no inverse: a click inside an open body does nothing, so
+selecting or following text in an open section cannot fold it. The collapsed
+section carries `cursor: pointer` so the preview reads as the control it is.
+
+**Why:** The three faded lines are the part of a collapsed section a reader is
+already looking at when they decide they want the rest, and the chevron is a
+14px target in the gutter. Making the text they are reading the target removes
+the aim without adding a control.
+
+**What a future change has to respect:** the handler sits on the section, not
+on the body, because the collapsed body keeps `pointer-events: none` and never
+receives the click — removing that declaration silently removes the feature.
+It expands rather than toggles, which is what keeps a heading click (which
+toggles, and which bubbles to the same handler) from opening and closing in one
+event. It also stays out of the accessibility tree: the chevron is the button,
+and a second control naming the same action would be read twice.
 
 ### 2026-09-02 — Heading sections start open
 

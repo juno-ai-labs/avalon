@@ -17,6 +17,7 @@ interface MarkdownCollapseValue {
   readonly collapsed: ReadonlySet<string>;
   readonly sectionIds: readonly string[];
   readonly allExpanded: boolean;
+  expand: (id: string) => void;
   toggle: (id: string) => void;
   setAll: (expanded: boolean) => void;
 }
@@ -67,13 +68,21 @@ export function MarkdownCollapseController({
       return next;
     });
   }, []);
+  const expand = useCallback((id: string) => {
+    setCollapsed((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+  }, []);
   const setAll = useCallback((nextExpanded: boolean) => {
     setCollapsed(nextExpanded ? new Set() : new Set(sectionIds));
   }, [sectionIds]);
   const allExpanded = sectionIds.length > 0 && sectionIds.every((id) => !collapsed.has(id));
   const value = useMemo<MarkdownCollapseValue>(
-    () => ({ allExpanded, collapsed, sectionIds, setAll, toggle }),
-    [allExpanded, collapsed, sectionIds, setAll, toggle],
+    () => ({ allExpanded, collapsed, expand, sectionIds, setAll, toggle }),
+    [allExpanded, collapsed, expand, sectionIds, setAll, toggle],
   );
   return (
     <MarkdownCollapseContext.Provider value={value}>
@@ -93,9 +102,23 @@ export function MarkdownCollapseSection({
 }): React.JSX.Element {
   const collapse = useMarkdownCollapse();
   const expanded = !(collapse?.collapsed.has(id) ?? false);
+  // The faded preview is part of the same affordance as the chevron: a reader
+  // who clicks the three lines they cannot finish wants the rest of them. The
+  // body itself takes no pointer events while collapsed, so the click lands
+  // here on the section. Opening only — a click inside an open body belongs to
+  // the text, never to the accordion.
+  const openFromPreview = (event: React.MouseEvent<HTMLDivElement>): void => {
+    // The heading runs its own toggle, including its selection guard.
+    if ((event.target as HTMLElement | null)?.closest?.('.markdown-collapse-heading')) return;
+    if (window.getSelection()?.isCollapsed === false) return;
+    collapse?.expand(id);
+  };
   return (
     <MarkdownCollapseSectionIdContext.Provider value={id}>
-      <div className={clsx('markdown-collapse', expanded ? 'is-expanded' : 'is-collapsed')}>
+      <div
+        className={clsx('markdown-collapse', expanded ? 'is-expanded' : 'is-collapsed')}
+        {...(expanded || !collapse ? {} : { onClick: openFromPreview })}
+      >
         {heading}
         <div
           aria-hidden={expanded ? undefined : true}

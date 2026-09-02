@@ -817,6 +817,16 @@ describe('collapsed heading preview mask', () => {
     expect(body).toContain('transparent)');
     expect(body).not.toContain('18%');
   });
+
+  // The preview opens the section on click, and the click lands on the section
+  // rather than the body because the body takes no pointer events. Both halves
+  // are load-bearing: without the cursor the preview does not read as a
+  // control, and without the pointer-events answer the click never leaves the
+  // body it started in.
+  it('reads as a control: pointer cursor on the section, no pointer events on the body', () => {
+    expect(rule('.markdown-collapse.is-collapsed')).toContain('cursor: pointer');
+    expect(rule('.markdown-collapse.is-collapsed > .markdown-collapse-body')).toContain('pointer-events: none');
+  });
 });
 
 /**
