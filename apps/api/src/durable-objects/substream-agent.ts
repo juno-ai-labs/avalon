@@ -5271,8 +5271,26 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // socket to one object-local work-stream/substream authority. Revocation
     // evicts the socket through the local participant/session epoch path, so a
     // range does not repeat D1 authorization per block or hydrated turn.
-    if (!attachment.subscribed) {
-      this.sendError(socket, "subscription_required", "Subscribe before loading transcript ranges");
+    //
+    // A socket assembling its own requested snapshot is subscribed. The flag is
+    // lowered for that window only to keep *broadcasts* out of it, and a range
+    // is not a broadcast: it is a direct reply to this reader, read from the
+    // fence this reader named, and it publishes nothing to anybody else. So
+    // serve it. Refusing here told a subscribed reader to subscribe — advice it
+    // could not act on, delivered through a frame it could not correlate, which
+    // is how a "Load earlier messages" click became a 15-second timeout.
+    //
+    // Once assembly replaces the fence, the snapshot check below answers
+    // `snapshot_expired` and the reader reloads under the new snapshot ID. That
+    // is the same answer it would get from any other superseding snapshot, and
+    // unlike a refusal it is a frame the reader already knows how to act on.
+    if (!attachment.subscribed && attachment.snapshotInFlight !== true) {
+      this.sendError(
+        socket,
+        "subscription_required",
+        "Subscribe before loading transcript ranges",
+        request.requestId,
+      );
       return;
     }
     const sequence = await this.currentSequence();
@@ -6879,7 +6897,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
-  private sendError(socket: WebSocket, code: string, message: string): void {
+  /**
+   * Refuse one frame in a way the reader can act on.
+   *
+   * `requestId` is required whenever the refused frame carried one. A caller
+   * that correlated its request is waiting on that identity and on nothing
+   * else: an uncorrelated refusal is invisible to it, so its promise survives
+   * until a local timeout fires and reports a timeout the room never had.
+   */
+  private sendError(socket: WebSocket, code: string, message: string, requestId: string | null = null): void {
     const event = ServerSocketEventSchema.parse({
       type: "error",
       // A private protocol error is not part of the canonical feed. Reusing
@@ -6888,7 +6914,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       sequence: this.objectStore.currentSequence(),
       occurredAt: new Date().toISOString(),
       code,
-      message
+      message,
+      requestId
     });
     socket.send(JSON.stringify(event));
   }
