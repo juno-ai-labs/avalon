@@ -1723,6 +1723,24 @@ describe('MarkdownBody heading collapse', () => {
     selection.mockRestore();
   });
 
+  it('opens a collapsed section when its faded preview is clicked, with no inverse on an open one', () => {
+    const { container } = render(<MarkdownBody collapseHeadings>{markdown}</MarkdownBody>);
+    const [first] = container.querySelectorAll('.markdown-collapse');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Collapse section' })[0]!);
+    expect(first).toHaveClass('is-collapsed');
+
+    const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ isCollapsed: false } as Selection);
+    fireEvent.click(first!.querySelector('.markdown-collapse-body')!);
+    expect(first).toHaveClass('is-collapsed');
+    selection.mockRestore();
+
+    fireEvent.click(first!.querySelector('.markdown-collapse-body')!);
+    expect(first).toHaveClass('is-expanded');
+    // No inverse: a click inside an open body belongs to the text it landed on.
+    fireEvent.click(first!.querySelector('.markdown-collapse-body p')!);
+    expect(first).toHaveClass('is-expanded');
+  });
+
   it('resolves a reference-style link whose definition lives under a later heading', () => {
     const { container } = render(
       <MarkdownBody collapseHeadings>
