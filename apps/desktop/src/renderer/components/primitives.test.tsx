@@ -1,15 +1,19 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
 import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
-  ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
-    <span data-size={size} data-state={state} data-testid="thinking-orb" />
+  ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
+    <span data-size={size} data-state={state} data-testid="thinking-orb" data-theme={theme} />
   ),
 }));
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  window.localStorage.clear();
+});
 
 /** Radix positions a tooltip with a ResizeObserver, which jsdom does not implement. */
 function stubResizeObserver(): void {
@@ -354,6 +358,22 @@ describe('OpeningState', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Opening automation…');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'connecting');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '64');
+  });
+
+  /**
+   * The orb paints a canvas, so nothing in `app.css` can reach its ink and the
+   * appearance has to arrive as a prop. A light window with a dark-pinned orb
+   * drew near-white dots on near-white ground.
+   */
+  it('draws the orb for the appearance the window is in', () => {
+    window.localStorage.setItem(
+      DEVICE_PREFERENCES_STORAGE_KEY,
+      JSON.stringify({ version: 1, theme: { family: 'terra', mode: 'light' } }),
+    );
+
+    render(<OpeningState label="Opening automation…" />);
+
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-theme', 'light');
   });
 });
 
