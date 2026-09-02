@@ -311,8 +311,8 @@ three sides. Terra did, for as long as the tokens existed.
 
 `rule-color-focus` exists because of what the first shape hides: once the border
 is gone, the rule turning warm is the only thing left saying the field is live.
-A theme that flattens the frame has to say what focus looks like. A card states
-it as its own `border-color-focus`, for the same reason.
+A theme that flattens the frame has to say what focus looks like. A card, whose
+top edge is that same token, states it as its own `border-color-focus`.
 
 `send-background` follows the same frame. A flat composer carrying a raised
 button reads as two surfaces disagreeing about which one the page is.

@@ -295,6 +295,11 @@ describe('Terra Light row hover', () => {
 describe('a card composer closes its frame', () => {
   const themes = readFileSync(resolve(process.cwd(), 'src/renderer/styles/themes.css'), 'utf8');
 
+  // A theme block runs to the first `}` in the first column, which holds while
+  // the generator emits one flat declaration list per block and no token value
+  // spans a line. Should either change, this reads the wrong span rather than
+  // failing — so the guard below asserts on tokens it looked up by name, and a
+  // block that lost its declarations fails the lookup rather than passing empty.
   function block(theme: string): string {
     const start = themes.indexOf(`[data-theme='${theme}']`);
     expect(start, `${theme} has no block`).toBeGreaterThan(-1);
