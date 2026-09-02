@@ -1241,6 +1241,102 @@ describe('MessageBlock markdown', () => {
   });
 });
 
+describe('MessageBlock agent document cards', () => {
+  const documentMessage: Message = {
+    ...baseMessage,
+    id: 'message-agent-document',
+    authorType: 'agent',
+    author: undefined,
+    text: [
+      'Here is the complete review.',
+      '',
+      '## Findings',
+      '',
+      'The first finding.',
+      '',
+      '### Detail',
+      '',
+      'Nested detail stays with Findings.',
+      '',
+      '## Recommendation',
+      '',
+      'Ship the focused change.',
+      '',
+      '## Sources',
+      '',
+      'The supporting evidence.',
+    ].join('\n'),
+  };
+
+  it('turns each h2 into a square card while leaving the preamble readable', () => {
+    render(<MessageBlock {...actions} agentDocumentCards message={documentMessage} />);
+
+    expect(screen.getByText('Here is the complete review.')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Open section/u })).toHaveLength(3);
+    expect(screen.getByRole('button', { name: 'Open section 1 of 3: Findings' })).toHaveStyle({ left: '0px', top: '0px' });
+    expect(screen.getByRole('button', { name: 'Open section 2 of 3: Recommendation' })).toHaveStyle({ left: '20px', top: '20px' });
+    expect(screen.getByText('3 sections')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Collapse all sections' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Expand section' })).not.toBeInTheDocument();
+  });
+
+  it('opens the selected card and pages with controls and arrow keys', async () => {
+    render(<MessageBlock {...actions} agentDocumentCards message={documentMessage} />);
+    const opener = screen.getByRole('button', { name: 'Open section 2 of 3: Recommendation' });
+    fireEvent.click(opener);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Recommendation' })).toBeInTheDocument();
+    expect(screen.getByText('Section 2 of 3')).toBeInTheDocument();
+    expect(screen.getByRole('dialog').querySelector('.agent-document-lightbox-page'))
+      .toHaveTextContent('Ship the focused change.');
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(screen.getByRole('heading', { name: 'Sources' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next section' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous section' }));
+    expect(screen.getByRole('heading', { name: 'Recommendation' })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument();
+    expect(screen.getByText('Nested detail stays with Findings.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous section' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close document' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
+  });
+
+  it('pages forward and back with horizontal swipe gestures', () => {
+    render(<MessageBlock {...actions} agentDocumentCards message={documentMessage} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open section 2 of 3: Recommendation' }));
+    const dialog = screen.getByRole('dialog');
+
+    fireEvent.pointerDown(dialog, { clientX: 240, clientY: 120 });
+    fireEvent.pointerUp(dialog, { clientX: 120, clientY: 125 });
+    expect(screen.getByRole('heading', { name: 'Sources' })).toBeInTheDocument();
+
+    fireEvent.pointerDown(dialog, { clientX: 120, clientY: 120 });
+    fireEvent.pointerUp(dialog, { clientX: 230, clientY: 126 });
+    expect(screen.getByRole('heading', { name: 'Recommendation' })).toBeInTheDocument();
+  });
+
+  it('keeps heading-less responses on the normal open-prose renderer', () => {
+    render(<MessageBlock {...actions} agentDocumentCards message={{ ...documentMessage, text: 'A direct answer with no sections.' }} />);
+
+    expect(screen.getByText('A direct answer with no sections.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Open section/u })).not.toBeInTheDocument();
+    expect(document.querySelector('.agent-document-deck')).not.toBeInTheDocument();
+  });
+
+  it('retains the existing inline disclosures when the host does not opt in', () => {
+    render(<MessageBlock {...actions} message={documentMessage} />);
+
+    expect(screen.getAllByRole('button', { name: 'Expand section' })).toHaveLength(3);
+    expect(screen.queryByRole('button', { name: /Open section/u })).not.toBeInTheDocument();
+  });
+});
+
 describe('MessageBlock export actions', () => {
   const agentMessage: Message = {
     ...baseMessage,

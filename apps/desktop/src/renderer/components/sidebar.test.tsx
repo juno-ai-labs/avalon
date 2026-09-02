@@ -177,6 +177,30 @@ describe('Sidebar work-stream markers', () => {
     });
   });
 
+  it('reduces the GrokBot shell navigation to work streams', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[automation]}
+            conversationOnly
+            notes={[note('note-hidden', 'Meeting notes', '2026-07-31T19:00:00.000Z')]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('stream-visible', 'Customer launch', 'completed')]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Customer launch')).toBeInTheDocument();
+    expect(screen.queryByText('Daily product brief')).not.toBeInTheDocument();
+    expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument();
+    expect(screen.queryByText('New automation')).not.toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Search work streams' })).toBeInTheDocument();
+  });
+
   afterEach(() => vi.unstubAllGlobals());
 
   it('resizes from the keyboard and exposes its constrained width', () => {
