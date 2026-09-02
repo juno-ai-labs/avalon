@@ -74,6 +74,7 @@ describe("the page fence", () => {
   it("sends no referrer and lets no shared cache hold a response", () => {
     const headers = artifactSecurityHeaders();
     expect(headers["referrer-policy"]).toBe("no-referrer");
+    expect(headers["x-robots-tag"]).toBe("noindex");
     expect(headers["cache-control"]).toContain("private");
     expect(headers["x-content-type-options"]).toBe("nosniff");
   });
@@ -96,23 +97,24 @@ describe("the cross-artifact request fence", () => {
     expect(classifyFetchMetadata(request({ site: "same-site", navigation: true }), ORIGIN)).toBe("top_level");
   });
 
-  it("does not treat a bare Sec-Fetch-Site: none as a navigation", () => {
-    // Without the navigate/document pair it is a sub-resource request from a
-    // client that set no mode, which is not something to admit on trust.
-    expect(classifyFetchMetadata(request({ site: "none" }), ORIGIN)).toBe("refused");
+  it("admits a bare read without giving it a viewer identity", () => {
+    // Crawlers and unfurlers send no navigation metadata. They may read the
+    // public representation, but this verdict makes the Worker ignore cookies.
+    expect(classifyFetchMetadata(request({ site: "none" }), ORIGIN)).toBe("anonymous_read");
   });
 
-  it("refuses a sub-resource request even when it carries the navigate site value", () => {
+  it("keeps unsafe sub-resource requests behind the same-origin fence", () => {
     // The attack is a form post, a fetch, or an image — never a document
     // navigation, which cannot carry a body a page composed.
     expect(classifyFetchMetadata(
       request({ site: "cross-site", navigation: true, method: "POST" }),
       ORIGIN,
     )).toBe("refused");
-    expect(classifyFetchMetadata(
-      request({ site: "cross-site", headers: { "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" } }),
-      ORIGIN,
-    )).toBe("refused");
+    expect(classifyFetchMetadata(request({
+      site: "cross-site",
+      method: "POST",
+      headers: { "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" },
+    }), ORIGIN)).toBe("refused");
   });
 
   it("refuses a credentialed simple POST from a sibling artifact, which needs no preflight", () => {
@@ -124,19 +126,30 @@ describe("the cross-artifact request fence", () => {
     )).toBe("refused");
   });
 
-  it("refuses a same-site sub-resource GET, because a model handler may treat GET as a write", () => {
-    expect(classifyFetchMetadata(request({ site: "same-site", origin: null }), ORIGIN)).toBe("refused");
-    expect(classifyFetchMetadata(request({ site: "cross-site", origin: null }), ORIGIN)).toBe("refused");
+  it("serves cross-site and same-site reads anonymously", () => {
+    expect(classifyFetchMetadata(request({ site: "same-site", origin: null }), ORIGIN))
+      .toBe("anonymous_read");
+    expect(classifyFetchMetadata(request({ site: "cross-site", origin: null }), ORIGIN))
+      .toBe("anonymous_read");
   });
 
-  it("refuses a client that sends no fetch metadata at all", () => {
-    // A non-browser caller is treated as not same-origin rather than admitted.
-    expect(classifyFetchMetadata(request({ site: null, origin: null }), ORIGIN)).toBe("refused");
+  it("serves a crawler with no fetch metadata anonymously", () => {
+    expect(classifyFetchMetadata(request({ site: null, origin: null }), ORIGIN))
+      .toBe("anonymous_read");
+    expect(classifyFetchMetadata(request({ site: null, origin: null, method: "HEAD" }), ORIGIN))
+      .toBe("anonymous_read");
   });
 
-  it("refuses a mismatched Origin even when the metadata claims same-origin", () => {
+  it("downgrades a mismatched-Origin read to anonymous", () => {
     expect(classifyFetchMetadata(
       request({ site: "same-origin", origin: "https://evil-g.rallyusercontent.test" }),
+      ORIGIN,
+    )).toBe("anonymous_read");
+  });
+
+  it("refuses a mismatched-Origin write even when metadata claims same-origin", () => {
+    expect(classifyFetchMetadata(
+      request({ site: "same-origin", method: "POST", origin: "https://evil-g.rallyusercontent.test" }),
       ORIGIN,
     )).toBe("refused");
   });
@@ -149,6 +162,13 @@ describe("the cross-artifact request fence", () => {
       request({ site: "same-origin", method: "POST", origin: "null" }),
       ORIGIN,
     )).toBe("refused");
+  });
+
+  it("downgrades an opaque-Origin read to anonymous", () => {
+    expect(classifyFetchMetadata(
+      request({ site: "same-origin", origin: "null" }),
+      ORIGIN,
+    )).toBe("anonymous_read");
   });
 
   it("refuses a top-level navigation that is not a GET", () => {

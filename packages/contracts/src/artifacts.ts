@@ -73,13 +73,14 @@ export const ARTIFACT_STORAGE_CLASS_NAME = "SiteData";
 export const ARTIFACT_RESERVED_PREFIX = "/__rally";
 
 /**
- * The viewer identity every request carries into artifact code.
+ * The viewer identity an authenticated Rally request carries into artifact code.
  *
  * Product headers are minted `x-rally-*` and read through `readRallyHeader`
  * (see `http-headers.ts`); these two join that family rather than inventing a
  * spelling beside it. They are injected by the serving side after the session
  * check and after every inbound header of these names — canonical *and*
  * superseded — has been stripped, which is the entire anti-spoof mechanism.
+ * Public requests carry neither header.
  *
  * Absence, not a sentinel, represents an anonymous viewer. `null` from
  * `headers.get` is the most pretrained idiom there is and the natural falsy
