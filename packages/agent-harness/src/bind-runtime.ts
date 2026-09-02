@@ -101,6 +101,7 @@ import {
   normalizeToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
+import { modelDefaultReasoningEffort } from "./model-inference-defaults";
 
 const PersistedProviderMessageSchema = z.custom<ProviderMessage>(
   (value) => {
@@ -1999,7 +2000,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     const requestPlugins = modelMessagesContainFile(requestMessages)
       ? [{ id: "file-parser", pdf: { engine: "native" } }]
       : [];
-    const reasoningEffort = args.reasoningEffort ?? args.input.config.reasoningEffort;
+    const requestedReasoningEffort = args.reasoningEffort ?? args.input.config.reasoningEffort;
     const fallbackModels = args.fallbackModels ?? args.input.config.fallbackModels ?? [];
     const azurePricing = routeIncludesAzureBinding([intendedModel, ...fallbackModels])
       ? await resolveAzureModelPricing()
@@ -2014,7 +2015,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         messages: requestMessages,
         hasTools: wireTools.length > 0,
         hasFileParserPlugin: requestPlugins.length > 0,
-        hasReasoningEffort: reasoningEffort !== undefined,
+        hasReasoningEffort: requestedReasoningEffort !== undefined,
       },
     );
     const executePlan = () => executeRoutePlan({
@@ -2027,6 +2028,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         currentModel = candidate.canonicalModelId;
         textStream.beginAttempt();
         try {
+          const reasoningEffort = requestedReasoningEffort
+            ?? modelDefaultReasoningEffort(candidate.canonicalModelId);
           const trace = candidate.providerId === OPENROUTER_PROVIDER
             ? buildOpenRouterTracePayload(
                 args.input.traceContext ?? {
@@ -2059,7 +2062,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             stream: true as const,
             stream_options: { include_usage: true as const },
             ...(wireTools.length > 0
-              ? { tools: wireTools, tool_choice: "auto" as const }
+              ? {
+                  tools: wireTools,
+                  tool_choice: "auto" as const,
+                  parallel_tool_calls: true as const,
+                }
               : {}),
             ...(candidate.providerId === OPENROUTER_PROVIDER && requestPlugins.length > 0
               ? { plugins: requestPlugins }
@@ -2965,13 +2972,22 @@ function routePlan(
     [AZURE_PROVIDER, azureTransport(workspaceId, config.azure, azurePricing)],
   ]);
   const stages = models.flatMap((model, index) => {
+    const modelRequirements = modelDefaultReasoningEffort(model) === undefined
+      ? requirements
+      : {
+          ...requirements,
+          capabilities: new Set([
+            ...requirements.capabilities,
+            "reasoning_effort" as const,
+          ]),
+        };
     const boundProviders = AZURE_MODEL_BINDINGS.has(model)
       ? new Set<ProviderId>([AZURE_PROVIDER])
       : new Set<ProviderId>();
     const built = buildRoutePlan({
       primaryModel: model,
       fallbackModel: null,
-      requirements,
+      requirements: modelRequirements,
       policyFor: (canonical) => resolveProviderPolicy(
         MODEL_ROUTE_REGISTRY,
         canonical,
