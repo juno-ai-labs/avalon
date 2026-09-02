@@ -368,9 +368,11 @@ describe("provider webhook ingestion against the workspace authority", () => {
     /**
      * The receipt a crash between the global receipt commit and the connector
      * enqueue leaves behind: present, matching, and `processed_at IS NULL`.
-     * Seeded rather than produced by a first delivery so the state under test
-     * is the only thing this test sets up — the payload reference is the same
-     * `sha256` of the same bytes the service will compute.
+     * Seeded rather than produced by a first delivery, so the state under test
+     * is the only thing this test sets up. The payload reference is a plain
+     * SHA-256 of the signed bytes — the same standard hash the service takes,
+     * not a value the service was asked for — and a wrong one would fail
+     * loudly as a reused-delivery-id conflict rather than pass quietly.
      */
     async function seedPendingReceipt(rawBody: string): Promise<void> {
       await env.DB.prepare(
@@ -404,7 +406,7 @@ describe("provider webhook ingestion against the workspace authority", () => {
       expect(receipt?.error_json).toBeNull();
     });
 
-    it("still settles a redelivery whose connector rows only the workspace object has", async () => {
+    it("applies the redelivery's resource effects in the object rather than stopping at the shortcut", async () => {
       const rawBody = issuesDelivery();
       await seedPendingReceipt(rawBody);
       await serviceFor().ingestGitHub(rawBody, await githubHeaders(rawBody, DELIVERY_ID));
