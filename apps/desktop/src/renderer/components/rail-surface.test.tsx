@@ -88,6 +88,54 @@ describe('useRailCrossFade', () => {
     expect(result.current).toBeNull();
   });
 
+  // A work-stream switch is not a hand-off. Nothing takes the slot in the stream
+  // arrived at, so a panel carried into it would dissolve over another stream's
+  // feed while that feed is laid out around it.
+  it('does not fade a panel out of a scope it has left', () => {
+    const { result, rerender } = renderHook(
+      ({ id, scope }: { id: string | null; scope: string }) => useRailCrossFade(id, scope),
+      { initialProps: { id: 'inspector' as string | null, scope: 'workstream-one' } },
+    );
+
+    rerender({ id: null, scope: 'workstream-two' });
+    expect(result.current).toBeNull();
+  });
+
+  // The close and the scope do not always reach the hook in one render: the
+  // screen's own state settles first, and the store it reads catches up in a
+  // layout effect. A fade started in between still belongs to the scope it
+  // started in.
+  it('drops a fade already running when the scope changes under it', () => {
+    const { result, rerender } = renderHook(
+      ({ id, scope }: { id: string | null; scope: string }) => useRailCrossFade(id, scope),
+      { initialProps: { id: 'inspector' as string | null, scope: 'workstream-one' } },
+    );
+
+    rerender({ id: null, scope: 'workstream-one' });
+    expect(result.current).toBe('inspector');
+
+    rerender({ id: null, scope: 'workstream-two' });
+    expect(result.current).toBeNull();
+
+    act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
+    expect(result.current).toBeNull();
+  });
+
+  // Only a change of scope forgets. Within one work stream the hand-off is
+  // exactly what it was.
+  it('still cross-fades a hand-off inside one scope', () => {
+    const { result, rerender } = renderHook(
+      ({ id, scope }: { id: string | null; scope: string }) => useRailCrossFade(id, scope),
+      { initialProps: { id: 'inspector' as string | null, scope: 'workstream-one' } },
+    );
+
+    rerender({ id: 'block-dashboard', scope: 'workstream-one' });
+    expect(result.current).toBe('inspector');
+
+    act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
+    expect(result.current).toBeNull();
+  });
+
   // Switching back mid-fade turns the hand-off around rather than stacking a
   // second one on it: the panel that was on its way out is the one on screen.
   it('turns the fade around when the sidebar changes hands again mid-fade', () => {
