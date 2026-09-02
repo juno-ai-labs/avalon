@@ -1,6 +1,6 @@
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
-import type { ElicitationData, Message, MessageMention, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
+import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
 import {
   AutomationDraftProposedV1Schema,
@@ -1561,6 +1561,105 @@ function activityTiming(activity: TranscriptActivity | undefined): {
     monotonicStartedAt: receivedAt,
     timingAccuracy,
   };
+}
+
+/**
+ * A row's own reasoning segment, or nothing.
+ *
+ * Keyed on the verb because that is what separates the two kinds of thought
+ * row the projection produces: `thinking` is one turn's own reasoning and
+ * several belong to a message, `working` is the response's total and there is
+ * one of it, which `foldSettledWorkIntoMessages` moves into the header.
+ */
+function thinkingSegment(message: Message): ThoughtEventData | null {
+  const thought = message.thoughtEvent;
+  if (!thought || message.messageType !== 'thought') return null;
+  return (thought.activeVerb ?? 'working') === 'thinking' ? thought : null;
+}
+
+/**
+ * Collapse a run of thinking into one row carrying the whole run's time.
+ *
+ * The model thinks between every pair of tool calls, so a run that used one
+ * plugin four times arrives as four thinking rows around a single grouped
+ * plugin row — "thought for 29s / thought for 38s / thought for 17s / thought
+ * for 14s", four spent timers stacked in the feed saying one thing each. What
+ * a reader wants from them is the same thing the plugin row gives: that Rally
+ * was reasoning, and for how long in total. So the run becomes one row,
+ * "thinking for …" while any segment is still going and "thought for …" once
+ * they have all settled.
+ *
+ * The run is bounded exactly as a plugin group's is — see
+ * `continuesPluginActivityRun`. Anything a person reads closes it, so thinking
+ * that happens after Rally has said something starts a second row under that
+ * sentence rather than being summed into the one above it. Plugin rows do not
+ * close it, which is what puts the four rows above into one; the plugin row
+ * they surround keeps its own place, because grouping already anchors it at
+ * the first call in the run.
+ *
+ * The collapsed row sits where the run's *first* thinking row sat and inherits
+ * its identity, so the feed's order stays the order work happened in and the
+ * row's id does not move as the run grows.
+ */
+export function groupThinkingMessages(messages: readonly Message[]): Message[] {
+  interface Run {
+    row: number;
+    segments: ThoughtEventData[];
+  }
+  const runs: Run[] = [];
+  let open: Run | null = null;
+  const rows: Message[] = [];
+  for (const message of messages) {
+    if (!continuesPluginActivityRun(message)) open = null;
+    const segment = thinkingSegment(message);
+    if (!segment) {
+      rows.push(message);
+      continue;
+    }
+    if (open) {
+      open.segments.push(segment);
+      continue;
+    }
+    open = { row: rows.length, segments: [segment] };
+    runs.push(open);
+    rows.push(message);
+  }
+  for (const run of runs) {
+    if (run.segments.length === 1) continue;
+    const row = rows[run.row]!;
+    // One unknown segment makes the whole run unknowable rather than shorter:
+    // summing only the segments that reported understates the reasoning by
+    // exactly the one that did not, and presents the shortfall as certain.
+    const durationKnown = run.segments.every((segment) => segment.durationMs !== null);
+    const monotonicStartedAt = run.segments.flatMap((segment) => segment.monotonicStartedAt === undefined
+      ? []
+      : typeof segment.monotonicStartedAt === 'number'
+        ? [segment.monotonicStartedAt]
+        : [...segment.monotonicStartedAt]);
+    // A wall-clock start cannot be aggregated — the row has one field and
+    // several segments could be running — so it survives only when the run has
+    // exactly one, which is the case it was written for. Every producer today
+    // reports a running segment monotonically, and those do sum.
+    const startedAt = run.segments.flatMap((segment) => segment.startedAt === undefined ? [] : [segment.startedAt]);
+    const first = run.segments[0]!;
+    rows[run.row] = {
+      ...row,
+      thoughtEvent: {
+        status: run.segments.some((segment) => segment.status === 'started') ? 'started' : 'completed',
+        durationMs: durationKnown
+          ? run.segments.reduce((total, segment) => total + (segment.durationMs ?? 0), 0)
+          : null,
+        ...(startedAt.length === 1 ? { startedAt: startedAt[0]! } : {}),
+        ...(monotonicStartedAt.length === 0 ? {} : { monotonicStartedAt }),
+        ...(run.segments.some((segment) => segment.timingAccuracy === 'upper_bound')
+          ? { timingAccuracy: 'upper_bound' as const }
+          : {}),
+        ...(first.activeVerb === undefined ? {} : { activeVerb: first.activeVerb }),
+        ...(first.completedVerb === undefined ? {} : { completedVerb: first.completedVerb }),
+      },
+    };
+  }
+  return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
 
 /**

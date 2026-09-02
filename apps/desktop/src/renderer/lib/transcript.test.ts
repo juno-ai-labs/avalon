@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
-import type { Message } from './types';
+import type { Message, ThoughtEventData } from './types';
 import {
   foldSettledWorkIntoMessages,
   createElicitationMessage,
@@ -11,6 +11,7 @@ import {
   orderedTranscriptMessages,
   composeTranscript,
   groupPluginToolMessages,
+  groupThinkingMessages,
   mergeCanonicalTranscriptSnapshot,
   mergeRealtimeTranscriptActivity,
   mergeRealtimeTranscriptTurn,
@@ -1562,6 +1563,145 @@ describe('grouping tool calls by plugin', () => {
     ]);
 
     expect(grouped.map((message) => message.sequenceNumber)).toEqual([1, 2]);
+  });
+});
+
+describe('collapsing a run of thinking', () => {
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt: '2026-08-26T12:00:00.000Z',
+    ...extra,
+  });
+
+  const thinkingRow = (id: string, thought: Partial<ThoughtEventData> = {}): Message =>
+    row(id, {
+      messageType: 'thought',
+      thoughtEvent: {
+        status: 'completed',
+        durationMs: 1_000,
+        activeVerb: 'thinking',
+        completedVerb: 'thought',
+        ...thought,
+      },
+    });
+
+  const pluginRow = (id: string): Message =>
+    row(id, {
+      messageType: 'plugin_activity',
+      pluginActivity: {
+        groupKey: 'computer', name: 'Computer', icon: 'computer',
+        activeVerb: 'using a computer', completedVerb: 'used a computer',
+        active: false, durationMs: 7_000,
+      },
+    });
+
+  it('sums a run into one row where its thinking first started', () => {
+    const rows = groupThinkingMessages([
+      thinkingRow('thought-1', { durationMs: 29_000 }),
+      thinkingRow('thought-2', { durationMs: 38_000 }),
+      thinkingRow('thought-3', { durationMs: 17_000 }),
+      thinkingRow('thought-4', { durationMs: 14_000 }),
+    ]);
+
+    expect(rows.map((message) => message.id)).toEqual(['thought-1']);
+    expect(rows[0]!.thoughtEvent).toMatchObject({
+      status: 'completed',
+      durationMs: 98_000,
+      activeVerb: 'thinking',
+      completedVerb: 'thought',
+    });
+  });
+
+  it('keeps the run open across the plugin rows the thinking surrounds', () => {
+    // The production shape: one grouped plugin row anchored at the run's first
+    // call, with the model's thinking between every later call stacked under it.
+    const rows = groupThinkingMessages([
+      pluginRow('computer'),
+      thinkingRow('thought-1', { durationMs: 29_000 }),
+      thinkingRow('thought-2', { durationMs: 38_000 }),
+    ]);
+
+    expect(rows.map((message) => message.messageType)).toEqual(['plugin_activity', 'thought']);
+    expect(rows[1]!.thoughtEvent?.durationMs).toBe(67_000);
+  });
+
+  it('closes the run at anything a person reads', () => {
+    const rows = groupThinkingMessages([
+      thinkingRow('thought-1', { durationMs: 1_000 }),
+      thinkingRow('thought-2', { durationMs: 2_000 }),
+      row('said', { messageType: 'text', text: 'Here is what I found' }),
+      thinkingRow('thought-3', { durationMs: 4_000 }),
+      thinkingRow('thought-4', { durationMs: 8_000 }),
+    ]);
+
+    expect(rows.map((message) => message.thoughtEvent?.durationMs ?? message.text)).toEqual([
+      3_000, 'Here is what I found', 12_000,
+    ]);
+  });
+
+  it('leaves the response total out of the run it sits in', () => {
+    // 'working' is the whole response's timer, which the header takes; folding
+    // it into a turn's thinking would double-count it and take it out of reach
+    // of `foldSettledWorkIntoMessages`.
+    const rows = groupThinkingMessages([
+      thinkingRow('thought-1', { durationMs: 1_000 }),
+      thinkingRow('thought-2', { durationMs: 2_000 }),
+      row('response', {
+        messageType: 'thought',
+        thoughtEvent: { status: 'completed', durationMs: 60_000, activeVerb: 'working', completedVerb: 'worked' },
+      }),
+    ]);
+
+    expect(rows.map((message) => message.thoughtEvent?.durationMs)).toEqual([3_000, 60_000]);
+  });
+
+  it('reports no time at all when one segment of the run never reported its own', () => {
+    const rows = groupThinkingMessages([
+      thinkingRow('thought-1', { durationMs: 5_000 }),
+      thinkingRow('thought-2', { durationMs: null }),
+    ]);
+
+    expect(rows[0]!.thoughtEvent?.durationMs).toBeNull();
+  });
+
+  it('keeps every still-running segment ticking, and reads as thinking while any is', () => {
+    const rows = groupThinkingMessages([
+      thinkingRow('thought-1', { durationMs: 5_000 }),
+      thinkingRow('thought-2', { status: 'started', durationMs: 2_000, monotonicStartedAt: 1_000 }),
+      thinkingRow('thought-3', { status: 'started', durationMs: 3_000, monotonicStartedAt: 1_002 }),
+    ]);
+
+    expect(rows[0]!.thoughtEvent).toMatchObject({ status: 'started', durationMs: 10_000 });
+    expect(rows[0]!.thoughtEvent?.monotonicStartedAt).toEqual([1_000, 1_002]);
+  });
+
+  it('carries a recovered segment\u2019s uncertainty across the whole run', () => {
+    const rows = groupThinkingMessages([
+      thinkingRow('thought-1', { durationMs: 5_000 }),
+      thinkingRow('thought-2', { durationMs: 2_000, timingAccuracy: 'upper_bound' }),
+    ]);
+
+    expect(rows[0]!.thoughtEvent?.timingAccuracy).toBe('upper_bound');
+  });
+
+  it('leaves a lone thinking row exactly as it was', () => {
+    const lone = thinkingRow('thought-1', { durationMs: 5_000, monotonicStartedAt: 1_000 });
+
+    expect(groupThinkingMessages([lone])[0]!.thoughtEvent).toEqual(lone.thoughtEvent);
+  });
+
+  it('renumbers the rows it kept so the feed stays densely ordered', () => {
+    const rows = groupThinkingMessages([
+      thinkingRow('thought-1'),
+      thinkingRow('thought-2'),
+      row('said', { messageType: 'text', text: 'Done' }),
+    ]);
+
+    expect(rows.map((message) => message.sequenceNumber)).toEqual([1, 2]);
   });
 });
 
