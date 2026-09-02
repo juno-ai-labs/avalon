@@ -3313,8 +3313,12 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
    is the heading's exactly — both are a flat `left: -20px`, and an alignment
    change has to move both. What is not shared is the vertical box: the heading
    sizes its own against a heading's line in `em` (`height: 1.25em`,
-   `top: 0.12em`), while this row's line is a fixed 20px, so `height: 100%` on
-   the toggle is enough. */
+   `top: 0.12em`), while this row's is a flat 20px — its own height, not the
+   toggle's. `height: 100%` resolves to the same 20px today and would keep
+   resolving to something as the toggle grew, which is the failure: a label that
+   ever wrapped would stretch the box and centre the glyph across both lines,
+   where it belongs on the first. Pinning it is what the heading rule does too,
+   for the same reason. */
 .work-accordion { display: grid; gap: 12px; }
 
 .work-accordion-toggle {
@@ -3343,7 +3347,7 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
   align-items: center;
   color: var(--av-sys-color-text-muted);
   display: inline-flex;
-  height: 100%;
+  height: 20px;
   justify-content: center;
   left: -20px;
   position: absolute;

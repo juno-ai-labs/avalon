@@ -256,7 +256,9 @@ edge — level with the author line and with the answer's paragraphs — and the
 chevron is the only thing outside that edge. The horizontal offset is the
 heading's exactly — both a flat `left: -20px` — so an alignment change moves
 both. Only the vertical box differs: the heading sizes its own against a
-heading's line in `em`, and this row's line is a fixed 20px.
+heading's line in `em`, and this row's is a flat 20px of its own — not
+`height: 100%` against the toggle, which resolves to 20px today but would
+stretch and centre the glyph across two lines if the label ever wrapped.
 
 Three things about it are decisions rather than details:
 
