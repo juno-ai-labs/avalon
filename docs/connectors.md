@@ -905,6 +905,29 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-02 — Every shipped connector gets public support coverage
+
+**What changed:** The public Support Center now mirrors the product connector
+catalog and publishes a dedicated page for Google, GitHub,
+Granola, Linear, Notion, Slack, inbound webhooks, and Public X. Each page names
+the supported connection modes, first recovery steps, and the provider details
+that are safe to include in a support request.
+
+**Why:** A generic Connections article could not explain the meaningful
+differences between personal OAuth, workspace installations, selected-resource
+access, administrator API keys, signed inbound webhooks, and Rally-managed
+read-only retrieval. It also made the public support surface drift from the
+connectors visible in desktop Settings.
+
+**Considered and rejected:** One long connector page with anchored sections.
+That would repeat the same information-architecture problem corrected in the
+Trust Center and would give individual connectors no stable support URL.
+
+**What a future change has to respect:** Adding or removing a connector in the
+desktop catalog requires the same change in the public connector directory,
+its support page, sitemap, build inputs, and cross-link test. Do not document
+credentials or provider payloads as information a customer should email.
+
 ### 2026-09-01 — Watching a Google resource routes events, having never routed any
 
 **What changed:** The Google manifest's activity types declare

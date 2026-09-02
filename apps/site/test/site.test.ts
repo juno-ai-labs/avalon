@@ -14,6 +14,28 @@ import { normalizedTelemetryPathname, sitePageForPath } from '../src/telemetry';
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+const readRepositoryFile = (path: string): string =>
+  readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8');
+
+const supportConnectorPages = [
+  { provider: 'google', slug: 'google', title: 'Google' },
+  { provider: 'github', slug: 'github', title: 'GitHub' },
+  { provider: 'granola', slug: 'granola', title: 'Granola' },
+  { provider: 'linear', slug: 'linear', title: 'Linear' },
+  { provider: 'notion', slug: 'notion', title: 'Notion' },
+  { provider: 'slack', slug: 'slack', title: 'Slack' },
+  { provider: 'generic_webhook', slug: 'inbound-webhook', title: 'Inbound webhook' },
+  { provider: 'x', slug: 'x', title: 'Public X' },
+] as const;
+
+const supportPagePaths = [
+  'support/index.html',
+  'support/getting-started/index.html',
+  'support/connectors/index.html',
+  ...supportConnectorPages.map(({ slug }) => `support/connectors/${slug}/index.html`),
+  'support/contact/index.html',
+] as const;
+
 /**
  * `wrangler.jsonc` is JSON with comments, like the two regional API configs.
  * Reading it with a bare `JSON.parse` made the file's *formatting* part of this
@@ -85,14 +107,15 @@ describe('public Rally site', () => {
       'open/index.html',
       'app/workstreams/index.html',
       'slack/index.html',
-      'terms/index.html',
-      'privacy/index.html',
-      'acceptable-use/index.html',
-      'dpa/index.html',
-      'subprocessors/index.html',
-      'cookies/index.html',
-      'security/index.html',
-      'support/index.html',
+      'trust/terms/index.html',
+      'trust/privacy/index.html',
+      'trust/acceptable-use/index.html',
+      'trust/dpa/index.html',
+      'trust/subprocessors/index.html',
+      'trust/cookies/index.html',
+      'trust/index.html',
+      'trust/security/index.html',
+      ...supportPagePaths,
       'auth/desktop/index.html',
       '404.html',
     ];
@@ -125,14 +148,15 @@ describe('public Rally site', () => {
       readProjectFile('open/index.html'),
       readProjectFile('app/workstreams/index.html'),
       readProjectFile('slack/index.html'),
-      readProjectFile('terms/index.html'),
-      readProjectFile('privacy/index.html'),
-      readProjectFile('acceptable-use/index.html'),
-      readProjectFile('dpa/index.html'),
-      readProjectFile('subprocessors/index.html'),
-      readProjectFile('cookies/index.html'),
-      readProjectFile('security/index.html'),
-      readProjectFile('support/index.html'),
+      readProjectFile('trust/terms/index.html'),
+      readProjectFile('trust/privacy/index.html'),
+      readProjectFile('trust/acceptable-use/index.html'),
+      readProjectFile('trust/dpa/index.html'),
+      readProjectFile('trust/subprocessors/index.html'),
+      readProjectFile('trust/cookies/index.html'),
+      readProjectFile('trust/index.html'),
+      readProjectFile('trust/security/index.html'),
+      ...supportPagePaths.map((path) => readProjectFile(path)),
       readProjectFile('auth/desktop/index.html'),
       readProjectFile('404.html'),
     ];
@@ -426,19 +450,25 @@ describe('public Rally site', () => {
 
   it('ships working Marketplace landing, privacy, support, and exact desktop handoff surfaces', () => {
     const landing = readProjectFile('slack/index.html');
-    const privacy = readProjectFile('privacy/index.html');
+    const privacy = readProjectFile('trust/privacy/index.html');
     const support = readProjectFile('support/index.html');
+    const slackSupport = readProjectFile('support/connectors/slack/index.html');
+    const granolaSupport = readProjectFile('support/connectors/granola/index.html');
     const handoff = readProjectFile('src/desktop-open.ts');
 
     expect(landing).toContain('Optional personal authorization');
-    expect(landing).toContain('/privacy');
+    expect(landing).toContain('/trust/privacy');
     expect(privacy).toContain('does not scrape, mirror');
+    expect(support).toContain('<title>Support Center · Rally</title>');
+    expect(support).toContain('rel="canonical" href="https://rallywith.ai/support/"');
     expect(support).toContain('within two business days');
-    expect(support).toContain('Generate a Granola Workspace API key');
-    expect(support).toContain('Settings → Connectors → Workspace API keys');
-    expect(support).toContain('Create new key');
-    expect(support).toContain('Personal connections use Granola’s browser sign-in and do not require an API key.');
-    expect(support).toContain('https://docs.granola.ai/help-center/sharing/integrations/granola-api');
+    expect(support).toContain('Rally for Slack');
+    expect(slackSupport).toContain('Slack App Management');
+    expect(granolaSupport).toContain('Generate a Granola Workspace API key');
+    expect(granolaSupport).toContain('Settings → Connectors → Workspace API keys');
+    expect(granolaSupport).toContain('Create new key');
+    expect(granolaSupport).toContain('Personal connections use Granola’s browser sign-in and do not require an API key.');
+    expect(granolaSupport).toContain('https://docs.granola.ai/help-center/sharing/integrations/granola-api');
     expect(handoff).toContain('parseDesktopDeepLinkIntent');
     expect(handoff).toContain('parseWorkspaceAddressedDeepLink');
     expect(handoff).toContain('window.location.hash');
@@ -446,17 +476,69 @@ describe('public Rally site', () => {
     expect(handoff).not.toContain('window.location.search');
   });
 
+  it('publishes a multi-page Support Center for every product connector', () => {
+    const hub = readProjectFile('support/index.html');
+    const connectorHub = readProjectFile('support/connectors/index.html');
+    const sitemap = readProjectFile('public/sitemap.xml');
+    const desktopSettings = readRepositoryFile(
+      'apps/desktop/src/renderer/screens/workspace-settings.tsx',
+    );
+    const desktopCatalog = desktopSettings.match(
+      /const connectorProviders = \[(?<catalog>[\s\S]*?)\] as const;/u,
+    )?.groups?.catalog;
+    if (!desktopCatalog) throw new Error('Desktop connector catalog was not found');
+    const desktopProviders = new Set(
+      [...desktopCatalog.matchAll(/^\s+provider: '([^']+)' as const,/gmu)]
+        .map((match) => match[1]),
+    );
+    expect(desktopProviders).toEqual(
+      new Set(supportConnectorPages.map(({ provider }) => provider)),
+    );
+
+    expect(hub).toContain('href="/support/getting-started/"');
+    expect(hub).toContain('href="/support/connectors/"');
+    expect(hub).toContain('href="/support/contact/"');
+    expect(sitemap).toContain('https://rallywith.ai/support/</loc>');
+
+    for (const [index, { slug, title }] of supportConnectorPages.entries()) {
+      const route = `/support/connectors/${slug}/`;
+      const page = readProjectFile(`support/connectors/${slug}/index.html`);
+      expect(hub, slug).toContain(`href="${route}"`);
+      expect(connectorHub, slug).toContain(`href="${route}"`);
+      expect(sitemap, slug).toContain(`https://rallywith.ai${route}`);
+      expect(page, slug).toContain(`<title>${title} connector · Rally Support</title>`);
+      expect(page, slug).toContain(`rel="canonical" href="https://rallywith.ai${route}"`);
+      expect(page, slug).toContain(
+        `Connector ${String(index + 1).padStart(2, '0')} / ${String(supportConnectorPages.length).padStart(2, '0')}`,
+      );
+      expect(page, slug).toContain('href="/support/connectors/"');
+      expect(page, slug).toContain('href="/support/contact/"');
+      if (slug !== 'slack') {
+        expect(page, slug).not.toContain('href="/support/connectors/" aria-current="page"');
+      }
+    }
+
+    for (const path of supportPagePaths) {
+      expect(readProjectFile(path), path).not.toMatch(/\bconnection test\b/iu);
+    }
+
+    expect(readProjectFile('support/contact/index.html')).toContain('Safe details to send');
+    expect(readProjectFile('support/contact/index.html')).toContain('Never send');
+  });
+
   it('publishes a complete, cross-linked Rally Trust Center', () => {
     const landing = readProjectFile('index.html');
+    const redirects = readProjectFile('public/_redirects');
     const sitemap = readProjectFile('public/sitemap.xml');
     const policies = [
-      ['terms/index.html', '/terms', 'Terms of Service'],
-      ['privacy/index.html', '/privacy', 'Privacy Policy'],
-      ['acceptable-use/index.html', '/acceptable-use', 'Acceptable Use Policy'],
-      ['dpa/index.html', '/dpa', 'Data Processing Addendum'],
-      ['subprocessors/index.html', '/subprocessors', 'Sub-processors'],
-      ['cookies/index.html', '/cookies', 'Cookie &amp; Tracking Notice'],
-      ['security/index.html', '/security', 'Trust Center'],
+      ['trust/index.html', '/trust', 'Trust Center'],
+      ['trust/security/index.html', '/trust/security', 'Security'],
+      ['trust/terms/index.html', '/trust/terms', 'Terms of Service'],
+      ['trust/privacy/index.html', '/trust/privacy', 'Privacy Policy'],
+      ['trust/acceptable-use/index.html', '/trust/acceptable-use', 'Acceptable Use Policy'],
+      ['trust/dpa/index.html', '/trust/dpa', 'Data Processing Addendum'],
+      ['trust/subprocessors/index.html', '/trust/subprocessors', 'Sub-processors'],
+      ['trust/cookies/index.html', '/trust/cookies', 'Cookie &amp; Tracking Notice'],
     ] as const;
 
     for (const [, route] of policies) {
@@ -466,47 +548,74 @@ describe('public Rally site', () => {
 
     for (const [path, route, title] of policies) {
       const page = readProjectFile(path);
+      const [document] = page.split('<footer class="legal-footer">');
       expect(page).toContain('<body class="legal-page">');
       expect(page).toContain(title);
       expect(page).toContain('Juno AI Labs');
-      expect(page).toContain(`rel="canonical" href="https://rallywith.ai${route}"`);
+      expect(page).toContain(`rel="canonical" href="https://rallywith.ai${route}/"`);
+      expect(document, path).not.toContain(
+        'href="/trust/">Trust Center</a><a href="/trust/security/">Security</a>',
+      );
       for (const [, linkedRoute] of policies) {
         expect(page).toContain(`href="${linkedRoute}/"`);
       }
     }
 
-    const privacy = readProjectFile('privacy/index.html');
+    const privacy = readProjectFile('trust/privacy/index.html');
     expect(privacy).toContain('Effective August 25, 2026');
     expect(privacy).toContain('does not scrape, mirror');
     expect(privacy).toContain('do not sell personal information');
     expect(privacy).toContain('accepted product-event and delivery records expire within 90 days');
-    expect(readProjectFile('dpa/index.html')).toContain('without undue delay');
-    expect(readProjectFile('dpa/index.html')).toContain('Annex B · Technical and organizational measures');
-    expect(readProjectFile('subprocessors/index.html')).toContain('Cloudflare, Inc.');
-    expect(readProjectFile('cookies/index.html')).toContain('uses bounded first-party product analytics');
-    expect(readProjectFile('cookies/index.html')).toContain('uses no persistent browser analytics identifier');
-    expect(readProjectFile('cookies/index.html')).toContain("does not load PostHog's browser SDK");
-    expect(readProjectFile('security/index.html')).toContain('context isolation');
-    expect(readProjectFile('security/index.html')).not.toContain('Request access');
-    expect(readProjectFile('security/index.html')).not.toContain('SOC 2');
-    expect(readProjectFile('security/index.html')).not.toContain('<i aria-label="Implemented">');
-    expect(readProjectFile('security/index.html').match(/role="img" aria-label="Implemented"/gu)).toHaveLength(7);
+    expect(readProjectFile('trust/dpa/index.html')).toContain('without undue delay');
+    expect(readProjectFile('trust/dpa/index.html')).toContain('Annex B · Technical and organizational measures');
+    expect(readProjectFile('trust/subprocessors/index.html')).toContain('Cloudflare, Inc.');
+    expect(readProjectFile('trust/cookies/index.html')).toContain('uses bounded first-party product analytics');
+    expect(readProjectFile('trust/cookies/index.html')).toContain('uses no persistent browser analytics identifier');
+    expect(readProjectFile('trust/cookies/index.html')).toContain("does not load PostHog's browser SDK");
+    expect(readProjectFile('trust/security/index.html')).toContain('context isolation');
+    expect(readProjectFile('trust/security/index.html')).not.toContain('Request access');
+    expect(readProjectFile('trust/security/index.html')).not.toContain('SOC 2');
+    expect(readProjectFile('trust/security/index.html')).not.toContain('<i aria-label="Implemented">');
+    expect(readProjectFile('trust/security/index.html').match(/role="img" aria-label="Implemented"/gu)).toHaveLength(7);
+    const styles = readProjectFile('src/styles.css');
+    expect(styles).toContain('.trust-hero h1 em{color:#111210');
+    expect(styles).toContain('.trust-reporting h2 em{color:#111210');
+    expect(styles).toContain('.support-article>section>.support-section-body{display:grid;gap:1.5rem;');
     const [landingContent, landingFooter] = landing.split('<footer class="rally-footer">');
     expect(landingContent).not.toContain('/security/');
-    expect(landingFooter).toContain('<a href="/security/">Trust Center</a>');
+    expect(landingFooter).toContain('<a href="/trust/">Trust Center</a>');
+    expect(redirects).toContain('/security  /trust/security/  301');
+    expect(redirects).toContain('/privacy  /trust/privacy/  301');
+    expect(redirects).toContain('/terms  /trust/terms/  301');
+    expect(redirects).toContain('/dpa  /trust/dpa/  301');
   });
 
   it('uses Rally grammar and Trust Center naming on every public page', () => {
     const pages = [
-      'index.html', 'invite/index.html', 'slack/index.html', 'terms/index.html',
-      'privacy/index.html', 'acceptable-use/index.html', 'dpa/index.html',
-      'subprocessors/index.html', 'cookies/index.html', 'security/index.html',
+      'index.html', 'invite/index.html', 'slack/index.html', 'trust/terms/index.html',
+      'trust/privacy/index.html', 'trust/acceptable-use/index.html', 'trust/dpa/index.html',
+      'trust/subprocessors/index.html', 'trust/cookies/index.html', 'trust/index.html',
+      'trust/security/index.html', ...supportPagePaths,
     ];
     for (const path of pages) {
       const page = readProjectFile(path);
       expect(page, path).not.toMatch(/\b[Aa]n Rally\b/u);
       expect(page, path).not.toContain('>Security Policy<');
     }
+  });
+
+  it('registers every public HTML page as a production build input', () => {
+    const publicHtmlPaths = readdirSync(new URL('../', import.meta.url), {
+      encoding: 'utf8',
+      recursive: true,
+    }).filter((path) => path.endsWith('.html')
+      && !path.startsWith('dist/')
+      && !path.startsWith('node_modules/'));
+    const config = readProjectFile('vite.config.ts');
+    const buildInputPaths = [...config.matchAll(/`\$\{projectRoot\}([^`]+\.html)`/gu)]
+      .map((match) => match[1]);
+
+    expect(new Set(buildInputPaths)).toEqual(new Set(publicHtmlPaths));
   });
 
   it('uses help@rallywith.ai as the only role-based public contact and preserves triage subjects', () => {
@@ -568,7 +677,12 @@ describe('public Rally site', () => {
     )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/app/workspaces/eu/private-workspace'))
       .toBe('/app/workspaces/:region/:workspace/workstreams/:id');
-    expect(normalizedTelemetryPathname('/privacy/')).toBe('/privacy/');
+    expect(normalizedTelemetryPathname('/trust/privacy/')).toBe('/trust/privacy/');
+    expect(sitePageForPath('/trust')).toBe('legal');
+    expect(sitePageForPath('/trust/')).toBe('legal');
+    expect(sitePageForPath('/trust/privacy/')).toBe('legal');
+    expect(sitePageForPath('/support')).toBe('support');
+    expect(sitePageForPath('/support/')).toBe('support');
     expect(classifyDesktopHandoffTarget('avalon://workstreams/not-a-uuid')).toEqual({
       handoffType: 'workstream', validity: 'invalid',
     });

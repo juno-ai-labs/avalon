@@ -7,3 +7,21 @@
 # ID-only prefix remains a compatibility reader for links already shared.
 /app/workspaces/*  /app/workstreams/  200
 /app/workstreams/*  /app/workstreams/  200
+
+# Legal documents now live together under one Trust Center hierarchy. Preserve
+# public links that predate the consolidation, including their trailing-slash
+# variants, while publishing only the canonical /trust/ URLs.
+/security  /trust/security/  301
+/security/*  /trust/security/  301
+/terms  /trust/terms/  301
+/terms/*  /trust/terms/  301
+/privacy  /trust/privacy/  301
+/privacy/*  /trust/privacy/  301
+/acceptable-use  /trust/acceptable-use/  301
+/acceptable-use/*  /trust/acceptable-use/  301
+/dpa  /trust/dpa/  301
+/dpa/*  /trust/dpa/  301
+/subprocessors  /trust/subprocessors/  301
+/subprocessors/*  /trust/subprocessors/  301
+/cookies  /trust/cookies/  301
+/cookies/*  /trust/cookies/  301

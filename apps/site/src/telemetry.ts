@@ -199,7 +199,7 @@ export function sitePageForPath(path: string): SitePage {
   if (path.startsWith('/slack/link')) return 'slack_handoff';
   if (path.startsWith('/open')) return 'desktop_handoff';
   if (path.startsWith('/support') || path === '/slack/' || path === '/slack') return 'support';
-  if (/^\/(?:terms|privacy|acceptable-use|dpa|subprocessors|cookies|security)(?:\/|$)/u.test(path)) return 'legal';
+  if (/^\/trust(?:\/|$)/u.test(path)) return 'legal';
   if (path.startsWith('/download')) return 'download';
   return 'landing';
 }
