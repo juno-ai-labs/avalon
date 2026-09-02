@@ -103,6 +103,7 @@ import {
   themeWindowBackground,
   type ThemeChoice,
 } from '../common/themes';
+import { accountReconnectRequiredFailure } from '../common/workspace-activation-error';
 import {
   definitivelyInvalidatesStoredCredential,
   readJsonBody,
@@ -2121,9 +2122,22 @@ async function createDevelopmentSession(input: unknown): Promise<DesktopSession>
   });
 }
 
+/**
+ * A renewal of the account identity that the service refused for good has
+ * already surrendered the credential (see `refreshStoredCredentialOnce`). To
+ * the request that needed it, that is the same answer as never having had
+ * one: the renderer signs in from the action that asked, in the same click,
+ * rather than reporting an outage and signing in on the next.
+ */
+function identityRenewalFailure(error: unknown): unknown {
+  return refreshFailureIsTerminal(error) ? accountReconnectRequiredFailure() : error;
+}
+
 async function requireOnboardingIdentitySession(): Promise<WireSession> {
-  const stored = await loadStoredIdentitySession();
-  if (!stored) throw new Error('Sign in to Rally before setting up a workspace');
+  const stored = await loadStoredIdentitySession().catch((error: unknown) => {
+    throw identityRenewalFailure(error);
+  });
+  if (!stored) throw accountReconnectRequiredFailure();
   if (stored.apiBaseUrl !== runtimeConfig().api.global) {
     throw new Error('Workspace setup requires a Rally platform identity session');
   }
@@ -2138,7 +2152,7 @@ async function onboardingIdentityRequest(
     refresh: async (identity) => {
       const auth = await loadStoredAuthSet();
       const account = auth?.account;
-      if (!account) throw new Error('Sign in to Rally before setting up a workspace');
+      if (!account) throw accountReconnectRequiredFailure();
       if (!storedAuthMatches(account, storedAuthFromSession(identity, 'global'))) {
         // Something already replaced the credential this request presented: a
         // refresh that finished first, or a fresh sign-in. Use what is stored
@@ -2147,7 +2161,9 @@ async function onboardingIdentityRequest(
         const replacement = await storedSessionForCredential(account);
         if (replacement && Date.parse(replacement.expiresAt) > Date.now()) return replacement;
       }
-      return refreshStoredCredential(account);
+      return refreshStoredCredential(account).catch((error: unknown) => {
+        throw identityRenewalFailure(error);
+      });
     },
     fetch: request,
   });
@@ -2276,7 +2292,9 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
       workspaces: await workspaceDirectoryRows(lastWorkspaceDiscovery?.workspaces ?? []),
       invitations: lastWorkspaceDiscovery?.invitations ?? [],
       identity: identityStored ? 'unavailable' : 'reconnect_required',
-      identityError: error instanceof Error ? error.message : 'Rally could not check your workspaces.',
+      identityError: !identityStored
+        ? 'Sign in to Rally again to continue.'
+        : error instanceof Error ? error.message : 'Rally could not check your workspaces.',
     };
   }
   lastWorkspaceDiscovery = { workspaces: discovered.workspaces, invitations: discovered.invitations };

@@ -22,7 +22,7 @@ import type {
   DesktopSession,
   RuntimeConfig,
 } from '../../common/desktop';
-import { workspaceActivationFailureCode } from '../../common/workspace-activation-error';
+import { accountReconnectRequired, workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
@@ -57,6 +57,36 @@ export interface PendingConnectorOAuth {
   workspaceId: string;
 }
 
+/** The account menu's directory; whoever restores the account identity invalidates it. */
+export const WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY = ['workspace-account-directory'] as const;
+
+/**
+ * How an action that needs the account identity reports the detour it took.
+ * Main answers such an action with `account_reconnect_required` when this
+ * device holds no identity credential; the action then opens the browser for
+ * a sign-in and runs again once that has landed, and the row or dialog that
+ * started it hears about the wait through this so it can say where the
+ * person is expected next.
+ */
+export interface AccountActionProgress {
+  onSignInRequired: () => void;
+}
+
+/** A newer browser sign-in was started from this device; it carries the
+ * person's current intent, and whoever waited on the earlier one stands down. */
+export class AccountSignInSupersededError extends Error {
+  override readonly name = 'AccountSignInSupersededError';
+
+  constructor() {
+    super('A newer sign-in replaced this one');
+  }
+}
+
+/** The browser sign-in an action was waiting on did not complete. */
+export class AccountSignInFailedError extends Error {
+  override readonly name = 'AccountSignInFailedError';
+}
+
 export interface AppSessionValue {
   booting: boolean;
   runtime: RuntimeConfig | null;
@@ -75,13 +105,25 @@ export interface AppSessionValue {
   setPendingConnectorOAuth: (attempt: PendingConnectorOAuth | null) => void;
   clearPendingInvitation: () => void;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
-  activateWorkspace: (region: Region, workspaceId: string, operationId?: string) => Promise<void>;
+  activateWorkspace: (
+    region: Region,
+    workspaceId: string,
+    operationId?: string,
+    progress?: AccountActionProgress,
+  ) => Promise<void>;
   acceptInvitation: (region: Region, invitationId: string, operationId?: string) => Promise<void>;
   declineInvitation: (region: Region, invitationId: string) => Promise<void>;
+  /** Opens the browser for an account sign-in and resolves once its callback
+   * has been exchanged for the identity credential on this device. */
   reconnectAccountIdentity: () => Promise<void>;
   leaveWorkspace: (workspaceId: string, expectedOutcome: WorkspaceDepartureOutcome) => Promise<WorkspaceDeparture>;
   createDevelopmentSession: () => Promise<void>;
-  finishWorkspaceSetup: (name: string, region: Region, operationId?: string) => Promise<void>;
+  finishWorkspaceSetup: (
+    name: string,
+    region: Region,
+    operationId?: string,
+    progress?: AccountActionProgress,
+  ) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
   signOut: () => Promise<void>;
   signOutIfCredentialCleared: () => Promise<void>;
@@ -163,6 +205,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   sessionRef.current = session;
   /** The workspace a menu switch is in the middle of landing; see the session-changed listener. */
   const pendingActivationRef = useRef<{ region: Region; workspaceId: string } | null>(null);
+  /** Whoever is waiting on the browser sign-in this renderer last started. */
+  const pendingAccountSignInRef = useRef<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
   const bridge = useMemo<AppSessionDesktopBridge>(() => desktopBridge(), []);
   const queryClient = useQueryClient();
 
@@ -342,7 +386,44 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
       throw error;
     }
+    // The rest happens in the browser. Its callback arrives as a deep link,
+    // and the exchange there settles this; main has already made the newest
+    // attempt the only one it will honour, so an earlier waiter stands down.
+    return new Promise<void>((resolve, reject) => {
+      pendingAccountSignInRef.current?.reject(new AccountSignInSupersededError());
+      pendingAccountSignInRef.current = { resolve, reject };
+    });
   }, [bridge, runtime]);
+
+  /**
+   * Run an action that needs the account identity. When main answers that
+   * this device holds no identity credential, the person is sent to the
+   * browser to sign in and the action runs again once that has landed — a
+   * switch or a creation restores the credential itself rather than failing
+   * and asking for a separate reconnect first.
+   */
+  const withAccountIdentity = useCallback(async <T,>(
+    action: () => Promise<T>,
+    progress?: AccountActionProgress,
+  ): Promise<T> => {
+    try {
+      return await action();
+    } catch (error) {
+      if (!accountReconnectRequired(error)) throw error;
+      progress?.onSignInRequired();
+      try {
+        await reconnectAccountIdentity();
+      } catch (signInError) {
+        // A sign-in that never reached the browser — the identity service
+        // refused to start one, or the page could not be opened — is a
+        // sign-in failure to the row that asked, not a workspace outage.
+        throw signInError instanceof AccountSignInSupersededError || signInError instanceof AccountSignInFailedError
+          ? signInError
+          : new AccountSignInFailedError('Rally could not open the sign-in page');
+      }
+      return action();
+    }
+  }, [reconnectAccountIdentity]);
 
   /**
    * Land a chosen workspace in one step. The shell needs the workspace record
@@ -378,16 +459,24 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     }
   }, [applySession, queryClient]);
 
-  const activateWorkspace = useCallback(async (selectedRegion: Region, workspaceId: string, operationId?: string): Promise<void> => {
+  const activateWorkspace = useCallback(async (
+    selectedRegion: Region,
+    workspaceId: string,
+    operationId?: string,
+    progress?: AccountActionProgress,
+  ): Promise<void> => {
     const previous = sessionRef.current;
     pendingActivationRef.current = { region: selectedRegion, workspaceId };
     try {
-      const nextSession = await bridge.activateWorkspace({ region: selectedRegion, workspaceId, operationId });
+      const nextSession = await withAccountIdentity(
+        () => bridge.activateWorkspace({ region: selectedRegion, workspaceId, operationId }),
+        progress,
+      );
       await applyActivatedSession(nextSession, previous);
     } finally {
       pendingActivationRef.current = null;
     }
-  }, [applyActivatedSession, bridge]);
+  }, [applyActivatedSession, bridge, withAccountIdentity]);
 
   const acceptInvitation = useCallback(async (
     invitationRegion: Region,
@@ -423,14 +512,22 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     return nextSession;
   }, [applySession, bridge]);
 
-  const finishWorkspaceSetup = useCallback(async (name: string, selectedRegion: Region, operationId?: string): Promise<void> => {
+  const finishWorkspaceSetup = useCallback(async (
+    name: string,
+    selectedRegion: Region,
+    operationId?: string,
+    progress?: AccountActionProgress,
+  ): Promise<void> => {
     const normalized = name.trim();
     if (normalized.length < 2) throw new Error('Enter a workspace name with at least two characters.');
     setDeviceWorkspaceName(normalized);
     setWorkspaceNameState(normalized);
-    const nextSession = await bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId });
+    const nextSession = await withAccountIdentity(
+      () => bridge.createWorkspace({ region: selectedRegion, name: normalized, operationId }),
+      progress,
+    );
     applySession(nextSession);
-  }, [applySession, bridge]);
+  }, [applySession, bridge, withAccountIdentity]);
 
   /**
    * Drafted text and cached attachment bytes are workspace content, so a device
@@ -549,6 +646,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
      * renders it, so the failure is reported rather than swallowed: silence
      * here is the surface not appearing at all.
      */
+    /** Hand a sign-in's outcome to the action waiting on it; false when nothing is. */
+    const settleAccountSignIn = (failure: Error | null): boolean => {
+      const pending = pendingAccountSignInRef.current;
+      if (!pending) return false;
+      pendingAccountSignInRef.current = null;
+      if (failure) pending.reject(failure);
+      else pending.resolve();
+      return true;
+    };
     const reportDeepLinkFailure = (message: string): void => {
       if (sessionRef.current === null) {
         setDeepLinkError(message);
@@ -812,9 +918,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       }
       if (intent.status === 'failed') {
         if (intent.attemptId) await bridge.cancelDesktopAuthAttempt(intent.attemptId);
-        reportDeepLinkFailure(
-          `Sign in could not be completed: ${intent.errorCode?.replace(/[_-]+/gu, ' ') ?? 'unknown error'}`,
-        );
+        const message = `Sign in could not be completed: ${intent.errorCode?.replace(/[_-]+/gu, ' ') ?? 'unknown error'}`;
+        // An action waiting on this sign-in shows the failure where it was
+        // started; the window only speaks up when nothing else will.
+        if (!settleAccountSignIn(new AccountSignInFailedError(message))) reportDeepLinkFailure(message);
         return;
       }
       setDeviceSelectedRegion('global');
@@ -829,8 +936,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           attemptId: intent.attemptId!,
         });
         applySession(nextSession);
+        // The account identity is back on this device, so whatever the menu
+        // last heard about it — a reconnect it thought was still needed — is
+        // stale the moment this lands, not the next time it happens to ask.
+        void queryClient.invalidateQueries({ queryKey: WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY });
+        settleAccountSignIn(null);
       } catch (error: unknown) {
-        reportDeepLinkFailure(error instanceof Error ? error.message : 'Sign in could not be completed.');
+        const message = error instanceof Error ? error.message : 'Sign in could not be completed.';
+        if (!settleAccountSignIn(new AccountSignInFailedError(message))) reportDeepLinkFailure(message);
       } finally {
         setExchangingTicket(false);
       }

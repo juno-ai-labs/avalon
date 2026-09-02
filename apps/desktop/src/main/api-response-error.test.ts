@@ -8,6 +8,7 @@ import {
   UnusableCredentialError,
   workspaceActivationBridgeError,
 } from './api-response-error';
+import { accountReconnectRequiredFailure } from '../common/workspace-activation-error';
 
 describe('desktop API response errors', () => {
   it('marks only an HTTP 401 as a definitively invalid stored credential', async () => {
@@ -62,6 +63,12 @@ describe('desktop API response errors', () => {
     expect(workspaceActivationBridgeError(
       new RallyApiResponseError('provider wording can change', 503, 'service_unavailable'),
     ).message).toContain('workspace_activation_unavailable');
+  });
+
+  it('lets a failure the bridge already named cross unchanged instead of reading it as an outage', () => {
+    const missingIdentity = accountReconnectRequiredFailure();
+
+    expect(workspaceActivationBridgeError(missingIdentity)).toBe(missingIdentity);
   });
 });
 

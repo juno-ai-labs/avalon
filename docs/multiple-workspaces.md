@@ -61,9 +61,9 @@ makes a *concurrent* pair of renewals with the same token succeed twice, each
 rotating, and the answer that reaches the desktop first is the one persisted.
 The device is then holding a token the service accepts only until the grace
 ends; the next renewal is a 401, which is terminal, and the credential is
-surrendered. For the identity credential that is the "Reconnect account…" item
-and every discovered workspace gone from the menu until the account is signed
-in again.
+surrendered. For the identity credential that means the next switch or
+creation first sends the person through a browser sign-in, and every
+discovered-only workspace gone from the menu until it has.
 
 Every renewal therefore goes through `credential-refresh.ts`: two requests
 that found the same access token expired share one rotation and persist the
@@ -87,8 +87,9 @@ the session's creation a fresh sign-in is required whatever happened in
 between, and a renewal past that ceiling is refused rather than handed a
 token the bearer check would reject. The identity credential minted at
 sign-in and every workspace credential minted at activation follow the same
-rule, so "Reconnect account…" is expected after ninety days, or after a
-month away, and at no other time short of a sign-out or a revocation.
+rule, so a sign-in on the way into another workspace is expected after ninety
+days, or after a month away, and at no other time short of a sign-out or a
+revocation.
 
 ### The account menu's directory
 
@@ -100,13 +101,13 @@ readable with no network at all. `getOnboardingState` never rejects on
 discovery's account. It reports `identity` as `connected`, `reconnect_required`
 (no identity credential is stored), or `unavailable` (discovery failed for
 another reason), and lists the stored set either way, merged with the last
-discovery this run received so a blip does not shrink the list. While the
-account needs reconnecting no other workspace can be opened — every switch
-crosses Global activation — so each background row carries the muted caption
-every row uses for its second line ("Reconnect your account to open"), a
-tooltip with the longer reason, and selecting one restates the reason under
-the row instead of attempting an activation that must fail. It is the same
-register as a connector that needs reconnecting in Settings, not an alarm.
+discovery this run received so a blip does not shrink the list. The menu
+never marks a row on that state and offers no reconnect item of its own: a
+switch or a creation that needs the identity credential restores it itself
+(see [Switching](#switching)), and `reconnect_required` is read only by the
+no-workspace gate, which has nothing to switch to. The caption under the
+account's email names the active workspace's data region as US or EU — the
+two regions that exist; "Global" was the name of the US one.
 
 A background row's trailing indicator is one green dot, shown when the
 WorkspaceDO attention read reports any activity — work streams waiting on the
@@ -133,6 +134,26 @@ A switch that changed the workspace always lands on the new work-stream page.
 A work stream open in the previous workspace must never be looked up in the
 next one, which is what the route would otherwise do; only an addressed link
 opens a specific destination, and it resets the route itself.
+
+A switch or a creation that finds no identity credential on this device signs
+the account in on the spot rather than failing. Main answers such a request
+with `account_reconnect_required`, a coded failure that crosses the bridge
+unchanged where anything else becomes an outage, and `withAccountIdentity` in
+`app-session.tsx` opens the browser for the sign-in, tells the row or dialog
+that started it — which keeps its spinner with "Finish signing in to Rally in
+your browser" beneath — and runs the same request again once the callback has
+been exchanged for the credential. Choosing the row again opens the browser
+again and the earlier attempt stands down; a callback that reports failure
+lands as the row's error, and so does a sign-in that never reached the
+browser ("Rally could not open the sign-in page"). A renewal of the identity
+credential that the service refuses for good — the surrender in
+[Credential renewal](#credential-renewal) — answers the request that needed
+it with the same code, so the click that discovered the credential was dead
+is the click that signs in, not the one after. The exchange also invalidates
+the menu's directory query the moment it lands, so nothing the renderer holds
+about the account outlives the sign-in that changed it. There is no timeout
+on the wait: that would be a limit with a number nobody has chosen, and the
+row stays chosen and choosable instead.
 
 A discovery that succeeds is complete (a regional outage is a 503, never a
 shorter list), so a stored background workspace it does not list is a
@@ -304,9 +325,9 @@ never acquire a product WebSocket.
 - Failed attention reads keep the last values and label their relative update
   time. Discovery reconciliation removes a membership that has actually ended.
 - Discovery that cannot run leaves the stored set listed and says which state
-  the account is in; a missing identity credential is a state the menu shows
-  with the rows outlined, not an error it retries into a menu item that comes
-  and goes.
+  the account is in; a missing identity credential is restored by the next
+  switch or creation through a browser sign-in, never shown as a menu item
+  that comes and goes or a caption that outlives the reconnect.
 - An unreachable target region leaves the active workspace intact and reports
   that connectivity is required. A link into the active workspace needs no
   connectivity to open and fails on its first read like any other request.
@@ -362,6 +383,48 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-02 — A switch signs the account in itself, and the regions are US and EU
+
+**What changed:** A switch or a creation that finds no identity credential on
+this device opens the browser for a sign-in and runs again once the callback
+has landed, with "Finish signing in to Rally in your browser" under the row
+or in the dialog meanwhile. The "Reconnect account…" item, the row caption,
+its tooltip, and the switch guard that read the renderer's copy of the
+account state are gone. Main names that failure `account_reconnect_required`
+and lets it cross the bridge unchanged, and the ticket exchange invalidates
+the directory query the moment the credential is back. The region under the
+account's email, the row tags, the legacy one-workspace menu, the region
+picker, the invitation card, and Settings say US or United States rather
+than Global.
+
+**Why:** Field feedback on 1.259.0, the first build carrying the earlier
+fixes: after choosing "Reconnect account…" and finishing the browser sign-in,
+the menu still said "Reconnect your account to open this workspace" under the
+other workspace, and it opened only on the next choice of the row. The
+renderer gated the switch on `identity` from its last directory answer, and
+nothing refreshed that answer when the exchange landed — the focus refetch
+ran before the callback was exchanged and the next menu open deduplicated
+into it — so a row chosen inside that window was refused with an error
+caption that then outlived the reconnect. Beyond the bug, a separate
+reconnect step was the wrong shape: choosing the workspace already said what
+the person wanted. And "Global" named a region whose data lives in the
+United States; the product has two regions, not a global one.
+
+**Considered and rejected:** Refetching the directory after the exchange and
+keeping the guard, which leaves every switch at the mercy of a query the
+renderer might be holding stale. A timeout on the wait for the browser,
+which is a limit with a number nobody has chosen; the row stays chosen and
+can be chosen again instead.
+
+**Consequences:** An action that needs the identity credential goes through
+`withAccountIdentity` rather than reading the directory's `identity`, which
+now serves only the no-workspace gate. A failure that already carries an
+activation code is thrown as one; `workspaceActivationBridgeError` passes it
+through and wraps everything else as an outage. A terminal renewal of the
+identity credential is reported as that code too, by `identityRenewalFailure`
+in main, so surrendering the credential and asking for the sign-in are one
+answer rather than two clicks.
 
 ### 2026-09-02 — A session's life slides with use, under a ninety-day ceiling
 

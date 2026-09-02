@@ -449,6 +449,13 @@ pre {
   font-size: 12px;
   margin: 8px 0 0;
 }
+/* The same slot as `.inline-error`, for a step that is still in progress
+   somewhere else — a sign-in finishing in the browser — rather than a fault. */
+.inline-note {
+  color: var(--av-sys-color-text-muted);
+  font-size: 12px;
+  margin: 8px 0 0;
+}
 
 .empty-state {
   color: var(--av-sys-color-text-muted);
@@ -1109,10 +1116,6 @@ pre {
 .workspace-menu-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
-/* A workspace this device still lists but cannot open until the account is
-   reconnected says so in the muted caption every row uses for its second
-   line, with the longer reason in a tooltip. Nothing about it is an alarm. */
-.workspace-menu-tooltip { line-height: 1.4; max-width: 240px; }
 .workspace-region-tag {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-sys-color-border-subtle);

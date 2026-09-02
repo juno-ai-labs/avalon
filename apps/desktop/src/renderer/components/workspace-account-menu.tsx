@@ -2,7 +2,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { WorkspaceAttention } from '@rally/contracts';
 import { Check, ChevronDown, LoaderCircle, LogOut, Plus, Settings } from 'lucide-react';
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type {
   DesktopPendingWorkspaceInvitation,
@@ -10,28 +10,34 @@ import type {
   RallyRegion,
 } from '../../common/desktop';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
+import type { AccountActionProgress } from '../lib/app-session';
 import type { WorkspaceMember } from '../lib/types';
 import { formatRelative } from '../lib/format';
 import { uuidV7 } from '../lib/telemetry';
 import { Avatar, Button, Modal } from './primitives';
 
 export interface WorkspaceAccountMenuProps {
-  accountReconnectRequired?: boolean;
   activeWorkspace: DesktopWorkspaceSummary;
   attention: Record<string, WorkspaceAttention | undefined>;
   currentUser: WorkspaceMember;
   enabled: boolean;
   invitations: DesktopPendingWorkspaceInvitation[];
   promptedInvitation?: DesktopPendingWorkspaceInvitation | null;
+  /** The switching row whose activation is waiting on a sign-in finishing in
+   * the browser. It stays selectable so the browser can be opened again. */
+  signingInWorkspaceKey?: string | null;
   staleAt: string | null;
   switchingWorkspaceKey?: string | null;
   workspaceErrors?: Record<string, string | undefined>;
   workspaces: DesktopWorkspaceSummary[];
   onAcceptInvitation: (invitation: DesktopPendingWorkspaceInvitation, operationId: string) => Promise<void>;
-  onCreateWorkspace: (input: { name: string; region: RallyRegion }, operationId: string) => Promise<void>;
+  onCreateWorkspace: (
+    input: { name: string; region: RallyRegion },
+    operationId: string,
+    progress: AccountActionProgress,
+  ) => Promise<void>;
   onDeclineInvitation: (invitation: DesktopPendingWorkspaceInvitation) => Promise<void>;
   onMenuOpen: () => void;
-  onReconnectAccount: () => Promise<void>;
   onInvitationPromptDismiss: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
@@ -40,16 +46,18 @@ export interface WorkspaceAccountMenuProps {
   onSwitchWorkspace: (workspace: DesktopWorkspaceSummary) => Promise<boolean>;
 }
 
-/** Why a background workspace is outlined while the account needs reconnecting.
- * Every switch crosses Global activation with the identity credential, so
- * without one no other workspace can be opened — but it is still a workspace
- * this device knows, so it stays listed rather than vanishing. */
-export const WORKSPACE_NEEDS_ACCOUNT_RECONNECT =
-  'This workspace can\'t be opened until you reconnect your account: the account sign-in on this device has expired. '
-  + 'Choose Reconnect account… below.';
+/** Where the person is expected next while an action that needed the account
+ * identity waits for the sign-in it started; under the row, or in the dialog. */
+export const FINISH_SIGN_IN_IN_BROWSER = 'Finish signing in to Rally in your browser';
 
+/** The two data regions, as the compact tag on a row and the caption under
+ * the account's email. */
 function regionLabel(region: RallyRegion): string {
-  return region === 'eu' ? 'European Union' : 'Global';
+  return region === 'eu' ? 'EU' : 'US';
+}
+
+function regionName(region: RallyRegion): string {
+  return region === 'eu' ? 'European Union' : 'United States';
 }
 
 /** What the dot means when nothing is waiting on this person. */
@@ -94,13 +102,13 @@ function actionErrorMessage(error: unknown, fallback: string): string {
 }
 
 export function WorkspaceAccountMenu({
-  accountReconnectRequired = false,
   activeWorkspace,
   attention,
   currentUser,
   enabled,
   invitations,
   promptedInvitation = null,
+  signingInWorkspaceKey = null,
   staleAt,
   switchingWorkspaceKey = null,
   workspaceErrors = {},
@@ -109,7 +117,6 @@ export function WorkspaceAccountMenu({
   onCreateWorkspace,
   onDeclineInvitation,
   onMenuOpen,
-  onReconnectAccount,
   onInvitationPromptDismiss,
   onOpenSettings,
   onSignOut,
@@ -122,6 +129,7 @@ export function WorkspaceAccountMenu({
   const [workspaceRegion, setWorkspaceRegion] = useState<RallyRegion>('global');
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [creationSigningIn, setCreationSigningIn] = useState(false);
   const creationOperation = useRef<{ fingerprint: string; id: string } | null>(null);
   const invitationOperation = useRef<{ invitationId: string; id: string } | null>(null);
   const workspaceNameInput = useRef<HTMLInputElement>(null);
@@ -152,13 +160,16 @@ export function WorkspaceAccountMenu({
       ? creationOperation.current
       : { fingerprint, id: uuidV7() };
     creationOperation.current = operation;
-    void onCreateWorkspace(input, operation.id).then(() => {
+    void onCreateWorkspace(input, operation.id, { onSignInRequired: () => setCreationSigningIn(true) }).then(() => {
       creationOperation.current = null;
       setCreating(false);
       setWorkspaceName('');
     }, (error: unknown) => {
       setActionError(actionErrorMessage(error, 'The workspace could not be created.'));
-    }).finally(() => setActionPending(false));
+    }).finally(() => {
+      setActionPending(false);
+      setCreationSigningIn(false);
+    });
   };
 
   return (
@@ -203,22 +214,25 @@ export function WorkspaceAccountMenu({
                     ? attentionDescription
                     : UNREAD_ACTIVITY_DESCRIPTION;
                   const switching = workspaceKey === switchingWorkspaceKey;
-                  const unavailable = !active && accountReconnectRequired;
+                  const signingIn = switching && workspaceKey === signingInWorkspaceKey;
                   const error = workspaceErrors[workspaceKey];
                   const label = [
                     workspace.name,
                     ...(multipleRegions ? [regionLabel(workspace.region)] : []),
                     ...(active ? ['Current'] : []),
                     ...(attentionDescription ? [attentionDescription] : []),
-                    ...(unavailable ? [WORKSPACE_NEEDS_ACCOUNT_RECONNECT] : []),
+                    ...(signingIn ? [FINISH_SIGN_IN_IN_BROWSER] : []),
                     ...(error ? [error] : []),
                   ].join(', ');
-                  const item = (
+                  return (
                     <DropdownMenu.Item
                       aria-label={label}
-                      className={unavailable ? 'menu-item workspace-menu-item is-unavailable' : 'menu-item workspace-menu-item'}
+                      className="menu-item workspace-menu-item"
+                      key={workspaceKey}
                       onSelect={(event) => {
-                        if (active || switching) return;
+                        // A row waiting on the browser can be chosen again,
+                        // which opens the browser again.
+                        if (active || (switching && !signingIn)) return;
                         // The menu stays open while the switch is pending, so
                         // the row's spinner and any error land where the
                         // person is looking; it closes itself once it took.
@@ -234,10 +248,16 @@ export function WorkspaceAccountMenu({
                         <span>{workspace.name}</span>
                         {error
                           ? <small className="workspace-menu-error">{error}</small>
-                          : unavailable && <small className="workspace-menu-note">Reconnect your account to open</small>}
+                          : signingIn && <small className="workspace-menu-note">{FINISH_SIGN_IN_IN_BROWSER}</small>}
                       </span>
                       {multipleRegions && <small className="workspace-region-tag">{regionLabel(workspace.region)}</small>}
-                      {switching && <LoaderCircle aria-label="Opening workspace" className="spin" size={14} />}
+                      {switching && (
+                        <LoaderCircle
+                          aria-label={signingIn ? 'Waiting for sign-in' : 'Opening workspace'}
+                          className="spin"
+                          size={14}
+                        />
+                      )}
                       {active && <Check aria-label="Current" size={14} />}
                       {!active && !switching && attentionDescription && activityDetail && (
                         <IndicatorTooltip label={activityDetail}>
@@ -245,18 +265,6 @@ export function WorkspaceAccountMenu({
                         </IndicatorTooltip>
                       )}
                     </DropdownMenu.Item>
-                  );
-                  if (!unavailable) return <Fragment key={workspaceKey}>{item}</Fragment>;
-                  return (
-                    <Tooltip.Root delayDuration={300} key={workspaceKey}>
-                      <Tooltip.Trigger asChild>{item}</Tooltip.Trigger>
-                      <Tooltip.Portal>
-                        <Tooltip.Content className="tooltip workspace-menu-tooltip" side="right" sideOffset={8}>
-                          {WORKSPACE_NEEDS_ACCOUNT_RECONNECT}
-                          <Tooltip.Arrow className="tooltip-arrow" />
-                        </Tooltip.Content>
-                      </Tooltip.Portal>
-                    </Tooltip.Root>
                   );
                 })}
                 {invitations.length > 0 && (
@@ -289,11 +297,6 @@ export function WorkspaceAccountMenu({
                   <DropdownMenu.Label className="menu-label workspace-counts-stale">
                     Counts last updated {formatRelative(staleAt)}
                   </DropdownMenu.Label>
-                )}
-                {accountReconnectRequired && (
-                  <DropdownMenu.Item className="menu-item" onSelect={() => { void onReconnectAccount(); }}>
-                    Reconnect account…
-                  </DropdownMenu.Item>
                 )}
                 <DropdownMenu.Separator className="menu-separator" />
               </>
@@ -429,12 +432,13 @@ export function WorkspaceAccountMenu({
                 type="radio"
               />
               <span>
-                <strong>{regionLabel(region)}</strong>
+                <strong>{regionName(region)}</strong>
                 <small>{region === 'eu' ? 'Data stored in the European Union' : 'Data stored in the United States'}</small>
               </span>
             </label>
           ))}
         </fieldset>
+        {creationSigningIn && !actionError && <p className="inline-note">{FINISH_SIGN_IN_IN_BROWSER}</p>}
         {actionError && <p className="inline-error">{actionError}</p>}
       </Modal>
     </>
