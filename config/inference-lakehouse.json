@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "binding": "INFERENCE_LAKEHOUSE",
   "deploymentTokenOwner": "account",
   "namespace": "avalon",
@@ -11,6 +11,7 @@
       "sinkType": "r2_data_catalog",
       "bucket": "avalon-global-inference-lakehouse",
       "stream": "avalon_global_inference_lakehouse_stream",
+      "streamId": "6d72907e685e47909e5bdd6e5f9063d6",
       "sink": "avalon_global_inference_lakehouse_sink",
       "pipeline": "avalon_global_inference_lakehouse"
     }

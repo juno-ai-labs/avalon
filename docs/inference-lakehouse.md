@@ -23,11 +23,11 @@ product authority, and a capture failure does not change the inference outcome.
 | `packages/agent-harness/src/index.ts`, `bind-runtime.ts` | Emit one exact request event and one terminal attempt event for each structured or streaming provider call. |
 | `apps/api/src/services/inference-lakehouse.ts` | Build the common record, explicitly skip EU, archive Global in `PAYLOADS`, hash it, and enqueue the pointer without failing the inference. |
 | `apps/api/src/queues/inference-lakehouse-consumer.ts` | Validate the pointer and archived bytes, enforce the regional boundary, fit the row to Pipeline's request limit, and send it through `INFERENCE_LAKEHOUSE`. |
-| `config/inference-lakehouse.json` | Source of truth for the Global bucket, stream, sink, pipeline, namespace, table, and binding names. |
+| `config/inference-lakehouse.json` | Source of truth for the Global bucket, stream, pinned stream ID, sink, pipeline, namespace, table, and binding name. |
 | `config/inference-lakehouse-stream-schema.json` | Immutable structured-stream schema and analytical column contract. |
-| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Idempotent Global bucket, catalog, stream, sink, and pipeline provisioning plus generated-ID binding materialization. |
+| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Locally materializes pinned bindings for application deploys; explicit modes check or reconcile both Global lakehouses. |
 | `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | Global declares the inference Queue producer/consumer; EU contains the explicit deferral comment and no inference transport. |
-| `.github/workflows/deploy-api.yml` | Runs both resource preflights and deploys the generated Wrangler configs before any inference can target the resources. |
+| `.github/workflows/deploy-api.yml` | Materializes pinned Wrangler configs locally and deploys them without a Pipelines management-plane preflight. |
 
 ## How it works
 
@@ -128,46 +128,63 @@ writes zstd-compressed Parquet with a 300-second rolling interval to Data Catalo
 namespace `avalon`, table `llm_inference`; Cloudflare creates the namespace and
 table when the first records arrive.
 
-### Provisioning on merge
+### Deployment bindings and explicit reconciliation
 
-The API deployment does all resource work before migrations or Worker upload:
+The API deployment keeps application delivery independent from the Pipelines
+management API:
 
 1. `ensure-cloudflare-queues.mjs` creates the Global inference queue; its
    Wrangler consumer declaration causes the Global dead-letter queue to be
    created on first deployment. EU declares neither.
-2. `ensure-cloudflare-inference-lakehouse.mjs` creates the Global R2 bucket,
-   enables Data Catalog, and creates the structured stream, immutable sink, and
-   pipeline if they are absent. The immutable sink name includes the verified
-   deployment-token ID's SHA-256 fingerprint without exposing the ID.
-3. The preflight discovers Cloudflare's generated Global stream ID and writes
-   ignored `.wrangler.lakehouses.<region>.json` deploy configs. The Global
-   config contains both analytical Pipeline bindings; EU contains neither.
-4. The workflow deploys EU without inference bindings and then Global with the
-   generated Queue and Pipeline bindings. Health requires them only in Global;
-   EU reports the export as intentionally disabled.
+2. Both lakehouse manifests record the existing production stream's generated
+   ID. `ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings` reads
+   those manifests and writes ignored `.wrangler.lakehouses.<region>.json`
+   configs without credentials or network access. Global receives both
+   analytical bindings; EU receives neither.
+3. The workflow deploys EU without analytical bindings and then Global with the
+   pinned Queue and Pipeline bindings. Health requires them only in Global; EU
+   reports the export as intentionally disabled.
 
-Later merges run the same path. `config/inference-lakehouse.json` declares the
-deployment credential as account-owned, so provisioning uses the account token
-verifier directly and does not guess ownership from an API failure. Existing
-resources are read back and compared to the manifest; immutable schema, sink, or
-SQL drift fails the deployment rather than creating a parallel table or silently
-dropping fields. The provisioner uses each Pipeline list response directly for
-that comparison instead of repeating the same read through the resource's
-detail endpoint. Read-only Cloudflare API calls get up to ten total attempts for
-connection failures and HTTP 408, 409, 429, and 5xx responses. They respect a
-returned `Retry-After` value and otherwise use the official TypeScript client's
-jittered exponential backoff: a nominal 500 milliseconds, doubling to an
-8-second ceiling before downward jitter. Mutating requests are never retried, so
-a lost create response cannot duplicate an immutable resource. The final
-failure includes Cloudflare's Ray ID when one was returned. No resource requires
-a dashboard or laptop step. The existing
-account-owned deployment token must have
+Normal merges do not list, create, or verify Pipelines resources. The streams,
+sinks, and pipelines are immutable infrastructure, and a transient outage in
+their management plane must not prevent an unrelated Worker release. A missing
+or malformed pin fails local manifest validation, as does reusing one stream ID
+for both bindings. Cloudflare may still accept a syntactically valid ID whose
+stream no longer exists; regional health proves that the Worker exposes each
+binding, not that its remote stream accepts rows. That is why creation and
+replacement require explicit reconciliation, while failed ingestion remains
+visible through Queue retries and the dead-letter queues.
+
+Infrastructure work uses an explicit mode. `--check` reads every resource and
+fails on absence or drift without mutation. `--reconcile` may create missing
+buckets, catalogs, streams, sinks, and pipelines, then applies the same schema,
+destination, SQL, credential, duplicate-name, and pinned-stream-ID assertions.
+Run one of those modes before changing a lakehouse manifest, stream schema, sink
+credential, or pinned ID; they are not application-deploy steps. If one or more
+named streams are absent, reconciliation creates every missing stream, verifies
+its immutable shape, collects all generated IDs that differ from the manifests,
+and then fails before creating downstream resources for those streams. Review
+the complete set, update the pins together, and run reconciliation again to
+create or verify the downstream resources. Each named stream is reused on the
+second pass; none is silently replaced or left as an unrelated orphan. `--check`
+never creates a missing stream.
+
+`config/inference-lakehouse.json` declares the deployment credential as
+account-owned, so reconciliation uses the account token verifier directly and
+does not guess ownership from an API failure. Read-only reconciliation calls get
+up to ten total attempts for connection failures and HTTP 408, 409, 429, and 5xx
+responses. They respect a returned `Retry-After` value and otherwise use the
+official TypeScript client's jittered exponential backoff: a nominal 500
+milliseconds, doubling to an 8-second ceiling before downward jitter. Mutating
+requests are never retried, so a lost create response cannot duplicate an
+immutable resource. The final failure includes Cloudflare's Ray ID when one was
+returned. The existing account-owned deployment token must have
 Workers R2 Storage Admin Read & Write, R2 Data Catalog, Pipelines, Queues, and
 Worker deployment permissions. Its token value is installed in the Global Data
 Catalog sink but is never logged or persisted in a generated Wrangler file.
 Replacing that deployment token changes the desired credential-bound sink name,
-so provisioning fails before creating a conflicting sink. Rotating the
-credential therefore requires an explicit immutable sink/pipeline migration.
+so reconciliation fails before creating a conflicting sink. Rotating the
+credential therefore remains an explicit immutable sink/pipeline migration.
 
 ## Invariants
 
@@ -190,8 +207,9 @@ credential therefore requires an explicit immutable sink/pipeline migration.
   `event_id`; duplicate analytical rows are preferable to an inference outcome
   that disappears.
 - **The stream schema changes only by a deliberate replacement design.** A
-  structured Pipeline stream cannot be edited. The deploy refuses drift, so a
-  field cannot be removed or retyped under an existing table by accident.
+  structured Pipeline stream cannot be edited. Explicit reconciliation refuses
+  drift, so a field cannot be removed or retyped under an existing table by
+  accident.
 - **Capture is best effort with respect to the model call.** A Queue, R2, or
   Pipeline outage must not turn a successful user inference into a failure. The
   structured failure log and DLQ are the operator-visible consequences.
@@ -242,10 +260,10 @@ hash verification, oversized fallback, and poison-message acknowledgement.
 `apps/api/test-workers/queue-dispatch.test.ts` proves the real Worker dispatches
 the queue before product maintenance fencing. Harness tests prove exact request
 and response events. `scripts/ensure-cloudflare-inference-lakehouse.test.mjs`
-uses a stateful Cloudflare API double to prove a blank account is fully created,
-a second run creates nothing, generated IDs reach both Wrangler files, check mode
-does not mutate, immutable drift refuses deployment, and provisioning precedes
-migrations and upload. `ensure-cloudflare-queues.test.mjs` pins each producer,
+uses a stateful Cloudflare API double to prove the two-pass empty-account
+bootstrap, idempotent reconciliation, pinned-ID drift fences, zero-network
+binding materialization, check-mode non-mutation, immutable drift checks, and
+workflow ordering. `ensure-cloudflare-queues.test.mjs` pins each producer,
 consumer, and DLQ name.
 
 Run the focused suites with:
@@ -299,10 +317,10 @@ delivery alarm. `inference_lakehouse_delivered` includes only identifiers,
 source, event type, and whether the row used the oversized fallback.
 
 `pnpm cloudflare:resources:check` verifies the Global lakehouse and
-all other declared hosted resources without creating anything.
-`pnpm cloudflare:inference-lakehouse:ensure -- --materialize-bindings` is the
-same idempotent path the deployment uses and is break-glass tooling, not a
-required release step. Query Global's `rally.llm_inference` Iceberg table by
+all other declared hosted resources without creating anything. Run
+`pnpm cloudflare:lakehouses:ensure` only for explicit infrastructure
+reconciliation; ordinary deploys invoke `--materialize-bindings` themselves and
+need no operator step. Query Global's `rally.llm_inference` Iceberg table by
 `event_id`, `inference_request_id`, workspace/work-stream/substream/request IDs,
 model, source, time, success/failure, or usage. Follow `payload_object_key` into
 the Global payload bucket when the exact JSON is needed. There is no EU query
@@ -329,6 +347,37 @@ while retaining queryable columns. Revisit it only with real storage cost or a
 decided retention policy, not a speculative cache or aggregation layer.
 
 ## Changelog
+
+### 2026-09-01 — Application deploys use pinned stream bindings
+
+**What changed:** The two production Pipeline stream IDs now live in their
+checked-in lakehouse manifests. Normal API deploys materialize the regional
+Wrangler configs from those IDs without credentials or Cloudflare requests;
+Pipelines creation and immutable drift verification moved behind explicit
+`--check` and `--reconcile` modes.
+
+**Why:** Removing redundant detail reads and raising GET retries did not restore
+deployments. In the first post-change deployment, the inference pipeline list
+recovered only on attempt seven and the analytics pipeline list returned HTTP
+500 on all ten attempts, even though both live streams and the currently
+deployed Worker bindings remained healthy. An application release had no reason
+to depend on that failing infrastructure-management surface.
+
+**Considered and rejected:** More retries or pagination, because live probes
+showed neither changed the provider failure; silently ignoring a failed
+reconciliation while still deriving bindings from it, because that could write
+an incomplete config; and copying IDs from the previously deployed Worker on
+every release, because the checked-in manifests are a deterministic authority
+and already play that role for other generated Cloudflare resource IDs.
+
+**Consequences:** Ordinary Worker releases make no Pipelines API call and cannot
+be blocked by this control-plane incident. They no longer re-verify downstream
+sink or SQL drift on every code change; infrastructure changes and deployment
+credential rotation must run explicit reconciliation. Creating or recreating
+streams is a two-pass migration: the first pass creates every missing stream and
+reports the complete generated-ID set without creating their downstream
+resources, and the second pass resumes after an operator commits the reviewed
+pins together.
 
 ### 2026-09-01 — Pipeline list responses replace redundant detail reads
 
