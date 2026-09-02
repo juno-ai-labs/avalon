@@ -1563,13 +1563,19 @@ and the rejected alternatives are in
 [`agent-harness.md`](agent-harness.md#changelog); this entry records the storage
 contract that changed.
 
-**Consequences:** These two writes are now idempotent per run rather than per
-`(attempt, value)` pair, which is what lets a replacement instance restart the
-loop against the recorded scope. A caller that genuinely needs to detect a
-changed value must read the row back and compare stored against stored; the
-outcome no longer carries that answer. Both hash columns are still written on
-the first attempt and are still the forensic record of the build a run was
-admitted on.
+**Consequences:** `persistScope` is now idempotent per run and
+`persistPluginActivation` per `(run, plugin)`, rather than each being idempotent
+per `(attempt, value)` pair. That is what lets a replacement instance restart the
+loop instead of dying, but it preserves the admission row rather than executing
+against it: the root runtime continues with its own freshly recomputed tool
+surface, and the stored fields do not bound it. A caller that genuinely needs to
+detect a changed value must read the row back and compare stored against stored;
+the outcome no longer carries that answer. The lease fence runs before the reuse
+path in both, so an executor that has lost the run is still told
+`ownership_lost` rather than being handed a false success — the removed value
+comparison had been doing that job incidentally, since a stale executor carries
+a different attempt ID. Both hash columns are still written on the first attempt
+and are still the forensic record of the build a run was admitted on.
 
 ### 2026-09-02 — A refused transcript range names the request it refuses
 

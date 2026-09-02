@@ -213,7 +213,7 @@ its upper input fence to an explicitly admitted correction. Both values are
 frozen in the receipt's execution context before it is linked to the singleton;
 neither value creates or identifies a loop.
 
-After admission Rally validates the execution principal and records the run scope once, canonically hashed: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A later attempt of the same run reuses that recorded scope rather than re-freezing its own, because a run resumed after a Worker deploy recomputes the build half of the scope from different code. Subsequent membership, ownership, grant, disablement, and policy checks may only remove authority, and every tool call is revalidated live against current connection state.
+After admission Rally validates the execution principal and records the run scope once, canonically hashed: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A later attempt of the same run leaves that record untouched rather than re-freezing its own, because a run resumed after a Worker deploy recomputes the build half of the scope from different code and refusing the difference killed the run. **The record is not what a resumed attempt executes against.** Root tool authorization never reads it: an attempt assembles its tool surface freshly on every activation, so a resumed run's authority is its current state rather than its admitted state, and a connection added mid-run can widen it. What holds is live revalidation — the execution principal, work-stream state, connection identity, owner, grants and capability are rechecked at run start, before credential decryption, before every tool call, and between model turns. Within one attempt, membership, ownership, grant, disablement and policy checks may only remove authority.
 
 ### Context and stable prompts
 
@@ -977,9 +977,11 @@ participants remain deferred product work.
 - **Activation never precedes its subordinate execution receipt.** The receipt
   is the durable start signal; a replay uses its same identity and loop.
 - **The run scope is recorded once, canonically hashed, and never rewritten.** A
-  later attempt reuses it rather than reproducing it, because a resumption
-  across a deploy legitimately recomputes a different build. Every later check
-  may only *remove* authority.
+  later attempt leaves the record alone rather than reproducing it, because a
+  resumption across a deploy legitimately recomputes a different build. The
+  record is a forensic one on the root path: a resumed attempt executes against
+  a freshly assembled tool surface, not against the stored fields, so live
+  reauthorization rather than the record is what bounds it.
 - **Loading never widens the frozen scope.** Bound connections, attached
   resources, and previously used plugins are activation *hints*, filtered through
   the frozen scope and reauthorized before restoration.
@@ -1284,14 +1286,26 @@ instance already made; the resumption path already restarts the loop without
 that cost.
 
 **Consequences:** Nothing re-checks that a resumed attempt's authority did not
-widen between attempts. That check now rests entirely on live revalidation
-before every tool call, which is where the enforcement already was: the stored
-`run_scopes` row is read in only two places, both on the inline-child path, and
-never to authorize a tool. The child binding is untouched and still has teeth,
+widen between attempts, so a connection added mid-run can widen the resumed
+surface. That bound now rests entirely on live revalidation before every tool
+call, which is where the enforcement already was: the stored `run_scopes` row is
+read in only two places, both on the inline-child path, and never to authorize a
+tool. Filtering the freshly assembled surface against the stored eligible
+connection and capability fields would restore the bound without reinstating any
+comparison, and is the shape to reach for if this is wanted back.
+
+The removed value comparison was also doing a second job by accident. Because a
+stale executor carries a different attempt ID, it fell to `mismatch` and threw,
+which fenced it; `persistPluginActivation` had no other ownership assertion at
+all, since `persistRunPluginActivation` does not call
+`assertHarnessAttemptOwned`. Reusing on the row alone would have handed a
+zombie executor a false success and let it keep building context against a run
+it no longer holds. Both writes therefore run `attemptOwnership` *before* the
+reuse path, which keeps the deploy fix and still reports a lost lease. The child binding is untouched and still has teeth,
 because `persistInlineChildScope` compares the child's `inherited_scope_hash`
 against the parent's *stored* hash — two stored values, neither recomputed, so a
 deploy cannot separate them. `run_scopes.scope_hash` and
-`run_plugin_activations.tool_surface_hash` survive as forensic record of the
+`run_plugin_activations.tool_surface_hash` survive as a forensic record of the
 build a run was admitted on; no migration was needed and none of the columns
 moved. Anyone reinstating a comparison here must compare stored against stored,
 or exclude the build fields, or it will fail every run that outlives a deploy.
@@ -2393,7 +2407,7 @@ flag is the recorded escalation if staged rollout is later wanted.
 hashed into the recorded run scope, and at the time of this change bumping it
 failed every in-flight run resuming across the deploy with
 `immutable_run_scope_mismatch`. That hazard is gone as of *A deploy no longer
-kills the runs it interrupts* below, which stopped comparing a recomputed scope
+kills the runs it interrupts* above, which stopped comparing a recomputed scope
 against the recorded one; the reasoning that follows stands on its own. The section
 grants no capability and moves no authority — eligible capabilities and the tool
 surface hash are unchanged — and its flag derives from environment and run input

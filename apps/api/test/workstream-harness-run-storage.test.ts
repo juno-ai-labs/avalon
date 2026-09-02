@@ -819,13 +819,37 @@ describe("freezing a run's scope", () => {
 
     // A restart that mints a fresh attempt id, rather than reclaiming the
     // fenced one, is the other shape of the same thing: the run's scope is
-    // still the one it was admitted with, not the taker's recomputation.
-    sql.exec(`UPDATE runs SET lease_owner = ?, attempt_epoch = 2 WHERE run_id = ?`, "owner-2", RUN);
+    // still the one it was admitted with, not the taker's recomputation. The
+    // taker has genuinely claimed the run, so it clears the lease fence below.
+    sql.exec(
+      `UPDATE runs SET lease_owner = ?, legacy_attempt_id = ?, attempt_epoch = 2 WHERE run_id = ?`,
+      "owner-2",
+      "attempt-2",
+      RUN,
+    );
     expect(storage.persistScope({
       ...fence, runId: RUN, ...scope, attemptId: "attempt-2", owner: "owner-2", scopeHash: "scope-hash-2",
     })).toEqual({ outcome: "reused" });
     expect(storage.scope({ runId: RUN }))
       .toMatchObject({ attempt_id: "attempt-1", scope_hash: "scope-hash-1" });
+  });
+
+  it("refuses an executor that lost the run even though a scope is recorded", () => {
+    const { storage, sql } = claimed();
+    storage.persistScope({ ...fence, runId: RUN, ...scope });
+
+    // Reusing on the row alone would answer a stale executor with success. The
+    // removed hash comparison used to catch this by accident, because a stale
+    // executor carries a different attempt id; the lease fence catches it on
+    // purpose.
+    sql.exec(
+      `UPDATE runs SET lease_owner = ?, legacy_attempt_id = ? WHERE run_id = ?`,
+      "owner-2",
+      "attempt-2",
+      RUN,
+    );
+    expect(storage.persistScope({ ...fence, runId: RUN, ...scope }))
+      .toEqual({ outcome: "ownership_lost" });
   });
 
   it("refuses an attempt that no longer holds the run", () => {
@@ -902,6 +926,23 @@ describe("recording a plugin activation", () => {
       RUN,
       "linear",
     ).one()).toMatchObject({ tool_surface_hash: "surface-v1" });
+  });
+
+  it("refuses an executor that lost the run even though the activation exists", () => {
+    const { storage, sql } = claimed();
+    storage.persistPluginActivation({ ...fence, runId: RUN, ...activation });
+
+    // A stale executor told its activation is durable goes on preparing the
+    // plugin against a run it no longer holds, so the lease is checked before
+    // the row is.
+    sql.exec(
+      `UPDATE runs SET lease_owner = ?, legacy_attempt_id = ? WHERE run_id = ?`,
+      "owner-2",
+      "attempt-2",
+      RUN,
+    );
+    expect(storage.persistPluginActivation({ ...fence, runId: RUN, ...activation }))
+      .toEqual({ outcome: "ownership_lost" });
   });
 
   it("refuses an attempt that no longer holds the run", () => {
