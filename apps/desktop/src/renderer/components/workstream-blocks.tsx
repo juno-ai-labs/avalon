@@ -1484,6 +1484,15 @@ function workSummaryLabel(summary: NonNullable<Message['workSummary']>): string 
  * it. It borrows the plugin marks' own box and pulse rather than growing a
  * second set: this is the same 20px column, and a thinking row that is still
  * going has exactly the fact to convey that a running plugin row does.
+ *
+ * `active` is the row's reported status, which is what a plugin mark pulses on
+ * too — not `AgentWorkTiming`'s narrower `running`, which additionally demands
+ * a start to count from. The orb answered that question the other way, and the
+ * difference shows in one state: an activity still marked active whose
+ * intervals have all closed parks the number and the label's shimmer, and the
+ * mark keeps breathing. That row is reporting a live activity, so the mark is
+ * saying the true thing and the frozen number beside it is the defect; the
+ * plugin rows have carried the same pair since they replaced their spinners.
  */
 function ThinkingGlyph({ active }: { active: boolean }): React.JSX.Element {
   return (
@@ -1500,11 +1509,12 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
   const thought = message.thoughtEvent;
   if (!thought) return null;
   const active = thought.status === 'started';
+  const verb = thought.activeVerb ?? 'working';
   // Only the model's own reasoning gets the brain. The other row this block
   // draws is the response's overall total — tool calls and all — and it keeps
   // the orb, the shape that stands for work in general rather than for
   // thinking. The verb is what tells them apart, here as everywhere else.
-  const thinking = (thought.activeVerb ?? 'working') === 'thinking';
+  const thinking = verb === 'thinking';
   return (
     <AgentWorkTiming
       active={active}
@@ -1512,7 +1522,7 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
       // This block renders both kinds of thought row — a turn's thinking and a
       // response's overall work — so the subject comes from the row's own verb
       // rather than being fixed here: "Rally is thinking", "Rally is working".
-      activeName={`Rally is ${thought.activeVerb ?? 'working'}`}
+      activeName={`Rally is ${verb}`}
       durationMs={thought.durationMs}
       monotonicStartedAt={thought.monotonicStartedAt}
       timingAccuracy={thought.timingAccuracy}

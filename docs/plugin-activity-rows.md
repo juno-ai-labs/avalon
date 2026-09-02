@@ -88,7 +88,9 @@ So `groupThinkingMessages` sums a run's thinking into one row — "thinking for
 all settled — sitting where the run's first thinking row sat.
 
 That row draws a **brain** where a plugin row draws its mark, in the same box
-and with the same pulse while it is still going. The orb it replaces said only
+and with the same pulse while its activity is still reported active — which is
+the plugin mark's own condition, and a looser one than the ticking number's:
+a row whose intervals have all closed keeps the pulse and freezes the number. The orb it replaces said only
 that something was running, which the shimmering label already said; every other
 row in the column names the place the work happened, and reasoning is one of
 those places. The response's own total keeps the orb — it covers tool calls as
