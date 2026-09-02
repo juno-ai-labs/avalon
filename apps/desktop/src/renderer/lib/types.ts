@@ -462,7 +462,13 @@ export interface Message {
      * colleague's message gets, with a different name in the author slot — so
      * nothing but the author line and this type distinguishes it.
      */
-    | 'automation_activation';
+    | 'automation_activation'
+    /**
+     * A settled run's machinery, folded behind its own total. Carries no work
+     * of its own: `workAccordion.rows` holds the plugin and thinking rows it
+     * swallowed, and the reader opens it to see them.
+     */
+    | 'work_accordion';
   text?: string;
   contextLabel?: string;
   mentions?: MessageMention[];
@@ -536,10 +542,35 @@ export interface Message {
    * progress and becomes a fact about the message it produced, so it moves
    * into that message's header rather than leaving a spent timer sitting in
    * the feed under the answer.
+   *
+   * It is printed there only when the turn reached for nothing. Where the run
+   * left machinery above the answer, `collapseSettledWorkIntoAccordion` moves
+   * this total onto the `work_accordion` row it folds that machinery into, and
+   * the header carries nothing.
    */
   workSummary?: {
     durationMs: number | null;
     timingAccuracy?: 'observed' | 'upper_bound';
+  };
+  /**
+   * The finished run's machinery, and the total that stands for it.
+   *
+   * Set on a `work_accordion` row, which sits where the run's first row sat —
+   * directly above the answer the run produced. The total is that answer's
+   * `workSummary`, moved here rather than copied: a duration printed twice,
+   * once on the accordion and once in the header a line below it, is the same
+   * fact competing with itself.
+   *
+   * The rows it swallowed are nested rather than left in the feed, because the
+   * transcript is virtualized: a collapse that only hid its rows would still
+   * cost one measured item each, and an opened one would grow N items whose
+   * heights the cache has to be told about individually. One row, one
+   * measurement, one thing to remember about it.
+   */
+  workAccordion?: {
+    durationMs: number | null;
+    timingAccuracy?: 'observed' | 'upper_bound';
+    rows: Message[];
   };
   elicitation?: ElicitationData;
 }
