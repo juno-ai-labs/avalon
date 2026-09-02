@@ -316,6 +316,7 @@ describe('a card composer closes its frame', () => {
     // A rule theme zeroes the border width; a card carries one.
     if (token(theme, 'border-width') === '0') {
       expect(token(theme, 'border-color')).toBe('transparent');
+      expect(token(theme, 'border-color-focus')).toBe('transparent');
       // The hairline is the whole shape here, and `rule-color-focus` is the only
       // thing left saying the field is live. Either one going transparent leaves
       // a composer with no edge at all, which is the same defect as the card's
