@@ -122,7 +122,11 @@ oracle. **The code never travels in a request URL.** The desktop lands on
 `location.hash` — which a browser never sends to a server — clears it from the
 address bar, and `POST`s the code in a request body. The redeem endpoint never
 serves artifact content: it consumes the code, sets the cookie, and redirects, so
-no artifact document is ever loaded at a location that held the code.
+no artifact document is ever loaded at a location that held the code. This
+Rally-authored bootstrap is the only response with
+`Referrer-Policy: same-origin`, which keeps Chromium's Origin non-opaque on the
+redeem POST; the artifact document reached after redemption returns to
+`no-referrer`.
 
 The lazy move from a legacy UUID host to a readable host is an origin change.
 Server-side facet data is unaffected, but browser-owned cookies, local storage,
@@ -149,6 +153,11 @@ is the only place that can forward into it.
 
 ## Invariants
 
+- **The access bootstrap is the only response that may depart from
+  `Referrer-Policy: no-referrer`, and it may widen only to `same-origin`.** Its
+  native same-origin form POST otherwise carries `Origin: null` and cannot pass
+  the redeem fence. The exception must never reach model-authored content or a
+  policy that sends an artifact origin off-origin.
 - **Model-authored content is never same-origin with the application, the API, or
   another artifact.** Break it and a hostile artifact reads another's storage,
   cookies, or DOM. The origin is a per-artifact subdomain of a registrable domain
@@ -370,6 +379,38 @@ Worker's waistline is deliberately minimal, so a compromise of it exposes
 artifact content and viewer sessions rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-02 — The redeem bootstrap keeps its same-origin identity
+
+**What changed:** The Rally-authored `/__rally/open` bootstrap now carries
+`Referrer-Policy: same-origin`; artifact documents, errors, and every other
+response keep the default `no-referrer` policy.
+
+**Why:** A production Electron trace showed the bootstrap reaching the artifact
+Worker and preserving its one-time code, then Chromium submitting the
+same-origin redeem form with `Sec-Fetch-Site: same-origin` but `Origin: null`.
+The fetch-metadata fence correctly rejected that opaque origin with 403, so the
+rail rendered the neutral "Open this from Rally" page instead of the artifact.
+The `null` was produced by the bootstrap response inheriting the artifact
+page's `no-referrer` policy.
+
+**Considered and rejected:** Relaxing the origin mismatch check would admit an
+opaque initiator wherever fetch metadata happened to say same-origin; moving the
+code into a query parameter would put it in Cloudflare request logs; and
+changing the policy on artifact content would weaken a protection unrelated to
+redemption. Replacing the native form with `fetch()` would preserve a real
+Origin under `no-referrer`, but it would make the bootstrap script reproduce the
+navigation and neutral-error behavior the form already supplies. The bootstrap
+is Rally-owned, has one same-origin form action, and never exposes its fragment
+in a Referer, so giving only that response a same-origin policy is the smaller
+and cheaper-to-reverse repair.
+
+**Consequences:** Chromium-based Rally surfaces can redeem the single-use code
+and receive their viewer cookie. Only the bootstrap path can be sent as a
+same-origin referrer, while the fragment proof remains client-only and the
+resulting artifact page continues to send no referrer. Unit and route-level
+regressions lock both the policy split and refusal of the production
+`Sec-Fetch-Site: same-origin` plus `Origin: null` pair.
 
 ### 2026-09-01 — Review closes navigation, retry, and local-setup gaps
 
