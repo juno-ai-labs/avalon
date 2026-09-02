@@ -82,6 +82,25 @@ describe("artifact hostname allocation", () => {
     expect(reserved).not.toBe(firstCandidate);
   });
 
+  it("reports exhaustion when a finite policy value is selected and every candidate collides", async () => {
+    const { database, env } = fixture();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      database.prepare(
+        `INSERT INTO artifact_hostname_routes
+           (hostname_stub, region, artifact_id, created_at)
+         VALUES (?, 'global', ?, '2026-09-01T00:00:00.000Z')`,
+      ).run(
+        await artifactHostnameCandidate(env, WORKSPACE, ARTIFACT_2, attempt),
+        attempt === 0 ? ARTIFACT_1 : "00000000-0000-7000-8000-0000000000b3",
+      );
+    }
+
+    await expect(ensureArtifactHostname(env, {
+      workspaceId: WORKSPACE,
+      artifactId: ARTIFACT_2,
+    }, 2)).rejects.toThrow("artifact_hostname_exhausted");
+  });
+
   it("makes a public origin a permanent, immutable tombstone", async () => {
     const { database, env } = fixture();
     const stub = await ensureArtifactHostname(env, {

@@ -16,11 +16,20 @@ import { sha256 } from "../lib/crypto";
 import { allocateWorkstreamEmailAddressCandidate } from "../lib/workstream-email-address";
 
 /**
- * Matches the established address and resource-slug allocators. Their shared
- * vocabulary makes even a second attempt roughly a one-in-a-billion event;
- * this is an inherited protocol bound rather than a new operational ceiling.
+ * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: D1 collision attempts while reserving one artifact hostname.
+ * Without it: a corrupted or adversarially saturated route table can keep one
+ *   authenticated publish/open request issuing paid D1 writes indefinitely.
+ *   No upstream bound limits those attempts.
+ * Direction: upper bound; the open value is +Infinity.
+ * Trips: allocation fails with `artifact_hostname_exhausted`; no product or
+ *   WorkspaceDO row points at an unreserved hostname.
+ * Derive from: the acceptable D1 cost and request duration for one publish,
+ *   weighed against the four-word vocabulary's collision probability.
  */
-const MAXIMUM_HOSTNAME_ALLOCATION_ATTEMPTS = 1_024;
+export const MAXIMUM_HOSTNAME_ALLOCATION_ATTEMPTS = Number.POSITIVE_INFINITY;
 
 async function hostnameKey(env: Env): Promise<string> {
   return sha256(`artifact-hostname:${env.SESSION_SIGNING_KEY}`);
@@ -57,12 +66,13 @@ async function existingHostname(env: Env, input: ArtifactHostnameInput): Promise
 export async function ensureArtifactHostname(
   env: Env,
   input: ArtifactHostnameInput,
+  maximumAttempts = MAXIMUM_HOSTNAME_ALLOCATION_ATTEMPTS,
 ): Promise<ArtifactHostnameStub> {
   const existing = await existingHostname(env, input);
   if (existing) return existing;
 
   const createdAt = nowIso();
-  for (let attempt = 0; attempt < MAXIMUM_HOSTNAME_ALLOCATION_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
     const candidate = await artifactHostnameCandidate(env, input.workspaceId, input.artifactId, attempt);
     await env.PLATFORM_DB.prepare(
       `INSERT INTO artifact_hostname_routes

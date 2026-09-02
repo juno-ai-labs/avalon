@@ -170,7 +170,8 @@ const ARTIFACT_HOST_SUFFIX = { global: "-g", eu: "-eu" } as const;
  * this parser only establishes the wire shape.
  */
 export const ArtifactHostnameStubSchema = z.string()
-  .regex(/^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u);
+  .regex(/^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u)
+  .brand<"ArtifactHostnameStub">();
 export type ArtifactHostnameStub = z.infer<typeof ArtifactHostnameStubSchema>;
 
 export const ArtifactHostnameRouteSchema = z.strictObject({
@@ -196,11 +197,11 @@ export type ArtifactHostnameRoute = z.infer<typeof ArtifactHostnameRouteSchema>;
  * remains the supervisor object's identity. Legacy UUID labels keep parsing so
  * existing bookmarks remain valid while newly opened artifacts use the stub.
  */
-export function artifactHostLabel(hostnameStub: string, region: "global" | "eu"): string {
-  return `${ArtifactHostnameStubSchema.parse(hostnameStub)}${ARTIFACT_HOST_SUFFIX[region]}`;
+export function artifactHostLabel(hostnameStub: ArtifactHostnameStub, region: "global" | "eu"): string {
+  return `${hostnameStub}${ARTIFACT_HOST_SUFFIX[region]}`;
 }
 
-export function artifactOrigin(hostnameStub: string, region: "global" | "eu", domain: string): string {
+export function artifactOrigin(hostnameStub: ArtifactHostnameStub, region: "global" | "eu", domain: string): string {
   return `https://${artifactHostLabel(hostnameStub, region)}.${domain}`;
 }
 
@@ -226,17 +227,21 @@ export function parseArtifactHost(
   const label = host.trim().toLowerCase().split(":")[0]?.split(".")[0] ?? "";
   const stub = STUB_HOST_LABEL_PATTERN.exec(label);
   if (stub?.[1] && stub[2]) {
+    const hostnameStub = ArtifactHostnameStubSchema.safeParse(stub[1]);
+    if (!hostnameStub.success) return null;
     return {
-      hostnameStub: ArtifactHostnameStubSchema.parse(stub[1]),
+      hostnameStub: hostnameStub.data,
       legacyArtifactId: null,
       region: stub[2] === "eu" ? "eu" : "global",
     };
   }
   const legacy = LEGACY_HOST_LABEL_PATTERN.exec(label);
   if (!legacy?.[1] || !legacy[2]) return null;
+  const artifactId = ArtifactIdSchema.safeParse(legacy[1]);
+  if (!artifactId.success) return null;
   return {
     hostnameStub: null,
-    legacyArtifactId: ArtifactIdSchema.parse(legacy[1]),
+    legacyArtifactId: artifactId.data,
     region: legacy[2] === "eu" ? "eu" : "global",
   };
 }

@@ -328,6 +328,7 @@ const numericString = z.string().regex(/^\d+$/u, "must be a base-10 integer");
 
 const EnvContractSchema = z.object({
   DB: binding<D1Database>(),
+  PLATFORM_DB: binding<D1Database>(),
   PAYLOADS: binding<R2Bucket>(),
   TELEMETRY_PAYLOADS: binding<R2Bucket>(),
   INFERENCE_PRICING_CACHE: binding<KVNamespace>(),
