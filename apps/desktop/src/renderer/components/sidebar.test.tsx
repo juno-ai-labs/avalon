@@ -405,12 +405,13 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    // Three for the automations, then two groups of four and three.
-    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(10);
+    // Three for the projects, three for the automations, then two groups of
+    // four and three.
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(13);
     expect(container.querySelectorAll('.skeleton-group-label')).toHaveLength(2);
     // Said once for the whole wait, not once per section and not once per row.
     expect(screen.getAllByRole('status')).toHaveLength(1);
-    expect(screen.getByText('Loading your work streams, automations and notes')).toBeInTheDocument();
+    expect(screen.getByText('Loading your projects, work streams, automations and notes')).toBeInTheDocument();
     // Nothing claims the sidebar is empty while it is still arriving.
     expect(screen.queryByText('No active automations')).not.toBeInTheDocument();
     expect(screen.queryByText('No work streams or notes yet')).not.toBeInTheDocument();

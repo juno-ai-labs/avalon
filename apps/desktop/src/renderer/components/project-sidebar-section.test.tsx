@@ -91,6 +91,42 @@ function CreateFlowHarness({
 }
 
 describe('the Projects sidebar section', () => {
+  it('given no projects yet, when the first answer is still in flight, then the section holds row-shaped skeletons', () => {
+    const { container, rerender } = renderSection({ loading: true, projects: [] });
+
+    // The shape of the rows that are coming, the same placeholder the
+    // automations and work streams below show while the same answer is out.
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(3);
+    // Nothing claims the workspace has no projects while they are still arriving.
+    expect(screen.queryByText('No projects yet')).not.toBeInTheDocument();
+    // Decorative: the wait is announced once, by the work-stream section, so
+    // these rows are hidden from the accessibility tree rather than read out.
+    for (const row of container.querySelectorAll('.skeleton-row')) {
+      expect(row).toHaveAttribute('aria-hidden', 'true');
+    }
+
+    rerender(
+      <Tooltip.Provider>
+        <MemoryRouter initialEntries={['/workstreams/new']}>
+          <ProjectSidebarSection
+            inactiveProjects={[]}
+            loading={false}
+            onAddWorkstream={async () => undefined}
+            onCreate={async () => hiring}
+            onReorder={async () => undefined}
+            onRestore={async () => undefined}
+            projects={[hiring]}
+            renderWorkstream={() => null}
+            workstreams={[]}
+          />
+        </MemoryRouter>
+      </Tooltip.Provider>,
+    );
+
+    expect(container.querySelectorAll('.skeleton-row')).toHaveLength(0);
+    expect(screen.getByRole('link', { name: /Hiring/u })).toBeInTheDocument();
+  });
+
   it('given one project, when its row opens the dashboard and is clicked again, then the selected row closes its accordion', () => {
     renderSection();
 
