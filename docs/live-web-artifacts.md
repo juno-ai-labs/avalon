@@ -463,6 +463,13 @@ adapter in `index.ts` would have worked and been untestable: this module holds
 no `electron` import precisely so its decisions can be unit tested, and *when a
 surface may be touched* is a decision.
 
+**Also:** `present()` discards a view whose contents closed themselves before
+deciding whether to reuse it. Reuse was keyed on the artifact ID alone, so a
+page that called `window.close()` left a dead handle that the next presentation
+of the same artifact would keep — compositing nothing while reporting success,
+which the rail reads as a live preview and so renders no fallback over the blank
+pane. Found by review.
+
 **Consequences:** The lifecycle is now part of the two interfaces, so any future
 host or view implementation has to answer for it. A destroyed window is asked to
 detach nothing, because destroying it already destroyed its children; the view
