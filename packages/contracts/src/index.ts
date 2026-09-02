@@ -2055,6 +2055,11 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
      */
     publishPresence: z.boolean().default(true),
   }),
+  // A speculative feed may paint its snapshot before navigation commits. The
+  // retained admitted socket sends this one-way promotion when the person
+  // actually opens the work stream, keeping hover reads free of seen-state
+  // writes without putting a request on the click-to-paint path.
+  z.strictObject({ type: z.literal("mark_opened") }),
   // Re-send the canonical `snapshot` frame on a socket that is already
   // subscribed. It carries no cursor on purpose: a viewer asking for canonical
   // state is saying its own state may be wrong, so a cursor it supplied is the

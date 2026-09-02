@@ -99,6 +99,11 @@ const SocketTicketSchema = z.object({
   url: z.string().min(1),
   ticket: z.string().min(1),
   ticketId: IdSchema.optional(),
+  subscriptionBootstrap: z.boolean().optional(),
+});
+const SocketTicketQuerySchema = z.object({
+  afterSequence: z.coerce.number().int().nonnegative().optional(),
+  speculative: z.literal("true").transform(() => true).optional(),
 });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
@@ -358,37 +363,61 @@ workstreamRoutes.post("/:id/retry", zValidator("param", idParam), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(RetriedRunSchema.parse(await client.retry()), 202);
 });
-workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) => {
-  const id = c.req.valid("param").id;
-  return requestFlowSpan(c, "workstream.socket.ticket", {
-    flow: "workstream_open",
-    identity: { workstreamId: id, substreamId: "0" },
-  }, async (span) => {
-    const issued = await span.step("workstream.socket.ticket.issue", () =>
-      new WorkstreamService(c.env, getAuth(c)).socketTicket(id, "0"));
-    // The upgrade this authorizes is a new connection, which the platform
-    // traces as its own invocation with its own trace id. The ticket id is the
-    // attribute both traces carry, and the only thing that joins them.
-    span.setAttributes({
-      "rally.socket.ticket_id": issued.ticketId,
+workstreamRoutes.get(
+  "/:id/socket",
+  zValidator("param", idParam),
+  zValidator("query", SocketTicketQuerySchema),
+  async (c) => {
+    const id = c.req.valid("param").id;
+    const afterSequence = c.req.valid("query").afterSequence;
+    const speculative = c.req.valid("query").speculative ?? false;
+    return requestFlowSpan(c, "workstream.socket.ticket", {
+      flow: "workstream_open",
+      identity: { workstreamId: id, substreamId: "0" },
+    }, async (span) => {
+      const issued = await span.step("workstream.socket.ticket.issue", () =>
+        new WorkstreamService(c.env, getAuth(c)).socketTicket(
+          id,
+          "0",
+          afterSequence,
+          speculative,
+        ));
+      // The upgrade this authorizes is a new connection, which the platform
+      // traces as its own invocation with its own trace id. The ticket id is the
+      // attribute both traces carry, and the only thing that joins them.
+      span.setAttributes({
+        "rally.socket.ticket_id": issued.ticketId,
+      });
+      return c.json(SocketTicketSchema.parse(issued));
     });
-    return c.json(SocketTicketSchema.parse(issued));
-  });
-});
-workstreamRoutes.get("/:id/substreams/:substreamId/socket", zValidator("param", substreamSocketParam), async (c) => {
-  const param = c.req.valid("param");
-  return requestFlowSpan(c, "workstream.socket.ticket", {
-    flow: "workstream_open",
-    identity: { workstreamId: param.id, substreamId: param.substreamId },
-  }, async (span) => {
-    const issued = await span.step("workstream.socket.ticket.issue", () =>
-      new WorkstreamService(c.env, getAuth(c)).socketTicket(param.id, param.substreamId));
-    span.setAttributes({
-      "rally.socket.ticket_id": issued.ticketId,
+  },
+);
+workstreamRoutes.get(
+  "/:id/substreams/:substreamId/socket",
+  zValidator("param", substreamSocketParam),
+  zValidator("query", SocketTicketQuerySchema),
+  async (c) => {
+    const param = c.req.valid("param");
+    const afterSequence = c.req.valid("query").afterSequence;
+    const speculative = c.req.valid("query").speculative ?? false;
+    return requestFlowSpan(c, "workstream.socket.ticket", {
+      flow: "workstream_open",
+      identity: { workstreamId: param.id, substreamId: param.substreamId },
+    }, async (span) => {
+      const issued = await span.step("workstream.socket.ticket.issue", () =>
+        new WorkstreamService(c.env, getAuth(c)).socketTicket(
+          param.id,
+          param.substreamId,
+          afterSequence,
+          speculative,
+        ));
+      span.setAttributes({
+        "rally.socket.ticket_id": issued.ticketId,
+      });
+      return c.json(SocketTicketSchema.parse(issued));
     });
-    return c.json(SocketTicketSchema.parse(issued));
-  });
-});
+  },
+);
 workstreamRoutes.get("/:id/control-socket", zValidator("param", idParam), async (c) =>
   c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c))
     .workstreamControlSocketTicket(c.req.valid("param").id))),

@@ -603,6 +603,18 @@ canonical product state is invalid.
 
 `planSocketReplay` handles the four cursor relationships explicitly:
 
+For current desktop clients the resume cursor is signed into the single-use
+socket ticket. The SubstreamAgent performs session and workspace-membership
+admission once during acceptance, stores the admitted role in the hibernation
+attachment, and completes this plan before returning the `101`. Older servers
+remain compatible because the renderer sends an explicit `subscribe` unless
+the ticket response advertises bootstrap. Reusing the admitted attachment for
+snapshot detail removes duplicate initial authorization only; the access
+revocation queue still closes that socket immediately.
+The ticket may also sign speculative hover intent. Its snapshot skips
+`first_opened_at`; the admitted socket settles that state only when committed
+navigation sends `mark_opened`.
+
 1. A new subscription at sequence zero receives an `initial` canonical
    snapshot.
 2. A cursor at the durable sequence needs no frames; a cursor behind it receives
@@ -1038,6 +1050,7 @@ misrouted product statement now fails because the table or column is absent.
 - **Nothing may `await` between a sync waterline's allocation and its send.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. `publishSync` allocates in `transactionSync` and sends in the same synchronous run, which is what makes that true; an `await` between the two opens the input gate and lets a later publication overtake, and the desktop then silently drops the parked payload along with every topic it named. This is not hypothetical — it is the bug the revalidation sweep shipped, recorded in the changelog.
 - **No publish path asks D1 anything.** Losing workspace access is carried by the queue in [`access-revocation.md`](access-revocation.md) and by nothing else — no object polls, revalidates on a timer, or re-reads `workspace_members` before sending. Putting a D1 query back on a publish path is where the waterline ordering bug came from, and the transcript feed would pay it per token frame. An object enforcing its *own* SQL — `canRead`, `product.canRead` — is not that: it is synchronous, local, and answers a question no queue message carries.
 - **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** Admission is where authorization is decided, and it is decided fresh every time; no long-lived ticket or attachment is continuing authority for a new write. What an admitted socket then holds is ended by the revocation queue, not by re-asking.
+- **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. Sockets never carry a connector principal; tickets are issued to login sessions only.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
@@ -1477,6 +1490,35 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-01 — Feed acceptance bootstraps one admitted snapshot
+
+**What changed:** The signed feed ticket may carry a resume cursor. Socket
+acceptance verifies session and membership once, serializes the admitted role,
+and completes a presence-free subscription before returning the upgrade.
+Snapshot detail reuses that admission instead of repeating D1 authorization.
+Cold initialization now separates schema/repository readiness from lease repair
+and alarm re-arming, which have a named runtime-recovery phase.
+
+**Why:** The former first frame required accept, a later subscribe message, and
+another authorization inside snapshot detail. Cold sockets also awaited agent
+lease/alarm recovery before a read subscription could begin. All three waits sat
+inside the two-second work-stream switch target without strengthening the
+authorization decision.
+
+**Considered and rejected:** Trusting an unsigned cursor would make replay state
+renderer-controlled after ticket issue. Skipping fresh socket admission would
+extend ticket authority. Deferring runtime recovery until a later mutation
+would leave abandoned leases and alarms unresolved after a read-only wake.
+
+**Consequences:** New client/server pairs can receive their first frame without
+a client subscribe round trip. Rolling deployments keep the explicit subscribe
+fallback. Read sockets may proceed while runtime recovery finishes, while
+mutations still await full initialization and revocation still terminates the
+admitted attachment. Speculative snapshots do not settle unseen state;
+navigation promotes the admitted socket explicitly. A thrown bootstrap closes
+the registered server end before reconnect, and a thrown runtime-recovery
+attempt is retried by the next mutation instead of poisoning the isolate.
 
 ### 2026-09-01 — Exposing an automation run unhides a row; it creates nothing
 

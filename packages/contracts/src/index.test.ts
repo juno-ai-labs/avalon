@@ -814,6 +814,15 @@ describe("boundary contracts", () => {
     }).success).toBe(false);
   });
 
+  it("takes only the empty socket promotion event", () => {
+    expect(ClientSocketEventSchema.parse({ type: "mark_opened" }))
+      .toEqual({ type: "mark_opened" });
+    expect(ClientSocketEventSchema.safeParse({
+      type: "mark_opened",
+      userId: id,
+    }).success).toBe(false);
+  });
+
   it("validates ordered socket mutations", () => {
     expect(
       ClientSocketEventSchema.parse({
