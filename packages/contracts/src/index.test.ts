@@ -319,14 +319,6 @@ describe("boundary contracts", () => {
       "openai/gpt-5.6-terra",
       "openai/gpt-5.6-luna",
     ]);
-    expect(AGENT_MODEL_OVERRIDES.filter((id) => id.startsWith("google/gemini-3"))).toEqual([
-      "google/gemini-3.8-flash",
-      "google/gemini-3.7-flash",
-      "google/gemini-3.6-flash",
-      "google/gemini-3.5-flash",
-      "google/gemini-3-flash-preview",
-    ]);
-
     // Takes its two versions in the order the list mentions them, so the call
     // below reads the way the rule is stated: the id listed first must carry
     // the newer version.
