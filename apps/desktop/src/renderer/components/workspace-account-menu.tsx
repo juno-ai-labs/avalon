@@ -36,7 +36,9 @@ export interface WorkspaceAccountMenuProps {
   onInvitationPromptDismiss: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
-  onSwitchWorkspace: (workspace: DesktopWorkspaceSummary) => Promise<void>;
+  /** Resolves true once the switch has taken; the menu closes on that and stays
+   * open — with the row's error beneath it — when it did not. */
+  onSwitchWorkspace: (workspace: DesktopWorkspaceSummary) => Promise<boolean>;
 }
 
 /** Why a background workspace is outlined while the account needs reconnecting.
@@ -59,16 +61,40 @@ function countClass(attention: WorkspaceAttention): string {
       : 'is-unseen';
 }
 
+/** What the green dot means: something moved, nothing is waiting on this person. */
+export const UNREAD_ACTIVITY_DESCRIPTION = 'New activity since you last looked. Nothing is waiting on you.';
+
+/**
+ * The count is how many work streams are waiting on this person, and its
+ * colour is the strongest reason among them — the same order WorkspaceDO
+ * ranks them: a mention, then a run waiting for input, then a work stream
+ * they are in but have never opened.
+ */
 function attentionLabel(attention: WorkspaceAttention): string | null {
-  if (attention.waitingForYou > 0) {
-    const subject = attention.waitingReason === 'mentioned'
-      ? 'mentions'
+  const count = attention.waitingForYou;
+  if (count > 0) {
+    const plural = count === 1 ? '' : 's';
+    return attention.waitingReason === 'mentioned'
+      ? `${count} mention${plural} waiting for you`
       : attention.waitingReason === 'needs_input'
-        ? 'items needing input'
-        : 'unseen items';
-    return `${attention.waitingForYou} ${subject}`;
+        ? `${count} work stream${plural} waiting for your input`
+        : `${count} new work stream${plural} you have not opened`;
   }
   return attention.hasUnreadActivity ? 'Unread activity' : null;
+}
+
+function IndicatorTooltip({ children, label }: { children: React.ReactElement; label: string }): React.JSX.Element {
+  return (
+    <Tooltip.Root delayDuration={300}>
+      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content className="tooltip" side="top" sideOffset={6}>
+          {label}
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
 }
 
 function actionErrorMessage(error: unknown, fallback: string): string {
@@ -100,6 +126,7 @@ export function WorkspaceAccountMenu({
   onSwitchWorkspace,
 }: WorkspaceAccountMenuProps): React.JSX.Element {
   const [invitation, setInvitation] = useState<DesktopPendingWorkspaceInvitation | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceRegion, setWorkspaceRegion] = useState<RallyRegion>('global');
@@ -146,7 +173,13 @@ export function WorkspaceAccountMenu({
 
   return (
     <>
-      <DropdownMenu.Root onOpenChange={(open) => { if (open && enabled) onMenuOpen(); }}>
+      <DropdownMenu.Root
+        onOpenChange={(open) => {
+          setMenuOpen(open);
+          if (open && enabled) onMenuOpen();
+        }}
+        open={menuOpen}
+      >
         <DropdownMenu.Trigger asChild>
           <button
             aria-label={[
@@ -194,23 +227,35 @@ export function WorkspaceAccountMenu({
                       className={unavailable ? 'menu-item workspace-menu-item is-unavailable' : 'menu-item workspace-menu-item'}
                       onSelect={(event) => {
                         if (active || switching) return;
+                        // The menu stays open while the switch is pending, so
+                        // the row's spinner and any error land where the
+                        // person is looking; it closes itself once it took.
                         event.preventDefault();
-                        void onSwitchWorkspace(workspace);
+                        void onSwitchWorkspace(workspace).then(
+                          (switched) => { if (switched) setMenuOpen(false); },
+                          () => undefined,
+                        );
                       }}
                     >
                       <span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span>
                       <span className="workspace-menu-copy">
                         <span>{workspace.name}</span>
-                        {error && <small className="workspace-menu-error">{error}</small>}
+                        {error
+                          ? <small className="workspace-menu-error">{error}</small>
+                          : unavailable && <small className="workspace-menu-note">Reconnect your account to open</small>}
                       </span>
                       {multipleRegions && <small className="workspace-region-tag">{regionLabel(workspace.region)}</small>}
                       {switching && <LoaderCircle aria-label="Opening workspace" className="spin" size={14} />}
                       {active && <Check aria-label="Current" size={14} />}
-                      {!active && !switching && count > 0 && workspaceAttention && (
-                        <span className={`workspace-attention-count ${countClass(workspaceAttention)}`}>{count}</span>
+                      {!active && !switching && count > 0 && workspaceAttention && attentionDescription && (
+                        <IndicatorTooltip label={attentionDescription}>
+                          <span className={`workspace-attention-count ${countClass(workspaceAttention)}`}>{count}</span>
+                        </IndicatorTooltip>
                       )}
                       {!active && !switching && count === 0 && !loadingAttention && workspaceAttention?.hasUnreadActivity && (
-                        <span aria-label="Unread activity" className="workspace-activity-dot" />
+                        <IndicatorTooltip label={UNREAD_ACTIVITY_DESCRIPTION}>
+                          <span aria-label="Unread activity" className="workspace-activity-dot" />
+                        </IndicatorTooltip>
                       )}
                     </DropdownMenu.Item>
                   );

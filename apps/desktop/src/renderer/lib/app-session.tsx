@@ -25,6 +25,7 @@ import type {
 import { workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
+import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
 import {
   readDevicePreferences,
@@ -160,6 +161,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
   const sessionRef = useRef<DesktopSession | null>(null);
   sessionRef.current = session;
+  /** The workspace a menu switch is in the middle of landing; see the session-changed listener. */
+  const pendingActivationRef = useRef<{ region: Region; workspaceId: string } | null>(null);
   const bridge = useMemo<AppSessionDesktopBridge>(() => desktopBridge(), []);
   const queryClient = useQueryClient();
 
@@ -228,6 +231,18 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   }, [bridge]);
 
   useEffect(() => bridge.onSessionChanged((nextSession) => {
+    // Main announces a workspace the moment it is persisted, which for a
+    // switch this renderer asked for is before `activateWorkspace` has fetched
+    // what the shell needs to draw it. That path applies the session itself
+    // once it has; applying it here first would tear the shell down early and
+    // make the switch look like a session change that already happened.
+    const pending = pendingActivationRef.current;
+    if (
+      pending && nextSession?.workspace
+      && nextSession.workspace.id === pending.workspaceId && nextSession.workspace.region === pending.region
+    ) {
+      return;
+    }
     const previousSession = sessionRef.current;
     sessionRef.current = nextSession;
     if (!sessionsShareCacheScope(previousSession, nextSession)) queryClient.clear();
@@ -329,10 +344,50 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     }
   }, [bridge, runtime]);
 
-  const activateWorkspace = useCallback(async (selectedRegion: Region, workspaceId: string, operationId?: string): Promise<void> => {
-    const nextSession = await bridge.activateWorkspace({ region: selectedRegion, workspaceId, operationId });
+  /**
+   * Land a chosen workspace in one step. The shell needs the workspace record
+   * before it can draw anything, so it is fetched with the new credential
+   * while the old workspace is still on screen and seeded into the fresh
+   * cache the moment the session changes — otherwise the window shows a bare
+   * "Opening workspace…" between the two. The route is reset to the new
+   * work-stream page whenever the workspace actually changed: a work stream
+   * open in the previous workspace must not be looked up in the next one.
+   * The feature flags ride across the same way so the account menu keeps its
+   * shape while the new workspace's answer is on its way.
+   */
+  const applyActivatedSession = useCallback(async (
+    nextSession: DesktopSession,
+    previous: DesktopSession | null,
+  ): Promise<void> => {
+    const target = nextSession.workspace;
+    const workspaceChanged = !target || !previous?.workspace
+      || previous.workspace.id !== target.id || previous.workspace.region !== target.region;
+    const prefetched = target
+      ? await new RallyApi(nextSession.apiBaseUrl, nextSession).getWorkspace().catch(() => null)
+      : null;
+    const flags = queryClient.getQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY);
+    if (workspaceChanged) window.location.hash = '/workstreams/new';
     applySession(nextSession);
-  }, [applySession, bridge]);
+    if (prefetched && target) {
+      queryClient.setQueryData(['workspace', target.id, nextSession.user.id], prefetched);
+    }
+    if (flags !== undefined) {
+      // Carried, not trusted: stamped stale so the new workspace's own answer
+      // replaces it on the first render that asks.
+      queryClient.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, flags, { updatedAt: 0 });
+    }
+  }, [applySession, queryClient]);
+
+  const activateWorkspace = useCallback(async (selectedRegion: Region, workspaceId: string, operationId?: string): Promise<void> => {
+    const previous = sessionRef.current;
+    pendingActivationRef.current = { region: selectedRegion, workspaceId };
+    try {
+      const nextSession = await bridge.activateWorkspace({ region: selectedRegion, workspaceId, operationId });
+      await applyActivatedSession(nextSession, previous);
+    } finally {
+      pendingActivationRef.current = null;
+    }
+  }, [applyActivatedSession, bridge]);
 
   const acceptInvitation = useCallback(async (
     invitationRegion: Region,
