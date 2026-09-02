@@ -1285,14 +1285,28 @@ activations to the attempt, so a fresh identity re-runs external writes the dead
 instance already made; the resumption path already restarts the loop without
 that cost.
 
+Raised in review and also rejected: *filtering* the freshly assembled tool
+surface against the stored eligible connection and capability fields. It is
+strictly better than the two rejected checks above — it restores the admitted
+bound without reinstating any comparison, so a run still restarts rather than
+dying — and it was declined anyway, deliberately. Rally is one product with one
+authorization path, and that path is live: the principal, work-stream state,
+connection identity, owner, grants and capability are rechecked before every
+tool call. A second bound derived from a snapshot would be a parallel model to
+keep correct, and the case it uniquely catches — a connection added between two
+attempts of one run, in the seconds a Durable Object takes to restart — is
+narrow enough not to earn one. Revisit this if resumed runs ever become
+long-lived enough for workspace state to move underneath them routinely.
+
 **Consequences:** Nothing re-checks that a resumed attempt's authority did not
 widen between attempts, so a connection added mid-run can widen the resumed
 surface. That bound now rests entirely on live revalidation before every tool
 call, which is where the enforcement already was: the stored `run_scopes` row is
 read in only two places, both on the inline-child path, and never to authorize a
-tool. Filtering the freshly assembled surface against the stored eligible
-connection and capability fields would restore the bound without reinstating any
-comparison, and is the shape to reach for if this is wanted back.
+tool. **This is the intended model rather than a gap awaiting a follow-up**: a
+resumed run's authority is its current state, and live revalidation is what
+bounds it. Anyone reading this as an oversight should change it deliberately,
+not patch it.
 
 The removed value comparison was also doing a second job by accident. Because a
 stale executor carries a different attempt ID, it fell to `mismatch` and threw,
