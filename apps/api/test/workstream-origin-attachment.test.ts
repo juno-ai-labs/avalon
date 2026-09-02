@@ -53,6 +53,7 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
 
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { publishWorkstreamEvent } from "../src/services/integrations";
 import {
   attachWorkstreamOriginResource,
   describeWorkstreamOrigin,
@@ -218,6 +219,22 @@ describe("attaching a work stream's origin", () => {
     })]);
   });
 
+  it("leaves origin realtime publication to the owning work-stream object", async () => {
+    const database = seededDatabase();
+    const environmentValue = environment(database);
+    const created = await new WorkstreamService(environmentValue, auth(), () => undefined).create(request());
+    vi.mocked(publishWorkstreamEvent).mockClear();
+
+    await expect(attachWorkstreamOriginResource(environmentValue, {
+      workspaceId,
+      workstreamId: created.workstream.id,
+      attachedByUserId: memberId,
+      descriptor: await slackOrigin(environmentValue),
+    })).resolves.not.toBeNull();
+
+    expect(publishWorkstreamEvent).not.toHaveBeenCalled();
+  });
+
   it("does not lose the work stream when the origin cannot be written down", async () => {
     const database = seededDatabase();
     const service = new WorkstreamService(environment(database), auth(), () => undefined);
@@ -235,7 +252,7 @@ describe("attaching a work stream's origin", () => {
     expect(attachments(database, created.workstream.id)).toEqual([]);
   });
 
-  it("skips the broadcast but keeps the row when the work stream is gone", async () => {
+  it("keeps the shared row when the work stream is gone", async () => {
     const database = seededDatabase();
     const environmentValue = environment(database);
     const created = await new WorkstreamService(environmentValue, auth(), () => undefined).create(request());
