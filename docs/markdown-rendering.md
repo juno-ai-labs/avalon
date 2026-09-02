@@ -180,9 +180,11 @@ view state and must never decide which words are audible.
 
 The collapse-all control lives in the agent-message header, immediately to
 the right of **Worked for**. It expands or collapses every section in that
-turn. New sections that stream in are open regardless of that control's last
-action, because a heading that has only just arrived is not one the reader has
-chosen to close.
+turn, and it offers **Collapse all** until every section is already closed:
+a turn with some sections closed is a reader who has been folding, and the
+action to hand them is folding the rest. New sections that stream in are open
+regardless of that control's last action, because a heading that has only just
+arrived is not one the reader has chosen to close.
 
 Streaming keeps the existing settled-segment memo: complete sections
 render as memoised chunks, and only the last section's body goes through
@@ -688,7 +690,11 @@ the heading just did. The heading check is the load-bearing one: without it,
 the click that the heading deliberately declines to toggle on — a link in the
 heading, or one that follows a text selection — would expand the section
 anyway. It also stays out of the accessibility tree: the chevron is the button,
-and a second control naming the same action would be read twice.
+and a second control naming the same action would be read twice. The test
+dispatches its click at the section rather than at the body, because jsdom
+applies no CSS and lays nothing out: a click aimed at the body bubbles to the
+section there and would pass with the handler on either element, while in a
+real window only one of the two arrangements works.
 
 ### 2026-09-02 — Heading sections start open
 
@@ -705,12 +711,30 @@ reply, including the short ones where there was nothing to scan. Reading is the
 common case and folding is the exception, so the exception is what a reader now
 asks for.
 
+The entry this supersedes gave a second reason, and it is the one that has to
+be answered rather than outvoted: default-collapsed was "the right first paint
+for a streaming reply, which would otherwise push the viewport by a full
+section on every heading that lands". An open section is no longer clipped at
+`3lh`, so that growth is now unbounded — but it does not land on the reader.
+A transcript that is at the end follows the newest message as it grows
+(`use-transcript-follow.ts`), and a reader who has scrolled away has released
+that follow and sits *above* the streaming tail, which grows below them. The
+push the earlier entry feared needed a viewport pinned mid-reply while the
+content above it grew, and the transcript has no such state.
+`estimateSize: () => 140` in `message-feed.tsx` is left as it was: it is the
+guess for a row the virtualizer has not measured yet, `measureElement`
+corrects it as each row renders, and a better number is one to set from what
+rows actually measure rather than from this change.
+
 **What a future change has to respect:** the stored set is *collapsed* ids —
 membership means closed, and absence means open. Inverting it back is what
 makes a streamed-in heading default the wrong way, because the id of a section
 that does not exist yet cannot be in any set. Keep the collapse-all control's
-`allExpanded` derived from that set rather than tracked separately, or the
-button and the sections will disagree after a stream appends a heading.
+`allCollapsed` derived from that set rather than tracked separately, or the
+button and the sections will disagree after a stream appends a heading. That
+control reads `allCollapsed` and not its opposite on purpose: the mixed state
+is a reader partway through folding, and the pre-flip control answered it with
+**Expand all**, which is the one direction they had just declined.
 
 ### 2026-08-31 — Image embed cards preview the image
 
