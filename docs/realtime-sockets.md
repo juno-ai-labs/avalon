@@ -81,7 +81,8 @@ admission is split in two.
    minted, its request schedules that recorded SubstreamAgent's ticket-scoped
    admission and initial-snapshot preparation under `waitUntil`. The response
    does not await that work: object initialization, local visibility admission,
-   and snapshot assembly overlap the ticket's transit and client handshake,
+   a current D1 session/membership check, and eligible snapshot assembly overlap
+   the ticket's transit and client handshake,
    while a failed, revoked, evicted, stale-generation, or unfinished preparation
    leaves the ordinary regional upgrade checks as the fallback.
    A non-main UUID is not warmed merely because its parent is visible; product
@@ -99,12 +100,14 @@ admission is split in two.
    rejects a region or work-stream mismatch.
 4. **Admit.** A feed upgrade reaches the exact `SubstreamAgent`. When the
    in-memory preparation matches every verified ticket claim and the object's
-   local authority generation, the room reuses its admitted role and prepared
-   snapshot; otherwise it re-reads regional authority and session/membership.
-   Both paths recheck object-local visibility and atomically consume the durable
-   ticket receipt. Preparation never consumes a ticket, and session/membership
-   or local-visibility revocation removes a pending preparation before it can be
-   used. A
+   local authority generation, the room reuses its current session/membership
+   decision and eligible prepared snapshot; otherwise it re-reads
+   session/membership. Both paths re-read current regional authority because a
+   maintenance transition can close a generation in place, recheck object-local
+   visibility, and atomically consume the durable ticket receipt. Preparation
+   never consumes a ticket. A constant-size revocation fence prevents older
+   in-flight preparation from reappearing, and only the newest room admission
+   and newest completed snapshot are retained. A
    metadata upgrade reaches the exact `WorkstreamDO`, which verifies D1
    membership plus its local visibility projection. A workspace upgrade reaches
    the workspace's `WorkspaceDO`, which consumes a separate audience ticket and
@@ -720,10 +723,12 @@ what that leaves exposed.
 **What changed:** Feed tickets now sign the authenticated role and current
 authority generation beside their existing exact identity, cursor, expiry, and
 one-time ticket ID. The main-feed ticket continuation asks SubstreamAgent to
-prepare that exact admission and, when the replay plan needs one, assemble the
-viewer-specific initial snapshot. Upgrade reuses the work only when every
-verified claim and the object's local generation match; otherwise it takes the
-former regional authorization and snapshot path.
+recheck and prepare that exact admission and, for a non-speculative replay plan
+without pending-input spill, assemble the viewer-specific initial snapshot.
+Upgrade reuses the work only when every verified claim, current session expiry,
+and the object's local generation match; otherwise it takes the regional
+session/membership and snapshot path. Current maintenance authority remains an
+upgrade-time check on both paths.
 
 **Why:** Current local traces left roughly 168 ms in repeated room authority and
 session/membership reads and roughly 242 ms in snapshot detail after the native
@@ -737,12 +742,15 @@ signed ticket and request-scoped preparation would make them forgeable. Marking
 the work stream opened during preparation was also rejected because a ticket
 request that never upgrades must not settle unseen state.
 
-**Consequences:** A successful preparation removes the two regional admission
-reads and snapshot detail assembly from room upgrade. The durable ticket receipt
-still enforces one use, actual acceptance still settles unseen state, and
-revocation deletes pending work. Eviction, mismatch, expiry, mutation during
-assembly, or preparation failure loses only the optimization and falls back to
-the old path. `workstream_socket_ticket_warm_finished.preparation_outcome`,
+**Consequences:** A successful preparation removes the session/membership join
+and eligible snapshot detail assembly from room upgrade, while retaining the
+current maintenance read. The room holds at most one prepared admission and one
+completed snapshot; speculative tickets and pending-input spill stay
+admission-only, and spill frames serialize one at a time during delivery. The
+durable ticket receipt still enforces one use, actual acceptance still settles
+unseen state, and revocation fences pending work. Eviction, mismatch, expiry,
+local product mutation, sequence change, or preparation failure loses only the
+optimization and falls back to the old path. `workstream_socket_ticket_warm_finished.preparation_outcome`,
 `rally.socket.admission_source`, and `rally.snapshot.source` expose which path ran.
 
 ### 2026-09-02 — Ticket transit overlaps main-room wake and construction cannot drop phases

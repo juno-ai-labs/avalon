@@ -101,10 +101,16 @@ describe("work-stream socket ticket preparation", () => {
       userId,
       sessionId: auth.sessionId,
       ticketId: ticket.ticketId,
+      ticketIssuedAt: expect.any(Number),
+      ticketExpiresAt: expect.any(Number),
       authorityGeneration: 7,
       role: "member",
       speculative: false,
     }));
+    const preparation = (prepareSocketAdmission as unknown as {
+      mock: { calls: Array<[{ ticketIssuedAt: number; ticketExpiresAt: number }]> };
+    }).mock.calls[0]![0];
+    expect(preparation.ticketExpiresAt - preparation.ticketIssuedAt).toBe(60);
     expect(info).toHaveBeenCalledWith(expect.objectContaining({
       event: "workstream_socket_ticket_warm_finished",
       workspace_id: workspaceId,

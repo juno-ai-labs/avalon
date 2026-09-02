@@ -264,9 +264,10 @@ forwarded to a room. Tickets bind user, workspace, work stream, region, and
 one-time ID, and the room atomically rejects reuse. A feed ticket also binds the
 authenticated role and regional work-stream authority generation. SubstreamAgent
 may reuse those values only when they exactly match request-scoped in-memory
-preparation and its local generation; session/membership or local visibility
-revocation deletes that preparation, and its absence restores the full regional
-admission check. HyperSight block tickets add
+preparation revalidated against D1 during ticket transit and its local
+generation. Every upgrade still reads current regional maintenance authority;
+session/membership or local-visibility revocation fences or deletes preparation,
+and its absence restores the full regional admission check. HyperSight block tickets add
 the stable block ID and a distinct audience, so they cannot authorize a source
 feed or parent control socket. The ticket travels in
 `Sec-WebSocket-Protocol` — the one handshake header a browser will set, through
@@ -606,8 +607,10 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   cutoff rather than copied to HyperSight or any later role.
 - **A prepared feed admission is usable only by its exact signed ticket and
   object authority generation.** It is in memory, never a second durable
-  credential; revocation removes it, eviction loses it, and every miss falls
-  back to current regional session/membership authorization. The durable ticket
+  credential; it is revalidated against D1 during ticket transit, natural
+  session expiry is checked locally at upgrade, revocation fences it, eviction
+  loses it, and every miss falls back to current regional session/membership
+  authorization. The room retains only one preparation, and the durable ticket
   receipt remains the one-use decision.
 - **A native WebSocket in the renderer is constructed only from a URL an
   authenticated ticket endpoint returned; Electron's work-stream broker is
@@ -767,10 +770,12 @@ incident response that may prompt it.
 **What changed:** The feed JWT now signs role and work-stream authority
 generation. SubstreamAgent reuses them only when an internal ticket-transit
 preparation matches the complete verified identity, expiry, cursor, speculative
-intent, and ticket ID, and the object's own generation still matches. Pending
-preparation is removed by the same session/membership and local-visibility
-revocations that close sockets. Ticket consumption remains a durable atomic
-operation performed only at upgrade.
+intent, and ticket ID, the session/membership decision was revalidated during
+ticket transit, and the object's own generation still matches. Current regional
+maintenance authority is read at every upgrade. A constant-size revocation
+fence prevents older in-flight preparation from reappearing, and newer tickets
+replace the room's single retained preparation. Ticket consumption remains a
+durable atomic operation performed only at upgrade.
 
 **Why:** Removing repeated room D1 reads is safe only if it spends the exact
 decision made by authenticated ticket issue without creating a longer-lived or
@@ -784,10 +789,11 @@ after preparation was lost would miss a revocation delivered while the object
 was active. Consuming the ticket during preparation would make a failed warm-up
 invalidate the real connection.
 
-**Consequences:** The common prepared path skips regional authorization without
-extending the ticket's 60-second lifetime or its one-use scope. Revocation,
-eviction, mismatch, expiry, stale authority generation, and preparation failure
-all discard the optimization and preserve the prior fail-closed path.
+**Consequences:** The common prepared path skips the regional session/membership
+join, but not current maintenance authority, without extending the ticket's
+60-second lifetime or one-use scope. Revocation, eviction, mismatch, natural
+session expiry, stale authority generation, and preparation failure all discard
+the optimization and preserve the prior fail-closed path.
 
 ### 2026-09-01 — Model-authored web content gets its own origins, and its own fences
 

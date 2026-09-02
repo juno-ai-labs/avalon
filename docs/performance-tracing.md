@@ -289,7 +289,12 @@ show whether ticket transit covered storage readiness, admission, and snapshot
 assembly before the joined upgrade arrived. Upgrade records
 `rally.socket.admission_source` as `ticket_preparation` or `regional_fallback`,
 and snapshot delivery records `rally.snapshot.source` as `ticket_preparation`
-or `room_assembly`. When the subscription's plan needs a fresh room snapshot,
+or `room_assembly`; `ticket_preparation_incomplete` means admission was ready
+but the snapshot was speculative, superseded, invalidated, or contained
+pending-input spill and therefore assembled at upgrade. Both admission cohorts
+retain `workstream.room.socket.authority_read` for the current maintenance
+phase; only fallback has `workstream.room.socket.member_authorize`. When the
+subscription's plan needs a fresh room snapshot,
 `workstream.room.snapshot.detail`, `…transcript`, and `…encode` sit inside it;
 the prepared path has no upgrade-time detail span. `rally.snapshot.trims` is
 worth reading beside the byte size. A
@@ -670,9 +675,9 @@ old binary warm outcome would call an admission-only preparation equivalent to
 a fully prepared first frame.
 
 **Consequences:** Compare exact ticket IDs across the warm event and room span.
-A prepared-snapshot cohort should omit both regional admission spans and the
-upgrade-time snapshot-detail span; a fallback retains the old shape and remains
-the correctness baseline.
+A prepared-snapshot cohort should omit the regional member-authorization and
+upgrade-time snapshot-detail spans but retain the regional authority read; a
+fallback retains the old shape and remains the correctness baseline.
 
 ### 2026-09-02 — Ticket transit pays main-room wake and factory phases are lossless
 
