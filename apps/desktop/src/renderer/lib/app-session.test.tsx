@@ -40,7 +40,6 @@ let observedLeaveWorkspace: ((
 ) => Promise<unknown>) | null = null;
 let observedPendingConnectorOAuth: AppSessionValue['pendingConnectorOAuth'] = null;
 let observedSetPendingConnectorOAuth: AppSessionValue['setPendingConnectorOAuth'] | null = null;
-let observedActivateWorkspace: AppSessionValue['activateWorkspace'] | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
@@ -107,7 +106,6 @@ function SessionProbe(): React.JSX.Element {
   observedLeaveWorkspace = context.leaveWorkspace;
   observedPendingConnectorOAuth = context.pendingConnectorOAuth;
   observedSetPendingConnectorOAuth = context.setPendingConnectorOAuth;
-  observedActivateWorkspace = context.activateWorkspace;
   return (
     <>
       <output>
