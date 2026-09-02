@@ -181,7 +181,7 @@ prompt-token override tiers. The Worker
 `avalon-api-inference-pricing-global` refreshes the OpenRouter endpoint
 inventories hourly. The inventory is the union of the developer-mode manual
 choice list and every Monad production Azure deployment that has an
-OpenRouter identity: fourteen canonical model IDs as of 2026-08-30. It stores one
+OpenRouter identity: sixteen canonical model IDs as of 2026-09-02. It stores one
 record per model in `INFERENCE_PRICING_CACHE`, using the canonical OpenRouter ID
 itself (for example `x-ai/grok-4.3`) as the KV key. Each input, cached-input, and
 output USD-per-million value in a token-priced record remains a decimal JSON
