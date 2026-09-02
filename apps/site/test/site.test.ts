@@ -500,7 +500,7 @@ describe('public Rally site', () => {
     expect(hub).toContain('href="/support/contact/"');
     expect(sitemap).toContain('https://rallywith.ai/support/</loc>');
 
-    for (const { slug, title } of supportConnectorPages) {
+    for (const [index, { slug, title }] of supportConnectorPages.entries()) {
       const route = `/support/connectors/${slug}/`;
       const page = readProjectFile(`support/connectors/${slug}/index.html`);
       expect(hub, slug).toContain(`href="${route}"`);
@@ -508,6 +508,9 @@ describe('public Rally site', () => {
       expect(sitemap, slug).toContain(`https://rallywith.ai${route}`);
       expect(page, slug).toContain(`<title>${title} connector · Rally Support</title>`);
       expect(page, slug).toContain(`rel="canonical" href="https://rallywith.ai${route}"`);
+      expect(page, slug).toContain(
+        `Connector ${String(index + 1).padStart(2, '0')} / ${String(supportConnectorPages.length).padStart(2, '0')}`,
+      );
       expect(page, slug).toContain('href="/support/connectors/"');
       expect(page, slug).toContain('href="/support/contact/"');
       if (slug !== 'slack') {
@@ -577,6 +580,7 @@ describe('public Rally site', () => {
     const styles = readProjectFile('src/styles.css');
     expect(styles).toContain('.trust-hero h1 em{color:#111210');
     expect(styles).toContain('.trust-reporting h2 em{color:#111210');
+    expect(styles).toContain('.support-article>section>.support-section-body{display:grid;gap:1.5rem;');
     const [landingContent, landingFooter] = landing.split('<footer class="rally-footer">');
     expect(landingContent).not.toContain('/security/');
     expect(landingFooter).toContain('<a href="/trust/">Trust Center</a>');
@@ -598,6 +602,20 @@ describe('public Rally site', () => {
       expect(page, path).not.toMatch(/\b[Aa]n Rally\b/u);
       expect(page, path).not.toContain('>Security Policy<');
     }
+  });
+
+  it('registers every public HTML page as a production build input', () => {
+    const publicHtmlPaths = readdirSync(new URL('../', import.meta.url), {
+      encoding: 'utf8',
+      recursive: true,
+    }).filter((path) => path.endsWith('.html')
+      && !path.startsWith('dist/')
+      && !path.startsWith('node_modules/'));
+    const config = readProjectFile('vite.config.ts');
+    const buildInputPaths = [...config.matchAll(/`\$\{projectRoot\}([^`]+\.html)`/gu)]
+      .map((match) => match[1]);
+
+    expect(new Set(buildInputPaths)).toEqual(new Set(publicHtmlPaths));
   });
 
   it('uses help@rallywith.ai as the only role-based public contact and preserves triage subjects', () => {
