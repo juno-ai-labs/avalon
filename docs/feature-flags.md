@@ -1083,7 +1083,10 @@ To exercise a real flag locally you need Cloudflare credentials and
 
 1. Add the key and its typed value to `agent-model-flags.ts` if it is about
    model routing, to `client-feature-flags.ts` if a client reads it, or to a new
-   module alongside them otherwise. Keep `env.FLAGS` out of call sites.
+   module alongside them otherwise. Keep `env.FLAGS` out of call sites. Declare
+   a product Boolean's key constant as `ProductFeatureFlagKey` rather than a
+   bare string: that annotation is what turns step 5 from something to remember
+   into a typecheck error naming the keys that do exist.
 2. Give it a default that reproduces today's behavior, and hand that same
    default to Flagship so an absent flag and an unreachable Flagship agree. For
    a client *feature* that means `false`: a feature nobody has been given yet is
@@ -1108,7 +1111,9 @@ To exercise a real flag locally you need Cloudflare credentials and
    `apps/ace/src/protocol.ts`, and to an `ensureFlag` call in
    `apps/ace/scripts/deploy.mjs` carrying the identical description and
    default. Merging those three redeploys Ace, and that deployment is what
-   creates the flag. `apps/ace/test/protocol.test.ts` fails when a product
+   creates the flag. With the annotation from step 1 in place, `pnpm typecheck`
+   fails until the first of those three is done, and the other two are then
+   pinned to it by tests — so this step is enforced rather than trusted. `apps/ace/test/protocol.test.ts` fails when a product
    Boolean the Worker serves is missing from the catalog, and
    `deployment-contract.test.ts` fails when a catalogued flag is not
    provisioned or its description drifts. A flag deliberately kept *outside*
@@ -1161,9 +1166,11 @@ and a mutation reply remains usable when no live event overtook it.
 **What changed:** "Adding a flag" gained an explicit Ace registration step
 naming all three edits a product Boolean needs — the contracts key enum, Ace's
 `MANAGED_FLAGS` catalog, and the `ensureFlag` call in Ace's deploy script — and
-`multiple-workspaces-enabled` was registered in each. A test now fails when a
-product Boolean this document's client table lists is missing from Ace's
-catalog.
+`multiple-workspaces-enabled` was registered in each. Every product Boolean's
+key constant is now declared `ProductFeatureFlagKey`, so an unregistered key is
+a typecheck error at the declaration. Tests now fail when a product Boolean this
+document's client table lists is missing from Ace's catalog, and when a served
+key opts out of Ace by not being named `-enabled`.
 
 **Why:** Step 5 previously read "create it in the `avalon-api` app", which
 describes an outcome without naming the mechanism that produces it. #464 read
@@ -1179,7 +1186,8 @@ create a flag with no rule — live and unscoped — at whatever moment the firs
 poll arrives.
 
 **Consequences:** The failure that used to be silent now fails on the pull
-request. Flags outside Ace stay outside it by keeping a key that does not end
+request — at typecheck for anything declared through the shared type, and in
+Ace's suite for anything that bypasses it. Flags outside Ace stay outside it by keeping a key that does not end
 in `-enabled`; `developer-settings` and `control-tower-refresh-seconds` are the
 two, and both keep their Wrangler paths documented here. A flag whose key is
 renamed to end in `-enabled` becomes Ace's to manage and must be registered.
