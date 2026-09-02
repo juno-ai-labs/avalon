@@ -625,6 +625,10 @@ describe("connector tools selected for harness runs", () => {
       "search_resource",
       "view_resource",
       "summarize_resource",
+      // Read-only and safe to repeat, so a read-only child inherits them like
+      // every other resource read.
+      "describe_artifact_data",
+      "query_artifact_data",
       "current_time",
     ]);
     expect(childTools.coreTools.some((tool) => tool.definition.capability.startsWith("memory.")))
@@ -731,6 +735,10 @@ describe("connector tools selected for harness runs", () => {
       "search_resource",
       "view_resource",
       "summarize_resource",
+      // Read-only and safe to repeat, so a read-only child inherits them like
+      // every other resource read.
+      "describe_artifact_data",
+      "query_artifact_data",
       "current_time",
     ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("search");

@@ -16,6 +16,7 @@ import {
   type WorkstreamControlMetadata,
   type BlockDashboard,
   type BlockDashboardBlockRun,
+  type UserId,
   type WorkstreamControlSocketEvent,
 } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
@@ -2109,6 +2110,27 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       manualUnreadGeneration: Math.max(...effects.map((effect) => effect.manualUnreadGeneration ?? 0)),
       latestMentionAttentionOrdinal: Math.max(...effects.map((effect) => effect.latestMentionAttentionOrdinal ?? 0)),
     };
+  }
+
+  /**
+   * Whether one person may currently read this work stream.
+   *
+   * The public face of the predicate below, for a caller that holds a viewer
+   * open against this work stream's content but is not itself this object —
+   * today, the artifact supervisor deciding whether a live artifact keeps
+   * serving to someone.
+   *
+   * It exists as an RPC rather than a queue message because **work-stream
+   * visibility is not a D1 fact**: it lives in this object's own SQL, and
+   * `docs/access-revocation.md` is explicit that routing it through the
+   * revocation queue would put a round trip between a scope change and the
+   * reader it excludes. So the authority answers directly, exactly as it does
+   * for a socket, and the caller caches the answer for a bounded interval
+   * rather than asking per request.
+   */
+  async canReadWorkstream(userId: UserId): Promise<boolean> {
+    await this.initialized;
+    return this.canRead(userId);
   }
 
   private canRead(userId: string): boolean {

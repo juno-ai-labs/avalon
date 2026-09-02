@@ -1,0 +1,150 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  ARTIFACT_RESERVED_PREFIX,
+  ARTIFACT_VIEWER_ID_HEADER,
+  ARTIFACT_VIEWER_NAME_HEADER,
+  ArtifactManifestSchema,
+  SITE_MANIFEST_MIME_TYPE,
+  artifactAssetKey,
+  artifactHostLabel,
+  artifactIsolateId,
+  artifactManifestKey,
+  artifactOrigin,
+  classifyAttachmentKind,
+  parseArtifactHost,
+} from "./index";
+// A separate subpath, deliberately: `http-headers` stays zod-free so the
+// static site can import it without pulling a validation library into a page.
+import { RALLY_HEADERS, RALLY_HEADER_PREFIX, rallyHeaderAliases } from "./http-headers";
+
+const ARTIFACT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+function manifest(overrides: Record<string, unknown> = {}) {
+  return {
+    version: 1,
+    artifactId: ARTIFACT,
+    artifactVersion: 3,
+    mode: "active",
+    stateful: true,
+    serverModuleSha256: "a".repeat(64),
+    assets: [{
+      path: "index.html",
+      contentType: "text/html; charset=utf-8",
+      sizeBytes: 120,
+      sha256: "b".repeat(64),
+    }],
+    totalBytes: 120,
+    publishedAt: "2026-08-29T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("artifact manifest", () => {
+  it("accepts a complete manifest and rejects unknown fields", () => {
+    expect(ArtifactManifestSchema.safeParse(manifest()).success).toBe(true);
+    expect(ArtifactManifestSchema.safeParse({ ...manifest(), extra: 1 }).success).toBe(false);
+  });
+
+  it("refuses an artifact id that is not a UUID, because it is also the hostname", () => {
+    expect(ArtifactManifestSchema.safeParse(manifest({ artifactId: "my-site" })).success).toBe(false);
+  });
+
+  it("refuses a zero or negative version, so an asset key can never collide with another", () => {
+    expect(ArtifactManifestSchema.safeParse(manifest({ artifactVersion: 0 })).success).toBe(false);
+    expect(ArtifactManifestSchema.safeParse(manifest({ artifactVersion: -1 })).success).toBe(false);
+  });
+
+  it("requires a real digest per asset", () => {
+    const bad = manifest({
+      assets: [{ path: "a.css", contentType: "text/css", sizeBytes: 1, sha256: "nope" }],
+    });
+    expect(ArtifactManifestSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("allows a stateless active artifact and a static one", () => {
+    expect(ArtifactManifestSchema.safeParse(manifest({ stateful: false })).success).toBe(true);
+    const staticManifest = manifest({ mode: "static", stateful: false, serverModuleSha256: null });
+    expect(ArtifactManifestSchema.safeParse(staticManifest).success).toBe(true);
+  });
+});
+
+describe("artifact addressing", () => {
+  it("folds the region into the label rather than adding a dotted level", () => {
+    // Two labels deep is not covered by Universal SSL, so this shape is a TLS
+    // decision, not a formatting preference.
+    expect(artifactHostLabel(ARTIFACT, "global")).toBe(`${ARTIFACT}-g`);
+    expect(artifactHostLabel(ARTIFACT, "eu")).toBe(`${ARTIFACT}-eu`);
+    expect(artifactHostLabel(ARTIFACT, "global")).not.toContain(".");
+    expect(artifactHostLabel(ARTIFACT, "eu")).not.toContain(".");
+  });
+
+  it("round-trips a host back to its artifact and region", () => {
+    for (const region of ["global", "eu"] as const) {
+      const origin = artifactOrigin(ARTIFACT, region, "rallyusercontent.com");
+      expect(parseArtifactHost(new URL(origin).host)).toEqual({ artifactId: ARTIFACT, region });
+    }
+  });
+
+  it("tolerates a port, uppercase, and surrounding whitespace on the Host header", () => {
+    expect(parseArtifactHost(`  ${ARTIFACT.toUpperCase()}-G.rallyusercontent.com:8787 `))
+      .toEqual({ artifactId: ARTIFACT, region: "global" });
+  });
+
+  it("returns null for anything that is not an artifact host, rather than throwing", () => {
+    // This runs before authorization on the serving hot path, so a
+    // non-artifact host must be an ordinary null answer.
+    for (const host of ["rallywith.ai", "", "..", `${ARTIFACT}.rallyusercontent.com`, `${ARTIFACT}-us.x`]) {
+      expect(parseArtifactHost(host)).toBeNull();
+    }
+  });
+
+  it("does not confuse the two regions, which share a UUID prefix", () => {
+    expect(parseArtifactHost(`${ARTIFACT}-eu.rallyusercontent.com`)?.region).toBe("eu");
+    expect(parseArtifactHost(`${ARTIFACT}-g.rallyusercontent.com`)?.region).toBe("global");
+  });
+
+  it("keys assets and manifests immutably per version", () => {
+    expect(artifactAssetKey(ARTIFACT, 3, "css/app.css"))
+      .toBe(`artifact/${ARTIFACT}/v3/assets/css/app.css`);
+    expect(artifactManifestKey(ARTIFACT, 3)).toBe(`artifact/${ARTIFACT}/v3/manifest.json`);
+    expect(artifactAssetKey(ARTIFACT, 3, "a")).not.toBe(artifactAssetKey(ARTIFACT, 4, "a"));
+  });
+
+  it("scopes the loader isolate id to the version, which is the cache contract", () => {
+    expect(artifactIsolateId(ARTIFACT, 3)).toBe(`artifact:${ARTIFACT}:v3`);
+    expect(artifactIsolateId(ARTIFACT, 3)).not.toBe(artifactIsolateId(ARTIFACT, 4));
+  });
+});
+
+describe("artifact conventions", () => {
+  it("classifies a site manifest as a site, not as text", () => {
+    // `+json` would otherwise claim it and route a site into the readable-text
+    // paths, where a content read would try to return a manifest as a body.
+    expect(classifyAttachmentKind({ mimeType: SITE_MANIFEST_MIME_TYPE })).toBe("site");
+    expect(SITE_MANIFEST_MIME_TYPE.endsWith("+json")).toBe(true);
+  });
+
+  it("keeps an archive publish distinguishable from a site publish", () => {
+    expect(classifyAttachmentKind({ mimeType: "application/zip", fileName: "bundle.zip" }))
+      .not.toBe("site");
+  });
+
+  it("puts the viewer headers in the product header family, aliases included", () => {
+    // The strip that prevents forgery has to cover the superseded spelling too,
+    // because every product header reader widens to it.
+    for (const header of [ARTIFACT_VIEWER_ID_HEADER, ARTIFACT_VIEWER_NAME_HEADER]) {
+      expect(header.startsWith(RALLY_HEADER_PREFIX)).toBe(true);
+      expect(header).toBe(header.toLowerCase());
+      expect(rallyHeaderAliases(header)).toContain(header);
+      expect(rallyHeaderAliases(header).length).toBeGreaterThan(1);
+      expect(Object.values(RALLY_HEADERS)).toContain(header);
+    }
+  });
+
+  it("reserves one prefix, so a version mount needs no second origin", () => {
+    expect(ARTIFACT_RESERVED_PREFIX).toBe("/__rally");
+    expect(ARTIFACT_RESERVED_PREFIX.startsWith("/")).toBe(true);
+    expect(ARTIFACT_RESERVED_PREFIX.endsWith("/")).toBe(false);
+  });
+});

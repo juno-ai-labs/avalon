@@ -1,4 +1,7 @@
+import { BUILDING_LIVE_SITES_SKILL } from "./building-live-sites-skill";
 import type { HarnessSkill } from "./index";
+
+export { BUILDING_LIVE_SITES_SKILL };
 
 /**
  * Skills the harness ships with, for a host that has no library of its own yet.
@@ -320,5 +323,8 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   DEEP_RESEARCH_SKILL,
   WRITING_AN_EMAIL_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
+  // the whole procedure ends in publishing a directory from a sandbox.
+  BUILDING_LIVE_SITES_SKILL,
 ];
 

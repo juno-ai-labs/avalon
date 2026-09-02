@@ -385,12 +385,44 @@ the execution principal and owning scope, but it remains a name rather than
 authority: an executor still performs its normal authorization query.
 
 An authorized wrong-tool call may carry a bounded `suggestedCall` for exactly
-`workstream_read_resource` or `workstream_view_resource`. The structured-failure
-sanitizer accepts only those strict shapes, the eight registered kinds, bounded
+`workstream_read_resource`, `workstream_view_resource`, their two
+automation-prefixed twins, or `terminal_import_resource`. The structured-failure
+sanitizer accepts only those strict shapes, the nine registered kinds, bounded
 MIME/reason values, and the existing fixed recovery fields. It does not forward
 converter, provider, or attachment-authored objects.
 
-The work-stream runtime now exposes five bounded operations. The old
+`terminal_import_resource` is the one member that is not a content read, and it
+is admitted in exactly one form: `{ resourceId }`. That is the create-only
+shape, which refuses a non-empty destination with `destination_exists` rather
+than replacing anything, so a model that follows the suggestion blind cannot
+lose work — the strict object is what stops a producer suggesting `overwrite`.
+It exists because a content read on a **site** has nothing single-bodied to
+return: a site's stored content is its manifest, not a page. The remediation is
+prefix-aware, and an automation-prefixed run gets the same sentence with **no**
+`suggestedCall` — automation runs hold no Terminal, so naming that tool would
+trade one dead end for a worse one.
+
+Two further work-stream tools read a **live artifact's stored data**, and are on
+this plugin rather than Terminal's deliberately: reading a poll's tally must not
+require a sandbox, and the run answering a data question is usually not the run
+that built the page.
+
+| Tool | Strict input | Successful `output` |
+| --- | --- | --- |
+| `workstream_describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount }] }`. Discovery first: the schema is a model-designed one this run may never have seen. |
+| `workstream_query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
+
+Both are `mode: "read"`, `idempotency: "safe"`. **Read-only is enforced on the
+statement, not by the transaction** — an always-rollback transaction is not an
+authorization boundary, because caller SQL can commit mid-payload — so admission
+is positive: exactly one statement, parsing as a `SELECT`, with a `WITH` clause's
+*body* checked rather than its opening keyword. `sql_error` carries the repair in
+its own sentence. `no_artifact_data` answers a static or stateless site, which is
+a working outcome rather than a broken one, and points at the Terminal import for
+reading its source. Results are the site's own data, written by its visitors, and
+are handled as untrusted content wherever they surface.
+
+The work-stream runtime now exposes five bounded content operations. The old
 `workstream_read` hard-capped index is replaced by
 `workstream_list_resources`, whose first call accepts an optional natural-
 language kind and whose cursor-only continuations can exhaust more than fifty
@@ -486,9 +518,41 @@ model-actionable drift check. See
 | `terminal_apply_patch` | `{ patch: string }` | `{ files: [{ path, previousPath?, operation, additions, deletions }], additions, deletions }`; `operation` is `created`, `edited`, `renamed`, or `deleted`. |
 | `terminal_run_command` | `{ command: string, cwd?: string, timeoutMs?: integer, description?: string }` | `{ state, terminationReason, exitCode, stdout, stderr, outputResourceId?, startedAt, completedAt, stdoutTruncated, stderrTruncated, durationMs }`. Nonzero exit is a completed command result, not an executor exception. Standard `git` and `gh` commands are available after repository checkout; `read_only` credentials reject remote mutation, while `full_access` may push and manage a PR. |
 | `terminal_checkout_repository` | `{ repositoryFullName: string, requiredRemoteAccess?: "read_only" | "full_access" }` | `{ repository, repositoryId, connectionId, connectionName, baseRef, baseSha, headRef, remoteAccess, localEditsAllowed: true, remoteWritesAllowed, outcome, backup }`; `backup` is the attached recovery resource created before replacing prior workspace state, or `null` when there was nothing to preserve. |
-| `terminal_import_resource` | `{ resourceId: UUID }` or `{ resourceId: UUID, destinationPath: string, overwrite?: boolean }` | `{ resourceId, filePath, outcome, mimeType, sizeBytes, sourceSha256 }`; `outcome` is `created`, `replaced`, or deterministic `reused`. |
-| `terminal_publish_resource` | `{ filePath: string, displayName?: string, description?: string }` | `{ resourceId, title, resourceType: "generated_file", provider: "avalon_generated", mimeType, sizeBytes, sourceSha256, attachmentKind, contentMode, derivativeStatus, createdAt }`. Identity is `(work stream, normalized publish path)`: publishing the same path again updates that resource in place — new content, mime type, metadata, and `displayName` when one is given — and returns the same `resourceId`. Equal content returns it untouched, which is also how a replay of one call is absorbed. `createdAt` stays the first publish's timestamp across updates, so it is not a witness that this call's bytes landed. A different path, or the same path from another work stream, is a different document. |
+| `terminal_import_resource` | `{ resourceId: UUID }` or `{ resourceId: UUID, destinationPath: string, overwrite?: boolean }` | `{ resourceId, filePath, outcome, mimeType, sizeBytes, sourceSha256 }`; `outcome` is `created`, `replaced`, or deterministic `reused`. For a **site** resource `destinationPath` names the directory root to materialize into and the output adds `fileCount`; `filePath` is reused for that root rather than a second key appearing beside it, so the round trip is `filePath` in, `filePath` out and a republish targets what the import returned. `overwrite` is whole-tree replacement, never a merge — merging would leave files a prior version deleted lying in the tree for the next publish to ship back. |
+| `terminal_publish_resource` | `{ filePath: string, displayName?: string, description?: string }`; `filePath` may name a **directory** beneath `AVALON_RESOURCE_DIR` | A discriminated union on `publishKind` (`file` | `site` | `archive`), decided by the directory's root entry — see [Publishing a directory](#publishing-a-directory) below. A *file* returns `{ resourceId, title, resourceType: "generated_file", provider: "avalon_generated", mimeType, sizeBytes, sourceSha256, attachmentKind, contentMode, derivativeStatus, createdAt }`. Identity is `(work stream, normalized publish path)`: publishing the same path again updates that resource in place — new content, mime type, metadata, and `displayName` when one is given — and returns the same `resourceId`. Equal content returns it untouched, which is also how a replay of one call is absorbed. `createdAt` stays the first publish's timestamp across updates, so it is not a witness that this call's bytes landed. A different path, or the same path from another work stream, is a different document. |
 | `terminal_publish_branch_and_pr` | `{ title: string, body: string }` | `{ repository, baseRef, headRef, commitSha, publishedSha, outcome, pullRequest: { number, url, title, state: "open" } }`; `outcome` is `created`, convergent `updated`, or recovered `unchanged`. |
+
+### Publishing a directory
+
+`filePath` may name a directory, and **the publish kind is resolved from what the
+model wrote rather than from a parameter** — a parameter restating what the files
+already say is a parameter that can disagree with them, and the disagreement
+would be invisible until serve time.
+
+| Root entry | Publishes as | Output adds |
+| --- | --- | --- |
+| `index.js` | An **active site** Rally executes per request | `resourceType: "generated_site"`, `attachmentKind: "site"`, `slug`, `url`, `mode: "active"`, `stateful`, `version`, `fileCount`, `totalBytes`, `manifestSha256`; `mimeType` is the site-manifest type |
+| `index.html`, no `index.js` | A **static site** | The same, with `mode: "static"` |
+| Neither | One downloadable **zip** | Today's file shape over the zip, plus `fileCount` and `totalBytes` |
+
+`index.js` wins over `index.html`, because an active site almost always ships
+both. The discriminant is `publishKind` rather than `resourceType` because a
+document and an archive share the latter — a model told to switch on
+`resourceType` would have to infer the archive branch from the presence of
+`fileCount`, which is inference rather than a contract. A site output omits `contentMode` and `derivativeStatus` — a site has no
+single content body to read and no derivative to wait on — and renames
+`sizeBytes`/`sourceSha256` to `totalBytes`/`manifestSha256`, because a manifest
+hash is not a file hash and a caller comparing them would be wrong.
+
+Two failure codes are added. `single_file_directory` fires only on the archive
+branch: a one-file zip is almost never deliberate and is near-exactly the shape
+of a document publish that grabbed the folder by mistake, so it is refused with
+the instruction to publish that file's own path. A one-file directory whose file
+*is* an entry never trips it. `site_entry_removed` refuses a republish that would
+turn a live site back into an archive — a URL participants hold is never killed
+by an accident of file layout, while archive→site upgrades freely because that is
+the archive fallback's own recovery. No publish-time code validation is promised:
+`index.js` runs at serve time and nowhere else.
 
 Every path uses `/` separators, is relative to `/workspace`, and rejects an
 absolute path, backslash, NUL, or `..`. `publish_resource.filePath` is instead

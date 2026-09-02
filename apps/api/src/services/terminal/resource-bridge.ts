@@ -1,4 +1,10 @@
-import { AttachmentKindSchema, classifyAttachmentKind, ResourceSchema } from "@rally/contracts";
+import {
+  AttachmentKindSchema,
+  SITE_MANIFEST_MIME_TYPE,
+  artifactOrigin,
+  classifyAttachmentKind,
+  ResourceSchema,
+} from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../../env";
@@ -16,7 +22,18 @@ import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visi
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalSandboxProvider } from "./provider-contract";
 import type { TerminalResourceBridge } from "./runtime";
-import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedResourceOutput } from "./tools";
+import {
+  existingArtifactForResource,
+  pointArtifactAtVersion,
+  registerArtifact,
+  writeArtifactVersion,
+} from "./site-resource-bridge";
+import {
+  requireTerminalEffectIntent,
+  TerminalToolError,
+  type TerminalPublishedResourceOutput,
+  type TerminalPublishedSiteOutput,
+} from "./tools";
 
 interface PublishedRow {
   id: string;
@@ -88,6 +105,7 @@ function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishe
   return {
     resourceId: row.id,
     title: row.title,
+    publishKind: "file" as const,
     resourceType: "generated_file" as const,
     provider: "avalon_generated" as const,
     mimeType: row.mime_type ?? "application/octet-stream",
@@ -599,6 +617,7 @@ export function createTerminalResourceBridge(
       return {
         resourceId,
         title,
+        publishKind: "file",
         resourceType: "generated_file",
         provider: "avalon_generated",
         mimeType,
@@ -610,5 +629,246 @@ export function createTerminalResourceBridge(
         createdAt: timestamp,
       };
     },
+
+    async publishedKindForPath(context, filePath) {
+      const providerResourceId = await publishedResourceIdentity(context.workstreamId, filePath);
+      const row = await workspace.prepare(
+        `SELECT resource_type, mime_type FROM resources
+          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
+      ).bind(context.workspaceId, providerResourceId).first<{
+        resource_type: string;
+        mime_type: string | null;
+      }>();
+      if (!row) return null;
+      if (row.resource_type === "generated_site") return "site";
+      // An archive and an ordinary document are the same row type; only the
+      // mime type separates them, and only the site transition is guarded, so
+      // the distinction is reported rather than acted on here.
+      return row.mime_type === "application/zip" ? "archive" : "file";
+    },
+
+    /**
+     * Publish a directory that carried a site entry, as a resource Rally serves.
+     *
+     * The identity is the document rule unchanged — `(work stream, normalized
+     * path)` — so a republish of the same directory updates the same artifact,
+     * keeps the same URL, and lets the versioning layer capture the superseded
+     * state at the site it already owns. What differs is what is stored: the
+     * resource's content is the *manifest*, not any page, so a content read on
+     * a site resource has nothing single-bodied to return and is redirected to
+     * the Terminal import instead.
+     */
+    async publishSiteResource(context, input, site) {
+      const effectIntentId = requireTerminalEffectIntent(context, "publication");
+      const providerResourceId = await publishedResourceIdentity(
+        context.workstreamId,
+        input.filePath,
+      );
+      const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
+                model_content_status, created_at
+           FROM resources
+          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
+      const existing = await workspace.prepare(select)
+        .bind(context.workspaceId, providerResourceId).first<PublishedRow>();
+      const settled = existing ?? await workspace.prepare(select)
+        .bind(context.workspaceId, `terminal:${effectIntentId}`).first<PublishedRow>();
+
+      // A republish that would turn a live site back into an archive never
+      // reaches here — the runtime refuses it — but a republish that changes
+      // nothing does, and it must not mint a version. The manifest carries the
+      // version number and the timestamp, so the comparison is over the files
+      // rather than over the manifest that describes them.
+      const contentDigest = await sha256Hex(new TextEncoder().encode(JSON.stringify(
+        site.files.map((file) => [file.path, file.sha256]),
+      )));
+      const previous = settled
+        ? await existingArtifactForResource(workspace, context.workspaceId, settled.id)
+        : null;
+      if (settled && previous && settled.content_sha256 === contentDigest) {
+        // Equal content covers both a crash-replay of a settled call and a
+        // republish that changed nothing.
+        return siteOutput(env, settled, {
+          artifactId: previous.artifactId,
+          version: previous.version,
+          mode: previous.mode,
+          stateful: site.stateful,
+          fileCount: site.files.length,
+          totalBytes: site.files.reduce((total, file) => total + file.bytes.byteLength, 0),
+          manifestSha256: settled.content_sha256 ?? "",
+          slug: await resourceSlug(workspace, context.workspaceId, settled.id),
+        });
+      }
+
+      const resourceId = settled?.id ?? newId();
+      const version = (previous?.version ?? 0) + 1;
+      const written = await writeArtifactVersion(env, {
+        workspaceId: context.workspaceId,
+        workstreamId: context.workstreamId,
+        region: env.AVALON_REGION,
+        artifactId: previous?.artifactId ?? null,
+        resourceId,
+        version,
+        mode: site.mode,
+        stateful: site.stateful,
+        files: site.files,
+        serverModuleSha256: site.serverModuleSha256,
+      });
+
+      const timestamp = nowIso();
+      const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
+      const metadata = JSON.stringify({
+        sourcePath: input.filePath,
+        size: written.manifest.totalBytes,
+        attachmentKind: "site",
+        contentMode: "unsupported",
+        artifactId: written.artifactId,
+        artifactVersion: version,
+        artifactMode: site.mode,
+        artifactStateful: site.stateful,
+        ...(input.description ? { description: input.description } : {}),
+      });
+
+      if (settled) {
+        await swapPublishedContent({
+          workspace,
+          env,
+          workspaceId: context.workspaceId,
+          existing: settled,
+          filePath: input.filePath,
+          displayName: input.displayName,
+          description: input.description,
+          bytes: written.manifestBytes,
+          digest: contentDigest,
+          mimeType: SITE_MANIFEST_MIME_TYPE,
+          attachmentKind: "site",
+          contentMode: "unsupported",
+          derivativeStatus: "unsupported",
+          harnessRunId: context.harnessRunId,
+        });
+      } else {
+        await workspace.prepare(
+          `INSERT INTO resources
+           (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+            content_ref, content_sha256, metadata_json, last_hydrated_at, uploaded_by_user_id,
+            attachment_status, model_content_status, created_at, updated_at,
+            revision_author_kind, revision_author_run_id, revision_cause)
+           VALUES (?, ?, 'generated_site', 'avalon_generated', ?, ?, ?, ?, ?, ?, ?, ?, 'attached', 'unsupported', ?, ?,
+                   'agent', ?, 'created')`,
+        ).bind(
+          resourceId,
+          context.workspaceId,
+          providerResourceId,
+          title,
+          SITE_MANIFEST_MIME_TYPE,
+          written.manifestRef,
+          contentDigest,
+          metadata,
+          timestamp,
+          context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
+          timestamp,
+          timestamp,
+          context.harnessRunId,
+        ).run();
+        await attachResource({
+          workspaceId: context.workspaceId,
+          workstreamId: context.workstreamId,
+          resourceId,
+          attachedByUserId: context.executionPrincipal.type === "user"
+            ? context.executionPrincipal.userId
+            : null,
+        });
+        await allocateResourceSlugBesideCreation(env, context.workspaceId, resourceId);
+      }
+
+      await registerArtifact(workspace, {
+        artifactId: written.artifactId,
+        workspaceId: context.workspaceId,
+        workstreamId: context.workstreamId,
+        resourceId,
+        mode: site.mode,
+        stateful: site.stateful,
+        version,
+        manifestRef: written.manifestRef,
+      });
+      // Last, and only once every byte it names is durable. Until this returns
+      // the artifact serves its previous version; after it returns the new one
+      // is what every open resolves to. There is no window where the pointer
+      // names bytes a viewer cannot read.
+      await pointArtifactAtVersion(env, {
+        artifactId: written.artifactId,
+        workspaceId: context.workspaceId,
+        workstreamId: context.workstreamId,
+        resourceId,
+        region: env.AVALON_REGION,
+        manifest: written.manifest,
+      });
+
+      return siteOutput(env, {
+        id: resourceId,
+        title,
+        created_at: settled?.created_at ?? timestamp,
+      }, {
+        artifactId: written.artifactId,
+        version,
+        mode: site.mode,
+        stateful: site.stateful,
+        fileCount: site.files.length,
+        totalBytes: written.manifest.totalBytes,
+        manifestSha256: written.manifestSha256,
+        slug: await resourceSlug(workspace, context.workspaceId, resourceId),
+      });
+    },
+  };
+}
+
+/** The rail's own name for a site, taken from the directory it was written in. */
+function siteTitle(filePath: string): string {
+  return normalizePublishPath(filePath).split("/").at(-1) || "site";
+}
+
+async function resourceSlug(
+  workspace: D1Database,
+  workspaceId: string,
+  resourceId: string,
+): Promise<string | null> {
+  const row = await workspace.prepare(
+    `SELECT slug FROM resource_slugs WHERE workspace_id = ? AND resource_id = ?`,
+  ).bind(workspaceId, resourceId).first<{ slug: string }>().catch(() => null);
+  return row?.slug ?? null;
+}
+
+function siteOutput(
+  env: Env,
+  row: { id: string; title: string; created_at: string },
+  site: {
+    artifactId: string;
+    version: number;
+    mode: "static" | "active";
+    stateful: boolean;
+    fileCount: number;
+    totalBytes: number;
+    manifestSha256: string;
+    slug: string | null;
+  },
+): TerminalPublishedSiteOutput {
+  return {
+    resourceId: row.id,
+    title: row.title,
+    publishKind: "site",
+    resourceType: "generated_site",
+    provider: "avalon_generated",
+    attachmentKind: "site",
+    slug: site.slug,
+    // The model's next step is citing the artifact, so the URL is in the
+    // result rather than something it has to derive from an id.
+    url: artifactOrigin(site.artifactId, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN),
+    mode: site.mode,
+    stateful: site.stateful,
+    version: site.version,
+    mimeType: SITE_MANIFEST_MIME_TYPE,
+    fileCount: site.fileCount,
+    totalBytes: site.totalBytes,
+    manifestSha256: site.manifestSha256,
+    createdAt: row.created_at,
   };
 }

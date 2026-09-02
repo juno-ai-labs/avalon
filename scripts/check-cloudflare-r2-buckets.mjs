@@ -9,6 +9,12 @@ const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
 const regionalConfigs = [
   { region: 'global', path: join(repositoryDirectory, 'apps/api/wrangler.global.jsonc') },
   { region: 'eu', path: join(repositoryDirectory, 'apps/api/wrangler.eu.jsonc') },
+  // The artifact serving Workers bind the same buckets from their own configs.
+  // Left out of this list, an EU binding that forgot `jurisdiction` reaches a
+  // different bucket in the default namespace and nothing here notices — which
+  // is exactly how one shipped.
+  { region: 'global', path: join(repositoryDirectory, 'apps/api/wrangler.artifacts.global.jsonc') },
+  { region: 'eu', path: join(repositoryDirectory, 'apps/api/wrangler.artifacts.eu.jsonc') },
 ];
 
 function required(name, environment) {
@@ -42,8 +48,19 @@ export function r2BucketsFromWrangler(source, region) {
 
 export async function configuredR2Buckets() {
   const buckets = [];
+  // Deduplicated on the whole tuple, not on the bucket name: the artifact
+  // Workers bind the same buckets as the API Worker, so an identical binding
+  // collapses — but one that differs in `jurisdiction` stays a separate row and
+  // gets checked against the jurisdiction it actually names. Keying on the name
+  // alone would let a correct binding mask a wrong one.
+  const seen = new Set();
   for (const config of regionalConfigs) {
-    buckets.push(...r2BucketsFromWrangler(await readFile(config.path, 'utf8'), config.region));
+    for (const bucket of r2BucketsFromWrangler(await readFile(config.path, 'utf8'), config.region)) {
+      const key = `${bucket.region}/${bucket.binding}/${bucket.name}/${bucket.jurisdiction}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      buckets.push(bucket);
+    }
   }
   return buckets;
 }

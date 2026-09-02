@@ -1,3 +1,4 @@
+import { SITE_MANIFEST_MIME_TYPE } from '@rally/contracts';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -709,6 +710,65 @@ describe('resource detail content preview', () => {
     );
     act(() => { useUiStore.getState().inspect({ type: 'resource', id: resource.id }); });
   }
+
+  const site: WorkstreamResource = {
+    ...note,
+    id: 'resource-site',
+    title: 'Offsite RSVP',
+    resourceType: 'generated_site',
+    mimeType: SITE_MANIFEST_MIME_TYPE,
+  };
+
+  function siteArtifacts() {
+    return {
+      openArtifact: vi.fn(async () => ({
+        openUrl: 'https://3f2504e0-4f89-41d3-9a0c-0305e82c3301-g.rallyusercontent.test/__rally/open#c',
+        canonicalUrl: 'https://3f2504e0-4f89-41d3-9a0c-0305e82c3301-g.rallyusercontent.test',
+        artifactId: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+        mode: 'active' as const,
+        stateful: false,
+      })),
+      describeData: vi.fn(async () => ({ tables: [] })),
+      loadTable: vi.fn(async () => ({ rows: [], csv: '' })),
+      loadErrors: vi.fn(async () => []),
+      surface: {
+        present: vi.fn(async () => true),
+        setBounds: vi.fn(async () => undefined),
+        close: vi.fn(async () => undefined),
+        popOut: vi.fn(async () => undefined),
+        copyText: vi.fn(async () => undefined),
+        openExternal: vi.fn(async () => undefined),
+      },
+    };
+  }
+
+  it('shows a live artifact as a page to open rather than a record to describe', async () => {
+    const artifacts = siteArtifacts();
+    render(
+      <Tooltip.Provider>
+        <InspectorRail siteArtifacts={artifacts} workstream={{ ...workstream, resources: [site] }} />
+      </Tooltip.Provider>,
+    );
+    act(() => { useUiStore.getState().inspect({ type: 'resource', id: site.id }); });
+    await waitFor(() => expect(artifacts.surface.present).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: /Pop out/u })).toBeInTheDocument();
+  });
+
+  it('falls back to the ordinary resource card when live artifacts are off', () => {
+    // Presentation only: with the flag off a site is still an ordinary resource
+    // in the rail — it just is not rendered as a page.
+    openDetail(site);
+    expect(screen.queryByRole('button', { name: /Pop out/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Preview/u })).not.toBeInTheDocument();
+    expect(document.querySelector('.inspector-detail')).toBeInTheDocument();
+  });
+
+  it('never tries to read a site as text, which would show its manifest', () => {
+    // A site's stored content is the index, not the page.
+    const loadResourceContent = vi.fn(async () => new Blob(['{"version":1}']));
+    openDetail(site, loadResourceContent);
+    expect(loadResourceContent).not.toHaveBeenCalled();
+  });
 
   it('renders the resource content beneath its metadata, so a citation is not a dead end', async () => {
     const loadResourceContent = vi.fn(async () => new Blob(['## Findings\n\nRevenue grew 40%.']));

@@ -51,6 +51,13 @@ test('CI distributes the expensive verification work across independent lanes', 
       + 'pnpm --filter @rally/api build:eu && pnpm --filter @rally/api build:telemetry && '
       + 'pnpm --filter @rally/api check:telemetry-startup-boundary && '
       + 'pnpm --filter @rally/api build:pricing && '
+      // The artifact-serving Workers are dry-run built here rather than only in
+      // the deploy workflow, unlike the documents and Terminal services: they
+      // are the one public origin that executes model-authored code, so a bad
+      // route, binding, or startup profile is worth catching on the pull
+      // request instead of at release.
+      + 'pnpm --filter @rally/api build:artifacts && '
+      + 'pnpm --filter @rally/api build:artifacts:eu && '
       + 'pnpm --filter @rally/desktop test:release',
   );
   assert.equal(

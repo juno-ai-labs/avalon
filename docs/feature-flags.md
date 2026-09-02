@@ -475,6 +475,7 @@ behave. There are eight today:
 | `meeting-recording-enabled` | boolean | `false` | Whether Electron shows meeting-recording actions |
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
 | `automation-workspace-templates-enabled` | boolean | `false` | Whether Electron shows workspace-template surfaces |
+| `live-artifacts-enabled` | boolean | `false` | Whether Electron shows live-artifact surfaces — the rail's site detail and preview pane, the Data view, and the artifact window. Presentation only: an artifact's authorization is structural, so a URL somebody already holds keeps working through its session checks whether or not this is on. See [`live-web-artifacts.md`](live-web-artifacts.md) |
 | `digests-enabled` | boolean | `true` | Whether Electron shows the Digest settings section — resolved through `digest-flags.ts`, the same function that gates delivery; see [`digests.md`](digests.md#the-run) |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 | `control-tower-refresh-seconds` | number | `60` | How often a recording meeting commits a transcript segment and rewrites its Control Tower briefing |
@@ -845,8 +846,9 @@ decision about both regions at once, not a local change to a loader.
 
 Ace automatically ensures all eleven `agent-model-*` JSON flags plus
 `hypersight-enabled`, `meeting-recording-enabled`, `suggested-work-enabled`,
-`automation-workspace-templates-enabled`, `multiple-workspaces-enabled`, and
-`digests-enabled` exist on every merge-to-main deployment. It seeds model flags from the checked-in Worker
+`automation-workspace-templates-enabled`, `multiple-workspaces-enabled`,
+`live-artifacts-enabled`, and `digests-enabled` exist on every
+merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
 defaults off except
 `digests-enabled`, which defaults **on** — a digest already sends by default

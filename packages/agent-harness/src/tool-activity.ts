@@ -47,6 +47,16 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Listed attached resources",
     failed: "Could not list attached resources",
   },
+  workstream_describe_artifact_data: {
+    started: "Looking at what the site has collected",
+    settled: "Looked at what the site has collected",
+    failed: "Could not read what the site has collected",
+  },
+  workstream_query_artifact_data: {
+    started: "Reading the site's data",
+    settled: "Read the site's data",
+    failed: "Could not read the site's data",
+  },
   workstream_search_resource: {
     started: "Searching an attached resource",
     settled: "Searched an attached resource",

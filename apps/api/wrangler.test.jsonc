@@ -9,6 +9,7 @@
     "AVALON_REGION": "global",
     "PUBLIC_API_BASE_URL": "https://api.test",
     "PUBLIC_WEB_BASE_URL": "https://app.test",
+    "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.test",
     "ALLOWED_ORIGINS": "app://rallywithai,app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/callback",
     "LOG_LEVEL": "error",
@@ -24,6 +25,10 @@
       "database_id": "00000000-0000-0000-0000-000000000001"
     }
   ],
+  // The facet proofs need a real loader: a stateful artifact's class is loaded
+  // into the facet through it, and a double would prove nothing about the
+  // mechanism the whole stateful design rests on.
+  "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }],
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
@@ -32,6 +37,7 @@
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
+      { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" },
       { "name": "MIGRATION_PROBE_DO", "class_name": "MigrationProbeDO" }
     ]
   },
@@ -45,6 +51,7 @@
         "WorkstreamDO",
         "WorkspaceDO",
         "SlackReactionTicker",
+        "ArtifactHostDO",
         "MigrationProbeDO"
       ]
     }
