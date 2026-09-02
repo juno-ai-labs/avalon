@@ -19,7 +19,7 @@ for an affirmative EU route.
 | `apps/api/src/routes/telemetry.ts` | Exposes the content-free Cloudflare route decision and the capability-bound anonymous ingest. |
 | `apps/api/src/telemetry/bootstrap.ts` | Reduces Cloudflare country to `eu` or `global`, fixes the journey route, and permits only the public-site event allowlist before authentication. |
 | `apps/api/src/telemetry/posthog-adapter.ts` | Maps the Global page observations once to PostHog `$pageview` and `$pageleave`. |
-| `apps/site/cookies/index.html` | Public disclosure for first-party site analytics, browser storage, regional behavior, and prohibited fields. |
+| `apps/site/trust/cookies/index.html` | Public disclosure for first-party site analytics, browser storage, regional behavior, and prohibited fields. |
 
 The product decision is in the [public-site telemetry
 PRD](PRDs/2026-08-13_public-site-telemetry/prd.md). The shared event, retention,
@@ -197,6 +197,28 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-09-02 — Public policies move under one Trust Center route
+
+**What changed:** The Trust Center overview and its Security, Privacy, Terms,
+DPA, Acceptable Use, Sub-processor, and Cookie documents now publish as distinct
+pages below `/trust/`.
+The previous top-level document URLs redirect permanently to their canonical
+Trust Center equivalents, and public-site telemetry classifies the full
+hierarchy as legal content.
+
+**Why:** The policies were visually related but lived at unrelated top-level
+paths. A single public hierarchy makes the center easier to navigate, share,
+and extend without changing the telemetry privacy boundary.
+
+**Considered and rejected:** Keeping `/security/` as the overview and merely
+linking the top-level policies from it. That preserved bookmarks but left the
+information architecture fragmented; permanent redirects preserve those links
+without making the old layout canonical.
+
+**Consequences:** New links and search metadata use `/trust/`; old public links
+continue to resolve. Route reporting still carries only bounded pathnames and
+does not add query strings, content, or identity.
 
 ### 2026-09-01 — Workspace-addressed paths remain identifier-free in telemetry
 

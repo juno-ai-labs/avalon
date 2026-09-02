@@ -7,27 +7,63 @@
     <loc>https://rallywith.ai/slack</loc>
   </url>
   <url>
-    <loc>https://rallywith.ai/terms</loc>
+    <loc>https://rallywith.ai/trust/</loc>
   </url>
   <url>
-    <loc>https://rallywith.ai/privacy</loc>
+    <loc>https://rallywith.ai/trust/security/</loc>
   </url>
   <url>
-    <loc>https://rallywith.ai/acceptable-use</loc>
+    <loc>https://rallywith.ai/trust/terms/</loc>
   </url>
   <url>
-    <loc>https://rallywith.ai/dpa</loc>
+    <loc>https://rallywith.ai/trust/privacy/</loc>
   </url>
   <url>
-    <loc>https://rallywith.ai/subprocessors</loc>
+    <loc>https://rallywith.ai/trust/acceptable-use/</loc>
   </url>
   <url>
-    <loc>https://rallywith.ai/cookies</loc>
+    <loc>https://rallywith.ai/trust/dpa/</loc>
   </url>
   <url>
-    <loc>https://rallywith.ai/security</loc>
+    <loc>https://rallywith.ai/trust/subprocessors/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/trust/cookies/</loc>
   </url>
   <url>
     <loc>https://rallywith.ai/support</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/getting-started/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/connectors/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/connectors/google/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/connectors/github/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/connectors/granola/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/connectors/linear/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/connectors/notion/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/connectors/slack/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/connectors/inbound-webhook/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/connectors/x/</loc>
+  </url>
+  <url>
+    <loc>https://rallywith.ai/support/contact/</loc>
   </url>
 </urlset>
