@@ -81,6 +81,23 @@ export const ProjectSummarySchema = z.strictObject({
   audienceGeneration: z.number().int().positive(),
   lifecycleGeneration: z.number().int().positive(),
   participants: z.array(ProjectParticipantSchema),
+  /**
+   * Members a surface can show: an active membership whose work stream is not
+   * archived.
+   *
+   * Not every membership. Archiving a work stream leaves its membership alone
+   * — that row is what returns it to this project if it is unarchived — while
+   * every list of work streams filters archived ones out, so a project that
+   * counted them claimed members no screen could render: one whose work
+   * streams had been archived sat on "Showing 1 of 4" pointing at a **load
+   * more** that could never produce the other three. The whole membership,
+   * archived rows included, stays inside WorkspaceDO for the things that act
+   * on a project's behalf — an audience change reaches every member, listable
+   * or not. Nothing on the wire carries it, deliberately: a field added here
+   * is an unknown key to a desktop build that shipped before it, and this
+   * object is nested in the socket's opening sidebar payload, which such a
+   * build would then drop whole.
+   */
   workstreamIds: z.array(z.string().uuid()).default([]),
   defaultResourceIds: z.array(z.string().uuid()).default([]),
   createdAt: z.string().datetime({ offset: true }),

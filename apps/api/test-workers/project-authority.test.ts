@@ -6,12 +6,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   WorkspaceProjectSnapshotEventSchema,
+  type WorkspaceProjectSnapshotEvent,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  type WorkstreamId,
 } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
+import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
+import type { WorkstreamRegionalEffect } from "../src/durable-objects/workstream-regional-effect";
 
 // 09f0, not 09a0: external-event-routing.test.ts owns 09a0, and a shared
 // object name is a shared input gate across files (test:scripts enforces
@@ -70,6 +74,7 @@ async function establishWorkspace(): Promise<void> {
   ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
   await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec("DELETE FROM workspace_workstream_directory");
     state.storage.sql.exec("DELETE FROM project_workstream_memberships");
     state.storage.sql.exec("DELETE FROM workspace_project_order");
     state.storage.sql.exec("DELETE FROM project_participants");
@@ -89,8 +94,80 @@ async function seedMembership(projectId: string, workstreamId: string): Promise<
   });
 }
 
+let directorySeq = 0;
+
+/**
+ * Publish one work stream into the workspace directory, the way its own object
+ * would — the projection a project reads to tell a member it can show from one
+ * it cannot.
+ */
+async function publishDirectory(
+  workstreamId: WorkstreamId,
+  archivedAt: string | null,
+  sourceVersion: number,
+): Promise<void> {
+  directorySeq += 1;
+  const effect: WorkstreamRegionalEffect = {
+    kind: "directory_common",
+    title: "Member work stream",
+    description: "",
+    preview: "",
+    scope: "workspace",
+    state: "idle",
+    systemKind: null,
+    lastActivityAt: "2026-08-01T00:00:00.000Z",
+    completedAt: null,
+    archivedAt,
+    originType: "ad_hoc",
+    createdByUserId: OWNER,
+    automationSubscriptionId: null,
+    plannedFor: null,
+    latestAttentionOrdinal: 0,
+    unreadTrackingStartOrdinal: 0,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    resourceLinks: [],
+  };
+  await workspace().applyWorkstreamDirectoryEffects({
+    workspaceId: WORKSPACE_ID,
+    envelopes: [{
+      kind: "workstream_regional_effect",
+      contractVersion: 1,
+      region: "global",
+      workspaceId: WORKSPACE_ID,
+      workstreamId,
+      generation: 1,
+      messageId: `00000000-0000-7000-8000-${String(directorySeq).padStart(9, "0")}9e0`,
+      partitionKey: "common",
+      sourceVersion,
+      requiredProjectionVersion: null,
+      payloadHash: workstreamRegionalEffectHash(effect),
+      effect,
+    }],
+  });
+}
+
 function nextMessage(socket: WebSocket): Promise<MessageEvent> {
   return new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
+}
+
+/**
+ * The next project snapshot, skipping whatever else the socket is carrying.
+ *
+ * A work stream's archival publishes its own directory state on this socket
+ * too, and arrives first; taking the next message flatly would assert against
+ * that one instead.
+ */
+function nextProjectSnapshot(socket: WebSocket): Promise<WorkspaceProjectSnapshotEvent> {
+  return new Promise((resolve) => {
+    const listen = (event: MessageEvent): void => {
+      const decoded = WorkspaceProjectSnapshotEventSchema.safeParse(JSON.parse(String(event.data)));
+      if (!decoded.success) return;
+      socket.removeEventListener("message", listen);
+      resolve(decoded.data);
+    };
+    socket.addEventListener("message", listen);
+  });
 }
 
 async function connectProjectViewer(userId: string, suffix: string): Promise<WebSocket> {
@@ -428,6 +505,88 @@ describe("WorkspaceDO project authority", () => {
         workstreamId,
       ).one().state).toBe("active");
     });
+  });
+
+  it("given a project member, when its work stream is archived, then the project counts it apart from the members it can show", async () => {
+    const created = await create("Startup stuff");
+    if (!created.ok) throw new Error("project_fixture_failed");
+    const listed = asWorkstreamId("00000000-0000-7000-8000-0000000009c1");
+    const archived = asWorkstreamId("00000000-0000-7000-8000-0000000009c2");
+    await seedMembership(created.project.id, listed);
+    await seedMembership(created.project.id, archived);
+    await publishDirectory(listed, null, 1);
+    await publishDirectory(archived, null, 1);
+
+    await expect(workspace().listProjects({ workspaceId: WORKSPACE_ID, userId: OWNER }))
+      .resolves.toMatchObject({
+        ok: true,
+        directory: { items: [{ workstreamIds: [listed, archived] }] },
+      });
+
+    await publishDirectory(archived, "2026-09-01T00:00:00.000Z", 2);
+
+    // No surface can list an archived work stream, so the count every surface
+    // reads no longer includes it.
+    await expect(workspace().listProjects({ workspaceId: WORKSPACE_ID, userId: OWNER }))
+      .resolves.toMatchObject({ ok: true, directory: { items: [{ workstreamIds: [listed] }] } });
+    // The membership itself is untouched — it is what returns the work stream
+    // to this project if it is unarchived, and what an audience change still
+    // has to reach.
+    await expect(workspace().listProjectMembers({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      projectId: created.project.id,
+    })).resolves.toEqual({ ok: true, workstreamIds: [listed, archived] });
+  });
+
+  it("given a subscribed viewer, when a member work stream is archived, then a newer project snapshot arrives without a project write", async () => {
+    const created = await create("Startup stuff", "workspace");
+    if (!created.ok) throw new Error("project_fixture_failed");
+    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000009c3");
+    await seedMembership(created.project.id, workstreamId);
+    await publishDirectory(workstreamId, null, 1);
+    const before = await workspace().listProjects({ workspaceId: WORKSPACE_ID, userId: OWNER });
+    if (!before.ok) throw new Error("project_fixture_failed");
+
+    const socket = await connectProjectViewer(OWNER, "923");
+    try {
+      const snapshot = nextProjectSnapshot(socket);
+      await publishDirectory(workstreamId, "2026-09-01T00:00:00.000Z", 2);
+      const projects = (await snapshot).projects;
+      expect(projects.active.items).toEqual([expect.objectContaining({ workstreamIds: [] })]);
+      // Newer than the directory its reader already holds. A snapshot at the
+      // same waterline is a replay to every client that receives it, so one
+      // published without advancing it corrects nothing on screen.
+      expect(projects.active.waterline).toBeGreaterThan(before.directory.waterline);
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("given a work stream in no project, when it is archived, then no project snapshot is published", async () => {
+    const created = await create("Startup stuff", "workspace");
+    if (!created.ok) throw new Error("project_fixture_failed");
+    const stranger = asWorkstreamId("00000000-0000-7000-8000-0000000009c4");
+    await publishDirectory(stranger, null, 1);
+
+    const socket = await connectProjectViewer(OWNER, "924");
+    try {
+      let published = false;
+      socket.addEventListener("message", (event: MessageEvent) => {
+        if (WorkspaceProjectSnapshotEventSchema.safeParse(JSON.parse(String(event.data))).success) {
+          published = true;
+        }
+      });
+      await publishDirectory(stranger, "2026-09-01T00:00:00.000Z", 2);
+      // The archive of a work stream no project holds changes no project, and
+      // ordinary activity publishes this same effect: republishing both
+      // project lists to every socket for each of those would cost the sidebar
+      // far more than the count is worth.
+      await workspace().listProjects({ workspaceId: WORKSPACE_ID, userId: OWNER });
+      expect(published).toBe(false);
+    } finally {
+      socket.close(1000, "test complete");
+    }
   });
 
   it("given an active project, when it is archived, then navigation and pending defaults stop but history remains", async () => {
