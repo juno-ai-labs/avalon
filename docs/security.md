@@ -791,9 +791,15 @@ invalidate the real connection.
 
 **Consequences:** The common prepared path skips the regional session/membership
 join, but not current maintenance authority, without extending the ticket's
-60-second lifetime or one-use scope. Revocation, eviction, mismatch, natural
-session expiry, stale authority generation, and preparation failure all discard
-the optimization and preserve the prior fail-closed path.
+60-second lifetime or one-use scope. The security model explicitly trusts the
+revocation fan-out to close prepared admissions and live sockets after a D1
+session or membership change; the prepared fast path deliberately does not poll
+D1 again at upgrade. A matching prepared ticket may therefore upgrade while
+that fan-out is in transit. The ticket is valid for at most 60 seconds, natural
+session expiry is checked locally, and delivered fan-out removes the preparation
+or closes the socket. Revocation received before preparation, eviction,
+mismatch, stale authority generation, and preparation failure all discard the
+optimization and preserve the prior fail-closed path.
 
 ### 2026-09-01 — Model-authored web content gets its own origins, and its own fences
 

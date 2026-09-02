@@ -471,8 +471,8 @@ would make an optional optimization an availability dependency. Settling unseen
 state during ticket transit would mistake intent for an actual open.
 
 **Consequences:** The common prepared path still pays the current maintenance
-authority read, but removes the session/membership join and viewer-detail
-assembly from upgrade. Revocation fences in-flight preparation; session expiry,
+authority read, but removes the session/membership join and eligible
+viewer-detail assembly from upgrade. Revocation fences in-flight preparation; session expiry,
 local product changes, changed sequence, pending-input spill, or a speculative
 open discard snapshot reuse. A cold eviction, mismatch, failed preparation, or
 superseded ticket pays the previous path without changing protocol correctness.
