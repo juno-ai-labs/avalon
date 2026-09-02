@@ -5,19 +5,22 @@ import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import {
   Archive,
-  ChevronDown,
+  ChevronRight,
   ChevronsLeft,
   Check,
+  CircleHelp,
   CirclePause,
   Clock,
   Cog,
-  Command,
   Copy,
   EyeOff,
   FileStack,
+  Gauge,
   Globe2,
   GripVertical,
+  Info,
   LogOut,
+  Megaphone,
   Menu,
   Mic2,
   NotebookText,
@@ -28,6 +31,7 @@ import {
   Plus,
   Search,
   Settings,
+  Smartphone,
   Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -492,11 +496,10 @@ function CommandShortcutHint({
   if (!visible || shortcut === undefined) return null;
   return (
     <span aria-hidden="true" className="command-shortcut-scrim">
-      {/* Same Badge + scope-badge chrome as an automation's You / Workspace
-          pill, so holding Command does not introduce a second, chunkier chip. */}
+      {/* GrokBot renders the platform glyph and slot as one compact run rather
+          than placing a command icon beside the number. */}
       <Badge className="scope-badge command-shortcut-pill">
-        <Command size={9} />
-        <span>{shortcut}</span>
+        {`⌘${shortcut}`}
       </Badge>
     </span>
   );
@@ -1009,6 +1012,11 @@ export function Sidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const openPublicPage = useCallback(async (path: string): Promise<void> => {
+    const bridge = desktopBridge();
+    const { webBaseUrl } = await bridge.getRuntimeConfig();
+    await bridge.openExternal(new URL(path, `${webBaseUrl.replace(/\/$/u, '')}/`).toString());
+  }, []);
   const roster = useMemo(() => {
     const byId = new Map(members.map((member) => [member.id, member]));
     byId.set(workspace.currentUser.id, workspace.currentUser);
@@ -1679,9 +1687,10 @@ export function Sidebar({
             <ChevronsLeft size={16} />
           </IconButton>
           <NavLink
-            aria-label="New work stream"
+            aria-label="New chat"
             className={({ isActive }) => clsx('sidebar-new-button window-no-drag', isActive && 'is-active')}
             onClick={() => markSurfaceEntrypoint('sidebar_new')}
+            state={location.pathname === '/workstreams/new' ? undefined : { returnTo: location.pathname }}
             to="/workstreams/new"
           >
             <Plus aria-hidden="true" size={16} />
@@ -1957,13 +1966,11 @@ export function Sidebar({
 
         {accountMenu ?? <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
-            <button className="account-trigger window-no-drag" type="button">
+            <button aria-label="Open account menu" className="account-trigger window-no-drag" type="button">
               <Avatar member={workspace.currentUser} size="small" />
               <span className="account-copy">
                 <strong>{workspace.currentUser.name}</strong>
-                <span>{workspace.name}</span>
               </span>
-              <ChevronDown aria-hidden="true" size={14} />
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
@@ -1978,8 +1985,45 @@ export function Sidebar({
                   <Settings size={14} /> Settings…
                 </button>
               </DropdownMenu.Item>
-              <DropdownMenu.Item className="menu-item" onSelect={onSignOut}>
-                <LogOut size={14} /> Sign out
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void openPublicPage('/').catch(() => undefined)}
+              >
+                <Smartphone aria-hidden="true" />
+                <span>Get Rally for iOS</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void desktopBridge().openSettings()}
+              >
+                <Settings aria-hidden="true" />
+                <span>Settings</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void openPublicPage('/').catch(() => undefined)}
+              >
+                <Info aria-hidden="true" />
+                <span>About</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void openPublicPage('/support/').catch(() => undefined)}
+              >
+                <CircleHelp aria-hidden="true" />
+                <span>Help Center</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="menu-item account-menu-item"
+                onSelect={() => void openPublicPage('/support/').catch(() => undefined)}
+              >
+                <Megaphone aria-hidden="true" />
+                <span>Send Feedback</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator className="menu-separator account-menu-separator" />
+              <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onSignOut}>
+                <LogOut aria-hidden="true" />
+                <span>Log out</span>
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>

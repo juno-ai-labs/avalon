@@ -1,6 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
-import { ArrowUp, AtSign, Check, ChevronDown, LoaderCircle, Mic, Plus } from 'lucide-react';
+import { ArrowUp, AtSign, Check, ChevronDown, CircleDot, LoaderCircle, Mic, Paperclip, Plus } from 'lucide-react';
 import {
   forwardRef,
   Fragment,
@@ -136,6 +136,8 @@ interface ComposerInputProps {
    * that move.
    */
   onSelect?: () => void;
+  /** GrokBot-style task teaching action shown beside file attachment in the capsule menu. */
+  onTeachTask?: () => void;
   onOpenAttachment: (preview: AttachmentPreview) => void;
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
@@ -193,6 +195,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   onRemoveAttachment,
   onRetryAttachment,
   onSelect,
+  onTeachTask,
   onSubmit,
   onValueChange,
   placeholder,
@@ -339,6 +342,8 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
           submitting && 'is-sending',
           drop.dragging && 'is-file-dragging',
           messageCapsule && 'is-message-capsule',
+          messageCapsule && attachments.length > 0 && 'has-attachments',
+          messageCapsule && showSubmit && 'has-submit',
         )}
         onDragEnter={drop.onDragEnter}
         onDragLeave={drop.onDragLeave}
@@ -421,9 +426,42 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 <AtSign size={15} />
               </IconButton>
             )}
-            <IconButton disabled={submitting} label="Attach a file" onClick={() => fileInputRef.current?.click()}>
-              {uploading ? <LoaderCircle className="spin" size={15} /> : <Plus size={16} />}
-            </IconButton>
+            {messageCapsule ? (
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <IconButton className="composer-action-trigger" disabled={submitting} label="Composer actions">
+                    {uploading ? <LoaderCircle className="spin" size={15} /> : <Plus size={17} />}
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    align="start"
+                    className="menu-content composer-action-menu"
+                    collisionPadding={8}
+                    side="top"
+                    sideOffset={8}
+                  >
+                    <DropdownMenu.Item
+                      className="menu-item composer-action-menu-item"
+                      onSelect={() => fileInputRef.current?.click()}
+                    >
+                      <Paperclip aria-hidden="true" />
+                      <span>Attach files</span>
+                    </DropdownMenu.Item>
+                    {onTeachTask && (
+                      <DropdownMenu.Item className="menu-item composer-action-menu-item" onSelect={onTeachTask}>
+                        <CircleDot aria-hidden="true" className="composer-teach-task-icon" />
+                        <span>Teach a task</span>
+                      </DropdownMenu.Item>
+                    )}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            ) : (
+              <IconButton disabled={submitting} label="Attach a file" onClick={() => fileInputRef.current?.click()}>
+                {uploading ? <LoaderCircle className="spin" size={15} /> : <Plus size={16} />}
+              </IconButton>
+            )}
             {!messageCapsule && (
               <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
                 {dictationButton('Click or hold to dictate')}

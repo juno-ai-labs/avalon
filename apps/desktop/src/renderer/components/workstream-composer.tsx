@@ -1,5 +1,6 @@
 import { LoaderCircle, Sparkles, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import {
@@ -104,6 +105,7 @@ export function WorkstreamComposer({
   queueItems = [],
   onReorderQueue,
 }: WorkstreamComposerProps): React.JSX.Element {
+  const navigate = useNavigate();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
   const {
@@ -366,7 +368,7 @@ export function WorkstreamComposer({
         <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
           {visibleCandidates.map((candidate, index) => (
             <button
-              aria-label={`${candidate.label} — ${candidate.description} — ${candidate.kind === 'rally' ? 'ASSISTANT' : PERSON_MENTION_TYPE}`}
+              aria-label={`${candidate.label} — ${candidate.description} — ${candidate.kind === 'rally' ? 'Bot' : PERSON_MENTION_TYPE}`}
               aria-selected={index === mentionNavigation.activeIndex}
               className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
               id={mentionOptionId(candidate.id)}
@@ -385,8 +387,11 @@ export function WorkstreamComposer({
                   ? <Avatar member={candidate.member} size="small" />
                   : <span className="rally-mention-icon"><Sparkles size={14} /></span>}
               </span>
-              <span><strong>{candidate.label}</strong><small>{candidate.description}</small></span>
-              <Badge>{candidate.kind === 'rally' ? 'ASSISTANT' : PERSON_MENTION_TYPE}</Badge>
+              <span className="mention-popover-copy">
+                <strong>{candidate.label}</strong>
+                {candidate.kind === 'person' && <small>{candidate.description}</small>}
+              </span>
+              <span className="mention-popover-kind">{candidate.kind === 'rally' ? 'Bot' : PERSON_MENTION_TYPE}</span>
             </button>
           ))}
         </div>
@@ -432,6 +437,7 @@ export function WorkstreamComposer({
         onRetryAttachment={onRetryAttachment}
         onSelect={() => refreshOpenMentionQuery(text)}
         onSubmit={send}
+        onTeachTask={() => void navigate('/automations/new')}
         onValueChange={updateText}
         placeholder={placeholder}
         ref={textareaRef}
