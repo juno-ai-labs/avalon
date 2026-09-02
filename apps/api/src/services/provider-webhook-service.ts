@@ -443,7 +443,23 @@ export class ProviderWebhookService {
   ): Promise<ProviderWebhookIngestionResult> {
     const payloadRef = `${this.env.AVALON_REGION}/provider-webhooks/${input.provider}/${input.bodyHash}.json`;
     const priorReceipt = await this.loadReceipt(input.provider, input.deliveryId);
-    if (priorReceipt) {
+    // Pre-cutover only. This shortcut repairs a redelivery whose receipt
+    // committed before its activities were queued, and it does so in the old
+    // shape throughout: `findPendingReceiptActivities` reads `activities` and
+    // `finishReceipt` enqueues by activity id. Migration 0090 dropped
+    // `activities`, and it is in no authority now — not regional D1, and not
+    // `WORKSPACE_LOCAL_TABLES`, so no routing can reach it. Left unguarded it
+    // threw `no such table` on every redelivery of an unprocessed receipt,
+    // unmapped, as a 500; the provider retried, took the same branch, and
+    // `processed_at` could never be set, so the failure was permanent for that
+    // delivery — on the path that exists to recover from a crash.
+    //
+    // The main path below already repairs the same case, and in the current
+    // shape: the receipt insert conflicts, `existingWorkspaceReceipt` loads,
+    // `shouldApplyWorkspaceEffects` sees the null `processed_at`, and
+    // `finishWorkspaceReceipt` enqueues the connector events. So the modern
+    // path simply falls through to it.
+    if (priorReceipt && !this.env.WORKSPACE_DOS) {
       this.assertMatchingReceipt(priorReceipt, input.eventType, payloadRef);
       if (
         priorReceipt.processed_at === null
@@ -1121,12 +1137,20 @@ export class ProviderWebhookService {
   ): Promise<ConnectorConnectionContext> {
     let credentials: Record<string, unknown> = {};
     if (row.encrypted_credentials && row.credential_iv) {
-      credentials = parseRecord(await decryptVersionedConnectorCredentials(this.env, {
-        id: row.id,
-        encrypted_credentials: row.encrypted_credentials,
-        credential_iv: row.credential_iv,
-        credential_key_version: row.credential_key_version,
-      }));
+      // Rewrites the row when the stored key version trails the active one, so
+      // this is a `connector_connections` write on the ordinary delivery path.
+      // Dormant until a key rotation, and a rotation is exactly when it would
+      // have fired: for every provider at once, while blocking the rewrite the
+      // rotation waits on.
+      credentials = parseRecord(await decryptVersionedConnectorCredentials(
+        withWorkspaceRuntimeDatabase(this.env, row.workspace_id),
+        {
+          id: row.id,
+          encrypted_credentials: row.encrypted_credentials,
+          credential_iv: row.credential_iv,
+          credential_key_version: row.credential_key_version,
+        },
+      ));
     }
     return {
       id: row.id,
@@ -1169,7 +1193,13 @@ export class ProviderWebhookService {
         // it rotated, which is what the manual write here used to do.
         const signal = AbortSignal.timeout(15_000);
         const hasAccess = await withAuthorizedConnection(
-          this.env,
+          // The door refreshes and persists a near-expiry token, which is a
+          // `connector_connections` write — WorkspaceDO's table, not regional
+          // D1's. Unwrapped it threw `no such table` before the payload was
+          // stored or the receipt written, discarding the whole delivery for
+          // every matched connection, including healthy ones in other
+          // workspaces. Same wrap as the reauthorization write below.
+          withWorkspaceRuntimeDatabase(this.env, connection.workspaceId),
           { connection, adapter: connectorRegistryForEnv(this.env).get("github"), signal },
           (authorized) => canGitHubPersonalConnectionAccessRepository(
             config,
