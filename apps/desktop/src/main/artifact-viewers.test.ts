@@ -237,18 +237,31 @@ describe('the rail preview controller', () => {
       url: string | null;
       bounds: PreviewBounds[];
       closed: boolean;
+      destroyed: boolean;
     }[] = [];
     const removed: unknown[] = [];
+    // Both surfaces can be destroyed by Electron rather than by this
+    // controller, so the harness lets a test say so.
+    const host = { destroyed: false };
     const controller = new ArtifactPreviewController(
       {
+        destroyed: () => host.destroyed,
         contentSize: () => ({ width: 1_200, height: 800 }),
         removeView: (view) => removed.push(view),
       },
       servingDomain,
       () => {
-        const state = { url: null as string | null, bounds: [] as PreviewBounds[], closed: false };
+        const state = {
+          url: null as string | null,
+          bounds: [] as PreviewBounds[],
+          closed: false,
+          destroyed: false,
+        };
         views.push(state);
         return {
+          // Electron owns a window's view tree: destroying the window destroys
+          // every view under it, so the fake cannot let one outlive the other.
+          destroyed: () => host.destroyed || state.destroyed,
           setBounds: (bounds: PreviewBounds) => state.bounds.push(bounds),
           loadURL: async (url: string) => {
             state.url = url;
@@ -259,7 +272,7 @@ describe('the rail preview controller', () => {
         };
       },
     );
-    return { controller, views, removed };
+    return { controller, views, removed, host };
   }
 
   const bounds = { x: 900, y: 100, width: 280, height: 400 };
@@ -375,6 +388,75 @@ describe('the rail preview controller', () => {
     // Idempotent: a second close must not remove a view twice.
     controller.destroy();
     expect(removed).toHaveLength(1);
+  });
+
+  it('touches nothing when the window it was composited over is already gone', async () => {
+    const { controller, views, removed, host } = harness();
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    // How quitting to install an update reaches this controller: Electron
+    // destroys the window, and the window's own `closed` handler tears the
+    // preview down afterwards. Detaching or closing anything here throws
+    // `Object has been destroyed` out of an event handler, which the main
+    // process reports as an uncaught exception instead of quitting.
+    host.destroyed = true;
+    controller.destroy();
+    expect(removed).toHaveLength(0);
+    expect(views[0]?.closed).toBe(false);
+    expect(controller.currentArtifactId()).toBeNull();
+  });
+
+  it('detaches a view whose contents closed themselves, without closing it again', async () => {
+    const { controller, views, removed } = harness();
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    views[0]!.destroyed = true;
+    controller.destroy();
+    // The window is still alive and still holding the child, so the detach has
+    // to happen; only the second close would throw.
+    expect(removed).toHaveLength(1);
+    expect(views[0]?.closed).toBe(false);
+    // Idempotent here too. This is the path where it is not obvious: the
+    // window is alive, so nothing else would stop a second detach.
+    controller.destroy();
+    expect(removed).toHaveLength(1);
+  });
+
+  it('replaces a view whose contents closed themselves rather than reporting it live', async () => {
+    const { controller, views, removed } = harness();
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
+    // An artifact page calling `window.close()`. The handle stays, and it is
+    // still this artifact's, so the artifact-ID comparison alone would keep it.
+    views[0]!.destroyed = true;
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
+    expect(views).toHaveLength(2);
+    expect(views[1]?.url).toBe(`${ORIGIN}/`);
+    expect(views[1]?.bounds.at(-1)).toEqual(bounds);
+    // The dead one is detached from the window that is still holding it.
+    expect(removed).toHaveLength(1);
+  });
+
+  it('stops laying out a view whose contents closed themselves', async () => {
+    const { controller, views } = harness();
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    const laidOut = views[0]!.bounds.length;
+    // The window is alive, so the window half of the layout guard does not
+    // apply. The rail goes on sending layout updates — a resize — because it
+    // has no way to learn the preview died under it.
+    views[0]!.destroyed = true;
+    controller.setBounds({ x: 100, y: 100, width: 200, height: 200 });
+    controller.setOverlayOpen(true);
+    expect(views[0]?.bounds).toHaveLength(laidOut);
+  });
+
+  it('refuses to lay out or present over a window that is gone', async () => {
+    const { controller, views, host } = harness();
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    const laidOut = views[0]!.bounds.length;
+    host.destroyed = true;
+    controller.setBounds({ x: 100, y: 100, width: 200, height: 200 });
+    controller.setOverlayOpen(true);
+    expect(views[0]?.bounds).toHaveLength(laidOut);
+    expect(await controller.present({ artifactId: 'other', url: `${ORIGIN}/`, bounds })).toBe(false);
+    expect(views).toHaveLength(1);
   });
 });
 
