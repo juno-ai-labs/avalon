@@ -6,6 +6,7 @@ import {
   createElicitationMessage,
   adjacentTranscriptRange,
   createTextMessage,
+  optimisticMentionRendering,
   createToolEventMessage,
   orderedTranscriptMessages,
   composeTranscript,
@@ -156,6 +157,42 @@ describe('transcript messages', () => {
       ...base,
       elicitation: { id: 'question-one', prompt: 'Choose', responseType: 'single_select', status: 'open' },
     })).toMatchObject({ messageType: 'elicitation', elicitation: { id: 'question-one' } });
+  });
+
+  it('rewrites an optimistic turn into the Markdown the room will store, so its mention is already a chip', () => {
+    // The chip is rendered from the text, not from the mention rows: without
+    // the `person://` Markdown `renderIdentity` has no href to resolve and the
+    // bubble shows a plain `@Sam` that widens into a chip when the canonical
+    // turn lands — the one resize an in-flight row exists to prevent.
+    const rendered = optimisticMentionRendering(
+      'Ping @Sam and @Linear',
+      [
+        { type: 'person', label: '@Sam', userId: 'user-sam', connectorType: null, startOffset: 5, endOffset: 9 },
+        {
+          type: 'connector', label: '@Linear', userId: null, connectorType: 'linear',
+          startOffset: 14, endOffset: 21,
+        },
+      ],
+      [{ id: 'user-sam', name: 'Sam', email: 'sam@example.com', timezone: 'UTC' }],
+    );
+
+    expect(rendered.text).toBe('Ping [@Sam](person://user-sam) and @Linear');
+    expect(rendered.mentions).toEqual([
+      {
+        type: 'person', personId: 'user-sam', displayName: 'Sam', startOffset: 5, endOffset: 30,
+      },
+      {
+        type: 'connector', connectorType: 'linear', startOffset: 35, endOffset: 42,
+      },
+    ]);
+  });
+
+  it('leaves a draft alone when the selection carries no offsets to rewrite', () => {
+    expect(optimisticMentionRendering(
+      'Ping @Sam',
+      [{ type: 'person', label: '@Sam', userId: 'user-sam', connectorType: null }],
+      [{ id: 'user-sam', name: 'Sam', email: 'sam@example.com', timezone: 'UTC' }],
+    )).toEqual({ text: 'Ping @Sam', mentions: [] });
   });
 
   it('replaces logical client and persisted messages without moving their transcript position', () => {

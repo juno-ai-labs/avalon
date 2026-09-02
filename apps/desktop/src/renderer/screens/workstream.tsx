@@ -63,6 +63,7 @@ import {
   createTextMessage,
   foldSettledWorkIntoMessages,
   groupPluginToolMessages,
+  optimisticMentionRendering,
   orderedTranscriptMessages,
   applyPendingInputQueueOrder,
   assignPendingInputQueueSequences,
@@ -1886,6 +1887,9 @@ export function WorkstreamScreen(): React.JSX.Element {
           .map((overlay) => overlay.position.eventSequence),
       ) + 1;
       const createdAt = new Date().toISOString();
+      // Rendered text, not sent text: `createMessage` below is given the draft
+      // the person typed, and the room does this same rewrite on its own copy.
+      const rendered = optimisticMentionRendering(text, mentions, members.data ?? []);
       const optimistic = createTextMessage({
         id: clientId,
         clientMessageId: clientId,
@@ -1893,7 +1897,8 @@ export function WorkstreamScreen(): React.JSX.Element {
         sequenceNumber: 0,
         authorType: 'human',
         author: workspaceMemberFromSession(session),
-        text,
+        text: rendered.text,
+        mentions: rendered.mentions,
         attachments: readyAttachments.flatMap((attachment) => attachment.resource ? [{
           id: attachment.resource.id,
           fileName: attachment.file.name,
