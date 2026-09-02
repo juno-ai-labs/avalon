@@ -1600,8 +1600,10 @@ and continue the same durable execution at the next model-turn index. An
 explicit stop still settles the reservation and terminalizes the run. Real
 workerd coverage forces eviction with a streaming reservation and checks the
 new execution epoch, canonical status turn, and still-executing singleton. The
-Bind runtime subtracts already-persisted model turns from the configured run
-ceiling, so takeover does not refresh that budget.
+Bind runtime subtracts assistant reservations belonging to the current
+subordinate execution from the configured run ceiling, so takeover does not
+refresh that budget and the loop's lifetime turn index does not charge later
+executions.
 
 **Why:** A production instance reset closed the feed sockets while an automation
 authoring response was reserved. Recovery successfully reclaimed the durable
