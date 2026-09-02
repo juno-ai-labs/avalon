@@ -25,12 +25,12 @@ thing to argue for rather than a thing to preserve.
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
-- `apps/desktop/src/renderer/screens/workstream.tsx` adapts a SubstreamAgent feed.
-  Its tool rows are not rendered one per call: they collapse into one row per
-  plugin, which [`plugin-activity-rows.md`](plugin-activity-rows.md) owns
-  entirely. The automation adapter below deliberately keeps a row per call.
-- `apps/desktop/src/renderer/screens/new-automation.tsx` adapts an AutomationAgent
-  draft feed.
+- `apps/desktop/src/renderer/screens/workstream.tsx` adapts a SubstreamAgent feed,
+  and is now the only adapter. Its tool rows are not rendered one per call: they
+  collapse into one row per plugin, which
+  [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
+  retired automation-draft adapter kept a row per call, which is the divergence
+  that made the collapse a decision worth recording rather than an obvious one.
 
 ## Contract
 
