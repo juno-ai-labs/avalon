@@ -244,6 +244,14 @@ export function workstreamPayloadBelongsToRoute(
  * with HyperSight open must not hand a sidebar to the next stream opened from
  * it, and the preference itself is left alone so the toggle still means what it
  * did.
+ *
+ * `openedThisVisit` is this window's own toggle, so the gate answers the same
+ * way to every other way the preference can arrive: the control socket's boot
+ * frame, and a change made on another device while this stream is on screen.
+ * None of them open the panel here. That is the same rule rather than a gap in
+ * it — a sidebar opens where somebody asked for it, and this window was not
+ * asked. The preference is still read, still written, and still what the toggle
+ * beside the reader acts on.
  */
 export function blockDashboardHoldsSidebar(
   preferenceVisible: boolean,
@@ -1199,9 +1207,11 @@ export function WorkstreamScreen(): React.JSX.Element {
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
   const railOpen = storeRailOpen && railScope === id;
-  // No request and no open gate of its own. The independently-started control
-  // socket writes the preference when it arrives; until then the dashboard is
-  // simply closed and the feed remains fully usable.
+  // No request of its own. The independently-started control socket writes the
+  // preference when it arrives; until then the dashboard is simply closed and
+  // the feed remains fully usable. What arrives is no longer an open on its
+  // own, either: the visit gate below is what the boot frame now meets, so a
+  // stream is reached closed however its preference reads.
   const blockDashboardPreference = useQuery<BlockDashboardPreference | null>({
     queryKey: ['block-dashboard-preference', id],
     queryFn: async () => null,
@@ -1670,10 +1680,15 @@ export function WorkstreamScreen(): React.JSX.Element {
     persistBlockDashboardPreference(visible);
   }, [closeRail, id, persistBlockDashboardPreference]);
 
+  // Yielding the sidebar is written back, but only by the stream HyperSight is
+  // actually showing in. The stored preference outlives the visit that set it,
+  // so a stream reached from that one can hold `visible` with nothing on
+  // screen; writing `false` from there would erase the person's toggle, on this
+  // device and every other, for a panel this visit never displaced.
   const openRailVariant = useCallback((variant: RailVariant): void => {
     openRail(variant);
-    if (blockDashboardPreferred) persistBlockDashboardPreference(false);
-  }, [blockDashboardPreferred, openRail, persistBlockDashboardPreference]);
+    if (blockDashboardOpen) persistBlockDashboardPreference(false);
+  }, [blockDashboardOpen, openRail, persistBlockDashboardPreference]);
 
   // The shell lays the main pane out against whichever panel holds the right
   // sidebar, and only this screen knows whether HyperSight has it — or which
