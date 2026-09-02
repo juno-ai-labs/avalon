@@ -552,6 +552,54 @@ export class WorkstreamService {
     private readonly defer?: (promise: Promise<unknown>) => void,
   ) {}
 
+  /**
+   * Use the ticket-to-upgrade interval to pay the room's storage-ready wake.
+   *
+   * The ticket remains the authorization boundary and this is deliberately
+   * best effort: an unavailable warm-up must leave the later upgrade to take
+   * the same cold path it took before, never turn a usable ticket into an API
+   * failure. `defer` is request-owned `waitUntil`, so the Worker keeps the
+   * binding call alive after sending the ticket without adding it to ticket
+   * latency.
+   */
+  private warmMainSocketSubstream(workstreamId: string, ticketId: string): void {
+    if (!this.defer) return;
+    const startedAt = Date.now();
+    this.defer((async () => {
+      try {
+        const stub = await durableObjectStubForWorkspace(
+          this.env,
+          this.env.SUBSTREAM_AGENTS,
+          this.auth.workspaceId,
+          substreamAgentName(
+            this.env.AVALON_REGION,
+            this.auth.workspaceId,
+            asWorkstreamId(workstreamId),
+          ),
+        );
+        await stub.wake();
+        logStructuredEvent(this.env, "info", "workstream_socket_ticket_warm_finished", {
+          workspace_id: this.auth.workspaceId,
+          workstream_id: workstreamId,
+          substream_id: "0",
+          ticket_id: ticketId,
+          duration_ms: Math.max(0, Date.now() - startedAt),
+          outcome: "success",
+        });
+      } catch (error) {
+        logWarn(this.env, "workstream_socket_ticket_warm_finished", {
+          workspace_id: this.auth.workspaceId,
+          workstream_id: workstreamId,
+          substream_id: "0",
+          ticket_id: ticketId,
+          duration_ms: Math.max(0, Date.now() - startedAt),
+          outcome: "failure",
+          error_name: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    })());
+  }
+
   /** The object client, or a 503 refusal on a stack that never opened the authority. */
   private async authoritativeClient(id: string): Promise<WorkstreamObjectClient> {
     await requireOpenWorkstreamAuthority(this.env);
@@ -754,6 +802,10 @@ export class WorkstreamService {
       afterSequence,
       speculative,
     );
+    // The main feed is recorded by work-stream creation. Non-main creation is
+    // not a product surface yet, so an arbitrary child UUID must not
+    // materialize an object merely because its parent work stream is visible.
+    if (substreamId === "0") this.warmMainSocketSubstream(id, ticketId);
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/workstreams/${id}/substreams/${substreamId}`;
