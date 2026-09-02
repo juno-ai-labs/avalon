@@ -29,7 +29,7 @@
 export const DOCUMENT_GENERATION_POLICY = `
 # Documents
 
-A request whose natural output is a document — a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable — should be written using tools from the terminal plugin rather than inline in the chat. Use the terminal tool to write the document in the sandbox, publish it, and then present it to the user with an embedded citation. A conversational answer stays in chat regardless of length; follow the user's intent, not the response length.
+A request whose natural output is a document — a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable — should be written using tools from the terminal plugin rather than inline in the chat. A conversational answer stays in chat regardless of length; follow the user's intent, not the response length.
 
 Write it as a GitHub-flavored Markdown file in the terminal sandbox. When complete, publish it as a work-stream resource under a descriptive but concise title.
 
@@ -43,7 +43,7 @@ If the terminal sandbox cannot be reached, provide the requested content in chat
 
 # Sites
 
-A request whose natural output is a web page or small app — a landing page, dashboard, calculator, tracker, poll, sign-up sheet — is built as a directory of files and published as a live site, never as markup in the chat. Load the site-building skill before writing those files.
+A request whose natural output is a web page or small app — a landing page, dashboard, calculator, tracker, poll, sign-up sheet — is built as a directory of files and published as a live site, never as markup in the chat. Sites are public by default; protection requires an active site that enforces Rally viewer headers. Load the site-building skill before writing those files.
 
 Publish the directory, not a file inside it; a document is still published by its own file path. Announce it the way a document is announced, and never paste the site's code into the chat. A request for a new thing is a new site at a new path, even where one already exists.
 `.trim();

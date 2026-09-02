@@ -1,8 +1,8 @@
 # Live web artifacts
 
 A **live artifact** is a directory a work-stream run published that Rally also
-*serves*, at a stable per-artifact HTTPS origin, to every participant who can see
-the work stream. A landing page, a dashboard, a calculator, a poll: the model
+*serves publicly*, at a stable per-artifact HTTPS origin. A landing page, a
+dashboard, a calculator, a poll: the model
 writes ordinary files in the Terminal sandbox exactly as it writes a document,
 publishes the directory with the same tool, and what lands in the rail is a page
 people open rather than a code listing.
@@ -37,7 +37,7 @@ exists.
 | `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, and reaching the supervisor through the one supported resolver. |
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
-| `apps/api/src/services/artifact-open-service.ts` | The only door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. |
+| `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The rail's site detail: the pane it measures and hands over, the actions, the Data view, and the error log. |
 | `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp, the shared isolation contract, and the overlay rule. |
 
@@ -101,10 +101,14 @@ Fences apply in this order, all before any model-authored code runs:
 
 1. **Host** — not an artifact host, or the wrong region's, answers the neutral
    page.
-2. **Fetch metadata** — the request must be same-origin, or a genuine top-level
-   navigation. See [Invariants](#invariants).
-3. **Viewer session** — the cookie is checked against `ArtifactHostDO`, which
-   also confirms the viewer still sees the work stream.
+2. **Fetch metadata** — unsafe requests require exact same-origin metadata.
+   `GET` and `HEAD` from anywhere are admitted as anonymous public reads; only
+   same-origin requests and genuine top-level navigations may carry Rally
+   viewer identity. See [Invariants](#invariants).
+3. **Optional viewer session** — when a request is eligible and carries the
+   artifact cookie, it is checked against `ArtifactHostDO`, which also confirms
+   the viewer still sees the work stream. A missing, expired, or no-longer-visible
+   session falls back to the public representation with no identity headers.
 
 Then `/__rally/*` paths are Rally's own (the access bootstrap, the redeem
 endpoint, prior-version mounts) and everything else is artifact content: assets
@@ -112,6 +116,25 @@ resolved against the manifest for a static site, the loader for a stateless
 active one, or the facet for a stateful one.
 
 ### Access
+
+Artifact content is public by default. A direct browser, crawler, or unfurler
+can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
+current manifest from `ArtifactHostDO`, strips any inbound cookie and viewer
+header before model code runs, and injects no identity. Static sites therefore
+cannot be private. Anonymous unsafe methods are refused before model code runs:
+public means readable, not anonymously writable.
+
+The four-word hostname is a readable routing label with roughly 30 bits of
+combinations, not an access secret. Search crawlers receive
+`X-Robots-Tag: noindex`, but that is indexing etiquette rather than a security
+boundary; anyone holding or discovering the URL can read the current site.
+
+An author who needs a protected site must publish an **active** site whose
+handler checks `x-rally-viewer-id` before every route and before its asset
+fallback, returning 401 when the header is absent. Rally injects that header
+only after the session flow below succeeds; inbound copies are stripped first.
+This makes the handler's check an authorization boundary rather than a
+guessable-URL convention. The site-building skill teaches this shape explicitly.
 
 `POST /resources/:id/artifact/open` mints a single-use code against current
 work-stream visibility — asked of `WorkstreamDO` rather than inferred, because
@@ -163,22 +186,23 @@ is the only place that can forward into it.
   cookies, or DOM. The origin is a per-artifact subdomain of a registrable domain
   that is not `rallywith.ai`.
 - **Separate origins do not close cross-artifact CSRF, so the serving Worker
-  does.** Every artifact is a subdomain of one registrable domain, so two
+  separates public reads from credentialed requests.** Every artifact is a
+  subdomain of one registrable domain, so two
   artifacts are same-*site*: `SameSite` does not stop script in artifact A
   sending a credentialed request to artifact B, and a simple `POST` needs no
-  preflight, so B's model-written handler would still run. Requests are admitted
-  only when fetch metadata says `same-origin`, or when the request *is* a
-  top-level document navigation — `Sec-Fetch-Mode: navigate` with
-  `Sec-Fetch-Dest: document`, on a `GET`. **`Sec-Fetch-Site: none` is the wrong
+  preflight, so B's model-written handler would still run. Unsafe requests are
+  admitted only when fetch metadata says `same-origin`. A top-level document
+  navigation — `Sec-Fetch-Mode: navigate` with `Sec-Fetch-Dest: document`, on a
+  `GET` — may also use a valid viewer session. **`Sec-Fetch-Site: none` is the wrong
   test** and was the first thing written here: it covers an address bar and a
   bookmark, but a link click or a redirect from anywhere else sends
   `cross-site`, so keying on it would refuse the ordinary act of following a
-  link to an artifact you can already see. Classifying on what the request is
-  keeps the boundary intact, because a document navigation cannot carry a body
-  a page composed, and the sub-resource requests that *are* the attack never
-  reach that branch. **Cross-origin GETs are refused too** — artifact code may
-  treat any method as a write, and nothing about a model-written handler makes
-  it safe by method.
+  link to an artifact. Classifying on what the request is keeps the boundary
+  intact, because a document navigation cannot carry a body a page composed.
+  Cross-origin, same-site, and metadata-free `GET`/`HEAD` requests are allowed
+  only as anonymous public reads: their cookies are ignored and model code gets
+  no viewer headers. That distinction is load-bearing; treating a cross-site
+  read as an identified viewer would restore the sibling-artifact attack.
 - **The CSP's `script-src` and `style-src` must stay written out.** `'self'`
   does not permit inline code, so inheriting `default-src` would refuse the
   inline `<script>` and `<style>` model-authored pages are built from and break
@@ -192,6 +216,11 @@ is the only place that can forward into it.
   superseded spellings alike. That strip is the entire anti-spoof mechanism; a
   header family whose readers widen to a legacy prefix and whose stripper does
   not has a forgeable back door.
+- **Anonymous access is read-only.** Fetch metadata protects browsers from
+  sibling-artifact CSRF; it does not authenticate a non-browser caller, which
+  can spell those headers itself. `GET` and `HEAD` may fall back to the public
+  representation, while every unsafe method still requires a valid Rally
+  viewer session.
 - **The renderer never embeds, fetches, or parses artifact content.** An
   `<iframe>` would widen the renderer's CSP to a wildcard artifact host and graft
   remote model-authored content into the application DOM as a navigable,
@@ -279,18 +308,32 @@ facet that holds a stateful artifact's data. It does not own:
 
 ## Failure modes and limits
 
-- **The loader binding is absent.** A static artifact still serves; an active one
-  degrades to its assets, so its pages render and its routes 404. Visible partial
-  failure rather than a dead origin.
+- **The loader binding is absent.** A static artifact still serves. A stateless
+  active artifact fails closed with 503 because its handler may be the access
+  control protecting those same assets; serving the files as a fallback would
+  turn a runtime outage into a privacy breach. A stateful site runs through its
+  supervisor facet and does not need this binding on the serving Worker.
 - **The model's module throws.** The viewer gets a plain Rally page, never a
   stack trace. The error — message, stack, request path — lands in a bounded
   per-artifact log (50 entries) the rail shows, so a participant can paste it
   back into chat.
-- **A viewer loses work-stream visibility.** Their next request is refused, and
-  the session is not renewed. `VISIBILITY_CACHE_MS` bounds the staleness window
-  and **ships at the open value of zero** — every request re-asks `WorkstreamDO`
-  — because the window is how long a removed viewer keeps reading, which is the
-  team's number to set rather than this code's to guess.
+- **A viewer loses work-stream visibility.** Their next eligible request loses
+  its Rally identity and receives the anonymous public representation. A
+  protected active site's own early header guard then returns 401; a public site
+  continues serving it. `VISIBILITY_CACHE_MS` bounds how long a removed viewer
+  may still receive identity and **ships at the open value of zero** — every
+  request re-asks `WorkstreamDO` — because that security window is the team's
+  number to set rather than this code's to guess.
+- **Viewer identity cannot be checked.** Identity is an optional enhancement to
+  public serving, so a failed visibility hop falls back to the anonymous
+  representation rather than making a browser with an old cookie less able to
+  read than a crawler. The failure emits a structured warning; a protected
+  active site's header guard still refuses the anonymous request.
+- **An anonymous request makes the model handler throw.** It receives the same
+  neutral 500 response, but cannot append to the participant-facing error ring:
+  otherwise crafted public requests could evict every useful diagnosis and
+  plant attacker-controlled paths in a surface participants paste into chat.
+  Reproducing the failure through Rally records it with trusted viewer context.
 - **A prior version of a stateful artifact.** Source only, never live: one facet
   runs one class, so serving old code would abort the facet under current
   viewers, and old code against a live schema is undefined besides.
@@ -313,7 +356,7 @@ facet that holds a stateful artifact's data. It does not own:
 | Suite | What it proves |
 | --- | --- |
 | `pnpm --filter @rally/api exec vitest run test/artifact-read-only-sql.test.ts` | The SQL admission, adversarially: statement sequences that commit mid-payload, CTEs wrapping writes, semicolons inside literals, writes behind comment markers, and identifier injection. |
-| `pnpm --filter @rally/api exec vitest run test/artifact-serving-policy.test.ts` | The three fences: CSP directives, cross-artifact request admission including the credentialed simple `POST`, version-mount parsing, and asset resolution. |
+| `pnpm --filter @rally/api exec vitest run test/artifact-serving-policy.test.ts test/artifact-serving-hostname.test.ts` | The three fences: CSP directives, anonymous public reads, session identity only on eligible requests, refusal of credentialed cross-artifact writes, version-mount parsing, and asset resolution. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-site-publish.test.ts` | Kind resolution, the one-file refusal, the storage-class check, content types, the zip, and the asymmetric transition. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
@@ -375,10 +418,50 @@ code is untrusted and capability-fenced (one injected binding, no network, no
 secrets, no Rally bindings); artifact *data* is untrusted content with a trusted
 container, since the rows were written by model code and page visitors while the
 host class that reads them is Rally's and cannot be shadowed; and the serving
-Worker's waistline is deliberately minimal, so a compromise of it exposes
-artifact content and viewer sessions rather than workspace authority.
+Worker's waistline is deliberately minimal. Artifact content is intentionally
+public unless its active handler requires the trusted viewer header; error logs,
+data tools, publication, and revision remain work-stream-authorized. A
+compromise of the serving Worker exposes artifact content and viewer sessions
+rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-02 — Sites become public by default; protection becomes active code
+
+**What changed:** Artifact `GET` and `HEAD` requests now serve the current site
+without a Rally session. Cross-site and metadata-free reads are forced
+anonymous even if they carry a cookie; same-origin requests and top-level
+navigations receive trusted viewer headers only after a valid Rally session is
+checked. The site-building guidance now says that a protected site must be
+active and reject requests without `x-rally-viewer-id` before routing or serving
+assets. Anonymous unsafe methods remain session-gated, public responses opt out
+of search indexing, and the rail action names what it copies: **Copy public
+link**.
+
+**Why:** The stable URL is a product output intended to open in browsers and
+unfurl in crawlers. Requiring every reader to enter through Rally made copied
+links return 401/403 and made social previews impossible. A static page cannot
+make an authorization decision, so claiming platform privacy for every site
+also prevented the author from choosing the public behavior the URL implied.
+
+**Considered and rejected:** Making every request anonymous would discard useful
+member attribution for polls and sign-ups opened inside Rally. Trusting a
+cookie on arbitrary cross-site reads would let a sibling artifact exercise a
+handler as the victim because all artifact hosts are same-site. Keeping static
+sites session-gated while publicizing active sites would invert the natural
+default and leave crawlers unable to read the most common site type.
+
+**Consequences:** Existing static and active sites are publicly readable. A
+protected site is an explicit active application boundary, not an unguessable
+URL: its first operation checks the Rally-injected viewer id on every route.
+Unsafe cross-origin requests remain refused, public reads never receive a
+viewer identity, and all responses retain the platform CSP and security
+headers. Historical-version mounts remain session-gated because an old active
+version cannot run its protection guard, and a stateless active site returns
+503 rather than exposing assets when its handler cannot run. The readable
+hostname is not treated as secrecy; its finite vocabulary is accepted because
+the content is public, while `noindex` avoids turning sharing into search
+discovery.
 
 ### 2026-09-02 — Pop-outs keep artifact content below the window controls
 

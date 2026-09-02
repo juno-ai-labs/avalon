@@ -87,21 +87,24 @@ export function artifactSecurityHeaders(): Record<string, string> {
   return {
     "content-security-policy": ARTIFACT_CONTENT_SECURITY_POLICY,
     "referrer-policy": "no-referrer",
+    // A shareable or unfurlable URL is not an invitation to place work-stream
+    // output in a public search index. Link-preview crawlers still read it.
+    "x-robots-tag": "noindex",
     "x-content-type-options": "nosniff",
     // An artifact origin is never a legitimate frame parent either; a page that
     // framed another artifact would be a same-site credentialed load.
     "x-frame-options": "DENY",
-    // Artifact content is per-viewer authorized and version-mutable at its
-    // canonical URL. A shared cache holding one viewer's response would serve
-    // it to another.
+    // Active artifacts may vary a response by authenticated viewer identity,
+    // and the canonical URL is version-mutable. A shared cache cannot know
+    // which responses are anonymous and which are personalized.
     "cache-control": "private, no-store",
   };
 }
 
-export type FetchMetadataVerdict = "same_origin" | "top_level" | "refused";
+export type FetchMetadataVerdict = "same_origin" | "top_level" | "anonymous_read" | "refused";
 
 /**
- * Whether a credentialed request genuinely belongs to this artifact.
+ * Whether a request may carry Rally's trusted viewer identity into an artifact.
  *
  * **Separate origins do not close this on their own, and that is the whole
  * reason this exists.** Every artifact is a subdomain of one registrable
@@ -115,12 +118,13 @@ export type FetchMetadataVerdict = "same_origin" | "top_level" | "refused";
  * place it can be closed once, for every artifact, without trusting
  * model-written handlers to defend themselves.
  *
- * A `same-site` or `cross-site` request is refused **including GETs**, because
- * artifact code may treat any method as a write and nothing about a
- * model-written handler makes it safe by method. Fetch metadata is unforgeable
- * by page script — it is a browser-set forbidden header — and a client that
- * sends none, such as a non-browser caller, is treated as not same-origin and
- * refused rather than admitted.
+ * Public viewing changes the read half of that rule, not the credential half.
+ * A `GET` or `HEAD` from anywhere may reach the artifact, but only as
+ * `anonymous_read`: the serving Worker ignores any cookie and injects no
+ * viewer headers. Unsafe requests still require exact same-origin browser
+ * metadata. This makes public pages and unfurl crawlers work without letting a
+ * sibling artifact exercise another artifact's handler with the victim's
+ * identity.
  */
 export function classifyFetchMetadata(
   request: Request,
@@ -128,10 +132,13 @@ export function classifyFetchMetadata(
 ): FetchMetadataVerdict {
   const site = request.headers.get("sec-fetch-site");
   const origin = request.headers.get("origin");
+  const anonymousRead = request.method === "GET" || request.method === "HEAD";
   // An `Origin` that disagrees with this artifact settles it regardless of what
-  // `Sec-Fetch-Site` says: browsers send `null` for opaque origins, and a
-  // literal mismatch is never legitimate here.
-  if (origin !== null && origin !== artifactOrigin) return "refused";
+  // `Sec-Fetch-Site` says. It may still read the public representation, but it
+  // must never carry a viewer session into model-authored code.
+  if (origin !== null && origin !== artifactOrigin) {
+    return anonymousRead ? "anonymous_read" : "refused";
+  }
   if (site === "same-origin") return "same_origin";
   // A genuine top-level navigation, identified by what it *is* rather than
   // where it came from. `Sec-Fetch-Site: none` alone is the wrong test: it
@@ -147,6 +154,7 @@ export function classifyFetchMetadata(
   const navigation = request.headers.get("sec-fetch-mode") === "navigate"
     && request.headers.get("sec-fetch-dest") === "document";
   if (navigation && request.method === "GET") return "top_level";
+  if (anonymousRead) return "anonymous_read";
   return "refused";
 }
 
