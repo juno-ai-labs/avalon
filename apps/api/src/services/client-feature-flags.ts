@@ -1,4 +1,4 @@
-import type { ClientFeatureFlags } from "@rally/contracts";
+import type { ClientFeatureFlags, ProductFeatureFlagKey } from "@rally/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
@@ -46,14 +46,36 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * `docs/feature-flags.md` for the rules each flag is provisioned with.
  */
 
+/**
+ * The `ProductFeatureFlagKey` annotation is the whole registration check, and
+ * it is why these keys are not bare strings. That type is the enum Ace manages
+ * its flags through, so a key missing from it fails `pnpm typecheck` right
+ * here, listing the keys that do exist — before any test runs, and long before
+ * a deploy. Adding it to the enum then drags the rest along: Ace's catalog is
+ * pinned to the enum and its deploy script is pinned to the catalog, and the
+ * deploy script is the only thing that creates a flag in Flagship.
+ *
+ * `multiple-workspaces-enabled` shipped in #464 without any of that and simply
+ * did not exist in Flagship — off for everyone, with no operator able to turn
+ * it on and nothing failing to say so.
+ *
+ * The two keys below that carry no annotation are the two that deliberately
+ * sit outside Ace, so the annotation also reads as the answer to "does an
+ * operator manage this?" `developer-settings` is a per-device staff toggle
+ * driven through Wrangler; `control-tower-refresh-seconds`, over in
+ * `control-tower-flags.ts`, is a cadence rather than a Boolean. Both are
+ * covered by an allowlist in Ace's `protocol.test.ts`, which fails on any
+ * *other* served key that opts out this way.
+ */
+
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
-export const HYPERSIGHT_FLAG_KEY = "hypersight-enabled";
-export const MEETING_RECORDING_FLAG_KEY = "meeting-recording-enabled";
-export const SUGGESTED_WORK_FLAG_KEY = "suggested-work-enabled";
-export const AUTOMATION_WORKSPACE_TEMPLATES_FLAG_KEY = "automation-workspace-templates-enabled";
-export const MULTIPLE_WORKSPACES_FLAG_KEY = "multiple-workspaces-enabled";
-export const LIVE_ARTIFACTS_FLAG_KEY = "live-artifacts-enabled";
+export const HYPERSIGHT_FLAG_KEY: ProductFeatureFlagKey = "hypersight-enabled";
+export const MEETING_RECORDING_FLAG_KEY: ProductFeatureFlagKey = "meeting-recording-enabled";
+export const SUGGESTED_WORK_FLAG_KEY: ProductFeatureFlagKey = "suggested-work-enabled";
+export const AUTOMATION_WORKSPACE_TEMPLATES_FLAG_KEY: ProductFeatureFlagKey = "automation-workspace-templates-enabled";
+export const MULTIPLE_WORKSPACES_FLAG_KEY: ProductFeatureFlagKey = "multiple-workspaces-enabled";
+export const LIVE_ARTIFACTS_FLAG_KEY: ProductFeatureFlagKey = "live-artifacts-enabled";
 
 interface ClientFeatureFlagSubject {
   userId: string;
