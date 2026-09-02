@@ -6,7 +6,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { createMemoryTableTools } from "../src/services/memory-table-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createCloudflareTestBinding,
+  createTestD1Database,
+  createTestD1PreparedStatement,
+  createTestD1Result,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
 import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
@@ -23,6 +29,7 @@ const OWNER_CONNECTION_ID = "00000000-0000-4000-8000-000000000007";
 const OTHER_CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
 const SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000009";
 const CHILD_HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000012");
+const AUTOMATION_RESOURCE_ID = "00000000-0000-4000-8000-000000000013";
 
 const GOOGLE_WORKSPACE_CAPABILITIES = [
   "drive.read",
@@ -74,6 +81,8 @@ class ToolSelectionDatabase {
   readonly binding: D1Database;
   readonly connections: ConnectionRow[];
   readonly admittedAutomationDrafts: Array<Record<string, unknown>> = [];
+  readonly proposedDraftCards: Array<Record<string, unknown>> = [];
+  readonly replayOutputs = new Map<string, unknown>();
   memberStatus = "active";
 
   constructor(
@@ -113,7 +122,11 @@ class ToolSelectionDatabase {
 
   readonly objectStore = testWorkstreamObjectStore();
   readonly agents = testSubstreamAgentsBinding(this.objectStore, {
-    extra: { appendDraftProposedCard: vi.fn(async () => undefined) },
+    extra: {
+      appendDraftProposedCard: vi.fn(async (request: Record<string, unknown>) => {
+        this.proposedDraftCards.push(request);
+      }),
+    },
   });
 }
 
@@ -228,6 +241,17 @@ afterEach(() => {
 function env(database: ToolSelectionDatabase): Env {
   return createTestEnv({
     DB: database.binding,
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>({
+      get: vi.fn(async (key: string) => {
+        if (!database.replayOutputs.has(key)) return null;
+        return {
+          text: async () => JSON.stringify({
+            replayVersion: 1,
+            output: database.replayOutputs.get(key),
+          }),
+        };
+      }),
+    }),
     SUBSTREAM_AGENTS: database.agents,
     AUTOMATION_AGENTS: testSubstreamAgentsBinding(database.objectStore, {
       extra: {
@@ -693,6 +717,35 @@ describe("connector tools selected for harness runs", () => {
         capability: "rally.automation.plugins.inspect",
       }),
     );
+    database.objectStore.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          connection_id, input_json, output_ref, output_summary, execution_plan_json,
+          started_at, settled_at)
+       VALUES (?, ?, 0, 2, ?, 'automation_resources_search', 'read', ?,
+               'development_fixture', 'completed', 'resources-before-eviction',
+               NULL, ?, ?, 'Found a mail thread', ?, 2, 3)`,
+    ).run(
+      "persisted-automation-resources",
+      HARNESS_RUN_ID,
+      "development_fixture:persisted-automation-resources",
+      "persisted-resource-input",
+      JSON.stringify({ query: "mail thread" }),
+      "replay/automation-resources",
+      JSON.stringify({
+        canonicalToolName: "resources_search",
+        capability: "rally.automation.resources.search",
+      }),
+    );
+    database.replayOutputs.set("replay/automation-resources", {
+      resources: [{
+        id: AUTOMATION_RESOURCE_ID,
+        pluginId: "plugin_google",
+        resourceType: "gmail_thread",
+        sourceBindingKeys: ["google_source"],
+      }],
+    });
     const evaluatorRules = {
       schemaVersion: 1,
       evaluators: [{
@@ -700,6 +753,7 @@ describe("connector tools selected for harness runs", () => {
         source: {
           sourceBindingKey: "google_source",
           suggestedSourcePluginId: "plugin_google",
+          resourceId: AUTOMATION_RESOURCE_ID,
           event: { kind: "event_type", eventType: "email.received" },
         },
         when: { kind: "always" },
@@ -711,7 +765,7 @@ describe("connector tools selected for harness runs", () => {
           tool_name, mode, request_hash, authority_revision, status, tool_call_id,
           connection_id, input_json, output_summary, execution_plan_json,
           started_at, settled_at)
-       VALUES (?, ?, 0, 2, ?, 'automation_set_evaluator_rules', 'write', ?,
+       VALUES (?, ?, 0, 3, ?, 'automation_set_evaluator_rules', 'write', ?,
                'development_fixture', 'completed', 'rules-before-eviction',
                NULL, ?, 'Stored evaluator rules', ?, 2, 3)`,
     ).run(
@@ -774,10 +828,52 @@ describe("connector tools selected for harness runs", () => {
 
     expect(activeCredentialPluginIds).toEqual(new Set([`connection:${WORKSPACE_CONNECTION_ID}`]));
     expect(selected.loadedAutomationPluginIds).toEqual(new Set(["plugin_google"]));
+    const setEvaluatorRules = automations.tools.find((tool) =>
+      tool.definition.name === "set_evaluator_rules"
+    );
+    if (!setEvaluatorRules) throw new Error("automation_evaluator_tools_missing");
+    await expect(setEvaluatorRules.execute(
+      evaluatorRules,
+      { toolCallId: "reset-rules-after-eviction" } as never,
+    )).resolves.toMatchObject({ output: { accepted: true } });
     await expect(submit.execute(readyDraft, { toolCallId: "submit-after-load" } as never))
       .resolves.toMatchObject({ output: { accepted: true } });
     expect(database.admittedAutomationDrafts).toHaveLength(1);
-    expect(database.admittedAutomationDrafts[0]).toMatchObject({ evaluatorRules });
+    expect(database.admittedAutomationDrafts[0]).toMatchObject({
+      automationId: HARNESS_RUN_ID,
+      evaluatorRules,
+    });
+    expect(database.proposedDraftCards).toHaveLength(1);
+
+    __integrationTesting.forgetCredentialPluginActivation(
+      { name: `connection:${WORKSPACE_CONNECTION_ID}`, reason: "socket_closed" },
+      selected.frozenConnections,
+      activeCredentialPluginIds,
+      selected.loadedAutomationPluginIds,
+    );
+    expect(activeCredentialPluginIds).toEqual(new Set());
+    expect(selected.loadedAutomationPluginIds).toEqual(new Set());
+    await expect(submit.execute(readyDraft, { toolCallId: "submit-after-drop" } as never))
+      .rejects.toThrow("Load and inspect plugin_google");
+
+    const replacement = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    __integrationTesting.recordCredentialPluginActivation(
+      `connection:${WORKSPACE_CONNECTION_ID}`,
+      replacement.frozenConnections,
+      new Set(),
+      replacement.loadedAutomationPluginIds,
+    );
+    const replacementSubmit = replacement.plugins.find((candidate) =>
+      candidate.canonicalId === "rally:automations"
+    )?.tools.find((tool) => tool.definition.name === "submit_draft");
+    if (!replacementSubmit) throw new Error("replacement_automation_creator_tools_missing");
+    await expect(replacementSubmit.execute(
+      readyDraft,
+      { toolCallId: "submit-after-eviction" } as never,
+    )).resolves.toMatchObject({ output: { accepted: true } });
+    expect(database.admittedAutomationDrafts.map((draft) => draft.automationId))
+      .toEqual([HARNESS_RUN_ID, HARNESS_RUN_ID]);
+    expect(database.proposedDraftCards).toHaveLength(2);
   });
 
   it("inherits tools committed into a deferred parent plugin after activation", async () => {

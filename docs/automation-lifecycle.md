@@ -611,10 +611,13 @@ idempotent per workspace.
 **What changed:** The work-stream Automations plugin now shares credential
 activation state with the harness: when a canonical connection activation is
 persisted, its model-facing plugin ID becomes available to ready-draft
-validation. On a resumed run, completed inspection and evaluator receipts
-rebuild the Automations plugin's transient authoring state before its first tool
-executes. The shared elicitation tool now requests the provider idempotency key
-its durable question writer already required.
+validation, and a dropped activation removes that permission again. On a resumed
+run, completed inspection, people/resource search, and evaluator receipts
+rebuild the Automations plugin's transient authoring state in tool order before
+its first tool executes. The harness run ID is the authored automation ID, so a
+replacement plugin instance refines the same draft instead of creating another.
+The shared elicitation tool now requests the provider idempotency key its durable
+question writer already required.
 
 **Why:** An hourly Granola automation loaded the connector and inspected its
 automation metadata, but submission still read an empty private loaded set and
@@ -629,8 +632,10 @@ the durable key check would let a replay create a second blocking question.
 
 **Consequences:** Explicit loads, preloads, and restored activation hints all
 satisfy the same ready-draft rule once the model also inspects the plugin.
-Eviction cannot erase a completed inspection or staged evaluator set. Repeated
-elicitation execution resolves to one stored question.
+Eviction cannot erase completed inspection, research, or evaluator state and
+cannot fork a duplicate automation. A closed connector activation immediately
+stops satisfying ready-draft validation. Repeated elicitation execution resolves
+to one stored question.
 
 ### 2026-09-01 — An event-driven draft must carry its rules to be submitted
 
