@@ -403,6 +403,7 @@ export function WorkstreamComposer({
         attachments={attachments}
         error={error}
         fileInputRef={fileInputRef}
+        layout="message-capsule"
         onAttach={onAttach}
         onKeyDown={(event) => {
           if (mentionNavigation.handleKeyDown(event)) return;
@@ -425,30 +426,6 @@ export function WorkstreamComposer({
         mentionListbox={visibleCandidates.length > 0
           ? { id: 'workstream-mention-listbox', activeOptionId: mentionNavigation.activeOptionId }
           : undefined}
-        // The run first, the pin second. What a run recorded is what actually
-        // ran — the pin where it was pinned, the flag's served answer where it
-        // was not, and the only place that served variation is visible to a
-        // client at all. The pin is the fallback rather than the source because
-        // it answers for almost nobody, but it does answer for the one case the
-        // run cannot: a run that failed before its first token records no model,
-        // and a pinned work stream must never be described as following a flag
-        // it does not consult.
-        model={{
-          kind: 'settled',
-          // Trimmed before it is believed. `harness_runs.model` is not
-          // constrained to be non-empty, and a Worker whose `OPENROUTER_*`
-          // variable is unset resolves to `""` — `modelId` in
-          // `agent-model-flags.ts` normalizes an absent variable to the empty
-          // string — which is stored and reaches here. Empty means the same
-          // thing null does, so it falls through to the pin rather than
-          // rendering a pill with no name in it.
-          model: workstream.latestHarnessRun?.model?.trim() || workstream.modelOverride || null,
-          // The pin decides what the control may claim about the future, which
-          // is not the same question as what it shows. Only a pinned work
-          // stream is fixed to this model; an unpinned one re-resolves the flag
-          // on every launch and may land somewhere else next run.
-          pinned: workstream.modelOverride != null,
-        }}
         onMention={beginMention}
         onOpenAttachment={onOpenAttachment}
         onRemoveAttachment={onRemoveAttachment}

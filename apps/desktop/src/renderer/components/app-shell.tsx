@@ -26,7 +26,6 @@ import {
   setCachedWorkstreams,
 } from '../lib/workstreams-cache';
 import type { AutomationSummary, NoteDetail, NoteSummary, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
-import { ThemeBackdrop } from './theme-backdrop';
 import { Sidebar } from './sidebar';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
 
@@ -433,18 +432,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       backgroundWorkstreamIds={backgroundRealtimeIds}
     >
       <div className={shellClassName} style={shellStyle}>
-      {/*
-        The main window only. The standalone Settings and meeting windows reach
-        their own surfaces before `AppShell` and deliberately do not mount this:
-        both are dense forms, and a field of moving light behind one costs more
-        legibility than it buys. They keep `surface-default` as a flat ground.
-
-        So on Air the two windows do look different side by side, which is a
-        decision rather than an oversight — `docs/theming.md` records it in the
-        Invariants, and a test fails if a third surface starts mounting one
-        without that decision being revisited.
-      */}
-      <ThemeBackdrop />
       <Sidebar
         accountMenu={(
           <WorkspaceAccountMenu

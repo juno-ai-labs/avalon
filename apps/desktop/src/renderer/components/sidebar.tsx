@@ -484,7 +484,6 @@ function CommandShortcutHint({
 function WorkstreamRow({
   commandShortcut,
   commandShortcutsVisible,
-  currentUserId,
   debugEnabled,
   drag,
   members,
@@ -502,7 +501,6 @@ function WorkstreamRow({
 }: {
   commandShortcut?: number;
   commandShortcutsVisible?: boolean;
-  currentUserId: string;
   debugEnabled: boolean;
   drag?: PinnedRowDrag;
   members: WorkspaceMember[];
@@ -683,7 +681,6 @@ function WorkstreamRow({
             )}
             <span className="workstream-row-people">
               <SidebarWorkstreamFacepile
-                currentUserId={currentUserId}
                 extraCount={workstream.participantExtraCount}
                 memberIds={workstream.participantUserIds}
                 roster={members}
@@ -806,45 +803,22 @@ function resolveSidebarFacepileMembers(
   });
 }
 
-/**
- * The sidebar pile is "who else is in this", not a roster of everyone including
- * the reader. The directory preview still carries the viewer's id (it is the
- * same payload for every participant), so drop them here and, when they sat
- * past the three painted ids, take them out of the overflow too.
- */
-function sidebarFacepileForViewer(
-  memberIds: readonly string[],
-  extraCount: number,
-  currentUserId: string,
-): { extraCount: number; memberIds: string[] } {
-  const viewerWasInPreview = memberIds.includes(currentUserId);
-  return {
-    // The wire extraCount still includes the viewer when they sat past the
-    // painted ids. Decrement once to drop them; do not decrement when they
-    // were already in the preview, or overflow of other people would vanish.
-    extraCount: viewerWasInPreview ? extraCount : Math.max(0, extraCount - 1),
-    memberIds: memberIds.filter((id) => id !== currentUserId),
-  };
-}
-
 function SidebarWorkstreamFacepile({
-  currentUserId,
   extraCount,
   memberIds,
   roster,
 }: {
-  currentUserId: string;
   extraCount: number;
   memberIds: readonly string[];
   roster: readonly WorkspaceMember[];
 }): React.JSX.Element | null {
-  const forViewer = sidebarFacepileForViewer(memberIds, extraCount, currentUserId);
-  const members = resolveSidebarFacepileMembers(forViewer.memberIds, roster);
+  const members = resolveSidebarFacepileMembers(memberIds, roster);
   if (members.length === 0) return null;
   return (
     <span aria-hidden="true" className="sidebar-workstream-facepile">
       <AvatarStack
-        extraCount={forViewer.extraCount + (forViewer.memberIds.length - members.length)}
+        extraCount={extraCount + (memberIds.length - members.length)}
+        layout="grok-cluster"
         limit={WORKSTREAM_SIDEBAR_FACEPILE_LIMIT}
         members={members}
       />
@@ -1538,7 +1512,6 @@ export function Sidebar({
 
   const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
     <WorkstreamRow
-      currentUserId={workspace.currentUser.id}
       debugEnabled={debugEnabled}
       members={roster}
       workspace={workspace}
@@ -1794,7 +1767,6 @@ export function Sidebar({
                   <WorkstreamRow
                     commandShortcut={commandShortcutById.get(`workstream:${pinned.id}`)}
                     commandShortcutsVisible={commandShortcutsVisible}
-                    currentUserId={workspace.currentUser.id}
                     debugEnabled={debugEnabled}
                     drag={pinnedRowDrag(pinned, index)}
                     key={pinned.id}
@@ -1905,7 +1877,6 @@ export function Sidebar({
                       <WorkstreamRow
                         commandShortcut={commandShortcutById.get(item.id)}
                         commandShortcutsVisible={commandShortcutsVisible}
-                        currentUserId={workspace.currentUser.id}
                         debugEnabled={debugEnabled}
                         key={item.id}
                         onArchive={setArchiveWorkstreamTarget}

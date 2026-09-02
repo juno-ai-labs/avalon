@@ -183,6 +183,24 @@ on purpose. A row that scrolls away open and comes back closed re-measures
 shorter than the size cache expects, and the virtualizer declines to compensate
 a re-measurement during a backward scroll, so the transcript jumps under the
 reader by the whole delta.
+
+### 2026-09-02 — Sidebar participants use GrokBot's compact cluster
+
+**What changed:** Work-stream participant previews now occupy a small overlapping
+circle, wedge, and pill cluster with the overflow count immediately to its right.
+
+**Why:** A horizontal chain of same-shaped avatars consumed the row's title room
+and did not match the compact participant mark used by the reference interface.
+
+**Considered and rejected:** Applying the cluster to every `AvatarStack` would
+also reshape headers, participant controls, and presence surfaces. The sidebar
+opts in so those semantic uses retain their ordinary row layout.
+
+**Consequences:** The directory still decides which three people and overflow
+count are available. Unlike the retired horizontal "who else" strip, the
+cluster represents the full participant preview, including the current person;
+this remains a renderer-only geometry change.
+
 ### 2026-09-01 — GrokBot shell removes Rally-specific navigation chrome
 
 **What changed:** The active desktop shell now mounts a work-stream-only left

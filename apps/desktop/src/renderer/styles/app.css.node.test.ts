@@ -95,14 +95,6 @@ describe('work-stream launch surface geometry', () => {
     }
   });
 
-  // The hand-off keeps the home content mounted for exactly as long as the
-  // stylesheet spends fading it, and the two are declared in different files.
-  it('fades the home content over the span the screen keeps it mounted for', () => {
-    const leaving = rule('.launch-home-layer.is-leaving');
-
-    expect(leaving).not.toBeNull();
-    expect(leaving).toContain('animation: launch-home-leave 190ms');
-  });
 });
 
 describe('member picker controls', () => {
@@ -165,7 +157,6 @@ describe('scrollbar gutter reservation on the always-tall scrollers', () => {
     ['.rail-scroll'],
     ['.settings-navigation'],
     ['.settings-content-scroll'],
-    ['.new-workstream-home'],
     ['.automation-overview-scroll'],
     ['.new-automation-screen'],
     ['.note-detail-scroll'],

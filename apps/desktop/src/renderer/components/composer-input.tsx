@@ -44,6 +44,8 @@ interface ComposerInputProps {
   error?: string;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   footerHint?: ReactNode;
+  /** Main work streams opt into GrokBot's single-row message capsule. */
+  layout?: 'toolbar' | 'message-capsule';
   maxHeight?: number;
   mentionDisabled?: boolean;
   mentionLabel?: string;
@@ -177,6 +179,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   error,
   fileInputRef,
   footerHint,
+  layout = 'toolbar',
   maxHeight = 180,
   mentionDisabled = false,
   mentionLabel = 'Mention a participant',
@@ -259,6 +262,8 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const dictationActive = !['idle', 'error'].includes(dictation.state);
   const dictationBlocking = ['requesting', 'connecting', 'listening'].includes(dictation.state);
   const dictationEditingBlocked = dictationBlocking || dictation.state === 'finalizing';
+  const messageCapsule = layout === 'message-capsule';
+  const showSubmit = submitting || value.trim().length > 0 || attachments.length > 0;
 
   const startDictation = (): void => {
     dictationBaseRef.current = value;
@@ -281,6 +286,48 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     onMention();
   };
 
+  const dictationButton = (idleLabel: string): React.JSX.Element => (
+    <IconButton
+      aria-pressed={dictationActive}
+      className="dictation-button"
+      disabled={!api || submitting}
+      label={dictation.state === 'finalizing'
+        ? 'Finalizing dictation'
+        : dictation.state === 'transcribing'
+          ? 'Cancel dictation'
+          : dictationActive ? 'Stop dictation' : idleLabel}
+      onClick={(event) => {
+        if (event.detail === 0) toggleDictation();
+      }}
+      onPointerCancel={() => {
+        const press = microphonePressRef.current;
+        microphonePressRef.current = undefined;
+        if (press?.startedRecording) void dictation.stop();
+      }}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        microphonePressRef.current = {
+          startedAt: performance.now(),
+          startedRecording: !dictationActive,
+        };
+        toggleDictation();
+      }}
+      onPointerUp={() => {
+        const press = microphonePressRef.current;
+        microphonePressRef.current = undefined;
+        if (press?.startedRecording && performance.now() - press.startedAt >= 350) {
+          void dictation.stop();
+        }
+      }}
+    >
+      {dictation.state === 'requesting' || dictation.state === 'connecting' || dictation.state === 'transcribing' || dictation.state === 'finalizing'
+        ? <LoaderCircle className="spin" size={15} />
+        : <Mic size={15} />}
+    </IconButton>
+  );
+
   return (
     <>
       <div
@@ -291,6 +338,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
           composing && 'is-composing',
           submitting && 'is-sending',
           drop.dragging && 'is-file-dragging',
+          messageCapsule && 'is-message-capsule',
         )}
         onDragEnter={drop.onDragEnter}
         onDragLeave={drop.onDragLeave}
@@ -368,80 +416,46 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         </div>
         <div className="composer-toolbar">
           <div className="composer-tools">
-            <IconButton disabled={submitting || dictationEditingBlocked || mentionDisabled} label={mentionLabel} onClick={beginMention}>
-              <AtSign size={15} />
-            </IconButton>
+            {!messageCapsule && (
+              <IconButton disabled={submitting || dictationEditingBlocked || mentionDisabled} label={mentionLabel} onClick={beginMention}>
+                <AtSign size={15} />
+              </IconButton>
+            )}
             <IconButton disabled={submitting} label="Attach a file" onClick={() => fileInputRef.current?.click()}>
               {uploading ? <LoaderCircle className="spin" size={15} /> : <Plus size={16} />}
             </IconButton>
-            <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
-              <IconButton
-                aria-pressed={dictationActive}
-                className="dictation-button"
-                disabled={!api || submitting}
-                label={dictation.state === 'finalizing'
-                  ? 'Finalizing dictation'
-                  : dictation.state === 'transcribing'
-                    ? 'Cancel dictation'
-                    : dictationActive ? 'Stop dictation' : 'Click or hold to dictate'}
-                onClick={(event) => {
-                  if (event.detail === 0) toggleDictation();
-                }}
-                onPointerCancel={() => {
-                  const press = microphonePressRef.current;
-                  microphonePressRef.current = undefined;
-                  if (press?.startedRecording) void dictation.stop();
-                }}
-                onPointerDown={(event) => {
-                  if (event.button !== 0) return;
-                  event.preventDefault();
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                  microphonePressRef.current = {
-                    startedAt: performance.now(),
-                    startedRecording: !dictationActive,
-                  };
-                  toggleDictation();
-                }}
-                onPointerUp={() => {
-                  const press = microphonePressRef.current;
-                  microphonePressRef.current = undefined;
-                  if (press?.startedRecording && performance.now() - press.startedAt >= 350) {
-                    void dictation.stop();
-                  }
-                }}
-              >
-                {dictation.state === 'requesting' || dictation.state === 'connecting' || dictation.state === 'transcribing' || dictation.state === 'finalizing'
-                  ? <LoaderCircle className="spin" size={15} />
-                  : <Mic size={15} />}
-              </IconButton>
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <IconButton className="microphone-menu-trigger" disabled={submitting || dictationEditingBlocked} label="Choose microphone">
-                    <ChevronDown size={14} />
-                  </IconButton>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content align="start" className="menu-content microphone-menu" sideOffset={8}>
-                    <DropdownMenu.Label className="menu-label">Microphone</DropdownMenu.Label>
-                    {dictation.devices.length === 0 ? (
-                      <DropdownMenu.Item className="menu-item" disabled>No microphones found</DropdownMenu.Item>
-                    ) : (
-                      <DropdownMenu.RadioGroup onValueChange={dictation.setSelectedDeviceId} value={dictation.selectedDeviceId}>
-                        {dictation.devices.map((device) => (
-                          <DropdownMenu.RadioItem className="menu-item microphone-menu-item" key={device.deviceId} value={device.deviceId}>
-                            <span>{device.label}</span>
-                            <DropdownMenu.ItemIndicator asChild>
-                              <Check aria-hidden="true" size={15} />
-                            </DropdownMenu.ItemIndicator>
-                          </DropdownMenu.RadioItem>
-                        ))}
-                      </DropdownMenu.RadioGroup>
-                    )}
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-            </div>
-            {model && debugEnabled && (
+            {!messageCapsule && (
+              <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
+                {dictationButton('Click or hold to dictate')}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <IconButton className="microphone-menu-trigger" disabled={submitting || dictationEditingBlocked} label="Choose microphone">
+                      <ChevronDown size={14} />
+                    </IconButton>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content align="start" className="menu-content microphone-menu" sideOffset={8}>
+                      <DropdownMenu.Label className="menu-label">Microphone</DropdownMenu.Label>
+                      {dictation.devices.length === 0 ? (
+                        <DropdownMenu.Item className="menu-item" disabled>No microphones found</DropdownMenu.Item>
+                      ) : (
+                        <DropdownMenu.RadioGroup onValueChange={dictation.setSelectedDeviceId} value={dictation.selectedDeviceId}>
+                          {dictation.devices.map((device) => (
+                            <DropdownMenu.RadioItem className="menu-item microphone-menu-item" key={device.deviceId} value={device.deviceId}>
+                              <span>{device.label}</span>
+                              <DropdownMenu.ItemIndicator asChild>
+                                <Check aria-hidden="true" size={15} />
+                              </DropdownMenu.ItemIndicator>
+                            </DropdownMenu.RadioItem>
+                          ))}
+                        </DropdownMenu.RadioGroup>
+                      )}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              </div>
+            )}
+            {model && debugEnabled && !messageCapsule && (
               /* One control in both shapes. A settled work stream gets the same
                  dropdown — same trigger, same pill, same chevron — with the
                  trigger `disabled`, which is what stops it opening; its menu is
@@ -508,9 +522,16 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
           {footerHint && <span className="composer-hint">{footerHint}</span>}
           <div className="composer-submit-area">
             {submitAccessory}
-            <button aria-label={submitLabel} className="composer-send" disabled={dictationBlocking || submitDisabled} onClick={() => void submit()} type="button">
-              {submitting ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
-            </button>
+            {messageCapsule && (
+              <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
+                {dictationButton('Start voice input')}
+              </div>
+            )}
+            {(!messageCapsule || showSubmit) && (
+              <button aria-label={submitLabel} className="composer-send" disabled={dictationBlocking || submitDisabled} onClick={() => void submit()} type="button">
+                {submitting ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
+              </button>
+            )}
           </div>
         </div>
       </div>
