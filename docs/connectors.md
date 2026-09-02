@@ -909,17 +909,19 @@ fixture table instead, where it is reviewable.
 
 **What changed:** Across all seven adapters, the string parameters whose empty
 value is not a value — pagination cursors, identifiers, handles, and date
-filters — declare `minLength: 1` in the `inputSchema` the model reads. Three
+filters — declare `minLength: 1` in the `inputSchema` the model reads. Six
 executor parses that did not enforce what they declared now do: Linear's
-`after`, Granola's `cursor`, and Gmail's `threadId`. Content parameters are
-deliberately untouched, because `description: ""` on `linear_update_issue` and
-`path: ""` on GitHub's `contents.list` are real requests. X additionally maps
-its own `next_cursor: ""` to absence, that empty cursor being one its API emits
-rather than one a model invented.
+`after`, Granola's `cursor` on both `list_notes` and `list_folders`, Gmail's
+`threadId`, `gmail.search`'s `query`, and `calendar.list_events`'s `query`.
+Content parameters are deliberately untouched, because `description: ""` on
+`linear_update_issue` and `path: ""` on GitHub's `contents.list` are real
+requests.
 
-X additionally reports a last page as `next_cursor: null` rather than
-passing X's own `""` to the model, which read as "there is another page" and
-sent it back to page one indefinitely.
+X is handled on both sides of its own empty cursor: its parse maps a received
+`""` to absence, that spelling being one its API emits rather than one a model
+invented, and its four paginated tools now report a last page as
+`next_cursor: null` instead of the `""` that read to a model as "there is
+another page" and sent it back to page one indefinitely.
 
 **Why:** A run failed to file a Linear ticket after sending `after: ""` on
 `linear_list_teams` and `linear_search_issues`. The declared schema said only
