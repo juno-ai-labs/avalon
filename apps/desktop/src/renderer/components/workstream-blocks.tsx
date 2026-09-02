@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import {
   IconBrain,
   IconDeviceDesktop,
+  IconImageGeneration,
   IconPlug,
   IconWebhook,
   IconWorldSearch,
@@ -1540,6 +1541,7 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
  */
 const unbrandedIconByKey: Record<Exclude<PluginGroupIcon, PluginBrandMark | 'rally'>, TablerIcon> = {
   computer: IconDeviceDesktop,
+  'image-generation': IconImageGeneration,
   plug: IconPlug,
   web: IconWorldSearch,
   webhook: IconWebhook,

@@ -54,7 +54,7 @@ describe('pluginGroup', () => {
       {
         key: 'name:Multimodal generation',
         name: 'Multimodal generation',
-        icon: 'plug',
+        icon: 'image-generation',
         activeVerb: 'Using Multimodal generation',
         completedVerb: 'Used Multimodal generation',
       },
