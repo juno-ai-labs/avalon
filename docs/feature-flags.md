@@ -1141,8 +1141,8 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 
 **What changed:** `openai/gpt-5.6-sol` was added to the shared pinnable-model
 contract and its desktop presentation, ordered above Terra and Luna. The same
-contract-derived order now appears in the new-work-stream and new-automation
-developer selectors and in Ace's model suggestions.
+contract-derived order now appears in the new-work-stream developer selector
+and in Ace suggestions for roles whose complete execution path is Azure-routed.
 
 **Why:** Sol is the strongest GPT-5.6 family member and is deployed in Rally's
 Azure resource, so operators need to be able to pin work streams and choose it
@@ -1153,7 +1153,11 @@ pricing worker's selector inventory. Both already derive from
 `AGENT_MODEL_OVERRIDES`; the pricing union also already named the Azure
 deployment, so the set continues to write one KV record for Sol.
 
-**Consequences:** The model ID is now a valid explicit pin. Its Azure-only
+**Consequences:** The model ID is now a valid explicit pin. The selector cannot
+know whether the run's target region has the Azure credential pair, so a Sol pin
+may still fail closed there. It also fails closed for a PDF/file-parser or audio
+turn that the Azure binding does not admit. A work-stream pin is immutable;
+recover by starting a new work stream with another model. Its Azure-only
 provider policy is owned by the harness rather than this product list: choosing
 Sol never authorizes an OpenRouter route for the same model.
 

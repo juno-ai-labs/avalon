@@ -158,7 +158,10 @@ export function createAzureModelPricingResolver(
 
     const resolved = new Map<string, AzureModelPricing>();
     for (const [modelId, pricing] of cachedEntries) {
-      if (!pricing) throw new Error(`Azure model pricing cache is unavailable for ${modelId}`);
+      // Pricing is a per-model admission fact. One missing or malformed KV
+      // record must omit only that Azure candidate, not unrelated deployments
+      // whose records are still valid.
+      if (!pricing) continue;
       resolved.set(modelId, {
         inputUsdPerM: Number(pricing.inputUsdPerM),
         cachedInputUsdPerM: Number(pricing.cachedInputUsdPerM),

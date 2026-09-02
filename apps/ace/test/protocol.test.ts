@@ -7,11 +7,14 @@ import {
 } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
 import {
+  AZURE_ROUTED_MODEL_ROLES,
+  GPT_5_6_SOL_MODEL_ID,
   MANAGED_FLAGS,
   MANAGED_MODELS,
   MODEL_CHOICES,
   ManagedFlagUpdateSchema,
   ManagedModelUpdateSchema,
+  modelChoicesForRole,
 } from '../src/protocol';
 
 const repositoryDirectory = fileURLToPath(new URL('../../..', import.meta.url));
@@ -198,6 +201,27 @@ describe('Ace managed model protocol', () => {
       'openai/gpt-5.6-terra',
       'openai/gpt-5.6-luna',
     ]);
+  });
+
+  it('offers Sol only to roles whose complete execution path is Azure-routed', () => {
+    expect(AZURE_ROUTED_MODEL_ROLES).toEqual(['inline_child', 'block_dashboard']);
+    expect(modelChoicesForRole('inline_child')).toContain(GPT_5_6_SOL_MODEL_ID);
+    expect(modelChoicesForRole('block_dashboard')).toContain(GPT_5_6_SOL_MODEL_ID);
+    expect(modelChoicesForRole('workstream')).not.toContain(GPT_5_6_SOL_MODEL_ID);
+    expect(modelChoicesForRole('addressing_classifier')).not.toContain(GPT_5_6_SOL_MODEL_ID);
+
+    expect(ManagedModelUpdateSchema.safeParse({
+      role: 'inline_child',
+      routing: { model: GPT_5_6_SOL_MODEL_ID, fallbackModels: [] },
+    }).success).toBe(true);
+    expect(ManagedModelUpdateSchema.safeParse({
+      role: 'workstream',
+      routing: { model: GPT_5_6_SOL_MODEL_ID, fallbackModels: [] },
+    }).success).toBe(false);
+    expect(ManagedModelUpdateSchema.safeParse({
+      role: 'meeting_notes',
+      routing: { model: 'x-ai/grok-4.3', fallbackModels: [GPT_5_6_SOL_MODEL_ID] },
+    }).success).toBe(false);
   });
 
   it('accepts a free-text primary and preserves the ordered fallback array', () => {
