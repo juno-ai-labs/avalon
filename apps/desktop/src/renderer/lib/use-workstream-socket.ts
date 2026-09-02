@@ -1126,6 +1126,26 @@ export function useWorkstreamSocket(
         } else scheduleReconnect();
         return;
       }
+      // A refusal the room correlated to one request is that request's answer,
+      // and it is read ahead of every guard below for the same reason the
+      // resync branch releases these callers: a caller holding a correlated
+      // promise has nothing else that will settle it, and a frame dropped here
+      // costs it the full timeout and reports a timeout the room never had.
+      // The room's own code and message are carried through rather than
+      // flattened to one client code — the two the callers steer on
+      // (`workstream_socket_unavailable`, `transcript_snapshot_changed`) both
+      // mean "ask again", which a refusal does not, and a wrong one would
+      // reconnect or retry against a room that just said no. Falls through:
+      // an error frame is still an answer to a snapshot request, which the
+      // ordering guard below reads.
+      if (event.type === 'error' && event.requestId !== null) {
+        const pending = pendingTranscriptRanges.get(event.requestId);
+        if (pending) {
+          pendingTranscriptRanges.delete(event.requestId);
+          window.clearTimeout(pending.timeout);
+          pending.reject(new ApiError(event.message, 409, event.code));
+        }
+      }
       // Once replay history is unavailable, subsequent frames cannot safely be
       // applied on top of stale state. Reconnect only after the direct REST
       // snapshot succeeds, retaining the old cursor across failed attempts.

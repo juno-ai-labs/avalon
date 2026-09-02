@@ -3633,6 +3633,83 @@ describe('useWorkstreamSocket', () => {
     await expect(settled).resolves.toMatchObject({ code: 'workstream_socket_unavailable' });
   });
 
+  it('releases an in-flight transcript range on the room\'s correlated refusal', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, 'workstream-one', true),
+      { wrapper: createWrapper() },
+    );
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const settled = result.current.loadTranscriptRange({
+      snapshotId: '00000000-0000-7000-8000-000000000777',
+      range: { startInclusive: 1, endExclusive: 2 },
+      resumeAfterEventSequence: 0,
+    }).then(() => null, (error: unknown) => error);
+    const requestId = (sentFrames(socket).at(-1) as { requestId: string }).requestId;
+
+    // Without the correlation this frame is indistinguishable from an
+    // unsolicited protocol error, and the caller waits out its own 15-second
+    // timeout before reporting a timeout the room never had.
+    act(() => socket.message({
+      type: 'error',
+      sequence: 9,
+      occurredAt: '2026-09-02T17:00:00.000Z',
+      code: 'subscription_required',
+      message: 'Subscribe before loading transcript ranges',
+      requestId,
+    }));
+
+    await expect(settled).resolves.toMatchObject({
+      code: 'subscription_required',
+      message: 'Subscribe before loading transcript ranges',
+    });
+  });
+
+  it('leaves an in-flight transcript range alone when an unrelated error arrives', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, 'workstream-one', true),
+      { wrapper: createWrapper() },
+    );
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    let outcome: unknown = 'pending';
+    void result.current.loadTranscriptRange({
+      snapshotId: '00000000-0000-7000-8000-000000000777',
+      range: { startInclusive: 1, endExclusive: 2 },
+      resumeAfterEventSequence: 0,
+    }).then((range) => { outcome = range; }, (error: unknown) => { outcome = error; });
+
+    act(() => socket.message({
+      type: 'error',
+      sequence: 9,
+      occurredAt: '2026-09-02T17:00:00.000Z',
+      code: 'rest_required',
+      message: 'Persist this action through the work-stream API before publishing it.',
+      requestId: null,
+    }));
+    await flushPromises();
+
+    expect(outcome).toBe('pending');
+  });
+
   it('counts one drop when a resync frame lands in the same batch as an abrupt close', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
