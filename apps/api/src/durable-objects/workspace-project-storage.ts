@@ -9,6 +9,7 @@ import {
   type ProjectSummary,
 } from "@rally/contracts";
 
+import { boundParameterChunks } from "./bound-parameters";
 import type {
   WorkspaceProjectCreateRequest,
   WorkspaceProjectAudienceRequest,
@@ -336,6 +337,74 @@ export class WorkspaceProjectStorage {
       if (!removed) return false;
       this.advanceWaterline(now);
       return this.project(projectId);
+    });
+  }
+
+  /**
+   * Every work stream this project holds, archived ones included.
+   *
+   * The summary carries only what a surface can list, so anything acting on
+   * the project's behalf — the audience fan-out above all — reads the
+   * membership itself through here rather than through the shape sent to a
+   * client.
+   */
+  members(userId: string, projectId: string): string[] | false {
+    if (!this.visibleProjectIds(userId).includes(projectId)
+      && !this.listInactive(userId).items.some((project) => project.id === projectId)) return false;
+    return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT workstream_id FROM project_workstream_memberships
+        WHERE project_id = ? AND state = 'active' ORDER BY workstream_id`,
+      projectId,
+    ).toArray().map((membership) => membership.workstream_id);
+  }
+
+  /**
+   * The members a surface can show: an active membership whose work stream the
+   * directory does not have archived.
+   *
+   * A `LEFT JOIN` rather than a join on an archived-at test: a work stream
+   * started inside a project is a member before its first directory projection
+   * lands, and an inner join would drop it out of its own project for the
+   * seconds in between.
+   */
+  private listableMembers(projectId: string): string[] {
+    return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT membership.workstream_id
+         FROM project_workstream_memberships membership
+         LEFT JOIN workspace_workstream_directory directory
+           ON directory.workstream_id = membership.workstream_id
+        WHERE membership.project_id = ? AND membership.state = 'active'
+          AND directory.archived_at IS NULL
+        ORDER BY membership.workstream_id`,
+      projectId,
+    ).toArray().map((membership) => membership.workstream_id);
+  }
+
+  /**
+   * Record that these work streams moved into or out of the archive, and say
+   * whether any project's summary changed as a result.
+   *
+   * Two things in one transaction because they are one fact. Most work streams
+   * belong to no project, so the membership test is what keeps a republication
+   * off the path every projection takes; and when one does belong, the
+   * waterline advance is what makes the snapshot that follows newer than the
+   * one its readers already hold — a project directory at the same waterline
+   * is dropped as a replay, so publishing without this corrects nothing until
+   * the next project write or reconnect.
+   */
+  noteMemberArchivalChange(workstreamIds: readonly string[], now = Date.now()): boolean {
+    return this.storage.transactionSync(() => {
+      const holdsMembership = boundParameterChunks(workstreamIds).some((chunk) => (
+        this.storage.sql.exec<{ one: number } & Record<string, SqlStorageValue>>(
+          `SELECT 1 AS one FROM project_workstream_memberships
+            WHERE state = 'active'
+              AND workstream_id IN (${chunk.map(() => "?").join(", ")})
+            LIMIT 1`,
+          ...chunk,
+        ).toArray().length > 0
+      ));
+      if (holdsMembership) this.advanceWaterline(now);
+      return holdsMembership;
     });
   }
 
@@ -954,11 +1023,7 @@ export class WorkspaceProjectStorage {
         state: participant.state,
         generation: participant.generation,
       })),
-      workstreamIds: this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT workstream_id FROM project_workstream_memberships
-          WHERE project_id = ? AND state = 'active' ORDER BY workstream_id`,
-        row.project_id,
-      ).toArray().map((membership) => membership.workstream_id),
+      workstreamIds: this.listableMembers(row.project_id),
       defaultResourceIds: this.storage.sql.exec<{ resource_id: string } & Record<string, SqlStorageValue>>(
         `SELECT resource_id FROM project_default_resources
           WHERE project_id = ? AND state = 'active' ORDER BY resource_id`,

@@ -48,6 +48,17 @@ person's rows cannot change another person's order. Presentation changes update
 the normalized name, icon, and color and advance only
 `presentation_revision`.
 
+A project's membership and the members it can show are not the same list.
+Archiving a work stream takes it out of every listing and leaves its membership
+untouched, so `ProjectSummary.workstreamIds` — what a screen counts and renders
+— is the active memberships whose work stream the workspace directory does not
+have archived, and `listProjectMembers` is how anything acting on the project's
+behalf reads the whole membership. An audience change fans out over the
+membership; a count on a screen reads the summary. Nothing on the wire carries
+the archived members: `ProjectSummary` is a strict schema nested in the socket's
+opening sidebar payload, and a field a shipped desktop build does not know makes
+it drop that payload whole.
+
 Adding an existing work stream is staged. WorkspaceDO first records a `joining`
 membership and determines whether a previous active project can remain until
 the final swap. The service enlarges the WorkstreamDO audience, attaches the
@@ -216,6 +227,56 @@ send leaves them pending for a later alarm; accepted messages remain safe to
 duplicate because the consumer rechecks target generations.
 
 ## Changelog
+
+### 2026-09-02 — A project counts the members it can show
+
+**What changed:** `ProjectSummary.workstreamIds` is now the active memberships
+whose work stream is not archived, joined against the workspace directory
+WorkspaceDO already holds. The membership itself is unchanged and is read
+through a new `listProjectMembers` RPC, which the audience fan-out in
+`ProjectService.updateAudience` now uses in place of the summary. A directory
+projection that moves a work stream into or out of the archive advances the
+project waterline and republishes the project snapshot, but only when one of
+the affected work streams is in a project.
+
+**Why:** Archiving a work stream never touched its project membership, while
+every list of work streams filters archived ones out — so a project counted
+members no surface could render. A workspace with three of a project's four
+work streams archived sat on "Showing 1 of 4 work streams. Load more in the
+sidebar to see all", pointing at a **load more** that could never produce the
+other three, and the sidebar accordion said "4 work streams; load more to see
+all" beside one row. Both counts came from this field.
+
+**Considered and rejected:** Removing the membership when the work stream is
+archived. It reads as the tidier fix and throws away the only record of where
+the work stream belongs, so unarchiving would return it to no project, and the
+write would have to cross from the work stream's own object into WorkspaceDO as
+a queued effect rather than a transaction. Carrying the archived members as a
+second field on `ProjectSummary`: it would have kept the fan-out reading one
+shape, but that object is nested in the socket's opening sidebar payload and
+parsed by a strict schema, so an added key makes a desktop build that shipped
+before it drop the whole payload — work streams, automations and notes included
+— rather than just ignoring a field. Publishing the project snapshot on every
+directory projection: those arrive on ordinary activity, and republishing both
+project lists to every socket that often costs far more than the count is
+worth.
+
+The waterline advance is not incidental. A project directory at a waterline a
+client already holds is dropped as a replay, so the first version of this
+published a corrected snapshot that every open window discarded: driving the
+archive from the app left the project page saying "1 work stream" over "Load
+more recent work streams in the sidebar" until a reload, which is the bug this
+change is about. `noteMemberArchivalChange` tests the membership and advances the
+waterline in one transaction, and its answer is what decides whether to
+publish.
+
+**Consequences:** A count on a screen and the membership can now disagree, and
+that is the point — anything acting on the project's behalf must read
+`listProjectMembers` rather than the summary, or it will silently skip archived
+members. `workstreamIds` is left-joined against the directory, so a work stream
+that is a member before its first projection lands still counts. Existing rows
+need no migration: the join is evaluated per read, so the projects in this
+state correct themselves on the next list.
 
 ### 2026-09-02 — The Projects sidebar section waits with skeleton rows
 
