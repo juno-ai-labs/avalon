@@ -106,6 +106,46 @@ describe('MessageBlock model timing', () => {
     expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
   });
+
+  it('marks a thinking row with the brain rather than the orb, and pulses it while it runs', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-05T12:00:00.000Z'));
+    const thinkingRow = (status: 'started' | 'completed'): Message => ({
+      ...baseMessage,
+      id: 'thought-thinking',
+      authorType: 'agent',
+      author: undefined,
+      messageType: 'thought',
+      thoughtEvent: {
+        status,
+        durationMs: 50_000,
+        activeVerb: 'thinking',
+        completedVerb: 'thought',
+        // A running row is a status *and* a start: `AgentWorkTiming` parks a
+        // row that claims to be going and reports no start, so without this
+        // the assertion below would be made in the one state the test's own
+        // name says it is not testing.
+        ...(status === 'started' ? { startedAt: Date.now() } : {}),
+      },
+    });
+    const { container, rerender } = render(<MessageBlock {...actions} message={thinkingRow('started')} />);
+
+    expect(screen.getByText('thinking for 50s')).toBeVisible();
+    expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
+    // The mark replaces the spinner rather than joining it.
+    expect(screen.queryByTestId('thinking-orb')).toBeNull();
+    expect(container.querySelector('.plugin-face .tabler-icon-brain')).not.toBeNull();
+    expect(container.querySelector('.plugin-face')).toHaveClass('plugin-face-active');
+
+    rerender(<MessageBlock {...actions} message={thinkingRow('completed')} />);
+    expect(screen.getByText('thought for 50s')).toBeVisible();
+    expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
+    // The mark is a mark, not a spinner: it stays once the row settles, and
+    // only its pulse stops.
+    expect(container.querySelector('.plugin-face .tabler-icon-brain')).not.toBeNull();
+    expect(container.querySelector('.plugin-face')).not.toHaveClass('plugin-face-active');
+    expect(screen.queryByTestId('thinking-orb')).toBeNull();
+  });
 });
 
 const singleSelectElicitation: ElicitationData = {
