@@ -64,6 +64,11 @@
       "database_name": "avalon-eu",
       "database_id": "099eb3bf-4291-4a0f-a051-645e5c338881",
       "migrations_dir": "../../packages/db/migrations"
+    },
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "rally-platform",
+      "database_id": "39b6800c-7945-4c5b-80cb-e7cdd73af14a"
     }
   ],
   "ai": { "binding": "AI" },

@@ -16,6 +16,7 @@ const WORKSTREAM = "3f2504e0-4f89-41d3-9a0c-0305e82c3302";
 const RESOURCE = "3f2504e0-4f89-41d3-9a0c-0305e82c3303";
 const ARTIFACT = "3f2504e0-4f89-41d3-9a0c-0305e82c3304";
 const USER = "3f2504e0-4f89-41d3-9a0c-0305e82c3305";
+const HOSTNAME_STUB = "level-luminous-sequential-schrodinger";
 
 interface Fixture {
   registryRow?: Record<string, unknown> | null;
@@ -47,6 +48,7 @@ function fixture(input: Fixture = {}) {
                   workstream_id: WORKSTREAM,
                   mode: "active",
                   stateful: 1,
+                  hostname_stub: HOSTNAME_STUB,
                 }
               : input.registryRow;
           }
@@ -113,7 +115,7 @@ describe("minting access to a live artifact", () => {
     const { service } = fixture();
     const result = await service.open(RESOURCE);
     const [beforeHash, afterHash] = result.openUrl.split("#");
-    expect(beforeHash).toBe(`https://${ARTIFACT}-g.rallyusercontent.test${ARTIFACT_RESERVED_PREFIX}/open`);
+    expect(beforeHash).toBe(`https://${HOSTNAME_STUB}-g.rallyusercontent.test${ARTIFACT_RESERVED_PREFIX}/open`);
     expect(afterHash).toBe("c".repeat(64));
     expect(beforeHash).not.toContain("c".repeat(64));
   });
@@ -123,7 +125,7 @@ describe("minting access to a live artifact", () => {
     // because it grants nothing.
     const { service } = fixture();
     const result = await service.open(RESOURCE);
-    expect(result.canonicalUrl).toBe(`https://${ARTIFACT}-g.rallyusercontent.test`);
+    expect(result.canonicalUrl).toBe(`https://${HOSTNAME_STUB}-g.rallyusercontent.test`);
     expect(result.canonicalUrl).not.toContain("#");
   });
 
@@ -228,6 +230,7 @@ describe("the CSV an export hands somebody", () => {
   it("reads nothing for a site that keeps no data", async () => {
     const { service } = fixture({ registryRow: {
       artifact_id: ARTIFACT, workstream_id: WORKSTREAM, mode: "static", stateful: 0,
+      hostname_stub: HOSTNAME_STUB,
     } });
     expect(await service.describeData(RESOURCE)).toEqual({ tables: [] });
     expect(await service.pageData(RESOURCE, "rsvps", 0)).toEqual({ rows: [], csv: "" });

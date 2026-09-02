@@ -21,6 +21,8 @@ exists.
 | `apps/api/src/services/terminal/site-publish.ts` | What a published directory *becomes* — the entry-file rule, the stateful-class check, the content-type table, the zip bundler, and the one asymmetric kind transition. |
 | `apps/api/src/services/terminal/site-import.ts` | Reading a version's files back out of the bucket, and the whole-tree replacement that writes them — never a merge. |
 | `apps/api/src/services/terminal/site-resource-bridge.ts` | Writing one version: assets and manifest into the bucket, the registry row, the supervisor's pointer. The order is the contract. |
+| `apps/api/src/services/artifact-hostname.ts` | Reserving a readable four-word hostname in shared platform D1 with permanent collision tombstones. |
+| `packages/db/platform-migrations/` | The content-free, platform-shared D1 schema used by both product regions and both artifact Workers. |
 | `apps/api/src/services/terminal/runtime.ts` | `inspectPublishTarget` (what a path is) and `publishDirectory` (reading the tree and dispatching). |
 | `apps/api/src/durable-objects/artifact-host-do.ts` | One supervisor object per artifact: version pointer, viewer sessions, error log, and the facet that runs the model's storage class. |
 | `apps/api/src/artifacts/index.ts` | The artifact serving Worker's entry point — a second Worker, its own origin, its own bindings. |
@@ -30,7 +32,7 @@ exists.
 | `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The one thing that crosses into an artifact's isolate. |
 | `apps/api/src/artifacts/asset-shim.ts` | The two module sources that run inside the isolate: the wrapper that makes `fetch(string)` true, and the entry Rally puts in front of a stateless active site's own module. |
 | `apps/api/src/artifacts/pages.ts` | The neutral page, the plain error page, and the fragment-to-cookie bootstrap. |
-| `apps/api/wrangler.artifacts.{global,eu}.jsonc` | The serving Workers: wildcard route, cross-script DO binding, loader, bucket. |
+| `apps/api/wrangler.artifacts.{global,eu}.jsonc` | The serving Workers: wildcard route, platform D1 index, cross-script DO binding, loader, bucket. |
 | `apps/api/src/services/workstream-artifact-data-tools.ts` | The two read-only data tools' contract: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
 | `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, and reaching the supervisor through the one supported resolver. |
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
@@ -88,12 +90,12 @@ intact.
 ### Serving
 
 The artifact serving Worker is a second entrypoint in `apps/api`, deployed as its
-own Worker on its own origin. Given nothing but
-`Host: <artifact-id>-<region>.rallyusercontent.com` it reaches the right
-supervisor object with no lookup: **the artifact id is the hostname label**, so
-the id is parsed out of the host and the object is named from it. There is no
-index, no directory hop, and no per-request database read before the first byte —
-the Worker holds no D1 at all.
+own Worker on its own origin. A public address is
+`<four-word-stub>-<region>.rallyusercontent.com`. The Worker reads exactly one
+indexed row from the content-free `rally-platform` D1 database to recover the
+artifact UUID, then reaches the existing UUID-addressed supervisor. Legacy UUID
+hosts keep parsing so an old bookmark remains valid; every newly minted or lazily
+migrated URL uses the readable stub.
 
 Fences apply in this order, all before any model-authored code runs:
 
@@ -121,6 +123,13 @@ oracle. **The code never travels in a request URL.** The desktop lands on
 address bar, and `POST`s the code in a request body. The redeem endpoint never
 serves artifact content: it consumes the code, sets the cookie, and redirects, so
 no artifact document is ever loaded at a location that held the code.
+
+The lazy move from a legacy UUID host to a readable host is an origin change.
+Server-side facet data is unaffected, but browser-owned cookies, local storage,
+and IndexedDB under the legacy origin are not copied to the readable origin and
+become unreachable from later opens. Artifacts currently use Rally's server-side
+data surface for durable state, so preserving that browser-local state was not
+worth retaining UUID origins for newly opened sessions.
 
 ### Stateful artifacts
 
@@ -216,17 +225,22 @@ is the only place that can forward into it.
 - **A version's bytes are immutable.** The loader caches an isolate by a
   version-scoped id, so publishing different content at a version already used
   serves the cached module. A republish always advances the version.
-- **Assets, then manifest, then resource row, then pointer.** Each step depends
-  only on ones that already committed, so a failure leaves the artifact serving
-  its *previous* version rather than a version whose bytes a viewer cannot read.
+- **Assets, then manifest, then hostname reservation, then resource row, then
+  pointer.** Each step depends only on ones that already committed, so a failure
+  leaves the artifact serving its *previous* version rather than a version whose
+  bytes a viewer cannot read. The hostname must be reserved before the resource
+  row moves: otherwise a D1 failure followed by an equal-content retry can
+  mistake the changed resource for a completed publish and return the old
+  artifact version.
 - **A republish never downgrades a live site to an archive.** Archive→site
   upgrades freely — that is the archive fallback's own recovery — but the
   reverse fails loudly, because a URL participants hold is never killed by an
   accident of file layout.
-- **`artifact_registry` is not a uniqueness authority and cannot be one.** It
+- **`artifact_registry` is not the region-wide uniqueness authority.** It
   lives in a per-workspace database, so a `UNIQUE` there is unique per workspace
-  and two workspaces could claim one host. Region-wide uniqueness comes from the
-  artifact id being a UUID.
+  and two workspaces could claim one host. The shared platform D1 composite
+  primary key reserves `(region, hostname_stub)`; an immutable trigger and a
+  no-delete trigger make old origins permanent tombstones.
 - **A data query is admitted positively, never by denylist.** An always-rollback
   transaction is not an authorization boundary: caller SQL can commit
   mid-statement. Exactly one statement, parsing as a `SELECT`, with a `WITH`
@@ -319,9 +333,12 @@ Two traps:
   `avalon_generated`, and the same `terminal:<workstream>:<path>` identity file
   publishes use. Its `content_ref` points at the version's **manifest**, so its
   MIME type is `application/vnd.rally.site-manifest+json`.
-- `artifact_registry` (WorkspaceDO, migration 28): `artifact_id` (the hostname
-  label), `workspace_id`, `workstream_id`, `resource_id`, `mode`, `stateful`,
-  `current_version`, `manifest_ref`, timestamps.
+- `artifact_registry` (WorkspaceDO, migrations 28–29): `artifact_id` (the
+  supervisor/storage UUID), `hostname_stub`, `workspace_id`, `workstream_id`,
+  `resource_id`, `mode`, `stateful`, `current_version`, `manifest_ref`, timestamps.
+- Shared platform D1 `artifact_hostname_routes`: `region`, `hostname_stub`,
+  `artifact_id`, `created_at`. It contains no workspace, user, session, or
+  artifact content.
 - `ArtifactHostDO` (both regions, jurisdiction-pinned): `artifact_state` (one
   row), `viewer_sessions` (digests only — the cookie value is never stored), and
   `error_log` (a bounded ring).
@@ -332,12 +349,14 @@ Two traps:
 
 ## Regional impact
 
-Serving is region-distinct end to end. The two wildcard hosts route to their own
+Serving content is region-distinct end to end. The two wildcard hosts route to their own
 region's Worker (`*-g` and `*-eu`), so an EU artifact's bytes never transit a
 Global Worker and no cross-region bridge is added. An artifact's assets,
 manifest, stored data, sessions, and error log all rest in its workspace's
-region. The EU half is deployed dark and accepts no traffic until EU Terminal
-ships, because nothing can publish an EU artifact before then.
+region. Only the opaque stub-to-artifact-UUID row is platform-shared; it carries
+no content or participant identity. The EU half is deployed dark and accepts no
+traffic until EU Terminal ships, because nothing can publish an EU artifact
+before then.
 
 ## Security and trust model
 
@@ -351,6 +370,65 @@ Worker's waistline is deliberately minimal, so a compromise of it exposes
 artifact content and viewer sessions rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-01 — Review closes navigation, retry, and local-setup gaps
+
+**What changed:** Artifact surfaces now fence redirects as well as ordinary
+navigations, initial preview loads share one abort-aware result across concurrent
+presenters, and failed pop-out loads close. Public host parsing is total, desktop
+host admission accepts only the two artifact label shapes, platform D1 is part of
+fresh local migration setup and the runtime binding contract, and publication
+reserves a new hostname before mutating the resource row.
+
+**Why:** Review found three failure windows hidden by individually reasonable
+steps. Handing artifact contents from the global fence to the origin fence also
+handed redirects over, but the origin fence only listened for navigation. An
+Electron `loadURL()` promise reports `ERR_ABORTED` when the bootstrap starts its
+intended redemption POST, so treating every rejection as terminal can destroy a
+healthy rail while a second caller has already reported success. And reserving a
+hostname after a resource swap lets a D1 outage make the retry's equal-content
+path return the previous artifact version. The local binding also existed before
+its separate migration chain ran, making fresh development fail only at first
+use.
+
+**Considered and rejected:** Restoring the global artifact block would break the
+same-origin redemption again; ignoring all `loadURL()` failures would restore
+blank DNS/TLS views; moving the resource row before reservation would preserve a
+retry trap; and teaching the regional migration discovery about a shared chain
+would blur the deliberate regional/platform ownership boundary.
+
+**Consequences:** Both navigation event types stay under the artifact-origin
+owner; concurrent presentations agree on initial-load success; `ERR_ABORTED` is
+the one non-terminal Electron load result; fresh local setup applies the shared
+schema into both region state directories; and browser-local data under a legacy
+UUID origin is intentionally not migrated to its readable successor.
+
+### 2026-09-01 — Readable origins use a content-free platform route index
+
+**What changed:** New and existing generated sites receive a deterministic
+four-word public hostname of the form
+`<stub>-<region>.rallyusercontent.com`. A dedicated platform-shared D1 database
+reserves `(region, hostname_stub)` permanently and resolves it to the existing
+UUID-addressed `ArtifactHostDO`; legacy UUID hosts remain valid.
+
+**Why:** UUID origins made a generated site look like infrastructure rather than
+something a person could recognize or share. The established stub generator
+already provides the product's readable naming vocabulary, but a workspace-local
+registry cannot prevent two workspaces choosing the same public origin.
+
+**Considered and rejected:** R2 was considered as the route index, but a
+point-read D1 table is cheaper for this read-heavy workload and gives the
+allocator atomic uniqueness constraints. Reusing either regional product D1
+would make one region authoritative for the other; duplicating rows would allow
+the two allocators to collide. The chosen shared D1 stores only the opaque stub,
+region, artifact UUID, and creation time—not workspace identity, content, viewer
+identity, or session state.
+
+**Consequences:** `*.rallyusercontent.com` must exist as one proxied wildcard DNS
+record before either artifact Worker is promoted. Deployments promote the
+backward-compatible serving Worker before the API begins minting stub origins.
+Hostname rows are permanent tombstones, while all authorization, content,
+sessions, Durable Objects, and R2 bytes remain in the workspace's region.
 
 ### 2026-09-01 — Archive determinism uses the ZIP calendar, not a UTC instant
 
@@ -444,12 +522,15 @@ exactly the missing piece: model-written code executed at request time in a fres
 isolate with capability-based sandboxing, no deploy pipeline and no per-artifact
 Cloudflare resources.
 
-Four decisions a future change has to respect. **The artifact id is the hostname
-label**, which is what lets the serving Worker reach the right object holding
+At that release, four decisions were recorded. The first—**the artifact id is
+the hostname label**—was superseded by the readable-origin entry above; the
+remaining UUID-addressed supervisor identity is still why the serving Worker can
+reach the right object after the platform lookup. The original reasoning was:
+the serving Worker could reach the right object holding
 nothing but a `Host` header; an earlier draft minted short labels from a regional
 allocator and rejected "addressing by artifact id" along with the
 hostname→id index it was actually arguing against — the id needs no index because
-the host *is* the id, and a UUID is region-wide unique for free. **The host class
+the host *was* the id, and a UUID is region-wide unique for free. **The host class
 composes the model's class rather than extending it**, because a subclass would
 put Rally's method names in the model's namespace and win every collision, and
 `query`/`describe`/`page` are exactly what a model names its own SQL helpers.

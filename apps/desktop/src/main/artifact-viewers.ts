@@ -19,6 +19,7 @@
  *
  * See `docs/live-web-artifacts.md` and `docs/security.md`.
  */
+import { parseArtifactHost } from '@rally/contracts';
 import type { Session } from 'electron';
 
 /**
@@ -31,7 +32,7 @@ import type { Session } from 'electron';
  */
 export interface ArtifactViewHandle {
   setBounds(bounds: PreviewBounds): void;
-  loadURL(url: string): void;
+  loadURL(url: string): Promise<void>;
   close(): void;
 }
 
@@ -56,6 +57,30 @@ export interface ArtifactPresentation {
 }
 
 /**
+ * Apply the main process's broad navigation fence without stealing artifact
+ * navigation from its stricter, origin-scoped owner.
+ *
+ * `web-contents-created` installs the broad fence before a `WebContentsView`
+ * can be marked as an artifact. The decision therefore happens when the
+ * navigation fires. Most importantly, an artifact returns before
+ * `preventDefault()`: preventing first and then "deferring" blocked the
+ * bootstrap's same-origin redemption POST and left every preview on an empty
+ * Opening page.
+ */
+export function applyGlobalNavigationPolicy(input: {
+  event: { preventDefault(): void };
+  url: string;
+  artifactSurface: boolean;
+  rendererAllowed: (url: string) => boolean;
+  externalAllowed: (url: string) => boolean;
+  openExternal: (url: string) => void;
+}): void {
+  if (input.rendererAllowed(input.url) || input.artifactSurface) return;
+  input.event.preventDefault();
+  if (input.externalAllowed(input.url)) input.openExternal(input.url);
+}
+
+/**
  * Whether a URL is one this process will load into an artifact surface.
  *
  * The renderer supplies it, so it is checked here rather than trusted: `https:`
@@ -76,7 +101,27 @@ export function isArtifactUrl(candidate: string, servingDomain: string): boolean
   if (url.protocol !== 'https:') return false;
   const host = url.hostname.toLowerCase();
   const domain = servingDomain.toLowerCase();
-  return host === domain || host.endsWith(`.${domain}`);
+  const suffix = `.${domain}`;
+  if (!host.endsWith(suffix)) return false;
+  const label = host.slice(0, -suffix.length);
+  if (!label || label.includes('.')) return false;
+  return parseArtifactHost(label) !== null;
+}
+
+/**
+ * Load an artifact's initial URL without mistaking its bootstrap form POST for
+ * a network failure. Electron rejects `loadURL()` with `ERR_ABORTED` whenever
+ * the loaded page starts a second main-frame navigation before finishing; that
+ * is exactly how `/__rally/open` redeems its fragment-held capability.
+ */
+export async function loadArtifactInitialUrl(loadURL: () => Promise<void>): Promise<boolean> {
+  try {
+    await loadURL();
+    return true;
+  } catch (error) {
+    return typeof error === 'object' && error !== null && 'code' in error
+      && error.code === 'ERR_ABORTED';
+  }
 }
 
 /**
@@ -154,16 +199,21 @@ export function artifactWebPreferences(artifactId: string, packaged: boolean) {
  */
 export function confineToArtifactOrigin(
   contents: {
-    on(event: 'will-navigate', handler: (event: { preventDefault(): void }, url: string) => void): void;
+    on(
+      event: 'will-navigate' | 'will-redirect',
+      handler: (event: { preventDefault(): void }, url: string) => void,
+    ): void;
     setWindowOpenHandler(handler: (details: { url: string }) => { action: 'deny' }): void;
     session: Pick<Session, 'setPermissionRequestHandler'>;
   },
   origin: string,
 ): void {
-  contents.on('will-navigate', (event, url) => {
+  const fence = (event: { preventDefault(): void }, url: string): void => {
     if (sameOrigin(url, origin)) return;
     event.preventDefault();
-  });
+  };
+  contents.on('will-navigate', fence);
+  contents.on('will-redirect', fence);
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
   contents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
     callback(false);
@@ -196,6 +246,7 @@ function sameOrigin(candidate: string, origin: string): boolean {
 export class ArtifactPreviewController {
   private view: ArtifactViewHandle | null = null;
   private artifactId: string | null = null;
+  private pendingLoad: { view: ArtifactViewHandle; result: Promise<boolean> } | null = null;
   private bounds: PreviewBounds | null = null;
   private hiddenByOverlay = false;
 
@@ -206,15 +257,33 @@ export class ArtifactPreviewController {
   ) {}
 
   /** Show one artifact in the rail's preview region. */
-  present(request: ArtifactPresentation): boolean {
+  async present(request: ArtifactPresentation): Promise<boolean> {
     if (!isArtifactUrl(request.url, this.servingDomain)) return false;
     if (this.artifactId !== request.artifactId) this.destroy();
     this.bounds = request.bounds;
     if (!this.view) {
       this.view = this.createView(request);
       this.artifactId = request.artifactId;
-      this.view.loadURL(request.url);
+      const created = this.view;
+      this.applyBounds();
+      const result = loadArtifactInitialUrl(() => created.loadURL(request.url)).then((loaded) => {
+        // DNS, TLS, and terminal navigation failures should not leave an empty
+        // composited view. `ERR_ABORTED` is the successful redemption handoff
+        // documented by `loadArtifactInitialUrl`, not a terminal failure.
+        if (!loaded && this.view === created) this.destroy();
+        return loaded;
+      });
+      this.pendingLoad = { view: created, result };
     }
+    const current = this.view;
+    if (!current) return false;
+    const pending = this.pendingLoad?.view === current ? this.pendingLoad.result : null;
+    if (pending && !await pending) return false;
+    if (this.pendingLoad?.result === pending) this.pendingLoad = null;
+    // A different presentation may have replaced this view while its initial
+    // navigation was pending. The old caller must not report the new view as
+    // its own success.
+    if (this.view !== current || this.artifactId !== request.artifactId) return false;
     this.applyBounds();
     return true;
   }
@@ -237,6 +306,7 @@ export class ArtifactPreviewController {
     this.view.close();
     this.view = null;
     this.artifactId = null;
+    this.pendingLoad = null;
     this.bounds = null;
     this.hiddenByOverlay = false;
   }
