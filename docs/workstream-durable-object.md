@@ -1546,6 +1546,31 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-02 — Fenced scope and activation writes reuse rather than refuse
+
+**What changed:** `FencedWriteOutcome` loses its `mismatch` member. `persistScope`
+and `persistPluginActivation` now return `reused` whenever the run already
+carries the row, without comparing the caller's `scopeHash` or
+`toolSurfaceHash` against the stored one. `persisted`, `reused` and
+`ownership_lost` remain, and the lease fence around the insert is unchanged.
+
+**Why:** The comparison read a recomputed value as though it were a stored one.
+A Durable Object is reset when the Worker is deployed, so a run in flight
+resumes on a new bundle and recomputes both hashes from different tool
+definitions. Production lost a run to this on 2026-09-02 after its own
+reservation and tool-batch recovery had already repaired it. The full incident
+and the rejected alternatives are in
+[`agent-harness.md`](agent-harness.md#changelog); this entry records the storage
+contract that changed.
+
+**Consequences:** These two writes are now idempotent per run rather than per
+`(attempt, value)` pair, which is what lets a replacement instance restart the
+loop against the recorded scope. A caller that genuinely needs to detect a
+changed value must read the row back and compare stored against stored; the
+outcome no longer carries that answer. Both hash columns are still written on
+the first attempt and are still the forensic record of the build a run was
+admitted on.
+
 ### 2026-09-02 — A refused transcript range names the request it refuses
 
 **What changed:** The socket `error` frame carries an optional `requestId`, and
