@@ -250,11 +250,12 @@ The control is the markdown headings' collapse chevron — the same `ChevronRigh
 at 14px and 1.8, the same muted neutral, the same quarter turn on the same
 140ms — because the reader has already learned it on the answer immediately
 below, and a second collapse drawn a second way a few pixels above the first
-reads as a different kind of thing. Its gutter is this column's own rather than
-the heading's negative offset: the chevron takes `.plugin-face`'s 20px box and
-the timing row's 7px gap, so it lands in the same column as the marks of the
-rows it hides and the total lands in the same column as their labels — which
-puts it within three pixels of the heading chevrons below it anyway.
+reads as a different kind of thing. It hangs in the gutter the same way too:
+outdented into the margin, so the total starts on the transcript's own left
+edge — level with the author line and with the answer's paragraphs — and the
+chevron is the only thing outside that edge. The offset is a flat 20px where
+the heading derives its own from `em`, because this row's line box is a fixed
+20px rather than a heading's.
 
 Three things about it are decisions rather than details:
 
@@ -503,6 +504,38 @@ projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
 
+### 2026-09-02 — The accordion's chevron hangs in the margin, not inside the column
+
+**What changed:** `.work-accordion-chevron` is absolutely positioned at
+`left: -20px` on a `position: relative` toggle, instead of taking
+`.plugin-face`'s 20px box and the timing row's 7px gap in flow. The total now
+starts on the transcript's own left edge — level with the author line and the
+answer's paragraphs — and the chevron is the only thing outside that edge.
+
+**Why:** In flow, the chevron and the gap pushed the total 27px inside the edge
+every other row in the column starts at, so the closed row read as one that had
+drifted rather than one hung off the column. A gutter is the margin *outside*
+the text, which is what the heading collapse does and what this now does.
+
+**Considered and rejected:** Keeping the in-flow version because it put the
+chevron within three pixels of the heading chevrons below it. That alignment was
+real but it is not what a reader sees: a heading's text is itself indented 20px
+inside the body, so its chevron lands at the body edge, while this row's text
+*is* the body edge. Matching the chevrons meant mismatching the text, and the
+text is the thing a column is read down.
+
+**Also:** the heading collapse moved its own gutter from padding to margin in
+the same change ([`markdown-rendering.md`](markdown-rendering.md)), because the
+padding had been indenting the whole answer. The two chevrons now sit at the
+same x, which is what they were always meant to do — matching them by moving
+this one *into* the column had matched the glyphs by mismatching the text.
+
+**What a future change has to respect:** the outdent is 20px flat, not the
+heading's `em`-derived offset — this row's line box is a fixed 20px, so an
+`em` offset lands a few pixels off. And the chevron sits outside the content
+column, so any surface that reduces the transcript's left padding below 20px
+clips it; at the narrowest window the shell allows it still has 18px of room.
+
 ### 2026-09-02 — Automations draws Tabler's keyframes glyph
 
 **What changed:** The `rally:automations` activity row draws Tabler's
@@ -528,7 +561,7 @@ on that name the way every other row does.
 `workstream.tsx`'s pipeline, after `foldSettledWorkIntoMessages`. Once a turn's
 response timer has settled, the plugin and thinking rows immediately above that
 turn's answer fold into one `work_accordion` row — "Worked for 41m 17s" behind
-the markdown headings' own collapse chevron, in this column's 20px glyph
+the markdown headings' own collapse chevron, outdented into the transcript's
 gutter — sitting where the run's first row sat, holding those rows in
 `workAccordion.rows` and drawing them through `PluginActivityBlock` and
 `ThoughtBlock` when a reader opens it. The total it prints is the answer's
@@ -566,10 +599,9 @@ and one thing for `RowDisclosure` to remember.
 Also rejected: a chevron of this row's own, inline after the total. The reader
 meets two collapses within a few pixels of each other — this one and the
 heading sections of the answer under it — and drawing them differently makes
-them read as unrelated affordances. The heading's `em`-based gutter offset is
-the one thing not copied: it is measured against a heading's line box and lands
-a few pixels off on a 20px timing row, so the chevron takes the mark column
-this feed already has.
+them read as unrelated affordances. The heading's `em`-based offset is the one
+thing not copied: it is measured against a heading's line box, and this row's
+is a fixed 20px, so the outdent is written as a flat 20px.
 
 **What a future change has to respect:** the collapse keys on the settled
 response total and nothing else — that is the loop's completion signal, and a
