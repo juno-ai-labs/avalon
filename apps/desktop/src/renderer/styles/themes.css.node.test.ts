@@ -14,7 +14,7 @@ const app = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 
 /**
  * The design-token JSON, two directories up at the repository root. It is the
  * source of truth for what a token is and what each theme sets; `themes.css` is
- * generated from it, and `scripts/build-theme-css.test.mjs` holds the two
+ * generated from it, and `scripts/build-theme-assets.test.mjs` holds the two
  * together. What is left for this file is the half that JSON cannot see: how
  * `app.css` and the main process use the vocabulary.
  */
@@ -275,5 +275,28 @@ describe('Terra Light row hover', () => {
   it('aliases hover to raised-hover so the fill is darker than the sidebar', () => {
     const terraLight = themeFiles.find((theme) => theme.id === 'terra-light');
     expect(terraLight?.tokens['cmp.row.background-hover']).toBe('{sys.color.surface.raised-hover}');
+  });
+});
+
+/**
+ * The composer's top edge comes from `rule-color`, in both of its shapes.
+ *
+ * That coupling is what makes the token set's own guard — a card states
+ * `rule-color` as its `border-color`, in `scripts/build-theme-assets.test.mjs`
+ * — mean anything. `border-top` is written from the token unconditionally and
+ * before `border-width`, so a theme that leaves it `transparent` does not turn
+ * a rule off: it erases the top of a card, which is exactly what Terra shipped.
+ * Anchored here so that the day this declaration gains a real opt-in for the
+ * rule shape, the premise fails rather than four themes downstream of it.
+ */
+describe('the composer top edge is drawn from rule-color', () => {
+  it('writes border-top from the token in the shared rule', () => {
+    expect(app).toContain(
+      'border-top: var(--av-sys-size-border-hairline) solid var(--av-cmp-composer-rule-color);',
+    );
+  });
+
+  it('writes the focus top edge from rule-color-focus', () => {
+    expect(app).toContain('border-top-color: var(--av-cmp-composer-rule-color-focus);');
   });
 });

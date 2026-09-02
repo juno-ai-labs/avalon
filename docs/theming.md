@@ -303,9 +303,16 @@ The composer is built from one set of tokens either way. A card sets
 nothing and gives `rule-color` a hairline, so the composer reads as a line the
 page rests on rather than a box floating over it. Air takes the second.
 
+`rule-color` is the composer's **top** edge in both shapes, not an extra
+hairline a rule theme switches on — the stylesheet draws that edge from it
+unconditionally. A card theme therefore states it as the same line as its
+`border-color`, and a card theme that leaves it `transparent` gets a box with
+three sides. Terra did, for as long as the tokens existed.
+
 `rule-color-focus` exists because of what the first shape hides: once the border
 is gone, the rule turning warm is the only thing left saying the field is live.
-A theme that flattens the frame has to say what focus looks like.
+A theme that flattens the frame has to say what focus looks like. A card, whose
+top edge is that same token, states it as its own `border-color-focus`.
 
 `send-background` follows the same frame. A flat composer carrying a raised
 button reads as two surfaces disagreeing about which one the page is.
@@ -670,8 +677,8 @@ request description is not reachable from the repository.
 
 | Suite | What it covers |
 | --- | --- |
-| `scripts/build-theme-css.test.mjs` | The JSON half: that the committed stylesheet is what the JSON produces, that themes set only declared paths, that aliases resolve and never cycle, that every theme restates every colour and declares every token, that both ramps are ordered by contrast, and that a backdrop layer — gradient, fetched URL, or drawn SVG — becomes the CSS it should. Runs in CI through `pnpm test:scripts`. |
-| `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every `var()` naming a declared token, lines coming off the line ramp, the navigation tint and the backdrop each painted once, and the duplicated window background. Runs against the files on disk. |
+| `scripts/build-theme-assets.test.mjs` | The JSON half: that the committed stylesheet is what the JSON produces, that themes set only declared paths, that aliases resolve and never cycle, that every theme restates every colour and declares every token, that both ramps are ordered by contrast, that a card composer states its top edge as its frame while a rule keeps a visible one, and that a backdrop layer — gradient, fetched URL, or drawn SVG — becomes the CSS it should. Runs in CI through `pnpm test:scripts`. |
+| `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every `var()` naming a declared token, lines coming off the line ramp, the navigation tint and the backdrop each painted once, the duplicated window background, and the composer's top edge being drawn from `rule-color` — the coupling the token invariant above rests on. Runs against the files on disk. |
 | `src/main/theme-assets.test.ts` | The backdrop policy and URL parsing, and the font cache: fetch-once, integrity, the size limit, concurrent asks collapsing to one request, and a 404 for every id no theme declared. |
 | `src/common/themes.test.ts` | Resolution and parsing, including that a deliberate choice is never overridden by the Mac. |
 | `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, the unknown-theme fallback, and that a reader takes the applied appearance rather than a store the broadcast has outrun. |
@@ -695,6 +702,50 @@ the defects fixed on the way in — a near-black label on a near-black fill in
 Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
+
+### 2026-09-02 — Terra's work-stream composer closes its frame and matches the launch composer
+
+**What changed:** the two Terra themes set `cmp.composer.border-color` to
+`ref.color.line.3` rather than `line.4`, and `cmp.composer.rule-color` /
+`rule-color-focus` to `line.3` / `line.5` rather than `transparent`. Air and Air
+Dark are untouched: their composer stays the rule the tokens exist to express.
+
+**Why:** two composers ask for the same thing in the same product and did not
+look alike. The new-work-stream screen's `.launch-composer` writes its own card
+— `line.3`, `radius.xl`, `shadow.md` — while the work stream's composer draws
+from `cmp.composer.*`, which named a darker line; side by side the second read
+as the heavier control, and it is the one a person types into all day. Worse,
+the stylesheet draws the composer's top edge from `rule-color` in *both* shapes,
+so Terra's `transparent` left the card open along the top: three sides and a
+colour change where the fourth belonged. Matching the launch composer fixes both
+at once, because that screen already showed what the card is supposed to be.
+
+**Considered and rejected:** pointing `.launch-composer` at `cmp.composer.*` so
+one definition serves both. It is the better factoring on paper and the wrong
+change here — under Air the launch screen would stop being a card and become a
+rule, which is a product decision about a screen nobody asked about, made as a
+side effect of a colour fix. Also rejected: dropping the focus darkening
+entirely and holding `line.3` through focus, so the two matched in every state.
+The launch composer holds `line.3` through focus only because its own selector
+outranks
+`.workstream-composer:focus-within`; the work stream's composer is the
+long-lived field, and taking its one focus signal away to match an accident is
+not symmetry worth having.
+
+**What it also fixed, which was not the goal:** the launch hand-off.
+`new-workstream.tsx` puts `workstream-screen is-launching` on the root while a
+work stream is being created, so mid-transition the composer stops matching
+`.workstream-launch-screen:not(.is-launching) .launch-composer` and falls to the
+tokenised rule — with `transition: border-color 240ms` still running on it. The
+frame therefore animated `line.3` → `line.4` *and faded its top edge away* on
+the way across, then the destination screen painted the same. Both endpoints are
+now `line.3`, so the lid no longer opens during the hand-off. The
+`work-stream launch surface geometry` suite exists to protect that transition
+and had no way to see this: it reasons about geometry, and this was colour.
+
+**What a future change has to respect:** a card theme states `rule-color` as its
+own border colour. Leaving it `transparent` does not turn the rule off — it
+erases the top of the card.
 
 ### 2026-09-02 — The thinking orb follows the appearance instead of pinning dark
 
