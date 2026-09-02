@@ -1,12 +1,14 @@
-# Theming
+# Appearance tokens
 
-A theme is a JSON file. `config/design-tokens/` holds one file per appearance
+An appearance is a JSON file. `config/design-tokens/` holds one file per appearance
 and a registry saying which tokens exist and what each one means; a build step
 turns them into the stylesheet the renderer loads. Nothing in the interface
 chooses a colour outside that vocabulary, so adding an appearance costs a JSON
 file rather than an audit of a 3,800-line stylesheet.
 
-Read this before adding a theme, adding a token, or writing a colour anywhere in
+Rally now exposes one GrokBot-inspired visual system with light and dark
+appearances; the earlier family picker is retired. Read this before changing an
+appearance, adding a token, or writing a colour anywhere in
 the renderer. Two rules carry the rest: **`app.css` names tokens and never a
 colour**, and **`themes.css` is generated — edit the JSON**. A test fails if
 either stops being true.
@@ -682,7 +684,7 @@ request description is not reachable from the repository.
 | `src/main/theme-assets.test.ts` | The backdrop policy and URL parsing, and the font cache: fetch-once, integrity, the size limit, concurrent asks collapsing to one request, and a 404 for every id no theme declared. |
 | `src/common/themes.test.ts` | Resolution and parsing, including that a deliberate choice is never overridden by the Mac. |
 | `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, the unknown-theme fallback, and that a reader takes the applied appearance rather than a store the broadcast has outrun. |
-| `src/renderer/components/theme-picker.test.tsx` | The picker, including that each swatch previews with its own `data-theme`. |
+| `src/renderer/components/theme-picker.test.tsx` | The System, Light, and Dark appearance control and its system watcher. |
 | `src/renderer/components/agent-work-timing.test.tsx`, `primitives.test.tsx` | That the orb — the one surface handed an appearance rather than a token — is given the one the window is drawn in. |
 | `src/renderer/lib/device-preferences.test.ts` | That an unknown theme is dropped without discarding the record. |
 
@@ -820,6 +822,28 @@ differently should change how it is *painted*: `--av-sys-color-person-1`
 through `-6` are the accent it and the dot resolve through.
 [`conversation-surfaces.md`](conversation-surfaces.md) owns the row itself and
 carries the full entry.
+
+### 2026-09-01 — Rally has one GrokBot palette with light and dark appearances
+
+**What changed:** The Settings surface no longer offers visual families. It
+offers only System, Light, and Dark, all resolving to the same Rally design.
+The main window no longer mounts the Air backdrop. Its light palette now uses
+the reference's `#fcfcfc` canvas, `#f7f7f7` sidebar, and neutral fills; dark uses
+the measured `#070707` canvas, `#111111` sidebar, `#2f2f2f` raised controls, and
+`#313131` selected work-stream row.
+
+**Why:** The GrokBot rewrite is the application, not a selectable skin. Keeping
+Terra and Air as visible alternatives made every screenshot and component state
+depend on a product choice that no longer exists.
+
+**Considered and rejected:** Deleting the token generator with the picker. The
+generator is still the enforcement boundary that keeps literal colors out of
+component CSS and gives light and dark exact, independently measured values.
+
+**Consequences:** Older stored family choices keep only their mode when read by
+the renderer. The legacy appearance files remain build inputs until the desktop
+window-prepaint and asset plumbing can be collapsed without mixing that cleanup
+into this frontend rewrite.
 
 ### 2026-08-30 — Mermaid resolves the active design tokens
 

@@ -23,8 +23,8 @@ describe('the two axes', () => {
     expect(appearanceModeDescriptions.map((mode) => mode.id)).toEqual([...appearanceModes]);
   });
 
-  it('starts on the original design, following the Mac', () => {
-    expect(defaultThemeChoice).toEqual({ family: 'terra', mode: 'system' });
+  it('starts on the single Rally design, following the Mac', () => {
+    expect(defaultThemeChoice).toEqual({ family: 'air', mode: 'system' });
   });
 
   /**
@@ -111,8 +111,8 @@ describe('what the main process builds a window from', () => {
   it('gives a pinned choice the same background whatever the Mac says', () => {
     const choice = { family: 'air', mode: 'dark' } as const;
 
-    expect(themeWindowBackground[resolveTheme(choice, false)]).toBe('#100e0c');
-    expect(themeWindowBackground[resolveTheme(choice, true)]).toBe('#100e0c');
+    expect(themeWindowBackground[resolveTheme(choice, false)]).toBe('#070707');
+    expect(themeWindowBackground[resolveTheme(choice, true)]).toBe('#070707');
   });
 
   /**

@@ -80,7 +80,10 @@ function systemPrefersDark(): boolean {
 }
 
 export function readThemeChoice(): ThemeChoice {
-  return readDevicePreferences().theme ?? defaultThemeChoice;
+  const stored = readDevicePreferences().theme ?? defaultThemeChoice;
+  // Theme families were retired with the GrokBot rewrite. Preserve only the
+  // person's lighting preference when migrating an older device setting.
+  return { family: 'air', mode: stored.mode };
 }
 
 /** Changing one axis and leaving the other alone, which is what the picker does. */

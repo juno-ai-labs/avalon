@@ -58,8 +58,8 @@ describe('theme', () => {
     removeMatchMedia();
   });
 
-  it('starts on the original design following the Mac when nothing has been chosen', () => {
-    expect(readThemeChoice()).toEqual({ family: 'terra', mode: 'system' });
+  it('starts on the single Rally design following the Mac when nothing has been chosen', () => {
+    expect(readThemeChoice()).toEqual({ family: 'air', mode: 'system' });
   });
 
   it('records the resolved appearance and the choice that produced it', () => {
@@ -129,8 +129,8 @@ describe('theme', () => {
       JSON.stringify({ version: 1, theme: { family: 'sepia', mode: 'dark' } }),
     );
 
-    expect(readThemeChoice()).toEqual({ family: 'terra', mode: 'system' });
-    expect(installTheme().resolved).toBe('terra-light');
+    expect(readThemeChoice()).toEqual({ family: 'air', mode: 'system' });
+    expect(installTheme().resolved).toBe('air');
   });
 
   /**
@@ -164,10 +164,10 @@ describe('theme', () => {
       const stop = watchSystemAppearance();
 
       media.change(true);
-      expect(document.documentElement.dataset['theme']).toBe('terra');
+      expect(document.documentElement.dataset['theme']).toBe('air-dark');
 
       media.change(false);
-      expect(document.documentElement.dataset['theme']).toBe('terra-light');
+      expect(document.documentElement.dataset['theme']).toBe('air');
       stop();
     });
 

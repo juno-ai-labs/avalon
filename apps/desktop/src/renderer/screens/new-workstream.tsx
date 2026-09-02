@@ -1,10 +1,10 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type ProjectSummary, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ChevronRight, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { NavLink, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import {
@@ -13,7 +13,6 @@ import {
   rebaseMentionIdentities,
   upsertMentionIdentity,
 } from '../lib/mention-draft';
-import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
 import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
 import type { MentionIdentity } from '../lib/api';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
@@ -21,18 +20,15 @@ import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
-import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
-import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
-import { Avatar, AvatarStack, RallyMark, Badge, Button, EmptyState, LoadingState, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
-import { withSuggestedPrompts } from '../components/suggested-prompts';
+import { Avatar, AvatarStack, Badge, Button, EmptyState, LoadingState, Modal, TitleSkeleton } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
-import { ProjectIconPile } from '../components/project-sidebar-section';
 
 interface CreateWorkstreamInput {
   attachmentIds: string[];
@@ -66,13 +62,6 @@ interface LaunchingWorkstream {
   /** Frozen at submit so the optimistic turn and the persisted one agree. */
   createdAt: string;
   openingMessage: string;
-  /**
-   * Which launcher started this. Suggested work is created from the suggestion
-   * rather than from the composer, so its surface shows no opening turn and no
-   * draft — anything sitting in the composer belongs to a work stream that has
-   * not been started, and showing it here would attach it to one that has.
-   */
-  origin: 'composer' | 'suggested-work';
   /** Drives the work timer, which the created stream keeps counting from. */
   startedAt: number;
 }
@@ -136,23 +125,6 @@ function optimisticOpeningTranscript(
       activities: [],
       pluginRuns: [],
     }],
-    activities: [],
-    activeActivities: [],
-    pluginRuns: [],
-    activeTurns: [],
-    pendingInputs: [],
-  };
-}
-
-function emptyOptimisticTranscript(created: CreatedWorkstream): WorkstreamTranscriptSnapshot {
-  return {
-    snapshotId: `optimistic:${created.turnId}`,
-    snapshotThrough: 0,
-    eventSequence: 0,
-    snapshotAtUtc: created.createdAt,
-    unreadAnchorSequence: null,
-    unreadReason: 'no_unread',
-    ranges: [],
     activities: [],
     activeActivities: [],
     pluginRuns: [],
@@ -353,8 +325,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   const routeProjectId = useParams<{ projectId: string }>().projectId;
   const owningProjectId = projectId === 'route' ? routeProjectId : projectId;
   const { api } = useAppSession();
-  const featureFlags = useClientFeatureFlags(api);
-  const suggestedWorkEnabled = featureFlags.data?.suggestedWorkEnabled === true;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -387,7 +357,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   // must not happen, since the create path reserves an address and writes rows
   // before anything looks at the message's length.
   const [tooLong, setTooLong] = useState(false);
-  const homeLeaving = useHomeHandOff(launching !== null);
   const attachmentDraft = useFileAttachments(api, draftKey);
   const loadAttachmentContent = useCallback(
     (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
@@ -402,16 +371,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     enabled: Boolean(api),
     staleTime: 60_000,
   });
-  // The same list the sidebar shows, from the same cache entry, so a realtime
-  // update lands on both at once.
-  const workstreams = useWorkstreamsQuery();
   const { active: projects } = useProjectDirectories();
-  const opportunities = useQuery({
-    queryKey: ['work-opportunities'],
-    queryFn: ({ signal }) => api!.getWorkOpportunities(signal),
-    enabled: Boolean(api && suggestedWorkEnabled),
-    staleTime: Number.POSITIVE_INFINITY,
-  });
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
   const owningProject = projects.data?.items.find((project) => project.id === owningProjectId);
   const personalProjectParticipantIds = useMemo(() => new Set(
@@ -428,20 +388,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     )));
     setPickerOpen(false);
   }, [members.data, owningProject?.scope, personalProjectParticipantIds, workspace.currentUser.id]);
-  // Everything somebody put in front of this person: a run stopped for an
-  // answer, a mention, and a work stream somebody added them to that they have
-  // not opened. All three have a person behind them, which is what the section
-  // is for and what keeps it short enough to scan — being merely unread is not
-  // one of them, and listing it swamped the rest. The newest activity is the
-  // one worth looking at first, so the list is ordered by that rather than by
-  // which of the states a row happens to be in.
-  const attentionWorkstreams = useMemo(
-    () => (workstreams.data ?? [])
-      .filter((workstream) => workstreamNeedsAttention(workstream))
-      .sort((left, right) => new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()),
-    [workstreams.data],
-  );
-
   // Opened on the keystroke that starts a work stream and closed once the
   // route change is requested. The surface is optimistic — the work stream is
   // already on screen — so what this spans is the round trip behind it. Held in
@@ -522,72 +468,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     },
   });
 
-  const startOpportunity = useMutation({
-    mutationFn: (opportunity: WorkOpportunity) => {
-      const key = opportunityKeys.current.get(opportunity.id) ?? crypto.randomUUID();
-      opportunityKeys.current.set(opportunity.id, key);
-      const position = (opportunities.data ?? []).findIndex((item) => item.id === opportunity.id) + 1;
-      return api!.startWorkOpportunity(opportunity.id, opportunity.version, key, 'workspace_home', position);
-    },
-    // Suggested work opens onto the same surface, minus the opening turn. That
-    // turn is attributed to the person selecting the suggestion, but its text is
-    // the expanded brief, which the server holds and this list has never seen —
-    // only the one-line `displayPrompt`. Standing that line in for the brief
-    // would show them a turn that is replaced by a different, much longer one
-    // the moment the refetch lands.
-    onMutate: () => {
-      const createdAt = new Date().toISOString();
-      opportunityStartedAt.current = createdAt;
-      setLaunching({
-        attachments: [],
-        createdAt,
-        openingMessage: '',
-        origin: 'suggested-work',
-        startedAt: Date.parse(createdAt),
-      });
-    },
-    onError: () => setLaunching(null),
-    onSuccess: (created, opportunity) => {
-      opportunityKeys.current.delete(opportunity.id);
-      // Seeded for the same reason the typed path is: without it the work-stream
-      // screen has neither query and shows its full-screen `Opening work stream…`
-      // state, cutting away from a surface that was already showing this work
-      // stream. The transcript is seeded empty rather than invented — the brief
-      // that opening turn carries is written server-side, and it arrives with the
-      // refetch a moment later.
-      const detail = launchedWorkstreamDetail(created, {
-        creator: workspace.currentUser,
-        origin: 'suggested_work',
-        startedAt: opportunityStartedAt.current ?? created.createdAt,
-      });
-      queryClient.setQueryData(['workstream', created.workstream.id], detail);
-      queryClient.setQueryData(
-        ['ordered-transcript', created.workstream.id],
-        emptyOptimisticTranscript(created),
-      );
-      void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
-      void queryClient.invalidateQueries({ queryKey: ['work-opportunities'] });
-      void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-      void navigate(`/workstreams/${created.workstream.id}`);
-    },
-  });
-
-  const dismissOpportunity = useMutation({
-    mutationFn: (opportunity: WorkOpportunity) => api!.dismissWorkOpportunity(
-      opportunity.id,
-      opportunity.version,
-      (opportunities.data ?? []).findIndex((item) => item.id === opportunity.id) + 1,
-    ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['work-opportunities'] }),
-  });
-
-  const impressionKey = (opportunities.data ?? []).map((item) => `${item.id}:${item.version}`).join('|');
-  useEffect(() => {
-    if (!suggestedWorkEnabled) return;
-    const ids = (opportunities.data ?? []).map((item) => item.id);
-    if (ids.length > 0) void api?.recordWorkOpportunityImpressions(ids);
-  }, [api, impressionKey, suggestedWorkEnabled]);
-
   const submit = (): void => {
     const submitted = mentionsInTrimmedText(message, selectedMentions);
     const openingMessage = submitted.text;
@@ -618,7 +498,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     // Before the request, not after it: this is the whole point of the screen
     // below, and a state set in the same commit as the send is what makes the
     // work stream appear to open on the keystroke rather than on the response.
-    setLaunching({ attachments, createdAt, openingMessage, origin: 'composer', startedAt: Date.parse(createdAt) });
+    setLaunching({ attachments, createdAt, openingMessage, startedAt: Date.parse(createdAt) });
     create.mutate({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
       attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
@@ -632,11 +512,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     });
   };
 
-  // Suggested work is not created from the composer, so the draft sitting in it
-  // is held back rather than shown attached to the work stream being started.
-  // Nothing is discarded: it is still in state and still in the draft cache, and
-  // it comes back the moment the launch ends either way.
-  const draftHidden = launching?.origin === 'suggested-work';
   const participants = [workspace.currentUser, ...selectedMembers];
   // A membership that is not active is one the work-stream endpoints refuse, so
   // neither the inline list nor the dialog may offer it: picking one here also
@@ -740,11 +615,8 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     ? participants.map((participant) => participant.name).join(', ')
     : `${workspace.currentUser.name} +${participants.length - 1}`;
   // Text or files: `submit` accepts a create carrying only attachments, and
-  // that turn is a bubble of tiles rather than an empty one. Suggested work is
-  // the only launch with no turn at all — its opening turn is the selecting
-  // member's, but the brief it carries is expanded server-side and the client
-  // holds only the one-line suggestion, which is not the same text.
-  const openingTurn: Message | null = launching?.origin === 'composer'
+  // that turn is a bubble of tiles rather than an empty one.
+  const openingTurn: Message | null = launching
     ? {
       id: 'launching-opening-message',
       workstreamId: 'launching',
@@ -789,39 +661,6 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
       </header>
 
       <div className="launch-body">
-        {(!launching || homeLeaving) && (
-          <div className={clsx('launch-home-layer', launching && 'is-leaving')} inert={Boolean(launching)}>
-            <div className="new-workstream-home">
-              <header className="new-workstream-welcome">
-                <RallyMark className="new-workstream-welcome-mark" />
-                <h1>{owningProjectId ? 'New project work stream' : `Welcome back, ${workspace.currentUser.name.split(/\s+/u)[0]}`}</h1>
-              </header>
-
-              {!owningProjectId && attentionWorkstreams.length > 0 && (
-                <section className="waiting-workstreams" aria-labelledby="attention-workstreams-heading">
-                  <h2 id="attention-workstreams-heading">Needs attention</h2>
-                  <div className="waiting-workstream-list">
-                    {attentionWorkstreams.map((workstream) => <AttentionWorkstreamRow key={workstream.id} projects={projects.data?.items ?? []} workstream={workstream} />)}
-                  </div>
-                </section>
-              )}
-
-              {!owningProjectId && suggestedWorkEnabled && (
-                <WorkSuggestedPrompts
-                  error={opportunities.error?.message ?? startOpportunity.error?.message ?? dismissOpportunity.error?.message}
-                  items={opportunities.data ?? []}
-                  onDismiss={(opportunity) => dismissOpportunity.mutate(opportunity)}
-                  onSelect={(opportunity) => startOpportunity.mutate(opportunity)}
-                  pendingId={startOpportunity.isPending
-                    ? startOpportunity.variables?.id ?? null
-                    : dismissOpportunity.isPending ? dismissOpportunity.variables?.id ?? null : null}
-                />
-              )}
-
-            </div>
-          </div>
-        )}
-
         {launching && (
           <div className="launch-transcript-layer transcript-scroll">
             <div className="transcript-column">
@@ -919,7 +758,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
           <ComposerInput
             api={api ?? undefined}
             ariaLabel="Opening work-stream message"
-            attachments={draftHidden ? [] : attachmentDraft.attachments}
+            attachments={attachmentDraft.attachments}
             autoFocus
             className="launch-composer"
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
@@ -942,13 +781,13 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             onOpenAttachment={setAttachmentPreview}
             onRemoveAttachment={attachmentDraft.removeAttachment}
             onRetryAttachment={attachmentDraft.retryAttachment}
-            onSelect={() => { if (!draftHidden) refreshOpenMentionQuery(message); }}
+            onSelect={() => refreshOpenMentionQuery(message)}
             onSubmit={submit}
             // Held back rather than merely hidden: the composer is controlled,
             // so a keystroke during a suggested-work launch would otherwise
             // write the empty value it is being shown back over the draft it is
             // hiding, and lose it.
-            onValueChange={(value) => { if (draftHidden) return; updateMessage(value); setTooLong(false); }}
+            onValueChange={(value) => { updateMessage(value); setTooLong(false); }}
             placeholder="Describe a task or ask a question…"
             ref={textareaRef}
             rows={2}
@@ -960,7 +799,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             // their way into a message.
             submitting={launching !== null}
             uploading={attachmentDraft.uploading}
-            value={draftHidden ? '' : message}
+            value={message}
           />
         </div>
         {members.error && !launching && <p className="muted-notice">People could not be loaded. You can still create this work stream with yourself.</p>}
