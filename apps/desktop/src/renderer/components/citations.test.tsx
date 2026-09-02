@@ -451,7 +451,7 @@ describe('resource citations', () => {
     // The card is a container, not one button: a control cannot nest inside a
     // button, and a play control that opened the rail would be the same defect
     // the other way round.
-    expect(document.querySelector('.citation-card')!.tagName).toBe('DIV');
+    expect(document.querySelector('.citation-card')!.tagName).toBe('SPAN');
     expect(document.querySelector('.citation-card button')).not.toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
@@ -498,6 +498,39 @@ describe('resource citations', () => {
 
     // Unmounted before the prototype goes back: the card pauses its element on
     // the way out, and jsdom's own `pause()` throws.
+    unmount();
+    playback.restore();
+    createObjectURL.mockRestore();
+    vi.mocked(URL.revokeObjectURL).mockRestore?.();
+  });
+
+  it('keeps its paragraph through the serialize-and-reparse a saved picture makes', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const playback = stubPlayback();
+    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+
+    const { container, unmount } = render(
+      <MarkdownBody citations={context({ preview, resolve: () => RECORDING })}>
+        {'Play the episode here too:\n\n![Inbox Brief](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    await waitFor(() => { expect(container.querySelector('audio')).not.toBeNull(); });
+    // A lone embed keeps the paragraph the markdown put it in — the row pass
+    // merges runs of two or more — so this card lives inside a `p`.
+    const live = container.querySelector('.citation-card')!;
+    expect(live.closest('p')).not.toBeNull();
+
+    // The export serializes this DOM to a string and Chromium reparses it.
+    // React nests a block element inside a paragraph happily; the HTML parser
+    // does not — it closes the paragraph first and leaves a stray empty one, so
+    // the saved picture gains a paragraph's margin the turn never had.
+    const reparsed = document.createElement('div');
+    reparsed.innerHTML = container.innerHTML;
+    expect(reparsed.querySelector('.citation-card')!.closest('p')).not.toBeNull();
+    expect(reparsed.querySelectorAll('p')).toHaveLength(container.querySelectorAll('p').length);
+
     unmount();
     playback.restore();
     createObjectURL.mockRestore();

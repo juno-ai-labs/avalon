@@ -292,6 +292,16 @@ rail. Two controls, each with its own accessible name — "Play <title>" /
 that *are* one button, so it is written `button.citation-card:hover`; lighting
 the container would advertise a click it does not take.
 
+Its container is a `span`, and **every node in it is phrasing content**. A lone
+embed keeps the paragraph the markdown put it in — the row pass merges runs of
+two or more — so the card renders inside a `<p>`. React builds the live DOM node
+by node and nests a block element there happily; the **export** serializes that
+DOM to a string and Chromium *reparses* it, and the HTML parser closes an open
+paragraph before a `div`, leaving a stray empty one behind. A saved picture then
+carries a paragraph's margin the turn never had. `button`, `span`, `small` and
+`audio` are all phrasing content; adding a block element here reopens it, and
+the round trip is covered by a test that reparses the rendered markup.
+
 It is a transport, not a player. Scrubbing, volume and speed are the rail's own
 `<audio controls>`, one click away through the title: a scrub target 150px wide
 inside a tile is a control nobody can land on. Playing state and position come
@@ -727,8 +737,12 @@ would have left the card a picture of nothing; what a reader wants from an
 announced recording is to play it, and the rail already proves the bytes play by
 handing the same blob to `<audio controls>`.
 
-**What a future change has to respect:** the card's shape is decided from the
-*record*, not from the settled preview — deciding it on arriving bytes would
+**What a future change has to respect:** the card's container is a `span` and
+everything in it is phrasing content, because a lone embed renders inside a
+paragraph and the export reparses the serialized DOM — the first draft used a
+`div`, which Chromium's parser lifted out of its paragraph and replaced with a
+stray empty one, so the saved picture and the live turn disagreed. The card's
+shape is decided from the *record*, not from the settled preview — deciding it on arriving bytes would
 swap a button for a container under a reader who had already focused it. Keep
 the two controls separately named; the accessible name of the play button is the
 only place the playing state is announced, and it must keep following the
