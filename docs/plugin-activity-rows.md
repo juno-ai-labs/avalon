@@ -5,11 +5,15 @@ per plugin per uninterrupted stretch of work, saying which place Rally is workin
 in and for how long — "Slack is working for 4m 02s", becoming "Slack worked for
 5m 02s" when the plugin is done.
 
-Read this before changing what a tool call looks like in the feed, adding a
-first-party plugin, changing a plugin's canonical id or display name, or
-changing when a tool block learns its owner. The rows a person actually reads —
-Rally's own sentences, elicitations, suggestions — are untouched by any of it;
-this document is only about the machinery underneath them.
+The same collapse is applied to the model's thinking, which arrives one row per
+reasoning segment and reads as one "thought for …" per run.
+
+Read this before changing what a tool call or a thinking segment looks like in
+the feed, adding a first-party plugin, changing a plugin's canonical id or
+display name, or changing when a tool block learns its owner. The rows a person
+actually reads — Rally's own sentences, elicitations, suggestions — are
+untouched by any of it; this document is only about the machinery underneath
+them.
 
 ## Where the code lives
 
@@ -19,8 +23,8 @@ this document is only about the machinery underneath them.
 | `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, one `@thesvg/react` component per brand, and `connectorBrandMark` — the one table saying which mark a connector wears. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `ConnectorMark`, the one component that draws one. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
-| `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks and plugin activities out of the canonical snapshot; `groupPluginToolMessages` collapses the composed feed. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` | Applies `groupPluginToolMessages` to the composed transcript, and is the only caller. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, and `groupThinkingMessages` collapses the thinking left in it. |
+| `apps/desktop/src/renderer/screens/workstream.tsx` | Applies `groupPluginToolMessages` and then `groupThinkingMessages` to the composed transcript, and is the only caller of either. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark stand in for the thinking orb. |
 | `apps/desktop/src/renderer/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the bare mark and its pulse. |
@@ -49,7 +53,7 @@ the plugin was in play, including the gaps between its calls, which no sum of
 individual call durations can reproduce. The client no longer reads it directly
 except as the legacy fallback below.
 
-### The three steps
+### The four steps
 
 1. **Projection.** `orderedTranscriptMessages` copies `pluginId` and the owning
    run's `displayName` onto each tool row, and turns each entry of
@@ -64,6 +68,43 @@ except as the legacy fallback below.
    tool or plugin-activity row resolves to a group through `pluginGroup`; the
    first row of a group becomes the group's row, at that position, and every
    later row of the same group folds into it and disappears.
+4. **Collapsing the thinking.** `groupThinkingMessages` walks the result the
+   same way, over the same run boundary, and sums a run's thinking rows into
+   the first of them. The response's own total is not thinking and is left
+   alone; see [the thinking rows](#the-thinking-rows).
+
+### The thinking rows
+
+A thinking block is the model reasoning, and the transcript gives each one its
+own activity and so its own row. The model thinks between every pair of tool
+calls, so a run that used one plugin four times reaches the feed as one grouped
+plugin row and four thinking rows stacked under it — "thought for 29s / thought
+for 38s / thought for 17s / thought for 14s". Each is true and none is what a
+reader wanted to know, which is the same complaint the per-call tool rows
+answered: what places Rally worked in, and for how long.
+
+So `groupThinkingMessages` sums a run's thinking into one row — "thinking for
+1m 39s" while any segment is still going, "thought for 1m 38s" once they have
+all settled — sitting where the run's first thinking row sat.
+
+Two rows deliberately stay out of it:
+
+- **The response's own total**, the "worked for …" row at the foot of a live
+  run, which `foldSettledWorkIntoMessages` moves into the message header when it
+  settles. It is one fact about the whole response, not a step inside it. The
+  two are told apart by the row's verb, which is the same signal that fold
+  already keys on.
+- **The plugin rows the thinking surrounds.** They keep their own places, since
+  grouping has already anchored each at its plugin's first call in the run.
+
+A run also stops at a stretch of transcript this client has not loaded, which
+the projection marks for both passes — see the invariant below.
+
+The arithmetic follows the plugin row's, for the same reasons: one segment with
+an unknown duration makes the whole run's total unknown rather than shorter, a
+recovered segment's `upper_bound` accuracy carries to the whole row, and every
+still-running segment contributes its own monotonic start so the live number
+advances at the rate its own total accrues.
 
 ### What the groups are
 
@@ -186,9 +227,23 @@ under the answer reads like another step still to come.
   half the rate its own total accrues, and the number would jump to the real
   total at the moment they settled. This is why `monotonicStartedAt` is a list
   on both `PluginActivityData` and `AgentWorkTiming`.
+- **A collapsed thinking row's total is the run's, and its position is the
+  run's first thought.** Both follow the plugin row's rule, and for the same
+  reason: the feed's order is the order work started in. The response's own
+  timer is never part of that total — it is the whole response, not a step in
+  it, and summing it into a turn's thinking would double-count it and put it out
+  of reach of `foldSettledWorkIntoMessages`.
 - **A group row's position is its plugin's first row in the run, never its
   last.** The feed's order is the order work started in; the alternative makes a
   row jump downward as the plugin is used again.
+- **A run never crosses transcript nobody has loaded.** A snapshot's coverage
+  is not one interval — the opening one commonly holds an unread island and a
+  separate latest island — and the projection flattens both into one list, so
+  two rows either side of that seam look adjacent and are not. The projection
+  marks the first row after a gap with `precededByTranscriptGap`, computed from
+  the snapshot's own coverage, and **both** passes close their run on it. A jump
+  in `transcriptSequence` is not the signal: it cannot tell a hidden turn from a
+  sequence the transcript never assigned.
 - **`pluginGroup` is the only mapping.** A second table anywhere — a component
   branching on `pluginId`, a screen naming Rally itself — is how the feed and
   the row it draws come to disagree about what a group is.
@@ -251,8 +306,12 @@ It deliberately does **not** cover:
   are [`workstream-durable-object.md`](workstream-durable-object.md)'s and
   [`agent-harness.md`](agent-harness.md)'s; this module adds nothing to the wire
   and asks for nothing new on it.
-- **The run-level timer** at the foot of the transcript, and the thinking rows.
-  Both remain `AgentWorkTiming` with the thinking orb.
+- **The run-level timer** at the foot of the transcript, and what a thinking
+  row *is*. Both remain `AgentWorkTiming` with the thinking orb, and the
+  transcript's thinking blocks and activities are the authority's, not this
+  module's. What this module owns is how many of those rows a reader sees:
+  `groupThinkingMessages` collapses a run of them the way the plugin rows are
+  collapsed.
 - **Colour and theme tokens**, which are [`theming.md`](theming.md)'s.
 
 ## Failure modes and limits
@@ -273,6 +332,21 @@ It deliberately does **not** cover:
   and no more, which is what the per-plugin activity row said before this change
   too; a run's failures reach the reader through Rally's own words and the run
   failure notice.
+- **A run that spans a stretch of transcript this client has not loaded** is
+  cut at the seam, so a reader can see two rows where one session had one run.
+  That is deliberate and is the safe direction: the turn that would have ended
+  the run may be in the part nobody loaded, and joining across it would report
+  work as one stretch that a sentence from Rally had in fact separated. Loading
+  the gap closes it and the two rows become one, which is a **remount**, not
+  just a row disappearing: the surviving row takes the earlier thought's id.
+- **A collapsed thinking total is a sum over rows**, and each row's duration is
+  its whole activity's. It stays honest only while a turn contributes one
+  thinking block, which is what the authority writes today — one block per
+  assistant turn, pointed at that turn's own thinking activity. A second block
+  on one turn would resolve to the same activity and be counted twice, as one
+  row quietly doubled rather than two rows visibly repeating a number. Whoever
+  projects thinking per attempt or per segment has to key the sum on the
+  activity instead.
 - No caps, quotas, or timeouts: the whole module is a pure function over a list
   that is already bounded by the transcript's own paging.
 
@@ -282,7 +356,7 @@ It deliberately does **not** cover:
 | --- | --- | --- |
 | `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
-| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. |
+| `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, and the absent orb. |
 | `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
 
@@ -297,6 +371,65 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-09-02 — A run of thinking is one row
+
+**What changed:** `groupThinkingMessages` collapses a run of thinking rows into
+one, summing their durations, over the same run boundary the plugin grouping
+uses. The row reads "thinking for …" while any segment is still going and
+"thought for …" once they have all settled. `ThoughtEventData.monotonicStartedAt`
+widened to a list to carry every still-running segment, the way
+`PluginActivityData`'s already does.
+
+**Why:** The model thinks between every pair of tool calls, so a real run
+reached the feed as one grouped plugin row followed by four spent timers —
+"thought for 29s / thought for 38s / thought for 17s / thought for 14s" — each
+of them true and none of them the thing a reader wanted, which is that Rally
+reasoned and for how long. It is the same complaint the per-call tool rows
+answered, one row type later: the feed's machinery should say what happened, not
+enumerate the steps it took. Collapsing to a total also stops the row count
+scaling with how many tools a run happened to call.
+
+**Considered and rejected:** Collapsing only strictly adjacent thinking rows.
+It handles the screenshot that prompted this and nothing else — a run that
+alternates between two plugins puts a group row between two thoughts and would
+have left them apart, which is the arrangement that produces the most rows in
+the first place. Reusing `continuesPluginActivityRun` means one definition of a
+run for both passes, so the two collapses can never disagree about where a run
+ended. Also rejected: folding a turn's thinking into the response's own timer,
+which would make the header the only place reasoning appeared and erase the
+progress a reader watches during a live run — the same trade the 2026-08-29
+entry rejected in the other direction.
+
+**Found in review, and fixed here:** a run could cross a stretch of transcript
+this client had not loaded. `orderedTranscriptMessages` flattens every range of
+a snapshot into one list, and a snapshot's coverage is not one interval — the
+opening one carries an unread island and a separate latest island whenever the
+unread anchor is away from the tail, which is the ordinary case for someone
+returning to a busy work stream. The two rows either side of that seam look
+adjacent and are not, so a run joined work across turns nobody had seen — a
+sentence from Rally among them, which is exactly what is supposed to end a run.
+A three-island fixture summed 29s + 38s + 17s into one 1m 24s row that stood for
+two unrelated stretches. The projection now marks the first row after a gap with
+`precededByTranscriptGap`, computed from the snapshot's own coverage, and both
+passes close their run on it. **This was already true of the plugin grouping**,
+which has flattened the same list since it shipped; fixing only the new pass
+would have left the two disagreeing about where a run ends, which is the one
+thing sharing `continuesPluginActivityRun` exists to prevent.
+
+A jump in `transcriptSequence` was rejected as the signal. It is derivable from
+the rows alone and needs no new field, but it cannot tell a turn the client did
+not load from a sequence the transcript never assigned, so it would cut runs
+that are genuinely contiguous. Coverage is what the snapshot actually states.
+
+**Consequences:** A thought row can now stand for several activities, so
+anything reading a duration off one is reading a run's total rather than one
+segment's, and `monotonicStartedAt` on it may be a list. The response-scope row
+is told apart by its verb — `activeVerb === 'thinking'` is a turn's own
+reasoning — so a future scope that reuses either verb joins whichever collapse
+that verb names. Any future pass that reasons about a run of adjacent rows owes
+the same `precededByTranscriptGap` check; `continuesPluginActivityRun` answers
+what a row *is*, not whether the row before it is really the row before it.
 
 ### 2026-08-30 — Multimodal generation keeps a named plugin row
 
