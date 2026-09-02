@@ -32,7 +32,7 @@ connection lifecycle around that admission protocol.
 | --- | --- |
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the shared helpers both sides use. The single source of the wire format. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, HyperSight-block, and automation ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
-| `apps/api/src/services/workstream-service.ts` | Gates a feed ticket on current visibility and starts the recorded main SubstreamAgent's storage-ready wake as measurable, failure-isolated request background work. |
+| `apps/api/src/services/workstream-service.ts` | Gates a feed ticket on current visibility/authority and starts the recorded main SubstreamAgent's ticket-scoped admission and snapshot preparation as measurable, failure-isolated request background work. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its WorkspaceDO replay receipt and session lease, and the Azure upgrade. |
 | `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, automation, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
@@ -71,16 +71,19 @@ admission is split in two.
    `GET /realtime/transcription/socket`. The Worker checks the caller may open
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
    region, one-time `jti`, audience, only the target IDs that purpose requires,
-   and the current regional session ID. The two work-stream feed routes also
+   the current regional session ID, and — for a feed — the authenticated role
+   plus the current work-stream authority generation. The two work-stream feed routes also
    return that `jti` as `ticketId` beside the ticket — the id of the credential,
    never the credential — because the upgrade it authorizes opens a new
    connection carrying no request id, and it is the only value the issuing
    route, the edge, and the room all hold. See
    [`performance-tracing.md`](performance-tracing.md). Once a main-feed ticket is
-   minted, its request schedules that recorded SubstreamAgent's side-effect-free
-   `wake()` under `waitUntil`. The response does not await that work: object
-   initialization overlaps the ticket's transit and client handshake, while a
-   failed or unfinished warm-up leaves the ordinary cold upgrade as the fallback.
+   minted, its request schedules that recorded SubstreamAgent's ticket-scoped
+   admission and initial-snapshot preparation under `waitUntil`. The response
+   does not await that work: object initialization, local visibility admission,
+   and snapshot assembly overlap the ticket's transit and client handshake,
+   while a failed, revoked, evicted, stale-generation, or unfinished preparation
+   leaves the ordinary regional upgrade checks as the fallback.
    A non-main UUID is not warmed merely because its parent is visible; product
    creation must first record that child in the parent directory.
 2. **Present.** The client opens the socket with the ticket as the second
@@ -94,8 +97,14 @@ admission is split in two.
 3. **Verify.** The Worker checks the `Upgrade` header and the exact `Origin`,
    reads the ticket off the offer, verifies the signature and the claims, and
    rejects a region or work-stream mismatch.
-4. **Admit.** A feed upgrade reaches the exact `SubstreamAgent`, which
-   re-authorizes read visibility and atomically consumes its ticket id. A
+4. **Admit.** A feed upgrade reaches the exact `SubstreamAgent`. When the
+   in-memory preparation matches every verified ticket claim and the object's
+   local authority generation, the room reuses its admitted role and prepared
+   snapshot; otherwise it re-reads regional authority and session/membership.
+   Both paths recheck object-local visibility and atomically consume the durable
+   ticket receipt. Preparation never consumes a ticket, and session/membership
+   or local-visibility revocation removes a pending preparation before it can be
+   used. A
    metadata upgrade reaches the exact `WorkstreamDO`, which verifies D1
    membership plus its local visibility projection. A workspace upgrade reaches
    the workspace's `WorkspaceDO`, which consumes a separate audience ticket and
@@ -705,6 +714,36 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-02 — Ticket transit prepares admission and the initial feed frame
+
+**What changed:** Feed tickets now sign the authenticated role and current
+authority generation beside their existing exact identity, cursor, expiry, and
+one-time ticket ID. The main-feed ticket continuation asks SubstreamAgent to
+prepare that exact admission and, when the replay plan needs one, assemble the
+viewer-specific initial snapshot. Upgrade reuses the work only when every
+verified claim and the object's local generation match; otherwise it takes the
+former regional authorization and snapshot path.
+
+**Why:** Current local traces left roughly 168 ms in repeated room authority and
+session/membership reads and roughly 242 ms in snapshot detail after the native
+handshake had already completed. Ticket transit was warming only schema and
+repositories, leaving those two waits serialized on the opening path.
+
+**Considered and rejected:** Persisting prepared snapshots would turn a
+short-lived latency optimization into another content store and require cleanup
+semantics. Treating forwarded role headers as authority without a matching
+signed ticket and request-scoped preparation would make them forgeable. Marking
+the work stream opened during preparation was also rejected because a ticket
+request that never upgrades must not settle unseen state.
+
+**Consequences:** A successful preparation removes the two regional admission
+reads and snapshot detail assembly from room upgrade. The durable ticket receipt
+still enforces one use, actual acceptance still settles unseen state, and
+revocation deletes pending work. Eviction, mismatch, expiry, mutation during
+assembly, or preparation failure loses only the optimization and falls back to
+the old path. `workstream_socket_ticket_warm_finished.preparation_outcome`,
+`rally.socket.admission_source`, and `rally.snapshot.source` expose which path ran.
 
 ### 2026-09-02 — Ticket transit overlaps main-room wake and construction cannot drop phases
 
