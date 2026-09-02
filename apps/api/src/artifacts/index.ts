@@ -22,12 +22,15 @@
  * Request flow, in the order the fences apply:
  *
  * ```
- * Host → stub route → artifact id ──▶ fetch-metadata fence ──▶ viewer session check
- *                                                                   │
- *              ┌────────────────────────────────────────────────────┤
- *              ▼                                                    ▼
- *      /__rally/* (Rally's own)              artifact content
- *      open · redeem · v<n> mounts       static assets, or the loader
+ * Host → stub route → artifact id ──▶ fetch-metadata fence
+ *                                             │
+ *                    ┌────────────────────────┴──────────────────────┐
+ *                    ▼                                               ▼
+ *          public anonymous read                         same-origin / navigation
+ *          no cookie or identity                         valid session adds identity
+ *                    └────────────────────────┬──────────────────────┘
+ *                                             ▼
+ *                                  assets, loader, or facet
  * ```
  *
  * See `docs/live-web-artifacts.md`.
@@ -44,6 +47,7 @@ import {
 import { artifactHostDOName } from "../durable-objects/names";
 import type { ArtifactHostDO } from "../durable-objects/artifact-host-do";
 import { durableObjectStubForArtifact } from "../lib/durable-object-namespace";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
   artifactSecurityHeaders,
   classifyFetchMetadata,
@@ -247,24 +251,81 @@ export default {
       return withSecurityHeaders(new Response(null, { status: 303, headers }));
     }
 
-    // Every remaining path is artifact content, and every fence applies before
-    // any of it is read. Fetch metadata comes first because it is the cheapest
-    // and because it is the one a sibling artifact would be exercising.
-    if (classifyFetchMetadata(request, origin) === "refused") {
+    // Every remaining path is public artifact content. Fetch metadata decides
+    // whether the request is eligible to carry a trusted Rally viewer identity:
+    // anonymous reads are allowed from anywhere, but unsafe requests still
+    // require exact same-origin browser metadata.
+    const verdict = classifyFetchMetadata(request, origin);
+    if (verdict === "refused") {
       return html(neutralPage(), 403);
     }
 
-    const session = readCookie(request, SESSION_COOKIE);
-    const admitted = session ? await artifact.checkSession(session, VISIBILITY_CACHE_MS) : null;
-    if (!admitted?.ok || !admitted.manifest) {
-      // Knowing a URL grants nothing — the house rule for every other resource
-      // identifier, and it holds here. A viewer whose visibility ended sees the
-      // same page as a stranger.
-      return html(neutralPage(), admitted?.reason === "not_visible" ? 403 : 401);
+    let admitted: Admitted | null = null;
+    if (verdict !== "anonymous_read") {
+      const session = readCookie(request, SESSION_COOKIE);
+      // Identity is an optional enhancement to a public response. If the
+      // visibility hop fails, degrade to anonymous rather than making a viewer
+      // with an old cookie less able to open the site than a crawler is.
+      let checked: Awaited<ReturnType<ArtifactHostDO["checkSession"]>> | null = null;
+      if (session) {
+        try {
+          checked = await artifact.checkSession(session, VISIBILITY_CACHE_MS);
+        } catch (error) {
+          logWarn({
+            LOG_LEVEL: "info",
+            AVALON_REGION: env.AVALON_REGION,
+          }, "artifact_viewer_session_check_failed", {
+            artifact_id: artifactId,
+            code: diagnosticErrorCode(error, "session_check_failed"),
+          });
+        }
+      }
+      if (
+        checked?.ok
+        && checked.viewerId
+        && checked.viewerName !== undefined
+        && checked.version !== undefined
+        && checked.mode !== undefined
+        && checked.stateful !== undefined
+        && checked.manifest
+      ) {
+        admitted = {
+          viewerId: checked.viewerId,
+          viewerName: checked.viewerName,
+          version: checked.version,
+          mode: checked.mode,
+          stateful: checked.stateful,
+          manifest: checked.manifest,
+        };
+      }
+    }
+    if (!admitted) {
+      const state = await artifact.currentState();
+      if (!state) return html(neutralPage(), 404);
+      admitted = {
+        viewerId: null,
+        viewerName: null,
+        version: state.version,
+        mode: state.mode,
+        stateful: state.stateful,
+        manifest: state.manifest,
+      };
+    }
+
+    // Public means readable, not anonymously writable. Fetch metadata is a
+    // browser CSRF signal rather than caller authentication, and a non-browser
+    // client can spell those headers itself. Preserve the former session gate
+    // for every method that may mutate model-owned state.
+    if (!admitted.viewerId && request.method !== "GET" && request.method !== "HEAD") {
+      return html(neutralPage(), 401);
     }
 
     const mount = splitVersionMount(url.pathname);
     if (mount.version !== null && mount.version !== admitted.version) {
+      // Historical active versions cannot run their protection guard, and a
+      // historical static version has no guard at all. Keep version browsing
+      // behind the Rally session even though the current site is public.
+      if (!admitted.viewerId) return html(neutralPage(), 401);
       const refusal = refuseUnsafeVersionRequest(request);
       if (refusal) return html(plainErrorPage(refusal), 405);
       return servePriorVersion(env, artifactId, mount.version, mount.path, admitted);
@@ -274,7 +335,14 @@ export default {
   },
 };
 
-type Admitted = Awaited<ReturnType<ArtifactHostDO["checkSession"]>>;
+type Admitted = {
+  viewerId: string | null;
+  viewerName: string | null;
+  version: number;
+  mode: "static" | "active";
+  stateful: boolean;
+  manifest: ArtifactManifest;
+};
 
 /**
  * Serve one asset out of a version's immutable bucket prefix.
@@ -319,28 +387,34 @@ async function serveCurrent(
   url: URL,
   admitted: Admitted,
 ): Promise<Response> {
-  const manifest = admitted.manifest!;
+  const manifest = admitted.manifest;
   if (manifest.mode === "static") {
     return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null);
   }
-  // An active artifact whose loader binding is not provisioned degrades to its
-  // assets rather than failing: a site's pages are still readable, and the
-  // failure is visible as routes that 404 rather than as a dead origin.
-  if (!env.ARTIFACT_LOADER) {
-    return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null);
+  // A stateful site runs through the supervisor's facet and needs no loader
+  // binding here. A stateless active site cannot safely fall back to assets:
+  // its handler may be the access control protecting those same files.
+  if (!env.ARTIFACT_LOADER && !manifest.stateful) {
+    return html(plainErrorPage("This artifact is temporarily unavailable."), 503);
   }
   try {
     const response = await runArtifactModule(env, ctx, artifact, artifactId, request, admitted);
     return withSecurityHeaders(response);
   } catch (error) {
-    // The viewer never sees a stack trace; the participant does, in the rail,
-    // where it can be pasted back into chat for the model to fix.
-    await artifact.recordError({
-      version: manifest.artifactVersion,
-      requestPath: url.pathname,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? (error.stack ?? null) : null,
-    }).catch(() => undefined);
+    // The viewer never sees a stack trace. For an identified participant it
+    // lands in the rail, where it can be pasted back into chat for the model.
+    // The rail error ring is participant-facing and bounded. Letting an
+    // anonymous caller append would let 50 crafted failures evict every useful
+    // diagnosis and plant attacker-chosen paths in a surface people paste back
+    // into chat.
+    if (admitted.viewerId) {
+      await artifact.recordError({
+        version: manifest.artifactVersion,
+        requestPath: url.pathname,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? (error.stack ?? null) : null,
+      }).catch(() => undefined);
+    }
     return html(plainErrorPage("This artifact hit an error. Ask Rally in the work stream to fix it."), 500);
   }
 }
@@ -378,8 +452,9 @@ async function servePriorVersion(
  * `globalOutbound: null` makes `fetch()` and `connect()` throw, so a page's
  * server half cannot reach the network at all, and the viewer cookie is
  * stripped before the request crosses into it — artifact code never sees a
- * credential. What it does see is the viewer's identity, as two trusted headers
- * injected after every inbound header of those names has been stripped.
+ * credential. For a request carrying a valid Rally session it sees the viewer's
+ * identity as two trusted headers injected after every inbound header of those
+ * names has been stripped; a public request sees neither header.
  */
 async function runArtifactModule(
   env: ArtifactServingEnv,
@@ -389,7 +464,7 @@ async function runArtifactModule(
   request: Request,
   admitted: Admitted,
 ): Promise<Response> {
-  const manifest = admitted.manifest!;
+  const manifest = admitted.manifest;
   // A stateful artifact's requests route through the supervisor: facet stubs
   // cannot travel over RPC, so the object that owns the facet is the only place
   // that can forward into it. That is a platform constraint rather than a

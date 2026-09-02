@@ -561,6 +561,10 @@ describe("built-in skills", () => {
     // `Rally-…` invention beside it.
     expect(body).toContain("x-rally-viewer-id");
     expect(body).toContain("x-rally-viewer-name");
+    expect(body).toContain("Sites are public by default");
+    expect(body).toContain("A static site cannot perform this check");
+    expect(body).toContain("Rally refuses unsafe methods");
+    expect(body).toMatch(/before\s+API routing and before `env\.ASSETS\.fetch`/u);
     expect(body).not.toMatch(/\bRally-Viewer-Id\b/u);
     // The three rules that keep a polling page a good citizen, and the one that
     // makes the fence true rather than advisory.
