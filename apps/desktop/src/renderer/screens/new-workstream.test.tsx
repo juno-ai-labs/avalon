@@ -622,9 +622,9 @@ describe('New work-stream home', () => {
 
     const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
     fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'GPT-5.6 Sol' }));
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Gemini 3.8 Flash' }));
 
-    await screen.findByRole('button', { name: 'Model: GPT-5.6 Sol' });
+    await screen.findByRole('button', { name: 'Model: Gemini 3.8 Flash' });
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -632,7 +632,7 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
-      modelOverride: 'openai/gpt-5.6-sol',
+      modelOverride: 'google/gemini-3.8-flash',
       requestId: expect.any(String),
     }));
   });
