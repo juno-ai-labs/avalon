@@ -3942,6 +3942,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
     return {
       projection: this.transcript.readBindProjection(input.loopId),
+      modelIterationsUsed: this.loop.assistantTurnCountForExecution(execution.runId),
       transcriptThrough: this.transcript.transcriptThrough(),
       commitActivationInputs: async (boundary) => {
         if (boundary.loopId !== input.loopId

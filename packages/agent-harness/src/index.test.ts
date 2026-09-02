@@ -1240,6 +1240,7 @@ describe("agent harness", () => {
       loopId: "persistent-loop",
       harnessRunId: "recovered-execution-at-limit",
       bindLoopProjection: projection,
+      modelIterationsUsed: 1,
     })).resolves.toMatchObject({
       status: "failed",
       failure: { code: "run_iteration_limit_exceeded" },
@@ -1250,11 +1251,16 @@ describe("agent harness", () => {
       choices: [{ delta: { content: "Recovered answer" }, finish_reason: "stop" }],
     }])) as typeof fetch;
     const transitions: BindLoopTransition[] = [];
+    const resumedInput = runInput(fetcher);
     await expect(runHarness({
-      ...runInput(fetcher),
+      ...resumedInput,
+      config: { ...resumedInput.config, maxIterations: 1 },
       loopId: "persistent-loop",
       harnessRunId: "recovered-execution",
       bindLoopProjection: projection,
+      // The projection's turn 1 belongs to an earlier execution in this case;
+      // a new run gets its own budget even though turn numbering stays global.
+      modelIterationsUsed: 0,
       onAssistantTurnReserved: (turn) => {
         expect(turn).toMatchObject({
           turnId: "persistent-loop:turn:2",

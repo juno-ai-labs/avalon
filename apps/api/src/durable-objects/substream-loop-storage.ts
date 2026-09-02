@@ -888,6 +888,14 @@ export class SubstreamLoopStorage {
     ));
   }
 
+  /** Durable model turns spent by one subordinate execution of this loop. */
+  assistantTurnCountForExecution(executionId: string): number {
+    return Number(first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM assistant_turn_reservations WHERE execution_id = ?`,
+      executionId,
+    ))?.count ?? 0);
+  }
+
   activeReservation(): AssistantTurnReservationRow | undefined {
     return first(this.sql.exec<AssistantTurnReservationRow>(
       `SELECT ${RESERVATION_COLUMNS} FROM assistant_turn_reservations

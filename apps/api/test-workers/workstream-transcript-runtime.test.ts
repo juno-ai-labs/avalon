@@ -428,6 +428,10 @@ describe("work-stream transcript on workerd SQLite", () => {
         active_execution_id: receiptRunId,
         active_execution_epoch: 2,
       });
+      expect(new SubstreamLoopStorage(state.storage)
+        .assistantTurnCountForExecution(receiptRunId)).toBe(1);
+      expect(new SubstreamLoopStorage(state.storage)
+        .assistantTurnCountForExecution("another-execution")).toBe(0);
       expect(transcript.readBindProjection(LOOP_ID)?.lastAssistantReservation).toMatchObject({
         turnId: reservedTurnId,
         modelTurnIndex: 1,

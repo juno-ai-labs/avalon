@@ -601,12 +601,17 @@ async function delayUnlessAborted(ms: number, signal: AbortSignal): Promise<void
 export async function runHarnessWithBind(input: RunHarnessInput): Promise<HarnessOutcome> {
   const onTurnWouldEnd = input.onTurnWouldEnd;
   const runMaxIterations = input.config.maxIterations ?? Number.POSITIVE_INFINITY;
-  // A persistent Bind projection is the run, not a fresh loop budget. Count
-  // model turns already committed before this activation so eviction, human
-  // input, and other resumptions cannot each reset the same run-wide ceiling.
+  const modelIterationsUsed = input.modelIterationsUsed ?? 0;
+  if (!Number.isSafeInteger(modelIterationsUsed) || modelIterationsUsed < 0) {
+    throw new Error("run_model_iterations_used_invalid");
+  }
+  // A resumed activation is not a fresh execution budget. Count this
+  // execution's prior reservations so eviction, human input, and other
+  // resumptions cannot each reset the run-wide ceiling. Do not use the
+  // projection's global turn index: one persistent loop serves many runs.
   const maxIterations = Math.max(
     0,
-    runMaxIterations - (input.bindLoopProjection?.lastModelTurnIndex ?? 0),
+    runMaxIterations - modelIterationsUsed,
   );
   const deadline = input.config.maxWallClockMs === undefined
     ? null
