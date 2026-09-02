@@ -283,6 +283,18 @@ read: `useCitations` classifies the resource once and sends both media kinds —
 image and audio — to the raw-bytes path, leaving the conversion-and-retry reader
 for things that really are text.
 
+**Three places classify, and they have to agree.** `ResourceService.preview`
+decides whether to return stored bytes, `useCitations` decides which reader to
+use, and the card decides which shape to draw — all three call
+`classifyAttachmentKind` on the MIME type and filename, unconditionally. That is
+deliberately *not* what `resourceIconType` does, which answers the raw
+`resourceType` for anything outside the two provenance types because a
+`github_pull_request` is not a file. A card that classified through the icon
+mapping was narrower than the read: an MP3 carrying a connector's own type
+(`slack_file`, `drive_file`) was fetched as audio and then drawn by the ordinary
+card, which has nothing to put in the room for a blob it did not classify as an
+image.
+
 The audio card is **the one card that is not a single button**, because a
 control cannot nest inside one. The tile keeps its shape: the badge slot becomes
 a play/pause button, the room becomes a played bar and an `m:ss` clock
@@ -311,7 +323,21 @@ to be playing something that failed to decode, and a container reporting an
 infinite duration shows the elapsed clock alone rather than "Infinity".
 The position is published as one custom property, `--citation-card-played`, and
 drawn on a pseudo-element — four state changes a second belong in one node's
-style, not in a child React reconciles. **Starting one card stops the one that
+style, not in a child React reconciles.
+
+**A re-ask must not interrupt playback.** The card's read effect re-runs
+whenever the citation context's `preview` callback changes identity, which
+`useCitations` rebuilds every time the work stream's resource array is replaced
+— on every `resource_attached` and `resource_updated` the socket delivers. Two
+things follow, and the card handles both: the object URL is held per *blob*
+rather than minted per run, so a cached read that resolves the same bytes hands
+the element the same `src`; and the asking state is merged over what the card
+already holds rather than replacing it, because the settled read lands in a
+second commit and the empty one in between unmounted the `audio` element. The
+skeleton is therefore chosen at render from the card having nothing to show, not
+from the flag alone. A failed re-ask keeps the bytes too: it is the route's
+answer about the next read, not a reason to stop a recording someone is
+listening to. **Starting one card stops the one that
 was sounding**, through a module-level reference to the playing element: a run
 of announced recordings shares one row, and two of them at once is not a mix
 anybody chose. A card leaving the transcript pauses its element, because
@@ -736,6 +762,14 @@ its glance belongs, under a title that said "Audio". Fixing only the decode
 would have left the card a picture of nothing; what a reader wants from an
 announced recording is to play it, and the rail already proves the bytes play by
 handing the same blob to `<audio controls>`.
+
+**Follow-up in the same change (review):** the object URL is held per blob and
+the asking state merges rather than replaces, so a `resource_attached` arriving
+mid-playback no longer returns a listener to 0:00; the card classifies with
+`classifyAttachmentKind` rather than through the icon mapping, so a connector's
+own audio file gets the transport instead of an empty room; and the transport's
+reduced-motion answer moved *below* the rule it overrides, because a media query
+adds no specificity and the earlier placement lost on source order.
 
 **What a future change has to respect:** the card's container is a `span` and
 everything in it is phrasing content, because a lone embed renders inside a

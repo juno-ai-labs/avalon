@@ -3009,7 +3009,6 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 }
 @media (prefers-reduced-motion: reduce) {
   .citation-card-preview-skeleton > span { animation: none; }
-  .citation-card-progress[data-loading='true'] { animation: none; }
 }
 /* The audio card's transport, in the badge slot and in the room above the
    title.
@@ -3039,6 +3038,14 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .citation-card-progress { background: var(--av-sys-color-shimmer-default); border-radius: var(--av-sys-size-radius-pill); height: 3px; overflow: hidden; width: 100%; }
 .citation-card-progress::after { background: var(--av-sys-color-text-muted); content: ''; display: block; height: 100%; width: var(--citation-card-played, 0%); }
 .citation-card-progress[data-loading='true'] { animation: citation-card-shimmer 1.8s ease-in-out infinite; }
+/* Below the rule it answers, not above it. A media query adds no specificity,
+   so this and the shimmer are both (0,2,0) and the cascade falls through to
+   source order — written in the block beside the skeleton's, 29 lines earlier,
+   it lost, and a reader who asked for less motion got the full shimmer. The
+   skeleton's own answer works only because its base rule precedes it. */
+@media (prefers-reduced-motion: reduce) {
+  .citation-card-progress[data-loading='true'] { animation: none; }
+}
 .citation-card-elapsed { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); font-variant-numeric: tabular-nums; letter-spacing: var(--av-sys-label-tracking); }
 /* The element is the playback, not a control: the transport above it is what a
    reader operates, and the browser's own bar would be a second one. */

@@ -496,8 +496,93 @@ describe('resource citations', () => {
     expect(await screen.findByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Pause Standup recap.mp3' })).toBeInTheDocument();
 
+    // A card scrolled out of a virtualized transcript takes its sound with it:
+    // removing a media element from the document does not stop it, so the one
+    // still playing has to be paused on the way out.
+    const sounding = [...document.querySelectorAll('audio')].find((element) => !element.paused);
+    expect(sounding).toBeDefined();
+
     // Unmounted before the prototype goes back: the card pauses its element on
     // the way out, and jsdom's own `pause()` throws.
+    unmount();
+    expect(sounding!.paused).toBe(true);
+    playback.restore();
+    createObjectURL.mockRestore();
+    vi.mocked(URL.revokeObjectURL).mockRestore?.();
+  });
+
+  it('keeps playing when the work stream\'s resource list changes under the card', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL')
+      .mockReturnValueOnce('blob:recording-1')
+      .mockReturnValueOnce('blob:recording-2');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const playback = stubPlayback();
+    // One blob, however many times the card asks: the host caches the read, so
+    // a re-ask resolves the same object. Two *callbacks*, because that is what
+    // actually changes — `useCitations` rebuilds `preview` on the resource map,
+    // and the card's effect depends on its identity.
+    const blob = new Blob(['id3'], { type: 'audio/mpeg' });
+    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob }));
+    const rebuilt = vi.fn(async () => ({ kind: 'audio' as const, blob }));
+
+    const { rerender, unmount } = render(
+      <MarkdownBody citations={context({ preview, resolve: () => RECORDING })}>
+        {'![Inbox Brief](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
+    await screen.findByRole('button', { name: 'Pause Inbox Brief.mp3' });
+
+    // What a `resource_attached` event does to every mounted card: the resource
+    // array is replaced, so the citation context — and the preview callback
+    // hanging off it — is a new object, and every card asks again.
+    rerender(
+      <MarkdownBody citations={context({ preview: rebuilt, resolve: () => RECORDING })}>
+        {'![Inbox Brief](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+    await act(async () => { await Promise.resolve(); });
+    // The card did ask again — without this the rest of the test proves nothing.
+    expect(rebuilt).toHaveBeenCalledWith('board-deck');
+
+    // The bytes did not change, so neither did the element's source — a new URL
+    // for the same blob reloads the element and drops a reader back to 0:00
+    // because the agent published some unrelated file.
+    expect(document.querySelector('audio')).toHaveAttribute('src', 'blob:recording-1');
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Pause Inbox Brief.mp3' })).toBeInTheDocument();
+
+    unmount();
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:recording-1');
+    playback.restore();
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+  });
+
+  it('gives a connector\'s own audio file the same transport as a generated one', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const playback = stubPlayback();
+    // `resourceType` is the connector's own word, not one of the two provenance
+    // types — and `useCitations` classifies from MIME and filename regardless,
+    // so this resource arrives as audio bytes. A card that classified more
+    // narrowly drew the ordinary tile over a blob it had nothing to do with.
+    const fromSlack = { ...RECORDING, resourceType: 'slack_file' };
+    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+
+    const { unmount } = render(
+      <MarkdownBody citations={context({ preview, resolve: () => fromSlack })}>
+        {'![Inbox Brief](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    expect(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
+    expect(document.querySelector('.citation-card-transport')).not.toBeNull();
+
     unmount();
     playback.restore();
     createObjectURL.mockRestore();
