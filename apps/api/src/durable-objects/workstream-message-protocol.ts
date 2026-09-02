@@ -1,5 +1,6 @@
 import { MESSAGE_MAX_CHARACTERS } from "@rally/contracts";
 import { z } from "zod";
+import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 import {
   type Exhaustive,
@@ -73,9 +74,9 @@ export function mutatesTranscript(operation: MessageOperation): boolean {
 
 export const isMessageOperation = operationGuard(MESSAGE_OPERATIONS);
 
-export const MessageOperationRequestSchema = objectPortRequestSchema(
+export const MessageOperationRequestSchema = deferredZodSchema(() => objectPortRequestSchema(
   isMessageOperation,
   "unknown_message_operation",
-);
+));
 
 export type MessageOperationRequest = z.infer<typeof MessageOperationRequestSchema>;
