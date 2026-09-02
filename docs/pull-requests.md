@@ -182,12 +182,13 @@ disable squash merging and rebase merging.
 
 ### A moving `main` is not a reason to hold a clean merge
 
-Merge as soon as two things hold: the pull request's own head is green, and
-GitHub reports the branch mergeable. `main` having advanced since those checks
-started is **not** a third condition. Do not rebase, force-push, and wait for a
-replacement run purely to have CI observe a head that sits on the newest `main`
-— by the time that run finishes `main` has usually moved again, so the rule
-costs a cycle per attempt and lands the change no more safely.
+A branch is ready to merge as soon as two conditions are met: the pull request's
+own head is green, and GitHub reports the branch mergeable. `main` having
+advanced since those checks started is **not** a third condition. Do not rebase,
+force-push, and wait for a replacement run purely to have CI observe a head that
+sits on the newest `main` — by the time that run finishes `main` has usually
+moved again, so the rule costs a cycle per attempt and lands the change no more
+safely.
 
 ```bash
 gh pr view <n> --json mergeable,mergeStateStatus,statusCheckRollup
