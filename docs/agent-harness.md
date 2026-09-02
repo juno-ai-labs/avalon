@@ -429,7 +429,10 @@ one of its values — `minLength` of at least 1, a `type` without `string`, or a
 `enum`/`const` excluding it, composed through `$ref`, `allOf`, and every branch
 of an `anyOf`/`oneOf`. A required property keeps the blank so validation names
 the field, an undeclared key keeps it so a strict parse still reports it, and a
-schema this walk cannot read keeps it too. `{}` and `{ after: "" }` are
+schema this walk cannot read keeps it too. Requiredness is itself resolved
+across the composed schema rather than read from the node carrying `properties`,
+since a generated schema commonly separates the two, and a walk that cannot
+finish drops nothing. `{}` and `{ after: "" }` are
 therefore one receipt identity. What that is for, and the obligation it puts on
 a tool's schema, is
 [`agent-tools.md`](agent-tools.md#1-fail-loud-never-silently-ignore-an-input).
@@ -1246,7 +1249,11 @@ instead of each connector rediscovering it.
 
 **Considered and rejected:** Fixing it inside each connector executor, which
 leaves the next connector to repeat it and still spends a round trip on an error
-the model may not recover from. Also rejected: stripping every empty string,
+the model may not recover from. Also rejected: reading `required` from the node
+that declares `properties`. A generated or hosted-MCP schema separates the two,
+so that would have dropped a required blank from a tool whose arguments Rally
+forwards without a local parse — the argument would have gone missing instead of
+being refused. Also rejected: stripping every empty string,
 which would silently discard values that mean something — a cleared description,
 a repository root path — and is the silent drop `agent-tools.md` principle 1
 forbids. Gating on what the schema itself declares is what keeps the two apart,

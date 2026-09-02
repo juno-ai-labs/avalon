@@ -11,6 +11,15 @@ type JsonObject = Record<string, unknown>;
 type NumericKind = "integer" | "number";
 type Normalized = { value: unknown; changed: boolean };
 type SchemaVisitBudget = { remaining: number };
+/**
+ * The property names an object value must carry, gathered from every schema
+ * composed into the node describing it. `complete` is false when the walk hit
+ * its depth or visit bound before it could finish, which is treated as "every
+ * key might be required" rather than as an empty set.
+ */
+type RequiredKeys = { keys: ReadonlySet<string>; complete: boolean };
+
+const NO_REQUIRED_KEYS: RequiredKeys = { keys: new Set(), complete: true };
 
 /**
  * Apply the model-tolerance rules shared by every harness tool.
@@ -75,6 +84,7 @@ function normalizeValue(
   rootSchema: JsonObject,
   depth: number,
   budget: SchemaVisitBudget,
+  inheritedRequired: RequiredKeys = NO_REQUIRED_KEYS,
 ): Normalized {
   if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue) || !consumeSchemaVisit(budget)) {
     return { value: input, changed: false };
@@ -82,16 +92,23 @@ function normalizeValue(
   const schema = schemaValue;
   let current: Normalized = { value: input, changed: false };
 
+  // `required` can sit on any schema composed into this node while `properties`
+  // sits on another, so requiredness is resolved once for the value and carried
+  // into every branch rather than read off whichever node declares the property.
+  const required = isObject(input)
+    ? mergeRequiredKeys(inheritedRequired, collectRequiredKeys(schema, rootSchema, depth, budget))
+    : inheritedRequired;
+
   const reference = typeof schema.$ref === "string" ? resolveLocalReference(rootSchema, schema.$ref) : null;
   if (reference) {
-    current = mergeNormalized(current, normalizeValue(current.value, reference, rootSchema, depth + 1, budget));
+    current = mergeNormalized(current, normalizeValue(current.value, reference, rootSchema, depth + 1, budget, required));
   }
 
-  current = mergeNormalized(current, normalizeDirect(current.value, schema, rootSchema, depth + 1, budget));
+  current = mergeNormalized(current, normalizeDirect(current.value, schema, rootSchema, depth + 1, budget, required));
 
   if (Array.isArray(schema.allOf)) {
     for (const branch of schema.allOf) {
-      current = mergeNormalized(current, normalizeValue(current.value, branch, rootSchema, depth + 1, budget));
+      current = mergeNormalized(current, normalizeValue(current.value, branch, rootSchema, depth + 1, budget, required));
     }
   }
 
@@ -102,7 +119,7 @@ function normalizeValue(
       : null;
   if (alternatives?.length) {
     const candidates = alternatives.map((branch, index) => {
-      const normalized = normalizeValue(current.value, branch, rootSchema, depth + 1, budget);
+      const normalized = normalizeValue(current.value, branch, rootSchema, depth + 1, budget, required);
       return {
         ...normalized,
         index,
@@ -127,6 +144,7 @@ function normalizeDirect(
   rootSchema: JsonObject,
   depth: number,
   budget: SchemaVisitBudget,
+  required: RequiredKeys = NO_REQUIRED_KEYS,
 ): Normalized {
   const numericKind = exclusiveNumericKind(schema);
   if (numericKind && typeof input === "string") {
@@ -148,9 +166,6 @@ function normalizeDirect(
 
   if (!isObject(input)) return { value: input, changed: false };
   const properties = isObject(schema.properties) ? schema.properties : {};
-  const required = new Set(Array.isArray(schema.required)
-    ? schema.required.filter((value): value is string => typeof value === "string")
-    : []);
   const entries: Array<[string, unknown]> = [];
   let changed = false;
 
@@ -159,7 +174,8 @@ function normalizeDirect(
     if (
       value === ""
       && declared
-      && !required.has(key)
+      && required.complete
+      && !required.keys.has(key)
       && schemaRejectsEmptyString(properties[key], rootSchema, depth + 1, budget)
     ) {
       changed = true;
@@ -176,6 +192,61 @@ function normalizeDirect(
   }
 
   return changed ? { value: Object.fromEntries(entries), changed: true } : { value: input, changed: false };
+}
+
+/**
+ * Every property name required of an object described by this schema, gathered
+ * across `$ref`, `allOf`, and each `anyOf`/`oneOf` branch rather than from the
+ * node that happens to carry `properties`.
+ *
+ * Union branches are collected together rather than per selected branch: a key
+ * required by any branch is treated as required, which errs toward keeping a
+ * value. Running out of depth or visits returns `complete: false`, and the
+ * caller then keeps every blank, so an exhausted budget can never widen what is
+ * dropped.
+ */
+function collectRequiredKeys(
+  schemaValue: unknown,
+  rootSchema: JsonObject,
+  depth: number,
+  budget: SchemaVisitBudget,
+): RequiredKeys {
+  if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue)) return NO_REQUIRED_KEYS;
+  if (!consumeSchemaVisit(budget)) return { keys: new Set(), complete: false };
+  const schema = schemaValue;
+  const keys = new Set<string>();
+  let complete = true;
+
+  if (Array.isArray(schema.required)) {
+    for (const value of schema.required) if (typeof value === "string") keys.add(value);
+  }
+
+  const compose = (branch: unknown): void => {
+    const nested = collectRequiredKeys(branch, rootSchema, depth + 1, budget);
+    for (const key of nested.keys) keys.add(key);
+    complete &&= nested.complete;
+  };
+
+  if (typeof schema.$ref === "string") {
+    const reference = resolveLocalReference(rootSchema, schema.$ref);
+    // An unresolvable reference may still require a key this cannot see.
+    if (reference === null) complete = false;
+    else compose(reference);
+  }
+  for (const branch of Array.isArray(schema.allOf) ? schema.allOf : []) compose(branch);
+  for (const branch of Array.isArray(schema.anyOf) ? schema.anyOf : []) compose(branch);
+  for (const branch of Array.isArray(schema.oneOf) ? schema.oneOf : []) compose(branch);
+
+  return { keys, complete };
+}
+
+function mergeRequiredKeys(left: RequiredKeys, right: RequiredKeys): RequiredKeys {
+  if (left.keys.size === 0 && left.complete) return right;
+  if (right.keys.size === 0 && right.complete) return left;
+  return {
+    keys: new Set([...left.keys, ...right.keys]),
+    complete: left.complete && right.complete,
+  };
 }
 
 /**

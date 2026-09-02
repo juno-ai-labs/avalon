@@ -88,6 +88,57 @@ describe("tool argument normalization", () => {
     expect(formatToolArgumentValidationError(error!)).toContain("query");
   });
 
+  it("keeps a blank required by a schema composed into the one declaring it", () => {
+    // `required` and `properties` need not sit on the same node. Reading only
+    // the node that carries `properties` deleted the field a sibling branch
+    // required, and a hosted MCP tool then ran with the argument missing
+    // instead of being told the value was invalid.
+    const viaAllOf = {
+      type: "object",
+      properties: { target: { type: "string", minLength: 1 } },
+      allOf: [{ required: ["target"] }],
+    };
+    const viaRef = {
+      type: "object",
+      $defs: { identity: { required: ["target"] } },
+      properties: { target: { type: "string", minLength: 1 } },
+      $ref: "#/$defs/identity",
+    };
+    const viaBranch = {
+      type: "object",
+      properties: { target: { type: "string", minLength: 1 }, all: { type: "boolean" } },
+      anyOf: [{ required: ["target"] }, { required: ["all"] }],
+    };
+
+    expect(normalizeToolArguments({ target: "" }, viaAllOf)).toEqual({ target: "" });
+    expect(normalizeToolArguments({ target: "" }, viaRef)).toEqual({ target: "" });
+    expect(normalizeToolArguments({ target: "" }, viaBranch)).toEqual({ target: "" });
+  });
+
+  it("keeps every blank when it cannot finish reading what the schema requires", () => {
+    const unresolvable = {
+      type: "object",
+      properties: { target: { type: "string", minLength: 1 } },
+      $ref: "#/$defs/missing",
+    };
+
+    expect(normalizeToolArguments({ target: "" }, unresolvable)).toEqual({ target: "" });
+  });
+
+  it("still drops a blank the composition leaves optional", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        target: { type: "string", minLength: 1 },
+        after: { type: ["string", "null"], minLength: 1 },
+      },
+      allOf: [{ required: ["target"] }],
+    };
+
+    expect(normalizeToolArguments({ target: "issue-1", after: "" }, schema))
+      .toEqual({ target: "issue-1" });
+  });
+
   it("drops a blank only when every branch of a composed schema rejects it", () => {
     const rejecting = {
       type: "object",
