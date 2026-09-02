@@ -112,11 +112,16 @@ index, stable turn ID, and exact participant transcript sequence, then Bind
 commits `assistant_reserved` to its durable projection. Provider I/O may begin
 only after both commits. The host repairs an unresolved reservation before
 calling the harness again; Bind refuses to infer from a projection that still
-contains one. A failed or stopped harness outcome settles that reservation
-before execution terminalization and replaces ephemeral partial output with a
-canonical status pill. If the host reservation survived but `assistant_reserved`
-did not, recovery commits that missing edge first and then settles it; neither
-step invokes the provider, and either may be safely resumed after a crash.
+contains one. On takeover, an explicit stop settles the reservation and ends the
+execution. Otherwise the host replaces the lost preview with a canonical
+interruption status pill and resumes the same execution at the next model-turn
+index. That retry is safe because a pending reservation means no assistant
+response was durably accepted and therefore no tool from it could have started.
+A failed or stopped outcome in the still-live harness settles its reservation
+before execution terminalization. If the host reservation survived but
+`assistant_reserved` did not, recovery commits that missing edge first and then
+settles it; neither step invokes the provider, and either may be safely resumed
+after a crash.
 Stream and checkpoint events for participant loops carry that
 same sequence. A generic host such as HyperSight has no participant sequence
 but still keeps one stable loop identity.
@@ -258,6 +263,17 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 
 Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. An explicit load may run a convergent host-owned `onActivate` preparation hook after reauthorization and dynamic tool loading. Successful preparation is single-flighted for the run, then activation is durably recorded before the plugin's tools or trusted guidance become visible. Failed preparation remains retryable only when the host returns model-safe retry guidance; provider details are not exposed.
 
+When that durable activation belongs to a credential plugin, the work-stream
+host also records its model-facing `plugin_*` ID in the automation-drafting
+state for the run. Explicit loads, preloads, and restored hints all cross the
+same bridge. `automation_submit_draft` can therefore enforce that a ready
+definition names only connectors the model both loaded through discovery and
+inspected through the automation catalog, without maintaining an unrelated
+second notion of “loaded.” Because restored durable activations deliberately
+skip `onActivate`, the Automations plugin prepares itself on its first tool call
+too: it rebuilds completed plugin inspections and staged evaluator rules from
+the run's tool receipts before validating a resumed draft.
+
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
 catalog entry. After `load_plugin` reauthorizes the connection, the harness
@@ -271,7 +287,7 @@ returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
-Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation, and `rally_automation_architect` owns automation research and draft submission. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
+Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_automation_architect` owns automation research and draft submission. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
 deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
@@ -1198,6 +1214,37 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-02 — Automation authoring and interrupted turns share durable truth
+
+**What changed:** `core_request_elicitation` now declares `provider_key`
+idempotency, matching the receipt-derived key its executor requires. A persisted
+credential activation now records both the canonical `connection:<uuid>` and
+the model-facing `plugin_*` identity consumed by ready-draft validation,
+including preloaded and restored activation hints. Completed inspection and
+evaluator receipts rebuild the Automations plugin's otherwise in-memory state
+after eviction. On object takeover, a pending assistant reservation is settled
+visibly and the Bind loop continues at the next model turn instead of
+terminalizing the execution.
+
+**Why:** One production automation-authoring run exposed all three mismatches.
+The elicitation definition withheld the key its executor required; loading and
+inspecting Granola could never satisfy submission because the draft tools held
+an unrelated empty loaded set; and the replacement `SubstreamAgent` reclaimed
+the attempt only to close it as `assistant_turn_interrupted`. Each durable fact
+already existed, but its next consumer used a disconnected representation.
+
+**Considered and rejected:** Removing the ready-draft load requirement would
+allow a definition to name a connector the model never activated. Weakening the
+elicitation executor to invent an ID would lose replay convergence. Retrying an
+accepted assistant/tool turn after eviction would risk repeating an external
+effect; only an unaccepted reservation is retried.
+
+**Consequences:** Elicitations converge on one durable question; ready drafts
+recognize the connector activation, inspection, and evaluator facts the harness
+actually persisted; and an instance/socket reset self-heals when the abandoned
+model turn has no accepted side effects. Existing ambiguous-tool recovery and
+explicit cancellation remain fail-closed.
 
 ### 2026-09-02 — GPT-5.6 Sol is Azure-only
 

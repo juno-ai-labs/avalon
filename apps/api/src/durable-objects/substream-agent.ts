@@ -3607,16 +3607,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const recoveredToolBatch = interruptedReservation
         ? null
         : await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease);
-      outcome = interruptedReservation
+      outcome = interruptedReservation === "stopped"
         ? {
-            status: interruptedReservation,
+            status: "stopped",
             error: {
-              code: interruptedReservation === "stopped"
-                ? "run_cancelled"
-                : "assistant_turn_interrupted",
-              message: interruptedReservation === "stopped"
-                ? "The run was stopped before its interrupted response could resume"
-                : "The interrupted response was closed without retrying provider output",
+              code: "run_cancelled",
+              message: "The run was stopped before its interrupted response could resume",
             },
           }
         : recoveredToolBatch === "waiting_for_input"
@@ -3881,7 +3877,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    */
   private async settleInterruptedAssistantReservation(
     input: WorkstreamWorkflowInput,
-  ): Promise<"failed" | "stopped" | null> {
+  ): Promise<"retry" | "stopped" | null> {
     const execution = this.activeLoopExecution;
     const loop = this.loop.loop();
     const reservation = this.loop.activeReservation();
@@ -3918,7 +3914,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       type: "stream_completed",
       streamId: reservation.stream_id,
     }).catch(() => undefined);
-    return stopped ? "stopped" : "failed";
+    // No assistant response was durably accepted, so no tool from this model
+    // turn could have started. The failed reservation remains visible as the
+    // honest record of the lost preview, while the same durable execution may
+    // safely reserve its next turn and call the provider again.
+    return stopped ? "stopped" : "retry";
   }
 
   private persistentLoopRuntime(
