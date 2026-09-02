@@ -54,6 +54,7 @@ import {
   AutomationMemoryTableSchema,
   ModelPluginIdSchema,
   ToolDefinitionSchema,
+  WorkstreamReadResourceOutputSchema,
   WorkstreamViewResourceOutputSchema,
   readStructuredFailure,
   asSubstreamId,
@@ -591,16 +592,30 @@ interface FailedAttachmentAccess {
   errorCode: string;
 }
 
+interface StartedAttachmentAccess {
+  cursorOnly: boolean;
+  resourceIds: string[];
+  toolName: string;
+}
+
 class AttachmentGroundingGuard {
-  private readonly started = new Map<string, { resourceIds: string[]; toolName: string }>();
+  private readonly started = new Map<string, StartedAttachmentAccess>();
+  private readonly readContinuations = new Map<string, string>();
   private readonly unresolved = new Map<string, FailedAttachmentAccess>();
   private nudgeSent = false;
   private terminalBoundaryApplied = false;
 
   onStarted(event: Extract<HarnessEvent, { type: "tool_started" }>): void {
     if (!isAttachmentContentCapability(event.policy.capability)) return;
+    const cursor = attachmentCursor(event.input);
+    const continuedResourceId = event.policy.capability === "workstream.resources.read" && cursor
+      ? this.readContinuations.get(cursor)
+      : undefined;
     this.started.set(event.toolCallId, {
-      resourceIds: attachmentResourceIds(event.input),
+      cursorOnly: Boolean(cursor) && attachmentResourceIds(event.input).length === 0,
+      resourceIds: continuedResourceId
+        ? [continuedResourceId]
+        : attachmentResourceIds(event.input),
       toolName: event.toolName,
     });
   }
@@ -610,6 +625,12 @@ class AttachmentGroundingGuard {
     const access = this.started.get(event.toolCallId);
     this.started.delete(event.toolCallId);
     if (!access) return;
+    if (event.policy.capability === "workstream.resources.read") {
+      const parsed = WorkstreamReadResourceOutputSchema.safeParse(event.result.output);
+      if (parsed.success) {
+        this.replaceReadContinuation(parsed.data.resourceId, parsed.data.nextCursor);
+      }
+    }
     if (event.policy.capability !== "workstream.resources.view") {
       const verifiedResourceIds = new Set([
         ...access.resourceIds,
@@ -643,14 +664,21 @@ class AttachmentGroundingGuard {
     const access = this.started.get(event.toolCallId);
     this.started.delete(event.toolCallId);
     if (event.phase === "validation") return;
-    const resourceIds = access?.resourceIds.length
+    const errorCode = structuredAttachmentFailureCode(event);
+    let resourceIds = access?.resourceIds.length
       ? access.resourceIds
       : structuredAttachmentFailureResourceIds(event);
+    if (resourceIds.length === 0
+      && errorCode === "invalid_cursor"
+      && access?.cursorOnly) {
+      const activeResourceIds = [...new Set(this.readContinuations.values())];
+      if (activeResourceIds.length === 1) resourceIds = activeResourceIds;
+    }
     const failure: FailedAttachmentAccess = {
       resourceIds,
       toolCallId: event.toolCallId,
       toolName: access?.toolName ?? event.toolName,
-      errorCode: structuredAttachmentFailureCode(event),
+      errorCode,
     };
     const keys = failure.resourceIds.length > 0
       ? failure.resourceIds.map((resourceId) => `resource:${resourceId}`)
@@ -670,7 +698,11 @@ class AttachmentGroundingGuard {
         continue;
       }
       if (receipt.status === "admitted" || receipt.status === "executing") {
-        this.started.set(receipt.toolCallId, { resourceIds, toolName: receipt.toolName });
+        this.started.set(receipt.toolCallId, {
+          cursorOnly: resourceIds.length === 0 && Boolean(attachmentCursor(parseJson(receipt.inputJson, {}))),
+          resourceIds,
+          toolName: receipt.toolName,
+        });
         continue;
       }
       const error = parseJson<{ code?: unknown }>(receipt.errorJson ?? "null", {});
@@ -747,6 +779,13 @@ class AttachmentGroundingGuard {
   private identities(): string[] {
     return [...this.unresolved.keys()].sort().map((key) => key.replace("resource:", "resource ").replace("tool_call:", "tool call "));
   }
+
+  private replaceReadContinuation(resourceId: string, nextCursor: string | null): void {
+    for (const [cursor, continuedResourceId] of this.readContinuations) {
+      if (continuedResourceId === resourceId) this.readContinuations.delete(cursor);
+    }
+    if (nextCursor) this.readContinuations.set(nextCursor, resourceId);
+  }
 }
 
 function acceptHarnessAssistantContent(
@@ -780,6 +819,12 @@ function attachmentResourceIds(value: unknown): string[] {
       : []),
   ];
   return [...new Set(ids)].sort();
+}
+
+function attachmentCursor(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const cursor = (value as Record<string, unknown>)["cursor"];
+  return typeof cursor === "string" && cursor.length > 0 ? cursor : null;
 }
 
 function structuredAttachmentFailureCode(event: Extract<HarnessEvent, { type: "tool_failed" }>): string {
