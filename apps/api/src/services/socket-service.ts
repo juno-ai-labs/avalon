@@ -46,6 +46,7 @@ interface SocketClaims {
   region: "global" | "eu";
   ticketId: string;
   expiresAt: number;
+  afterSequence?: number;
 }
 
 interface WorkspaceSocketClaims {
@@ -117,6 +118,7 @@ export async function issueSocketTicket(
   workstreamId: string,
   substreamId = "0",
   ticketId: string = uuidV7(),
+  afterSequence?: number,
 ): Promise<string> {
   assertSessionPrincipal(auth);
   const now = Math.floor(Date.now() / 1_000);
@@ -127,6 +129,7 @@ export async function issueSocketTicket(
     wsid: workstreamId,
     ssid: substreamId,
     region: auth.region,
+    ...(afterSequence === undefined ? {} : { after: afterSequence }),
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
@@ -224,6 +227,11 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
       (payload.region !== "global" && payload.region !== "eu")
     ) throw new Error("Incomplete socket claims");
+    const afterSequence = typeof payload.after === "number"
+      && Number.isInteger(payload.after)
+      && payload.after >= 0
+      ? payload.after
+      : undefined;
     return {
       sessionId: payload.sid,
       userId: asUserId(payload.sub),
@@ -233,6 +241,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,
+      ...(afterSequence === undefined ? {} : { afterSequence }),
     };
   } catch {
     throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
@@ -528,6 +537,9 @@ export class SocketService {
       headers.set(RALLY_HEADERS.USER_ID, claims.userId);
       headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
       headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
+      if (claims.afterSequence !== undefined) {
+        headers.set(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE, String(claims.afterSequence));
+      }
       // No trace header is written: the room's spans are already children of
       // this one, because a Durable Object call is a traced binding call and
       // everything inside it runs in this span's async context.

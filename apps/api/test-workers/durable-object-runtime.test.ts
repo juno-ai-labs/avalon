@@ -5267,6 +5267,63 @@ describe("Durable Objects in the Workers runtime", () => {
     );
   });
 
+  it("bootstraps the presence-free feed during upgrade without a subscribe message", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000600",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-socket-after-sequence": "0",
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    const delivered = nextMessage(socket);
+    socket.accept();
+
+    expect(JSON.parse(String((await delivered).data))).toMatchObject({
+      type: "snapshot",
+      reason: "initial",
+    });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
+        afterSequence: 0,
+        publishPresence: false,
+        subscribed: true,
+        role: "member",
+      });
+    });
+    socket.close(1000, "test complete");
+  });
+
   it("sends the newest page and the reader's own position in one snapshot", async () => {
     await seedOpenAuthority();
     await env.DB.batch([

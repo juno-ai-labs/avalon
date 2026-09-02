@@ -225,14 +225,16 @@ export interface DurableObjectPhaseOptions {
  */
 export function inDurableObjectPhase<T>(
   env: LogEnv,
-  phase: "initialize" | "schema_migrate",
+  phase: "initialize" | "schema_migrate" | "runtime_recovery",
   options: DurableObjectPhaseOptions,
   run: () => Promise<T>,
 ): Promise<T> {
   const spanName = `durable_object.${phase}`;
   const event = phase === "initialize"
     ? "durable_object_initialization"
-    : "durable_object_schema_migration";
+    : phase === "schema_migrate"
+      ? "durable_object_schema_migration"
+      : "durable_object_runtime_recovery";
   const startedAt = options.startedAt ?? Date.now();
   return inSpan(spanName, {
     "rally.component": options.component,

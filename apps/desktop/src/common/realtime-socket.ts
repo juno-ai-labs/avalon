@@ -15,6 +15,19 @@ export const DesktopRealtimeSocketKindSchema = z.enum([
 ]);
 export type DesktopRealtimeSocketKind = z.infer<typeof DesktopRealtimeSocketKindSchema>;
 
+export const DesktopRealtimeSocketHandshakePhaseSchema = z.enum([
+  'proxy_resolution',
+  'dns',
+  'tcp',
+  'tls',
+  'edge_upgrade',
+  'proxy_connect_tls_edge',
+  'route_failed',
+]);
+export type DesktopRealtimeSocketHandshakePhase = z.infer<
+  typeof DesktopRealtimeSocketHandshakePhaseSchema
+>;
+
 const DesktopRealtimeSocketIdSchema = z.string().regex(REALTIME_SOCKET_ID_PATTERN);
 
 export const DesktopRealtimeSocketOpenInputSchema = z.object({
@@ -42,6 +55,14 @@ export const DesktopRealtimeSocketCloseInputSchema = z.object({
 export type DesktopRealtimeSocketCloseInput = z.infer<typeof DesktopRealtimeSocketCloseInputSchema>;
 
 export const DesktopRealtimeSocketEventSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('handshake_phase'),
+    socketId: DesktopRealtimeSocketIdSchema,
+    phase: DesktopRealtimeSocketHandshakePhaseSchema,
+    durationMs: z.number().nonnegative(),
+    routeIndex: z.number().int().nonnegative(),
+    proxied: z.boolean(),
+  }).strict(),
   z.object({
     type: z.literal('open'),
     socketId: DesktopRealtimeSocketIdSchema,

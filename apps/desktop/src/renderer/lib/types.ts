@@ -737,6 +737,8 @@ export interface SocketTicket {
    * a slow open findable; see `docs/performance-tracing.md`.
    */
   ticketId?: string;
+  /** The server will send the initial replay or snapshot during the upgrade. */
+  subscriptionBootstrap?: boolean;
 }
 
 /** One person's scheduled digest: which days, what times, and where it goes. */

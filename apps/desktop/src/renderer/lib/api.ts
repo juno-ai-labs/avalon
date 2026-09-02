@@ -256,12 +256,14 @@ const socketTicketSchema = z.object({
   // Optional because the socket-ticket shape is shared with regional Workers
   // that predate it; a client that does not get one simply prints no ticket id.
   ticketId: z.string().optional(),
+  subscriptionBootstrap: z.boolean().optional(),
 })
-  .transform(({ url, ticket, ticketId }): SocketTicket => ({
+  .transform(({ url, ticket, ticketId, subscriptionBootstrap }): SocketTicket => ({
     url: socketUrlWithoutTicket(url),
     ticket,
     protocols: socketTicketProtocols(ticket),
     ...(ticketId === undefined ? {} : { ticketId }),
+    ...(subscriptionBootstrap === undefined ? {} : { subscriptionBootstrap }),
   }));
 
 export function normalizeHarnessStatus(status: WireWorkstream['harnessStatus']): HarnessStatus {
@@ -1879,9 +1881,17 @@ export class RallyApi {
     return { enabled: false };
   }
 
-  getSocketTicket(id: string, substreamId = '0', requestId?: string): Promise<SocketTicket> {
+  getSocketTicket(
+    id: string,
+    substreamId = '0',
+    requestId?: string,
+    afterSequence?: number,
+  ): Promise<SocketTicket> {
+    const query = afterSequence === undefined
+      ? ''
+      : `?afterSequence=${encodeURIComponent(afterSequence)}`;
     return this.request(
-      `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/socket`,
+      `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
       { schema: socketTicketSchema, ...(requestId ? { requestId } : {}) },
     );
   }

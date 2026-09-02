@@ -72,6 +72,7 @@ describe("socket ticket transport", () => {
       expect(request.headers.get("x-rally-session-id")).toBe(sessionId);
       expect(request.headers.get("x-rally-user-id")).toBe(userId);
       expect(request.headers.get("sec-websocket-protocol")).toBeNull();
+      expect(request.headers.get("x-rally-socket-after-sequence")).toBe("42");
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
     });
     const env = createTestEnv({
@@ -90,7 +91,7 @@ describe("socket ticket transport", () => {
       workspaceId,
       region: "global",
       role: "member",
-    }, workstreamId);
+    }, workstreamId, "0", undefined, 42);
     const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}/socket`, {
       headers: {
         Origin: "app://avalon",
