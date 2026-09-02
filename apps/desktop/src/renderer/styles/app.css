@@ -1110,8 +1110,8 @@ pre {
 .workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
 /* A workspace this device still lists but cannot open until the account is
-   reconnected: outlined rather than removed, with the reason in a tooltip. */
-.workspace-menu-item.is-unavailable { box-shadow: inset 0 0 0 1px var(--av-sys-color-danger-base); }
+   reconnected says so in the muted caption every row uses for its second
+   line, with the longer reason in a tooltip. Nothing about it is an alarm. */
 .workspace-menu-tooltip { line-height: 1.4; max-width: 240px; }
 .workspace-region-tag {
   background: var(--av-sys-color-surface-subtle);
@@ -1139,16 +1139,28 @@ pre {
 .workspace-region-choice label { align-items: center; display: flex; gap: 5px; }
 .workspace-region-choice label > span { display: flex; flex-direction: column; }
 .workspace-region-choice label small { color: var(--av-sys-color-text-muted); font-weight: 400; }
-.workspace-opening-overlay {
-  align-items: center;
-  background: var(--av-sys-color-scrim-subtle);
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  font-size: var(--av-sys-font-size-base);
-  inset: 0;
-  justify-content: center;
-  position: absolute;
-  z-index: 30;
+/* Switching workspaces is a dissolve, not a cut. While the new credential is
+   minted the current panes dim in place — no scrim and no caption; the menu
+   row's spinner already says what is happening — and once the session has
+   changed the same panes fade back up over the unchanged backdrop, now showing
+   the new workspace. The shell fetches the new workspace before the old one is
+   torn down, so no blank "opening" screen sits between the two. */
+.workspace-shell .sidebar,
+.workspace-shell .main-pane { transition: opacity 220ms ease; }
+.workspace-shell.is-switching-workspace .sidebar,
+.workspace-shell.is-switching-workspace .main-pane { opacity: 0.55; }
+.workspace-shell.is-switching-workspace .main-pane { pointer-events: none; }
+.workspace-shell.is-entering-workspace .sidebar,
+.workspace-shell.is-entering-workspace .main-pane { animation: workspace-enter 320ms ease-out; }
+/* From the dimmed level, not from nothing: the panes were sitting at 0.55 with
+   the old workspace when the session changed, so the new one picks up the same
+   brightness and rises — a dip to zero would flash the bare backdrop between. */
+@keyframes workspace-enter { from { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .workspace-shell .sidebar,
+  .workspace-shell .main-pane { transition: none; }
+  .workspace-shell.is-entering-workspace .sidebar,
+  .workspace-shell.is-entering-workspace .main-pane { animation: none; }
 }
 .mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
 .sidebar-scrim { display: none; }

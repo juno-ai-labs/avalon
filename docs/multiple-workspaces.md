@@ -85,9 +85,36 @@ discovery's account. It reports `identity` as `connected`, `reconnect_required`
 another reason), and lists the stored set either way, merged with the last
 discovery this run received so a blip does not shrink the list. While the
 account needs reconnecting no other workspace can be opened — every switch
-crosses Global activation — so each background row is outlined and its
-tooltip says why, and selecting one shows the reason under the row instead of
-attempting an activation that must fail.
+crosses Global activation — so each background row carries the muted caption
+every row uses for its second line ("Reconnect your account to open"), a
+tooltip with the longer reason, and selecting one restates the reason under
+the row instead of attempting an activation that must fail. It is the same
+register as a connector that needs reconnecting in Settings, not an alarm.
+
+A background row's trailing indicator is the WorkspaceDO attention read: a
+count when work streams are waiting on the person, coloured by the strongest
+reason among them (a mention, then a run waiting for input, then a work
+stream they are in but have never opened), and the green activity dot when
+something moved but nothing is waiting on them. Both explain themselves in a
+tooltip on hover.
+
+### Switching
+
+Choosing a workspace is a dissolve, not a cut. While the new credential is
+minted the current panes dim in place and the menu row shows its spinner; the
+menu stays open so a failure lands under the row the person chose, and closes
+itself once the switch took. `activateWorkspace` fetches the new workspace's
+record with the new credential before the old workspace is torn down and
+seeds it into the cleared cache the moment the session changes, so the shell
+never shows a bare "Opening workspace…" between the two; the same panes then
+fade back up over the unchanged backdrop showing the new workspace. The
+feature flags ride across the same way, stamped stale, so the account menu
+keeps its shape until the new workspace's own answer arrives.
+
+A switch that changed the workspace always lands on the new work-stream page.
+A work stream open in the previous workspace must never be looked up in the
+next one, which is what the route would otherwise do; only an addressed link
+opens a specific destination, and it resets the route itself.
 
 A discovery that succeeds is complete (a regional outage is a 503, never a
 shorter list), so a stored background workspace it does not list is a
@@ -317,6 +344,39 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-02 — A switch dissolves, lands on the new work-stream page, and the menu explains its marks
+
+**What changed:** Selecting a workspace from the account menu now dims the
+current panes in place, prefetches the new workspace's record before the old
+one is torn down, resets the route to the new work-stream page, fades the same
+panes back up, and closes the menu once the switch took. The scrim overlay and
+its "Opening …" caption are gone. Rows the account cannot open show a muted
+caption and a tooltip instead of a red outline, and the attention count and
+activity dot explain themselves on hover.
+
+**Why:** Field feedback on the first round. Starting a work stream in one
+workspace and switching to another before the reply arrived left the new
+workspace trying to open the old work stream, because a menu switch — unlike
+an addressed link — never touched the route. The switch itself read as
+jerky: a scrim with a caption, then a full-screen "Opening workspace…" while
+the shell was torn down and rebuilt, then the shell again. And the red outline
+on unopenable rows did not belong to the product's own idiom, which marks a
+connector that needs reconnecting with a muted dot and a caption rather than
+an alarm. The green dot and the coloured count had to be explained in person.
+
+**Considered and rejected:** Keeping the previous shell mounted under the new
+one with the old workspace's data as a placeholder, which would have put a
+socket for one workspace under an API client for another. A full crossfade
+of the whole window including the backdrop, which restarts an animated
+theme backdrop on every switch. Dismissing the menu the moment a row is
+chosen, which hides the row a failure needs to be shown beneath.
+
+**Consequences:** Any path that applies an activated session should go through
+`applyActivatedSession` so it prefetches, resets the route, and carries the
+flags; deep-link activation keeps its own route reset. The enter animation's
+length lives in one place in the shell and must match `workspace-enter` in
+`app.css`.
 
 ### 2026-09-02 — Stored workspaces outlive discovery, and one token rotates once
 
