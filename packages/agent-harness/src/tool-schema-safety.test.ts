@@ -360,6 +360,94 @@ describe("repairRootSchemaForProviders", () => {
     });
   });
 
+  it("does not intersect sibling union keywords against each other", () => {
+    // `anyOf` and `oneOf` at the same root are conjunctive: both must be
+    // satisfied. Intersecting within each keyword and unioning across them
+    // keeps `a` and `b`, which the schema genuinely requires. One accumulator
+    // shared by both would intersect `a` against `b` and emit neither,
+    // weakening a valid third-party schema into one the provider can satisfy
+    // with arguments the remote tool then rejects.
+    const schema = {
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      anyOf: [{ required: ["a"] }, { required: ["a"] }],
+      oneOf: [{ required: ["b"] }, { required: ["b"] }],
+    };
+
+    expect(repairRootSchemaForProviders(schema)).toEqual({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "string" } },
+      required: ["a", "b"],
+    });
+  });
+
+  it("recombines a colliding property as an intersection when its branches were one", () => {
+    // An `allOf` means every branch applies at once, so two declarations of the
+    // same name are constraints that must both hold. Recombining them as
+    // `anyOf` would say either will do and drop the other — the same silent
+    // widening in the opposite direction from the union case above.
+    const schema = {
+      type: "object",
+      allOf: [
+        { properties: { size: { type: "integer", minimum: 1 } } },
+        { properties: { size: { type: "integer", maximum: 10 } } },
+      ],
+    };
+
+    expect(repairRootSchemaForProviders(schema)).toEqual({
+      type: "object",
+      properties: {
+        size: { allOf: [{ type: "integer", minimum: 1 }, { type: "integer", maximum: 10 }] },
+      },
+    });
+  });
+
+  it("carries a branch's `$defs` up so a hoisted `$ref` still resolves", () => {
+    // The merge lifts the branch's `properties` to the root and deletes the
+    // branch. A `$ref` into that branch's own `$defs` would then point at a
+    // subtree that no longer exists, and an unresolvable `$ref` is the same
+    // class of rejection this corrector exists to prevent — it would have
+    // manufactured the failure it is there to stop.
+    const schema = {
+      anyOf: [{
+        type: "object",
+        $defs: { Foo: { type: "string" } },
+        properties: { a: { $ref: "#/$defs/Foo" } },
+        required: ["a"],
+      }],
+    };
+
+    expect(repairRootSchemaForProviders(schema)).toEqual({
+      type: "object",
+      $defs: { Foo: { type: "string" } },
+      properties: { a: { $ref: "#/$defs/Foo" } },
+      required: ["a"],
+    });
+  });
+
+  it("keeps `additionalProperties` only when every branch agreed on it", () => {
+    // `z.union` of strict objects emits `additionalProperties: false` per
+    // branch. Dropping it advertises an open object while the executor still
+    // parses strictly, which is checklist item 2 running backwards. Keeping one
+    // branch's `false` over another's silence would instead forbid members the
+    // merged object now legitimately admits.
+    const agreed = {
+      anyOf: [
+        { type: "object", properties: { a: { type: "string" } }, additionalProperties: false },
+        { type: "object", properties: { b: { type: "string" } }, additionalProperties: false },
+      ],
+    };
+    const disagreed = {
+      anyOf: [
+        { type: "object", properties: { a: { type: "string" } }, additionalProperties: false },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    };
+
+    expect(repairRootSchemaForProviders(agreed)).toMatchObject({ additionalProperties: false });
+    expect(repairRootSchemaForProviders(disagreed)).not.toHaveProperty("additionalProperties");
+  });
+
   it("keeps only what every branch of a union requires", () => {
     // `required` is what a merge most easily gets backwards. The branches are
     // alternatives, so their union of `required` would demand both names at
