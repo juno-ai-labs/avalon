@@ -93,9 +93,15 @@ The host also enforces that promise: if a read, search, view, or summary call
 fails or a completed multi-image view skips a requested resource, and no later
 successful content access resolves the same resource, the model receives one
 corrective turn and cannot publish attachment facts. Cursor reads attach their
-resolved resource identity to structured failures so a successful restart by
-resource ID clears the same guard entry instead of leaving a tool-call-only
-false positive. A run
+resolved resource identity to structured failures. If the cursor itself cannot
+be verified, the guard uses the resource behind the one unambiguous active
+server-issued read continuation; read results register both directions, while
+search passages and summary citations register their read cursors in the same
+provenance set. Completed receipt outputs rebuild that set after run resumption.
+The guard does not decode or approximate-match the bad cursor. A successful
+restart by resource ID can then clear the same guard entry instead of leaving a
+tool-call-only false positive. More than one active resource remains anonymous
+and fail-closed. A run
 that still ends replaces its prose with a deterministic, content-free
 `Attachment content unverified` boundary carrying only resource/tool/error
 provenance. `attachment_grounding_guard_triggered` records the same bounded
@@ -616,6 +622,34 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-09-02 — A corrupted continuation can recover through its one unambiguous read
+
+**What changed:** The attachment grounding guard remembers every server-issued
+cursor accepted by the read tool and its resource: both cursors returned by a
+read, plus search-passage and summary-citation cursors. Completed durable receipt
+outputs rebuild the provenance after run resumption. When an `invalid_cursor`
+call has no structured resource identity, the guard attributes it only when the
+cursor provenance names exactly one resource. A later verified read of that
+resource then clears the same safety entry.
+
+**Why:** A model changed one character in an opaque cursor, so signature
+verification correctly rejected it. The model recovered by restarting from the
+resource ID, but the cursor-only failure remained keyed by tool call and replaced
+every later assistant turn with the same unverified-attachment boundary.
+
+**Considered and rejected:** Decoding identity from the invalid cursor, accepting
+near-matching cursors, or clearing every anonymous cursor failure after any
+successful attachment read. The first two would make unverified input influence
+identity, while the last could let a read of one resource clear an unrelated
+failure. More than one active continuation therefore remains unresolved by tool
+call until a trusted result identifies it.
+
+**What a future change has to respect:** Cursor verification remains strict; the
+guard's continuation memory is recovery provenance, not authorization. Every
+tool that issues a cursor accepted by `workstream_read_resource` must register
+it live and through durable restoration. Never guess between multiple resource
+identities or execute a corrupted cursor.
 
 ### 2026-08-30 — Generated audio is a playable, non-model-readable kind
 
