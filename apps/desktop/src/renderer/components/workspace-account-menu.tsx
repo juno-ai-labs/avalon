@@ -1,7 +1,8 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import type { WorkspaceAttention } from '@rally/contracts';
 import { Check, ChevronDown, LoaderCircle, LogOut, Plus, Settings } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 
 import type {
   DesktopPendingWorkspaceInvitation,
@@ -37,6 +38,14 @@ export interface WorkspaceAccountMenuProps {
   onSignOut: () => void;
   onSwitchWorkspace: (workspace: DesktopWorkspaceSummary) => Promise<void>;
 }
+
+/** Why a background workspace is outlined while the account needs reconnecting.
+ * Every switch crosses Global activation with the identity credential, so
+ * without one no other workspace can be opened — but it is still a workspace
+ * this device knows, so it stays listed rather than vanishing. */
+export const WORKSPACE_NEEDS_ACCOUNT_RECONNECT =
+  'This workspace can\'t be opened until you reconnect your account: the account sign-in on this device has expired. '
+  + 'Choose Reconnect account… below.';
 
 function regionLabel(region: RallyRegion): string {
   return region === 'eu' ? 'European Union' : 'Global';
@@ -169,19 +178,20 @@ export function WorkspaceAccountMenu({
                   const count = workspaceAttention?.waitingForYou ?? 0;
                   const attentionDescription = workspaceAttention ? attentionLabel(workspaceAttention) : null;
                   const switching = workspaceKey === switchingWorkspaceKey;
+                  const unavailable = !active && accountReconnectRequired;
                   const error = workspaceErrors[workspaceKey];
                   const label = [
                     workspace.name,
                     ...(multipleRegions ? [regionLabel(workspace.region)] : []),
                     ...(active ? ['Current'] : []),
                     ...(attentionDescription ? [attentionDescription] : []),
+                    ...(unavailable ? [WORKSPACE_NEEDS_ACCOUNT_RECONNECT] : []),
                     ...(error ? [error] : []),
                   ].join(', ');
-                  return (
+                  const item = (
                     <DropdownMenu.Item
                       aria-label={label}
-                      className="menu-item workspace-menu-item"
-                      key={workspaceKey}
+                      className={unavailable ? 'menu-item workspace-menu-item is-unavailable' : 'menu-item workspace-menu-item'}
                       onSelect={(event) => {
                         if (active || switching) return;
                         event.preventDefault();
@@ -203,6 +213,18 @@ export function WorkspaceAccountMenu({
                         <span aria-label="Unread activity" className="workspace-activity-dot" />
                       )}
                     </DropdownMenu.Item>
+                  );
+                  if (!unavailable) return <Fragment key={workspaceKey}>{item}</Fragment>;
+                  return (
+                    <Tooltip.Root delayDuration={300} key={workspaceKey}>
+                      <Tooltip.Trigger asChild>{item}</Tooltip.Trigger>
+                      <Tooltip.Portal>
+                        <Tooltip.Content className="tooltip workspace-menu-tooltip" side="right" sideOffset={8}>
+                          {WORKSPACE_NEEDS_ACCOUNT_RECONNECT}
+                          <Tooltip.Arrow className="tooltip-arrow" />
+                        </Tooltip.Content>
+                      </Tooltip.Portal>
+                    </Tooltip.Root>
                   );
                 })}
                 {invitations.length > 0 && (
@@ -350,7 +372,7 @@ export function WorkspaceAccountMenu({
         open={creating}
         title="Create a workspace"
       >
-        <label className="field">
+        <label className="form-field">
           <span>Workspace name</span>
           <input
             maxLength={120}
