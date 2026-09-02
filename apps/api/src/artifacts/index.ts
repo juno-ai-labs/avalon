@@ -95,20 +95,26 @@ export interface ArtifactServingEnv {
   };
 }
 
+type ArtifactSecurityHeaderOptions = Readonly<{
+  referrerPolicy?: "same-origin";
+}>;
+
 function withSecurityHeaders(
   response: Response,
-  options: Readonly<{ referrerPolicy?: "same-origin" }> = {},
+  options: ArtifactSecurityHeaderOptions = {},
 ): Response {
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(artifactSecurityHeaders())) headers.set(name, value);
-  if (options.referrerPolicy) headers.set("referrer-policy", options.referrerPolicy);
+  if (options.referrerPolicy === "same-origin") {
+    headers.set("referrer-policy", options.referrerPolicy);
+  }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 function html(
   body: string,
   status: number,
-  securityOptions: Readonly<{ referrerPolicy?: "same-origin" }> = {},
+  securityOptions: ArtifactSecurityHeaderOptions = {},
 ): Response {
   return withSecurityHeaders(new Response(body, {
     status,
