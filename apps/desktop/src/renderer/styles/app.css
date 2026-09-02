@@ -648,7 +648,7 @@ pre {
 .sidebar-resizer {
   bottom: 0;
   position: absolute;
-  right: -12px;
+  right: -6px;
   top: 36px;
   width: 12px;
   z-index: 3;
@@ -3852,16 +3852,44 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
    edge. Both sidebars use it; only where each one sits differs. */
 .rail-resizer,
 .sidebar-resizer { align-items: center; cursor: col-resize; display: flex; justify-content: center; touch-action: none; }
-.rail-resizer > span,
-.sidebar-resizer > span { background: var(--av-ref-color-neutral-7); border-radius: var(--av-sys-size-radius-pill); height: 38px; transition: background 100ms ease, height 100ms ease, opacity 100ms ease; width: 2px; }
+.rail-resizer > span { background: var(--av-ref-color-neutral-7); border-radius: var(--av-sys-size-radius-pill); height: 38px; transition: background 100ms ease, height 100ms ease, opacity 100ms ease; width: 2px; }
+.sidebar-resizer > .sidebar-resizer-handle {
+  align-items: center;
+  background: var(--av-sys-color-surface-raised);
+  border: 1px solid var(--av-sys-color-border-default);
+  border-radius: var(--av-sys-size-radius-pill);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease, opacity 100ms ease, transform 100ms ease;
+  width: 16px;
+}
 .rail-resizer:focus-visible,
 .sidebar-resizer:focus-visible { outline: 0; }
-.rail-resizer:hover > span,
-.rail-resizer:focus-visible > span,
-.rail-resizer.is-resizing > span,
+.sidebar-resizer.is-near > .sidebar-resizer-handle,
+.sidebar-resizer:focus-visible > .sidebar-resizer-handle,
+.sidebar.is-resizing .sidebar-resizer > .sidebar-resizer-handle {
+  background: var(--av-sys-color-surface-raised-hover);
+  border-color: var(--av-sys-color-border-strong);
+  color: var(--av-sys-color-text-default);
+  transform: scale(1.06);
+}
+/* The sidebar uses a real grip rather than the rail's bare line. It stays
+   centered over the divider, appearing only when the generous pointer sensor
+   in the component says the edge is close enough to grab. */
 .sidebar-resizer.is-near > span,
 .sidebar-resizer:focus-visible > span,
-.sidebar.is-resizing .sidebar-resizer > span { background: var(--av-sys-color-brand-ink); height: 54px; }
+.sidebar.is-resizing .sidebar-resizer > span { opacity: 1; }
+/* Kept separate from the sidebar grip so the right rail retains its longer
+   brand-colored resize pill. */
+.rail-resizer:hover > span,
+.rail-resizer:focus-visible > span,
+.rail-resizer.is-resizing > span {
+  background: var(--av-sys-color-brand-ink);
+  height: 54px;
+}
 .rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: 12px; z-index: 41; }
 /* A drag has to track the pointer exactly; only closing the rail is animated. */
 .is-resizing-rail { cursor: col-resize !important; user-select: none !important; }
@@ -5038,7 +5066,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .sidebar-search {
   align-items: center;
-  background: var(--av-sys-color-surface-raised);
+  background: var(--grok-sidebar-search-background, var(--av-sys-color-surface-raised));
   border: 1px solid var(--av-sys-color-border-subtle);
   border-radius: 8px;
   color: var(--av-sys-color-text-muted);
@@ -5092,23 +5120,23 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .workstream-row {
   align-items: center;
-  border-radius: var(--av-sys-size-radius-lg);
+  border-radius: 8px;
   display: grid;
-  gap: 8px;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  min-height: 56px;
-  padding: 5px 7px 5px 5px;
+  gap: 6px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  min-height: 44px;
+  padding: 3px 7px;
 }
 
-.workstream-row .sidebar-row-icon { align-items: center; display: flex; height: 34px; justify-content: center; position: relative; width: 34px; }
+.workstream-row .sidebar-row-icon { align-items: center; display: flex; height: 30px; justify-content: center; position: relative; width: 30px; }
 .workstream-row-status { bottom: -2px; position: absolute; right: -3px; }
 .workstream-row-status .status-indicator { background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); height: 12px; width: 12px; }
 .workstream-row-status .status-dot { height: 6px; width: 6px; }
 .workstream-row .sidebar-row-main { align-self: stretch; justify-content: center; }
-.workstream-row .sidebar-row-title { align-items: baseline; display: flex; gap: 6px; justify-content: space-between; width: 100%; }
+.workstream-row .sidebar-row-title { align-items: baseline; color: var(--av-sys-color-text-default); display: flex; font-size: 12px; font-weight: 520; gap: 6px; justify-content: space-between; line-height: 15px; width: 100%; }
 .sidebar-row-title-copy { align-items: center; display: flex; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workstream-row .sidebar-row-title time { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 8.5px; font-weight: 450; }
-.workstream-row .sidebar-row-hint { margin-top: 2px; }
+.workstream-row .sidebar-row-title time { color: var(--grok-sidebar-secondary, var(--av-sys-color-text-muted)); flex: 0 0 auto; font-size: 10px; font-weight: 450; }
+.workstream-row .sidebar-row-hint { color: var(--grok-sidebar-secondary, var(--av-sys-color-text-muted)); font-size: 10.5px; line-height: 13px; margin-top: 0; }
 .workstream-row-people { align-items: center; display: flex; flex-direction: column; gap: 2px; justify-content: center; min-width: 38px; }
 .workstream-row .sidebar-workstream-facepile { margin: 0; }
 .workstream-row .sidebar-workstream-facepile .avatar-stack.is-grok-cluster {
@@ -5192,8 +5220,14 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .grokbot-conversation-faces .avatar-stack-item + .avatar-stack-item { margin-left: -7px; }
 .grokbot-workstream-header .header-menu-button { visibility: hidden; }
 
+.grokbot-shell { --grok-sidebar-search-background: #ebebeb; --grok-sidebar-secondary: #696969; }
+[data-theme='air-dark'] .grokbot-shell { --grok-sidebar-search-background: #232323; --grok-sidebar-secondary: #9e9e9e; }
 .grokbot-shell .sidebar-scroll { padding-top: 0; }
 .grokbot-shell .workstreams-section { margin-top: 10px; }
+.grokbot-shell .sidebar-group { margin-top: 14px; }
+.grokbot-shell .sidebar-group:first-child { margin-top: 0; }
+.grokbot-shell .sidebar-group-heading { min-height: 17px; padding: 0 7px 7px; }
+.grokbot-shell .sidebar-group h3 { color: var(--grok-sidebar-secondary); font-size: 10px; font-weight: 450; letter-spacing: 0; text-transform: none; }
 .grokbot-shell .sidebar-group-menu-trigger { display: none; }
 
 .workstream-screen .human-message-bubble {
