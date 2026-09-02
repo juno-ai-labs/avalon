@@ -151,6 +151,15 @@ cannot publish a terminal result, and `completed` cannot commit until its final
 agent message is durable. Expired attempts are compare-and-swap reaped as
 failed.
 
+Terminalization releases the persistent loop as soon as its canonical
+transcript, Bind state, and run status are durable. External result delivery,
+automation finalization, and work-stream name/description maintenance use the
+same run receipt's `external_settled_at` marker in a separate object-local
+drain. The host starts that drain eagerly with `waitUntil`, and the derived
+alarm candidate recovers it after cancellation or eviction. It processes
+terminal receipts in run order, but its retry deadline never reserves the loop
+or delays the next queued inference.
+
 Activation has one durable signal: the subordinate run receipt. There is no
 second dispatch table whose row can disagree with it. An external automation,
 wake-up, email, or activity may arrive with that receipt already created; it
@@ -174,8 +183,8 @@ The child wraps active work in a custom `keepAliveWhile()`, scheduling a
 does not depend on remaining resident: the persistent-loop projection and
 lease, subordinate execution receipt and attempt lease, immutable scope, tool receipts, streaming checkpoint, and final-turn
 fence resume or reconcile the run after eviction. Hibernating feed sockets wake
-only for batched frames or product events; user commands arrive through the
-workspace socket. Terminal remains a plugin in the same loop and executes its
+only for batched frames or product events; user message commands arrive through
+the admitted SubstreamAgent socket. Terminal remains a plugin in the same loop and executes its
 actual coding commands in Daytona.
 
 An invoked participant message is admitted first as a pending loop input. It
@@ -705,9 +714,14 @@ Root work-stream runs receive the stable `rally_memory` plugin. `memory_search`
 accepts exactly one of a content query or `memoryItemId`; the exact-ID form is the
 conflict-recovery read for a mutation and still reauthorizes the item against the
 host-derived scope union. The host returns scope provenance without allowing the
-model to select scope IDs. Ad-hoc user runs search workspace, user, and work-stream
-memory. An automation run's memory tools execute inside its named
-`AutomationAgent` and reach that automation's own memory; the workspace-side
+model to select scope IDs. A message-origin run does not search long-term memory
+automatically before its first inference: opening and follow-up composer messages,
+elicitation answers, inbound email, and Slack opening, follow-up, and elicitation
+messages go directly from durable transcript/trigger context to the model. The
+plugin remains available, so the agent can explicitly call `memory_search` when
+the task needs older context. Non-message ad-hoc runs search workspace, user, and
+work-stream memory at admission. An automation run's memory tools execute inside
+its named `AutomationAgent` and reach that automation's own memory; the workspace-side
 automation scope union was retired with the 2026-08-28 automation cutover, and
 `resolveMemoryAccess` refuses a subscription-declaring run by name
 (`memory_automation_scope_retired`) rather than reading a subscription row no
@@ -719,9 +733,10 @@ work stream's origin — is what decides which it is. That covers more than a
 member's reply: an elicitation answer, a manual retry, a HyperSight block
 dispatch, and, least obviously, the automation's *own* continuation through a
 scheduled wake-up, because `launchWorkstreamHarness` declares no subscription
-either. Each searches workspace memory, plus that member's own when a person is
-behind it. The subscription's automation scope stays reachable exactly from a
-run that declares it and whose principal matches it, and a work stream an
+either. Their search authority includes workspace memory, plus that member's own
+when a person is behind it; message runs exercise that authority only through an
+explicit memory tool call. The subscription's automation scope stays reachable
+exactly from a run that declares it and whose principal matches it, and a work stream an
 automation created owns no work-stream scope, because the next run of that
 subscription gets a different work stream and anything left in this one could
 never be recalled.
@@ -753,7 +768,7 @@ should start owning a work-stream scope once people are talking in it is a
 second. Neither is the memory union's to decide on its own, and neither writes a
 row today, so both stay open.
 
-Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; OpenRouter reporting a different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
+Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A fixed-model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; OpenRouter reporting a different resolved model fails the request closed, and retrieval falls back to FTS. Changing the constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership. A non-message root run that performs automatic admission recall stores an immutable snapshot and hash; a message-origin run stores no memory-context hash.
 
 Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
 
@@ -1089,6 +1104,7 @@ proof.
 | `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, successful/failure/stop receipt settlement across a mid-batch lease deadline, residual settlement on every terminal status and the marker-driven repair of a directly-failed root that lost its settlement response, healing an occupied checkpoint index, bulk residual-receipt settlement for stop/steering, descendant receipt settlement during child reaping, attachment dependency ordering, and dependency/replan interleavings. |
 | `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `agent-run-lifecycle.test.ts` | The real-workerd stable-loop state machine: singleton identity, pending-input FIFO and delivery mode, activation replay, alarm recovery after eviction, live-lease exclusion, expired-owner takeover, deferred retry on the same cycle and receipt, and exact execution fences through terminal settlement. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | The real-workerd product-to-provider path, including provider-failure reservation settlement into a canonical error pill, a scheduled activation-only input on an already-initialized Bind projection, exact provider-body inclusion, pre-execution launch replay after eviction, and terminal replay without a second source fact, execution receipt, provider boundary, or inference attempt. |
+| `apps/api/test-workers/substream-message-queue.test.ts` | The real-workerd multi-input queue, including proof that a deliberately blocked external settlement does not prevent the next queued input from reaching the provider and that the independent settlement lane subsequently drains. |
 | `apps/api/test/agent-run-dispatch-queue.test.ts`, `apps/api/test-workers/durable-object-runtime.test.ts` | The separate HyperSight block dispatch ledger: durable wake derivation, reclaim ordering, and direct terminal settlement refusing an obsolete lease token without changing the successor's token, outcome, or stream checkpoint. It does not model SubstreamAgent execution. |
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
@@ -1097,6 +1113,7 @@ proof.
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
 | `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, and invalidation races, against a real `WorkspaceDO` standing in for the memory authority. `apps/api/test-workers/workspace-memory.test.ts` proves the object's transactional receipts, witnesses, and FTS triggers on real workerd. |
+| `apps/api/test/message-run-context.test.ts` | Message-origin runs skip automatic long-term-memory recall while non-message runs retain their frozen admission context. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
 | `apps/api/test/digest-run-context.test.ts` | A scheduled digest's hidden brief becomes an explicit derived activation input with stable logical identity instead of disappearing on loop resume. |
@@ -1172,6 +1189,58 @@ named transient codes must be added to the bounded allowlist with provider
 evidence and a traversal test. Numeric 4xx codes outside 408 and 429 remain
 terminal. Bind's existing produced-output fence remains the authority that
 prevents replay after a partial answer.
+### 2026-09-01 — External settlement no longer reserves the inference loop
+
+**What changed:** A terminal run releases the persistent loop after its
+canonical terminal commit. Slack/digest/automation delivery and name/description
+maintenance drain independently from `external_settled_at`, with an eager
+`waitUntil` attempt and alarm recovery. The lane preserves terminal-run order;
+its retry deadline is no longer an executable-loop deadline.
+
+**Why:** The previous drain awaited every external and cosmetic continuation
+before it promoted the next queued message. A slow connector, classification,
+name generation, or description refresh therefore became time-to-inference even
+though the transcript and Bind state required by the next run were already
+durable.
+
+**Considered and rejected:** Dropping settlement or making it fire-and-forget
+would lose delivery after eviction. Running later settlements around a failed
+older one would make external destinations observe results out of order. The
+existing durable receipt already provides both recovery and ordering, so a new
+Queue or table would duplicate authority.
+
+**Consequences:** External delivery can trail later in-app inference. Its lane
+must remain idempotent and ordered, and every mutation of its due time must keep
+the shared object alarm armed. Only canonical terminalization and loop fencing
+may gate promotion of the next queued input.
+
+### 2026-09-01 — Message runs leave automatic long-term-memory recall off their critical path
+
+**What changed:** Opening and follow-up composer messages, elicitation answers,
+inbound email, and Slack opening, follow-up, and elicitation messages no longer
+call `freezeRunMemoryContext` before the first model request. Their immutable run
+scope records a null memory-context hash. The `rally_memory` plugin and explicit
+`memory_search` tool are unchanged, and non-message runs retain automatic frozen
+admission recall.
+
+**Why:** Production traces for three ordinary composer messages showed the
+fixed Qwen query embedding taking 8.46–8.83 seconds before main inference, while
+the vector leg failed, FTS recalled no items, and the run continued without any
+memory context. A message already has its immediate context in the durable
+transcript, so this speculative lookup should not delay every reply.
+
+**Considered and rejected:** adding a timeout or a shorter guessed budget still
+keeps a provider call on the message path and would introduce a defensive limit
+the team has not chosen. Starting recall asynchronously cannot add a result to
+an inference request that has already begun, and conditionally restarting the
+request would make first-turn behavior nondeterministic. Removing the memory
+plugin entirely would also remove deliberate, task-specific recall; this change
+removes only the automatic admission lookup.
+
+**What a future change has to respect:** a new human-message ingress must join
+the no-admission-recall set. If automatic recall is reintroduced for messages,
+it needs evidence that its result value outweighs its provider latency and a
+failure path that does not silently pay for an unusable vector result.
 
 ### 2026-09-01 — The standing policy gains a site trigger; the craft goes to a skill
 

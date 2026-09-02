@@ -285,10 +285,9 @@ The desktop holds four independent hibernating WebSocket roles:
 
 ```text
 one persistent workspace connection
-  <-> WorkspaceDO synchronization/command socket
+  <-> WorkspaceDO synchronization socket
   <- authoritative cursor-paged work-stream directory
   <- versioned workspace query-topic invalidations
-  -> create_message naming the target work stream/substream
 
 one connection per active, pinned, recent-five, live-state, or retained work stream
   <- WorkstreamDO complete independently waterlined common + viewer metadata
@@ -296,15 +295,16 @@ one connection per active, pinned, recent-five, live-state, or retained work str
 one substream `0` connection for the same proactive and retained work-stream set
   <- SubstreamAgent snapshot / stream frames / product events
   <- direct download and reconnect feed for exactly one substream
+  -> create_message for that already-admitted substream
+  <- private correlated admission receipt
 
 one connection per configured HyperSight block while its panel is visible
   <- BlockDashboardAgent run snapshot / stream checkpoint / result
   <- direct reconnect replacement; no source conversation or user commands
 
 user create_message after creation
-  -> persistent WorkspaceDO socket
-  -> per-command D1 session + membership recheck
-  -> WorkstreamObjectClient for the selected SubstreamAgent
+  -> retained SubstreamAgent socket
+  -> admitted attachment identity plus object-local participant check
   -> local SQLite message/run transaction
 ```
 
@@ -316,10 +316,13 @@ identity. A reconnect coalesces every missed topic into one newest-waterline
 event when the bounded log is available and otherwise invalidates every
 workspace query surface; intermediate invalidation states are not product data.
 Directory page requests and their cursors resume through that same socket;
-Electron does not fall back to a D1 work-stream list. A user message is never accepted on either read socket; a
-`create_message` sent there receives `workspace_socket_required`. This keeps
-workspace authorization and routing at the parent boundary while keeping the
-high-volume read/stream path direct to its child.
+Electron does not fall back to a D1 work-stream list. Once a substream socket is
+admitted, it accepts `create_message` for only the substream fixed in its
+hibernation attachment. The private receipt is outside the replay sequence, and
+the desktop resends the same `clientMessageId` after an ambiguous disconnect.
+Access revocation closes the socket, so the message does not pay a parent hop or
+a second D1 session/membership read. WorkspaceDO retains its former command
+handler only so released desktop builds can drain during rollout.
 
 The same persistent workspace socket carries explicit foreground presence. Each
 hibernation attachment records whether Rally itself is foregrounded and which
@@ -374,7 +377,7 @@ sequence. The desktop's idempotent `POST /workstreams` includes the opening
 message. The regional creation coordinator reserves the D1 route/receipt and
 email address, then initializes WorkstreamDO and main `SubstreamAgent("0")` with
 metadata, audience, attachments, the opening message, and first run. Only later
-messages use the already-open WorkspaceDO socket, so a broken second client
+messages use the already-open SubstreamAgent socket, so a broken second client
 request cannot leave an accidental empty work stream.
 
 The WorkspaceDO invalidation catalog covers workspace profile/timezone and
@@ -441,6 +444,15 @@ input or request activation; they do not hand correctness to an abandoned
 in-memory promise. `run_steering` and the SubstreamAgent-local
 `agent_run_dispatches` table are retired. The identically named HyperSight
 block-agent dispatch ledger remains a separate authority.
+
+A terminal `runs` row can remain externally unsettled without remaining
+executable. Its canonical transcript and loop terminalization release the
+singleton immediately; `external_settled_at IS NULL` instead feeds a separate
+SubstreamAgent drain for external result delivery, automation finalization, and
+name/description maintenance. That drain starts eagerly under `waitUntil`, is
+recovered from the same object alarm after eviction, and takes terminal receipts
+in order. A failed settlement moves only its own retry time and cannot prevent a
+pending loop input from becoming the next inference.
 
 `WorkstreamLoopWorkflow` and its binding are gone: every work-stream run
 executes inside the SubstreamAgent, and a stack whose authority is not
@@ -1037,7 +1049,7 @@ misrouted product statement now fails because the table or column is absent.
 - **The object jurisdiction matches the immutable workspace region.** Product-object constructors fail closed when `ctx.id.jurisdiction` is not `us` for Global or `eu` for EU.
 - **`WorkstreamDO` runs no model and owns no transcript.** Putting an agent there recreates one serialization bottleneck across substreams.
 - **High-volume child reads and streams never proxy through a parent.** Doing so would turn the control plane into the throughput and availability ceiling for every child.
-- **User messages enter through `WorkspaceDO`; aggregate metadata streams from `WorkstreamDO`; transcript/token feeds stream directly from `SubstreamAgent`.** Accepting writes on either read socket creates another authorization and ordering boundary.
+- **User messages and transcript/token feeds go directly to their admitted `SubstreamAgent`; aggregate metadata streams from `WorkstreamDO`.** The socket attachment fixes workspace, work stream, substream, user, session, and admitted role, while the object-local participant row remains the write check.
 - **An open work-stream socket is not foreground presence.** Electron reports application, window, and route foreground explicitly on its WorkspaceDO socket; retained metadata/feed sockets may stay open while their work stream is in the background.
 - **Workspace presence is ephemeral, attachment-backed, and viewer-scoped.** WorkspaceDO validates the reported work stream against its local directory, omits the receiving user, and never persists a presence table or sends a workspace-wide personal-work-stream map.
 - **Every Durable Object persists through explicit SQL.** KV calls create invisible schema and bypass migration, constraints, inspection, and lint.
@@ -1049,7 +1061,7 @@ misrouted product statement now fails because the table or column is absent.
 - **Child-to-parent and parent-to-workspace effects are hash-deduplicated and versioned.** RPC retries, Queue ordering, and delivery uniqueness are not trusted.
 - **Nothing may `await` between a sync waterline's allocation and its send.** The waterline is a monotonic counter and the desktop discards anything at or below the last one it applied, so a publication that allocated first has to send first. `publishSync` allocates in `transactionSync` and sends in the same synchronous run, which is what makes that true; an `await` between the two opens the input gate and lets a later publication overtake, and the desktop then silently drops the parked payload along with every topic it named. This is not hypothetical — it is the bug the revalidation sweep shipped, recorded in the changelog.
 - **No publish path asks D1 anything.** Losing workspace access is carried by the queue in [`access-revocation.md`](access-revocation.md) and by nothing else — no object polls, revalidates on a timer, or re-reads `workspace_members` before sending. Putting a D1 query back on a publish path is where the waterline ordering bug came from, and the transcript feed would pay it per token frame. An object enforcing its *own* SQL — `canRead`, `product.canRead` — is not that: it is synchronous, local, and answers a question no queue message carries.
-- **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** Admission is where authorization is decided, and it is decided fresh every time; no long-lived ticket or attachment is continuing authority for a new write. What an admitted socket then holds is ended by the revocation queue, not by re-asking.
+- **D1 workspace membership is rechecked for every WorkspaceDO operation and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** A direct substream message spends the authority already admitted to that exact socket; it does not re-ask D1. The revocation queue closes that socket when the authority ends, and object-local participation is still checked by the message transaction.
 - **A SubstreamAgent cold wake separates storage readiness from runtime recovery.** Schema, repositories, and durable identity gate socket admission. Lease repair and alarm re-arming begin immediately under `waitUntil` and have their own trace phase, but an accepted read socket does not await them. Any operation that can mutate or run agent work still waits for full initialization. A failed recovery attempt is not cached forever: that caller sees the failure and the next mutation retries the idempotent recovery.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. Sockets never carry a connector principal; tickets are issued to login sessions only.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
@@ -1137,7 +1149,9 @@ snapshot-fenced canonical transcript ranges without room-cursor movement,
 range revocation, compaction recovery, HyperSight checkpoint recovery/revocation, socket
 revocation across all four roles, obsolete queued
 run coalescing, stale-arrival rejection, per-block parent head-of-line delivery,
-ticket replay, and the read-only child socket.
+ticket replay, and retired message-page refusal. Direct child message admission,
+its private receipt, and hibernation resend are covered in
+`test-workers/message-to-output-pipeline.test.ts`.
 `test-workers/participant-notification.test.ts` covers what seating somebody
 enqueues, on both the create and the add-afterwards paths, plus identity-bearing
 mentions and attachment descriptors in an opening message, and member-authored
@@ -1519,6 +1533,53 @@ admitted attachment. Speculative snapshots do not settle unseen state;
 navigation promotes the admitted socket explicitly. A thrown bootstrap closes
 the registered server end before reconnect, and a thrown runtime-recovery
 attempt is retried by the next mutation instead of poisoning the isolate.
+### 2026-09-01 — Terminal runs hand inference and external settlement to separate lanes
+
+**What changed:** SubstreamAgent releases its persistent loop after canonical
+terminalization and drains `external_settled_at` receipts independently. The
+external lane starts eagerly, recovers from the shared alarm, and preserves run
+order without contributing work to `nextLoopWorkAt`.
+
+**Why:** The old loop processed an externally unsettled terminal receipt before
+claiming any queued input. Slack, automation delivery, naming, and description
+maintenance were therefore serialized into the next message's time to
+inference even though none contributes to its canonical context or execution
+fence.
+
+**Considered and rejected:** Marking a run externally settled before delivery
+would make eviction lose effects. A new Queue would introduce another claim and
+receipt authority around a row that already carries durable due, retry, error,
+and terminal markers. Letting later deliveries overtake a deferred earlier run
+would expose results out of order.
+
+**Consequences:** In-app inference may advance while a previous result is still
+being projected externally. The external lane must stay idempotent and ordered,
+and its oldest due receipt remains an independent derived alarm candidate.
+
+### 2026-09-01 — Existing-room messages enter the room they already have open
+
+**What changed:** Electron sends `create_message` on the retained SubstreamAgent
+socket and resolves a private correlated receipt there. The admitted role and
+workspace analytics surrogate now live in the hibernation attachment. Pending
+commands survive reconnect and resend the same `clientMessageId`. WorkspaceDO's
+old command handler remains only for released-client rollout compatibility.
+
+**Why:** The selected room socket is already authenticated, fixed to exactly one
+substream, and closed by the access-revocation path. Routing the send through
+WorkspaceDO added a Worker-to-parent invocation, another D1 session/membership
+read, and a parent-to-child call before the owning SQLite transaction could
+start.
+
+**Considered and rejected:** Revalidating D1 on every child command preserves the
+latency that this boundary removes and creates two authorities for when an open
+socket may write. Removing the WorkspaceDO handler immediately would strand an
+older desktop during a rolling deploy, so it drains as a compatibility surface
+but is no longer used by current code.
+
+**Consequences:** Losing authorization must close the room socket; that queue is
+part of the write-authority contract, not merely feed cleanup. New room commands
+must be scoped entirely by the attachment and object-local state, keep private
+receipts outside replay ordering, and remain idempotent across reconnect.
 
 ### 2026-09-01 — Exposing an automation run unhides a row; it creates nothing
 
