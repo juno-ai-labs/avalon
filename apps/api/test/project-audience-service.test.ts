@@ -51,9 +51,16 @@ function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
   });
 }
 
-function environment(current: ProjectSummary, calls: string[] = []): Env {
+function environment(
+  current: ProjectSummary,
+  calls: string[] = [],
+  // What the authority holds, which is not what the summary shows: archived
+  // members are absent from `workstreamIds` and still in the membership.
+  members: string[] = current.workstreamIds,
+): Env {
   const stub = {
     listProjects: async () => ({ ok: true, directory: { items: [current], waterline: 1 } }),
+    listProjectMembers: async () => ({ ok: true, workstreamIds: members }),
     canReadWorkstream: async () => true,
     updateProjectAudience: async (input: { audience: { scope: "personal" | "workspace"; participantUserIds: string[] } }) => {
       calls.push("project:update-audience");
@@ -157,6 +164,35 @@ describe("project audience changes", () => {
       { projectEffect: true },
     );
     expect(calls).toEqual(["workstream:remove-participant", "project:update-audience"]);
+  });
+
+  it("given a member work stream that is archived, when a participant is removed, then it loses them too", async () => {
+    const calls: string[] = [];
+    // Absent from `workstreamIds` because no surface can list it, and still a
+    // member: an audience is who may read the work stream, and an archived one
+    // can be unarchived.
+    const current = project({ workstreamIds: [] });
+    vi.spyOn(WorkstreamService.prototype, "removeParticipant").mockImplementation(async () => {
+      calls.push("workstream:remove-participant");
+    });
+    const service = new ProjectService(environment(current, calls, [workstreamId]), {
+      sessionId: "session",
+      userId: ownerId,
+      workspaceId,
+      region: "global",
+      role: "owner",
+    });
+
+    await service.updateAudience(projectId, {
+      scope: "personal",
+      participantUserIds: [ownerId],
+    });
+
+    expect(WorkstreamService.prototype.removeParticipant).toHaveBeenCalledWith(
+      workstreamId,
+      memberId,
+      { projectEffect: true },
+    );
   });
 });
 

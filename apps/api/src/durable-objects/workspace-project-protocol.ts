@@ -66,6 +66,25 @@ export const WorkspaceProjectMembershipPrepareRequestSchema = WorkspaceProjectAc
 }).strict();
 export type WorkspaceProjectMembershipPrepareRequest = z.infer<typeof WorkspaceProjectMembershipPrepareRequestSchema>;
 
+export const WorkspaceProjectMembersRequestSchema = WorkspaceProjectActorSchema.extend({
+  projectId: ProjectIdSchema,
+}).strict();
+export type WorkspaceProjectMembersRequest = z.infer<typeof WorkspaceProjectMembersRequestSchema>;
+
+/**
+ * Every work stream a project holds, archived ones included.
+ *
+ * Separate from the summary because `ProjectSummary.workstreamIds` is what a
+ * surface can list, and an archived member is not that — while an audience
+ * change still has to reach it. Server-to-server, so it may say what the
+ * client-facing shape deliberately does not.
+ */
+export const WorkspaceProjectMembersResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), workstreamIds: z.array(WorkstreamIdSchema) }),
+  WorkspaceProjectFailureSchema,
+]);
+export type WorkspaceProjectMembersResult = z.infer<typeof WorkspaceProjectMembersResultSchema>;
+
 export const WorkspaceProjectWorkstreamConstraintRequestSchema = WorkspaceProjectActorSchema.extend({
   workstreamId: WorkstreamIdSchema,
 }).strict();
