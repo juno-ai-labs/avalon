@@ -5203,6 +5203,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // otherwise to keep broadcasts out of the window below — and telling that
       // reader to subscribe first would be a lie it cannot act on.
       const assembling = attachment.snapshotInFlight === true;
+      // Uncorrelated on purpose: `request_snapshot` carries no request id, so
+      // there is none to name, and the client reads an uncorrelated error as
+      // the answer that releases its snapshot slot. Give that command a request
+      // id one day and this call has to forward it — leaving it would make the
+      // refusal invisible to the caller and, worse, still look like a snapshot
+      // answer to every other one.
       this.sendError(
         socket,
         assembling ? "snapshot_in_flight" : "subscription_required",
@@ -5285,6 +5291,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // is the same answer it would get from any other superseding snapshot, and
     // unlike a refusal it is a frame the reader already knows how to act on.
     if (!attachment.subscribed && attachment.snapshotInFlight !== true) {
+      // What is left here is a reader asking for history on a socket that never
+      // joined the feed, which no client of ours does. It went unlogged before,
+      // and that silence is most of why the bug this branch used to cause had
+      // to be diagnosed from the renderer's error string rather than from the
+      // room. The `warn` is the trace the next one gets.
+      logWarn(this.env, "substream_transcript_range_refused", {
+        workspace_id: attachment.workspaceId,
+        workstream_id: attachment.workstreamId,
+        substream_id: attachment.substreamId,
+        connection_id: attachment.connectionId,
+        request_id: request.requestId,
+        code: "subscription_required",
+      });
       this.sendError(
         socket,
         "subscription_required",
@@ -6900,10 +6919,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * Refuse one frame in a way the reader can act on.
    *
-   * `requestId` is required whenever the refused frame carried one. A caller
-   * that correlated its request is waiting on that identity and on nothing
-   * else: an uncorrelated refusal is invisible to it, so its promise survives
-   * until a local timeout fires and reports a timeout the room never had.
+   * Pass `requestId` whenever the refused frame carried one, and leave it null
+   * only when the frame genuinely had none. A caller that correlated its
+   * request is waiting on that identity and on nothing else: an uncorrelated
+   * refusal is invisible to it, so its promise survives until a local timeout
+   * fires and reports a timeout the room never had. The default is null
+   * because most refusals answer no request — a malformed frame, or a mutation
+   * that belongs on REST — not because omitting it is free where one exists.
    */
   private sendError(socket: WebSocket, code: string, message: string, requestId: string | null = null): void {
     const event = ServerSocketEventSchema.parse({
