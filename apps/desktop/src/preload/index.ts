@@ -171,6 +171,14 @@ const bridge: RallyDesktopBridge = {
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,
   exportMessage: (request) => ipcRenderer.invoke('message-export:save', request) as Promise<MessageExportResult>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
+  presentArtifactPreview: (request) =>
+    ipcRenderer.invoke('artifact:present-preview', request) as Promise<boolean>,
+  setArtifactPreviewBounds: (bounds) =>
+    ipcRenderer.invoke('artifact:set-preview-bounds', bounds) as Promise<void>,
+  setArtifactPreviewHidden: (hidden) =>
+    ipcRenderer.invoke('artifact:set-preview-hidden', hidden) as Promise<void>,
+  closeArtifactPreview: () => ipcRenderer.invoke('artifact:close-preview') as Promise<void>,
+  popOutArtifact: (request) => ipcRenderer.invoke('artifact:pop-out', request) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,
   closeMeetingNotes: (noteId) => ipcRenderer.invoke('system:close-meeting-notes', noteId) as Promise<void>,

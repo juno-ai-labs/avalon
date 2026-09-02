@@ -103,6 +103,7 @@ describe('Ace managed flag protocol', () => {
       'automation-workspace-templates-enabled',
       'multiple-workspaces-enabled',
       'digests-enabled',
+      'live-artifacts-enabled',
     ]);
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual(ProductFeatureFlagKeySchema.options);
     for (const flag of MANAGED_FLAGS) {

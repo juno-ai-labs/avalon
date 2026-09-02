@@ -694,12 +694,52 @@ async function requireVisibleResource(
   return row;
 }
 
+/**
+ * What a content read on a *site* gets instead of a dead end.
+ *
+ * A site has no single content body to return — its stored content is a
+ * manifest, not a page — so this failure is not an edge case, it is the natural
+ * next call a model makes after connecting "the artifact" to "a resource in
+ * this work stream". The failure path is therefore where that connection gets
+ * taught, which is why it names the import rather than merely refusing.
+ *
+ * **It is prefix-aware, and the automation branch names no tool at all.** The
+ * same failure fires from automation-prefixed runs, and the tool it would name
+ * is a Terminal one those runs do not hold: naming it would trade one dead end
+ * for a worse one, and the sanitizer would drop the unrecognized entry anyway.
+ *
+ * The suggestion carries `{ resourceId }` alone — the create-only form, which
+ * refuses a non-empty destination rather than replacing anything — so a model
+ * that follows it blind cannot lose work.
+ */
+export function siteReadRemediation(
+  resourceId: string,
+  mimeType: string | null,
+  calledTool: string,
+  modelToolPrefix: "workstream" | "automation",
+): AttachmentOperationError {
+  return attachmentError(
+    "resource_tool_mismatch",
+    modelToolPrefix === "automation"
+      ? `${calledTool} cannot read a site; a site's source is edited in a terminal workspace, which this run does not have.`
+      : `${calledTool} cannot read a site; a site's source is edited in the terminal workspace, so import it there to read or revise it.`,
+    {
+      actualMimeType: mimeType,
+      attachmentKind: "site",
+      ...(modelToolPrefix === "automation"
+        ? {}
+        : { suggestedCall: { tool: "terminal_import_resource", arguments: { resourceId } } }),
+    },
+  );
+}
+
 function assertReadableKind(
   row: VisibleWorkstreamResourceRow,
   calledTool: string,
   modelToolPrefix: "workstream" | "automation",
 ): void {
   const kind = rowKind(row);
+  if (kind === "site") throw siteReadRemediation(row.id, row.mime_type, calledTool, modelToolPrefix);
   if (kind !== "image") return;
   throw attachmentError(
     "resource_tool_mismatch",

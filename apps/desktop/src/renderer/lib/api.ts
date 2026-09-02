@@ -1666,6 +1666,74 @@ export class RallyApi {
     return response.blob();
   }
 
+  /**
+   * Mint this person's access to a live artifact.
+   *
+   * A POST because it creates a single-use code, and a GET would be
+   * prefetchable and cacheable — both wrong for a credential. The `openUrl` it
+   * returns carries that code in its fragment, which never leaves the browser.
+   */
+  async openArtifact(resourceId: string): Promise<{
+    openUrl: string;
+    canonicalUrl: string;
+    artifactId: string;
+    mode: 'static' | 'active';
+    stateful: boolean;
+  }> {
+    const response = await this.execute(
+      `/resources/${encodeURIComponent(resourceId)}/artifact/open`,
+      { method: 'POST' },
+    );
+    if (!response.ok) return this.throwResponseError(response);
+    return response.json();
+  }
+
+  /** The tables a stateful artifact keeps, for the rail's Data view. */
+  async describeArtifactData(resourceId: string): Promise<{
+    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
+  }> {
+    const response = await this.execute(
+      `/resources/${encodeURIComponent(resourceId)}/artifact/data`,
+      { method: 'GET' },
+    );
+    if (!response.ok) return this.throwResponseError(response);
+    return response.json();
+  }
+
+  /**
+   * One page of one table, as rows and as the CSV an export hands somebody.
+   *
+   * Both come from one read, so what the view shows and what a person exports
+   * can never disagree.
+   */
+  async readArtifactTable(resourceId: string, table: string): Promise<{
+    rows: Record<string, unknown>[];
+    csv: string;
+  }> {
+    const response = await this.execute(
+      `/resources/${encodeURIComponent(resourceId)}/artifact/data/${encodeURIComponent(table)}`,
+      { method: 'GET' },
+    );
+    if (!response.ok) return this.throwResponseError(response);
+    return response.json();
+  }
+
+  /** What the artifact's own server code threw, for the rail's error log. */
+  async readArtifactErrors(resourceId: string): Promise<{
+    occurredAt: number;
+    version: number;
+    requestPath: string;
+    message: string;
+    stack: string | null;
+  }[]> {
+    const response = await this.execute(
+      `/resources/${encodeURIComponent(resourceId)}/artifact/errors`,
+      { method: 'GET' },
+    );
+    if (!response.ok) return this.throwResponseError(response);
+    return response.json();
+  }
+
   async listResources(input: {
     query?: string;
     cursor?: string;

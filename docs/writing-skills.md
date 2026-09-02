@@ -18,6 +18,16 @@ The reference exemplar is `deep-research` in
 [`packages/agent-harness/src/built-in-skills.ts`](../packages/agent-harness/src/built-in-skills.ts).
 Read it before writing your own — most of what follows is distilled from it.
 
+`building-live-sites`
+([`building-live-sites-skill.ts`](../packages/agent-harness/src/building-live-sites-skill.ts))
+is the exemplar for the other shape: a skill that exists **because** its
+material would not fit anywhere cheaper. Its standing policy carries six lines
+of trigger and manners; everything the model needs once it is actually writing
+files — the entry-file rule, the handler shape, the storage class, the viewer
+headers — is here, loaded at the moment it matters. Its `ownerPlugin` scopes it
+to runs that hold the Terminal plugin, because the whole procedure ends in
+publishing a directory from a sandbox.
+
 ## The bar: a medium-sized model, at two moments
 
 A skill is read by a model **twice**, and it has to work both times for a

@@ -21,6 +21,7 @@ describe('useClientFeatureFlags', () => {
       suggestedWorkEnabled: true,
       automationWorkspaceTemplatesEnabled: true,
       multipleWorkspacesEnabled: true,
+      liveArtifactsEnabled: true,
       digestsEnabled: true,
       controlTowerRefreshSeconds: 60,
     }));

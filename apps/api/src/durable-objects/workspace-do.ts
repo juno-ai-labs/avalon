@@ -2358,6 +2358,50 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE workspace_workstream_directory ADD COLUMN automation_exposed INTEGER NOT NULL DEFAULT 0
        CHECK (automation_exposed IN (0, 1))`,
   ],
+}, {
+  // Renumbered from 26 during a rebase: `main` took 26 and 27 while this
+  // branch was open, and a Durable Object migration is decided by its
+  // number, so two 26s would diverge a fresh database from a hosted one.
+  version: 28,
+  description: "index live web artifacts beside the resource authority",
+  statements: [
+    // Beside `resources`, because an artifact *is* a resource with a serving
+    // side: one row here per site resource, carrying what the resource row has
+    // no column for. It is a per-workspace index for listing, revocation
+    // fan-out, and cleanup — never a uniqueness authority. It cannot be one:
+    // this database is per workspace, so a UNIQUE here is unique per workspace
+    // and two workspaces could claim the same host. Region-wide uniqueness
+    // comes from `artifact_id` being a UUID, which is also the hostname label
+    // and the segment its supervisor object is named by.
+    `CREATE TABLE artifact_registry (
+      artifact_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      workstream_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+      mode TEXT NOT NULL CHECK (mode IN ('static', 'active')),
+      stateful INTEGER NOT NULL DEFAULT 0 CHECK (stateful IN (0, 1)),
+      current_version INTEGER NOT NULL CHECK (current_version > 0),
+      manifest_ref TEXT NOT NULL,
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      UNIQUE(resource_id)
+    ) STRICT`,
+    // The revocation walk's workspace hop reads this: an artifact hangs off the
+    // workspace, like an automation, because this table is what names them and
+    // it lives here rather than in any work stream's own database.
+    `CREATE INDEX artifact_registry_workspace_idx
+      ON artifact_registry(workspace_id, updated_at DESC, artifact_id)`,
+    `CREATE INDEX artifact_registry_workstream_idx
+      ON artifact_registry(workstream_id, updated_at DESC, artifact_id)`,
+    `CREATE TRIGGER artifact_registry_workspace_identity_insert
+      BEFORE INSERT ON artifact_registry
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER artifact_registry_workspace_identity_update
+      BEFORE UPDATE OF workspace_id ON artifact_registry
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+  ],
 }];
 
 function compareProjectionCoordinate(
@@ -3641,6 +3685,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<{
     workstreamIds: string[];
     automationIds: string[];
+    artifactIds: string[];
   }> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
@@ -3692,6 +3737,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               WHERE lifecycle <> 'deleted' ORDER BY automation_id`,
         ...(request.userId ? [request.userId] : []),
       ).toArray().map((row) => row.automation_id),
+      // Artifacts hang off the workspace for the same reason automations do:
+      // `artifact_registry` lives here, beside the resource authority, and
+      // `docs/access-revocation.md`'s rule is that only the object holding a
+      // list can name its children. No work stream can name its artifacts —
+      // that table is not in its database — so putting the hop there would
+      // have meant a second copy of a fact this object already owns.
+      //
+      // The list is unfiltered by person, deliberately, and matches the
+      // generosity the rest of this walk is built on: an artifact is readable
+      // by anyone who can see its work stream, so this object cannot tell
+      // which artifacts a given person holds a session on without asking every
+      // work stream a question it would then have to cache. A hop that finds
+      // no session to drop costs one call.
+      artifactIds: this.state.storage.sql.exec<{ artifact_id: string }>(
+        `SELECT artifact_id FROM artifact_registry ORDER BY artifact_id`,
+      ).toArray().map((row) => row.artifact_id),
     };
   }
 

@@ -207,7 +207,7 @@ describe("work-stream compaction resource inventory", () => {
     expect(rendered).toContain("Visible resources: 0");
     expect(rendered).toContain("Message attachments: 0");
     expect(rendered).toContain(
-      "Allowed attachmentKind values: image, audio, markdown, pdf, document, spreadsheet, presentation, text, other.",
+      "Allowed attachmentKind values: image, audio, markdown, pdf, document, spreadsheet, presentation, text, site, other.",
     );
     expect(rendered).not.toContain("Groups:\n-");
     expect(rendered.length).toBeLessThan(1_500);

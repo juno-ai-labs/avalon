@@ -30,8 +30,18 @@ const NUMERIC_SEGMENT = /^[0-9]{1,12}$/u;
 
 /**
  * The fixed words that appear in a name alongside its identifiers: the two
- * region tokens, and the role word `block-dashboard`. Every one of them is a
- * compile-time constant in `apps/api/src/durable-objects/names.ts`.
+ * region tokens, and the role words `block-dashboard`, `automation`, and
+ * `artifact`. Every one of them is a compile-time constant in
+ * `apps/api/src/durable-objects/names.ts`.
+ *
+ * `automation` was missing until artifacts needed `artifact` added beside it,
+ * and the omission was silent in the direction omissions here always are:
+ * `migration-reporting.ts` degrades a non-opaque name to `objectName: null`
+ * rather than refusing to report, so every `AutomationAgent` report since that
+ * name was introduced has been arriving without the field an operator uses to
+ * find the object that is stuck. Adding a role word is a one-line change; not
+ * adding one costs nothing visible, which is exactly why this list is checked
+ * against `names.ts` by a test rather than by memory.
  *
  * This is an allowlist rather than a shape. A rule like "any short lowercase
  * word" would admit `eu:acme-corporation:payroll` — a perfectly plausible
@@ -40,7 +50,7 @@ const NUMERIC_SEGMENT = /^[0-9]{1,12}$/u;
  * one-line change in a file a reviewer is looking at for exactly this reason,
  * which is the point.
  */
-const FIXED_SEGMENTS = new Set(["global", "eu", "block-dashboard"]);
+const FIXED_SEGMENTS = new Set(["global", "eu", "block-dashboard", "automation", "artifact"]);
 
 /**
  * Every segment of an Avalon Durable Object name is one of three things: a

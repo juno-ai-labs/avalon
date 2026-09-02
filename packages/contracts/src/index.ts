@@ -34,6 +34,7 @@ export * from "./automation-evaluators";
 export * from "./automation-agent";
 export * from "./identifiers";
 
+export * from "./artifacts";
 export * from "./attachment-contracts";
 export * from "./resource-relationships";
 export * from "./projects";
@@ -420,6 +421,16 @@ export const ClientFeatureFlagsSchema = z.object({
   /** Whether Electron offers workspace switching and plural workspace setup. */
   multipleWorkspacesEnabled: z.boolean().default(false),
   /**
+   * Whether live-artifact surfaces are shown in Electron for this person.
+   *
+   * Presentation only, and that distinction is load-bearing: it gates the
+   * rail's site detail, the preview pane, the Data view, and the artifact
+   * window. Nothing that protects an artifact's data is scoped by it —
+   * authorization is structural, so a URL somebody already holds keeps working
+   * through its session checks whether or not this is on.
+   */
+  liveArtifactsEnabled: z.boolean().default(false),
+  /**
    * Whether the Digest settings section may be shown in Electron for this
    * person. Defaults **true**, the opposite of every other Boolean above: a
    * digest already sends by default for every existing person, so hiding the
@@ -451,6 +462,7 @@ export const ProductFeatureFlagKeySchema = z.enum([
   "automation-workspace-templates-enabled",
   "multiple-workspaces-enabled",
   "digests-enabled",
+  "live-artifacts-enabled",
 ]);
 export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
   kind: z.literal("product_feature_flag_changed"),
