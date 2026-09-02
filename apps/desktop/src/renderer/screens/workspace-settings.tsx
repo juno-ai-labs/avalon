@@ -531,6 +531,10 @@ export function WorkspaceSettingsScreen({
   const [terminalPreview, setTerminalPreview] = useState<TerminalNetworkPolicyPreview | null>(null);
   const terminalPolicyDirty = useRef(false);
   const [applicationSettings, setApplicationSettings] = useState<DesktopApplicationSettings | null>(null);
+  // Full settings arrive through two independent Electron channels: live
+  // events and replies to reads or mutations. A live event supersedes any
+  // operation that was already in flight when it arrived.
+  const applicationSettingsLiveGeneration = useRef(0);
   const [telemetryInspector, setTelemetryInspector] = useState<DesktopTelemetryInspectorEntry[]>([]);
   const [telemetryInspectorLoading, setTelemetryInspectorLoading] = useState(false);
   const [telemetryInspectorError, setTelemetryInspectorError] = useState<string | null>(null);
@@ -799,25 +803,39 @@ export function WorkspaceSettingsScreen({
     mutationFn: (timezone: string) => api!.updateWorkspaceTimezone(timezone),
     onSuccess: (updated) => setWorkspaceTimezone(updated.timezone),
   });
+  const applyApplicationSettingsMutation = (
+    settings: DesktopApplicationSettings,
+    _enabled: boolean,
+    liveGenerationAtStart: number | undefined,
+  ): void => {
+    if (liveGenerationAtStart !== applicationSettingsLiveGeneration.current) return;
+    setApplicationSettings(settings);
+    setApplicationSettingsLoadError(null);
+  };
   const updateLockdownMode = useMutation({
     mutationFn: (enabled: boolean) => bridge.setLockdownMode(enabled),
-    onSuccess: setApplicationSettings,
+    onMutate: () => applicationSettingsLiveGeneration.current,
+    onSuccess: applyApplicationSettingsMutation,
   });
   const updateDebugEnabled = useMutation({
     mutationFn: (enabled: boolean) => bridge.setDebugEnabled(enabled),
-    onSuccess: setApplicationSettings,
+    onMutate: () => applicationSettingsLiveGeneration.current,
+    onSuccess: applyApplicationSettingsMutation,
   });
   const updateMenuBarEnabled = useMutation({
     mutationFn: (enabled: boolean) => bridge.setMenuBarEnabled(enabled),
-    onSuccess: setApplicationSettings,
+    onMutate: () => applicationSettingsLiveGeneration.current,
+    onSuccess: applyApplicationSettingsMutation,
   });
   const updateLaunchAtLogin = useMutation({
     mutationFn: (enabled: boolean) => bridge.setLaunchAtLogin(enabled),
-    onSuccess: setApplicationSettings,
+    onMutate: () => applicationSettingsLiveGeneration.current,
+    onSuccess: applyApplicationSettingsMutation,
   });
   const updateProductAnalytics = useMutation({
     mutationFn: (enabled: boolean) => bridge.setProductAnalyticsEnabled(enabled),
-    onSuccess: setApplicationSettings,
+    onMutate: () => applicationSettingsLiveGeneration.current,
+    onSuccess: applyApplicationSettingsMutation,
   });
   const pendingInvitations = useMemo(
     () => (invitations.data ?? []).filter((invitation) => invitation.status === 'pending'),
@@ -940,19 +958,25 @@ export function WorkspaceSettingsScreen({
 
   useEffect(() => {
     let cancelled = false;
-    void bridge.getApplicationSettings().then((settings) => {
-      if (cancelled) return;
-      setApplicationSettings(settings);
-      setApplicationSettingsLoadError(null);
-    }).catch((error: unknown) => {
+    const unsubscribe = bridge.onApplicationSettingsChanged((settings) => {
+      applicationSettingsLiveGeneration.current += 1;
       if (!cancelled) {
+        setApplicationSettings(settings);
+        setApplicationSettingsLoadError(null);
+      }
+    });
+    const generationAtRead = applicationSettingsLiveGeneration.current;
+    void bridge.getApplicationSettings().then((settings) => {
+      if (!cancelled && applicationSettingsLiveGeneration.current === generationAtRead) {
+        setApplicationSettings(settings);
+        setApplicationSettingsLoadError(null);
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled && applicationSettingsLiveGeneration.current === generationAtRead) {
         setApplicationSettingsLoadError(
           error instanceof Error ? error.message : 'Application settings could not be loaded.',
         );
       }
-    });
-    const unsubscribe = bridge.onApplicationSettingsChanged((settings) => {
-      if (!cancelled) setApplicationSettings(settings);
     });
     return () => {
       cancelled = true;

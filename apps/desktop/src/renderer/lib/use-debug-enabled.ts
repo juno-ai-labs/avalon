@@ -19,16 +19,23 @@ export function useDebugEnabled(): boolean {
 
   useEffect(() => {
     let cancelled = false;
+    // Invoke replies and live events use independent Electron channels. Once a
+    // live transition arrives, the pending mount-time read is obsolete.
+    let liveUpdateGeneration = 0;
+    const unsubscribe = bridge.onApplicationSettingsChanged((settings) => {
+      liveUpdateGeneration += 1;
+      if (!cancelled) setDebugEnabled(settings.debugEnabled);
+    });
+    const generationAtRead = liveUpdateGeneration;
     void bridge.getApplicationSettings()
       .then((settings) => {
-        if (!cancelled) setDebugEnabled(settings.debugEnabled);
+        if (!cancelled && liveUpdateGeneration === generationAtRead) {
+          setDebugEnabled(settings.debugEnabled);
+        }
       })
       // Debugging affordances stay hidden when the preference is unreadable;
       // there is nothing here worth interrupting the surface for.
       .catch(() => undefined);
-    const unsubscribe = bridge.onApplicationSettingsChanged((settings) => {
-      if (!cancelled) setDebugEnabled(settings.debugEnabled);
-    });
     return () => {
       cancelled = true;
       unsubscribe();
