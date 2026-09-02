@@ -206,6 +206,7 @@ function headerElement(
   workstream = headerWorkstream,
   overrides: {
     currentUserId?: string | null;
+    grokBotMode?: boolean;
     onRename?: (title: string) => Promise<void>;
     presentUserIds?: readonly string[];
   } = {},
@@ -214,6 +215,7 @@ function headerElement(
     <Tooltip.Provider>
       <WorkstreamHeader
         currentUserId={overrides.currentUserId ?? null}
+        grokBotMode={overrides.grokBotMode ?? false}
         onAddParticipant={vi.fn()}
         // The screen opens the rail through the same store action.
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
@@ -265,6 +267,22 @@ describe('WorkstreamHeader presence', () => {
     expect(screen.queryByTitle(collaborator.name)).not.toBeInTheDocument();
     expect(container.querySelectorAll('.avatar-presence-ping')).toHaveLength(1);
     expect(container.querySelector('.participant-header-button [tabindex]')).toBeNull();
+  });
+});
+
+describe('WorkstreamHeader GrokBot shell', () => {
+  it('uses the centered conversation title as the only details control', () => {
+    renderWorkstreamHeader(headerWorkstream, { grokBotMode: true });
+
+    const title = screen.getByRole('button', { name: 'Daily product brief' });
+    expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
+    expect(title).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('button', { name: 'Show HyperSight' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'More work-stream actions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add participant' })).not.toBeInTheDocument();
+
+    fireEvent.click(title);
+    expect(title).toHaveAttribute('aria-pressed', 'true');
   });
 });
 

@@ -22,6 +22,8 @@ import { MessageBlock, type RowDisclosure } from './workstream-blocks';
  * adapter, which is why this component draws nothing when it has no messages.
  */
 interface MessageFeedProps {
+  /** The main work-stream feed presents an agent's h2 document as a card deck. */
+  agentDocumentCards?: boolean;
   /**
    * How this feed resolves and opens a citation. Absent on a surface with no
    * work stream behind it — an automation draft — where every citation
@@ -82,6 +84,7 @@ export function useMessageFeedVirtualizer(input: {
 }
 
 export function MessageFeed({
+  agentDocumentCards = false,
   citations,
   currentUserId,
   currentUserName,
@@ -120,6 +123,7 @@ export function MessageFeed({
         </div>
       ) : (
         <MessageBlock
+          agentDocumentCards={agentDocumentCards}
           {...(citations ? { citations } : {})}
           collapseHeadings
           currentUserId={currentUserId}

@@ -19,6 +19,19 @@ export type MarkdownCollapsePart =
       readonly body: string;
     };
 
+/** A document section introduced by a top-level h2. */
+export interface MarkdownH2Section {
+  readonly id: string;
+  readonly title: string;
+  readonly heading: string;
+  readonly body: string;
+}
+
+export interface MarkdownH2Document {
+  readonly preamble: string;
+  readonly sections: readonly MarkdownH2Section[];
+}
+
 /** ATX: 0–3 spaces, 1–6 hashes, then a space/tab or the end of the line. `#foo` is not a heading. */
 const ATX_HEADING = /^( {0,3})(#{1,6})(?:[ \t]|[ \t]*$)/u;
 const SETEXT_H1 = /^( {0,3})=+[ \t]*$/u;
@@ -125,6 +138,58 @@ function sliceLines(source: string, starts: readonly number[], from: number, to:
   const begin = starts[from] ?? source.length;
   const end = to >= starts.length ? source.length : starts[to]!;
   return source.slice(begin, end);
+}
+
+function h2Title(lines: readonly string[], index: number, lineCount: number): string {
+  if (lineCount === 2) return lines[index]!.trim();
+  return lines[index]!
+    .replace(/^ {0,3}##(?:[ \t]+|$)/u, '')
+    .replace(/[ \t]+#+[ \t]*$/u, '')
+    .trim();
+}
+
+/**
+ * Split a markdown document at top-level h2 boundaries.
+ *
+ * Unlike the collapsible-heading parser, an h3-h6 never starts or closes a
+ * section here: it belongs to the h2 above it. Headings inside code, lists, or
+ * blockquotes are ignored through the same document-heading rules used by the
+ * transcript's established collapse renderer.
+ *
+ * `preamble + sections.map(heading + body)` reconstructs `source` byte for
+ * byte. That property lets the card reader change presentation without
+ * changing the text Rally received.
+ */
+export function splitMarkdownH2Document(source: string): MarkdownH2Document {
+  if (source === '') return { preamble: '', sections: [] };
+  const lines = source.split('\n');
+  const kinds = markdownLineKinds(lines);
+  const allowed = documentHeadingAllowed(lines, kinds);
+  const starts = lineStartsOf(source, lines);
+  const boundaries: Array<{ index: number; lineCount: number; title: string }> = [];
+
+  for (let index = 0; index < lines.length;) {
+    const heading = proseHeadingAt(lines, kinds, allowed, index);
+    if (heading?.level === 2) {
+      boundaries.push({ index, lineCount: heading.lineCount, title: h2Title(lines, index, heading.lineCount) });
+    }
+    index += heading?.lineCount ?? 1;
+  }
+
+  if (boundaries.length === 0) return { preamble: source, sections: [] };
+  return {
+    preamble: sliceLines(source, starts, 0, boundaries[0]!.index),
+    sections: boundaries.map((boundary, index) => {
+      const headingEnd = boundary.index + boundary.lineCount;
+      const sectionEnd = boundaries[index + 1]?.index ?? lines.length;
+      return {
+        id: `document-section-${index}`,
+        title: boundary.title || `Section ${index + 1}`,
+        heading: sliceLines(source, starts, boundary.index, headingEnd),
+        body: sliceLines(source, starts, headingEnd, sectionEnd),
+      };
+    }),
+  };
 }
 
 function isDefinitionOpener(line: string): boolean {
