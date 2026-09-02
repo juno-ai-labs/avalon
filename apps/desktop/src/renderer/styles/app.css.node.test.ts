@@ -97,6 +97,31 @@ describe('work-stream launch surface geometry', () => {
 
 });
 
+describe('GrokBot sidebar header geometry', () => {
+  it('keeps creation in the titlebar and gives search its own rounded row', () => {
+    const titlebar = rule('.sidebar-titlebar');
+    const commandbar = rule('.sidebar-commandbar');
+    const create = rule('.sidebar-new-button');
+    const search = rule('.sidebar-search');
+    const scroll = rule('.sidebar-scroll');
+    const scrollbar = rule('.sidebar-scroll::-webkit-scrollbar');
+
+    expect(titlebar).not.toBeNull();
+    expect(commandbar).not.toBeNull();
+    expect(create).not.toBeNull();
+    expect(search).not.toBeNull();
+    expect(scroll).not.toBeNull();
+    expect(scrollbar).not.toBeNull();
+    expect(titlebar).toContain('height: 36px;');
+    expect(commandbar).toContain('display: block;');
+    expect(create).toContain('background: transparent;');
+    expect(search).toContain('border-radius: 8px;');
+    expect(search).toContain('height: 28px;');
+    expect(scroll).toContain('scrollbar-gutter: auto;');
+    expect(scrollbar).toContain('width: 0;');
+  });
+});
+
 describe('member picker controls', () => {
   it('keeps custom controls out of the flexible member-copy rule', () => {
     const copy = rule(
@@ -153,7 +178,6 @@ describe('citation card image preview', () => {
 describe('scrollbar gutter reservation on the always-tall scrollers', () => {
   it.each([
     ['.transcript-scroll'],
-    ['.sidebar-scroll'],
     ['.rail-scroll'],
     ['.settings-navigation'],
     ['.settings-content-scroll'],

@@ -201,6 +201,49 @@ count are available. Unlike the retired horizontal "who else" strip, the
 cluster represents the full participant preview, including the current person;
 this remains a renderer-only geometry change.
 
+### 2026-09-01 — Sidebar creation moves into GrokBot's titlebar row
+
+**What changed:** The work-stream creation action now sits alone at the right
+edge of the macOS titlebar row, aligned with the traffic lights. Search occupies
+its own full-width rounded row directly below it.
+
+**Why:** GrokBot separates window-level creation from navigation filtering. The
+previous shared toolbar made the plus a filled leading control beside search,
+which changed both the hierarchy and the vertical rhythm of the reference
+header.
+
+**Considered and rejected:** Absolutely positioning the plus over the existing
+search row would resemble one screenshot while leaving the DOM and drag regions
+as one toolbar. The two-row structure keeps the titlebar draggable and makes the
+creation link an explicit no-drag target.
+
+**Consequences:** The search and work-stream list keep their existing behavior,
+and only their top offset changes. Overlay scrolling no longer reserves a blank
+strip beside either one, and the sidebar resize handle now begins below the
+shorter titlebar row.
+
+### 2026-09-01 — Work-stream input becomes a compact message capsule
+
+**What changed:** The active conversation now uses a 42-pixel empty composer
+with one attachment action, one-line input, and a trailing voice action. A
+non-empty draft adds Send, attachments expand above the writing row, and the
+main surface omits the dedicated mention, microphone-menu, and model controls.
+
+**Why:** GrokBot treats input as a compact continuation of the conversation.
+Rally's forced text height plus a second toolbar row made the empty field more
+than twice as tall and left a large dead band under the transcript.
+
+**Considered and rejected:** Shrinking the old two-row toolbar with global CSS
+would leave its extra controls in the accessibility tree and would also alter
+the automation and launch composers. Removing typed mentions, drag/drop, or
+dictation was rejected because those are interaction capabilities rather than
+the mismatched toolbar presentation.
+
+**Consequences:** The main work-stream adapter explicitly selects the capsule
+layout. Typed `@`, slash commands, attachment paste/drop, voice input, Send,
+Stop, draft persistence, and bounded multiline resizing keep their existing
+handlers; other composer hosts retain the shared default.
+
 ### 2026-09-01 — GrokBot shell removes Rally-specific navigation chrome
 
 **What changed:** The active desktop shell now mounts a work-stream-only left
