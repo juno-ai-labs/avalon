@@ -8,7 +8,7 @@ import type { HarnessSkill } from "./index";
  * it renders on every request and this is hundreds of lines. What is here is the
  * craft: which entry file decides the site's kind, why every path is relative,
  * the handler shape, the storage class a site that must remember exports, and
- * the manners around the viewer identity every request carries.
+ * how a public-by-default site uses or requires trusted Rally viewer identity.
  *
  * `ownerPlugin` is the Terminal plugin, so the skill is offered only to runs
  * whose frozen scope includes it: the whole procedure ends in writing files in a
@@ -20,7 +20,7 @@ import type { HarnessSkill } from "./index";
  */
 
 const BUILDING_LIVE_SITES_BODY = `You are building a **live site**: a directory of files that Rally will
-serve at a stable URL to everyone in the work stream. The standing
+serve publicly at a stable URL. The standing
 guidance told you *when* to build one; this skill is *how* to build one
 that works the first time.
 
@@ -30,7 +30,8 @@ that works the first time.
    - The page just shows things (content, layout, client-side
      interactivity)? Write **\`index.html\`** at the directory root and
      assets beside it. This is a **static** site and the default; do
-     not add a server the page does not need.
+     not add a server the page does not need. Static sites are always
+     public.
    - The page needs **request-time computation** — server-side search
      or filtering over data you publish with it, a small JSON API the
      page calls? Also write **\`index.js\`** at the directory root. This
@@ -42,6 +43,10 @@ that works the first time.
      add storage speculatively: a page that only computes gets no
      database, and never publish a page that looks like it saves but
      does not.
+   - If the user asks for a **protected, private, members-only, or
+     work-stream-only** site, it must be active even when it would
+     otherwise be static. Write \`index.js\` and reject every request
+     without \`x-rally-viewer-id\` before routing or serving assets.
 
 2. **Lay out one stable directory** beneath the workspace's resource
    output directory, named for the site (\`launch-checklist/\`, not
@@ -98,6 +103,28 @@ that works the first time.
    }
    \`\`\`
 
+   **Sites are public by default.** Rally adds trusted viewer headers
+   only when the request has a valid Rally viewer session; a direct
+   public visit or crawler has neither header. If this site must be
+   protected, put this guard at the very start of the handler, before
+   API routing and before \`env.ASSETS.fetch\`, so it protects the HTML
+   and every asset as well as computed routes:
+
+   \`\`\`js
+   const viewerId = request.headers.get("x-rally-viewer-id");
+   if (!viewerId) {
+     return new Response("Open this site from Rally.", {
+       status: 401,
+       headers: { "content-type": "text/plain; charset=utf-8" },
+     });
+   }
+   \`\`\`
+
+   A static site cannot perform this check. Do not call a site private
+   because its URL is hard to guess, and do not build a login or accept
+   an identity header from client JavaScript; only Rally injects these
+   headers after validating its own session.
+
 4. **Treat every request as the first request.** The runtime starts and
    stops instances whenever it likes; two requests may or may not share
    one. So: no module-level variables as state, no counters, no caches
@@ -123,9 +150,9 @@ that works the first time.
    call an external API or load a remote resource server-side. Do not
    write code paths that try. A request that genuinely needs outside
    data means you fetch it *yourself, now, in the workspace* and
-   publish the result as a data file with the site. (Who is viewing
-   arrives on every request as trusted headers — see **Stateful
-   sites** item 7; a stateless site may read them too.)
+   publish the result as a data file with the site. (An identified Rally
+   viewer arrives as trusted headers — see **Stateful sites** item 7;
+   a stateless site may read them too.)
 
 7. **Design the page for where it actually lives.** The primary viewing
    surface is a narrow pane in Rally's right rail (roughly phone-width),
@@ -176,10 +203,11 @@ that works the first time.
   renders without it, silently and wrongly. Do instead: vendor the file
   into the directory and reference it relatively. Inline \`<script>\` and
   \`<style>\` blocks are fine, as are \`data:\` images.
-- **A server for a static page.** An \`index.js\` that only ever falls
-  through to \`env.ASSETS.fetch(request)\` is overhead with no behavior.
-  Do instead: delete it; \`index.html\` alone serves faster and can never
-  throw.
+- **A server for a public static page.** An \`index.js\` that only ever
+  falls through to \`env.ASSETS.fetch(request)\` is overhead with no
+  behavior. Do instead: delete it; \`index.html\` alone serves faster
+  and can never throw. Keep the server when its early viewer-header
+  guard is what protects the page.
 - **Streaming the site into chat.** The transcript gets a sentence and
   a citation; the code lives in the files. If someone asks to see the
   code, publish the files as ordinary resources or read out the
@@ -321,22 +349,21 @@ shape of \`index.js\`.
    \`this.subscriberCount\` silently resets. Write every fact that
    matters to \`this.ctx.storage\` the moment it exists, and treat any
    in-memory copy as rebuildable from storage on the next start.
-7. **The viewer arrives on every request — use it, and handle its
-   absence.** Every request carries two trusted headers Rally injects
-   and nothing can forge: \`x-rally-viewer-id\` (a stable member id) and
+7. **A Rally viewer is identified; a public visitor is anonymous.**
+   Requests made through a valid Rally viewer session carry two trusted
+   headers Rally injects and inbound callers cannot forge:
+   \`x-rally-viewer-id\` (a stable member id) and
    \`x-rally-viewer-name\` (the display name, percent-encoded — decode
-   with \`decodeURIComponent\`). So never build a login flow, a name
-   field for attribution, or a seat picker: an RSVP is attributed to
-   whoever sent it, one-vote-per-person is an upsert keyed on the
-   viewer id, and lists show real display names for free. Always
-   write the guest branch too: a missing header means an anonymous
-   viewer (\`request.headers.get("x-rally-viewer-id")\` returns \`null\` —
-   today it never happens, but pages built now must not break the day
-   guests exist), so check for \`null\` and decide what a guest may
-   do — usually read but not submit. And record identity only where
-   the request calls for it: an attendance sheet stores who came; a
-   feedback box that was asked to be anonymous stores no id even
-   though it has one.
+   with \`decodeURIComponent\`). A direct public visit or crawler has
+   neither. For a public site, write the anonymous branch deliberately
+   and decide what it may do — often read but not submit. For a
+   protected site, use the early all-routes guard in item 3. Never
+   build a login flow, a name field for attribution, or a seat picker:
+   an RSVP from an identified viewer is attributed to whoever sent it,
+   and one-vote-per-person is an upsert keyed on the viewer id. Record
+   identity only where the request calls for it: an attendance sheet
+   stores who came; a feedback box requested as anonymous stores no id
+   even when Rally supplied one.
 8. **Freshness comes from polling, not push — and every poll loop must
    know when to stop.** Nothing pushes updates into an open page;
    another viewer's vote appears when the page asks again. For
@@ -369,8 +396,8 @@ shape of \`index.js\`.
   on start). Participants' submissions are the product; a revision that
   clears them is data loss, not a fresh start. Do instead: additive
   schema changes, and ask in chat before any deliberate reset.
-- **Recording presence nobody asked for.** The headers tell you who is
-  viewing on every request, and everything you store is visible to the
+- **Recording presence nobody asked for.** For an identified Rally viewer the
+  headers tell you who is viewing, and everything you store is visible to the
   whole work stream in the rail's data view — a page that quietly logs
   who opened it reads as surveillance the moment anyone looks. Do
   instead: record identity with *acts* (an RSVP, a vote, a sign-up),
@@ -430,7 +457,7 @@ no module-level state, real statuses, nothing external.
 export const BUILDING_LIVE_SITES_SKILL: HarnessSkill = {
   name: "building-live-sites",
   description:
-    "How to build a live web page or small web app as a published site: choose static, active, or stateful, lay out the directory, write the request handler or storage class against the injected bindings, and revise it in place.",
+    "How to build a public-by-default live web page or small app, or an active protected site: choose static, active, or stateful, write its handler or storage class against injected bindings, and revise it in place.",
   whenToUse:
     "When a request is site-shaped — a page, dashboard, calculator, or small app someone will open — and you are about to write its files, beyond what the standing guidance already covers.",
   body: BUILDING_LIVE_SITES_BODY,
