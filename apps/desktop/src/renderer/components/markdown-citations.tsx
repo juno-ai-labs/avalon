@@ -400,6 +400,16 @@ let sounding: HTMLAudioElement | null = null;
  * through the title, and a scrub target 150px wide inside a tile is a control
  * nobody can land on. That is a trade, and it is the cheap one to reverse.
  *
+ * **Everything here is phrasing content, and that is load-bearing.** A lone
+ * embed keeps the paragraph the markdown put it in — `rehypeCitationEmbedRows`
+ * merges only runs of two or more — so this card renders inside a `<p>`. The
+ * container is a `span` rather than a `div` for that reason: React builds the
+ * live DOM node by node and would nest one happily, but the export serializes
+ * that DOM to a string and Chromium *reparses* it, and the parser closes an
+ * open paragraph before a `div` and leaves a stray empty one behind. The saved
+ * picture then has a paragraph the turn did not. `button`, `span`, `small` and
+ * `audio` are all phrasing; a block element added here reopens this.
+ *
  * The played position and the elapsed clock come from the element's own events
  * rather than from the click, so the button can never claim to be playing
  * something the element stopped — an audio file whose bytes will not decode
@@ -440,7 +450,7 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
   }, [src]);
 
   return (
-    <div className="citation-card citation-card-audio" data-resource-type={resource.resourceType}>
+    <span className="citation-card citation-card-audio" data-resource-type={resource.resourceType}>
       {src === undefined
         ? <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type="audio" /></span>
         : (
@@ -507,7 +517,7 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
         <strong className="citation-card-title">{label}</strong>
         <small className="citation-card-kind">{resourceKindLabel(resource)}</small>
       </button>
-    </div>
+    </span>
   );
 }
 
