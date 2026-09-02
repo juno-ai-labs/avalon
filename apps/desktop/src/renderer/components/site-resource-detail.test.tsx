@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -150,6 +150,39 @@ describe('showing a live artifact in the rail', () => {
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
     unmount();
     expect(props.surface.close).toHaveBeenCalled();
+  });
+
+  it('does not present after it goes away while minting a navigation', async () => {
+    // Switching work streams unmounts this detail. If its second, navigation-
+    // specific mint finishes afterwards, presenting then resurrects the old
+    // native view after the cleanup has already tried to close it.
+    let finishMint: ((access: SiteArtifactAccess) => void) | undefined;
+    const openArtifact = vi.fn()
+      .mockResolvedValueOnce({
+        openUrl: OPEN_URL,
+        canonicalUrl: CANONICAL,
+        artifactId: ARTIFACT,
+        mode: 'active' as const,
+        stateful: true,
+      })
+      .mockImplementationOnce(() => new Promise<SiteArtifactAccess>((resolve) => {
+        finishMint = resolve;
+      }));
+    const previewSurface = surface();
+    const { unmount } = setup({ openArtifact, surface: previewSurface });
+    await waitFor(() => expect(openArtifact).toHaveBeenCalledTimes(2));
+
+    unmount();
+    await act(async () => finishMint?.({
+      openUrl: `${OPEN_URL}-late`,
+      canonicalUrl: CANONICAL,
+      artifactId: ARTIFACT,
+      mode: 'active',
+      stateful: true,
+    }));
+
+    expect(previewSurface.close).toHaveBeenCalledOnce();
+    expect(previewSurface.present).not.toHaveBeenCalled();
   });
 });
 

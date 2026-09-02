@@ -148,7 +148,13 @@ export function SiteResourceDetail({
     if (!bounds) return undefined;
     let cancelled = false;
     void mintOpenUrl()
-      .then(async (url) => await surface.present({ artifactId: access.artifactId, url, bounds }))
+      .then(async (url) => {
+        // Minting crosses the API and can finish after a work-stream switch has
+        // unmounted this detail. Its cleanup has already closed the native view
+        // by then, so presenting here would resurrect an ownerless old preview.
+        if (cancelled) return false;
+        return await surface.present({ artifactId: access.artifactId, url, bounds });
+      })
       .then((shown) => { if (!cancelled) setPreviewShown(shown); })
       // A refused mint or a main process that cannot composite both land here.
       // Without this the pane keeps its `null` state and renders an empty box
