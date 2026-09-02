@@ -14,7 +14,13 @@ const migratableClasses = [
 describe("Durable Object initialization instrumentation", () => {
   it.each(migratableClasses)("routes %s constructor work through the timed base gate", (fileName) => {
     const source = readFileSync(`${process.cwd()}/src/durable-objects/${fileName}`, "utf8");
-    expect(source).toContain("this.initialized = this.initializeDurableObject(async () => {");
+    const timedGate = fileName === "substream-agent.ts"
+      ? "this.storageReady = this.initializeDurableObject(async () => {"
+      : "this.initialized = this.initializeDurableObject(async () => {";
+    expect(source).toContain(timedGate);
+    if (fileName === "substream-agent.ts") {
+      expect(source).toContain("this.initialized = this.storageReady.then(");
+    }
     expect(source).not.toContain("this.initialized = state.blockConcurrencyWhile(async () => {");
   });
 });

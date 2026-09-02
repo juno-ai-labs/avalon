@@ -124,8 +124,8 @@ function RetainedWorkstreamSocket({
   socketLeaseId: string;
   workstreamId: string;
 }): null {
-  const feedEnabled = active || background || admitted;
-  const initialReason = controlWarm && !feedEnabled
+  const feedEnabled = active || background || admitted || controlWarm;
+  const initialReason = controlWarm && !active && !background && !admitted
     ? 'hover_warmup'
     : active ? 'active_workstream' : background ? 'background_workstream' : 'retained_workstream';
   useWorkstreamControlSocket(api, workstreamId, controlWarm || feedEnabled, initialReason, socketLeaseId);
@@ -235,8 +235,9 @@ export function WorkstreamSocketPool({
   const openContext = useCallback((workstreamId: string): WorkstreamSocketOpenContext => {
     const state = admittedWorkstreamIdsRef.current.has(workstreamId)
       || backgroundWorkstreamIdsRef.current.has(workstreamId)
+      || controlWarmRef.current?.workstreamId === workstreamId
       ? 'retained_pair' as const
-      : controlWarmRef.current?.workstreamId === workstreamId ? 'control_warmup' as const : 'cold' as const;
+      : 'cold' as const;
     const socketLeaseId = socketLeaseIdsRef.current.get(workstreamId);
     return { state, ...(socketLeaseId ? { socketLeaseId } : {}) };
   }, []);
@@ -324,9 +325,9 @@ export function WorkstreamSocketPool({
 }
 
 /**
- * Warm one WorkstreamDO control socket after a deliberate sidebar hover.
- * SubstreamAgent subscription remains tied to opening the work stream so a
- * hover never publishes viewer presence.
+ * Warm the complete control/feed pair after a deliberate sidebar hover. Feed
+ * subscriptions opt out of presence, so preparing the first canonical frame
+ * does not make a hovered work stream appear viewed.
  */
 export function useWorkstreamSocketHoverWarmup(workstreamId: string): {
   onPointerCancel: () => void;

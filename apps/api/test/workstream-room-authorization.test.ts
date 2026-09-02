@@ -25,6 +25,7 @@ const MEMBER = "00000000-0000-7000-8000-0000000000c2";
 const OUTSIDER = "00000000-0000-7000-8000-0000000000c3";
 const WORKSTREAM = "00000000-0000-7000-8000-0000000000c4";
 const SESSION = "00000000-0000-7000-8000-0000000000c5";
+const MEMBER_SESSION = "00000000-0000-7000-8000-0000000000c6";
 const at = "2026-08-11T09:00:00.000Z";
 
 const databases: DatabaseSync[] = [];
@@ -66,7 +67,9 @@ function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync
     INSERT INTO sessions
       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
     VALUES ('${SESSION}', '${PARTICIPANT}', '${WORKSPACE}', 'global',
-            'substream-agent-session-hash', '2099-08-11T09:00:00.000Z', '${at}');
+            'substream-agent-session-hash', '2099-08-11T09:00:00.000Z', '${at}'),
+           ('${MEMBER_SESSION}', '${MEMBER}', '${WORKSPACE}', 'global',
+            'substream-agent-member-session-hash', '2099-08-11T09:00:00.000Z', '${at}');
     INSERT INTO workstreams
       (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
        created_by_user_id, harness_status, next_sequence_number, last_activity_at,
@@ -251,6 +254,7 @@ function publish(room: SubstreamAgent, event: Record<string, unknown>): Promise<
  * through" is legible as 403 against 401.
  */
 function connectAs(room: SubstreamAgent, userId: string): Promise<Response> {
+  const sessionId = userId === MEMBER ? MEMBER_SESSION : SESSION;
   return room.fetch(new Request("https://room.internal/socket", {
     headers: {
       Upgrade: "websocket",
@@ -258,7 +262,7 @@ function connectAs(room: SubstreamAgent, userId: string): Promise<Response> {
       "x-rally-workstream-id": WORKSTREAM,
       "x-rally-substream-id": "0",
       "x-rally-user-id": userId,
-      "x-rally-session-id": "test-session",
+      "x-rally-session-id": sessionId,
       "x-rally-socket-ticket-id": "3f1b0f4a-59cb-4f5f-8d1e-6d3e5a2a9c11",
       "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) - 1),
     },

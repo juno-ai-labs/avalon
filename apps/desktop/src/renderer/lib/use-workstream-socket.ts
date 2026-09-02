@@ -34,6 +34,7 @@ import {
   REALTIME_SOCKET_CONNECTING,
   REALTIME_SOCKET_OPEN,
   type RealtimeSocket,
+  type RealtimeSocketHandshakePhaseEvent,
 } from './realtime-socket';
 import { advanceStreamReveal, applyRevealedText, flushStreamReveal } from './streaming-reveal';
 import {
@@ -1547,7 +1548,12 @@ export function useWorkstreamSocket(
       // the person waited for. `ticketId` is what the server's upgrade and room
       // spans carry as `rally.socket.ticket_id`, and the request id joins the
       // ticket call itself. Replaced per attempt: a reconnect is a new open.
-      const trace = startPerfTrace('workstream_open', { workstreamId });
+      const openingAttemptId = workstreamFeedOpenAttemptId(workstreamId);
+      const trace = startPerfTrace('workstream_open', {
+        workstreamId,
+        ...(openingAttemptId ? { operationId: openingAttemptId } : {}),
+        report: openingAttemptId !== undefined,
+      });
       openTrace?.end({ outcome: 'superseded' });
       openTrace = trace;
       reportWorkstreamSocketStarted(
@@ -1557,7 +1563,7 @@ export function useWorkstreamSocket(
         attempts.current === 0 ? initialReasonRef.current : 'reconnect',
         attempts.current,
         trace.traceId,
-        workstreamFeedOpenAttemptId(workstreamId),
+        openingAttemptId,
       );
       trace.annotate({
         attempt: attempts.current,
@@ -1574,7 +1580,12 @@ export function useWorkstreamSocket(
         // lint rule recognizes a ticket only when the awaited call is the
         // declarator's own initializer, and a `mark` on the next line closes
         // exactly the same span.
-        const socketTicket = await api.getSocketTicket(workstreamId, '0', trace.traceId);
+        const socketTicket = await api.getSocketTicket(
+          workstreamId,
+          '0',
+          trace.traceId,
+          resumeState.lastSequence,
+        );
         trace.mark('socket_ticket');
         trace.annotate({ ticketId: socketTicket.ticketId ?? null });
         if (closedByEffect) {
@@ -1597,6 +1608,26 @@ export function useWorkstreamSocket(
         // slow server either way.
         trace.mark('dial');
         socket = nextSocket;
+        let failedRouteCount = 0;
+        nextSocket.addEventListener('handshakephase', (
+          phaseEvent: RealtimeSocketHandshakePhaseEvent,
+        ) => {
+          if (closedByEffect || socket !== nextSocket) return;
+          const annotation = {
+            proxy_resolution: 'pacResolutionMs',
+            dns: 'dnsMs',
+            tcp: 'tcpMs',
+            tls: 'tlsMs',
+            edge_upgrade: 'edgeUpgradeMs',
+            proxy_connect_tls_edge: 'proxyHandshakeMs',
+            route_failed: null,
+          }[phaseEvent.phase];
+          if (annotation) trace.annotate({ [annotation]: phaseEvent.durationMs });
+          if (phaseEvent.phase === 'route_failed') {
+            failedRouteCount += 1;
+            trace.annotate({ failedRouteCount });
+          }
+        });
         nextSocket.addEventListener('open', () => {
           if (closedByEffect || socket !== nextSocket) return;
           // Before the stability timer resets the counter: the depth this
@@ -1611,11 +1642,13 @@ export function useWorkstreamSocket(
           // that answer and paid two REST round trips to arrive at the same
           // place.
           snapshotRequestInFlight = false;
-          nextSocket.send(JSON.stringify({
-            type: 'subscribe',
-            afterSequence: resumeState.lastSequence,
-            publishPresence: false,
-          }));
+          if (!socketTicket.subscriptionBootstrap) {
+            nextSocket.send(JSON.stringify({
+              type: 'subscribe',
+              afterSequence: resumeState.lastSequence,
+              publishPresence: false,
+            }));
+          }
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
         });

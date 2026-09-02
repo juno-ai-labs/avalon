@@ -297,6 +297,12 @@ history is repaired by the subscription snapshot itself. A first ticket or
 handshake failure exposes that Retry action as soon
 as the socket enters
 `reconnecting`; no guessed fallback timeout is part of the measurement.
+Current feed tickets carry the signed resume cursor, so socket acceptance and
+the first subscription normally share one Durable Object invocation. Older
+client/server combinations retain the explicit subscribe frame as a rolling
+deployment fallback. `durable_object.runtime_recovery` measures lease repair
+and alarm re-arming separately from schema/repository readiness, so a cold wake
+does not hide recovery work inside socket acceptance.
 
 **`workstream_message_send`** — the desktop sends over the workspace command
 socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
@@ -323,13 +329,17 @@ and of a terminal until a reader opens the Verbose level. That is what lets it
 stay on in every build rather than behind a preference nobody had enabled when
 the slow open happened.
 
-Each completed flow also emits `renderer_perf_flow` through the typed renderer
+Each click-scoped completed flow also emits `renderer_perf_flow` through the typed renderer
 intent, validated main-process IPC, and regional telemetry spool. This is a
 closed diagnostic projection, not console forwarding: it carries exact total,
 phase, blocked, and effect-to-first-request milliseconds; a closed
 flow/outcome vocabulary; bounded structural counts; and the work-stream,
 ticket, client-message, and operation identifiers needed to join the backend
-work. Message sends keep the UUIDv4 client-message identifier separate from the
+work. Speculative hover and retained background socket attempts still print a
+local flow but are not uploaded as opening samples. Direct Electron routes add
+PAC, DNS, TCP, TLS, and edge-upgrade milliseconds; proxied routes add one
+CONNECT/TLS/edge aggregate plus failed-route count because the inner tunnel
+phases are not observable truthfully. Message sends keep the UUIDv4 client-message identifier separate from the
 UUIDv7 operation identifier required by the telemetry envelope. Raw console
 fields such as cursors and close codes are omitted, as are URLs, errors,
 messages, attachment names, and arbitrary annotations. Product analytics
@@ -548,6 +558,9 @@ For a cold Durable Object tail, find the automatic binding span and inspect its
 `durable_object.schema_migrate` child. Workers Logs can aggregate the matching
 `durable_object_initialization` and `durable_object_schema_migration` rows by
 `class_name`, `status`, and `duration_ms` even when a sampled trace is absent.
+Inspect `durable_object.runtime_recovery` independently: it is intentionally
+off the socket's storage-readiness gate even though it begins during the same
+activation.
 
 To find the pattern rather than the instance, filter `event = perf_flow` with
 `flow = <name>` and `duration_ms >` a threshold, and group by `slowest_step`.
@@ -614,6 +627,31 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-09-01 — Opening samples are click-scoped and cold wake recovery is named
+
+**What changed:** Background and speculative socket flows remain local while
+only a pending opening attempt exports `renderer_perf_flow`. Direct Node
+handshakes now expose PAC, DNS, TCP, TLS, and edge-upgrade phases; proxy attempts
+use one aggregate. Substream activation records runtime lease/alarm recovery in
+its own Durable Object phase, and signed-ticket bootstrap joins accept with the
+initial subscription.
+
+**Why:** The prior 72-hour distribution contained multi-minute retained-socket
+lifetimes under the same event used to diagnose 5–15 second clicks. It was not a
+product-open distribution. The remaining large handshake and object-wake blocks
+also needed boundaries that correspond to work the implementation can change.
+
+**Considered and rejected:** Filtering implausible totals at query time leaves
+unknown background samples in lower percentiles. Guessing proxy subphases makes
+false attribution. Moving runtime recovery after all requests would risk agent
+lease correctness; it remains scheduled immediately but no longer blocks socket
+storage readiness.
+
+**Consequences:** Historical `renderer_perf_flow` data before this change must
+not be compared directly with the new click-only cohort. Feed-visible and
+send-ready remain the authoritative total. Operators should compare direct and
+proxied routes separately and join ticket/connection IDs into server phases.
 
 ### 2026-08-26 — Work-stream open includes both transcript islands and usable composer
 
