@@ -41,6 +41,7 @@ import {
 } from '@rally/contracts';
 
 import { Button, DropdownSelect, IconButton, InlineError, Modal } from './primitives';
+import { SidebarSkeletonRows } from './sidebar-skeleton';
 import type { WorkstreamSummary } from '../lib/types';
 
 const PROJECT_ICONS: Record<ProjectIconKey, LucideIcon> = {
@@ -231,7 +232,10 @@ export function ProjectSidebarSection({
           </IconButton>
         </div>
         {loading && projects.length === 0 ? (
-          <p className="sidebar-empty">Loading projects…</p>
+          // The same placeholder rows the lists below use. Projects arrive on
+          // the same answer they do, so a line of prose here read as a third
+          // kind of wait next to two sections already showing their shape.
+          <SidebarSkeletonRows count={3} />
         ) : projects.length === 0 ? (
           <p className="sidebar-empty">{inactiveProjects.length > 0 ? 'No active projects' : 'No projects yet'}</p>
         ) : (
