@@ -754,6 +754,22 @@ describe('message header meta typography', () => {
     expect(rule('.message-block > header')).toContain('align-items: center');
     expect(rule('.message-block > header > *')).toContain('line-height: 1');
   });
+
+  /**
+   * The identity line over a person's turn stops where the bubble's top edge
+   * does, so the name and time sit over the flat of the pill rather than over
+   * the round of its corner. That is one number in two rules, and a literal
+   * copied into either drifts the first time the corner is tuned — a few pixels
+   * on one line, which is exactly what a screenshot pass looks past.
+   */
+  it('insets the human identity line by the bubble corner it is named once for', () => {
+    const block = rule(':is(.workstream-screen, .automation-chat-surface) .human-message');
+    expect(block).toContain('--turn-bubble-radius:');
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message-bubble'))
+      .toContain('border-radius: var(--turn-bubble-radius);');
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .human-message > header'))
+      .toContain('padding-inline-end: var(--turn-bubble-radius);');
+  });
 });
 
 describe('inspector resource document chrome', () => {

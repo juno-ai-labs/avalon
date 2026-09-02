@@ -1895,7 +1895,9 @@ export function MessageBlock({
           )}
           id={`message-${message.id}`}
         >
-          {!ownHumanResponse && <header><span aria-hidden="true" className="message-author-dot" /><span className="message-author">{responseAuthor}</span><time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time></header>}
+          {/* The same identity line every human turn carries, the reader's own
+              included — see the header on the ordinary authored row below. */}
+          <header><span aria-hidden="true" className="message-author-dot" /><span className="message-author">{responseAuthor}</span><time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time></header>
           <div className="human-message-content">
             <ElicitationPanel
               elicitation={message.elicitation}
@@ -1981,29 +1983,22 @@ export function MessageBlock({
       id={`message-${message.id}`}
       style={human ? { '--person-accent': personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id) } as React.CSSProperties : undefined}
     >
-      {/* Your own turn carries no identity line — you know who you are. A
-          context label is the exception, and the reason the header renders at
-          all here: a suggested-work brief is attributed to the person who
-          selected it but written by Rally, so the line saying where the words
-          came from is the only thing standing between them and a turn they do
-          not remember typing. The name stays suppressed; only the label and the
-          time appear. */}
-      {(!human || !ownHumanMessage || message.contextLabel) && (
-        <header>
-          {!ownHumanMessage && (
-            <>
-              {human && <span aria-hidden="true" className="message-author-dot" />}
-              <span className="message-author">
-                {human ? humanAuthorName : automation ? 'Automation' : 'Rally'}
-              </span>
-            </>
-          )}
-          {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
-          <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
-          {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
-          {!human && collapseHeadings && <MarkdownCollapseAllButton />}
-        </header>
-      )}
+      {/* One identity line for every turn in the feed, the reader's own
+          included. A person reading back a long transcript is reading a room,
+          not a private thread: whose words these are and when they were said is
+          the same question about their own turn as about anybody else's, and a
+          turn that answers it only for other people makes the reader's own
+          messages the one thing on screen with no time against it. */}
+      <header>
+        {human && <span aria-hidden="true" className="message-author-dot" />}
+        <span className="message-author">
+          {human ? humanAuthorName : automation ? 'Automation' : 'Rally'}
+        </span>
+        {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
+        <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
+        {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
+        {!human && collapseHeadings && <MarkdownCollapseAllButton />}
+      </header>
       {human ? (
         <div className="human-message-content">
           {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
