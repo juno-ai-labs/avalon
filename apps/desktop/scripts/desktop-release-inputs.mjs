@@ -1,4 +1,4 @@
-import { access, readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,13 +19,18 @@ export const FIXED_DESKTOP_RELEASE_INPUTS = Object.freeze([
   '.github/workflows/release-desktop-macos.yml',
 ]);
 
-async function filesBelow(directory) {
+const ignoredDesktopDirectories = new Set(['coverage', 'dist', 'node_modules', 'out']);
+
+async function filesBelow(directory, ignoredDirectories = new Set()) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await filesBelow(path));
-    else files.push(path);
+    if (entry.isDirectory()) {
+      if (!ignoredDirectories.has(entry.name)) files.push(...await filesBelow(path, ignoredDirectories));
+      continue;
+    }
+    files.push(path);
   }
   return files;
 }
@@ -49,20 +54,23 @@ async function moduleSpecifiers(path) {
   return [...specifiers];
 }
 
-async function firstReadable(paths) {
+async function firstFile(paths) {
   for (const path of paths) {
     try {
-      await access(path);
-      return path;
+      if ((await stat(path)).isFile()) return path;
     } catch { /* Try the next TypeScript module-resolution shape. */ }
   }
   return null;
 }
 
-async function resolveContractImport(importer, specifier) {
+export async function resolveContractImport(importer, specifier) {
   const unresolved = resolve(dirname(importer), specifier);
-  const path = await firstReadable([
+  const jsExtension = specifier.match(/\.(?<extension>[cm]?)js$/u)?.groups?.extension;
+  const sourceExtension = jsExtension === undefined ? null : `${jsExtension}ts`;
+  const withoutJsExtension = sourceExtension === null ? null : unresolved.slice(0, -(`.${jsExtension}js`.length));
+  const path = await firstFile([
     unresolved,
+    ...(withoutJsExtension ? [`${withoutJsExtension}.${sourceExtension}`] : []),
     `${unresolved}.ts`,
     `${unresolved}.tsx`,
     `${unresolved}.mts`,
@@ -74,20 +82,30 @@ async function resolveContractImport(importer, specifier) {
   return path;
 }
 
+export function resolveContractPackageImport(packageJson, specifier) {
+  if (specifier !== '@rally/contracts' && !specifier.startsWith('@rally/contracts/')) return null;
+  const exportKey = specifier === '@rally/contracts'
+    ? '.'
+    : `./${specifier.slice('@rally/contracts/'.length)}`;
+  const target = packageJson.exports[exportKey];
+  if (typeof target !== 'string') throw new Error(`Desktop contract import ${specifier} is absent from package exports`);
+  return resolve(contractDirectory, target);
+}
+
+export async function resolveContractSpecifier(importer, specifier, packageJson) {
+  if (specifier.startsWith('.')) return resolveContractImport(importer, specifier);
+  return resolveContractPackageImport(packageJson, specifier);
+}
+
 export async function desktopContractSourceClosure() {
   const packageJson = JSON.parse(await readFile(join(contractDirectory, 'package.json'), 'utf8'));
   const entryPoints = new Set();
 
-  for (const path of await filesBelow(join(desktopDirectory, 'src'))) {
+  for (const path of await filesBelow(desktopDirectory, ignoredDesktopDirectories)) {
     if (!/\.[cm]?[jt]sx?$/u.test(path) || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path)) continue;
     for (const specifier of await moduleSpecifiers(path)) {
-      if (specifier !== '@rally/contracts' && !specifier.startsWith('@rally/contracts/')) continue;
-      const exportKey = specifier === '@rally/contracts'
-        ? '.'
-        : `./${specifier.slice('@rally/contracts/'.length)}`;
-      const target = packageJson.exports[exportKey];
-      if (typeof target !== 'string') throw new Error(`Desktop contract import ${specifier} is absent from package exports`);
-      entryPoints.add(resolve(contractDirectory, target));
+      const entryPoint = resolveContractPackageImport(packageJson, specifier);
+      if (entryPoint) entryPoints.add(entryPoint);
     }
   }
 
@@ -98,8 +116,8 @@ export async function desktopContractSourceClosure() {
     if (closure.has(path)) continue;
     closure.add(path);
     for (const specifier of await moduleSpecifiers(path)) {
-      if (!specifier.startsWith('.')) continue;
-      const imported = await resolveContractImport(path, specifier);
+      const imported = await resolveContractSpecifier(path, specifier, packageJson);
+      if (!imported) continue;
       if (!closure.has(imported)) pending.push(imported);
     }
   }
@@ -110,6 +128,7 @@ export async function desktopContractSourceClosure() {
 }
 
 function matchesFixedInput(path) {
+  // Git emits repository-relative names with `/` even when this runs on Windows.
   return FIXED_DESKTOP_RELEASE_INPUTS.some((pattern) => (pattern.endsWith('/**')
     ? path.startsWith(pattern.slice(0, -2))
     : path === pattern));
