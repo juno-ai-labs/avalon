@@ -135,11 +135,10 @@ machine, and are drawn as one **Computer** row. The
 its canonical id maps it to Tabler's dedicated **image-generation** glyph rather
 than the generic plug, and `rally:automations` keeps its own **Automations** row
 the same way, drawing Tabler's **keyframes** glyph. A first-party plugin that is
-absent from that map *and*
-has no display name of its own — which is how an undecided one appears, since
-the transcript falls back to the raw id as its label — joins Rally, so an
-internal identifier never reaches the feed. Every other plugin keeps its own
-row.
+absent from that map *and* has no display name of its own — which is how an
+undecided one appears, since the transcript falls back to the raw id as its
+label — joins Rally, so an internal identifier never reaches the feed. Every
+other plugin keeps its own row.
 
 A connector's row is keyed on its **display name**, not its id. Two connections
 to the same service are one place as far as a reader is concerned, and the name
