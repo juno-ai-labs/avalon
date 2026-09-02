@@ -163,6 +163,26 @@ export function artifactIsolateId(artifactId: string, version: number): string {
 const ARTIFACT_HOST_SUFFIX = { global: "-g", eu: "-eu" } as const;
 
 /**
+ * The public, non-authoritative label one artifact origin carries.
+ *
+ * It uses the same frozen four-word vocabulary as work-stream addresses and
+ * resource aliases. The regional allocator reserves it before publication;
+ * this parser only establishes the wire shape.
+ */
+export const ArtifactHostnameStubSchema = z.string()
+  .regex(/^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u)
+  .brand<"ArtifactHostnameStub">();
+export type ArtifactHostnameStub = z.infer<typeof ArtifactHostnameStubSchema>;
+
+export const ArtifactHostnameRouteSchema = z.strictObject({
+  version: z.literal(1),
+  hostnameStub: ArtifactHostnameStubSchema,
+  artifactId: ArtifactIdSchema,
+  region: z.enum(["global", "eu"]),
+});
+export type ArtifactHostnameRoute = z.infer<typeof ArtifactHostnameRouteSchema>;
+
+/**
  * The artifact's hostname label, and the whole of its address.
  *
  * **The region rides inside the label rather than as its own dotted segment.**
@@ -172,21 +192,21 @@ const ARTIFACT_HOST_SUFFIX = { global: "-g", eu: "-eu" } as const;
  * Advanced Certificate Manager was bought and configured. Flattening keeps one
  * wildcard per zone and costs nothing recurring.
  *
- * The label is the artifact's own id, which is what lets the serving Worker
- * reach the right supervisor object with nothing but a `Host` header and no
- * database: it parses the id back out and names the object from it. A UUID is
- * region-wide unique by construction, so nothing has to allocate or guarantee
- * that separately.
+ * The label is a permanently reserved, human-readable stub. The serving Worker
+ * resolves it through the content-free platform D1 database to the artifact UUID, which
+ * remains the supervisor object's identity. Legacy UUID labels keep parsing so
+ * existing bookmarks remain valid while newly opened artifacts use the stub.
  */
-export function artifactHostLabel(artifactId: string, region: "global" | "eu"): string {
-  return `${artifactId}${ARTIFACT_HOST_SUFFIX[region]}`;
+export function artifactHostLabel(hostnameStub: ArtifactHostnameStub, region: "global" | "eu"): string {
+  return `${hostnameStub}${ARTIFACT_HOST_SUFFIX[region]}`;
 }
 
-export function artifactOrigin(artifactId: string, region: "global" | "eu", domain: string): string {
-  return `https://${artifactHostLabel(artifactId, region)}.${domain}`;
+export function artifactOrigin(hostnameStub: ArtifactHostnameStub, region: "global" | "eu", domain: string): string {
+  return `https://${artifactHostLabel(hostnameStub, region)}.${domain}`;
 }
 
-const HOST_LABEL_PATTERN
+const STUB_HOST_LABEL_PATTERN = /^([a-z]+-[a-z]+-[a-z]+-[a-z]+)-(g|eu)$/u;
+const LEGACY_HOST_LABEL_PATTERN
   = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(g|eu)$/u;
 
 /**
@@ -199,9 +219,29 @@ const HOST_LABEL_PATTERN
  */
 export function parseArtifactHost(
   host: string,
-): { artifactId: string; region: "global" | "eu" } | null {
+): {
+  hostnameStub: ArtifactHostnameStub | null;
+  legacyArtifactId: string | null;
+  region: "global" | "eu";
+} | null {
   const label = host.trim().toLowerCase().split(":")[0]?.split(".")[0] ?? "";
-  const matched = HOST_LABEL_PATTERN.exec(label);
-  if (!matched?.[1] || !matched[2]) return null;
-  return { artifactId: matched[1], region: matched[2] === "eu" ? "eu" : "global" };
+  const stub = STUB_HOST_LABEL_PATTERN.exec(label);
+  if (stub?.[1] && stub[2]) {
+    const hostnameStub = ArtifactHostnameStubSchema.safeParse(stub[1]);
+    if (!hostnameStub.success) return null;
+    return {
+      hostnameStub: hostnameStub.data,
+      legacyArtifactId: null,
+      region: stub[2] === "eu" ? "eu" : "global",
+    };
+  }
+  const legacy = LEGACY_HOST_LABEL_PATTERN.exec(label);
+  if (!legacy?.[1] || !legacy[2]) return null;
+  const artifactId = ArtifactIdSchema.safeParse(legacy[1]);
+  if (!artifactId.success) return null;
+  return {
+    hostnameStub: null,
+    legacyArtifactId: artifactId.data,
+    region: legacy[2] === "eu" ? "eu" : "global",
+  };
 }

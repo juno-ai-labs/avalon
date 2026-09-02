@@ -1,5 +1,8 @@
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
+import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
@@ -36,6 +39,7 @@ const I = "10000000-0000-4000-8000-000000000005";
 // intent, which is exactly what the per-call identity could not recognize.
 const I2 = "10000000-0000-4000-8000-000000000007";
 const RESOURCE = "10000000-0000-4000-8000-000000000006";
+const ARTIFACT = "10000000-0000-4000-8000-000000000008";
 
 const context: HarnessToolContext = {
   workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "resource-call",
@@ -72,6 +76,16 @@ function fixture(
   // and capture lives in WorkspaceDO's triggers — so the fixture takes them
   // from the ledger rather than publishing into a table that has no history.
   applyWorkspaceResourceSchema(database, W);
+  const platformDatabase = new DatabaseSync(":memory:");
+  openDatabases.push(platformDatabase);
+  platformDatabase.exec(readFileSync(fileURLToPath(new URL(
+    "../../../packages/db/platform-migrations/0001_artifact_hostname_routes.sql",
+    import.meta.url,
+  )), "utf8"));
+  platformDatabase.exec(readFileSync(fileURLToPath(new URL(
+    "../../../packages/db/platform-migrations/0002_minimize_artifact_hostname_routes.sql",
+    import.meta.url,
+  )), "utf8"));
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
@@ -116,7 +130,8 @@ function fixture(
     delete: vi.fn(async (key: string) => { objects.delete(key); }),
   });
   const baseEnv = createTestEnv({
-    DB: workspaceDatabase(database), PAYLOADS: bucket, AVALON_REGION: "global", APP_ENV: "test",
+    DB: workspaceDatabase(database), PLATFORM_DB: sqliteD1(platformDatabase),
+    PAYLOADS: bucket, AVALON_REGION: "global", APP_ENV: "test",
     MAX_ATTACHMENT_BYTES: "25000000",
     // The reaper's decisions are typed WorkspaceDO methods now. They run the
     // object's own storage functions over this fixture's database, because a
@@ -185,6 +200,47 @@ function fixture(
 }
 
 describe("Terminal resource bridge", () => {
+  it("reserves a site's hostname before a republish mutates its resource row", async () => {
+    const state = fixture();
+    const originalDigest = "a".repeat(64);
+    state.database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+          content_ref, content_sha256, metadata_json, attachment_status, model_content_status,
+          created_at, updated_at)
+       VALUES (?, ?, 'generated_site', 'avalon_generated', ?, 'Site',
+               'application/vnd.rally.site-manifest+json', 'old-manifest', ?, '{}',
+               'attached', 'unsupported', '2026-08-13', '2026-08-13')`,
+    ).run(RESOURCE, W, `terminal:${S}:site`, originalDigest);
+    state.database.prepare(
+      `INSERT INTO artifact_registry
+         (artifact_id, workspace_id, workstream_id, resource_id, mode, stateful,
+          current_version, manifest_ref, hostname_stub, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'static', 0, 1, 'old-manifest', NULL, 1, 1)`,
+    ).run(ARTIFACT, W, S, RESOURCE);
+    state.env.PLATFORM_DB = createTestD1Database({
+      prepare: () => { throw new Error("platform unavailable"); },
+    });
+
+    await expect(state.bridge.publishSiteResource(context, { filePath: "site" }, {
+      mode: "static",
+      stateful: false,
+      files: [{
+        path: "index.html",
+        bytes: new TextEncoder().encode("<h1>new</h1>"),
+        sha256: "b".repeat(64),
+      }],
+      serverModuleSha256: null,
+    })).rejects.toThrow("platform unavailable");
+
+    expect(state.database.prepare(
+      "SELECT content_sha256 FROM resources WHERE id = ?",
+    ).get(RESOURCE)).toEqual({ content_sha256: originalDigest });
+    expect(state.database.prepare(
+      "SELECT current_version, hostname_stub FROM artifact_registry WHERE artifact_id = ?",
+    ).get(ARTIFACT)).toEqual({ current_version: 1, hostname_stub: null });
+  });
+
   it("imports only a currently visible resource and verifies its stored hash", async () => {
     const { database, objectStore, objects, provider, bridge } = fixture();
     const bytes = new TextEncoder().encode("attached data\n");

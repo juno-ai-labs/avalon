@@ -41,6 +41,8 @@ export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
 
 export interface Env {
   DB: D1Database;
+  /** Shared, content-free routing authority available to both product regions. */
+  PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
   TELEMETRY_PAYLOADS: R2Bucket;
   /** One globally replicated cache shared by the Global and EU Workers. */
@@ -326,6 +328,7 @@ const numericString = z.string().regex(/^\d+$/u, "must be a base-10 integer");
 
 const EnvContractSchema = z.object({
   DB: binding<D1Database>(),
+  PLATFORM_DB: binding<D1Database>(),
   PAYLOADS: binding<R2Bucket>(),
   TELEMETRY_PAYLOADS: binding<R2Bucket>(),
   INFERENCE_PRICING_CACHE: binding<KVNamespace>(),

@@ -1,5 +1,6 @@
 import {
   AttachmentKindSchema,
+  type ArtifactHostnameStub,
   SITE_MANIFEST_MIME_TYPE,
   artifactOrigin,
   classifyAttachmentKind,
@@ -17,6 +18,7 @@ import {
 } from "../workstream-object-client";
 import { createResourceObjectPort } from "../../runtime/resource-port";
 import { allocateResourceSlugBesideCreation } from "../resource-slug";
+import { ensureArtifactHostname } from "../artifact-hostname";
 import { putStagedResourceObject, releaseStagedResourceObject } from "../resource-object-cleanup";
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
 import type { TerminalPortFactory } from "./object-port";
@@ -687,6 +689,16 @@ export function createTerminalResourceBridge(
       if (settled && previous && settled.content_sha256 === contentDigest) {
         // Equal content covers both a crash-replay of a settled call and a
         // republish that changed nothing.
+        const hostnameStub = previous.hostnameStub ?? await ensureArtifactHostname(env, {
+          workspaceId: context.workspaceId,
+          artifactId: previous.artifactId,
+        });
+        if (previous.hostnameStub === null) {
+          await workspace.prepare(
+            `UPDATE artifact_registry SET hostname_stub = ?
+              WHERE workspace_id = ? AND artifact_id = ? AND hostname_stub IS NULL`,
+          ).bind(hostnameStub, context.workspaceId, previous.artifactId).run();
+        }
         return siteOutput(env, settled, {
           artifactId: previous.artifactId,
           version: previous.version,
@@ -695,6 +707,7 @@ export function createTerminalResourceBridge(
           fileCount: site.files.length,
           totalBytes: site.files.reduce((total, file) => total + file.bytes.byteLength, 0),
           manifestSha256: settled.content_sha256 ?? "",
+          hostnameStub,
           slug: await resourceSlug(workspace, context.workspaceId, settled.id),
         });
       }
@@ -713,7 +726,14 @@ export function createTerminalResourceBridge(
         files: site.files,
         serverModuleSha256: site.serverModuleSha256,
       });
-
+      // Reserve the stable public origin before mutating the reusable resource
+      // row. If D1 is unavailable after the swap, a retry sees equal content
+      // and would otherwise return the previous registry version without ever
+      // registering or pointing at the bytes just written.
+      const hostnameStub = previous?.hostnameStub ?? await ensureArtifactHostname(env, {
+        workspaceId: context.workspaceId,
+        artifactId: written.artifactId,
+      });
       const timestamp = nowIso();
       const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const metadata = JSON.stringify({
@@ -782,6 +802,7 @@ export function createTerminalResourceBridge(
 
       await registerArtifact(workspace, {
         artifactId: written.artifactId,
+        hostnameStub,
         workspaceId: context.workspaceId,
         workstreamId: context.workstreamId,
         resourceId,
@@ -815,6 +836,7 @@ export function createTerminalResourceBridge(
         fileCount: site.files.length,
         totalBytes: written.manifest.totalBytes,
         manifestSha256: written.manifestSha256,
+        hostnameStub,
         slug: await resourceSlug(workspace, context.workspaceId, resourceId),
       });
     },
@@ -848,6 +870,7 @@ function siteOutput(
     fileCount: number;
     totalBytes: number;
     manifestSha256: string;
+    hostnameStub: ArtifactHostnameStub;
     slug: string | null;
   },
 ): TerminalPublishedSiteOutput {
@@ -861,7 +884,7 @@ function siteOutput(
     slug: site.slug,
     // The model's next step is citing the artifact, so the URL is in the
     // result rather than something it has to derive from an id.
-    url: artifactOrigin(site.artifactId, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN),
+    url: artifactOrigin(site.hostnameStub, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN),
     mode: site.mode,
     stateful: site.stateful,
     version: site.version,

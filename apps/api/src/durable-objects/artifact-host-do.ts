@@ -7,14 +7,14 @@
  * storage class as a Durable Object **facet** with its own isolated SQLite
  * database.
  *
- * **It is addressed by the artifact id its hostname carries, and that is what
- * makes serving possible at all.** The artifact serving Worker holds no D1, so
- * given nothing but `Host: <artifact-id>-<region>.rallyusercontent.com` it has
- * to reach the right object without a lookup. The id *is* the label, so the
- * Worker parses it out and names this object from it — no index, no directory
- * hop, no per-request database read before the first byte. Everything else the
- * request needs (which work stream, which version, which bucket prefix) comes
- * from this object once it is addressed.
+ * **It remains addressed by artifact UUID, even though the public hostname is
+ * readable.** The serving Worker resolves
+ * `Host: <stub>-<region>.rallyusercontent.com` through the content-free shared
+ * platform D1 database, then names this object from the returned UUID. Existing
+ * UUID-named objects and their facet databases therefore keep their identity
+ * when a public stub is allocated. Everything else the request needs (which
+ * work stream, which version, which bucket prefix) comes from this object once
+ * it is addressed.
  *
  * Two authorities own facts this object does not, and it asks each rather than
  * guessing — `docs/access-revocation.md` is explicit that they must never be

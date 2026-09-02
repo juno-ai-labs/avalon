@@ -8,22 +8,25 @@
  * artifact is registered beside the resource authority, and the supervisor
  * object is pointed at the new version. Only then is the URL live.
  *
- * **The order is the contract.** Assets, then manifest, then resource row, then
- * the supervisor's pointer — each step only depends on ones that already
- * committed, so a failure anywhere leaves the artifact serving its *previous*
- * version rather than a version whose bytes a viewer cannot read. The reverse
- * order would put a pointer in front of assets that might never land, and the
- * failure would be a live URL serving 404s to everyone holding it.
+ * **The order is the contract.** Assets, then manifest, then public-hostname
+ * reservation, then resource row, then the supervisor's pointer — each step
+ * only depends on ones that already committed, so a failure anywhere leaves the
+ * artifact serving its *previous* version rather than a version whose bytes a
+ * viewer cannot read. The reverse order would put a pointer in front of assets
+ * that might never land, and moving the resource before hostname reservation
+ * would make an equal-content retry return the previous registry version.
  *
  * See `docs/live-web-artifacts.md`.
  */
 import {
+  ArtifactHostnameStubSchema,
   SITE_MANIFEST_MIME_TYPE,
   artifactAssetKey,
   artifactManifestKey,
   asArtifactId,
   type ArtifactManifest,
   type ArtifactMode,
+  type ArtifactHostnameStub,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 
@@ -151,8 +154,8 @@ export async function writeArtifactVersion(
  *
  * The placement affinity is read here and passed down because this is the
  * artifact object's **first** lookup — Cloudflare honours a location hint only
- * then, and the serving Worker that makes every later call holds no D1 to
- * derive one from. Skipping it would mint artifact objects a continent away
+ * then, and the serving Worker holds only platform D1—not the regional
+ * workspace routing row needed to derive one. Skipping it would mint artifact objects a continent away
  * from the work streams they check visibility against.
  */
 export async function pointArtifactAtVersion(
@@ -186,17 +189,15 @@ export async function pointArtifactAtVersion(
 /**
  * Record the artifact beside the resource authority, or advance its version.
  *
- * A per-workspace index for listing, the revocation fan-out, and cleanup — and
- * deliberately **not** a uniqueness authority. It could not be one: this
- * database is per workspace, so a `UNIQUE` on the hostname here would be unique
- * per workspace and two workspaces could claim the same host. Region-wide
- * uniqueness comes from the artifact id being a UUID, which is also the
- * hostname label.
+ * A per-workspace index for listing, the revocation fan-out, and cleanup. The
+ * shared platform D1 `artifact_hostname_routes` table reserves the public stub; this
+ * row records the already-reserved value beside the resource authority.
  */
 export async function registerArtifact(
   workspace: D1Database,
   input: {
     artifactId: string;
+    hostnameStub: ArtifactHostnameStub;
     workspaceId: string;
     workstreamId: string;
     resourceId: string;
@@ -210,13 +211,14 @@ export async function registerArtifact(
   await workspace.prepare(
     `INSERT INTO artifact_registry (
        artifact_id, workspace_id, workstream_id, resource_id, mode, stateful,
-       current_version, manifest_ref, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       current_version, manifest_ref, hostname_stub, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(artifact_id) DO UPDATE SET
        mode = excluded.mode,
        stateful = excluded.stateful,
        current_version = excluded.current_version,
        manifest_ref = excluded.manifest_ref,
+       hostname_stub = excluded.hostname_stub,
        updated_at = excluded.updated_at`,
   ).bind(
     input.artifactId,
@@ -227,6 +229,7 @@ export async function registerArtifact(
     input.stateful ? 1 : 0,
     input.version,
     input.manifestRef,
+    input.hostnameStub,
     now,
     now,
   ).run();
@@ -237,19 +240,28 @@ export async function existingArtifactForResource(
   workspace: D1Database,
   workspaceId: string,
   resourceId: string,
-): Promise<{ artifactId: string; version: number; mode: ArtifactMode } | null> {
+): Promise<{
+  artifactId: string;
+  version: number;
+  mode: ArtifactMode;
+  hostnameStub: ArtifactHostnameStub | null;
+} | null> {
   const row = await workspace.prepare(
-    `SELECT artifact_id, current_version, mode FROM artifact_registry
+    `SELECT artifact_id, current_version, mode, hostname_stub FROM artifact_registry
       WHERE workspace_id = ? AND resource_id = ?`,
   ).bind(workspaceId, resourceId).first<{
     artifact_id: string;
     current_version: number;
     mode: string;
+    hostname_stub: string | null;
   }>();
   if (!row) return null;
   return {
     artifactId: row.artifact_id,
     version: row.current_version,
     mode: row.mode === "active" ? "active" : "static",
+    hostnameStub: row.hostname_stub === null
+      ? null
+      : ArtifactHostnameStubSchema.parse(row.hostname_stub),
   };
 }

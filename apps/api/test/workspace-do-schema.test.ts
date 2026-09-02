@@ -23,6 +23,8 @@ const RESOURCE_SLUG_VERSION = 19;
 const DRAFT_RESERVATION_VERSION = 20;
 const RESOURCE_PUBLICATION_FENCE_VERSION = 21;
 const OPENROUTER_MEMORY_EMBEDDING_VERSION = 23;
+const ARTIFACT_REGISTRY_VERSION = 28;
+const ARTIFACT_HOSTNAME_VERSION = 29;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -720,5 +722,48 @@ describe("the WorkspaceDO memory-embedding migration", () => {
       { memory_item_id: "invalidated", status: "completed", attempt_count: 1, completed_at: "2026-08-27T00:00:01.000Z" },
     ]);
     expect(bootstrapEntries(database)).toHaveLength(1);
+  });
+});
+
+describe("the WorkspaceDO artifact-hostname migration", () => {
+  it("keeps old artifacts nullable, then freezes a valid four-word stub", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, ARTIFACT_REGISTRY_VERSION);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
+       VALUES ('resource-1', ?, 'generated_site', 'avalon_generated', 'Site', '{}',
+               '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')`,
+    ).run(WORKSPACE_ID);
+    database.prepare(
+      `INSERT INTO artifact_registry
+         (artifact_id, workspace_id, workstream_id, resource_id, mode, stateful,
+          current_version, manifest_ref, created_at, updated_at)
+       VALUES ('artifact-1', ?, 'workstream-1', 'resource-1', 'static', 0,
+               1, 'artifact/artifact-1/v1/manifest.json', 1, 1)`,
+    ).run(WORKSPACE_ID);
+
+    apply(database, ARTIFACT_HOSTNAME_VERSION, ARTIFACT_REGISTRY_VERSION);
+    expect(database.prepare(
+      "SELECT hostname_stub FROM artifact_registry WHERE artifact_id = 'artifact-1'",
+    ).get()).toEqual({ hostname_stub: null });
+
+    database.exec(
+      "UPDATE artifact_registry SET hostname_stub = 'level-luminous-sequential-schrodinger' WHERE artifact_id = 'artifact-1'",
+    );
+    expect(() => database.exec(
+      "UPDATE artifact_registry SET hostname_stub = 'another-readable-origin-stub' WHERE artifact_id = 'artifact-1'",
+    )).toThrow(/immutable/iu);
+    // SQLite's `IS NOT` is deliberately null-safe: unlike `!=`, this also
+    // rejects clearing a value that has already become the public origin.
+    expect(() => database.exec(
+      "UPDATE artifact_registry SET hostname_stub = NULL WHERE artifact_id = 'artifact-1'",
+    )).toThrow(/immutable/iu);
+    expect(() => database.exec(
+      "INSERT INTO artifact_registry (artifact_id, workspace_id, workstream_id, resource_id, mode, stateful, current_version, manifest_ref, hostname_stub, created_at, updated_at) VALUES ('artifact-2', 'wrong', 'workstream-2', 'resource-1', 'static', 0, 1, 'x', 'only-three-words', 1, 1)",
+    )).toThrow();
+    database.close();
   });
 });

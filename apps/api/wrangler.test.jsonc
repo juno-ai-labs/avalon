@@ -23,6 +23,11 @@
       "binding": "DB",
       "database_name": "avalon-do-runtime-tests",
       "database_id": "00000000-0000-0000-0000-000000000001"
+    },
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "avalon-platform-runtime-tests",
+      "database_id": "00000000-0000-0000-0000-000000000002"
     }
   ],
   // The facet proofs need a real loader: a stateful artifact's class is loaded
