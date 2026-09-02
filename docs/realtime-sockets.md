@@ -207,18 +207,23 @@ close with the panel and recover from durable checkpoints when it is opened
 again. Access revocation is not delayed: the server closes every affected
 retained socket immediately, and that socket permanently stops reconnecting.
 
-A cold feed open is bounded until the first authoritative server frame can
-populate the work-stream caches. The first attempt covers ticket issue, PAC
-resolution, handshake, subscribe, and first frame with a 10-second deadline;
-two timeout retries use 20- and 40-second deadlines. A timeout closes the
-broker-owned transport and aborts an in-flight ticket before reconnect jitter
-runs. After the third total attempt, the socket stops reconnecting and the
-opening screen shows a terminal error. Its **Try again** action starts a fresh
-three-attempt sequence while retaining the existing REST recovery path. Once a
-canonical feed frame has arrived—or route-matching detail and transcript caches
-already exist—the opening deadline is disabled; ordinary background reconnects
-remain governed by heartbeat and reconnect behavior rather than this cold-open
-limit.
+A cold feed open is bounded until route-matching detail and transcript caches
+make the work stream renderable. The first attempt covers ticket issue, PAC
+resolution, handshake, subscribe, and canonical state with a 10-second
+deadline; two timeout retries use 20- and 40-second deadlines. A cacheless open
+always subscribes from sequence zero even when its retained resume registry has
+a later cursor, because replay alone cannot reconstruct missing base caches. A
+schema-valid replay frame therefore does not finish opening; a socket snapshot
+or the existing REST resync must install both canonical caches. The resync read
+shares the active attempt's abort signal. At the deadline the client checks the
+caches once more so a concurrent **Try again** REST result can transition to
+ordinary reconnect behavior instead of being overwritten by a terminal socket
+error. Otherwise a timeout closes the broker-owned transport and aborts an
+in-flight ticket before reconnect jitter runs. After the third total attempt,
+the socket stops reconnecting and the opening screen shows a terminal error.
+Its **Try again** action starts a fresh three-attempt sequence. Once canonical
+caches exist, ordinary background reconnects remain governed by heartbeat and
+reconnect behavior rather than this cold-open limit.
 
 Opening telemetry treats the composer as send-ready only after its active
 work-stream handler is installed and the committed composer crosses a paint.
@@ -723,9 +728,12 @@ message has a second place to follow.
 
 **What changed:** Initial work-stream feed opening now has three total timed
 attempts: 10 seconds, 20 seconds, and 40 seconds. Each deadline includes the
-ticket request through the first authoritative frame, cancels both pending
-ticket and broker transport work, and the third timeout shows a terminal error.
-The error's **Try again** action starts a new bounded sequence.
+ticket request through route-matching canonical detail and transcript state,
+cancels pending ticket, REST resync, and broker transport work, and the third
+timeout shows a terminal error. Cacheless retained readers subscribe from zero,
+replay-only frames keep the deadline armed, and a canonical REST result already
+in the caches at the deadline wins. The error's **Try again** action starts a
+new bounded sequence.
 
 **Why:** A ticket, PAC lookup, handshake, subscribe, or first snapshot could
 stall without producing a close or error, leaving the product on “Opening work
@@ -740,10 +748,11 @@ same cap to a feed that has already populated caches would unnecessarily stop
 background live-update recovery.
 
 **Consequences:** A cold open can spend at most 70 seconds in timed attempts,
-plus reconnect jitter between attempts, before presenting the error. Successful
-first-frame delivery permanently removes the opening deadline for that retained
-connection. Closing during PAC resolution must complete immediately so a timed
-attempt cannot leave a main-process socket behind.
+plus reconnect jitter between attempts, before presenting the error. Canonical
+cache installation permanently removes the opening deadline for that retained
+connection; an unrelated valid feed event does not. Closing during PAC
+resolution must complete immediately so a timed attempt cannot leave a
+main-process socket behind.
 
 ### 2026-09-01 — Hover warms the complete pair and upgrade bootstraps the feed
 
