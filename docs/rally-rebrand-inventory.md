@@ -266,9 +266,10 @@ design, not by oversight.
 
 The marketing, handoff, support, legal, manifest, metadata, unfurl, and Trust
 Center surfaces now identify Rally. The public legal documents were reviewed as
-product-party copy, and their security link is named for the destination it now
-serves: the public Trust Center. Internal noindex concept studies remain in the
-tree but are not a production navigation surface.
+product-party copy and publish in one hierarchy below `/trust/`; their previous
+top-level URLs remain only as permanent compatibility redirects. Internal
+noindex concept studies remain in the tree but are not a production navigation
+surface.
 
 Mailboxes printed by the site use `@rallywith.ai`. Superseded invitation and
 notification addresses elsewhere remain governed by the retirement conditions
