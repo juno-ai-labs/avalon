@@ -113,6 +113,7 @@ describe('Ace deployment contract', () => {
     expect(deploy).toContain("ensureFlag('meeting-recording-enabled'");
     expect(deploy).toContain("ensureFlag('suggested-work-enabled'");
     expect(deploy).toContain("ensureFlag('automation-workspace-templates-enabled'");
+    expect(deploy).toContain("ensureFlag('multiple-workspaces-enabled'");
     expect(deploy).toContain('variations: { off: false, on: true }');
     for (const model of MANAGED_MODELS) {
       expect(deploy, `${model.key} is provisioned before Ace deploys`).toContain(`ensureModelFlag('${model.key}'`);
