@@ -5,12 +5,13 @@ import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
  * The glyph a plugin row draws.
  *
  * A brand draws its own mark, from `plugin-marks.ts`. The rest are the shapes
- * no company owns: the two virtual groups, multimodal generation, the public
- * web, an unbranded webhook, and the plug a connector with no mark of its own
- * falls back to.
+ * no company owns: the two virtual groups, multimodal generation, automations,
+ * the public web, an unbranded webhook, and the plug a connector with no mark
+ * of its own falls back to.
  */
 export type PluginGroupIcon =
   | PluginBrandMark
+  | 'automations'
   | 'computer'
   | 'image-generation'
   | 'plug'
@@ -88,6 +89,12 @@ const MULTIMODAL_GENERATION_GROUP: PluginGroup = {
   icon: 'image-generation',
   ...usedGroupVerbs('Multimodal generation'),
 };
+const AUTOMATIONS_GROUP: PluginGroup = {
+  key: 'name:Automations',
+  name: 'Automations',
+  icon: 'automations',
+  ...usedGroupVerbs('Automations'),
+};
 
 /**
  * The plugins a reader has no reason to tell apart.
@@ -102,6 +109,7 @@ const MULTIMODAL_GENERATION_GROUP: PluginGroup = {
  * its icon is pinned to its canonical id rather than mutable display-name text.
  */
 const GROUPED_PLUGIN_IDS = new Map<string, PluginGroup>([
+  ['rally:automations', AUTOMATIONS_GROUP],
   ['rally:core', RALLY_GROUP],
   ['rally:discovery', RALLY_GROUP],
   ['rally:memory', RALLY_GROUP],

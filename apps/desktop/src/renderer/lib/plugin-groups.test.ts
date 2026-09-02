@@ -72,6 +72,28 @@ describe('pluginGroup', () => {
     });
   });
 
+  it('pins the automations plugin to its canonical id regardless of display name', () => {
+    expect(pluginGroup('rally:automations', 'Automations')).toEqual(
+      {
+        key: 'name:Automations',
+        name: 'Automations',
+        icon: 'automations',
+        activeVerb: 'Using Automations',
+        completedVerb: 'Used Automations',
+      },
+    );
+    // The plug is what the display-name fallback would reach for; the pin is
+    // what keeps the row wearing the keyframes mark instead.
+    expect(pluginGroup('rally:automations', 'Scheduled work')).toMatchObject({
+      key: 'name:Automations',
+      icon: 'automations',
+    });
+    expect(pluginGroup('rally:automations', undefined)).toMatchObject({
+      key: 'name:Automations',
+      icon: 'automations',
+    });
+  });
+
   it('phrases Rally as the actor and every other plugin as something it used', () => {
     // Rally is the agent, so it works. A connector is a thing the agent picked
     // up, so it gets used — and only the common-noun group takes an article.
