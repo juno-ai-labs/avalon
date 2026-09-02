@@ -818,10 +818,14 @@ future agent tool or plugin, not just this family.
 **What changed:** A second harness-wide tolerance, beside numeric-string
 normalization: on a **read** tool, an optional property given `""` is dropped
 before hashing, authorization, receipt planning, or execution when its schema
-declares the empty string is not one of its values. Principle 1 above carries the rule and the
-`minLength: 1` obligation that turns it on. Every connector's cursors, ids,
-handles, and date filters now declare it, and three executors that did not
-enforce it — Linear's `after`, Granola's `cursor`, Gmail's `threadId` — do.
+declares the empty string is not one of its values, and only for the top-level
+arguments object, which is the one place requiredness can be resolved without a
+schema evaluator. Principle 1 above carries the rule and the `minLength: 1`
+obligation that turns it on. Every connector's cursors, ids, handles, and date
+filters now declare it, and the six executor parses that did not enforce what
+they declared do: Linear's `after`, Granola's `cursor` on `list_notes` and on
+`list_folders`, Gmail's `threadId`, `gmail.search`'s `query`, and
+`calendar.list_events`'s `query`.
 
 **Why:** A production run was asked to file a Linear ticket, sent
 `after: ""` on `list_teams` and `search_issues`, and got back
@@ -844,6 +848,11 @@ prevent. Tying the strip to what the schema declares is what makes it safe, and
 it is why the obligation is on the schema rather than on the normalizer's
 judgement, and applying it to writes, where `null` and absence are different
 requests and a dropped blank turns a named error into a silent partial write.
+Also rejected: treating what the walk cannot read as requiring nothing. A depth
+or visit bound, an unresolvable `$ref`, a nested value whose requiredness an
+ancestor's branches split between them, and the conditional keywords `if`,
+`then`, `else`, `dependentRequired` and `dependentSchemas` are each unproven
+rather than unrequiring, and each keeps every blank.
 Also rejected: consulting `pattern` or `format`, which needs a regex
 or format vocabulary evaluated to answer a question `minLength` answers plainly
 and which the model reads more easily. Also rejected: reading `required` off the
@@ -853,8 +862,9 @@ required blank deleted, and a hosted MCP write tool, whose arguments Rally
 forwards without a local parse, would then have run with the argument missing
 rather than refusing it.
 
-**Consequences:** The tolerance is for reads; a write's blanked argument still
-fails, by name, at its executor. A tool that wants it must also declare it:
+**Consequences:** The tolerance is for a read's top-level arguments; a write's
+blanked argument, and any blank nested inside a value, still fails by name at
+its executor. A tool that wants it must also declare it:
 adding a read parameter whose empty value is meaningless without `minLength: 1`
 leaves the blank to reach the provider, and for a cursor
 `apps/api/test/tool-argument-empty-strings.test.ts` fails until it does.
