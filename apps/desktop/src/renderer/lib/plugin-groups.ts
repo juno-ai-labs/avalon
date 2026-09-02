@@ -5,10 +5,18 @@ import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
  * The glyph a plugin row draws.
  *
  * A brand draws its own mark, from `plugin-marks.ts`. The rest are the shapes
- * no company owns: the two virtual groups, the public web, an unbranded
- * webhook, and the plug a connector with no mark of its own falls back to.
+ * no company owns: the two virtual groups, multimodal generation, the public
+ * web, an unbranded webhook, and the plug a connector with no mark of its own
+ * falls back to.
  */
-export type PluginGroupIcon = PluginBrandMark | 'computer' | 'plug' | 'rally' | 'web' | 'webhook';
+export type PluginGroupIcon =
+  | PluginBrandMark
+  | 'computer'
+  | 'image-generation'
+  | 'plug'
+  | 'rally'
+  | 'web'
+  | 'webhook';
 
 /**
  * The glyph for one of the backend's own icon names.
@@ -74,6 +82,12 @@ const COMPUTER_GROUP: PluginGroup = {
   // Computer". Every connector is a name and takes none.
   ...usedGroupVerbs('a computer'),
 };
+const MULTIMODAL_GENERATION_GROUP: PluginGroup = {
+  key: 'name:Multimodal generation',
+  name: 'Multimodal generation',
+  icon: 'image-generation',
+  ...usedGroupVerbs('Multimodal generation'),
+};
 
 /**
  * The plugins a reader has no reason to tell apart.
@@ -83,12 +97,15 @@ const COMPUTER_GROUP: PluginGroup = {
  * Terminal are both Rally operating a machine on the reader's behalf, which is
  * what "Computer" names. Everything absent from this map keeps its own row —
  * a connector is a place the reader recognizes, and collapsing Slack into
- * Rally would hide the only part of the activity they can act on.
+ * Rally would hide the only part of the activity they can act on. A first-party
+ * plugin that keeps its own row but needs a dedicated glyph also lives here, so
+ * its icon is pinned to its canonical id rather than mutable display-name text.
  */
 const GROUPED_PLUGIN_IDS = new Map<string, PluginGroup>([
   ['rally:core', RALLY_GROUP],
   ['rally:discovery', RALLY_GROUP],
   ['rally:memory', RALLY_GROUP],
+  ['rally:multimodal-generation', MULTIMODAL_GENERATION_GROUP],
   ['rally:tables', RALLY_GROUP],
   ['rally.skills', RALLY_GROUP],
   ['rally:terminal', COMPUTER_GROUP],

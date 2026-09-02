@@ -50,15 +50,26 @@ describe('pluginGroup', () => {
         completedVerb: 'Used Web',
       },
     );
+  });
+
+  it('pins multimodal generation to its canonical id regardless of display name', () => {
     expect(pluginGroup('rally:multimodal-generation', 'Multimodal generation')).toEqual(
       {
         key: 'name:Multimodal generation',
         name: 'Multimodal generation',
-        icon: 'plug',
+        icon: 'image-generation',
         activeVerb: 'Using Multimodal generation',
         completedVerb: 'Used Multimodal generation',
       },
     );
+    expect(pluginGroup('rally:multimodal-generation', 'Image generation')).toMatchObject({
+      key: 'name:Multimodal generation',
+      icon: 'image-generation',
+    });
+    expect(pluginGroup('rally:multimodal-generation', undefined)).toMatchObject({
+      key: 'name:Multimodal generation',
+      icon: 'image-generation',
+    });
   });
 
   it('phrases Rally as the actor and every other plugin as something it used', () => {
