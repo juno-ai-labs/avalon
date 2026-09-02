@@ -1,5 +1,6 @@
 import {
   appearanceModeDescriptions,
+  appearanceOf,
   familyAppearances,
   themeFamilyDescriptions,
   type ResolvedTheme,
@@ -44,7 +45,7 @@ function Miniature(): React.JSX.Element {
  */
 export function ThemePicker(): React.JSX.Element {
   const { choice, resolved } = useTheme();
-  const lighting = resolved === familyAppearances[choice.family].dark ? 'dark' : 'light';
+  const lighting = appearanceOf(resolved);
   const familyLabel = themeFamilyDescriptions.find((family) => family.id === choice.family)?.label
     ?? 'Terra';
 
