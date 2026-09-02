@@ -477,6 +477,16 @@ export function applyHarnessStatus(
  * send, and when it is not, the reader asked for that divider and the room's own
  * viewer state is what clears it.
  *
+ * **`youAreMentioned` goes with the waterline**, because the room derives it as
+ * `latest_mention_attention_ordinal > seen_attention_ordinal` rather than
+ * storing it: the write that advances the author's own seen ordinal past a
+ * mention clears the flag too. Leaving it set would defeat the point of the
+ * rule — `mentioned` outranks `unread` in `MARKER_PRECEDENCE` and puts the row
+ * in **Needs attention** — so the reader's own reply would swap one wrongly lit
+ * dot for a louder one. Unlike the manual mark this *can* be fenced honestly:
+ * it is cleared only when the arriving turn is the newest attention event this
+ * client knows of, so a mention that landed after it survives a replay.
+ *
  * `viewerUserId` is null before sign-in, when nothing is anybody's own message.
  */
 function advanceWorkstreamAttention<T extends WorkstreamSummary>(
@@ -495,12 +505,17 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   const readThroughSequenceNumber = ownTurn
     ? Math.max(workstream.readThroughSequenceNumber, message.attentionSequenceNumber)
     : workstream.readThroughSequenceNumber;
+  const youAreMentioned = ownTurn && message.attentionSequenceNumber >= latestAttentionSequenceNumber
+    ? false
+    : workstream.youAreMentioned;
   if (latestAttentionSequenceNumber === workstream.latestAttentionSequenceNumber
-    && readThroughSequenceNumber === workstream.readThroughSequenceNumber) return workstream;
+    && readThroughSequenceNumber === workstream.readThroughSequenceNumber
+    && youAreMentioned === workstream.youAreMentioned) return workstream;
   return withDerivedUnread({
     ...workstream,
     latestAttentionSequenceNumber,
     readThroughSequenceNumber,
+    ...(youAreMentioned === undefined ? {} : { youAreMentioned }),
     lastActivityAt: message.createdAt > workstream.lastActivityAt
       ? message.createdAt
       : workstream.lastActivityAt,

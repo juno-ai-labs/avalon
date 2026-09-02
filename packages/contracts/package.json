@@ -20,7 +20,8 @@
     "./text": "./src/text.ts",
     "./markdown-code": "./src/markdown-code.ts",
     "./model-markdown": "./src/model-markdown.ts",
-    "./citations": "./src/citations.ts"
+    "./citations": "./src/citations.ts",
+    "./message-mentions": "./src/message-mentions.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

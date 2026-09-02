@@ -55,7 +55,7 @@ import {
   type WorkstreamReaderAudience,
 } from "../lib/audience-containment";
 import { logWarn } from "../observability/logger";
-import { mentionedPersonNames, prepareMentionMarkdown, type MentionPerson } from "../lib/message-mentions";
+import { mentionedPersonNames, prepareMentionMarkdown, type MentionPerson } from "@rally/contracts/message-mentions";
 import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
 import {

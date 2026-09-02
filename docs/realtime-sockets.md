@@ -676,9 +676,10 @@ from `RallyApi.viewerUserId`, and applies the room's own author rule to a turn
 the reader wrote: their read waterline moves to that message's attention
 ordinal, as the write that stored it did in the room. It also stopped carrying
 its own copy of the unread derivation and now calls `withDerivedUnread`, the one
-the versioned state store already used. The room's other half of that rule — the
-manual mark clearing — is deliberately *not* mirrored; the invariant above says
-why.
+the versioned state store already used. `youAreMentioned` moves with the
+waterline it is derived from, under the newest-turn fence the invariants above
+state. The room's other half of that rule — the manual mark clearing — is
+deliberately *not* mirrored; the invariant above says why.
 
 **Why:** the local advance ran a few hundred milliseconds ahead of the viewer
 state the room publishes, and in that window it was wrong in the one way a
