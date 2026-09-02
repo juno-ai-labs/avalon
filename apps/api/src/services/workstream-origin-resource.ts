@@ -246,14 +246,14 @@ export async function resolveOriginResource(
   // empty list, so an unrouted read here did not surface as a failure: every
   // work stream started from an opportunity was created with no origin
   // resources attached, silently, on every attempt.
-  env = withWorkspaceRuntimeDatabase(env, workspaceId);
+  const workspaceEnv = withWorkspaceRuntimeDatabase(env, workspaceId);
   const bindings = [
     workspaceId,
     descriptor.connectionId,
     descriptor.provider,
     descriptor.providerResourceId,
   ] as const;
-  const existing = await env.DB.prepare(ORIGIN_RESOURCE_LOOKUP_SQL).bind(...bindings).first<{
+  const existing = await workspaceEnv.DB.prepare(ORIGIN_RESOURCE_LOOKUP_SQL).bind(...bindings).first<{
     id: string;
     canonical_url: string | null;
     content_ref: string | null;
@@ -266,7 +266,7 @@ export async function resolveOriginResource(
     const fillsUrl = existing.canonical_url == null && descriptor.canonicalUrl != null;
     const fillsContent = existing.content_ref == null && descriptor.contentRef != null;
     if (fillsUrl || fillsContent) {
-      await env.DB.prepare(BACKFILL_ORIGIN_RESOURCE_SQL).bind(
+      await workspaceEnv.DB.prepare(BACKFILL_ORIGIN_RESOURCE_SQL).bind(
         descriptor.canonicalUrl,
         descriptor.contentRef,
         nowIso(),
@@ -279,7 +279,7 @@ export async function resolveOriginResource(
     return existing.id;
   }
   const at = nowIso();
-  await env.DB.prepare(
+  await workspaceEnv.DB.prepare(
     `INSERT INTO resources
      (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
       title, content_ref, canonical_url, metadata_json, created_at, updated_at)
@@ -301,7 +301,7 @@ export async function resolveOriginResource(
   ).run();
   // Read back rather than trusting the generated id: a concurrent create for
   // the same object leaves one row, and both callers must attach that one.
-  const canonical = await env.DB.prepare(ORIGIN_RESOURCE_LOOKUP_SQL).bind(...bindings).first<{ id: string }>();
+  const canonical = await workspaceEnv.DB.prepare(ORIGIN_RESOURCE_LOOKUP_SQL).bind(...bindings).first<{ id: string }>();
   return canonical?.id ?? null;
 }
 

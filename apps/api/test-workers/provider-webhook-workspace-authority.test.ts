@@ -463,6 +463,115 @@ describe("provider webhook ingestion against the workspace authority", () => {
     });
   });
 
+  /**
+   * A redelivery of work that is already done must be answered from the receipt
+   * alone, before connection discovery.
+   *
+   * Gating the pre-cutover repair on `!WORKSPACE_DOS` originally gated the
+   * *whole* prior-receipt branch, which sent settled redeliveries down the
+   * discovery path too. Two things break there, and neither is visible from the
+   * happy path: `filterGitHubPersonalConnections` calls GitHub and rethrows
+   * anything that is not `unauthorized`, so a provider blip rejects a delivery
+   * already processed; and once the matching route is gone, discovery returns
+   * empty *above* the receipt insert, so the reused-delivery-id comparison never
+   * runs at all.
+   */
+  describe("a redelivery whose receipt is already settled", () => {
+    const DELIVERY_ID = "github-settled-issue-1";
+    const attempts: string[] = [];
+
+    beforeEach(async () => {
+      attempts.length = 0;
+      // Every provider call fails. A double that merely recorded would leave
+      // these tests resting on a list nobody reads closely; this way a probe
+      // that should not have happened rejects the ingestion outright.
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL): Promise<Response> => {
+        attempts.push(typeof input === "string" || input instanceof URL
+          ? input.toString()
+          : input.url);
+        throw new Error("github_double_unreachable");
+      });
+      await seedIngressRoute({
+        connectionId: PERSONAL_CONNECTION_ID,
+        scope: "personal",
+      });
+      await seedWorkspaceConnection({
+        id: PERSONAL_CONNECTION_ID,
+        scope: "personal",
+        modelPluginId: "plugin_github_personal",
+        credentials: {
+          installationId: INSTALLATION_ID,
+          tokenKind: "user",
+          accessToken: STALE_ACCESS_TOKEN,
+          refreshToken: "github-user-refresh-token-stored",
+          // Inside the refresh window, so discovery would certainly reach the
+          // provider if it were reached at all.
+          expiresAt: new Date(Date.now() + 30_000).toISOString(),
+        },
+        credentialKey: ACTIVE_CREDENTIALS_KEY,
+        credentialKeyVersion: 1,
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    /** The receipt a completed delivery leaves: matching, and processed. */
+    async function seedSettledReceipt(rawBody: string, suffix = ""): Promise<void> {
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO provider_webhook_receipts
+           (provider, delivery_id, event_type, payload_ref, received_at, processed_at, error_json)
+         VALUES ('github', ?, 'issues', ?, ?, ?, NULL)`,
+      ).bind(
+        DELIVERY_ID,
+        `global/provider-webhooks/github/${await sha256Hex(`${rawBody}${suffix}`)}.json`,
+        NOW,
+        NOW,
+      ).run();
+    }
+
+    it("answers it from the receipt without reaching the provider", async () => {
+      const rawBody = issuesDelivery();
+      await seedSettledReceipt(rawBody);
+
+      await expect(serviceFor(GITHUB_APP_CONFIGURATION).ingestGitHub(
+        rawBody,
+        await githubHeaders(rawBody, DELIVERY_ID),
+      )).resolves.toEqual({ accepted: true, duplicate: true, activityCount: 0 });
+
+      expect(attempts, "provider calls made for a delivery already processed").toEqual([]);
+    });
+
+    it("answers it the same way once the matching route has been removed", async () => {
+      const rawBody = issuesDelivery();
+      await seedSettledReceipt(rawBody);
+      // The connection was disconnected between the delivery and its redelivery,
+      // so discovery below would match nothing.
+      await env.DB.prepare(`DELETE FROM connector_ingress_routes WHERE connection_id = ?`)
+        .bind(PERSONAL_CONNECTION_ID).run();
+
+      await expect(serviceFor(GITHUB_APP_CONFIGURATION).ingestGitHub(
+        rawBody,
+        await githubHeaders(rawBody, DELIVERY_ID),
+      )).resolves.toEqual({ accepted: true, duplicate: true, activityCount: 0 });
+    });
+
+    it("still refuses a reused delivery id once the matching route has been removed", async () => {
+      const rawBody = issuesDelivery();
+      // A settled receipt recorded against different bytes: the integrity check
+      // has to run here even though nothing downstream will match.
+      await seedSettledReceipt(rawBody, "-different");
+      await env.DB.prepare(`DELETE FROM connector_ingress_routes WHERE connection_id = ?`)
+        .bind(PERSONAL_CONNECTION_ID).run();
+
+      await expect(serviceFor(GITHUB_APP_CONFIGURATION).ingestGitHub(
+        rawBody,
+        await githubHeaders(rawBody, DELIVERY_ID),
+      )).rejects.toThrow("The provider reused a webhook delivery ID with different event content");
+    });
+  });
+
   describe("a personal GitHub connection whose token is inside the refresh window", () => {
     const DELIVERY_ID = "github-personal-issue-1";
     const github = useGitHubDouble();

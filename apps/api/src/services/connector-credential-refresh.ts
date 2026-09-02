@@ -19,6 +19,17 @@ const CredentialRowSchema = z.object({
   credential_key_version: z.coerce.number().int().positive(),
 });
 
+/**
+ * `DB` here must already be workspace-routed — `withWorkspaceRuntimeDatabase(env,
+ * workspaceId)`, not the raw regional binding.
+ *
+ * Every function below reads or writes `connector_connections`, which migration
+ * 0090 moved to WorkspaceDO. A `Pick` accepts the regional binding just as
+ * happily, and the failure is `no such table` at run time, mapped by nothing, on
+ * whatever path was unlucky enough to need a token refresh. That has already
+ * cost a whole GitHub delivery once; the type cannot state the requirement, so
+ * this comment does.
+ */
 type CredentialEnv = Pick<Env,
   "DB" | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION" | "CONNECTOR_CREDENTIALS_KEYS_JSON"
 >;

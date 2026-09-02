@@ -443,27 +443,33 @@ export class ProviderWebhookService {
   ): Promise<ProviderWebhookIngestionResult> {
     const payloadRef = `${this.env.AVALON_REGION}/provider-webhooks/${input.provider}/${input.bodyHash}.json`;
     const priorReceipt = await this.loadReceipt(input.provider, input.deliveryId);
-    // Pre-cutover only. This shortcut repairs a redelivery whose receipt
-    // committed before its activities were queued, and it does so in the old
-    // shape throughout: `findPendingReceiptActivities` reads `activities` and
-    // `finishReceipt` enqueues by activity id. Migration 0090 dropped
-    // `activities`, and it is in no authority now — not regional D1, and not
-    // `WORKSPACE_LOCAL_TABLES`, so no routing can reach it. Left unguarded it
-    // threw `no such table` on every redelivery of an unprocessed receipt,
-    // unmapped, as a 500; the provider retried, took the same branch, and
-    // `processed_at` could never be set, so the failure was permanent for that
-    // delivery — on the path that exists to recover from a crash.
+    // A delivery we have already seen is validated and answered here, in both
+    // authorities. Both halves have to stay above the discovery below: a
+    // settled delivery must not re-enter `filterConnections`, which for a
+    // personal GitHub connection refreshes a token and calls the provider and
+    // rethrows anything that is not `unauthorized` — a transient GitHub
+    // failure would then reject a redelivery of work already done. And the
+    // `connections.length === 0` return below is reached whenever the matching
+    // route has since been removed, which would leave a reused delivery id
+    // never compared against its receipt.
     //
-    // The main path below already repairs the same case, and in the current
-    // shape: the receipt insert conflicts, `existingWorkspaceReceipt` loads,
-    // `shouldApplyWorkspaceEffects` sees the null `processed_at`, and
-    // `finishWorkspaceReceipt` enqueues the connector events. So the modern
-    // path simply falls through to it.
-    if (priorReceipt && !this.env.WORKSPACE_DOS) {
+    // Only the *repair* of a pending receipt — one whose row committed before
+    // its work was queued — differs by authority.
+    if (priorReceipt) {
       this.assertMatchingReceipt(priorReceipt, input.eventType, payloadRef);
-      if (
-        priorReceipt.processed_at === null
-      ) {
+      if (priorReceipt.processed_at !== null) {
+        return { accepted: true, duplicate: true, activityCount: 0 };
+      }
+      // Pre-cutover only. This repair is in the old shape throughout:
+      // `findPendingReceiptActivities` reads `activities` and `finishReceipt`
+      // enqueues by activity id. Migration 0090 dropped `activities`, and it is
+      // in no authority now — not regional D1, and not `WORKSPACE_LOCAL_TABLES`,
+      // so no routing can reach it. Left ungated it threw `no such table` on
+      // every redelivery of an unprocessed receipt, unmapped, as a 500; the
+      // provider retried, took the same branch, and `processed_at` could never
+      // be set, so the failure was permanent for that delivery — on the path
+      // that exists to recover from a crash.
+      if (!this.env.WORKSPACE_DOS) {
         await this.finishReceipt(
           input.provider,
           input.deliveryId,
@@ -474,8 +480,12 @@ export class ProviderWebhookService {
             payloadRef,
           ),
         );
+        return { accepted: true, duplicate: true, activityCount: 0 };
       }
-      return { accepted: true, duplicate: true, activityCount: 0 };
+      // The main path below repairs the same case in the current shape: the
+      // receipt insert conflicts, `existingWorkspaceReceipt` loads,
+      // `shouldApplyWorkspaceEffects` sees the null `processed_at`, and
+      // `finishWorkspaceReceipt` enqueues the connector events. Fall through.
     }
 
     let connections = await this.loadMatchingConnections(
