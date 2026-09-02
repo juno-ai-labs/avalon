@@ -100,6 +100,7 @@ test('each Azure reviewer preserves the proven Monad Cline harness', async () =>
 		assert.match(review, new RegExp(`--modelid ${model.replaceAll('.', '\\.')}`, 'u'));
 		assert.match(review, /^ {6}CLINE_NO_AUTO_UPDATE: "1"$/mu);
 		assert.match(review, /^ {8}run: npm install -g cline@3\.0\.47$/mu);
+		assert.match(review, /^ {4}timeout-minutes: 30$/mu);
 
 		const stepNames = [...review.matchAll(/^ {6}- name: (.+)$/gmu)].map(
 			(match) => match[1],
@@ -132,6 +133,8 @@ test('each Azure reviewer preserves the proven Monad Cline harness', async () =>
 		assert.match(modelReview, /GH_TOKEN: \$\{\{ github\.token \}\}/u);
 		assert.match(modelReview, /CLINE_COMMAND_PERMISSIONS/u);
 		assert.match(modelReview, /PROMPT=\$\(cat <<EOF/u);
+		assert.match(modelReview, /You have 15 minutes \(wall clock\)\./u);
+		assert.doesNotMatch(modelReview, /You have 20 minutes \(wall clock\)\./u);
 		assert.match(
 			modelReview,
 			/cline --cwd "\$GITHUB_WORKSPACE" --auto-approve true "\$PROMPT"/u,
