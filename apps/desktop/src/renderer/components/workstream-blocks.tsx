@@ -1894,9 +1894,13 @@ export function MessageBlock({
             ownHumanResponse ? 'own-human-message' : 'coworker-message',
           )}
           id={`message-${message.id}`}
+          style={{ '--person-accent': personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id) } as React.CSSProperties}
         >
           {/* The same identity line every human turn carries, the reader's own
-              included — see the header on the ordinary authored row below. */}
+              included — see the header on the ordinary authored row below. The
+              accent is stated here for the same reason it is stated there: the
+              dot paints with it and the name is coloured by it, so a row that
+              omits it draws an invisible dot and an uncoloured name. */}
           <header><span aria-hidden="true" className="message-author-dot" /><span className="message-author">{responseAuthor}</span><time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time></header>
           <div className="human-message-content">
             <ElicitationPanel
