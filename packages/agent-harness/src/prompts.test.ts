@@ -86,7 +86,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "82d0a59549b98f9ffac137f1a6b1b54fdf0e8242662aadb51d63542a7bd654c7",
+        hash: "9b529fc65ddaf01865e49e1a549c7bd7c09ed3e0c58f586a8bc10216975cdf49",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -94,7 +94,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "0b2d44ae135aa8408afa1d1841ce702ed4c5bcae711888642378446e1df24917",
+        hash: "a0ef73a417326765031a6c345743d431608ba330949e2d1d1d9edd9821a28ac2",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -668,25 +668,10 @@ describe("prompt renderers", () => {
     expect(workstreamPrompt).toContain("Sites are public by default");
     expect(workstreamPrompt).toContain("protection requires an active site that enforces Rally viewer headers");
 
-    // Raised from 8,000 when the standing policy gained a second section, and
-    // raised rather than absorbed because there was nowhere left to absorb it.
-    // The arithmetic, re-measured on this base rather than carried over from
-    // when the raise was first written: without `# Sites` the prompt is 7,827
-    // bytes, so the old ceiling left 173 bytes of headroom, and a second
-    // publish shape cannot introduce itself, name its skill, and give its one
-    // most-missed rule (publish the directory, not a file inside it) in 173.
-    // With the public/protected-site rule, `# Sites` costs 662, which lands at
-    // 8,489 and leaves 11 under this bound.
-    //
-    // Per the instruction below, here is what looked misplaced rather than
-    // merely long, for whoever owns that prose to decide: `# Documents` opens
-    // with "Use the terminal tool to write the document in the sandbox,
-    // publish it, and then present it to the user with an embedded citation",
-    // which the next two paragraphs then say again in full and in detail. It is
-    // worth 131 bytes — not enough to get back under 8,000 on its own, which is
-    // the honest reason this is a raise and not a trim. It was left alone
-    // because it landed in a separate change and trimming somebody else's
-    // freshly-written policy to make room is not a silent edit to make.
+    // The 8,500-byte ceiling was introduced with the standing `# Sites`
+    // trigger. Re-measured after review removed a duplicate Documents sentence:
+    // the prompt without Sites is 7,701 bytes, Sites costs 662, and the total is
+    // 8,363 — 137 bytes of deliberate headroom rather than the previous 11.
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_500);
   });
 

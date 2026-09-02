@@ -154,11 +154,10 @@ describe('showing a live artifact in the rail', () => {
 });
 
 describe('the actions beside the preview', () => {
-  it('copies the canonical link, which carries no access code', async () => {
-    // That is precisely what makes it safe to paste anywhere.
+  it('labels and copies the canonical public link, which carries no access code', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /Copy link/u }));
+    fireEvent.click(screen.getByRole('button', { name: /Copy public link/u }));
     expect(props.surface.copyText).toHaveBeenCalledWith(CANONICAL);
     expect(props.surface.copyText).not.toHaveBeenCalledWith(expect.stringContaining('#'));
   });
@@ -182,7 +181,7 @@ describe('the actions beside the preview', () => {
 
   it('keeps every action disabled until access exists', () => {
     setup({ openArtifact: vi.fn(() => new Promise<SiteArtifactAccess>(() => undefined)) });
-    for (const name of [/Pop out/u, /Copy link/u, /Open in browser/u]) {
+    for (const name of [/Pop out/u, /Copy public link/u, /Open in browser/u]) {
       expect(screen.getByRole('button', { name })).toBeDisabled();
     }
   });

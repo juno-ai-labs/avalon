@@ -479,7 +479,7 @@ export class ArtifactHostDO extends MigratableDurableObject<Env> {
     };
   }
 
-  /** Read a specific version's manifest, for a prior-version render. */
+  /** Read the current manifest and execution shape for public serving and version routing. */
   async currentState(): Promise<{
     artifactId: string;
     workspaceId: string;

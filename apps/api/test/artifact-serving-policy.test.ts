@@ -74,6 +74,7 @@ describe("the page fence", () => {
   it("sends no referrer and lets no shared cache hold a response", () => {
     const headers = artifactSecurityHeaders();
     expect(headers["referrer-policy"]).toBe("no-referrer");
+    expect(headers["x-robots-tag"]).toBe("noindex");
     expect(headers["cache-control"]).toContain("private");
     expect(headers["x-content-type-options"]).toBe("nosniff");
   });
@@ -161,6 +162,13 @@ describe("the cross-artifact request fence", () => {
       request({ site: "same-origin", method: "POST", origin: "null" }),
       ORIGIN,
     )).toBe("refused");
+  });
+
+  it("downgrades an opaque-Origin read to anonymous", () => {
+    expect(classifyFetchMetadata(
+      request({ site: "same-origin", origin: "null" }),
+      ORIGIN,
+    )).toBe("anonymous_read");
   });
 
   it("refuses a top-level navigation that is not a GET", () => {
