@@ -22,16 +22,29 @@ function announce(settings: DesktopApplicationSettings): void {
   });
 }
 
+function applicationSettings(debugEnabled: boolean): DesktopApplicationSettings {
+  return {
+    lockdownMode: false,
+    lockdownAvailable: true,
+    debugEnabled,
+    developerSettingsAvailable: true,
+    menuBarEnabled: true,
+    menuBarAvailable: true,
+    menuBarPresent: true,
+    launchAtLogin: true,
+    launchAtLoginAvailable: true,
+    productAnalyticsEnabled: true,
+    productAnalyticsEffective: true,
+    productAnalyticsPreferencePending: false,
+    nativeCrashRestartRequired: false,
+  };
+}
+
 describe('useDebugEnabled', () => {
   beforeEach(() => {
     settingsListeners.clear();
     getApplicationSettings.mockReset();
-    getApplicationSettings.mockResolvedValue({
-      lockdownMode: false,
-      lockdownAvailable: false,
-      debugEnabled: false,
-      developerSettingsAvailable: true,
-    });
+    getApplicationSettings.mockResolvedValue(applicationSettings(false));
   });
 
   it('starts off and adopts the stored preference', async () => {
@@ -57,6 +70,30 @@ describe('useDebugEnabled', () => {
     announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true, productAnalyticsEnabled: true, productAnalyticsEffective: true, productAnalyticsPreferencePending: false, nativeCrashRestartRequired: false });
     expect(result.current).toBe(false);
   });
+
+  it.each([
+    { liveEnabled: true, staleEnabled: false },
+    { liveEnabled: false, staleEnabled: true },
+  ])(
+    'keeps the live debug value $liveEnabled when an older $staleEnabled snapshot settles',
+    async ({ liveEnabled, staleEnabled }) => {
+      let resolveInitial!: (settings: DesktopApplicationSettings) => void;
+      getApplicationSettings.mockReturnValue(new Promise((resolve) => {
+        resolveInitial = resolve;
+      }));
+      const { result } = renderHook(() => useDebugEnabled());
+      await waitFor(() => expect(settingsListeners.size).toBe(1));
+
+      announce(applicationSettings(liveEnabled));
+      expect(result.current).toBe(liveEnabled);
+
+      await act(async () => {
+        resolveInitial(applicationSettings(staleEnabled));
+        await Promise.resolve();
+      });
+      expect(result.current).toBe(liveEnabled);
+    },
+  );
 
   it('stays off when the preference cannot be read', async () => {
     getApplicationSettings.mockRejectedValue(new Error('Application settings could not be read.'));
