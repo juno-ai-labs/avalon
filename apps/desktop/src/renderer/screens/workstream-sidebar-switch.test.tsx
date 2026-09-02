@@ -242,6 +242,39 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     await waitFor(() => expect(screen.getByRole('complementary', { name: 'HyperSight' })).toBeInTheDocument());
   });
 
+  // Yielding the sidebar is written back; arriving at a stream that merely has
+  // the preference stored is not yielding anything, and writing it would erase
+  // the person's toggle on every device they use.
+  it('does not write away a HyperSight preference this visit never displaced', async () => {
+    renderScreen();
+    await screen.findByText('First work stream');
+    fireEvent.click(screen.getByRole('button', { name: 'Show HyperSight' }));
+    await waitFor(() => expect(screen.getByRole('complementary', { name: 'HyperSight' })).toBeInTheDocument());
+    switchWorkstream();
+    await screen.findByText('Second work stream');
+    returnToFirstWorkstream();
+    await screen.findByText('First work stream');
+    api.updateBlockDashboardPreference.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Work-stream context' }));
+
+    await waitFor(() => expect(useUiStore.getState().railOpen).toBe(true));
+    expect(api.updateBlockDashboardPreference).not.toHaveBeenCalled();
+  });
+
+  it('still writes the preference back when the inspector takes the slot from HyperSight', async () => {
+    renderScreen();
+    await screen.findByText('First work stream');
+    fireEvent.click(screen.getByRole('button', { name: 'Show HyperSight' }));
+    await waitFor(() => expect(screen.getByRole('complementary', { name: 'HyperSight' })).toBeInTheDocument());
+    api.updateBlockDashboardPreference.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Work-stream context' }));
+
+    await waitFor(() =>
+      expect(api.updateBlockDashboardPreference).toHaveBeenCalledWith(firstWorkstreamId, false));
+  });
+
   it('treats coming back to a work stream as a new visit, not the one that opened HyperSight', async () => {
     renderScreen();
     await screen.findByText('First work stream');
