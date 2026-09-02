@@ -1,3 +1,4 @@
+import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
@@ -119,38 +120,62 @@ export function createTextMessage({ text, ...message }: TextMessageInput): Messa
 }
 
 /**
- * The composer's selected mentions, in the shape a rendered turn carries them.
+ * The text and mentions an optimistic turn has to carry to render as the turn
+ * the room is about to store.
  *
- * An optimistic turn is rendered by the same block as the canonical one, so
- * what it does not carry, it does not draw. Without this the connection
- * mentions in a message being sent render as the plain `@name` the person
- * typed and become chips only when the canonical turn lands — a width change
- * on a row whose whole point is to already be the shape it will settle at.
+ * A mention chip is drawn from the message's *text*: a person mention is
+ * `[@Name](person://<id>)` Markdown, and `renderIdentity` resolves that href
+ * against `mentions` to find the name and avatar. The composer holds neither —
+ * it holds the plain `@Name` the person typed and the identities they picked
+ * from the popover — so an optimistic turn built straight from the draft
+ * renders plain text and becomes a chip only when the canonical turn lands,
+ * widening the bubble at exactly the moment an in-flight row exists to make
+ * uneventful.
  *
- * A selection with no offsets is dropped rather than guessed at: the offsets
- * are what `withConnectorMentionLinks` slices, and a wrong pair would dress
- * the wrong span as a mention. Person mentions are projected too — they cost
- * nothing here and the queue rows read them — but they are not what makes a
- * chip. That takes the `[@Name](person://<id>)` Markdown the *room* writes
- * into the stored text, and rewriting the text client-side to match would put
- * a second copy of the room's rewrite on this side of the wire, free to
- * disagree with it. A person mention therefore stays plain text until the turn
- * is canonical, which is what it did before an in-flight turn was drawn at all.
+ * `prepareMentionMarkdown` is the room's own rewrite, shared out of
+ * `@rally/contracts` rather than reimplemented here, so the two sides cannot
+ * disagree about escaping, overlapping selections, ordering, or which
+ * selections are dropped for no longer matching their visible text. What it
+ * returns is the stored text, byte for byte, for every mention it accepts; a
+ * selection it drops stays the plain text the room will also keep.
+ *
+ * The text is for rendering only — what is *sent* is the draft the person
+ * typed, and the room rewrites it there. A selection with no offsets is
+ * dropped: the offsets are the span the rewrite replaces, and a wrong pair
+ * would rewrite the wrong words.
  */
-export function messageMentionsFromSelection(
+export function optimisticMentionRendering(
+  text: string,
   selected: readonly MentionIdentity[],
-): MessageMention[] {
-  return selected.flatMap((mention) => {
-    if (mention.startOffset === undefined || mention.endOffset === undefined) return [];
-    return [{
+  members: readonly WorkspaceMember[],
+): { text: string; mentions: MessageMention[] } {
+  const offsetSelections = selected.flatMap((mention) =>
+    mention.startOffset === undefined || mention.endOffset === undefined ? [] : [{
+      type: mention.type,
+      userId: mention.userId,
+      connectorType: mention.connectorType,
+      startOffset: mention.startOffset,
+      endOffset: mention.endOffset,
+    }]);
+  if (offsetSelections.length === 0) return { text, mentions: [] };
+  const people = new Map(members.map((member) => [member.id, {
+    id: member.id,
+    name: member.name,
+    avatarUrl: member.avatarUrl ?? null,
+  }]));
+  const prepared = prepareMentionMarkdown(text, offsetSelections, people);
+  return {
+    text: prepared.text,
+    mentions: prepared.mentions.map((mention) => ({
       type: mention.type,
       ...(mention.userId ? { personId: mention.userId } : {}),
       ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
-      displayName: mention.label,
+      ...(mention.displayName ? { displayName: mention.displayName } : {}),
+      ...(mention.avatarUrl ? { avatarUrl: mention.avatarUrl } : {}),
       startOffset: mention.startOffset,
       endOffset: mention.endOffset,
-    }];
-  });
+    })),
+  };
 }
 
 export function createToolEventMessage({ toolEvent, ...message }: ToolEventMessageInput): Message {

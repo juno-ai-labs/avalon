@@ -6,7 +6,7 @@ import {
   createElicitationMessage,
   adjacentTranscriptRange,
   createTextMessage,
-  messageMentionsFromSelection,
+  optimisticMentionRendering,
   createToolEventMessage,
   orderedTranscriptMessages,
   composeTranscript,
@@ -159,24 +159,40 @@ describe('transcript messages', () => {
     })).toMatchObject({ messageType: 'elicitation', elicitation: { id: 'question-one' } });
   });
 
-  it('projects the composer\'s selected mentions onto an optimistic turn, dropping ones with no offsets', () => {
-    // The in-flight bubble is rendered by the block that draws the settled one,
-    // so a connection mention only becomes a chip there if the turn carries the
-    // offsets `withConnectorMentionLinks` slices. A selection without offsets
-    // has nothing to slice and is dropped rather than guessed at.
-    expect(messageMentionsFromSelection([
+  it('rewrites an optimistic turn into the Markdown the room will store, so its mention is already a chip', () => {
+    // The chip is rendered from the text, not from the mention rows: without
+    // the `person://` Markdown `renderIdentity` has no href to resolve and the
+    // bubble shows a plain `@Sam` that widens into a chip when the canonical
+    // turn lands — the one resize an in-flight row exists to prevent.
+    const rendered = optimisticMentionRendering(
+      'Ping @Sam and @Linear',
+      [
+        { type: 'person', label: '@Sam', userId: 'user-sam', connectorType: null, startOffset: 5, endOffset: 9 },
+        {
+          type: 'connector', label: '@Linear', userId: null, connectorType: 'linear',
+          startOffset: 14, endOffset: 21,
+        },
+      ],
+      [{ id: 'user-sam', name: 'Sam', email: 'sam@example.com', timezone: 'UTC' }],
+    );
+
+    expect(rendered.text).toBe('Ping [@Sam](person://user-sam) and @Linear');
+    expect(rendered.mentions).toEqual([
       {
-        type: 'connector', label: '@Linear', userId: null, connectorType: 'linear',
-        startOffset: 6, endOffset: 13,
+        type: 'person', personId: 'user-sam', displayName: 'Sam', startOffset: 5, endOffset: 30,
       },
-      { type: 'person', label: '@Sam', userId: 'user-sam', connectorType: null, startOffset: 0, endOffset: 4 },
-      { type: 'person', label: '@Nobody', userId: 'user-nobody', connectorType: null },
-    ])).toEqual([
       {
-        type: 'connector', connectorType: 'linear', displayName: '@Linear', startOffset: 6, endOffset: 13,
+        type: 'connector', connectorType: 'linear', startOffset: 35, endOffset: 42,
       },
-      { type: 'person', personId: 'user-sam', displayName: '@Sam', startOffset: 0, endOffset: 4 },
     ]);
+  });
+
+  it('leaves a draft alone when the selection carries no offsets to rewrite', () => {
+    expect(optimisticMentionRendering(
+      'Ping @Sam',
+      [{ type: 'person', label: '@Sam', userId: 'user-sam', connectorType: null }],
+      [{ id: 'user-sam', name: 'Sam', email: 'sam@example.com', timezone: 'UTC' }],
+    )).toEqual({ text: 'Ping @Sam', mentions: [] });
   });
 
   it('replaces logical client and persisted messages without moving their transcript position', () => {

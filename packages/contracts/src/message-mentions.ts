@@ -1,5 +1,5 @@
-import type { Message } from "@rally/contracts";
-import { personMentionHref } from "@rally/contracts/citations";
+import type { Message } from "./index";
+import { personMentionHref } from "./citations";
 
 type Mention = Message["mentions"][number];
 
@@ -59,6 +59,15 @@ function visiblePersonMentionMatches(value: string, person: MentionPerson): bool
  * Turn the composer's visible @Name ranges into durable, identity-bearing
  * Markdown. The database mention rows remain the authorization source of truth;
  * the Markdown target gives models and offline renderers the same stable ID.
+ *
+ * Shared rather than owned by the writer, because the desktop client builds the
+ * optimistic turn it shows while a message is in flight and has to arrive at
+ * byte-identical text: the mention chip is rendered *from* this Markdown, so a
+ * client that skipped the rewrite showed a plain `@Name` that became a chip —
+ * and widened the bubble — the moment the canonical turn landed. A second
+ * implementation on the client would have to agree with this one about
+ * escaping, overlap, ordering, and which selections are dropped; being the same
+ * function is how it agrees.
  *
  * Invalid, overlapping, duplicate, or no-longer-active person mentions are
  * omitted rather than being allowed to create an invisible notification. Plain
