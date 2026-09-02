@@ -16,7 +16,12 @@ interface MarkdownCollapseValue {
   /** Sections the reader has closed. A missing id is open. */
   readonly collapsed: ReadonlySet<string>;
   readonly sectionIds: readonly string[];
-  readonly allExpanded: boolean;
+  /**
+   * Whether every section is closed. The bulk control reads this rather than
+   * its opposite: with open as the default, "some are closed" is a reader who
+   * is folding, and the action to offer them is folding the rest.
+   */
+  readonly allCollapsed: boolean;
   expand: (id: string) => void;
   toggle: (id: string) => void;
   setAll: (expanded: boolean) => void;
@@ -79,10 +84,10 @@ export function MarkdownCollapseController({
   const setAll = useCallback((nextExpanded: boolean) => {
     setCollapsed(nextExpanded ? new Set() : new Set(sectionIds));
   }, [sectionIds]);
-  const allExpanded = sectionIds.length > 0 && sectionIds.every((id) => !collapsed.has(id));
+  const allCollapsed = sectionIds.length > 0 && sectionIds.every((id) => collapsed.has(id));
   const value = useMemo<MarkdownCollapseValue>(
-    () => ({ allExpanded, collapsed, expand, sectionIds, setAll, toggle }),
-    [allExpanded, collapsed, expand, sectionIds, setAll, toggle],
+    () => ({ allCollapsed, collapsed, expand, sectionIds, setAll, toggle }),
+    [allCollapsed, collapsed, expand, sectionIds, setAll, toggle],
   );
   return (
     <MarkdownCollapseContext.Provider value={value}>
@@ -120,7 +125,7 @@ export function MarkdownCollapseSection({
     <MarkdownCollapseSectionIdContext.Provider value={id}>
       <div
         className={clsx('markdown-collapse', expanded ? 'is-expanded' : 'is-collapsed')}
-        {...(expanded || !collapse ? {} : { onClick: openFromPreview })}
+        onClick={expanded ? undefined : openFromPreview}
       >
         {heading}
         <div
@@ -210,21 +215,26 @@ export function MarkdownCollapseH6(props: ComponentPropsWithoutRef<'h6'> & { nod
  * Expand or collapse every heading section in this turn. Lives in the
  * message header, to the right of **Worked for**, and is absent when the
  * body has no collapsible headings.
+ *
+ * It offers **Collapse all** until every section is already closed. A turn
+ * with some sections closed is a reader who has been folding, and the mirror
+ * of that — offering **Expand all** to someone in the middle of closing
+ * things — is what the pre-default-open control did.
  */
 export function MarkdownCollapseAllButton(): React.JSX.Element | null {
   const collapse = useMarkdownCollapse();
   if (!collapse || collapse.sectionIds.length === 0) return null;
-  const label = collapse.allExpanded ? 'Collapse all sections' : 'Expand all sections';
-  const Icon = collapse.allExpanded ? ChevronsDownUp : ChevronsUpDown;
+  const label = collapse.allCollapsed ? 'Expand all sections' : 'Collapse all sections';
+  const Icon = collapse.allCollapsed ? ChevronsUpDown : ChevronsDownUp;
   return (
     <Tooltip.Provider>
       <Tooltip.Root delayDuration={450}>
         <Tooltip.Trigger asChild>
           <button
-            aria-expanded={collapse.allExpanded}
+            aria-expanded={!collapse.allCollapsed}
             aria-label={label}
             className="message-collapse-all"
-            onClick={() => collapse.setAll(!collapse.allExpanded)}
+            onClick={() => collapse.setAll(collapse.allCollapsed)}
             type="button"
           >
             <Icon aria-hidden="true" size={14} strokeWidth={1.8} />

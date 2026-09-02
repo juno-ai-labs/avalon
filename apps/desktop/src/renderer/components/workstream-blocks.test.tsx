@@ -1729,12 +1729,15 @@ describe('MarkdownBody heading collapse', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Collapse section' })[0]!);
     expect(first).toHaveClass('is-collapsed');
 
+    // Dispatched at the section, which is where the click lands in a real
+    // window: the collapsed body is inert, so it is not a hit target. Clicking
+    // the body element here would pass even with the handler moved onto it.
     const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ isCollapsed: false } as Selection);
-    fireEvent.click(first!.querySelector('.markdown-collapse-body')!);
+    fireEvent.click(first!);
     expect(first).toHaveClass('is-collapsed');
     selection.mockRestore();
 
-    fireEvent.click(first!.querySelector('.markdown-collapse-body')!);
+    fireEvent.click(first!);
     expect(first).toHaveClass('is-expanded');
     // No inverse: a click inside an open body belongs to the text it landed on.
     fireEvent.click(first!.querySelector('.markdown-collapse-body p')!);
@@ -1803,6 +1806,27 @@ describe('MessageBlock heading collapse control', () => {
     const toggle = screen.getByRole('button', { name: 'Collapse all sections' });
     expect(summary?.nextElementSibling).toBe(toggle);
     expect(container.querySelectorAll('.markdown-collapse.is-expanded')).toHaveLength(2);
+    fireEvent.click(toggle);
+    expect(container.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Expand all sections' })).toBeInTheDocument();
+  });
+
+  it('keeps offering Collapse all while only some sections are closed', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'agent-mixed',
+      authorType: 'agent',
+      author: undefined,
+      text: '## Alpha\n\nFirst.\n\n## Beta\n\nSecond.\n',
+      workSummary: { durationMs: 83_000 },
+    };
+    const { container } = render(<MessageBlock {...actions} collapseHeadings message={message} />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Collapse section' })[0]!);
+    expect(container.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(1);
+
+    // A reader who has closed one section is folding, so folding the rest is
+    // the action to offer — not the round trip through Expand all.
+    const toggle = screen.getByRole('button', { name: 'Collapse all sections' });
     fireEvent.click(toggle);
     expect(container.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Expand all sections' })).toBeInTheDocument();
