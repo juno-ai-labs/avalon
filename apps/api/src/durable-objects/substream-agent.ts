@@ -1060,7 +1060,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * Bring this object up, and nothing else.
    *
-   * Awaiting `initialized` is the whole point: it runs the migrations and the
+   * Awaiting `storageReady` is the whole point: it runs the migrations and the
    * schema work that make the first real call slow. WorkstreamDO fires this as
    * it wakes so the two cold starts overlap instead of queueing, because a
    * person opening a work stream needs both objects and today pays for them one

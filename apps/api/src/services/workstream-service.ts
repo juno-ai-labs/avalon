@@ -1,6 +1,6 @@
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
-import { HarnessFailureCodeSchema, asHarnessRunId, asSubstreamId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
+import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -562,8 +562,9 @@ export class WorkstreamService {
    * binding call alive after sending the ticket without adding it to ticket
    * latency.
    */
-  private warmSocketSubstream(workstreamId: string, substreamId: string): void {
+  private warmMainSocketSubstream(workstreamId: string, ticketId: string): void {
     if (!this.defer) return;
+    const startedAt = Date.now();
     this.defer((async () => {
       try {
         const stub = await durableObjectStubForWorkspace(
@@ -574,15 +575,25 @@ export class WorkstreamService {
             this.env.AVALON_REGION,
             this.auth.workspaceId,
             asWorkstreamId(workstreamId),
-            substreamId === "0" ? "0" : asSubstreamId(substreamId),
           ),
         );
         await stub.wake();
-      } catch (error) {
-        logWarn(this.env, "workstream_socket_ticket_warm_failed", {
+        logStructuredEvent(this.env, "info", "workstream_socket_ticket_warm_finished", {
           workspace_id: this.auth.workspaceId,
           workstream_id: workstreamId,
-          substream_id: substreamId,
+          substream_id: "0",
+          ticket_id: ticketId,
+          duration_ms: Math.max(0, Date.now() - startedAt),
+          outcome: "success",
+        });
+      } catch (error) {
+        logWarn(this.env, "workstream_socket_ticket_warm_finished", {
+          workspace_id: this.auth.workspaceId,
+          workstream_id: workstreamId,
+          substream_id: "0",
+          ticket_id: ticketId,
+          duration_ms: Math.max(0, Date.now() - startedAt),
+          outcome: "failure",
           error_name: error instanceof Error ? error.name : "UnknownError",
         });
       }
@@ -791,7 +802,10 @@ export class WorkstreamService {
       afterSequence,
       speculative,
     );
-    this.warmSocketSubstream(id, substreamId);
+    // The main feed is recorded by work-stream creation. Non-main creation is
+    // not a product surface yet, so an arbitrary child UUID must not
+    // materialize an object merely because its parent work stream is visible.
+    if (substreamId === "0") this.warmMainSocketSubstream(id, ticketId);
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/workstreams/${id}/substreams/${substreamId}`;
