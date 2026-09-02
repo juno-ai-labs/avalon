@@ -1566,6 +1566,11 @@ export class RallyApi {
     startOffset: number;
     endOffset: number;
   }>> {
+    // Most sends contain no mention syntax. Keep their command path on the
+    // already-open work-stream room socket instead of putting a roster request in
+    // front of it. `person://` covers durable mention Markdown that is pasted
+    // or replayed; `@` covers composer and hand-typed mentions.
+    if (!text.includes('@') && !text.includes('person://')) return [];
     const members = await this.getWorkspaceMembers();
     // People only, and only here: what a name in the text resolves to has to
     // agree with what the composer that wrote it offered and highlighted.
