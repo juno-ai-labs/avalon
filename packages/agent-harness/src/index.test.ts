@@ -1876,6 +1876,165 @@ describe("agent harness", () => {
     ]);
   });
 
+  it("traverses from Azure when a successful stream reports the provider unavailable", async () => {
+    const urls: string[] = [];
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      urls.push(url);
+      return url.includes("services.ai.azure.com")
+        ? streamResponse([{ error: { code: "unavailable", message: "provider unavailable" } }])
+        : streamResponse([{
+            choices: [{ delta: { content: "openrouter recovered" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, cost: 0.01 },
+          }]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "x-ai/grok-4.6",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        transportRetries: 0,
+        workspaceId: "workspace-azure-stream-unavailable-fallback",
+      }),
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      content: "openrouter recovered",
+      model: "x-ai/grok-4.6",
+    });
+    expect(urls).toEqual([
+      "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+      "https://openrouter.ai/api/v1/chat/completions",
+    ]);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({
+      provider: "azure",
+      success: false,
+      disposition: "fallback",
+      providerError: { code: "unavailable" },
+    });
+  });
+
+  it("does not traverse a recognized streamed outage after observable output", async () => {
+    const urls: string[] = [];
+    const events: HarnessEvent[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      urls.push(url);
+      return url.includes("services.ai.azure.com")
+        ? streamResponse([
+            { choices: [{ delta: { content: "partial" }, finish_reason: null }] },
+            { error: { code: "unavailable", message: "provider unavailable" } },
+          ])
+        : streamResponse([{
+            choices: [{ delta: { content: "duplicated" }, finish_reason: "stop" }],
+          }]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "x-ai/grok-4.6",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        transportRetries: 2,
+        workspaceId: "workspace-stream-unavailable-after-output",
+      }),
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(urls).toEqual([
+      "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+    ]);
+    expect(outcome).toMatchObject({
+      status: "failed",
+      content: "partial",
+      failure: { kind: "provider", code: "provider_unavailable" },
+    });
+    expect(events.filter((event) => event.type === "stream_delta")).toEqual([
+      expect.objectContaining({ delta: "partial", reset: false }),
+    ]);
+  });
+
+  it("reports exhausted streamed-service-unavailable routes as a provider failure", async () => {
+    const urls: string[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      urls.push(String(request));
+      return streamResponse([{ error: { code: "service_unavailable", message: "provider unavailable" } }]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      primaryModel: "x-ai/grok-4.6",
+      azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+      transportRetries: 0,
+      workspaceId: "workspace-stream-unavailable-exhausted",
+    }));
+
+    expect(urls).toEqual([
+      "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+      "https://openrouter.ai/api/v1/chat/completions",
+    ]);
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "provider", code: "provider_unavailable" },
+    });
+  });
+
+  it("traverses an OpenRouter numeric streamed server error to the fallback model", async () => {
+    const models: string[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      const model = (JSON.parse(String(init?.body)) as { model: string }).model;
+      models.push(model);
+      return models.length === 1
+        ? streamResponse([{ error: { code: 503, message: "provider unavailable" } }])
+        : streamResponse([{
+            choices: [{ delta: { content: "fallback recovered" }, finish_reason: "stop" }],
+          }]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      fallbackModels: ["fallback/model"],
+      transportRetries: 0,
+      workspaceId: "workspace-openrouter-stream-503-fallback",
+    }));
+
+    expect(models).toEqual(["test/model", "fallback/model"]);
+    expect(outcome).toMatchObject({
+      status: "completed",
+      content: "fallback recovered",
+      model: "fallback/model",
+    });
+  });
+
+  it("does not traverse for an unrecognized statusless stream error", async () => {
+    const urls: string[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      urls.push(String(request));
+      return streamResponse([{ error: { code: "model_not_found", message: "unknown deployment" } }]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness(runInput(fetcher, {
+      primaryModel: "x-ai/grok-4.6",
+      azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+      // A nonzero budget proves terminal classification suppresses both route
+      // traversal and whole-plan retry rather than merely exhausting no budget.
+      transportRetries: 2,
+      workspaceId: "workspace-stream-model-not-found",
+    }));
+
+    // A stream envelope can also describe a request or model defect. Only
+    // provider-declared outage codes are safe to replay; an unknown code stays
+    // terminal rather than being hidden by a fallback or whole-plan retry.
+    expect(urls).toEqual([
+      "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+    ]);
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "execution", code: "harness_execution_failed" },
+    });
+  });
+
   it("does not resolve Azure pricing for a route with no Azure-bound model", async () => {
     const urls: string[] = [];
     const fetcher = vi.fn(async (request: RequestInfo | URL) => {
