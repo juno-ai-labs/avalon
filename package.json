@@ -18,7 +18,7 @@
     "cloudflare:observability": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs",
     "cloudflare:observability:check": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs --check",
     "cloudflare:resources:check": "dotenv -e .env.local -- node scripts/check-cloudflare-r2-buckets.mjs && dotenv -e .env.local -- node scripts/ensure-cloudflare-queues.mjs --check && dotenv -e .env.local -- node scripts/ensure-cloudflare-inference-lakehouse.mjs --check",
-    "cloudflare:lakehouses:ensure": "dotenv -e .env.local -- node scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings",
+    "cloudflare:lakehouses:ensure": "dotenv -e .env.local -- node scripts/ensure-cloudflare-inference-lakehouse.mjs --reconcile",
     "cloudflare:inference-lakehouse:ensure": "pnpm cloudflare:lakehouses:ensure",
     "cloudflare:queues:ensure": "dotenv -e .env.local -- node scripts/ensure-cloudflare-queues.mjs",
     "terminal:analytics": "dotenv -e .env.local -- node scripts/report-terminal-analytics.mjs",
