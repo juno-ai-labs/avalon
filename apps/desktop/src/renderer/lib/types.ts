@@ -475,6 +475,18 @@ export interface Message {
    * realtime frame budget and are deliberately not delivered.
    */
   blocksOmittedPlaceholder?: boolean;
+  /**
+   * Set on the first row after a stretch of transcript this client has not
+   * loaded.
+   *
+   * A snapshot's coverage is not one interval: the opening one commonly holds
+   * an unread island and a separate latest island, and the projection flattens
+   * both into one list. Two rows either side of that seam look adjacent and are
+   * not — anything between them, a sentence from Rally included, is simply
+   * absent. Every pass that reasons about a *run* of adjacent rows has to stop
+   * at this flag, or it will join work across turns nobody has seen.
+   */
+  precededByTranscriptGap?: boolean;
   statusEvent?: {
     kind: 'assistant_turn_failed' | 'assistant_turn_stopped';
     code: string;

@@ -1629,6 +1629,32 @@ describe('collapsing a run of thinking', () => {
     expect(rows[1]!.thoughtEvent?.durationMs).toBe(67_000);
   });
 
+  it('sums thinking that alternates with the plugins it drove', () => {
+    // The shape a real multi-plugin run produces: the model thinks, calls a
+    // plugin, thinks again, calls another. Every thought belongs to one stretch
+    // of reasoning, so the run is one row — and the plugin rows keep their own
+    // places, each already anchored at its plugin's first call.
+    const rows = groupThinkingMessages([
+      pluginRow('rally'),
+      thinkingRow('thought-1', { durationMs: 9_000 }),
+      pluginRow('multimodal'),
+      thinkingRow('thought-2', { durationMs: 7_000 }),
+      pluginRow('computer'),
+      thinkingRow('thought-3', { durationMs: 8_000 }),
+      thinkingRow('thought-4', { durationMs: 11_000 }),
+      row('said', { messageType: 'text', text: 'The hero artwork is ready.' }),
+      pluginRow('computer-2'),
+      thinkingRow('thought-5', { durationMs: 6_000 }),
+      thinkingRow('thought-6', { durationMs: 69_000 }),
+    ]);
+
+    expect(rows.map((message) => message.id)).toEqual([
+      'rally', 'thought-1', 'multimodal', 'computer', 'said', 'computer-2', 'thought-5',
+    ]);
+    expect(rows.map((message) => message.thoughtEvent?.durationMs ?? null))
+      .toEqual([null, 35_000, null, null, null, null, 75_000]);
+  });
+
   it('closes the run at anything a person reads', () => {
     const rows = groupThinkingMessages([
       thinkingRow('thought-1', { durationMs: 1_000 }),
@@ -1702,6 +1728,111 @@ describe('collapsing a run of thinking', () => {
     ]);
 
     expect(rows.map((message) => message.sequenceNumber)).toEqual([1, 2]);
+  });
+});
+
+describe('a transcript gap between two loaded islands', () => {
+  /**
+   * The opening snapshot a person returning to a busy work stream gets: an
+   * unread island and a separate latest island, with turns nobody has loaded
+   * in between. Both islands are flattened into one feed, so the last row of
+   * the first and the first row of the second look adjacent and are not.
+   */
+  const thinkingTurn = (
+    transcriptSequence: number,
+    turnId: string,
+  ): WorkstreamTranscriptSnapshot['ranges'][number]['turns'][number] => ({
+    transcriptSequence, turnId, entryKind: 'conversation',
+    actor: 'assistant', authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+    createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1,
+    blocks: [{
+      type: 'thinking', blockId: `${turnId}:thinking:0`, blockIndex: 0,
+      providerEvidence: 'reasoning_summary', summary: null,
+      activityId: `${turnId}:activity`,
+    }],
+    activityId: null,
+  });
+
+  const thinkingActivity = (
+    turnId: string,
+    durationMs: number,
+  ): WorkstreamTranscriptSnapshot['activities'][number] => ({
+    activityId: `${turnId}:activity`, parentActivityId: null, scope: 'thinking',
+    subjectId: `${turnId}:thinking:0`, callIndex: null, label: 'Thinking',
+    state: 'completed', revision: 1,
+    intervals: [{
+      intervalId: `${turnId}:interval`, startedAtUtc: '2026-08-26T12:00:00.000Z',
+      stoppedAtUtc: '2026-08-26T12:00:10.000Z', durationMs,
+      elapsedMsAtSnapshot: durationMs, boundarySource: 'rally',
+      timingAccuracy: 'observed', revision: 1,
+    }],
+  });
+
+  const disjointSnapshot: WorkstreamTranscriptSnapshot = {
+    snapshotId: 'snapshot-gap', snapshotThrough: 12, eventSequence: 1,
+    snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: 2,
+    unreadReason: null,
+    ranges: [
+      {
+        purpose: 'unread',
+        requested: { startInclusive: 2, endExclusive: 3 },
+        covered: { startInclusive: 2, endExclusive: 3 },
+        turns: [thinkingTurn(2, 'turn-unread')],
+        activities: [], pluginRuns: [],
+      },
+      {
+        purpose: 'latest',
+        requested: { startInclusive: 11, endExclusive: 13 },
+        covered: { startInclusive: 11, endExclusive: 13 },
+        turns: [thinkingTurn(11, 'turn-latest'), thinkingTurn(12, 'turn-latest-2')],
+        activities: [], pluginRuns: [],
+      },
+    ],
+    activities: [
+      thinkingActivity('turn-unread', 29_000),
+      thinkingActivity('turn-latest', 38_000),
+      thinkingActivity('turn-latest-2', 17_000),
+    ],
+    activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+  };
+
+  it('marks the first row of a later island and nothing else', () => {
+    const messages = orderedTranscriptMessages(disjointSnapshot, 'workstream-one', []);
+
+    expect(messages.map((message) => message.precededByTranscriptGap ?? false))
+      .toEqual([false, true, false]);
+  });
+
+  it('never sums thinking across turns nobody has loaded', () => {
+    // The turns between sequence 2 and 11 are not on this client. One of them
+    // may be a sentence from Rally, which would have ended the run — so the two
+    // sides of the seam must stay two rows, and only the contiguous pair sums.
+    const rows = groupThinkingMessages(orderedTranscriptMessages(disjointSnapshot, 'workstream-one', []));
+
+    expect(rows.map((message) => message.thoughtEvent?.durationMs)).toEqual([29_000, 55_000]);
+  });
+
+  it('never groups a plugin across turns nobody has loaded', () => {
+    const toolRow = (id: string, extra: Partial<Message>): Message => ({
+      id,
+      workstreamId: 'workstream-one',
+      sequenceNumber: 0,
+      authorType: 'agent',
+      messageType: 'tool_event',
+      createdAt: '2026-08-26T12:00:00.000Z',
+      toolEvent: {
+        id, toolCallId: id, name: `${id}_call`, status: 'completed',
+        pluginId: 'connection:one', pluginName: 'Slack',
+      },
+      ...extra,
+    });
+    const grouped = groupPluginToolMessages([
+      toolRow('slack-1', {}),
+      toolRow('slack-2', { precededByTranscriptGap: true }),
+    ]);
+
+    expect(grouped).toHaveLength(2);
+    expect(grouped.every((message) => message.messageType === 'plugin_activity')).toBe(true);
   });
 });
 

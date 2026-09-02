@@ -271,6 +271,23 @@ export function orderedTranscriptMessages(
     }
   }
   const turnsById = new Map(orderedTurns.map((turn) => [turn.turnId, turn]));
+  // The turns that open a stretch of transcript after one this client has not
+  // loaded. A snapshot's coverage is not one interval — the opening one
+  // commonly holds an unread island and a separate latest island — and the
+  // flatten above puts both in one list with nothing between them. Marking the
+  // seam is what stops a pass over adjacent rows from joining work across turns
+  // nobody has seen. Computed from the snapshot's own coverage rather than from
+  // a jump in `transcriptSequence`, which cannot tell a hidden turn from a
+  // sequence the transcript never assigned.
+  const gaps = transcriptGaps(snapshot);
+  const gapLeadingTurnIds = new Set<string>();
+  for (let index = 1; index < orderedTurns.length; index += 1) {
+    const previous = orderedTurns[index - 1]!.transcriptSequence;
+    const current = orderedTurns[index]!.transcriptSequence;
+    const hidden = gaps.some((gap) =>
+      gap.startInclusive < current && gap.endExclusive > previous + 1);
+    if (hidden) gapLeadingTurnIds.add(orderedTurns[index]!.turnId);
+  }
   // A plugin activity is addressed by the turn it hangs off and the plugin it
   // is about; its own id is the backend's composition of exactly those two.
   // Reading it back through the parent link rather than rebuilding that string
@@ -308,7 +325,7 @@ export function orderedTranscriptMessages(
       // Older Workers may have projected a Suggested context block before the
       // feature was retired. It is no longer part of the feed.
       .filter((block) => !(block.type === 'text' && block.messageType === 'suggestion'))
-      .map((block): Message => {
+      .map((block, blockPosition): Message => {
         const rememberOrder = (messageId: string): void => {
           // An open elicitation and its durable answer deliberately share one
           // UI identity. Keep the question's first position while the answered
@@ -338,6 +355,12 @@ export function orderedTranscriptMessages(
           ...(turn.clientMessageId ? { clientMessageId: turn.clientMessageId } : {}),
           ...(turn.actor === 'external' && turn.externalActor
             ? { externalActor: { ...turn.externalActor } }
+            : {}),
+          // Only the turn's first row carries the seam. Repeating it would
+          // close the run again between this turn's own blocks, which are
+          // contiguous by definition.
+          ...(blockPosition === 0 && gapLeadingTurnIds.has(turn.turnId)
+            ? { precededByTranscriptGap: true }
             : {}),
           createdAt: turn.createdAtUtc,
         };
@@ -483,6 +506,7 @@ export function orderedTranscriptMessages(
       text: 'This message is too large to display.',
       createdAt: turn.createdAtUtc,
       blocksOmittedPlaceholder: true,
+      ...(gapLeadingTurnIds.has(turn.turnId) ? { precededByTranscriptGap: true } : {}),
     });
   }
   for (const activity of snapshot.activities) {
@@ -997,6 +1021,10 @@ function pluginGroupContribution(message: Message): {
  * answers does close it: a sentence from Rally is a report on the work above
  * it, and folding work that came after the sentence back into a row printed
  * before it would put the feed out of order with its own narration.
+ *
+ * This answers only what a row *is*. A row that opens a stretch of transcript
+ * after an unloaded one closes the run too, whatever its type, and each caller
+ * checks `precededByTranscriptGap` itself — see `Message`.
  */
 function continuesPluginActivityRun(message: Message): boolean {
   return message.messageType === 'tool_event'
@@ -1043,6 +1071,12 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
   let open = new Map<string, GroupTiming>();
   const rows: Message[] = [];
   for (const message of messages) {
+    // A seam closes the run before this row is considered, rather than instead
+    // of considering it: the first row after a gap is work in its own right and
+    // opens the next run, which is why this is not folded into
+    // `continuesPluginActivityRun` — that answer would also push the row
+    // through unchanged.
+    if (message.precededByTranscriptGap) open = new Map();
     if (!continuesPluginActivityRun(message)) {
       open = new Map();
       rows.push(message);
@@ -1595,7 +1629,9 @@ function thinkingSegment(message: Message): ThoughtEventData | null {
  * sentence rather than being summed into the one above it. Plugin rows do not
  * close it, which is what puts the four rows above into one; the plugin row
  * they surround keeps its own place, because grouping already anchors it at
- * the first call in the run.
+ * the first call in the run. A row that opens a stretch of transcript after an
+ * unloaded one closes it too: the sentence that would have ended the run may
+ * be sitting in the part nobody has loaded.
  *
  * The collapsed row sits where the run's *first* thinking row sat and inherits
  * its identity, so the feed's order stays the order work happened in and the
@@ -1610,7 +1646,7 @@ export function groupThinkingMessages(messages: readonly Message[]): Message[] {
   let open: Run | null = null;
   const rows: Message[] = [];
   for (const message of messages) {
-    if (!continuesPluginActivityRun(message)) open = null;
+    if (message.precededByTranscriptGap || !continuesPluginActivityRun(message)) open = null;
     const segment = thinkingSegment(message);
     if (!segment) {
       rows.push(message);
