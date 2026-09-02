@@ -284,6 +284,16 @@ is the boundary `groupPluginToolMessages` and `groupThinkingMessages` already
 grouped within, so an accordion holds exactly one run's worth of rows, each of
 them already one per plugin.
 
+The unloaded-stretch half of that boundary is checked at **both** ends of the
+scan, which is the one place this pass differs in shape from the two before it.
+They walk forward and close the run on any row carrying
+`precededByTranscriptGap`, the row that would close it included; this one walks
+backward from the answer, so it has to read the flag on that answer too. The
+projection sets it on a turn's *first* row only, so an answer that opens its
+turn is exactly where it lands — and such an answer opens a newly loaded island,
+which makes the machinery above it in the list some earlier island's. It has no
+run of its own to fold, so it keeps its total in the header.
+
 ## Invariants
 
 - **No tool row survives grouping in the work-stream feed.** A tool row that
