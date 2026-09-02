@@ -352,7 +352,15 @@ export interface ThoughtEventData {
   durationMs: number | null;
   /** Client receipt time for the currently streaming inference attempt. */
   startedAt?: number;
-  monotonicStartedAt?: number;
+  /**
+   * One local monotonic start per still-running segment this row stands for.
+   *
+   * A projected row has exactly one. A collapsed run of thinking rows has as
+   * many as it summed, for the same reason a plugin group does: its total
+   * counts every segment, so the live number has to advance by every one of
+   * them or it jumps to the real figure the moment they settle.
+   */
+  monotonicStartedAt?: number | readonly number[];
   timingAccuracy?: 'observed' | 'upper_bound';
   activeVerb?: string;
   completedVerb?: string;
