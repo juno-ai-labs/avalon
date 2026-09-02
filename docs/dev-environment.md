@@ -407,8 +407,8 @@ That arithmetic is why the fix is structural rather than a larger runner.
 
 `pnpm lint` itself pins no heap ceiling, so a local run gets Node's default.
 CI sets one: the `lint` and `typecheck-and-build-invariants` lanes in
-`ci.yml` carry `NODE_OPTIONS: --max-old-space-size=8192`, as do the macOS
-release job's verification steps. **A matrix key named `env` is only a
+`ci.yml` carry `NODE_OPTIONS: --max-old-space-size=8192`, as do the desktop
+release workflow's Ubuntu verification steps. **A matrix key named `env` is only a
 variable — Actions gives it no meaning of its own** — so `ci.yml` names it
 explicitly on the run step, and a lane that sets nothing gets an empty
 `NODE_OPTIONS`, which Node ignores. A ceiling that is never named there is a
