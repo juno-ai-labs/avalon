@@ -408,6 +408,7 @@ export const googleTools: ToolDefinition[] = [
       properties: {
         query: {
           type: "string",
+          minLength: 1,
           description:
             "Gmail search query. Supports Gmail's operators, for example from:dana@example.com, to:, cc:, subject:, newer_than:30d, older_than:1y, has:attachment, in:anywhere, is:unread, and OR / parentheses / \"quoted phrases\". Prefer an operator query over bare keywords, which match message bodies and return far too much.",
         },
@@ -453,7 +454,7 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { threadId: { type: "string" } },
+      properties: { threadId: { type: "string", minLength: 1 } },
       required: ["threadId"]
     }
   },
@@ -466,7 +467,7 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { messageId: { type: "string" } },
+      properties: { messageId: { type: "string", minLength: 1 } },
       required: ["messageId"]
     }
   },
@@ -511,10 +512,10 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        calendarId: { type: "string", description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
-        timeMin: { type: "string", format: "date-time" },
-        timeMax: { type: "string", format: "date-time" },
-        query: { type: "string" },
+        calendarId: { type: "string", minLength: 1, description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
+        timeMin: { type: "string", minLength: 1, format: "date-time" },
+        timeMax: { type: "string", minLength: 1, format: "date-time" },
+        query: { type: "string", minLength: 1 },
         maxResults: { type: "integer", minimum: 1, maximum: 100 },
         pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
       },
@@ -531,8 +532,8 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        calendarId: { type: "string", description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
-        eventId: { type: "string" }
+        calendarId: { type: "string", minLength: 1, description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
+        eventId: { type: "string", minLength: 1 }
       },
       required: ["eventId"]
     }
@@ -576,6 +577,7 @@ export const googleTools: ToolDefinition[] = [
         },
         modifiedAfter: {
           type: "string",
+          minLength: 1,
           format: "date-time",
           description: "Only files modified after this RFC 3339 timestamp, for example 2026-08-01T00:00:00Z.",
         },
@@ -598,7 +600,7 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { fileId: { type: "string" } },
+      properties: { fileId: { type: "string", minLength: 1 } },
       required: ["fileId"]
     }
   },
@@ -611,7 +613,7 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { fileId: { type: "string" } },
+      properties: { fileId: { type: "string", minLength: 1 } },
       required: ["fileId"]
     }
   },
@@ -625,7 +627,7 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        fileId: { type: "string" },
+        fileId: { type: "string", minLength: 1 },
         mimeType: { type: "string", enum: ["text/plain", "application/pdf"] }
       },
       required: ["fileId", "mimeType"]
@@ -640,7 +642,7 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { documentId: { type: "string" } },
+      properties: { documentId: { type: "string", minLength: 1 } },
       required: ["documentId"]
     }
   },
@@ -670,7 +672,7 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        documentId: { type: "string" },
+        documentId: { type: "string", minLength: 1 },
         tabId: { type: "string", minLength: 1, maxLength: 500 },
         text: { type: "string", minLength: 1, maxLength: 100000 }
       },
@@ -687,7 +689,7 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        documentId: { type: "string" },
+        documentId: { type: "string", minLength: 1 },
         find: { type: "string", minLength: 1, maxLength: 10000 },
         replace: { type: "string", maxLength: 100000 },
         matchCase: { type: "boolean", default: true }
@@ -704,7 +706,7 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { spreadsheetId: { type: "string" } },
+      properties: { spreadsheetId: { type: "string", minLength: 1 } },
       required: ["spreadsheetId"]
     }
   },
@@ -719,7 +721,7 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        spreadsheetId: { type: "string" },
+        spreadsheetId: { type: "string", minLength: 1 },
         range: { type: "string", minLength: 1, maxLength: 1000 },
         majorDimension: { type: "string", enum: ["ROWS", "COLUMNS"] },
         valueRenderOption: {
@@ -796,12 +798,12 @@ export const GoogleAgentPluginDescriptor = defineConnectorAgentPlugin({
 
 function calendarEventWriteInputSchema(includeEventId: boolean): Record<string, unknown> {
   const properties: Record<string, unknown> = {
-    calendarId: { type: "string", description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
+    calendarId: { type: "string", minLength: 1, description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
     summary: { type: "string", minLength: 1, maxLength: 1000 },
     description: { type: "string", maxLength: 20000 },
     location: { type: "string", maxLength: 2000 },
-    start: { type: "string", format: "date-time" },
-    end: { type: "string", format: "date-time" },
+    start: { type: "string", minLength: 1, format: "date-time" },
+    end: { type: "string", minLength: 1, format: "date-time" },
     timeZone: { type: "string", minLength: 1, maxLength: 100 },
     attendeeEmails: {
       type: "array",
@@ -810,7 +812,7 @@ function calendarEventWriteInputSchema(includeEventId: boolean): Record<string, 
     }
   };
   if (includeEventId) {
-    properties.eventId = { type: "string", description: "The event's own id, not a calendar id." };
+    properties.eventId = { type: "string", minLength: 1, description: "The event's own id, not a calendar id." };
     delete properties.attendeeEmails;
     properties.addAttendeeEmails = {
       type: "array",
@@ -844,7 +846,7 @@ function sheetValuesWriteInputSchema(append: boolean): Record<string, unknown> {
     type: "object",
     additionalProperties: false,
     properties: {
-      spreadsheetId: { type: "string" },
+      spreadsheetId: { type: "string", minLength: 1 },
       range: { type: "string", minLength: 1, maxLength: 1000 },
       values: {
         type: "array",
@@ -867,11 +869,11 @@ function emailInputSchema(): Record<string, unknown> {
       cc: { type: "array", items: { type: "string", format: "email" } },
       subject: { type: "string" },
       body: { type: "string", description: "The message body, delivered as plain text exactly as written. Write plain text, not Markdown." },
-      threadId: { type: "string" },
-      inReplyTo: { type: "string", description: "RFC Message-ID header of the message being replied to" },
+      threadId: { type: "string", minLength: 1 },
+      inReplyTo: { type: "string", minLength: 1, description: "RFC Message-ID header of the message being replied to" },
       references: {
         type: "array",
-        items: { type: "string" },
+        items: { type: "string", minLength: 1 },
         maxItems: 50,
         description: "RFC Message-ID reference chain for a threaded reply"
       }
@@ -890,7 +892,7 @@ const EmailArgsSchema = z.strictObject({
   cc: z.array(z.string().email()).default([]),
   subject: z.string().min(1).max(998),
   body: z.string().max(500_000),
-  threadId: z.string().optional(),
+  threadId: z.string().min(1).optional(),
   inReplyTo: RfcMessageIdSchema.optional(),
   references: z.array(RfcMessageIdSchema).max(50).default([])
 }).superRefine((value, context) => {

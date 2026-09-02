@@ -13,13 +13,26 @@ type Normalized = { value: unknown; changed: boolean };
 type SchemaVisitBudget = { remaining: number };
 
 /**
- * Apply the one model-tolerance rule shared by every harness tool: a string may
- * stand in for a schema-declared number only when the complete string is a
- * finite JSON number and JavaScript can represent any integral value safely.
+ * Apply the model-tolerance rules shared by every harness tool.
  *
- * The provider-facing schema remains numeric so models still learn the
- * preferred shape. String alternatives remain strings: identifiers and free
- * text must not change meaning merely because their characters look numeric.
+ * 1. A string may stand in for a schema-declared number only when the complete
+ *    string is a finite JSON number and JavaScript can represent any integral
+ *    value safely. The provider-facing schema remains numeric so models still
+ *    learn the preferred shape. String alternatives remain strings: identifiers
+ *    and free text must not change meaning merely because their characters look
+ *    numeric.
+ * 2. An optional property given `""` is treated as absent when the property's
+ *    own schema says the empty string is not one of its values. Models blank
+ *    out optional cursors, ids, and filters rather than omitting them, and the
+ *    tool then either rejects the call or forwards the blank to a provider that
+ *    rejects it. Neither outcome carried any intent the tool could have
+ *    honored, because the value was already declared invalid.
+ *
+ * The second rule never reaches a value a tool would have accepted: a field
+ * where the empty string means something — clearing a description, listing a
+ * repository's root — does not declare it invalid, so it is left alone. That is
+ * the whole of the boundary, and it is why the strip is not the silent drop
+ * `docs/agent-tools.md` forbids.
  */
 export function normalizeToolArguments(input: unknown, schema: Record<string, unknown>): unknown {
   return normalizeValue(input, schema, schema, 0, { remaining: MAX_SCHEMA_VISITS }).value;
@@ -135,12 +148,25 @@ function normalizeDirect(
 
   if (!isObject(input)) return { value: input, changed: false };
   const properties = isObject(schema.properties) ? schema.properties : {};
+  const required = new Set(Array.isArray(schema.required)
+    ? schema.required.filter((value): value is string => typeof value === "string")
+    : []);
   const entries: Array<[string, unknown]> = [];
   let changed = false;
 
   for (const [key, value] of Object.entries(input)) {
+    const declared = Object.prototype.hasOwnProperty.call(properties, key);
+    if (
+      value === ""
+      && declared
+      && !required.has(key)
+      && schemaRejectsEmptyString(properties[key], rootSchema, depth + 1, budget)
+    ) {
+      changed = true;
+      continue;
+    }
     let normalized: Normalized = { value, changed: false };
-    if (Object.prototype.hasOwnProperty.call(properties, key)) {
+    if (declared) {
       normalized = normalizeValue(value, properties[key], rootSchema, depth + 1, budget);
     } else if (isObject(schema.additionalProperties)) {
       normalized = normalizeValue(value, schema.additionalProperties, rootSchema, depth + 1, budget);
@@ -150,6 +176,53 @@ function normalizeDirect(
   }
 
   return changed ? { value: Object.fromEntries(entries), changed: true } : { value: input, changed: false };
+}
+
+/**
+ * Whether the schema proves the empty string is not one of this property's
+ * values. Unproven means false: a schema this cannot read keeps `""` and the
+ * ordinary validation path decides, so a new JSON Schema idiom can never turn
+ * into a silent drop here.
+ *
+ * `pattern` and `format` are deliberately not consulted. Both would need the
+ * regex or format vocabulary evaluated to answer, and a field that must not be
+ * empty can say so with `minLength`, which is also the constraint the model
+ * reads.
+ */
+function schemaRejectsEmptyString(
+  schemaValue: unknown,
+  rootSchema: JsonObject,
+  depth: number,
+  budget: SchemaVisitBudget,
+): boolean {
+  if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue) || !consumeSchemaVisit(budget)) return false;
+  const schema = schemaValue;
+
+  const types = typeof schema.type === "string"
+    ? [schema.type]
+    : Array.isArray(schema.type)
+      ? schema.type.filter((value): value is string => typeof value === "string")
+      : [];
+  if (types.length > 0 && !types.includes("string")) return true;
+  if (typeof schema.minLength === "number" && schema.minLength >= 1) return true;
+  if (Object.prototype.hasOwnProperty.call(schema, "const") && schema.const !== "") return true;
+  if (Array.isArray(schema.enum) && !schema.enum.includes("")) return true;
+
+  if (typeof schema.$ref === "string") {
+    const reference = resolveLocalReference(rootSchema, schema.$ref);
+    if (schemaRejectsEmptyString(reference, rootSchema, depth + 1, budget)) return true;
+  }
+  if (Array.isArray(schema.allOf)
+    && schema.allOf.some((branch) => schemaRejectsEmptyString(branch, rootSchema, depth + 1, budget))) {
+    return true;
+  }
+  const alternatives = Array.isArray(schema.anyOf)
+    ? schema.anyOf
+    : Array.isArray(schema.oneOf)
+      ? schema.oneOf
+      : null;
+  if (!alternatives?.length) return false;
+  return alternatives.every((branch) => schemaRejectsEmptyString(branch, rootSchema, depth + 1, budget));
 }
 
 function exclusiveNumericKind(schema: JsonObject): NumericKind | null {

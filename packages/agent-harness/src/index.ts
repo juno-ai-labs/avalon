@@ -49,6 +49,11 @@ import { modelDefaultReasoningEffort } from "./model-inference-defaults";
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
 export {
+  formatToolArgumentValidationError,
+  normalizeToolArguments,
+  validateToolArguments,
+} from "./tool-arguments";
+export {
   applyBindLoopTransition,
   bindLoopMessageChain,
   bindLoopNonSystemMessageCount,
