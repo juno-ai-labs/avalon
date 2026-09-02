@@ -4,6 +4,8 @@ import {
   ARTIFACT_RESERVED_PREFIX,
   ARTIFACT_VIEWER_ID_HEADER,
   ARTIFACT_VIEWER_NAME_HEADER,
+  ArtifactHostnameRouteSchema,
+  ArtifactHostnameStubSchema,
   ArtifactManifestSchema,
   SITE_MANIFEST_MIME_TYPE,
   artifactAssetKey,
@@ -19,6 +21,7 @@ import {
 import { RALLY_HEADERS, RALLY_HEADER_PREFIX, rallyHeaderAliases } from "./http-headers";
 
 const ARTIFACT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+const HOSTNAME_STUB = "level-luminous-sequential-schrodinger";
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
@@ -46,7 +49,7 @@ describe("artifact manifest", () => {
     expect(ArtifactManifestSchema.safeParse({ ...manifest(), extra: 1 }).success).toBe(false);
   });
 
-  it("refuses an artifact id that is not a UUID, because it is also the hostname", () => {
+  it("refuses an artifact id that is not a UUID, because it is the storage identity", () => {
     expect(ArtifactManifestSchema.safeParse(manifest({ artifactId: "my-site" })).success).toBe(false);
   });
 
@@ -73,22 +76,26 @@ describe("artifact addressing", () => {
   it("folds the region into the label rather than adding a dotted level", () => {
     // Two labels deep is not covered by Universal SSL, so this shape is a TLS
     // decision, not a formatting preference.
-    expect(artifactHostLabel(ARTIFACT, "global")).toBe(`${ARTIFACT}-g`);
-    expect(artifactHostLabel(ARTIFACT, "eu")).toBe(`${ARTIFACT}-eu`);
-    expect(artifactHostLabel(ARTIFACT, "global")).not.toContain(".");
-    expect(artifactHostLabel(ARTIFACT, "eu")).not.toContain(".");
+    expect(artifactHostLabel(HOSTNAME_STUB, "global")).toBe(`${HOSTNAME_STUB}-g`);
+    expect(artifactHostLabel(HOSTNAME_STUB, "eu")).toBe(`${HOSTNAME_STUB}-eu`);
+    expect(artifactHostLabel(HOSTNAME_STUB, "global")).not.toContain(".");
+    expect(artifactHostLabel(HOSTNAME_STUB, "eu")).not.toContain(".");
   });
 
   it("round-trips a host back to its artifact and region", () => {
     for (const region of ["global", "eu"] as const) {
-      const origin = artifactOrigin(ARTIFACT, region, "rallyusercontent.com");
-      expect(parseArtifactHost(new URL(origin).host)).toEqual({ artifactId: ARTIFACT, region });
+      const origin = artifactOrigin(HOSTNAME_STUB, region, "rallyusercontent.com");
+      expect(parseArtifactHost(new URL(origin).host)).toEqual({
+        hostnameStub: HOSTNAME_STUB,
+        legacyArtifactId: null,
+        region,
+      });
     }
   });
 
   it("tolerates a port, uppercase, and surrounding whitespace on the Host header", () => {
-    expect(parseArtifactHost(`  ${ARTIFACT.toUpperCase()}-G.rallyusercontent.com:8787 `))
-      .toEqual({ artifactId: ARTIFACT, region: "global" });
+    expect(parseArtifactHost(`  ${HOSTNAME_STUB.toUpperCase()}-G.rallyusercontent.com:8787 `))
+      .toEqual({ hostnameStub: HOSTNAME_STUB, legacyArtifactId: null, region: "global" });
   });
 
   it("returns null for anything that is not an artifact host, rather than throwing", () => {
@@ -100,8 +107,27 @@ describe("artifact addressing", () => {
   });
 
   it("does not confuse the two regions, which share a UUID prefix", () => {
-    expect(parseArtifactHost(`${ARTIFACT}-eu.rallyusercontent.com`)?.region).toBe("eu");
-    expect(parseArtifactHost(`${ARTIFACT}-g.rallyusercontent.com`)?.region).toBe("global");
+    expect(parseArtifactHost(`${HOSTNAME_STUB}-eu.rallyusercontent.com`)?.region).toBe("eu");
+    expect(parseArtifactHost(`${HOSTNAME_STUB}-g.rallyusercontent.com`)?.region).toBe("global");
+  });
+
+  it("keeps UUID hosts readable while existing links migrate", () => {
+    expect(parseArtifactHost(`${ARTIFACT}-g.rallyusercontent.com`)).toEqual({
+      hostnameStub: null,
+      legacyArtifactId: ARTIFACT,
+      region: "global",
+    });
+  });
+
+  it("validates immutable hostname routes", () => {
+    expect(ArtifactHostnameStubSchema.safeParse(HOSTNAME_STUB).success).toBe(true);
+    expect(ArtifactHostnameStubSchema.safeParse("three-word-stub").success).toBe(false);
+    expect(ArtifactHostnameRouteSchema.safeParse({
+      version: 1,
+      hostnameStub: HOSTNAME_STUB,
+      artifactId: ARTIFACT,
+      region: "global",
+    }).success).toBe(true);
   });
 
   it("keys assets and manifests immutably per version", () => {
