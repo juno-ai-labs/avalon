@@ -120,13 +120,14 @@ advances at the rate its own total accrues.
 `rally:core`, `rally:discovery`, `rally:memory`, `rally:tables`, and
 `rally.skills` are all Rally reasoning about its own workspace, and are drawn as
 one **Rally** row. `rally:terminal` and `rally:workstream` are Rally operating a
-machine, and are drawn as one **Computer** row. The named
-`rally:multimodal-generation` plugin keeps its own **Multimodal generation** row
-with Tabler's dedicated **image-generation** glyph. A first-party plugin that is
-absent from that map *and* has no display name of its own — which is how an
-undecided one appears, since the transcript falls back to the raw id as its
-label — joins Rally, so an internal identifier never reaches the feed. Every
-other plugin keeps its own row.
+machine, and are drawn as one **Computer** row. The
+`rally:multimodal-generation` plugin keeps its own **Multimodal generation** row;
+its canonical id maps it to Tabler's dedicated **image-generation** glyph rather
+than the generic plug. A first-party plugin that is absent from that map *and*
+has no display name of its own — which is how an undecided one appears, since
+the transcript falls back to the raw id as its label — joins Rally, so an
+internal identifier never reaches the feed. Every other plugin keeps its own
+row.
 
 A connector's row is keyed on its **display name**, not its id. Two connections
 to the same service are one place as far as a reader is concerned, and the name

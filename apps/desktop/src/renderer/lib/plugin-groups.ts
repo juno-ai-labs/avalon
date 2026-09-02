@@ -97,7 +97,9 @@ const MULTIMODAL_GENERATION_GROUP: PluginGroup = {
  * Terminal are both Rally operating a machine on the reader's behalf, which is
  * what "Computer" names. Everything absent from this map keeps its own row —
  * a connector is a place the reader recognizes, and collapsing Slack into
- * Rally would hide the only part of the activity they can act on.
+ * Rally would hide the only part of the activity they can act on. A first-party
+ * plugin that keeps its own row but needs a dedicated glyph also lives here, so
+ * its icon is pinned to its canonical id rather than mutable display-name text.
  */
 const GROUPED_PLUGIN_IDS = new Map<string, PluginGroup>([
   ['rally:core', RALLY_GROUP],
