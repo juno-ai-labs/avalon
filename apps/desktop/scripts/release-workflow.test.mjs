@@ -1,8 +1,17 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
+import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+
+import {
+  desktopContractSourceClosure,
+  desktopReleaseInputPaths,
+  FIXED_DESKTOP_RELEASE_INPUTS,
+  resolveContractPackageImport,
+  resolveContractSpecifier,
+} from './desktop-release-inputs.mjs';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const workflowPath = join(repositoryDirectory, '.github/workflows/release-desktop-macos.yml');
@@ -42,10 +51,23 @@ test('the site deployment never shares the release queue', async () => {
   assert.doesNotMatch(siteWorkflow, /group: desktop-macos-release/u);
 });
 
-test('the macOS runner is only claimed once the plan job has approved a release', async () => {
+test('the macOS runner is only claimed after the frozen release commit passes Ubuntu verification', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
+  const verifyJob = workflow.slice(workflow.indexOf('\n  verify:'), workflow.indexOf('\n  release:'));
+  const releaseJob = workflow.slice(workflow.indexOf('\n  release:'));
 
-  assert.match(workflow, /^ {2}release:\n {4}needs: plan\n {4}if: needs\.plan\.outputs\.should_release == 'true'$/mu);
+  assert.match(verifyJob, /^ {4}needs: plan$/mu);
+  assert.match(verifyJob, /^ {4}if: needs\.plan\.outputs\.should_release == 'true'$/mu);
+  assert.match(verifyJob, /^ {4}runs-on: ubuntu-latest$/mu);
+  assert.match(verifyJob, /^ {4}timeout-minutes: 30$/mu);
+  assert.match(releaseJob, /^ {4}needs: \[plan, verify\]$/mu);
+  assert.match(releaseJob, /^ {4}runs-on: macos-26$/mu);
+  assert.match(releaseJob, /ref: \$\{\{ needs\.verify\.outputs\.release_commit \}\}/u);
+
+  for (const step of ['Lint', 'Typecheck', 'Test', 'Run release invariants']) {
+    assert.match(verifyJob, new RegExp(`- name: ${step}`, 'u'), `${step} must run on Ubuntu`);
+    assert.doesNotMatch(releaseJob, new RegExp(`- name: ${step}`, 'u'), `${step} must not spend macOS time`);
+  }
 });
 
 test('the app is health-gated against the regional APIs before it is distributed', async () => {
@@ -148,10 +170,9 @@ test('private telemetry artifacts are published to both isolated regional teleme
   assert.ok(symbols < distributed, 'a release must not distribute before both regional artifacts exist');
 });
 
-// The `paths:` filter is the release trigger, so it is also the only place the
-// "what ships in the app" decision is written down. These tests are what stops
-// it drifting: a wrong entry here is invisible until a merge silently fails to
-// release, which is exactly the outage this pipeline was rebuilt to prevent.
+// The `paths:` filter admits work to the cheap planner. Contract source is broad
+// on purpose; the planner derives which modules can reach the installed app.
+// These tests keep the static admission filter and dynamic classifier aligned.
 async function triggerPaths() {
   const workflow = await readFile(workflowPath, 'utf8');
   const block = workflow.match(/^ {4}paths:\n(?<body>(?:^ {6}- .*\n)+)/mu)?.groups?.body;
@@ -166,6 +187,84 @@ function matchesFilter(patterns, path) {
     : path === pattern));
 }
 
+async function filesBelow(directory, ignoredDirectories = new Set()) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (!ignoredDirectories.has(entry.name)) files.push(...await filesBelow(path, ignoredDirectories));
+      continue;
+    }
+    files.push(path);
+  }
+  return files;
+}
+
+async function staticModuleSpecifiers(path) {
+  const source = await readFile(path, 'utf8');
+  const syntax = path.endsWith('.tsx')
+    ? ts.ScriptKind.TSX
+    : /\.[cm]?js$/u.test(path) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+  const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, syntax);
+  const specifiers = [];
+  const visit = (node) => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+      && node.moduleSpecifier
+      && ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    }
+    if (
+      ts.isCallExpression(node)
+      && node.expression.kind === ts.SyntaxKind.ImportKeyword
+      && node.arguments.length === 1
+      && ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      specifiers.push(node.arguments[0].text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return specifiers;
+}
+
+async function typescriptDesktopContractSourceClosure() {
+  const desktopDirectory = join(repositoryDirectory, 'apps/desktop');
+  const contractDirectory = join(repositoryDirectory, 'packages/contracts');
+  const packageJson = JSON.parse(await readFile(join(contractDirectory, 'package.json'), 'utf8'));
+  const entryPoints = new Set();
+
+  for (const path of await filesBelow(
+    desktopDirectory,
+    new Set(['coverage', 'dist', 'node_modules', 'out']),
+  )) {
+    if (!/\.[cm]?[jt]sx?$/u.test(path) || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path)) continue;
+    for (const specifier of await staticModuleSpecifiers(path)) {
+      const entryPoint = resolveContractPackageImport(packageJson, specifier);
+      if (entryPoint) entryPoints.add(entryPoint);
+    }
+  }
+
+  const closure = new Set();
+  const pending = [...entryPoints];
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (closure.has(path)) continue;
+    closure.add(path);
+    for (const specifier of await staticModuleSpecifiers(path)) {
+      const imported = await resolveContractSpecifier(path, specifier, packageJson);
+      if (!imported) continue;
+      if (!closure.has(imported)) pending.push(imported);
+    }
+  }
+
+  return [...closure]
+    .map((path) => relative(repositoryDirectory, path).replaceAll('\\', '/'))
+    .sort();
+}
+
 test('the release trigger covers everything the installed app is built from', async () => {
   const patterns = await triggerPaths();
 
@@ -174,8 +273,8 @@ test('the release trigger covers everything the installed app is built from', as
     'apps/desktop/package.json',
     'apps/desktop/electron-builder.yml',
     'apps/desktop/resources/icon.icns',
+    'packages/contracts/package.json',
     'packages/contracts/src/index.ts',
-    'packages/agent-harness/src/index.ts',
     'package.json',
     'pnpm-lock.yaml',
     'pnpm-workspace.yaml',
@@ -184,25 +283,112 @@ test('the release trigger covers everything the installed app is built from', as
   ]) {
     assert.equal(matchesFilter(patterns, path), true, `${path} ships in the desktop app and must release`);
   }
+
+  assert.deepEqual(
+    patterns.sort(),
+    [
+      ...FIXED_DESKTOP_RELEASE_INPUTS.filter((path) => path !== 'packages/contracts/package.json'),
+      'packages/contracts/**',
+    ].sort(),
+    'The broad trigger must admit every contract change to the Ubuntu classifier and nothing else',
+  );
 });
 
-test('the release trigger excludes what a user could never install', async () => {
-  const patterns = await triggerPaths();
+async function workspacePackages() {
+  const workspace = await readFile(join(repositoryDirectory, 'pnpm-workspace.yaml'), 'utf8');
+  const packagePatterns = workspace
+    .match(/^packages:\n(?<body>(?: {2}- .*\n)+)/mu)?.groups?.body
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.replace(/^ {2}- /u, '').replace(/^['"]|['"]$/gu, ''));
+  assert.ok(packagePatterns, 'pnpm-workspace.yaml must declare package directories');
 
-  for (const path of [
+  const packages = [];
+  for (const pattern of packagePatterns) {
+    assert.match(pattern, /\/\*$/u, `Release invariant does not understand workspace pattern ${pattern}`);
+    const parent = pattern.slice(0, -2);
+    for (const entry of await readdir(join(repositoryDirectory, parent), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const directory = `${parent}/${entry.name}`;
+      try {
+        const manifest = JSON.parse(await readFile(join(repositoryDirectory, directory, 'package.json'), 'utf8'));
+        packages.push({ directory, manifest });
+      } catch { /* A workspace glob may contain a directory that is not a package. */ }
+    }
+  }
+  return packages;
+}
+
+test('every desktop workspace dependency reaches both the workflow and planner', async () => {
+  const patterns = await triggerPaths();
+  const packages = await workspacePackages();
+  const packageByName = new Map(packages.map(({ directory, manifest }) => [manifest.name, directory]));
+  const desktop = packages.find(({ manifest }) => manifest.name === '@rally/desktop')?.manifest;
+  assert.ok(desktop, 'The desktop package must belong to the pnpm workspace');
+  const dependencies = { ...desktop.dependencies, ...desktop.devDependencies };
+
+  for (const [name, version] of Object.entries(dependencies)) {
+    if (!version.startsWith('workspace:')) continue;
+    const directory = packageByName.get(name);
+    assert.ok(directory, `${name} must resolve to a package declared by pnpm-workspace.yaml`);
+    const manifestPath = `${directory}/package.json`;
+    assert.equal(matchesFilter(patterns, manifestPath), true, `${name} changes must reach Ubuntu planning`);
+    assert.deepEqual(
+      await desktopReleaseInputPaths([manifestPath]),
+      [manifestPath],
+      `${name} changes must remain release inputs after Ubuntu classification`,
+    );
+  }
+});
+
+test('the dependency-free planner scan equals the TypeScript contract import graph', async () => {
+  const contractSources = await desktopContractSourceClosure();
+  assert.deepEqual(
+    contractSources,
+    await typescriptDesktopContractSourceClosure(),
+    'Import syntax the planner cannot recognize must fail CI instead of silently missing a desktop dependency',
+  );
+  const mixedChanges = [
+    contractSources[0],
+    'packages/contracts/src/text.ts',
+    'packages/contracts/src/index.test.ts',
+    'docs/runbook.md',
+  ];
+  assert.deepEqual(await desktopReleaseInputPaths(mixedChanges), [contractSources[0]]);
+});
+
+test('the Ubuntu planner excludes what a user could never install', async () => {
+  const patterns = await triggerPaths();
+  const unrelated = [
     'docs/runbook.md',
     'README.md',
     'apps/api/src/index.ts',
     'apps/site/src/pages/index.astro',
     'apps/release-retention/src/index.ts',
+    'packages/agent-harness/src/index.ts',
+    'packages/connectors/src/index.ts',
+    'packages/contracts/src/durable-object-migrations.ts',
+    'packages/contracts/src/engineering-inspection.ts',
+    'packages/contracts/src/index.test.ts',
+    'packages/contracts/src/text.ts',
+    'packages/db/src/index.ts',
     'scripts/check-regional-health.mjs',
     'assets/brand/logo.svg',
     'config/provider-apps/github.json',
     'eslint.config.mjs',
     '.github/workflows/ci.yml',
     '.github/workflows/deploy-api.yml',
-  ]) {
-    assert.equal(matchesFilter(patterns, path), false, `${path} must not spend a 90-minute signed build`);
+  ];
+  const admitted = await desktopReleaseInputPaths(unrelated);
+
+  assert.deepEqual(admitted, [], 'Unrelated paths must not reach the macOS job');
+  for (const path of unrelated) {
+    const shouldReachUbuntu = path.startsWith('packages/contracts/');
+    assert.equal(
+      matchesFilter(patterns, path),
+      shouldReachUbuntu,
+      `${path} must ${shouldReachUbuntu ? '' : 'not '}start the cheap planner`,
+    );
   }
 });
 
@@ -376,7 +562,7 @@ test('the release-config retry never runs from the disposable sync worktree', as
   assert.match(recordStep, /git -C "\$sync" push origin HEAD:main/u);
 });
 
-test('the pipeline bumps the version itself, before the commit it tags', async () => {
+test('the pipeline freezes and verifies the bumped commit before macOS tags it', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const stepIndex = (name) => workflow.indexOf(`- name: ${name}`);
 
@@ -384,17 +570,21 @@ test('the pipeline bumps the version itself, before the commit it tags', async (
   const resolved = stepIndex('Resolve the release commit');
   const createdLocally = stepIndex('Create the release tag locally');
   const guarded = stepIndex('Guard tag, commit, and package versions');
+  const verified = stepIndex('Run release invariants');
 
   assert.notEqual(bumped, -1, 'The release must stamp the planned version onto the manifests');
   // The bump has to be in the tree before the tag is cut and before
   // validate-release-tag.mjs compares the manifests against it, or every
   // release would fail its own guard.
-  assert.ok(bumped < createdLocally, 'The version must be bumped before the tag is created');
+  assert.ok(bumped < resolved, 'The release commit must be resolved after the bump');
+  assert.ok(resolved < verified, 'Portable verification must run against the frozen release commit');
+  assert.ok(verified < createdLocally, 'The version must pass Ubuntu verification before macOS tags it');
   assert.ok(createdLocally < guarded, 'The tag must exist before the guard checks it');
   // The recorded watermark must name the bumped commit, not the one that
   // triggered the run.
-  assert.ok(bumped < resolved, 'The release commit must be resolved after the bump');
-  assert.match(workflow.slice(resolved), /RALLY_RELEASE_COMMIT=\$\(git rev-parse HEAD\)/u);
+  assert.match(workflow.slice(resolved), /sha=\$\(git rev-parse HEAD\).*GITHUB_OUTPUT/u);
+  assert.match(workflow, /RALLY_RELEASE_COMMIT: \$\{\{ needs\.verify\.outputs\.release_commit \}\}/u);
+  assert.match(workflow, /ref: \$\{\{ needs\.verify\.outputs\.release_commit \}\}/u);
 });
 
 test('the bump is skipped on a dispatch, which replays an already-tagged version', async () => {
@@ -407,8 +597,8 @@ test('the bump is skipped on a dispatch, which replays an already-tagged version
   // A replayed tag already carries its own version; re-bumping would move the
   // manifests off the tag and fail the guard.
   assert.match(bumpStep, /^ {8}if: needs\.plan\.outputs\.create_tag == 'true'$/mu);
-  // main can move between the plan and the bump; the newer tip carries strictly
-  // more work, so the release follows it rather than failing.
+  // main can move between the plan and the bump; the verifier includes the
+  // newest tip and then freezes it, so later commits wait for another run.
   assert.match(bumpStep, /git reset --hard origin\/main/u);
   assert.match(bumpStep, /retrying/u);
 });
@@ -436,7 +626,7 @@ test('a no-op bump is treated as resuming a release, never as one already shippe
 
 test('the plan is made from the tip, not from the commit that triggered the run', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const planJob = workflow.slice(workflow.indexOf('\n  plan:'), workflow.indexOf('\n  release:'));
+  const planJob = workflow.slice(workflow.indexOf('\n  plan:'), workflow.indexOf('\n  verify:'));
 
   // A run that waited in the queue was triggered long before it got the slot.
   // Planning from that stale checkout re-cuts a shipped version; planning from
@@ -447,6 +637,15 @@ test('the plan is made from the tip, not from the commit that triggered the run'
     planJob.indexOf('git fetch --no-tags origin main') < planJob.indexOf('plan-release.mjs'),
     'The tip must be fetched before the plan reads it',
   );
+  assert.ok(
+    planJob.indexOf('git checkout --detach origin/main') < planJob.indexOf('plan-release.mjs'),
+    'The contract classifier must read the same main tip whose watermark diff it classifies',
+  );
+  assert.match(
+    planJob,
+    /- name: Check out the tip the plan is made from\n {8}if: github\.event_name == 'push'/u,
+    'A tag replay must keep its dispatch checkout while a branch push moves to main tip',
+  );
 });
 
 test('the release job can write the tag it publishes', async () => {
@@ -454,4 +653,13 @@ test('the release job can write the tag it publishes', async () => {
   const releaseJob = workflow.slice(workflow.indexOf('\n  release:'));
 
   assert.match(releaseJob, /^ {4}permissions:\n {6}contents: write$/mu);
+});
+
+test('the Ubuntu verification job can write and freeze the version bump', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const verifyJob = workflow.slice(workflow.indexOf('\n  verify:'), workflow.indexOf('\n  release:'));
+
+  assert.match(verifyJob, /^ {4}permissions:\n {6}contents: write$/mu);
+  assert.match(verifyJob, /^ {4}outputs:\n {6}release_commit: \$\{\{ steps\.release_commit\.outputs\.sha \}\}$/mu);
+  assert.match(verifyJob, /git push origin HEAD:main/u);
 });
