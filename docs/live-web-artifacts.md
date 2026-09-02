@@ -124,6 +124,13 @@ address bar, and `POST`s the code in a request body. The redeem endpoint never
 serves artifact content: it consumes the code, sets the cookie, and redirects, so
 no artifact document is ever loaded at a location that held the code.
 
+The lazy move from a legacy UUID host to a readable host is an origin change.
+Server-side facet data is unaffected, but browser-owned cookies, local storage,
+and IndexedDB under the legacy origin are not copied to the readable origin and
+become unreachable from later opens. Artifacts currently use Rally's server-side
+data surface for durable state, so preserving that browser-local state was not
+worth retaining UUID origins for newly opened sessions.
+
 ### Stateful artifacts
 
 A site whose `index.js` exports `class SiteData extends DurableObject` gets its
@@ -218,9 +225,13 @@ is the only place that can forward into it.
 - **A version's bytes are immutable.** The loader caches an isolate by a
   version-scoped id, so publishing different content at a version already used
   serves the cached module. A republish always advances the version.
-- **Assets, then manifest, then resource row, then pointer.** Each step depends
-  only on ones that already committed, so a failure leaves the artifact serving
-  its *previous* version rather than a version whose bytes a viewer cannot read.
+- **Assets, then manifest, then hostname reservation, then resource row, then
+  pointer.** Each step depends only on ones that already committed, so a failure
+  leaves the artifact serving its *previous* version rather than a version whose
+  bytes a viewer cannot read. The hostname must be reserved before the resource
+  row moves: otherwise a D1 failure followed by an equal-content retry can
+  mistake the changed resource for a completed publish and return the old
+  artifact version.
 - **A republish never downgrades a live site to an archive.** Archive→site
   upgrades freely — that is the archive fallback's own recovery — but the
   reverse fails loudly, because a URL participants hold is never killed by an
@@ -359,6 +370,38 @@ Worker's waistline is deliberately minimal, so a compromise of it exposes
 artifact content and viewer sessions rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-01 — Review closes navigation, retry, and local-setup gaps
+
+**What changed:** Artifact surfaces now fence redirects as well as ordinary
+navigations, initial preview loads share one abort-aware result across concurrent
+presenters, and failed pop-out loads close. Public host parsing is total, desktop
+host admission accepts only the two artifact label shapes, platform D1 is part of
+fresh local migration setup and the runtime binding contract, and publication
+reserves a new hostname before mutating the resource row.
+
+**Why:** Review found three failure windows hidden by individually reasonable
+steps. Handing artifact contents from the global fence to the origin fence also
+handed redirects over, but the origin fence only listened for navigation. An
+Electron `loadURL()` promise reports `ERR_ABORTED` when the bootstrap starts its
+intended redemption POST, so treating every rejection as terminal can destroy a
+healthy rail while a second caller has already reported success. And reserving a
+hostname after a resource swap lets a D1 outage make the retry's equal-content
+path return the previous artifact version. The local binding also existed before
+its separate migration chain ran, making fresh development fail only at first
+use.
+
+**Considered and rejected:** Restoring the global artifact block would break the
+same-origin redemption again; ignoring all `loadURL()` failures would restore
+blank DNS/TLS views; moving the resource row before reservation would preserve a
+retry trap; and teaching the regional migration discovery about a shared chain
+would blur the deliberate regional/platform ownership boundary.
+
+**Consequences:** Both navigation event types stay under the artifact-origin
+owner; concurrent presentations agree on initial-load success; `ERR_ABORTED` is
+the one non-terminal Electron load result; fresh local setup applies the shared
+schema into both region state directories; and browser-local data under a legacy
+UUID origin is intentionally not migrated to its readable successor.
 
 ### 2026-09-01 — Readable origins use a content-free platform route index
 

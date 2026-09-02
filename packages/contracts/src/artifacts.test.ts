@@ -21,7 +21,7 @@ import {
 import { RALLY_HEADERS, RALLY_HEADER_PREFIX, rallyHeaderAliases } from "./http-headers";
 
 const ARTIFACT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
-const HOSTNAME_STUB = "level-luminous-sequential-schrodinger";
+const HOSTNAME_STUB = ArtifactHostnameStubSchema.parse("level-luminous-sequential-schrodinger");
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
@@ -104,6 +104,8 @@ describe("artifact addressing", () => {
     for (const host of ["rallywith.ai", "", "..", `${ARTIFACT}.rallyusercontent.com`, `${ARTIFACT}-us.x`]) {
       expect(parseArtifactHost(host)).toBeNull();
     }
+    expect(parseArtifactHost("deadbeef-dead-dead-dead-deadbeefdead-g.rallyusercontent.com"))
+      .toBeNull();
   });
 
   it("does not confuse the two regions, which share a UUID prefix", () => {

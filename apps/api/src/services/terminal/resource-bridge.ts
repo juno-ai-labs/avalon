@@ -1,5 +1,6 @@
 import {
   AttachmentKindSchema,
+  type ArtifactHostnameStub,
   SITE_MANIFEST_MIME_TYPE,
   artifactOrigin,
   classifyAttachmentKind,
@@ -725,7 +726,14 @@ export function createTerminalResourceBridge(
         files: site.files,
         serverModuleSha256: site.serverModuleSha256,
       });
-
+      // Reserve the stable public origin before mutating the reusable resource
+      // row. If D1 is unavailable after the swap, a retry sees equal content
+      // and would otherwise return the previous registry version without ever
+      // registering or pointing at the bytes just written.
+      const hostnameStub = previous?.hostnameStub ?? await ensureArtifactHostname(env, {
+        workspaceId: context.workspaceId,
+        artifactId: written.artifactId,
+      });
       const timestamp = nowIso();
       const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const metadata = JSON.stringify({
@@ -792,10 +800,6 @@ export function createTerminalResourceBridge(
         await allocateResourceSlugBesideCreation(env, context.workspaceId, resourceId);
       }
 
-      const hostnameStub = await ensureArtifactHostname(env, {
-        workspaceId: context.workspaceId,
-        artifactId: written.artifactId,
-      });
       await registerArtifact(workspace, {
         artifactId: written.artifactId,
         hostnameStub,
@@ -866,7 +870,7 @@ function siteOutput(
     fileCount: number;
     totalBytes: number;
     manifestSha256: string;
-    hostnameStub: string;
+    hostnameStub: ArtifactHostnameStub;
     slug: string | null;
   },
 ): TerminalPublishedSiteOutput {
