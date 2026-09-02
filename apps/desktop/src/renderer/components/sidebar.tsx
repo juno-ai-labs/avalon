@@ -64,6 +64,8 @@ import { ContextNestedMenu } from './nested-menu';
 import { WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
+  /** GrokBot-style shell: navigation is work streams only. */
+  conversationOnly?: boolean;
   workspace: Workspace;
   members?: WorkspaceMember[];
   automations: AutomationSummary[];
@@ -966,6 +968,7 @@ function moveWithin(ids: string[], id: string, index: number): string[] {
 }
 
 export function Sidebar({
+  conversationOnly = false,
   workspace,
   members = [],
   automations,
@@ -1714,21 +1717,23 @@ export function Sidebar({
                 <span>New meeting/notes</span>
               </button>
             )}
-          </div>
+          </div>}
 
-          <ProjectSidebarSection
-            inactiveProjects={inactiveProjects}
-            loading={loading === true}
-            onAddWorkstream={onAddWorkstreamToProject}
-            onCreate={onCreateProject}
-            onReorder={onReorderProjects}
-            onRestore={onRestoreProject}
-            projects={projects}
-            renderWorkstream={renderWorkstream}
-            workstreams={visibleWorkstreams}
-          />
+          {!conversationOnly && (
+            <ProjectSidebarSection
+              inactiveProjects={inactiveProjects}
+              loading={loading === true}
+              onAddWorkstream={onAddWorkstreamToProject}
+              onCreate={onCreateProject}
+              onReorder={onReorderProjects}
+              onRestore={onRestoreProject}
+              projects={projects}
+              renderWorkstream={renderWorkstream}
+              workstreams={visibleWorkstreams}
+            />
+          )}
 
-          <section className="sidebar-section" aria-labelledby="automations-heading">
+          {!conversationOnly && <section className="sidebar-section" aria-labelledby="automations-heading">
             <div className="sidebar-section-heading">
               <h2 id="automations-heading">Automations</h2>
             </div>
@@ -1752,7 +1757,7 @@ export function Sidebar({
                 ))}
               </div>
             )}
-          </section>
+          </section>}
 
           {/* Only when something is pinned. An empty heading would be a
               standing invitation to a feature the reader has not used, sitting

@@ -55,6 +55,7 @@ export {
 const RENAME_HINT = 'Double-click to rename';
 
 export function WorkstreamHeader({
+  grokBotMode = false,
   workstream,
   socketState,
   onAddParticipant,
@@ -64,6 +65,7 @@ export function WorkstreamHeader({
   currentUserId = null,
   workspaceTarget,
 }: {
+  grokBotMode?: boolean;
   workstream: WorkstreamDetail;
   socketState: SocketState;
   onAddParticipant: () => void;
@@ -195,6 +197,41 @@ export function WorkstreamHeader({
       .catch(() => undefined);
   };
   const naming = useNamingSkeleton(workstream);
+
+  if (grokBotMode) {
+    return (
+      <header className="grokbot-workstream-header window-drag">
+        <div className="window-no-drag">
+          <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}>
+            <Menu size={16} />
+          </IconButton>
+        </div>
+        {naming ? (
+          <h1><TitleSkeleton className="title-skeleton-header" /></h1>
+        ) : (
+          <h1>
+            <button
+              aria-pressed={showing('context')}
+              className="grokbot-conversation-title window-no-drag"
+              onClick={() => toggleRail('context')}
+              type="button"
+            >
+              <span aria-hidden="true" className="grokbot-conversation-faces">
+                <WorkstreamGlyph id={workstream.id} size={22} />
+                <AvatarStack
+                  currentUserId={currentUserId}
+                  members={workstream.participants}
+                  presentUserIds={presentUserIds}
+                />
+              </span>
+              <span>{workstream.title}</span>
+            </button>
+          </h1>
+        )}
+        <span aria-hidden="true" />
+      </header>
+    );
+  }
 
   return (
     <header className="workstream-header window-drag">

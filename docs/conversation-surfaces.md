@@ -183,7 +183,51 @@ on purpose. A row that scrolls away open and comes back closed re-measures
 shorter than the size cache expects, and the virtualizer declines to compensate
 a re-measurement during a backward scroll, so the transcript jumps under the
 reader by the whole delta.
-### 2026-09-02 — Work streams adopt the compact conversation shell
+### 2026-09-01 — GrokBot shell removes Rally-specific navigation chrome
+
+**What changed:** The active desktop shell now mounts a work-stream-only left
+navigation and a compact centered conversation title that opens the details
+rail. Project, automation, note, meeting, socket, HyperSight, participant-add,
+and overflow controls are absent from those two visible chrome regions.
+
+**Why:** This branch is a frontend rewrite against GrokBot's three-column
+conversation model. Keeping every existing Rally affordance visible would make
+the result a restyled Rally screen rather than a faithful reconstruction; the
+product-specific controls will be added back deliberately after the shell is
+settled.
+
+**Considered and rejected:** Deleting routes, data queries, or mutations along
+with their controls would turn a visual experiment into a product/backend
+change and make later reintroduction needlessly expensive. CSS-only hiding was
+also rejected because invisible controls should not remain in the accessibility
+tree.
+
+**Consequences:** Deep links and existing non-shell surfaces still work, but
+they are no longer discoverable through the main left navigation. The centered
+title is now the single details-rail affordance on an open work stream.
+
+### 2026-09-01 — Agent documents become paged section-card stacks
+
+**What changed:** The main work-stream feed now splits Rally responses at
+top-level h2 headings, represents those sections as 20-pixel-offset square
+cards, and opens them in a modal reader that pages by controls, arrow keys, or
+horizontal swipe. Preamble and heading-less responses remain readable inline.
+
+**Why:** Structured agent output should be scannable as a document set without
+turning long Rally prose into message bubbles or making readers expand several
+inline accordions before they can move between sections.
+
+**Considered and rejected:** Replacing `MarkdownBody`'s shared heading behavior
+globally would also change automation, attachment, export, and embedded preview
+surfaces. Splitting on h3-h6 was rejected because those headings express
+structure inside an h2 section rather than a new document card.
+
+**Consequences:** The main work-stream adapter explicitly opts agent turns into
+the card reader. The source parser must continue to ignore heading-like text in
+code, lists, and blockquotes, and the noninteractive export path must continue
+to emit the complete response.
+
+### 2026-09-01 — Work streams adopt the compact conversation shell
 
 **What changed:** The main frontend now uses deterministic color/icon work-stream
 identities, compact searchable navigation with participant face piles, attributed
