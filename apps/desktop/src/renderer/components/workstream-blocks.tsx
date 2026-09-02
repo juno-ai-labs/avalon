@@ -88,6 +88,22 @@ function personAccent(id: string): string {
   return `var(${palette[hash % palette.length] ?? palette[0]!})`;
 }
 
+/**
+ * The accent a person's turn is drawn with, from whichever identity the turn
+ * actually carries.
+ *
+ * Both human rows — the ordinary authored one and a settled elicitation answer —
+ * state this on the article, and both have to state the *same* thing: the dot's
+ * background and the author name's colour resolve through `--person-accent`, so
+ * a row that omits it paints a transparent dot and takes the ambient text
+ * colour, which is a header that renders and cannot be read as one. "These two
+ * rows are the same row" is the claim this file makes; a copied expression is
+ * how that stops being true.
+ */
+function turnAccent(message: Message): string {
+  return personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id);
+}
+
 function safeJson(value: unknown): string {
   try {
     const text = JSON.stringify(value, null, 2);
@@ -1833,6 +1849,12 @@ interface MessageBlockProps {
    */
   collapseHeadings?: boolean;
   currentUserId?: string;
+  /**
+   * The signed-in person's display name, for the one row that needs naming from
+   * the session rather than from the turn: their own elicitation answer, in the
+   * window before the canonical human turn replaces the optimistic projection.
+   */
+  currentUserName?: string;
   message: Message;
   loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
@@ -1856,6 +1878,7 @@ export function MessageBlock({
   citations,
   collapseHeadings = false,
   currentUserId,
+  currentUserName,
   loadAttachmentContent,
   message,
   onAnswerElicitation,
@@ -1885,7 +1908,15 @@ export function MessageBlock({
         || (message.authorType === 'agent' && message.author === undefined);
       const responseAuthor = externalResponse
         ? `${message.externalActor?.displayName ?? 'Slack workspace member'} · Slack`
-        : message.author?.name ?? 'Workspace member';
+        // Answering marks the assistant's question turn answered where it
+        // stands, and that turn carries no author record until the canonical
+        // human turn lands a moment later. Falling through to the anonymous
+        // label there would attribute the reader's own answer to a "Workspace
+        // member" on a row this same branch labels as theirs, so the session's
+        // own name stands in for that window.
+        : message.author?.name
+          ?? (ownHumanResponse ? currentUserName : undefined)
+          ?? 'Workspace member';
       return (
         <article
           aria-label={ownHumanResponse ? 'Your elicitation response' : `Response from ${responseAuthor}`}
@@ -1894,13 +1925,10 @@ export function MessageBlock({
             ownHumanResponse ? 'own-human-message' : 'coworker-message',
           )}
           id={`message-${message.id}`}
-          style={{ '--person-accent': personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id) } as React.CSSProperties}
+          style={{ '--person-accent': turnAccent(message) } as React.CSSProperties}
         >
           {/* The same identity line every human turn carries, the reader's own
-              included — see the header on the ordinary authored row below. The
-              accent is stated here for the same reason it is stated there: the
-              dot paints with it and the name is coloured by it, so a row that
-              omits it draws an invisible dot and an uncoloured name. */}
+              included — see the header on the ordinary authored row below. */}
           <header><span aria-hidden="true" className="message-author-dot" /><span className="message-author">{responseAuthor}</span><time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time></header>
           <div className="human-message-content">
             <ElicitationPanel
@@ -1985,7 +2013,7 @@ export function MessageBlock({
         pending && 'is-pending-delivery',
       )}
       id={`message-${message.id}`}
-      style={human ? { '--person-accent': personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id) } as React.CSSProperties : undefined}
+      style={human ? { '--person-accent': turnAccent(message) } as React.CSSProperties : undefined}
     >
       {/* One identity line for every turn in the feed, the reader's own
           included. A person reading back a long transcript is reading a room,
