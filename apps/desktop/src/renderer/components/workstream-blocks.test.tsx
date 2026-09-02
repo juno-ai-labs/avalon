@@ -287,6 +287,11 @@ describe('MessageBlock human identity', () => {
     // answer included.
     expect(response.querySelector('.message-author')).toHaveTextContent('Adam');
     expect(response.querySelector('time')).toBeInTheDocument();
+    // And it carries the accent that line is drawn with. The dot's background
+    // and the name's colour both resolve through `--person-accent`; a row that
+    // does not state it paints a transparent dot and an uncoloured name, which
+    // is a header that renders and cannot be seen.
+    expect(response.style.getPropertyValue('--person-accent')).not.toBe('');
     expect(screen.getByLabelText('Elicitation response')).toHaveClass('human-message-bubble');
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Compare offer vs. RSPA');
   });
