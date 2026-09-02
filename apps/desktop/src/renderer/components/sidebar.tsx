@@ -16,6 +16,7 @@ import {
   EyeOff,
   FileStack,
   Globe2,
+  GripVertical,
   LogOut,
   Menu,
   Mic2,
@@ -37,6 +38,7 @@ import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, Works
 import {
   formatDateTime,
   formatRelative,
+  formatTime,
   groupActivityItems,
   nextRecencyBoundary,
   recencyGroupBatchFilter,
@@ -189,6 +191,25 @@ function visibleBatchCounts(
       && item.note.ownerUserId === viewerId
       && item.note.recordingStatus !== 'recording').length,
   };
+}
+
+const sidebarWeekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
+const sidebarMonthDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+function formatSidebarActivityTime(value: string, now = new Date()): string {
+  const date = new Date(value);
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) return 'Unknown time';
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const startOfWeekWindow = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+
+  if (timestamp >= startOfToday && timestamp < startOfTomorrow) return formatTime(value);
+  if (timestamp >= startOfYesterday && timestamp < startOfToday) return 'Yesterday';
+  if (timestamp >= startOfWeekWindow && timestamp < startOfYesterday) return sidebarWeekday.format(date);
+  return sidebarMonthDay.format(date);
 }
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
@@ -627,7 +648,7 @@ function WorkstreamRow({
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
-              <WorkstreamGlyph id={workstream.id} />
+              <WorkstreamGlyph id={workstream.id} size={30} />
               <span className="workstream-row-status">
                 <StatusDot compact status={workstreamMarkerStatus(workstream)} tooltip />
               </span>
@@ -638,7 +659,7 @@ function WorkstreamRow({
                   {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
                   {naming ? <TitleSkeleton /> : workstream.title}
                 </span>
-                <time aria-hidden="true" dateTime={workstream.lastActivityAt}>{formatRelative(workstream.lastActivityAt)}</time>
+                <time aria-hidden="true" dateTime={workstream.lastActivityAt}>{formatSidebarActivityTime(workstream.lastActivityAt)}</time>
               </span>
               {description && (
                 <span className="sidebar-row-hint">
@@ -1982,7 +2003,9 @@ export function Sidebar({
           role="separator"
           tabIndex={0}
         >
-          <span />
+          <span aria-hidden="true" className="sidebar-resizer-handle">
+            <GripVertical size={11} strokeWidth={2} />
+          </span>
         </div>
       </aside>
       <Modal
