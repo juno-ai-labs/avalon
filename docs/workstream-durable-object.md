@@ -1546,6 +1546,37 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-02 — Fenced scope and activation writes reuse rather than refuse
+
+**What changed:** `FencedWriteOutcome` loses its `mismatch` member. `persistScope`
+and `persistPluginActivation` now return `reused` whenever the run already
+carries the row, without comparing the caller's `scopeHash` or
+`toolSurfaceHash` against the stored one. `persisted`, `reused` and
+`ownership_lost` remain, and the lease fence around the insert is unchanged.
+
+**Why:** The comparison read a recomputed value as though it were a stored one.
+A Durable Object is reset when the Worker is deployed, so a run in flight
+resumes on a new bundle and recomputes both hashes from different tool
+definitions. Production lost a run to this on 2026-09-02 after its own
+reservation and tool-batch recovery had already repaired it. The full incident
+and the rejected alternatives are in
+[`agent-harness.md`](agent-harness.md#changelog); this entry records the storage
+contract that changed.
+
+**Consequences:** `persistScope` is now idempotent per run and
+`persistPluginActivation` per `(run, plugin)`, rather than each being idempotent
+per `(attempt, value)` pair. That is what lets a replacement instance restart the
+loop instead of dying, but it preserves the admission row rather than executing
+against it: the root runtime continues with its own freshly recomputed tool
+surface, and the stored fields do not bound it. A caller that genuinely needs to
+detect a changed value must read the row back and compare stored against stored;
+the outcome no longer carries that answer. The lease fence runs before the reuse
+path in both, so an executor that has lost the run is still told
+`ownership_lost` rather than being handed a false success — the removed value
+comparison had been doing that job incidentally, since a stale executor carries
+a different attempt ID. Both hash columns are still written on the first attempt
+and are still the forensic record of the build a run was admitted on.
+
 ### 2026-09-02 — A refused transcript range names the request it refuses
 
 **What changed:** The socket `error` frame carries an optional `requestId`, and
