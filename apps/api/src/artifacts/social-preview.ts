@@ -43,15 +43,25 @@ export function socialPreviewMarkup(
 
 /** Inject into bounded, published HTML bytes without depending on the runtime. */
 export function injectSocialPreviewIntoHtml(source: string, markup: string): string {
-  const head = /<head\b[^>]*>/iu.exec(source);
-  if (head?.index !== undefined) {
-    const offset = head.index + head[0].length;
-    return `${source.slice(0, offset)}\n${markup}\n${source.slice(offset)}`;
+  const headEnd = /<\/head\s*>/iu.exec(source);
+  if (headEnd?.index !== undefined) {
+    return `${source.slice(0, headEnd.index)}${markup}\n${source.slice(headEnd.index)}`;
+  }
+  const headStart = /<head\b[^>]*>/iu.exec(source);
+  if (headStart?.index !== undefined) {
+    const body = /<body\b[^>]*>/iu.exec(source);
+    const offset = body?.index ?? source.length;
+    return `${source.slice(0, offset)}${markup}\n${source.slice(offset)}`;
   }
   const html = /<html\b[^>]*>/iu.exec(source);
   if (html?.index !== undefined) {
     const offset = html.index + html[0].length;
     return `${source.slice(0, offset)}<head>\n${markup}\n</head>${source.slice(offset)}`;
+  }
+  const doctype = /^\s*<!doctype\b[^>]*>/iu.exec(source);
+  if (doctype) {
+    const offset = doctype[0].length;
+    return `${source.slice(0, offset)}\n<head>\n${markup}\n</head>${source.slice(offset)}`;
   }
   return `<head>\n${markup}\n</head>${source}`;
 }
@@ -61,7 +71,7 @@ export function injectSocialPreviewIntoHtml(source: string, markup: string): str
  * HTML is touched, so a protected site's 401 and an API's JSON remain exact.
  */
 export function injectSocialPreviewResponse(response: Response, markup: string): Response {
-  const contentType = response.headers.get("content-type") ?? "";
+  const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
   if (response.status < 200 || response.status >= 300 || !contentType.startsWith("text/html")) {
     return response;
   }
@@ -69,7 +79,7 @@ export function injectSocialPreviewResponse(response: Response, markup: string):
   return new HTMLRewriter()
     .on("head", {
       element(element) {
-        element.prepend(`${markup}\n`, { html: true });
+        element.append(`\n${markup}`, { html: true });
         injected = true;
       },
     })
@@ -80,6 +90,18 @@ export function injectSocialPreviewResponse(response: Response, markup: string):
         injected = true;
       },
     })
+    .on("*", {
+      element(element) {
+        if (injected || ["html", "head", "body"].includes(element.tagName)) return;
+        element.before(`<head>\n${markup}\n</head>`, { html: true });
+        injected = true;
+      },
+    })
+    .onDocument({
+      end(end) {
+        if (!injected) end.append(`<head>\n${markup}\n</head>`, { html: true });
+      },
+    })
     .transform(response);
 }
 
@@ -87,6 +109,7 @@ function escapeHtmlAttribute(value: string): string {
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 }

@@ -67,6 +67,16 @@ describe("what a published directory becomes", () => {
     expect(resolveDirectoryPublish([entry("index.js")]))
       .toEqual({ kind: "site", mode: "active", entryPath: "index.js" });
   });
+
+  it("refuses authored files in Rally's derived-asset directory", () => {
+    const error = refusal(() => resolveDirectoryPublish([
+      entry("index.html"),
+      entry(".rally/social-preview.png"),
+    ]));
+
+    expect(error.code).toBe("reserved_site_path");
+    expect(error.message).toContain("reserved");
+  });
 });
 
 describe("whether a server module asks for a database", () => {
