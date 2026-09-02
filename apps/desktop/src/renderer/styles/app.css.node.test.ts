@@ -817,6 +817,14 @@ describe('collapsed heading preview mask', () => {
     expect(body).toContain('transparent)');
     expect(body).not.toContain('18%');
   });
+
+  // Clicking the preview opens the section, so a collapsed one reads as the
+  // control it is. An expanded section keeps the ordinary text cursor: there
+  // is no inverse click.
+  it('gives a collapsed section the pointer cursor, and an expanded one none', () => {
+    expect(rule('.markdown-collapse.is-collapsed')).toContain('cursor: pointer');
+    expect(rule('.markdown-collapse.is-expanded')).toBeNull();
+  });
 });
 
 /**

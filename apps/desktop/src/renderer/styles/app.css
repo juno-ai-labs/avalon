@@ -2746,6 +2746,7 @@ pre {
 .markdown-collapse-chevron:focus-visible { outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 1px; }
 .markdown-collapse-chevron svg { display: block; transition: transform 140ms ease; }
 .markdown-collapse.is-expanded .markdown-collapse-chevron svg { transform: rotate(90deg); }
+.markdown-collapse.is-collapsed { cursor: pointer; }
 .markdown-collapse.is-collapsed > .markdown-collapse-body {
   -webkit-mask-image: linear-gradient(to bottom, color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent), transparent);
   -webkit-mask-mode: alpha;

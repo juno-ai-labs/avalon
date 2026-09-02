@@ -58,7 +58,7 @@ describe('MessageFeed', () => {
     const article = screen.getByRole('heading', { name: 'Summary' }).closest('article');
     expect(article).not.toBeNull();
     expect(article!.querySelectorAll('.markdown-collapse')).toHaveLength(2);
-    expect(within(article!).getByRole('button', { name: 'Expand all sections' })).toBeVisible();
+    expect(within(article!).getByRole('button', { name: 'Collapse all sections' })).toBeVisible();
   });
 
   it('draws the placeholder rather than a blank row for a message too large to send', () => {

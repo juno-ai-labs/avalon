@@ -13,9 +13,16 @@ import {
 import { collapsibleSectionIds } from '../lib/markdown-collapse';
 
 interface MarkdownCollapseValue {
-  readonly expanded: ReadonlySet<string>;
+  /** Sections the reader has closed. A missing id is open. */
+  readonly collapsed: ReadonlySet<string>;
   readonly sectionIds: readonly string[];
-  readonly allExpanded: boolean;
+  /**
+   * Whether every section is closed. The bulk control reads this rather than
+   * its opposite: with open as the default, "some are closed" is a reader who
+   * is folding, and the action to offer them is folding the rest.
+   */
+  readonly allCollapsed: boolean;
+  expand: (id: string) => void;
   toggle: (id: string) => void;
   setAll: (expanded: boolean) => void;
 }
@@ -31,8 +38,9 @@ export function useMarkdownCollapse(): MarkdownCollapseValue | null {
  * Holds which heading sections are expanded for one markdown body (or for
  * the agent turn that hosts the collapse-all control next to **Worked for**).
  *
- * Default is collapsed: a missing id is closed. New sections that stream in
- * are therefore closed without anyone having to say so.
+ * Default is expanded: the set holds the sections the reader has closed, so a
+ * missing id is open. New sections that stream in are therefore open without
+ * anyone having to say so.
  */
 export function MarkdownCollapseController({
   children,
@@ -56,22 +64,30 @@ export function MarkdownCollapseController({
   if (computedIds.join('\0') !== sectionIds.join('\0')) {
     setSectionIds(computedIds);
   }
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = useCallback((id: string) => {
-    setExpanded((current) => {
+    setCollapsed((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
   }, []);
+  const expand = useCallback((id: string) => {
+    setCollapsed((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+  }, []);
   const setAll = useCallback((nextExpanded: boolean) => {
-    setExpanded(nextExpanded ? new Set(sectionIds) : new Set());
+    setCollapsed(nextExpanded ? new Set() : new Set(sectionIds));
   }, [sectionIds]);
-  const allExpanded = sectionIds.length > 0 && sectionIds.every((id) => expanded.has(id));
+  const allCollapsed = sectionIds.length > 0 && sectionIds.every((id) => collapsed.has(id));
   const value = useMemo<MarkdownCollapseValue>(
-    () => ({ allExpanded, expanded, sectionIds, setAll, toggle }),
-    [allExpanded, expanded, sectionIds, setAll, toggle],
+    () => ({ allCollapsed, collapsed, expand, sectionIds, setAll, toggle }),
+    [allCollapsed, collapsed, expand, sectionIds, setAll, toggle],
   );
   return (
     <MarkdownCollapseContext.Provider value={value}>
@@ -90,10 +106,27 @@ export function MarkdownCollapseSection({
   id: string;
 }): React.JSX.Element {
   const collapse = useMarkdownCollapse();
-  const expanded = collapse?.expanded.has(id) ?? false;
+  const expanded = !(collapse?.collapsed.has(id) ?? false);
+  // The faded preview is part of the same affordance as the chevron: a reader
+  // who clicks the three lines they cannot finish wants the rest of them. The
+  // collapsed body is inert, so it is out of hit testing and the click lands
+  // here on the section. Attached only while collapsed, and expanding rather
+  // than toggling: a click inside an open body belongs to the text it landed
+  // on, never to the accordion.
+  const openFromPreview = (event: React.MouseEvent<HTMLDivElement>): void => {
+    // The heading owns every click on itself, including the link and selection
+    // rules that decide it should *not* toggle; opening here would overrule
+    // them and swallow a link in a heading.
+    if ((event.target as HTMLElement | null)?.closest?.('.markdown-collapse-heading')) return;
+    if (window.getSelection()?.isCollapsed === false) return;
+    collapse?.expand(id);
+  };
   return (
     <MarkdownCollapseSectionIdContext.Provider value={id}>
-      <div className={clsx('markdown-collapse', expanded ? 'is-expanded' : 'is-collapsed')}>
+      <div
+        className={clsx('markdown-collapse', expanded ? 'is-expanded' : 'is-collapsed')}
+        onClick={expanded ? undefined : openFromPreview}
+      >
         {heading}
         <div
           aria-hidden={expanded ? undefined : true}
@@ -119,7 +152,7 @@ function CollapseHeading({
   const id = useContext(MarkdownCollapseSectionIdContext);
   const collapse = useMarkdownCollapse();
   if (!id || !collapse) return <Tag {...props}>{children}</Tag>;
-  const expanded = collapse.expanded.has(id);
+  const expanded = !collapse.collapsed.has(id);
   const label = expanded ? 'Collapse section' : 'Expand section';
   return (
     <Tag
@@ -182,21 +215,26 @@ export function MarkdownCollapseH6(props: ComponentPropsWithoutRef<'h6'> & { nod
  * Expand or collapse every heading section in this turn. Lives in the
  * message header, to the right of **Worked for**, and is absent when the
  * body has no collapsible headings.
+ *
+ * It offers **Collapse all** until every section is already closed. A turn
+ * with some sections closed is a reader who has been folding, and the mirror
+ * of that — offering **Expand all** to someone in the middle of closing
+ * things — is what the pre-default-open control did.
  */
 export function MarkdownCollapseAllButton(): React.JSX.Element | null {
   const collapse = useMarkdownCollapse();
   if (!collapse || collapse.sectionIds.length === 0) return null;
-  const label = collapse.allExpanded ? 'Collapse all sections' : 'Expand all sections';
-  const Icon = collapse.allExpanded ? ChevronsDownUp : ChevronsUpDown;
+  const label = collapse.allCollapsed ? 'Expand all sections' : 'Collapse all sections';
+  const Icon = collapse.allCollapsed ? ChevronsUpDown : ChevronsDownUp;
   return (
     <Tooltip.Provider>
       <Tooltip.Root delayDuration={450}>
         <Tooltip.Trigger asChild>
           <button
-            aria-expanded={collapse.allExpanded}
+            aria-expanded={!collapse.allCollapsed}
             aria-label={label}
             className="message-collapse-all"
-            onClick={() => collapse.setAll(!collapse.allExpanded)}
+            onClick={() => collapse.setAll(collapse.allCollapsed)}
             type="button"
           >
             <Icon aria-hidden="true" size={14} strokeWidth={1.8} />
