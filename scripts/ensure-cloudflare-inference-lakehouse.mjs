@@ -205,6 +205,30 @@ function assertManifest(manifest) {
   return manifest;
 }
 
+function assertDistinctPinnedStreamIds(manifests) {
+  const bindingByStreamId = new Map();
+  for (const manifest of manifests) {
+    assertManifest(manifest);
+    for (const regionName of LAKEHOUSE_REGIONS) {
+      const streamId = manifest.regions[regionName].streamId;
+      const existingBinding = bindingByStreamId.get(streamId);
+      if (existingBinding) {
+        throw new Error(
+          `${existingBinding} and ${manifest.binding} must not share pinned Pipeline stream ID ${streamId}`,
+        );
+      }
+      bindingByStreamId.set(streamId, manifest.binding);
+    }
+  }
+}
+
+class PinnedStreamIdDriftError extends Error {
+  constructor(streamName, expected, actual) {
+    super(`${streamName} ID drifted from pinned deployment binding: expected ${expected}, got ${actual}`);
+    this.name = 'PinnedStreamIdDriftError';
+  }
+}
+
 export async function loadInferenceLakehouseManifest() {
   const manifest = assertManifest(JSON.parse(await readFile(manifestPath, 'utf8')));
   const schemaPath = join(repositoryDirectory, manifest.streamSchema);
@@ -449,8 +473,8 @@ async function ensurePipeline(client, region, sink, create, log) {
   return pipeline;
 }
 
-export async function materializeLakehouseWranglerConfigs(
-  provisioned,
+async function writePinnedLakehouseWranglerConfigs(
+  manifests,
   options = {},
 ) {
   const outputDirectory = options.outputDirectory ?? join(repositoryDirectory, 'apps/api');
@@ -458,9 +482,9 @@ export async function materializeLakehouseWranglerConfigs(
   for (const regionName of WORKER_REGIONS) {
     const sourcePath = join(repositoryDirectory, `apps/api/wrangler.${regionName}.jsonc`);
     const config = parseWranglerConfig(await readFile(sourcePath, 'utf8'));
-    const pipelines = provisioned.flatMap(({ manifest, resources }) => {
-      const stream = resources[regionName]?.stream;
-      return stream ? [{ binding: manifest.binding, stream: stream.id }] : [];
+    const pipelines = manifests.flatMap((manifest) => {
+      const streamId = manifest.regions[regionName]?.streamId;
+      return streamId ? [{ binding: manifest.binding, stream: streamId }] : [];
     });
     if (pipelines.length > 0) config.pipelines = pipelines;
     else delete config.pipelines;
@@ -476,15 +500,8 @@ export async function materializePinnedLakehouseWranglerConfigs(options = {}) {
     loadInferenceLakehouseManifest(),
     loadAnalyticsLakehouseManifest(),
   ]);
-  const pinned = manifests.map((manifest) => {
-    assertManifest(manifest);
-    const resources = Object.fromEntries(LAKEHOUSE_REGIONS.map((regionName) => [
-      regionName,
-      { stream: { id: manifest.regions[regionName].streamId } },
-    ]));
-    return { manifest, resources };
-  });
-  const configs = await materializeLakehouseWranglerConfigs(pinned, options);
+  assertDistinctPinnedStreamIds(manifests);
+  const configs = await writePinnedLakehouseWranglerConfigs(manifests, options);
   return { manifests, configs };
 }
 
@@ -512,9 +529,7 @@ export async function ensureInferenceLakehouse(options = {}) {
     const region = manifest.regions[regionName];
     const stream = await ensureStream(client, region, manifest.streamSchema, create, log);
     if (stream.id !== region.streamId) {
-      throw new Error(
-        `${region.stream} ID drifted from pinned deployment binding: expected ${region.streamId}, got ${stream.id}`,
-      );
+      throw new PinnedStreamIdDriftError(region.stream, region.streamId, stream.id);
     }
     await ensureBucket(client, regionName, region, create, log);
     if (region.sinkType === 'r2_data_catalog') {
@@ -525,10 +540,7 @@ export async function ensureInferenceLakehouse(options = {}) {
     resources[regionName] = { stream, sink, pipeline };
   }
 
-  const configs = options.materializeBindings
-    ? await materializeLakehouseWranglerConfigs([{ manifest, resources }], options)
-    : undefined;
-  return { manifest, resources, configs };
+  return { manifest, resources };
 }
 
 export async function ensureCloudflareLakehouses(options = {}) {
@@ -536,19 +548,26 @@ export async function ensureCloudflareLakehouses(options = {}) {
     loadInferenceLakehouseManifest(),
     loadAnalyticsLakehouseManifest(),
   ]);
+  assertDistinctPinnedStreamIds(manifests);
   const provisioned = [];
+  const streamIdDrifts = [];
   for (const manifest of manifests) {
-    const result = await ensureInferenceLakehouse({
-      ...options,
-      manifest,
-      materializeBindings: false,
-    });
-    provisioned.push(result);
+    try {
+      const result = await ensureInferenceLakehouse({ ...options, manifest });
+      provisioned.push(result);
+    } catch (error) {
+      if (!(error instanceof PinnedStreamIdDriftError)) throw error;
+      streamIdDrifts.push(error);
+    }
   }
-  const configs = options.materializeBindings
-    ? await materializeLakehouseWranglerConfigs(provisioned, options)
-    : undefined;
-  return { provisioned, configs };
+  if (streamIdDrifts.length > 0) {
+    throw new Error(
+      `Update the pinned Pipeline stream IDs before reconciliation can continue:\n${streamIdDrifts
+        .map((error) => `- ${error.message}`)
+        .join('\n')}`,
+    );
+  }
+  return { provisioned };
 }
 
 export function parseLakehouseMode(arguments_) {
@@ -563,6 +582,5 @@ if (isEntryPoint(import.meta.url)) {
   if (mode === '--materialize-bindings') await materializePinnedLakehouseWranglerConfigs();
   else await ensureCloudflareLakehouses({
     create: mode === '--reconcile',
-    materializeBindings: false,
   });
 }

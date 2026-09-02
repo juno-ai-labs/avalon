@@ -148,21 +148,26 @@ management API:
 Normal merges do not list, create, or verify Pipelines resources. The streams,
 sinks, and pipelines are immutable infrastructure, and a transient outage in
 their management plane must not prevent an unrelated Worker release. A missing
-or invalid pinned stream still fails when Wrangler uploads the Global Worker,
-and regional health verifies that the expected bindings reached the runtime.
+or malformed pin fails local manifest validation, as does reusing one stream ID
+for both bindings. Cloudflare may still accept a syntactically valid ID whose
+stream no longer exists; regional health proves that the Worker exposes each
+binding, not that its remote stream accepts rows. That is why creation and
+replacement require explicit reconciliation, while failed ingestion remains
+visible through Queue retries and the dead-letter queues.
 
 Infrastructure work uses an explicit mode. `--check` reads every resource and
 fails on absence or drift without mutation. `--reconcile` may create missing
 buckets, catalogs, streams, sinks, and pipelines, then applies the same schema,
 destination, SQL, credential, duplicate-name, and pinned-stream-ID assertions.
 Run one of those modes before changing a lakehouse manifest, stream schema, sink
-credential, or pinned ID; they are not application-deploy steps. If a named
-stream is absent, reconciliation creates it, verifies its immutable shape, and
-then stops before creating a sink or pipeline because Cloudflare's new generated
-ID differs from the manifest pin. Review that partial bootstrap, update the pin,
-and run reconciliation again to create or verify the downstream resources. The
-named stream is reused on the second pass; it is not silently replaced or left
-as an unrelated orphan. `--check` never creates the missing stream.
+credential, or pinned ID; they are not application-deploy steps. If one or more
+named streams are absent, reconciliation creates every missing stream, verifies
+its immutable shape, collects all generated IDs that differ from the manifests,
+and then fails before creating downstream resources for those streams. Review
+the complete set, update the pins together, and run reconciliation again to
+create or verify the downstream resources. Each named stream is reused on the
+second pass; none is silently replaced or left as an unrelated orphan. `--check`
+never creates a missing stream.
 
 `config/inference-lakehouse.json` declares the deployment credential as
 account-owned, so reconciliation uses the account token verifier directly and
@@ -368,10 +373,11 @@ and already play that role for other generated Cloudflare resource IDs.
 **Consequences:** Ordinary Worker releases make no Pipelines API call and cannot
 be blocked by this control-plane incident. They no longer re-verify downstream
 sink or SQL drift on every code change; infrastructure changes and deployment
-credential rotation must run explicit reconciliation. Creating or recreating a
-stream is a two-pass migration: the first pass creates and reports the generated
-ID without creating downstream resources, and the second pass resumes after an
-operator commits that reviewed ID as the new pin.
+credential rotation must run explicit reconciliation. Creating or recreating
+streams is a two-pass migration: the first pass creates every missing stream and
+reports the complete generated-ID set without creating their downstream
+resources, and the second pass resumes after an operator commits the reviewed
+pins together.
 
 ### 2026-09-01 — Pipeline list responses replace redundant detail reads
 
