@@ -940,19 +940,27 @@ export function WorkspaceSettingsScreen({
 
   useEffect(() => {
     let cancelled = false;
+    // Main announces transitions, not the current value on every poll. Once a
+    // live transition arrives, the older mount-time read must never replace it.
+    let liveUpdateGeneration = 0;
+    const unsubscribe = bridge.onApplicationSettingsChanged((settings) => {
+      liveUpdateGeneration += 1;
+      if (!cancelled) {
+        setApplicationSettings(settings);
+        setApplicationSettingsLoadError(null);
+      }
+    });
+    const generationAtRead = liveUpdateGeneration;
     void bridge.getApplicationSettings().then((settings) => {
-      if (cancelled) return;
+      if (cancelled || liveUpdateGeneration !== generationAtRead) return;
       setApplicationSettings(settings);
       setApplicationSettingsLoadError(null);
     }).catch((error: unknown) => {
-      if (!cancelled) {
+      if (!cancelled && liveUpdateGeneration === generationAtRead) {
         setApplicationSettingsLoadError(
           error instanceof Error ? error.message : 'Application settings could not be loaded.',
         );
       }
-    });
-    const unsubscribe = bridge.onApplicationSettingsChanged((settings) => {
-      if (!cancelled) setApplicationSettings(settings);
     });
     return () => {
       cancelled = true;
