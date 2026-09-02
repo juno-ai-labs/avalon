@@ -117,6 +117,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * A key two schemas share when they say the same thing, so that a property
+ * redeclared identically across branches stays one declaration.
+ *
+ * Key order carries no meaning in JSON Schema and two branches are written by
+ * hand, so object keys are sorted before comparing; plain `JSON.stringify`
+ * would read `{type,const}` and `{const,type}` as different and emit a union of
+ * a schema with itself.
+ */
+function stableKey(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableKey).join(",")}]`;
+  if (!isPlainObject(value)) return JSON.stringify(value) ?? "null";
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableKey(value[key])}`).join(",")}}`;
+}
+
+/**
  * Every `allOf`/`anyOf`/`oneOf` branch that sanitization strips a constraint
  * from, as a path with the reason.
  *
@@ -217,7 +232,27 @@ export function repairRootSchemaForProviders(schema: Record<string, unknown>): R
   // handling, without anyone having to notice.
   if (nonObjectRootSchema(schema).length === 0) return schema;
 
-  const properties: Record<string, unknown> = isPlainObject(schema.properties) ? { ...schema.properties } : {};
+  // Every distinct declaration of each property name, in the order met. A
+  // discriminated union — the commonest root union a hosted MCP server serves —
+  // redeclares its discriminator per branch with a different `const`, so
+  // first-declaration-wins would advertise one branch's value as the only legal
+  // one and silently delete the rest. That is a schema the model cannot argue
+  // with and no log would ever show, which is the failure this repository asks
+  // to be traded away rather than kept.
+  const variants = new Map<string, unknown[]>();
+  const declare = (name: string, subschema: unknown): void => {
+    const seen = variants.get(name);
+    if (!seen) {
+      variants.set(name, [subschema]);
+      return;
+    }
+    // A branch that repeats a declaration verbatim is the same constraint, not
+    // an alternative; only genuinely different shapes become a union.
+    if (!seen.some((entry) => stableKey(entry) === stableKey(subschema))) seen.push(subschema);
+  };
+  if (isPlainObject(schema.properties)) {
+    for (const [name, subschema] of Object.entries(schema.properties)) declare(name, subschema);
+  }
   // `required` is intersected across the branches of a union and unioned across
   // an intersection, which is the most the flattened root can still assert. A
   // union's branches are alternatives, so only a name *every* branch demands is
@@ -233,12 +268,7 @@ export function repairRootSchemaForProviders(schema: Record<string, unknown>): R
     for (const branch of branches) {
       if (!isPlainObject(branch)) continue;
       if (isPlainObject(branch.properties)) {
-        // First declaration wins. A later branch redeclaring a name is
-        // describing the same argument, and the earlier branch is the one the
-        // author wrote first and the model reads as primary.
-        for (const [name, subschema] of Object.entries(branch.properties)) {
-          if (!(name in properties)) properties[name] = subschema;
-        }
+        for (const [name, subschema] of Object.entries(branch.properties)) declare(name, subschema);
       }
       const names = requiredNames(branch);
       if (keyword === "allOf") {
@@ -251,6 +281,17 @@ export function repairRootSchemaForProviders(schema: Record<string, unknown>): R
     }
   }
   for (const name of unionRequired ?? []) intersectionRequired.add(name);
+
+  // A name declared differently by different branches becomes a union *under*
+  // the property, which is the one place a provider accepts one: the same
+  // deployment that rejects a root `anyOf` accepts `table_query`'s nested
+  // recursive `$ref` union and `core_request_elicitation`'s nested nullable
+  // union. The model is then told every shape some branch allowed, which is a
+  // wider statement than the union made and an honest one, rather than a
+  // narrower statement that is false.
+  const properties = Object.fromEntries(
+    [...variants].map(([name, entries]) => [name, entries.length === 1 ? entries[0] : { anyOf: entries }]),
+  );
 
   // Only names the flattened root actually declares. A branch may require a
   // property whose subschema lived on a sibling the merge could not read, and a
