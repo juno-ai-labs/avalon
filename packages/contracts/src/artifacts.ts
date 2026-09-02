@@ -108,6 +108,23 @@ export const ArtifactManifestEntrySchema = z.strictObject({
 });
 export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>;
 
+/** Normalized metadata Rally can inject into a site's HTML response. */
+export const ArtifactSocialPreviewSchema = z.strictObject({
+  title: z.string().min(1).max(300),
+  description: z.string().min(1).max(500),
+  image: z.strictObject({
+    /** A published, directory-relative image asset. */
+    path: z.string().min(1).max(1_024),
+    contentType: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp"]),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    alt: z.string().min(1).max(500),
+    /** Rally generated this asset, so source import must leave it behind. */
+    generated: z.boolean(),
+  }),
+});
+export type ArtifactSocialPreview = z.infer<typeof ArtifactSocialPreviewSchema>;
+
 /**
  * The whole of what one version of an artifact is.
  *
@@ -130,6 +147,8 @@ export const ArtifactManifestSchema = z.strictObject({
   /** Present when `mode` is `active`; the module's own digest. */
   serverModuleSha256: z.string().regex(/^[0-9a-f]{64}$/u).nullable(),
   assets: z.array(ArtifactManifestEntrySchema).max(10_000),
+  /** Present on versions published after automatic social previews shipped. */
+  socialPreview: ArtifactSocialPreviewSchema.optional(),
   totalBytes: z.number().int().nonnegative(),
   publishedAt: z.string().datetime({ offset: true }),
 });
