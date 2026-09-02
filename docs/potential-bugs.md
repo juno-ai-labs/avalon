@@ -284,7 +284,7 @@ suggested-work sets, preferred recently-seen members, treated a long-waiting
 request as urgent so the less-active tier could not starve, and settled each
 member's ranking. It returned immediately once the authority was open, so it did
 nothing in any supported deployment. WorkspaceDO's product alarm does this now
-(`runProductAlarm` in `workspace-do.ts`) with the same dormant cutoff, active
+(`runProductAlarm` in `workspace-do-core.ts`) with the same dormant cutoff, active
 cutoff and starvation preference. The cron pass, its constants and its tests are deleted.
 
 **Why it is suspicious.** Two things the deleted suite proved are now unasserted

@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 const migratableClasses = [
   "block-dashboard-agent.ts",
   "substream-agent.ts",
-  "workspace-do.ts",
+  // `WorkspaceDO` is split across `workspace-do-*.ts` by inheritance; its
+  // constructor is on the first link. See `workspace-do-core.ts`.
+  "workspace-do-core.ts",
   "workstream-do.ts",
 ] as const;
 

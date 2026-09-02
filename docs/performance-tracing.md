@@ -35,7 +35,7 @@ necessarily keeps apart.
 | `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The workspace command socket's `create_message`, which is how the desktop actually sends a message. |
+| `apps/api/src/durable-objects/workspace-do-sockets.ts` | The workspace command socket's `create_message`, which is how the desktop actually sends a message. |
 | `apps/api/test/helpers/cloudflare-workers.ts` | The Node suite's stand-in for `tracing`, and `recordedSpans()`, which is how a Node test asserts on span names and attributes. |
 | `apps/desktop/src/renderer/lib/perf-trace.ts` | The renderer tracer, its governed diagnostic projection, and `newRequestId`. Not OpenTelemetry — see [The desktop half](#the-desktop-half). |
 | `apps/desktop/src/main/native-performance-log.ts`, `apps/desktop/native/unified-log/UnifiedLog.mm` | The main-owned, schema-closed bridge from a renderer performance event to macOS Unified Logging. |

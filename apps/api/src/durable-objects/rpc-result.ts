@@ -45,3 +45,8 @@ export interface ObjectPortOutcome {
 export function objectPortRpcResult(outcome: ObjectPortOutcome): DurableObjectRpcResult {
   return { status: outcome.status, bodyJson: JSON.stringify(outcome.payload) };
 }
+
+/** A JSON `Response`, the shape both the HTTP port and `responseToRpcResult` take. */
+export function json(body: unknown, status = 200): Response {
+  return Response.json(body, { status });
+}

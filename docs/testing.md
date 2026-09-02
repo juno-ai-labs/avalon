@@ -889,7 +889,7 @@ mechanical — grep each class's public async methods, then grep the suite for e
 name — so re-derive it rather than trusting this number after a change:
 
 ```bash
-grep -c "^  \(override \)\?async " apps/api/src/durable-objects/workspace-do.ts
+grep -h "^  \(override \)\?async " apps/api/src/durable-objects/workspace-do*.ts | wc -l
 ```
 
 The nineteen with no workerd exercise, so nobody has to rediscover the list:

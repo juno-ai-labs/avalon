@@ -8,9 +8,11 @@ import {
 import { truncateUtf16Safe } from "@rally/contracts/text";
 
 import { boundParameterChunks } from "./bound-parameters";
-import type {
-  WorkspaceDirectoryListRequest,
-  WorkspaceDirectoryPage,
+import {
+  WorkspaceDirectoryScheduleTargetsResultSchema,
+  type WorkspaceDirectoryListRequest,
+  type WorkspaceDirectoryPage,
+  type WorkspaceDirectoryScheduleTargetsResult,
 } from "./workspace-directory-protocol";
 import { epoch, iso } from "./workspace-projection";
 import { insertWorkstreamEffectReceipt } from "./workspace-regional-effect-storage";
@@ -680,4 +682,38 @@ export function advanceWorkspaceDirectoryVersion(storage: DurableObjectStorage, 
     `UPDATE workspace_directory_state SET waterline = waterline + 1, updated_at = ? WHERE id = 1`,
     now,
   );
+}
+
+/** The ceiling on how many work streams one person may pin. */
+export const MAX_WORKSPACE_PINS_PER_USER = 1_000;
+
+/**
+ * Every future Terminal deadline this workspace's directory carries.
+ *
+ * Read by the RPC the scheduler calls and by the object's own terminal-alarm
+ * reconciliation. One function so both see the same rows through the same
+ * contract parse: the reconciliation used to reach the RPC for it, which meant
+ * its mapping and its refusal of a corrupt row lived on the RPC's side of a
+ * seam that no longer exists.
+ */
+export function workspaceTerminalScheduleTargets(
+  storage: DurableObjectStorage,
+): WorkspaceDirectoryScheduleTargetsResult {
+  const rows = storage.sql.exec<{
+    kind: "wakeup" | "terminal";
+    workstream_id: string;
+    due_at: number;
+  }>(
+    `SELECT 'terminal' AS kind, workstream_id, next_terminal_action_at AS due_at
+       FROM workspace_workstream_directory
+      WHERE archived_at IS NULL AND next_terminal_action_at IS NOT NULL
+     ORDER BY due_at, workstream_id`,
+  ).toArray();
+  return WorkspaceDirectoryScheduleTargetsResultSchema.parse({
+    items: rows.map((row) => ({
+      kind: row.kind,
+      workstreamId: row.workstream_id,
+      dueAt: iso(row.due_at),
+    })),
+  });
 }

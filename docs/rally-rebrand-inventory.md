@@ -187,7 +187,7 @@ Environment variables and Worker bindings: **~950 occurrences, 277 files**.
   `this.env.AVALON_REGION` throughout `apps/api/src`, and stubbed in nearly
   every test that constructs an env. Heaviest: `connection-service.ts` (42),
   `durable-object-namespace.ts` (19), `auth-service.ts` (16),
-  `workspace-do.ts` (15).
+  and the `workspace-do*.ts` chain (15 across nine files).
 - **49 other `AVALON_*` names, 207 occurrences.** Three groups:
   - *Sandbox/terminal contract* — `AVALON_RESOURCE_DIR`, `AVALON_WORKSPACE_ID`,
     `AVALON_CONNECTION_ID`, `AVALON_GIT_BRANCH`, `AVALON_GIT_BASE_BRANCH`,

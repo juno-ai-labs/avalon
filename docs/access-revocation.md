@@ -22,7 +22,7 @@ the thing this module replaced, and it is not to come back.
 | `apps/api/src/services/workspace-service.ts` | `removeMember` and `leaveWorkspace` — end the D1 membership and publish in the same request. Final-member leave suspends the row during atomic workspace abandonment instead of deleting it, but publishes the same membership-wide revocation. |
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
-| `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,block-dashboard-agent,automation-agent}.ts` | `revokeSocketAccess` on each of the five socket-holding objects. |
+| `apps/api/src/durable-objects/{workspace-do-sockets,workstream-do,substream-agent,block-dashboard-agent,automation-agent}.ts` | `revokeSocketAccess` on each of the five socket-holding objects. |
 | `apps/api/wrangler.{global,eu,test}.jsonc` | The `ACCESS_REVOCATION_QUEUE` producer binding and the consumer settings. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 

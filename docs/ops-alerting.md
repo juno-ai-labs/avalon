@@ -18,7 +18,7 @@ contain, or changing how the channel is reached.
 | `apps/api/src/observability/ops-slack-notifier.ts` | `notifyOps`: the one place a notice is rendered and posted. The single source. |
 | `apps/api/src/env.ts` | `OPS_SLACK_BOT_TOKEN` and `OPS_SLACK_CHANNEL_ID`, the optional per-region pair. |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `reportScheduledAlarmAttempt`: the one policy for a gated alarm entry — which attempt warns, errors, and notifies — and `scheduledAlarmErrorCode`, which reduces a thrown error to what may leave. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workstream-do.ts`, `substream-agent.ts` | The failure and stall hooks, each reporting through that policy with its own identity fields. |
+| `apps/api/src/durable-objects/workspace-do-core.ts`, `workstream-do.ts`, `substream-agent.ts` | The failure and stall hooks, each reporting through that policy with its own identity fields. |
 | `apps/api/src/services/slack-agent-service.ts` | The exhausted-ingress-job notice, in `processQueuedIngress`. |
 | `apps/api/src/routes/health.ts` | `opsNotifications` — configured, half configured, or not, never required. |
 | `scripts/sync-dev-env.mjs`, `.env.example` | How the secret reaches a local `.dev.vars.*` file. |

@@ -26,7 +26,7 @@ which state wins.
 | `apps/desktop/src/renderer/styles/app.css` | `.status-<state> .status-dot` — one rule per state, each naming its token. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | The authority for the three personal states: `member_attention` for unread and mentions, `participants.first_opened_at` for unseen. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Migration v18: the column, its backfill, and the rebuilt `_runtime_workstream_participants` triggers that keep a re-add through the compatibility views unseen. |
-| `apps/api/src/durable-objects/workspace-do.ts` | `workspace_workstream_viewers`, the per-person projection the sidebar list is read from. |
+| `apps/api/src/durable-objects/workspace-do-directory-effects.ts`, `workspace-directory-storage.ts` | `workspace_workstream_viewers`, the per-person projection the sidebar list is read from. |
 
 ## How it works
 

@@ -684,7 +684,7 @@ The three tables stay named in `WORKSPACE_LOCAL_TABLES` even though nothing
 routes to them now, so an accidental generic statement reaches the object
 rather than falling through to regional D1. Whether the object then refuses it
 is a second decision, made by `WORKSPACE_TYPED_RPC_ONLY_TABLES` in
-`workspace-do.ts`; these three are not in that list, so such a statement still
+`workspace-runtime-sql-guards.ts`; these three are not in that list, so such a statement still
 executes. Adding them would close the domain the way the notification-intent
 table is closed, and is the obvious follow-up once the ledger has no other
 reader.
