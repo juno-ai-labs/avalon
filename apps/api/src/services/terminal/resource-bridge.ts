@@ -714,6 +714,7 @@ export function createTerminalResourceBridge(
 
       const resourceId = settled?.id ?? newId();
       const version = (previous?.version ?? 0) + 1;
+      const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const written = await writeArtifactVersion(env, {
         workspaceId: context.workspaceId,
         workstreamId: context.workstreamId,
@@ -724,6 +725,7 @@ export function createTerminalResourceBridge(
         mode: site.mode,
         stateful: site.stateful,
         files: site.files,
+        fallbackTitle: title,
         serverModuleSha256: site.serverModuleSha256,
       });
       // Reserve the stable public origin before mutating the reusable resource
@@ -735,7 +737,6 @@ export function createTerminalResourceBridge(
         artifactId: written.artifactId,
       });
       const timestamp = nowIso();
-      const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const metadata = JSON.stringify({
         sourcePath: input.filePath,
         size: written.manifest.totalBytes,

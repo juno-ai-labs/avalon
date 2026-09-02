@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { asArtifactId, type ArtifactManifest } from "@rally/contracts";
+import { describe, expect, it, vi } from "vitest";
 
-import { importTreeFailure, materializeTreeCommand } from "../src/services/terminal/site-import";
+import type { Env } from "../src/env";
+import { importTreeFailure, materializeTreeCommand, readArtifactVersionFiles } from "../src/services/terminal/site-import";
+import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 
 const DESTINATION = "/workspace/.rally-output/offsite-rsvp";
 const STAGING = "/workspace/.rally/tmp/tree-1";
@@ -10,6 +13,45 @@ function command(overwrite: boolean): string {
 }
 
 describe("writing a materialized site tree", () => {
+  it("leaves Rally's generated preview behind when importing source", async () => {
+    const artifactId = asArtifactId("00000000-0000-7000-8000-0000000000b1");
+    const manifest: ArtifactManifest = {
+      version: 1,
+      artifactId,
+      artifactVersion: 2,
+      mode: "static",
+      stateful: false,
+      serverModuleSha256: null,
+      assets: [
+        { path: "index.html", contentType: "text/html", sizeBytes: 1, sha256: "1".repeat(64) },
+        { path: ".rally/social-preview-auto.png", contentType: "image/png", sizeBytes: 1, sha256: "2".repeat(64) },
+      ],
+      socialPreview: {
+        title: "Site",
+        description: "Site description",
+        image: {
+          path: ".rally/social-preview-auto.png",
+          contentType: "image/png",
+          width: 1200,
+          height: 630,
+          alt: "Site",
+          generated: true,
+        },
+      },
+      totalBytes: 2,
+      publishedAt: "2026-09-02T00:00:00.000Z",
+    };
+    const get = vi.fn(async () => ({ arrayBuffer: async () => new Uint8Array([1]).buffer }));
+    const env = {
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ get }),
+    } satisfies Pick<Env, "PAYLOADS">;
+
+    await expect(readArtifactVersionFiles(env, manifest)).resolves.toEqual([
+      { path: "index.html", bytes: new Uint8Array([1]) },
+    ]);
+    expect(get).toHaveBeenCalledOnce();
+  });
+
   it("refuses a non-empty destination when no overwrite was asked for", () => {
     expect(command(false)).toContain("exit 44");
     expect(command(false)).toContain('ls -A "$destination"');
