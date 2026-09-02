@@ -148,6 +148,12 @@ function openSettingsSection(name: 'Account' | 'Digest' | 'Workspace' | 'Connect
   fireEvent.click(within(navigation).getByRole('button', { name }));
 }
 
+function announceApplicationSettings(settings: DesktopApplicationSettings): void {
+  act(() => {
+    for (const listener of applicationSettingsListeners) listener(settings);
+  });
+}
+
 describe('Workspace settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1968,13 +1974,7 @@ describe('Workspace settings', () => {
     await screen.findByRole('switch', { name: 'Lockdown mode' });
     expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
 
-    const announce = (settings: DesktopApplicationSettings): void => {
-      act(() => {
-        for (const listener of applicationSettingsListeners) listener(settings);
-      });
-    };
-
-    announce({
+    announceApplicationSettings({
       lockdownMode: false,
       lockdownAvailable: true,
       debugEnabled: true,
@@ -1993,7 +1993,7 @@ describe('Workspace settings', () => {
 
     // The flag going off takes the section with it, without a reload, and takes
     // the effective preference to off on the way past.
-    announce({
+    announceApplicationSettings({
       lockdownMode: false,
       lockdownAvailable: true,
       debugEnabled: false,
@@ -2010,6 +2010,46 @@ describe('Workspace settings', () => {
     });
     expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
   });
+
+  it.each([
+    { liveEnabled: true, staleEnabled: false },
+    { liveEnabled: false, staleEnabled: true },
+  ])(
+    'keeps the live Developer value $liveEnabled when an older $staleEnabled snapshot settles',
+    async ({ liveEnabled, staleEnabled }) => {
+      let resolveInitial!: (settings: DesktopApplicationSettings) => void;
+      getApplicationSettings.mockReturnValue(new Promise((resolve) => {
+        resolveInitial = resolve;
+      }));
+      renderSettings();
+      openSettingsSection('Application');
+      await waitFor(() => expect(applicationSettingsListeners.size).toBe(1));
+
+      const settings = (enabled: boolean): DesktopApplicationSettings => ({
+        lockdownMode: false,
+        lockdownAvailable: true,
+        debugEnabled: enabled,
+        developerSettingsAvailable: enabled,
+        menuBarEnabled: true,
+        menuBarAvailable: true,
+        menuBarPresent: true,
+        launchAtLogin: true,
+        launchAtLoginAvailable: true,
+        productAnalyticsEnabled: true,
+        productAnalyticsEffective: true,
+        productAnalyticsPreferencePending: false,
+        nativeCrashRestartRequired: false,
+      });
+      announceApplicationSettings(settings(liveEnabled));
+      expect(screen.queryByRole('switch', { name: 'Debug enabled' }) !== null).toBe(liveEnabled);
+
+      await act(async () => {
+        resolveInitial(settings(staleEnabled));
+        await Promise.resolve();
+      });
+      expect(screen.queryByRole('switch', { name: 'Debug enabled' }) !== null).toBe(liveEnabled);
+    },
+  );
 
   it('shows application-setting load failures inline', async () => {
     getApplicationSettings.mockRejectedValue(new Error('Application settings could not be read.'));
