@@ -16,7 +16,7 @@ import {
   type DurableObjectSqliteMigration,
 } from "../src/durable-objects/sqlite-migrations";
 import { workspaceDOName } from "../src/durable-objects/names";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do-migrations";
 
 const WORKSPACE_PREFIX = "00000000-0000-7000-8000-0000005000";
 

@@ -29,7 +29,8 @@ import {
   BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS,
   BlockDashboardAgent,
 } from "../src/durable-objects/block-dashboard-agent";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do-migrations";
+import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";

@@ -11,7 +11,7 @@ import { asWorkspaceId } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do-migrations";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
 

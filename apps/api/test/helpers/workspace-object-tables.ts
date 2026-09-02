@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 
 import type { DurableObjectSqliteMigration } from "../../src/durable-objects/sqlite-migrations";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../../src/durable-objects/workspace-do-migrations";
 
 /**
  * Add one of the WorkspaceDO's own tables to a regional snapshot, from the

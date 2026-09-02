@@ -13,7 +13,7 @@ behavior is in the approved [Projects design](PRDs/2026-08-26_projects/prd.md).
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/projects.ts` | Closed project IDs, icon/color registries, scopes, statuses, and wire shapes. |
-| `apps/api/src/durable-objects/workspace-do.ts` | WorkspaceDO schema migration and authenticated project RPC entry points. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-do-migrations.ts` | WorkspaceDO schema migration and authenticated project RPC entry points. |
 | `apps/api/src/durable-objects/workspace-project-protocol.ts` | Strict RPC requests, results, and stable error codes. |
 | `apps/api/src/durable-objects/workspace-project-storage.ts` | Synchronous project transactions, visibility filtering, and per-person ordering. |
 | `apps/api/src/services/project-service.ts` | Cross-object audience effects, membership settlement, and Queue publication. |

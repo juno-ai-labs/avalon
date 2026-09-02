@@ -11,7 +11,7 @@ import {
   type WorkstreamRegionalEffect,
   type WorkstreamRegionalEffectEnvelope,
 } from "../src/durable-objects/workstream-regional-effect";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do-migrations";
 import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-objects/workspace-directory-protocol";
 import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import {

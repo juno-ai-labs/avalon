@@ -34,7 +34,7 @@ import { asWorkspaceId } from "@rally/contracts";
 
 import { BLOCK_DASHBOARD_AGENT_SCHEMA_MIGRATIONS } from "../durable-objects/block-dashboard-agent";
 import { latestMigrationVersion, type ForcedMigrationOutcome } from "../durable-objects/migration-reporting";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workspace-do-migrations";
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../durable-objects/workstream-object-schema";
 import type { Env } from "../env";

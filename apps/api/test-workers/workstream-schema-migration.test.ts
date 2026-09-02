@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { TranscriptTurnSchema } from "@rally/contracts";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do-migrations";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 
 describe("work-stream schema migration in workerd", () => {

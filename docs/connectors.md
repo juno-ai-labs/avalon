@@ -49,7 +49,7 @@ or remounting Settings does not orphan reconciliation.
 | `apps/api/src/queues/activity-consumer.ts` | Regional Queue admission into WorkspaceDO, native connector-event retry, and the reusable routing processor, including `activityIsDigestible`. |
 | `apps/api/src/workflows/connector-poll.ts` | `pollCheckpointedActivityStreams` and the shared checkpoint runner. |
 | `apps/api/src/workflows/connector-event.ts` | Drain-only compatibility for connector-event Workflow instances created before the Queue-processing cutover. New events never create one. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts`, `workspace-connector-event-storage.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
 
 ## How it works
 

@@ -37,7 +37,17 @@ serve workspace product state or transcripts after cutover.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/names.ts` | The only constructors for deterministic workspace, work-stream, and substream object names. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Authoritative workspace product database, work-stream directory, hibernating synchronization/command socket, typed product SQL RPC, local product alarm, bounded topic replay, and one-time workspace-ticket receipts. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The `WorkspaceDO` class itself: its constructor and migration plan, the hibernating synchronization/command socket, the alarm hooks and `refreshSchedule`, the local product alarm, and the typed RPC surface every Worker and sibling object calls. Each RPC method asserts the object's own identity and then delegates to the domain module below that owns the write. |
+| `apps/api/src/durable-objects/workspace-do-migrations.ts` | `WORKSPACE_DO_SCHEMA_MIGRATIONS` — the ordered SQLite migration list the constructor applies. Read by the migration command consumer's head-version table and by the schema tests, neither of which wants the object class. |
+| `apps/api/src/durable-objects/workspace-directory-storage.ts` | The projected work-stream directory: its row shape, the `SELECT` every read of it starts from, the row-to-`Workstream` mappers, the pin order, and the regional-effect projection write. |
+| `apps/api/src/durable-objects/workspace-connector-event-storage.ts` | The connector-event ledger: canonical-row selection by provider identity or dedupe key, the bounded processing lease, fenced settlement, and the three retention windows. |
+| `apps/api/src/durable-objects/workspace-external-event-storage.ts` | The external-event spine: registration projection, destination matching for one accepted event, and the leased delivery receipts that carry it. |
+| `apps/api/src/durable-objects/workspace-activity-event-storage.ts` | The first-party activity log: the dedupe-keyed append with its target edges, the reader's visibility-filtered window, and the retention sweep. |
+| `apps/api/src/durable-objects/workspace-batch-dispatch-storage.ts` | Bulk work-stream operations: the server-side target selection and the request-hash-fenced dispatch ledger that turns it into exactly-once Queue events. |
+| `apps/api/src/durable-objects/workspace-draft-attachment-storage.ts` | Reservations holding an uploaded resource against one composing input until the work stream that will own it exists. |
+| `apps/api/src/durable-objects/workspace-socket-session.ts` | The command socket's serialized attachment shape, the reader that tolerates a previous deployment's shape, and both disconnect paths. |
+| `apps/api/src/durable-objects/workspace-runtime-sql-guards.ts` | What the generic SQL port refuses and what a write through it invalidates: alarm-source tables, typed-RPC-only tables, and sidebar-list sources. |
+| `apps/api/src/durable-objects/workspace-projection.ts` | The primitives every WorkspaceDO projection shares: epoch/ISO conversion and `(generation, version)` coordinate ordering. |
 | `apps/api/src/queues/access-revocation-consumer.ts`, `apps/api/src/services/access-revocation.ts` | The only way an open socket is closed for lost access: a queue message per object, and the `revokeSocketAccess` walk it drives. Owned by [`access-revocation.md`](access-revocation.md). |
 | `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | Strict WorkspaceDO activity, opportunity/provenance, ranking, and resolved-suggestion schema plus its transaction/lease repository. |
 | `apps/api/src/durable-objects/workspace-domain-schema.ts`, `workspace-runtime-sql.ts` | Strict schemas for connector/Terminal/automation/digest/resource/note/memory/delivery domains and the transactionally executed trusted SQL RPC. |
@@ -1477,6 +1487,46 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-02 — WorkspaceDO keeps its RPC surface; its domains move out beside it
+
+**What changed:** `workspace-do.ts` went from 9,633 lines to about 6,250 by
+moving eleven cohesive pieces into sibling modules, listed in **Where the code
+lives** above. Nothing changed about what the object does: the class keeps every
+RPC method, because a method on the class *is* the Durable Object's RPC surface
+and a caller reaches it as `stub.method(...)`. What moved is what each method
+does after it has asserted its own identity — the SQL, the row mappers, the
+constants, and the schema migration list — into free functions taking
+`DurableObjectStorage` (and `Env` where they log), which is the shape the
+`workspace-*-storage.ts` modules already had.
+
+**Why:** The file had grown past the point where the domains inside it could be
+read separately. The connector-event ledger, the external-event spine, and the
+batch-dispatch ledger are each a small protocol — a row claimed under a lease,
+advanced, and settled under a fence — and each was interleaved with the others
+and with 1,235 lines of DDL, so reading one meant scrolling past all of them. The
+directory projection was worse: its row interface, the `SELECT` naming its
+columns, and the `INSERT ... ON CONFLICT` filling them sat hundreds of lines
+apart in three places, and a column added to one and missed in the others is
+silently wrong rather than a type error. Putting each of those where its own
+pieces are adjacent is the whole point; the line count is a side effect.
+
+**Considered and rejected:** Splitting the *class* — mixins, or nested
+`RpcTarget` namespaces so `stub.digests.settings(...)` would work. Both change
+the RPC surface every caller in the tree is written against, and a Durable Object
+class is exactly the wrong place to take a compatibility risk for a readability
+win. Also rejected: leaving `WORKSPACE_DO_SCHEMA_MIGRATIONS` exported from
+`workspace-do.ts` as a re-export. Nine test files and the migration command
+consumer want the DDL and nothing else; making them import the object class to
+reach it is what let the DDL grow unnoticed in the first place.
+
+**Consequences:** A method body that needs more than storage and `Env` — one
+calling `refreshSchedule`, `publishSidebarList`, or `refreshProductAlarm` — keeps
+that call on the class and delegates only the storage half. That split is
+deliberate: those are the object's own scheduling and socket concerns, and a
+storage module that could reach them would stop being a storage module. Anything
+new in one of these domains belongs in its module, with a thin identity-asserting
+method on the class; adding it back to `workspace-do.ts` is how this grows again.
 
 ### 2026-09-01 — Exposing an automation run unhides a row; it creates nothing
 

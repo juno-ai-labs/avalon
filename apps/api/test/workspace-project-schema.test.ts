@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { PROJECT_COLOR_KEYS, PROJECT_ICON_KEYS } from "@rally/contracts";
 
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do-migrations";
 
 const PROJECT_SCHEMA_VERSION = 16;
 

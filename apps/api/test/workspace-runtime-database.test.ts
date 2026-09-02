@@ -6,7 +6,7 @@ import {
   WORKSPACE_LOCAL_TABLES,
   workspaceRuntimeDatabase,
 } from "../src/services/workspace-runtime-database";
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do-migrations";
 import type { WorkspaceRuntimeSqlResult } from "../src/durable-objects/workspace-runtime-sql";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
