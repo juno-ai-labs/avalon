@@ -808,6 +808,29 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
+### 2026-09-02 — The Slack support URL became a real Support Center
+
+**What changed:** `https://rallywith.ai/support` now opens a public, multi-page
+Support Center for the Rally desktop app, every shipped connector, privacy, and
+safe issue reporting. Slack has its own connector page explaining invocation
+surfaces, connection testing and reauthorization, identity linking through App
+Home, and the separate steps for disconnecting Rally and removing the app from
+Slack. The center preserves the public two-business-day response commitment and
+the single `help@rallywith.ai` address registered in the Slack manifest.
+
+**Why:** Slack's directory needs a working support destination, but the earlier
+page was mostly one connector-specific setup guide with a short Slack paragraph.
+It did not function as the general support surface named by the manifest.
+
+**Considered and rejected:** Linking the manifest directly to an email address
+or introducing a hosted help-desk portal. Email alone gives users no safe
+troubleshooting path before disclosure, while a second provider and support
+identity would add operational work without improving the small public corpus.
+
+**What a future change has to respect:** Keep the manifest URL public and
+stable, keep provider credentials and customer content out of support email,
+and do not publish a second role address unless it is confirmed to be monitored.
+
 ### 2026-09-01 — Slack handoffs retain their Rally workspace
 
 **What changed:** Link challenges, App Home settings/automation buttons,

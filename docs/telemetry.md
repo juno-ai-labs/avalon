@@ -1322,7 +1322,7 @@ and nothing has verified that PostHog ignores it. Re-check if session-stitched
 figures ever look wrong.
 
 **The 15-day sub-processor notice was considered and does not gate this.**
-`apps/site/subprocessors/index.html` promises customers 15 days' notice before a
+`apps/site/trust/subprocessors/index.html` promises customers 15 days' notice before a
 new sub-processor begins processing, and the DPA authorizes only the providers
 on that page — where PostHog was missing, despite already receiving product
 telemetry. That gap predates this change; what this change does is widen the
