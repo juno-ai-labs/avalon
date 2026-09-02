@@ -90,7 +90,8 @@ draft. Its three state-changing tools are:
 - `automation_submit_draft`, which stages the next compiled definition and
   references the staged evaluator keys;
 - `core_request_elicitation`, which records one structured unresolved question
-  for a definition that is not ready.
+  for a definition that is not ready. Its provider-key receipt is also the
+  durable question identity, so replay converges on the existing elicitation.
 
 An external-event definition must set evaluators before submission. Timer-only
 and manual-only definitions clear staged event rules rather than calling the
@@ -604,6 +605,37 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-02 — Work-stream authoring recognizes real plugin loads and elicitation receipts
+
+**What changed:** The work-stream Automations plugin now shares credential
+activation state with the harness: when a canonical connection activation is
+persisted, its model-facing plugin ID becomes available to ready-draft
+validation, and a dropped activation removes that permission again. On a resumed
+run, completed inspection, people/resource search, and evaluator receipts
+rebuild the Automations plugin's transient authoring state in tool order before
+its first tool executes. The harness run ID is the authored automation ID, so a
+replacement plugin instance refines the same draft instead of creating another.
+The shared elicitation tool now requests the provider idempotency key its durable
+question writer already required.
+
+**Why:** An hourly Granola automation loaded the connector and inspected its
+automation metadata, but submission still read an empty private loaded set and
+asked for the same work again. Its fallback elicitation then failed before
+writing because the tool definition selected record-before-execute semantics
+while the executor required a provider key. Together those bugs left no valid
+authoring exit.
+
+**Considered and rejected:** Treating every connector in the catalog as loaded
+would erase the distinction ready-draft validation exists to enforce. Removing
+the durable key check would let a replay create a second blocking question.
+
+**Consequences:** Explicit loads, preloads, and restored activation hints all
+satisfy the same ready-draft rule once the model also inspects the plugin.
+Eviction cannot erase completed inspection, research, or evaluator state and
+cannot fork a duplicate automation. A closed connector activation immediately
+stops satisfying ready-draft validation. Repeated elicitation execution resolves
+to one stored question.
 
 ### 2026-09-01 — An event-driven draft must carry its rules to be submitted
 

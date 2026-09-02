@@ -608,10 +608,10 @@ describe("restoring run-local attachment safety", () => {
   it("loads only the requested attachment capabilities in deterministic execution order", () => {
     const { storage } = open();
     storage.admit(plan({
-      effectIntentId: "effect-view",
+      effectIntentId: "effect-z-view",
       toolCallId: "call-view",
       executionPlanJson: '{"mode":"read","capability":"workstream.resources.view"}',
-      now: NOW + 2,
+      now: NOW,
     }));
     storage.admit(plan({
       effectIntentId: "effect-unrelated",
@@ -620,7 +620,7 @@ describe("restoring run-local attachment safety", () => {
       now: NOW + 1,
     }));
     storage.admit(plan({
-      effectIntentId: "effect-read",
+      effectIntentId: "effect-a-read",
       toolCallId: "call-read",
       executionPlanJson: '{"mode":"read","capability":"workstream.resources.read"}',
       now: NOW,
@@ -629,7 +629,7 @@ describe("restoring run-local attachment safety", () => {
     expect(storage.receiptsForRun({
       runId: RUN,
       capabilities: ["workstream.resources.read", "workstream.resources.view"],
-    }).map((receipt) => receipt.effectIntentId)).toEqual(["effect-read", "effect-view"]);
+    }).map((receipt) => receipt.effectIntentId)).toEqual(["effect-z-view", "effect-a-read"]);
     expect(storage.receiptsForRun({ runId: RUN, capabilities: [] })).toEqual([]);
   });
 });

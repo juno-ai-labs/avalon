@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   AUTOMATIONS_PLUGIN_ID,
   createAutomationsPlugin,
+  rememberAutomationPeopleSearchResult,
+  rememberAutomationResourceSearchResult,
   type AutomationCreatorToolHost,
 } from "./automation-creator-tools";
 
@@ -54,6 +56,31 @@ function toolNamed(tools: ReturnType<typeof createAutomationsPlugin>["tools"], n
 }
 
 describe("the automations plugin", () => {
+  it("rebuilds researched people and resources from replayed search output", () => {
+    const people = new Set<string>();
+    const resources: AutomationCreatorToolHost["resolvedResources"] = new Map();
+
+    rememberAutomationPeopleSearchResult({ people: [{ id: "person-1" }, { id: 42 }] }, people);
+    rememberAutomationResourceSearchResult({
+      resources: [{
+        id: "resource-1",
+        pluginId: "plugin_google",
+        resourceType: "gmail_thread",
+        sourceBindingKeys: ["google_source", 42],
+      }],
+    }, resources);
+
+    expect(people).toEqual(new Set(["person-1"]));
+    expect(resources).toEqual(new Map([[
+      "resource-1",
+      {
+        pluginId: "plugin_google",
+        resourceType: "gmail_thread",
+        sourceBindingKeys: ["google_source"],
+      },
+    ]]));
+  });
+
   it("is deferred, so loading it is the agent's decision and not a preload", () => {
     const plugin = createAutomationsPlugin(host());
 
