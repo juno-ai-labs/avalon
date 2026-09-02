@@ -87,6 +87,9 @@ export function artifactSecurityHeaders(): Record<string, string> {
   return {
     "content-security-policy": ARTIFACT_CONTENT_SECURITY_POLICY,
     "referrer-policy": "no-referrer",
+    // A shareable or unfurlable URL is not an invitation to place work-stream
+    // output in a public search index. Link-preview crawlers still read it.
+    "x-robots-tag": "noindex",
     "x-content-type-options": "nosniff",
     // An artifact origin is never a legitimate frame parent either; a page that
     // framed another artifact would be a same-site credentialed load.
