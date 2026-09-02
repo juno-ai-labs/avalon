@@ -64,6 +64,11 @@ import {
   LOADER_ENTRY_SOURCE,
 } from "./asset-shim";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
+import {
+  injectSocialPreviewIntoHtml,
+  injectSocialPreviewResponse,
+  socialPreviewMarkup,
+} from "./social-preview";
 
 /**
  * How stale a work-stream visibility answer may be.
@@ -358,6 +363,7 @@ async function serveAsset(
   manifest: ArtifactManifest,
   path: string,
   rewriteHtmlForVersion: number | null,
+  socialPageUrl: URL | null,
 ): Promise<Response> {
   const assetPaths = new Set(manifest.assets.map((asset) => asset.path));
   const resolved = resolveAssetPath(path, assetPaths);
@@ -368,6 +374,15 @@ async function serveAsset(
   if (rewriteHtmlForVersion !== null && asset.contentType.startsWith("text/html")) {
     const source = await object.text();
     return withSecurityHeaders(new Response(injectVersionBase(source, rewriteHtmlForVersion), {
+      status: 200,
+      headers: { "content-type": asset.contentType },
+    }));
+  }
+  if (socialPageUrl && manifest.socialPreview && resolved === "index.html"
+    && asset.contentType.toLowerCase().startsWith("text/html")) {
+    const source = await object.text();
+    const markup = socialPreviewMarkup(manifest.socialPreview, socialPageUrl, manifest.artifactVersion);
+    return withSecurityHeaders(new Response(injectSocialPreviewIntoHtml(source, markup), {
       status: 200,
       headers: { "content-type": asset.contentType },
     }));
@@ -389,7 +404,7 @@ async function serveCurrent(
 ): Promise<Response> {
   const manifest = admitted.manifest;
   if (manifest.mode === "static") {
-    return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null);
+    return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null, url);
   }
   // A stateful site runs through the supervisor's facet and needs no loader
   // binding here. A stateless active site cannot safely fall back to assets:
@@ -399,7 +414,13 @@ async function serveCurrent(
   }
   try {
     const response = await runArtifactModule(env, ctx, artifact, artifactId, request, admitted);
-    return withSecurityHeaders(response);
+    const rewritten = manifest.socialPreview
+      ? injectSocialPreviewResponse(
+          response,
+          socialPreviewMarkup(manifest.socialPreview, url, manifest.artifactVersion),
+        )
+      : response;
+    return withSecurityHeaders(rewritten);
   } catch (error) {
     // The viewer never sees a stack trace. For an identified participant it
     // lands in the rail, where it can be pasted back into chat for the model.
@@ -438,7 +459,7 @@ async function servePriorVersion(
   // A prior *static* version serves its frozen assets exactly. A prior
   // stateless-active version would run its frozen module over its frozen
   // assets; until the loader binding exists, its assets are what render.
-  return serveAsset(env, artifactId, version, manifest, path, version);
+  return serveAsset(env, artifactId, version, manifest, path, version, null);
 }
 
 /**

@@ -35,13 +35,18 @@ export interface SiteFile {
  * caller looping over `manifest.assets` itself.
  */
 export async function readArtifactVersionFiles(
-  env: Env,
+  env: Pick<Env, "PAYLOADS">,
   manifest: ArtifactManifest,
 ): Promise<SiteFile[]> {
   const artifactId = manifest.artifactId;
   const version = manifest.artifactVersion;
+  const generatedPreviewPath = manifest.socialPreview?.image.generated
+    ? manifest.socialPreview.image.path
+    : null;
   const wanted = [
-    ...manifest.assets.map((asset) => asset.path),
+    ...manifest.assets
+      .map((asset) => asset.path)
+      .filter((path) => path !== generatedPreviewPath),
     ...(manifest.mode === "active" ? ["index.js"] : []),
   ];
   const files: SiteFile[] = [];
