@@ -1,5 +1,5 @@
 import { createRef } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MentionIdentity } from '../lib/api';
@@ -491,17 +491,13 @@ describe('WorkstreamComposer mention confirmation', () => {
     // membership that is not active — the participants rail already filters for
     // exactly this reason.
     const options = await screen.findAllByRole('option');
-    const firstOption = options[0];
-    if (!firstOption) throw new Error('Expected at least one mention option');
-    await within(firstOption).findByText('A');
-    expect(options.map(mentionOptionCopy)).toEqual([{
-      badge: 'Person',
-      description: 'adam@example.com',
-      label: 'Adam',
-    }]);
+    expect(options.map(mentionOptionCopy)).toEqual([
+      { badge: 'ASSISTANT', description: 'Ask Rally to join this part of the conversation', label: 'Rally' },
+      { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
+    ]);
   });
 
-  it('offers people only, leaving the work stream\'s connections out of the list and out of the highlight', async () => {
+  it('offers Rally and people, leaving connections out of the list and highlight', async () => {
     const connected: WorkstreamDetail = {
       ...workstream,
       connections: [{
@@ -519,17 +515,16 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
 
     const options = await screen.findAllByRole('option');
-    const firstOption = options[0];
-    if (!firstOption) throw new Error('Expected at least one mention option');
-    await within(firstOption).findByText('A');
     expect(options.map(mentionOptionCopy)).toEqual([
+      { badge: 'ASSISTANT', description: 'Ask Rally to join this part of the conversation', label: 'Rally' },
       { badge: 'Person', description: 'adam@example.com', label: 'Adam' },
       { badge: 'Person', description: 'bob@example.com · not participating', label: 'Bob Builder' },
       { badge: 'Person', description: 'cara@example.com · not participating', label: 'Cara Chen' },
     ]);
-    expect(options[0]).toHaveAccessibleName('Adam — adam@example.com — Person');
-    expect(options[1]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Person');
-    expect(options[2]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Person');
+    expect(options[0]).toHaveAccessibleName('Rally — Ask Rally to join this part of the conversation — ASSISTANT');
+    expect(options[1]).toHaveAccessibleName('Adam — adam@example.com — Person');
+    expect(options[2]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Person');
+    expect(options[3]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Person');
     expect(screen.queryByText('Workspace connection')).not.toBeInTheDocument();
 
     // The draft's highlight names what the composer can mention, so a
@@ -547,19 +542,32 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
 
     const options = await screen.findAllByRole('option');
-    expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+    expect(options.map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false', 'false']);
 
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
 
     expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
-      .toEqual(['false', 'true', 'false']);
+      .toEqual(['false', 'true', 'false', 'false']);
 
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    await waitFor(() => expect(composer).toHaveValue('@Bob Builder '));
+    await waitFor(() => expect(composer).toHaveValue('@Adam '));
     expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
     // Enter chose a name rather than sending the half-written mention.
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('inserts Rally from the mention picker without forging a person identity', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend);
+    const composer = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(composer, { target: { value: '@' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Rally .* ASSISTANT/u }));
+
+    expect(composer).toHaveValue('@Rally ');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@Rally', [], undefined, undefined));
   });
 
   it('wraps to the last candidate when the highlight is walked up off the top', async () => {
@@ -571,7 +579,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.keyDown(composer, { key: 'ArrowUp' });
 
     expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
-      .toEqual(['false', 'false', 'true']);
+      .toEqual(['false', 'false', 'false', 'true']);
 
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -585,14 +593,15 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: '@' } });
     await screen.findAllByRole('option');
     fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
 
     // Bob was highlighted and the narrowed list has no Bob in it, so Enter must
     // fall back to the first row rather than to whoever inherited his place.
-    fireEvent.change(composer, { target: { value: '@a' } });
+    fireEvent.change(composer, { target: { value: '@ad' } });
 
-    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1));
     expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
-      .toEqual(['true', 'false']);
+      .toEqual(['true']);
 
     fireEvent.keyDown(composer, { key: 'Enter' });
 
@@ -615,7 +624,7 @@ describe('WorkstreamComposer mention confirmation', () => {
     // A highlight left over from the last time it was open would send Enter to
     // whoever was under it, which is not the row this list is showing first.
     await waitFor(() => expect(screen.getAllByRole('option').map((option) => option.getAttribute('aria-selected')))
-      .toEqual(['true', 'false', 'false']));
+      .toEqual(['true', 'false', 'false', 'false']));
   });
 
   it('sends participant mentions without asking for confirmation', async () => {

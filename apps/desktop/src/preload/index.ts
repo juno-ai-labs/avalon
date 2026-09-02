@@ -170,6 +170,7 @@ const bridge: RallyDesktopBridge = {
   hasStoredCredential: () => ipcRenderer.invoke('auth:has-stored-credential') as Promise<boolean>,
   logout: () => ipcRenderer.invoke('auth:logout') as Promise<void>,
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,
+  setConversationDetailsOpen: (input) => ipcRenderer.invoke('window:set-conversation-details', input) as Promise<void>,
   exportMessage: (request) => ipcRenderer.invoke('message-export:save', request) as Promise<MessageExportResult>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
   presentArtifactPreview: (request) =>

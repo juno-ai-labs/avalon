@@ -1,4 +1,4 @@
-import { LoaderCircle, Square, UserPlus } from 'lucide-react';
+import { LoaderCircle, Sparkles, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { RallyApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -32,7 +32,8 @@ interface MentionCandidate {
   id: string;
   label: string;
   description: string;
-  member: WorkspaceMember;
+  kind: 'rally' | 'person';
+  member?: WorkspaceMember;
 }
 
 interface WorkstreamComposerProps {
@@ -117,7 +118,12 @@ export function WorkstreamComposer({
   const [confirming, setConfirming] = useState(false);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
-  const candidates = useMemo<MentionCandidate[]>(() => members
+  const candidates = useMemo<MentionCandidate[]>(() => [{
+    id: 'rally-assistant',
+    label: 'Rally',
+    description: 'Ask Rally to join this part of the conversation',
+    kind: 'rally' as const,
+  }, ...members
     // The same rule the participants rail applies: a membership that is not
     // active is one the work-stream endpoint refuses, so naming it here would
     // only produce a failure nobody can act on.
@@ -126,8 +132,9 @@ export function WorkstreamComposer({
       id: member.id,
       label: member.name,
       description: participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
+      kind: 'person' as const,
       member,
-    })), [members, participantIds]);
+    }))], [members, participantIds]);
 
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
   const visibleCandidates = mentionQuery === null
@@ -256,18 +263,19 @@ export function WorkstreamComposer({
       return;
     }
     setText(completed.text);
-    const identity: MentionIdentity = {
-      type: 'person',
-      label: candidate.label,
-      userId: candidate.member.id,
-      connectorType: null,
-      startOffset: completed.startOffset,
-      endOffset: completed.endOffset,
-    };
-    setSelectedMentions((current) => upsertMentionIdentity(
-      rebaseMentionIdentities(text, completed.text, current),
-      identity,
-    ));
+    setSelectedMentions((current) => {
+      const rebased = rebaseMentionIdentities(text, completed.text, current);
+      if (!candidate.member) return rebased;
+      const identity: MentionIdentity = {
+        type: 'person',
+        label: candidate.label,
+        userId: candidate.member.id,
+        connectorType: null,
+        startOffset: completed.startOffset,
+        endOffset: completed.endOffset,
+      };
+      return upsertMentionIdentity(rebased, identity);
+    });
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
@@ -358,7 +366,7 @@ export function WorkstreamComposer({
         <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
           {visibleCandidates.map((candidate, index) => (
             <button
-              aria-label={`${candidate.label} — ${candidate.description} — ${PERSON_MENTION_TYPE}`}
+              aria-label={`${candidate.label} — ${candidate.description} — ${candidate.kind === 'rally' ? 'ASSISTANT' : PERSON_MENTION_TYPE}`}
               aria-selected={index === mentionNavigation.activeIndex}
               className={index === mentionNavigation.activeIndex ? 'is-selected' : undefined}
               id={mentionOptionId(candidate.id)}
@@ -373,10 +381,12 @@ export function WorkstreamComposer({
               type="button"
             >
               <span aria-hidden="true" className="mention-icon">
-                <Avatar member={candidate.member} size="small" />
+                {candidate.member
+                  ? <Avatar member={candidate.member} size="small" />
+                  : <span className="rally-mention-icon"><Sparkles size={14} /></span>}
               </span>
               <span><strong>{candidate.label}</strong><small>{candidate.description}</small></span>
-              <Badge>{PERSON_MENTION_TYPE}</Badge>
+              <Badge>{candidate.kind === 'rally' ? 'ASSISTANT' : PERSON_MENTION_TYPE}</Badge>
             </button>
           ))}
         </div>
