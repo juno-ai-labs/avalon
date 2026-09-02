@@ -205,9 +205,19 @@ function resourceIconType(resource: CitationResource): string {
  * the card is one shape for its whole life. Deciding it on the settled preview
  * instead would swap a button for a container under a reader who had already
  * focused it.
+ *
+ * It classifies from MIME and filename **unconditionally**, which is not what
+ * `resourceIconType` does — that answers the raw `resourceType` for anything
+ * outside the two provenance types, because a `github_pull_request` is not a
+ * file. Both halves that decide the *bytes* — `ResourceService.preview` and
+ * `useCitations` — make this same unconditional call, and a card that
+ * classified more narrowly than the read disagreed with it: an MP3 carrying a
+ * connector's own type (`slack_file`, `drive_file`) was fetched as audio and
+ * then drawn by the ordinary card, which has nothing to put in the room for a
+ * blob it did not classify as an image. The three have to agree.
  */
 function isAudioResource(resource: CitationResource): boolean {
-  return resourceIconType(resource) === 'audio';
+  return classifyAttachmentKind({ mimeType: resource.mimeType, fileName: resource.title }) === 'audio';
 }
 
 /** The kind of thing a resource is, at a glance. Shared with the rail's own list. */
@@ -262,7 +272,7 @@ function ResourceChip({ label, resource, onOpen }: {
  *
  * An audio resource is the one kind whose card is *not* a single button — it
  * hands off to `ResourceAudioCard`, which has a control in it. This component
- * still owns the read: one effect, one cache entry, one object URL to revoke,
+ * still owns the read: one effect, one cache entry, one object URL per *blob*,
  * whichever shape the card takes.
  */
 function ResourceEmbedCard({ label, resource, onOpen, preview }: {
@@ -272,9 +282,29 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   preview?: ((resourceId: string) => Promise<CitationPreview> | undefined) | undefined;
 }): React.JSX.Element {
   const { PreviewBody } = useCitationRender();
-  const [excerpt, setExcerpt] = useState<
-    { for: string; media?: 'audio' | 'image'; src?: string; text?: string; open?: boolean }
-  >({ for: '' });
+  const [excerpt, setExcerpt] = useState<CardPreviewState>({ for: '' });
+  /**
+   * One object URL per blob, held across effect runs rather than minted by each.
+   *
+   * This effect re-runs whenever `preview`'s identity changes, and it changes
+   * whenever the work stream's resource array does — which the socket replaces
+   * on every `resource_attached` and `resource_updated`. The cached read then
+   * resolves to the *same* blob, so minting a URL per run handed the element a
+   * new `src` for bytes that had not changed: the `audio` reloaded and a reader
+   * halfway through a recording was returned to 0:00 with the button back on
+   * "Play", because the agent published an unrelated file. An image tolerated
+   * it as an imperceptible re-decode; a recording does not.
+   *
+   * A ref rather than state: nothing renders from it, and the identity of the
+   * URL is what the element keys its load on.
+   */
+  const held = useRef<{ blob: Blob; url: string } | null>(null);
+  // Revoked on unmount alone, for the same reason it is minted once: a run that
+  // resolves the blob it already holds must leave the live URL alone.
+  useEffect(() => () => {
+    if (held.current) URL.revokeObjectURL(held.current.url);
+    held.current = null;
+  }, []);
   useEffect(() => {
     const request = preview?.(resource.id);
     if (!request) {
@@ -282,15 +312,16 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
       return;
     }
     let cancelled = false;
-    let objectUrl: string | undefined;
-    // Announced unconditionally, including for a read the host has already
-    // cached. React processes this update and the settled promise's own in one
-    // commit, so a warm card re-running this effect — a refetch of the resource
-    // list changes the callback's identity, and every mounted card asks again —
-    // never paints the skeleton over an excerpt it already had. Review raised
-    // that flash; a MutationObserver across every commit shows no skeleton node
-    // is created at all, so guarding it here would be a fix for nothing.
-    setExcerpt({ for: resource.id, open: true });
+    // Asking is announced on top of what the card already holds, not in place
+    // of it. A warm card re-runs this effect whenever the callback's identity
+    // changes — the socket replaces the work stream's resource array on every
+    // attach — and the settled read then resolves a microtask later, in a
+    // *second* commit. Replacing the state here emptied the card for the one in
+    // between: harmless for an excerpt nobody saw blink, fatal for a recording,
+    // because the `audio` element unmounted and took the playback with it. The
+    // skeleton is chosen at render from having nothing to show, so a re-ask
+    // still cannot paint one over an excerpt that is already there.
+    setExcerpt(asking(resource.id, true));
     request
       .then((result) => {
         if (cancelled) return;
@@ -298,18 +329,19 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
           setExcerpt({ for: resource.id, text: previewExcerpt(result.text) });
           return;
         }
-        objectUrl = URL.createObjectURL(result.blob);
-        setExcerpt({ for: resource.id, media: result.kind, src: objectUrl });
+        setExcerpt({ for: resource.id, media: result.kind, src: objectUrlFor(held, result.blob) });
       })
       .catch(() => {
         // Every rejection — unavailable, unconvertible, retries spent — means
         // the same thing here: the card keeps its empty room, exactly as it
-        // stands on a surface that offers no preview at all.
-        if (!cancelled) setExcerpt({ for: resource.id });
+        // stands on a surface that offers no preview at all. A card that
+        // already holds bytes keeps them, for the same reason the ask does not
+        // clear them: a failed *re*-ask is an answer about the next read, not a
+        // reason to take a recording away from somebody listening to it.
+        if (!cancelled) setExcerpt(asking(resource.id, false));
       });
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [preview, resource.id]);
   // A commit can hand this mounted card a different resource before the effect
@@ -319,7 +351,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
     return (
       <ResourceAudioCard
         label={label}
-        loading={settled.open === true}
+        loading={loadingRoom(settled)}
         onOpen={onOpen}
         resource={resource}
         src={settled.media === 'audio' ? settled.src : undefined}
@@ -335,7 +367,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
       type="button"
     >
       <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type={resourceIconType(resource)} /></span>
-      {settled.open && (
+      {loadingRoom(settled) && (
         <span aria-hidden="true" className="citation-card-preview-skeleton">
           <span /><span /><span />
         </span>
@@ -521,6 +553,17 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
   );
 }
 
+/**
+ * Whether the card's room is a read in progress rather than something to show.
+ *
+ * Read at render from the content rather than tracked as a state of its own, so
+ * that a re-ask over an excerpt or a player the card already has cannot paint a
+ * skeleton across it.
+ */
+function loadingRoom(settled: CardPreviewState): boolean {
+  return settled.open === true && settled.src === undefined && settled.text === undefined;
+}
+
 /** How much of the bar is played, as the width the stylesheet fills it to. */
 function playedWidth(position: number, duration: number | null): string {
   if (duration === null || duration <= 0) return '0%';
@@ -540,6 +583,39 @@ function clock(seconds: number): string {
   const remainder = String(whole % 60).padStart(2, '0');
   if (hours === 0) return `${minutes}:${remainder}`;
   return `${hours}:${String(minutes).padStart(2, '0')}:${remainder}`;
+}
+
+/** What the card holds while a read is open, or has just failed, for one resource. */
+type CardPreviewState = { for: string; media?: 'audio' | 'image'; src?: string; text?: string; open?: boolean };
+
+/**
+ * Move a card into or out of the asking state without discarding what it shows.
+ *
+ * A card handed a *different* resource starts empty — the old document's
+ * excerpt must not sit under the new one's title — and one asked again about
+ * the resource it already holds keeps everything but the flag.
+ */
+function asking(resourceId: string, open: boolean): (current: CardPreviewState) => CardPreviewState {
+  return (current) => (current.for === resourceId ? { ...current, open } : { for: resourceId, open });
+}
+
+/**
+ * The card's URL for these bytes: the one it already holds when the blob is the
+ * same object, a fresh one otherwise.
+ *
+ * Identity rather than equality, because that is exactly the question — the
+ * read is cached, so a re-run of the effect resolves the very same `Blob`, and
+ * two different reads produce two different objects whether or not the bytes
+ * inside them match. Replacing a held URL revokes it first: the element has
+ * already been handed the new one by the time anything could load the old.
+ */
+function objectUrlFor(held: React.RefObject<{ blob: Blob; url: string } | null>, blob: Blob): string {
+  const current = held.current;
+  if (current?.blob === blob) return current.url;
+  if (current) URL.revokeObjectURL(current.url);
+  const url = URL.createObjectURL(blob);
+  held.current = { blob, url };
+  return url;
 }
 
 /**
