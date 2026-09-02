@@ -649,7 +649,7 @@ pre {
   bottom: 0;
   position: absolute;
   right: -6px;
-  top: 36px;
+  top: 44px;
   width: 12px;
   z-index: 3;
 }
@@ -661,9 +661,9 @@ pre {
 .sidebar-titlebar {
   align-items: center;
   display: flex;
-  height: 36px;
+  height: 44px;
   justify-content: flex-end;
-  padding: 0 9px;
+  padding: 0 16px;
 }
 
 .sidebar-scroll {
@@ -672,7 +672,7 @@ pre {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 2px 8px 18px;
+  padding: 0 12px 18px;
   /* GrokBot keeps this rail visually quiet and lets wheel, trackpad, and
      keyboard scrolling move it without exposing a width-taking scrollbar. */
   scrollbar-gutter: auto;
@@ -1089,12 +1089,12 @@ pre {
   border-radius: 8px;
   color: var(--av-sys-color-text-default);
   display: flex;
-  gap: 10px;
-  margin: 0 8px 6px;
-  min-height: 46px;
-  padding: 7px 8px;
+  gap: 8px;
+  margin: 2px 12px 12px;
+  min-height: 40px;
+  padding: 6px 8px;
   text-align: left;
-  width: calc(100% - 16px);
+  width: calc(100% - 24px);
 }
 
 .account-trigger:hover { background: var(--av-sys-color-surface-subtle); }
@@ -1181,26 +1181,26 @@ pre {
 .account-menu-content {
   background: #fbfbfb;
   border-color: #d7d7d7;
-  border-radius: 11px;
-  box-shadow: 0 12px 34px rgb(0 0 0 / 14%);
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -4px rgb(0 0 0 / 10%), 0 10px 20px -3px rgb(0 0 0 / 10%), 0 0 0 1px rgb(228 228 228 / 4%);
   box-sizing: border-box;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   min-width: 228px;
-  padding: 5px 6px;
+  padding: 6px;
   width: 228px;
 }
 
 .account-menu-item.menu-item {
-  border-radius: 7px;
+  border-radius: 6px;
   color: var(--av-sys-color-text-default);
   display: grid;
-  font-size: 14px;
-  font-weight: 400;
-  gap: 8px;
+  font-size: 13px;
+  font-weight: 420;
+  gap: 4px;
   grid-template-columns: 18px minmax(0, 1fr);
   line-height: 20px;
-  min-height: 32px;
-  padding: 0 8px;
+  min-height: 30px;
+  padding: 6px 8px;
 }
 
 .account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
@@ -3487,7 +3487,7 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 
 /* Composer */
 
-.composer-dock { background: linear-gradient(to bottom, transparent, var(--av-sys-color-surface-default) 18%); bottom: 0; left: 0; padding: 20px 28px 14px; position: absolute; right: 0; z-index: 3; }
+.composer-dock { background: linear-gradient(to bottom, transparent, var(--av-sys-color-surface-default) 18%); bottom: 0; left: 0; padding: 0 16px 16px; position: absolute; right: 0; z-index: 3; }
 .composer-stack { display: grid; gap: 9px; margin: 0 auto; max-width: var(--av-cmp-feed-width); pointer-events: auto; position: relative; }
 .composer-wrap { margin: 0 auto; max-width: var(--av-cmp-feed-width); position: relative; }
 .composer-stack > .composer-wrap { margin: 0; max-width: none; width: 100%; }
@@ -3884,21 +3884,22 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
 .composer-error-slot { padding-top: 7px; }
 .composer-error-slot .inline-error { background: var(--av-sys-color-danger-wash); border: 1px solid var(--av-sys-color-danger-edge); border-radius: var(--av-sys-size-radius-sm); margin: 0; padding: 6px 8px; }
-.mention-popover { background: #fcfcfc; border: 1px solid #d7d7d7; border-radius: 12px; bottom: calc(100% - 8px); box-shadow: 0 12px 30px rgb(0 0 0 / 16%); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; left: 40px; max-height: 280px; overflow: auto; padding: 5px; position: absolute; width: min(360px, calc(100% - 40px)); z-index: 20; }
-.mention-popover > button { align-items: center; background: transparent; border-radius: 7px; color: var(--av-sys-color-text-default); display: flex; gap: 8px; min-height: 32px; padding: 4px 9px; text-align: left; width: 100%; }
+.mention-popover { background: #fcfcfc; border: .5px solid rgba(20, 20, 20, .15); border-radius: 12px; bottom: calc(100% - 8px); box-shadow: 0 4px 6px -4px rgb(0 0 0 / 10%), 0 10px 20px -3px rgb(0 0 0 / 10%), 0 0 0 1px rgb(228 228 228 / 4%); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; left: 40px; max-height: 280px; overflow: auto; padding: 6px; position: absolute; width: min(360px, calc(100% - 40px)); z-index: 20; }
+.mention-popover > button { align-items: center; background: transparent; border-radius: 6px; color: var(--av-sys-color-text-default); display: flex; font-size: 13px; font-weight: 400; gap: 6px; height: 28px; line-height: 18px; min-height: 28px; padding: 6px 8px; text-align: left; width: 100%; }
 /* One marked row, and `is-selected` is the one: the pointer moves the selection
    rather than painting a second highlight beside the keyboard's, so a `:hover`
    rule here would mark a row Enter is not going to take. */
 .mention-popover > button:focus-visible,
-.mention-popover > button.is-selected { background: #ebebeb; }
-.mention-icon { align-items: center; display: flex; flex: 0 0 24px; height: 24px; justify-content: center; width: 24px; }
-.mention-icon .avatar-small { height: 20px; width: 20px; }
+.mention-popover > button.is-selected,
+.mention-popover > button:hover { background: rgba(119, 119, 119, .17); }
+.mention-icon { align-items: center; display: flex; flex: 0 0 16px; height: 16px; justify-content: center; width: 16px; }
+.mention-icon :is(.avatar-small, .provider-icon) { height: 16px; width: 16px; }
 .mention-popover-copy { align-items: baseline; display: flex; flex: 1; gap: 8px; min-width: 0; }
-.mention-popover strong { font-size: 14px; font-weight: 400; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mention-popover small { color: #8f8f8f; font-size: 13px; font-weight: 400; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mention-popover-kind { color: #8f8f8f; flex: 0 0 auto; font-size: 13px; font-weight: 400; line-height: 18px; margin-left: auto; }
-[data-theme='air-dark'] .mention-popover { background: #070707; border-color: #2b2b2b; box-shadow: 0 14px 34px rgb(0 0 0 / 34%); }
-[data-theme='air-dark'] .mention-popover > button.is-selected { background: #2f2f2f; }
+.mention-popover strong { font-size: 13px; font-weight: 400; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-popover small { color: #8f8f8f; font-size: 13px; font-weight: 420; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-popover-kind { color: #8f8f8f; flex: 0 0 auto; font-size: 13px; font-weight: 420; line-height: 18px; margin-left: auto; }
+[data-theme='air-dark'] .mention-popover { background: #070707; border-color: rgba(252, 252, 252, .15); }
+[data-theme='air-dark'] .mention-popover > button:is(.is-selected, :hover) { background: rgba(119, 119, 119, .32); }
 [data-theme='air-dark'] .mention-popover :is(small, .mention-popover-kind) { color: #909090; }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
 .mention-confirm-person > span { display: flex; flex-direction: column; }
@@ -4918,7 +4919,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 :is(.workstream-screen, .automation-chat-surface) .agent-message {
-  max-width: var(--av-cmp-turn-width);
+  max-width: min(88%, 640px, calc(100% - 82px));
   min-width: 0;
   width: fit-content;
 }
@@ -4958,8 +4959,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
      is a few pixels on one line — the kind of thing a screenshot pass looks
      straight past. */
   --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
-  margin-left: var(--av-cmp-turn-margin);
-  max-width: var(--av-cmp-turn-width);
+  margin-left: auto;
+  max-width: min(88%, 640px, calc(100% - 82px));
   min-width: 0;
   width: fit-content;
 }
@@ -5130,7 +5131,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    visual hierarchy. */
 .sidebar-commandbar {
   display: block;
-  margin: 0 1px 12px;
+  margin: 4px 0 12px;
 }
 
 .sidebar-new-chat-draft {
@@ -5189,16 +5190,17 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .sidebar-search {
   align-items: center;
   background: var(--grok-sidebar-search-background, var(--av-sys-color-surface-raised));
-  border: 1px solid var(--av-sys-color-border-subtle);
+  border: 0;
   border-radius: 8px;
+  box-shadow: inset 0 0 0 .5px var(--av-cmp-sidebar-border);
   color: var(--av-sys-color-text-muted);
   display: flex;
   gap: 6px;
-  height: 28px;
-  padding: 0 9px;
+  height: 32px;
+  padding: 0 4px 0 8px;
 }
 
-.sidebar-search:focus-within { border-color: var(--av-sys-color-border-strong); }
+.sidebar-search:focus-within { box-shadow: inset 0 0 0 .5px var(--av-sys-color-border-strong); }
 .sidebar-search input { background: transparent; border: 0; color: var(--av-sys-color-text-default); font-size: 11.5px; min-width: 0; outline: 0; padding: 0; width: 100%; }
 .sidebar-search input::placeholder { color: var(--av-sys-color-text-muted); }
 .sidebar-search input::-webkit-search-cancel-button { display: none; }
@@ -5317,46 +5319,45 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-header .workstream-title-line h1 { font-size: 13px; }
 .workstream-header .workstream-subtitle { margin-top: 0; }
 
-.workstream-screen:has(> .grokbot-workstream-header) { grid-template-rows: 40px minmax(0, 1fr) auto; }
+.workstream-screen:has(> .grokbot-workstream-header) { grid-template-rows: 44px minmax(0, 1fr) auto; }
 .grokbot-workstream-header {
   --grok-header-background: #fcfcfc;
-  --grok-header-border: #e7e7e7;
-  --grok-header-title-background: #fcfcfc;
   --grok-header-control-hover: #ededed;
   align-items: center;
   background: var(--grok-header-background);
-  border-bottom: 1px solid var(--grok-header-border);
+  border-bottom: 0;
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) 34px;
   min-width: 0;
-  padding: 0 8px 0 16px;
+  padding: 0 12px 0 8px;
 }
 .grokbot-header-navigation { display: none; }
 .grokbot-workstream-header > h1 { display: flex; justify-content: flex-start; min-width: 0; }
 .grokbot-conversation-title {
   align-items: center;
-  background: var(--grok-header-title-background);
+  background: transparent;
   border: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--av-sys-color-text-default);
   display: flex;
   font-size: 13px;
   font-weight: 500;
-  gap: 6px;
+  gap: 4px;
   height: 28px;
   justify-content: flex-start;
   line-height: 18px;
   max-width: 100%;
   min-width: 0;
-  padding: 4px 9px;
+  padding: 4px 6px;
 }
 .grokbot-conversation-title > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grokbot-conversation-title:hover { background: var(--grok-header-control-hover); color: var(--av-sys-color-text-default); }
 .grokbot-computer-button.icon-button {
   color: #969696;
   height: 28px;
-  width: 28px;
+  margin-right: -4px;
+  width: 34px;
 }
 .grokbot-computer-button.icon-button:hover,
 .grokbot-computer-button.icon-button[aria-pressed='true'] {
@@ -5365,8 +5366,6 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 [data-theme='air-dark'] .grokbot-workstream-header {
   --grok-header-background: #070707;
-  --grok-header-border: #262626;
-  --grok-header-title-background: #1a1a1a;
   --grok-header-control-hover: #1a1a1a;
 }
 
@@ -5379,13 +5378,13 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   --grok-font-label-leading: 16px;
   --grok-font-caption-size: 11px;
   --grok-font-caption-leading: 16px;
-  --grok-font-regular: 400;
+  --grok-font-regular: 420;
   --grok-font-medium: 500;
   --grok-font-semibold: 600;
   --av-cmp-row-background-hover: #ebebeb;
-  --av-cmp-row-background-selected: #e1e1e1;
+  --av-cmp-row-background-selected: rgba(119, 119, 119, .17);
   --grok-command-shortcut-background: #f7f7f7;
-  --grok-sidebar-search-background: #ebebeb;
+  --grok-sidebar-search-background: rgba(119, 119, 119, .09);
   --grok-sidebar-secondary: #696969;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: var(--grok-font-body-1-size);
@@ -5394,10 +5393,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   line-height: var(--grok-font-body-1-leading);
 }
 [data-theme='air-dark'] .grokbot-shell {
-  --av-cmp-row-background-hover: #232323;
-  --av-cmp-row-background-selected: #313131;
+  --av-cmp-row-background-hover: rgba(119, 119, 119, .17);
+  --av-cmp-row-background-selected: rgba(119, 119, 119, .32);
   --grok-command-shortcut-background: #181818;
-  --grok-sidebar-search-background: #232323;
+  --grok-sidebar-search-background: rgba(119, 119, 119, .173);
   --grok-sidebar-secondary: #9e9e9e;
 }
 .grokbot-shell .workstream-row {
@@ -5405,7 +5404,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   gap: 8px;
   height: 54px;
   min-height: 54px;
-  padding: 9px;
+  padding: 8px;
 }
 .grokbot-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
 .grokbot-shell .command-shortcut-scrim {
@@ -5432,7 +5431,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .grokbot-shell .workstreams-section { margin-top: 10px; }
 .grokbot-shell .sidebar-group { margin-top: 14px; }
 .grokbot-shell .sidebar-group:first-child { margin-top: 0; }
-.grokbot-shell .sidebar-group-heading { min-height: 17px; padding: 0 7px 7px; }
+.grokbot-shell .sidebar-group-heading { min-height: 30px; padding: 8px 8px 6px; }
 .grokbot-shell .sidebar-search input {
   font-size: var(--grok-font-body-1-size);
   font-weight: var(--grok-font-regular);
@@ -5496,7 +5495,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 :is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body,
 :is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body {
   font-size: 14px;
-  font-weight: 400;
+  font-weight: 420;
   line-height: 20px;
 }
 :is(.workstream-screen, .automation-chat-surface) .human-message .message-author {
@@ -5506,7 +5505,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 :is(.workstream-screen, .automation-chat-surface) .human-message time {
   font-size: 12px;
-  font-weight: 400;
+  font-weight: 420;
   line-height: 16px;
 }
 :is(.workstream-screen, .automation-chat-surface) :is(.agent-work-timing-label, .tool-summary strong) {
@@ -5515,7 +5514,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   line-height: 18px;
 }
 
-.composer-wrap { max-width: min(760px, calc(100% - 28px)); }
+.composer-wrap { max-width: none; width: 100%; }
 .workstream-composer {
   --composer-text-padding: 12px 15px 2px;
   background: var(--av-sys-color-surface-raised);
@@ -5721,15 +5720,16 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   background: none;
   bottom: auto;
   left: auto;
-  padding: 10px 12px;
+  padding: 0 16px 16px;
   pointer-events: none;
   position: relative;
   right: auto;
 }
 
 .workstream-screen .composer-wrap {
-  max-width: 920px;
+  max-width: none;
   pointer-events: auto;
+  width: 100%;
 }
 
 .workstream-screen .composer-queue {
@@ -5738,7 +5738,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 .workstream-screen .composer-stack {
-  max-width: 760px;
+  max-width: none;
   width: 100%;
 }
 
@@ -5788,17 +5788,17 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   --composer-text-padding: 9px 4px 6px;
   align-items: end;
   background: var(--av-cmp-composer-background);
-  border: 1px solid #bdbdbd;
+  border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color);
   border-radius: 22px;
-  box-shadow: none;
+  box-shadow: var(--av-cmp-composer-shadow);
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) auto;
   min-height: 44px;
-  overflow: visible;
+  overflow: hidden;
 }
 
 :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within {
-  border-color: #bdbdbd;
+  border-color: var(--av-cmp-composer-border-color);
 }
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments {
@@ -5822,13 +5822,13 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule textarea {
   font-size: 14px;
-  font-weight: 400;
+  font-weight: 420;
   line-height: 20px;
   min-height: 42px;
 }
 :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule .composer-highlight {
   font-size: 14px;
-  font-weight: 400;
+  font-weight: 420;
   line-height: 20px;
 }
 
@@ -5845,10 +5845,11 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
-  background: #dedede;
-  border: 1px solid #c7c7c7;
+  background: rgba(119, 119, 119, .09);
+  border: 0;
   border-radius: 50%;
-  color: #747474;
+  box-shadow: inset 0 0 0 .5px rgba(20, 20, 20, .1);
+  color: rgba(20, 20, 20, .61);
   height: 28px;
   width: 28px;
 }
@@ -5887,34 +5888,34 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .composer-action-menu {
   background: #fbfbfb;
   border-color: #d7d7d7;
-  border-radius: 11px;
-  box-shadow: 0 12px 34px rgb(0 0 0 / 14%);
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -4px rgb(0 0 0 / 10%), 0 10px 20px -3px rgb(0 0 0 / 10%), 0 0 0 1px rgb(228 228 228 / 4%);
   box-sizing: border-box;
   min-width: 200px;
-  padding: 4px;
+  padding: 6px;
   width: 200px;
 }
 
 .composer-action-menu-item.menu-item {
-  border-radius: 7px;
+  border-radius: 6px;
   color: #252525;
-  font-size: 14px;
-  font-weight: 400;
-  gap: 11px;
-  line-height: 20px;
-  min-height: 32px;
-  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 420;
+  gap: 4px;
+  line-height: 18px;
+  min-height: 30px;
+  padding: 6px 8px;
 }
 
 .composer-action-menu-item > svg { height: 16px; stroke-width: 1.9; width: 16px; }
 .composer-action-menu-item .composer-teach-task-icon { color: #ff273c; stroke-width: 2.4; }
 
-[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule { border-color: #4e4e4e; }
-[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within { border-color: #4e4e4e; }
+[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule { border-color: rgba(252, 252, 252, .15); }
+[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within { border-color: rgba(252, 252, 252, .15); }
 [data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
-  background: #3b3b3b;
-  border-color: #4e4e4e;
-  color: #a8a8a8;
+  background: rgba(119, 119, 119, .173);
+  box-shadow: inset 0 0 0 .5px rgba(252, 252, 252, .1);
+  color: rgba(252, 252, 252, .56);
 }
 [data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule.has-submit .microphone-control .dictation-button {
   background: #3c3c3c;
@@ -5922,8 +5923,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 [data-theme='air-dark'] .composer-action-menu {
   background: #181818;
-  border-color: #3a3a3a;
-  box-shadow: 0 14px 38px rgb(0 0 0 / 32%);
+  border-color: rgba(252, 252, 252, .15);
 }
 [data-theme='air-dark'] .composer-action-menu-item.menu-item { color: #f4f4f4; }
 [data-theme='air-dark'] .composer-action-menu-item.menu-item[data-highlighted] { background: #2c2c2c; }
@@ -6000,7 +6000,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   }
 
   .workstream-screen :is(.human-message, .agent-message) {
-    max-width: var(--av-cmp-turn-width);
+    max-width: min(88%, 640px, calc(100% - 82px));
   }
 
   .workstream-screen .composer-dock {
@@ -6175,8 +6175,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    stay deliberately dense: each participant reads as one charcoal pill, with
    the caret beginning immediately after the final selected person. */
 .new-chat-screen:not(.is-launching) > .launch-header {
-  border-bottom: 1px solid var(--av-sys-color-border-subtle);
-  height: 43px;
+  border-bottom: .5px solid var(--av-cmp-sidebar-border);
+  height: 48.5px;
   overflow: visible;
   padding: 0;
   position: relative;
@@ -6186,16 +6186,17 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .new-chat-recipient-bar {
   align-items: center;
   display: flex;
-  gap: 7px;
-  height: 43px;
-  padding: 0 9px 0 13px;
+  gap: 6px;
+  height: 48px;
+  padding: 10px 12px 10px 12px;
+  width: 100%;
 }
 
 .new-chat-to-label {
   color: var(--av-sys-color-text-muted);
   flex: 0 0 auto;
   font-size: 14px;
-  font-weight: 400;
+  font-weight: 420;
   line-height: 20px;
 }
 
@@ -6261,7 +6262,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   color: var(--av-sys-color-text-default);
   flex: 1 0 132px;
   font-size: 14px;
-  font-weight: 400;
+  font-weight: 420;
   line-height: 20px;
   min-width: 132px;
   outline: 0;
@@ -6276,8 +6277,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   border: 0;
   color: var(--av-sys-color-text-muted);
   display: flex;
-  flex: 0 0 28px;
-  height: 28px;
+  border-radius: 50%;
+  flex: 0 0 20px;
+  height: 20px;
   justify-content: center;
   padding: 0;
 }
@@ -6286,23 +6288,22 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .new-chat-recipient-results {
   background: #fcfcfc;
-  border: 1px solid #e6e6e6;
+  border: .5px solid rgba(20, 20, 20, .15);
   border-radius: 14px;
-  box-shadow: 0 10px 30px rgb(0 0 0 / 12%);
-  left: 42px;
+  box-shadow: 0 4px 6px -4px rgb(0 0 0 / 10%), 0 10px 20px -3px rgb(0 0 0 / 10%), 0 0 0 1px rgb(228 228 228 / 4%);
+  left: 32px;
   max-height: min(330px, calc(100vh - 150px));
   overflow-y: auto;
-  padding: 5px;
+  padding: 6px;
   position: absolute;
-  top: 35px;
-  width: min(560px, calc(100% - 62px));
+  top: 38px;
+  width: min(560px, calc(100% - 52px));
   z-index: 20;
 }
 
 [data-theme='air-dark'] .new-chat-recipient-results {
   background: #2f2f2f;
-  border-color: #555;
-  box-shadow: 0 14px 38px rgb(0 0 0 / 34%);
+  border-color: rgba(252, 252, 252, .15);
 }
 
 .new-chat-recipient-results > button {
@@ -6312,9 +6313,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   border-radius: 8px;
   color: var(--av-sys-color-text-default);
   display: flex;
-  gap: 10px;
+  gap: 8px;
   min-height: 36px;
-  padding: 4px 9px;
+  padding: 6px 8px;
   text-align: left;
   width: 100%;
 }
@@ -6326,13 +6327,13 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 .new-chat-recipient-results > button.is-selected,
-.new-chat-recipient-results > button:hover { background: #e6e6e6; }
+.new-chat-recipient-results > button:hover { background: rgba(119, 119, 119, .17); }
 [data-theme='air-dark'] .new-chat-recipient-results > button.is-selected,
-[data-theme='air-dark'] .new-chat-recipient-results > button:hover { background: #464646; }
+[data-theme='air-dark'] .new-chat-recipient-results > button:hover { background: rgba(119, 119, 119, .32); }
 
 .new-chat-recipient-results .avatar-small { height: 24px; width: 24px; }
 .new-chat-recipient-copy { display: flex; flex: 1; min-width: 0; }
-.new-chat-recipient-copy strong { font-size: 14px; font-weight: 400; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-chat-recipient-copy strong { font-size: 14px; font-weight: 420; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .new-chat-recipient-shortcut { display: flex; gap: 2px; margin-left: auto; }
 .new-chat-recipient-shortcut kbd {
   align-items: center;
@@ -6363,21 +6364,21 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   background: linear-gradient(to top, var(--av-sys-color-surface-default) 72%, transparent);
   bottom: 0;
   left: 0;
-  padding: 20px 14px 14px;
+  padding: 0 16px 16px;
   position: absolute;
   right: 0;
 }
 
-.new-chat-screen:not(.is-launching) .composer-stack { max-width: 760px; }
+.new-chat-screen:not(.is-launching) .composer-stack { max-width: none; width: 100%; }
 .new-chat-screen:not(.is-launching) .launch-composer {
   background: var(--av-cmp-composer-background);
-  border: 1px solid #bdbdbd;
+  border: var(--av-cmp-composer-border-width) solid var(--av-cmp-composer-border-color);
   border-radius: 22px;
-  box-shadow: none;
+  box-shadow: var(--av-cmp-composer-shadow);
 }
 .new-chat-screen:not(.is-launching) .launch-composer textarea { min-height: 42px; }
 .new-chat-screen:not(.is-launching) .launch-composer.has-attachments textarea { min-height: 67px; }
-[data-theme='air-dark'] .new-chat-screen:not(.is-launching) .launch-composer { border-color: #4e4e4e; }
+[data-theme='air-dark'] .new-chat-screen:not(.is-launching) .launch-composer { border-color: rgba(252, 252, 252, .15); }
 
 @media (max-width: 760px) {
   .workstream-launch-screen:not(.is-launching) > .launch-dock {
