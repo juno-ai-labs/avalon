@@ -2,7 +2,9 @@ import { z } from "zod";
 
 import {
   AutomationSetEvaluatorRulesInputV1Schema,
+  isExternalEventTrigger,
   type AutomationDraft,
+  type AutomationSetEvaluatorRulesInputV1,
 } from "@rally/contracts";
 
 import {
@@ -42,8 +44,18 @@ export interface AutomationCreatorToolHost {
   loadedPluginIds: Set<string>;
   /** People the model resolved, for an evaluator rule that names one. */
   resolvedPersonIds: Set<string>;
-  /** The draft as it currently stands; `submit_draft` replaces it. */
-  draftState: { submitted: AutomationDraft | null };
+  /**
+   * The draft as it currently stands; `submit_draft` replaces it.
+   *
+   * `evaluatorRules` is what `set_evaluator_rules` last sent. The host keeps
+   * its own copy to hand to the submission, but `submit_draft` needs to see it
+   * too: it is the difference between telling the model to call a tool and
+   * handing it a bare error code.
+   */
+  draftState: {
+    submitted: AutomationDraft | null;
+    evaluatorRules?: AutomationSetEvaluatorRulesInputV1 | null;
+  };
   model: string;
   draftResearchPort?: {
     searchPeople(query: string): Promise<unknown>;
@@ -219,6 +231,23 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
           if (unloadedPluginId) {
             throw new Error(`Load and inspect ${unloadedPluginId} before submitting it in a ready automation draft`);
           }
+          // AutomationAgent refuses this too, and that throw is the one no
+          // caller can bypass. This one exists for what the model reads: a
+          // rejected tool call arrives as `error.message` verbatim, so the
+          // object's `automation_evaluator_rules_required` reaches it as a bare
+          // code tagged an external fault, with nothing naming the tool that
+          // fixes it. The comment on `set_evaluator_rules` below records where
+          // that ends — a model resubmitting the same draft until the loop runs
+          // out. Phrased like the plugin refusal above, for the same reason.
+          if (
+            (draftState.evaluatorRules?.evaluators.length ?? 0) === 0
+            && parsed.data.triggers.some(isExternalEventTrigger)
+          ) {
+            throw new Error(
+              "Call set_evaluator_rules with at least one rule before submitting a ready draft "
+              + "that has a connector_activity, semantic_activity or webhook trigger",
+            );
+          }
         }
         await input.draftMutationPort?.submitDraft(parsed.data, context);
         draftState.submitted = parsed.data;
@@ -252,6 +281,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         if (issues) throw issues;
         const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(raw);
         const result = await input.draftMutationPort.setEvaluatorRules(rules, context);
+        draftState.evaluatorRules = rules;
         return {
           output: result,
           summary: rules.evaluators.length === 0
