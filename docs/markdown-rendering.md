@@ -296,13 +296,23 @@ card, which has nothing to put in the room for a blob it did not classify as an
 image.
 
 The audio card is **the one card that is not a single button**, because a
-control cannot nest inside one. The tile keeps its shape: the badge slot becomes
-a play/pause button, the room becomes a played bar and an `m:ss` clock
-(`h:mm:ss` past the hour), and the title block becomes the button that opens the
-rail. Two controls, each with its own accessible name — "Play <title>" /
-"Pause <title>", and "Open <title>". The whole-card hover belongs to the cards
-that *are* one button, so it is written `button.citation-card:hover`; lighting
-the container would advertise a click it does not take.
+control cannot nest inside one. The tile keeps its shape: the badge stays the
+kind glyph every card carries — the speaker the rail's own list draws for a
+recording — the room becomes a played bar, an `m:ss` clock (`h:mm:ss` past the
+hour) and a small play/pause button beneath them, and the title block becomes
+the button that opens the rail. So the card reads top to bottom as what this is,
+where it is, and what to press. Two controls, each with its own accessible name
+— "Play <title>" / "Pause <title>", and "Open <title>". The whole-card hover
+belongs to the cards that *are* one button, so it is written
+`button.citation-card:hover`; lighting the container would advertise a click it
+does not take.
+
+The play button is filled where the badge is outlined: it is the control, not
+the mark, and the fill ties it to the track above it. It also has to be visible
+on four themes, and `surface.raised` — what the shared icon button rests on — is
+the same colour as this card on Terra and one point off it on Air Dark, while
+the line ramp the badge uses all but disappears on the dark ones.
+`shimmer.default` is a fill and reads on all four.
 
 Its container is a `span`, and **every node in it is phrasing content**. A lone
 embed keeps the paragraph the markdown put it in — the row pass merges runs of
@@ -762,6 +772,12 @@ its glance belongs, under a title that said "Audio". Fixing only the decode
 would have left the card a picture of nothing; what a reader wants from an
 announced recording is to play it, and the rail already proves the bytes play by
 handing the same blob to `<audio controls>`.
+
+**Follow-up in the same change (design):** the badge went back to the speaker
+glyph and the play/pause control moved out of it, into a small button under the
+bar and the clock. The badge is what every card uses to say what it is, and
+spending it on the one card's control both hid the kind and put the control
+above the position it moves.
 
 **Follow-up in the same change (review):** the object URL is held per blob and
 the asking state merges rather than replaces, so a `resource_attached` arriving

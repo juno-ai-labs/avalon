@@ -3010,13 +3010,20 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 @media (prefers-reduced-motion: reduce) {
   .citation-card-preview-skeleton > span { animation: none; }
 }
-/* The audio card's transport, in the badge slot and in the room above the
-   title.
+/* The audio card's transport: the position, the clock, and the control that
+   moves them, stacked in the room above the title.
 
-   The play control is the badge — same square, same hairline, now a button —
-   so a recording's card is the file tile every other card is, with its one
-   affordance where the kind glyph would have been. `background: none` and
-   `font: inherit` are the button reset the badge never needed as a span.
+   The play button sits *under* the bar and the clock rather than in the badge
+   slot, so the card reads top to bottom as what this is, where it is, and what
+   to press — and the badge goes on saying what every other card's badge says.
+   It is smaller than the badge (22px against 27px) because it is an affordance
+   inside the card rather than the card's own mark, and it carries the button
+   reset a span never needs. It is *filled* where the badge is outlined, which
+   separates the control from the mark and ties it to the track below it — and
+   is the only treatment that survives every theme: `surface.raised`, which the
+   shared icon button rests on, is the same colour as this card on Terra and one
+   point off it on Air Dark, and the line ramp the badge uses all but disappears
+   on the dark themes. `shimmer.default` is a fill, and reads on all four.
 
    The bar itself is drawn on a pseudo-element from `--citation-card-played`,
    which the card publishes as a percentage. That keeps a position that changes
@@ -3032,8 +3039,8 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
    rather than under the badge — the room above it is the same deliberate empty
    room every other card keeps, and the first `auto` in the column takes the
    slack, so the title block's own stays true. */
-.citation-card-play { background: none; cursor: pointer; font: inherit; padding: 0; }
-.citation-card-play:hover { border-color: var(--av-sys-color-border-strong); color: var(--av-sys-color-text-default); }
+.citation-card-play { align-items: center; align-self: flex-start; background: var(--av-sys-color-shimmer-default); border: 0; border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-flex; font: inherit; height: 22px; justify-content: center; padding: 0; width: 22px; }
+.citation-card-play:hover { color: var(--av-sys-color-text-default); }
 .citation-card-transport { display: flex; flex-direction: column; gap: 5px; margin-top: auto; min-width: 0; }
 .citation-card-progress { background: var(--av-sys-color-shimmer-default); border-radius: var(--av-sys-size-radius-pill); height: 3px; overflow: hidden; width: 100%; }
 .citation-card-progress::after { background: var(--av-sys-color-text-muted); content: ''; display: block; height: 100%; width: var(--citation-card-played, 0%); }

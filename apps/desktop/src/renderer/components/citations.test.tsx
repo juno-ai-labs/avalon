@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import type { CitationTarget } from '@rally/contracts/citations';
 import { describe, expect, it, vi } from 'vitest';
 import { CitationFootnoteSection, CitationsProvider } from './markdown-citations';
-import type { CitationContext, CitationResource } from './markdown-citations';
+import type { CitationContext, CitationPreview, CitationResource } from './markdown-citations';
 import { MarkdownBody } from './workstream-blocks';
 
 vi.mock('../lib/platform', () => ({
@@ -57,6 +57,39 @@ function stubPlayback(): { played: HTMLMediaElement[]; restore: () => void } {
       media.play = original.play;
       media.pause = original.pause;
     },
+  };
+}
+
+/**
+ * A recording the test hands over when it chooses.
+ *
+ * The card settles in the commit that resolves this, so a test drives the read
+ * with `act` instead of polling for the element the read produces. Polling was
+ * the same assertion most of the time and a five-second timeout under a loaded
+ * suite the rest of it: `waitFor` is a 50ms poll, and nothing in the card needs
+ * one — the settle is a state update like any other.
+ *
+ * `blob` is one object across every callback, because the host caches the read:
+ * a card asked twice about one resource is answered with the same bytes.
+ */
+function deferredRecording(): {
+  blob: Blob;
+  deliver: () => Promise<void>;
+  preview: () => Promise<CitationPreview>;
+  rebuilt: () => Promise<CitationPreview>;
+} {
+  const blob = new Blob(['id3'], { type: 'audio/mpeg' });
+  const settle: Array<(preview: CitationPreview) => void> = [];
+  const read = (): Promise<CitationPreview> => new Promise((resolve) => settle.push(resolve));
+  return {
+    blob,
+    // Awaited inside `act`, so the card's state update and the effects it runs
+    // are flushed before the assertion after it.
+    deliver: () => act(async () => {
+      for (const resolve of settle.splice(0)) resolve({ kind: 'audio', blob });
+    }),
+    preview: vi.fn(read),
+    rebuilt: vi.fn(read),
   };
 }
 
@@ -366,7 +399,7 @@ describe('resource citations', () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const playback = stubPlayback();
-    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+    const { deliver, preview } = deferredRecording();
 
     const { unmount } = render(
       <MarkdownBody citations={context({ preview, resolve: () => RECORDING })}>
@@ -374,7 +407,7 @@ describe('resource citations', () => {
       </MarkdownBody>,
     );
 
-    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    await deliver();
     const element = document.querySelector('audio')!;
     expect(element).toHaveAttribute('src', 'blob:recording');
     // The defect: audio read as a derivative filled the room with the file's
@@ -387,9 +420,9 @@ describe('resource citations', () => {
     expect(playback.played).toContain(element);
     // The label follows the element, not the click, so it cannot claim to be
     // playing something that stopped.
-    const pause = await screen.findByRole('button', { name: 'Pause Inbox Brief.mp3' });
+    const pause = screen.getByRole('button', { name: 'Pause Inbox Brief.mp3' });
     fireEvent.click(pause);
-    expect(await screen.findByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
 
     unmount();
     expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:recording');
@@ -402,7 +435,7 @@ describe('resource citations', () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const playback = stubPlayback();
-    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+    const { deliver, preview } = deferredRecording();
 
     const { unmount } = render(
       <MarkdownBody citations={context({ preview, resolve: () => RECORDING })}>
@@ -410,7 +443,7 @@ describe('resource citations', () => {
       </MarkdownBody>,
     );
 
-    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    await deliver();
     const element = document.querySelector('audio')!;
 
     reportMedia(element, { duration: 225, currentTime: 45 }, 'durationchange');
@@ -440,19 +473,30 @@ describe('resource citations', () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const playback = stubPlayback();
-    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+    const { deliver, preview } = deferredRecording();
     const citations = context({ preview, resolve: () => RECORDING });
 
     const { unmount } = render(
       <MarkdownBody citations={citations}>{'![Inbox Brief](resource://board-deck)'}</MarkdownBody>,
     );
 
-    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    await deliver();
     // The card is a container, not one button: a control cannot nest inside a
     // button, and a play control that opened the rail would be the same defect
     // the other way round.
     expect(document.querySelector('.citation-card')!.tagName).toBe('SPAN');
     expect(document.querySelector('.citation-card button')).not.toBeNull();
+
+    // The badge says what the card is, in the same speaker glyph the rail's own
+    // list draws — it is not the control, and it is not a button.
+    const badge = document.querySelector('.citation-card-badge')!;
+    expect(badge.tagName).toBe('SPAN');
+    expect(badge.querySelector('.lucide-volume-2')).not.toBeNull();
+
+    // The control sits inside the transport, under the bar and the clock.
+    const transport = document.querySelector('.citation-card-transport')!;
+    const stacked = [...transport.children].map((child) => child.className);
+    expect(stacked).toEqual(['citation-card-progress', 'citation-card-elapsed', 'citation-card-play']);
 
     fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
     expect(citations.open).not.toHaveBeenCalled();
@@ -475,7 +519,7 @@ describe('resource citations', () => {
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const playback = stubPlayback();
     const second = { ...RECORDING, id: 'standup', title: 'Standup recap.mp3' };
-    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+    const { deliver, preview } = deferredRecording();
 
     const { unmount } = render(
       <MarkdownBody
@@ -488,12 +532,13 @@ describe('resource citations', () => {
       </MarkdownBody>,
     );
 
-    await waitFor(() => { expect(document.querySelectorAll('audio')).toHaveLength(2); });
+    await deliver();
+    expect(document.querySelectorAll('audio')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
     fireEvent.click(screen.getByRole('button', { name: 'Play Standup recap.mp3' }));
 
     // Two recordings sounding at once is not a mix anybody chose.
-    expect(await screen.findByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Pause Standup recap.mp3' })).toBeInTheDocument();
 
     // A card scrolled out of a virtualized transcript takes its sound with it:
@@ -521,9 +566,7 @@ describe('resource citations', () => {
     // a re-ask resolves the same object. Two *callbacks*, because that is what
     // actually changes — `useCitations` rebuilds `preview` on the resource map,
     // and the card's effect depends on its identity.
-    const blob = new Blob(['id3'], { type: 'audio/mpeg' });
-    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob }));
-    const rebuilt = vi.fn(async () => ({ kind: 'audio' as const, blob }));
+    const { deliver, preview, rebuilt } = deferredRecording();
 
     const { rerender, unmount } = render(
       <MarkdownBody citations={context({ preview, resolve: () => RECORDING })}>
@@ -531,9 +574,9 @@ describe('resource citations', () => {
       </MarkdownBody>,
     );
 
-    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    await deliver();
     fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
-    await screen.findByRole('button', { name: 'Pause Inbox Brief.mp3' });
+    screen.getByRole('button', { name: 'Pause Inbox Brief.mp3' });
 
     // What a `resource_attached` event does to every mounted card: the resource
     // array is replaced, so the citation context — and the preview callback
@@ -543,9 +586,9 @@ describe('resource citations', () => {
         {'![Inbox Brief](resource://board-deck)'}
       </MarkdownBody>,
     );
-    await act(async () => { await Promise.resolve(); });
     // The card did ask again — without this the rest of the test proves nothing.
     expect(rebuilt).toHaveBeenCalledWith('board-deck');
+    await deliver();
 
     // The bytes did not change, so neither did the element's source — a new URL
     // for the same blob reloads the element and drops a reader back to 0:00
@@ -571,7 +614,7 @@ describe('resource citations', () => {
     // so this resource arrives as audio bytes. A card that classified more
     // narrowly drew the ordinary tile over a blob it had nothing to do with.
     const fromSlack = { ...RECORDING, resourceType: 'slack_file' };
-    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+    const { deliver, preview } = deferredRecording();
 
     const { unmount } = render(
       <MarkdownBody citations={context({ preview, resolve: () => fromSlack })}>
@@ -579,7 +622,7 @@ describe('resource citations', () => {
       </MarkdownBody>,
     );
 
-    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    await deliver();
     expect(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
     expect(document.querySelector('.citation-card-transport')).not.toBeNull();
 
@@ -593,7 +636,7 @@ describe('resource citations', () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const playback = stubPlayback();
-    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+    const { deliver, preview } = deferredRecording();
 
     const { container, unmount } = render(
       <MarkdownBody citations={context({ preview, resolve: () => RECORDING })}>
@@ -601,7 +644,7 @@ describe('resource citations', () => {
       </MarkdownBody>,
     );
 
-    await waitFor(() => { expect(container.querySelector('audio')).not.toBeNull(); });
+    await deliver();
     // A lone embed keeps the paragraph the markdown put it in — the row pass
     // merges runs of two or more — so this card lives inside a `p`.
     const live = container.querySelector('.citation-card')!;
