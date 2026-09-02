@@ -406,6 +406,42 @@ describe("provider webhook ingestion against the workspace authority", () => {
       expect(receipt?.error_json).toBeNull();
     });
 
+    /**
+     * The integrity check the removed shortcut used to make first.
+     *
+     * Gating that branch moved the reused-delivery-id refusal from the top of
+     * `ingestVerified` to the main path, where the receipt insert conflicts and
+     * `assertMatchingReceipt` runs against the row it conflicted with. That is a
+     * different line doing the same job, which is exactly the kind of move worth
+     * pinning: a review of this change read the shortcut's assertion as the only
+     * one and concluded a mismatched redelivery would now be answered `200` and
+     * silently dropped forever.
+     */
+    it("still refuses a delivery id the provider reused with different content", async () => {
+      const rawBody = issuesDelivery();
+      // Same delivery id, a payload reference from different bytes — what a
+      // provider reusing an id looks like from this side.
+      await env.DB.prepare(
+        `INSERT OR REPLACE INTO provider_webhook_receipts
+           (provider, delivery_id, event_type, payload_ref, received_at, processed_at, error_json)
+         VALUES ('github', ?, 'issues', ?, ?, NULL, NULL)`,
+      ).bind(
+        DELIVERY_ID,
+        `global/provider-webhooks/github/${await sha256Hex(`${rawBody}-different`)}.json`,
+        NOW,
+      ).run();
+
+      await expect(serviceFor().ingestGitHub(
+        rawBody,
+        await githubHeaders(rawBody, DELIVERY_ID),
+      )).rejects.toThrow("The provider reused a webhook delivery ID with different event content");
+
+      // Refused rather than quietly settled: the stale receipt is untouched, so
+      // a later delivery under the same id is still refused too.
+      const receipt = await storedReceipt(DELIVERY_ID);
+      expect(receipt?.processed_at).toBeNull();
+    });
+
     it("applies the redelivery's resource effects in the object rather than stopping at the shortcut", async () => {
       const rawBody = issuesDelivery();
       await seedPendingReceipt(rawBody);
