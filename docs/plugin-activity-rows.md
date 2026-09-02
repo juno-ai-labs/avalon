@@ -253,9 +253,10 @@ below, and a second collapse drawn a second way a few pixels above the first
 reads as a different kind of thing. It hangs in the gutter the same way too:
 outdented into the margin, so the total starts on the transcript's own left
 edge — level with the author line and with the answer's paragraphs — and the
-chevron is the only thing outside that edge. The offset is a flat 20px where
-the heading derives its own from `em`, because this row's line box is a fixed
-20px rather than a heading's.
+chevron is the only thing outside that edge. The horizontal offset is the
+heading's exactly — both a flat `left: -20px` — so an alignment change moves
+both. Only the vertical box differs: the heading sizes its own against a
+heading's line in `em`, and this row's line is a fixed 20px.
 
 Three things about it are decisions rather than details:
 
@@ -530,11 +531,14 @@ padding had been indenting the whole answer. The two chevrons now sit at the
 same x, which is what they were always meant to do — matching them by moving
 this one *into* the column had matched the glyphs by mismatching the text.
 
-**What a future change has to respect:** the outdent is 20px flat, not the
-heading's `em`-derived offset — this row's line box is a fixed 20px, so an
-`em` offset lands a few pixels off. And the chevron sits outside the content
-column, so any surface that reduces the transcript's left padding below 20px
-clips it; at the narrowest window the shell allows it still has 18px of room.
+**What a future change has to respect:** the two chevrons share one horizontal
+offset, a flat `left: -20px` in both rules, and they are meant to line up — so
+an alignment change has to move both or it breaks the thing this entry exists
+to establish. Only their vertical boxes differ, the heading's sized in `em`
+against a heading's line and this one's against a fixed 20px row. And the
+chevron sits outside the content column, so any surface that reduces the
+transcript's left padding below 20px clips it; at the narrowest window the
+shell allows it still has 18px of room.
 
 ### 2026-09-02 — Automations draws Tabler's keyframes glyph
 
@@ -599,9 +603,10 @@ and one thing for `RowDisclosure` to remember.
 Also rejected: a chevron of this row's own, inline after the total. The reader
 meets two collapses within a few pixels of each other — this one and the
 heading sections of the answer under it — and drawing them differently makes
-them read as unrelated affordances. The heading's `em`-based offset is the one
-thing not copied: it is measured against a heading's line box, and this row's
-is a fixed 20px, so the outdent is written as a flat 20px.
+them read as unrelated affordances. The horizontal offset is copied exactly —
+a flat `left: -20px`, the same declaration the heading uses. Only the vertical
+box is this row's own: the heading sizes its against a heading's line in `em`,
+and this row's line is a fixed 20px.
 
 **What a future change has to respect:** the collapse keys on the settled
 response total and nothing else — that is the loop's completion signal, and a
