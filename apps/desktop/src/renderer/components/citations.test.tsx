@@ -493,10 +493,15 @@ describe('resource citations', () => {
     expect(badge.tagName).toBe('SPAN');
     expect(badge.querySelector('.lucide-volume-2')).not.toBeNull();
 
-    // The control sits inside the transport, under the bar and the clock.
+    // The control sits inside the transport, under the bar and the clock, and
+    // it is the app's own icon button rather than a control of the card's own.
     const transport = document.querySelector('.citation-card-transport')!;
     const stacked = [...transport.children].map((child) => child.className);
-    expect(stacked).toEqual(['citation-card-progress', 'citation-card-elapsed', 'citation-card-play']);
+    expect(stacked).toEqual([
+      'citation-card-progress',
+      'citation-card-elapsed',
+      'icon-button citation-card-play',
+    ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
     expect(citations.open).not.toHaveBeenCalled();
