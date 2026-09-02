@@ -3668,9 +3668,12 @@ describe('useWorkstreamSocket', () => {
       requestId,
     }));
 
+    // The room's code steers; its protocol prose stays off the banner and on
+    // `details`, where a report can still recover it.
     await expect(settled).resolves.toMatchObject({
       code: 'subscription_required',
-      message: 'Subscribe before loading transcript ranges',
+      message: 'This part of the transcript could not be loaded.',
+      details: 'Subscribe before loading transcript ranges',
     });
   });
 
@@ -3748,6 +3751,21 @@ describe('useWorkstreamSocket', () => {
       code: 'rest_required',
       message: 'Persist this action through the work-stream API before publishing it.',
       requestId: null,
+    }));
+    await flushPromises();
+
+    expect(outcome).toBe('pending');
+
+    // A correlated refusal naming a range this socket is not holding is the
+    // case that proves the lookup rather than the null check: two readers can
+    // have ranges in flight at once, and one refusal settles exactly one.
+    act(() => socket.message({
+      type: 'error',
+      sequence: 10,
+      occurredAt: '2026-09-02T17:00:01.000Z',
+      code: 'subscription_required',
+      message: 'Subscribe before loading transcript ranges',
+      requestId: '00000000-0000-7000-8000-0000000009f9',
     }));
     await flushPromises();
 
