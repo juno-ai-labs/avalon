@@ -32,6 +32,7 @@ connection lifecycle around that admission protocol.
 | --- | --- |
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the shared helpers both sides use. The single source of the wire format. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, HyperSight-block, and automation ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
+| `apps/api/src/services/workstream-service.ts` | Gates a feed ticket on current visibility and starts the ticketed SubstreamAgent's storage-ready wake as failure-isolated request background work. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its WorkspaceDO replay receipt and session lease, and the Azure upgrade. |
 | `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, automation, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
@@ -75,7 +76,11 @@ admission is split in two.
    never the credential — because the upgrade it authorizes opens a new
    connection carrying no request id, and it is the only value the issuing
    route, the edge, and the room all hold. See
-   [`performance-tracing.md`](performance-tracing.md).
+   [`performance-tracing.md`](performance-tracing.md). Once a feed ticket is
+   minted, its request schedules the exact SubstreamAgent's side-effect-free
+   `wake()` under `waitUntil`. The response does not await that work: object
+   initialization overlaps the ticket's transit and client handshake, while a
+   failed or unfinished warm-up leaves the ordinary cold upgrade as the fallback.
 2. **Present.** The client opens the socket with the ticket as the second
    protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
    from the `WebSocket` constructor; Electron's work-stream broker passes the
@@ -443,6 +448,10 @@ The Electron broker emits PAC resolution, DNS, TCP, TLS, and edge HTTP-upgrade
 durations for direct routes. Proxy CONNECT, TLS, and edge work is deliberately
 one aggregate because the proxy agent exposes no reliable inner transition.
 Failed PAC routes are counted and timed before the next ordered route begins.
+The renderer adapter retains phases that cross IPC before its first phase
+observer is attached and replays that finite backlog before dispatching later
+phases live. An absent phase therefore means the main process did not observe
+it, rather than that renderer registration lost it.
 
 Checkpoint, queued/running, and terminal publications enter one per-agent
 serial queue only after their SQLite transition commits. Adjacent unsent
@@ -689,6 +698,32 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-02 — Ticket transit overlaps room wake and early handshake phases survive IPC
+
+**What changed:** Issuing a feed ticket now schedules the exact SubstreamAgent's
+storage-ready `wake()` as best-effort request background work. The Electron
+renderer adapter also retains handshake phases emitted before its first phase
+observer and replays them in order before subsequent live phases.
+
+**Why:** Cold object initialization was paid only after the ticket request and
+native handshake had completed, leaving that transit time unused. Separately,
+all native phase fields could be absent even when the main process emitted them
+because the IPC subscription became live before the work-stream hook attached
+its phase listener.
+
+**Considered and rejected:** Awaiting `wake()` before returning the ticket would
+put initialization on the critical path and let an optimization fail a valid
+ticket request. Caching PAC results was also rejected without phase evidence:
+proxy selection may depend on the full URL and current network policy. A second
+renderer-side clock would duplicate the native phase clocks instead of fixing
+their delivery.
+
+**Consequences:** A feed ticket performs one additional idempotent Durable
+Object RPC. Ticket correctness and response latency do not depend on it; failure
+is logged and the upgrade remains the cold-start fallback. New packaged-client
+samples can distinguish direct PAC/DNS/TCP/TLS/edge time from the truthful proxy
+aggregate without a listener-registration blind spot.
 
 ### 2026-09-02 — A client no longer marks a work stream unread for the reader's own turn
 
