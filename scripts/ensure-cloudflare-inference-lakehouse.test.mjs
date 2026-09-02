@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,6 +10,8 @@ import {
   ensureInferenceLakehouse,
   loadAnalyticsLakehouseManifest,
   loadInferenceLakehouseManifest,
+  materializePinnedLakehouseWranglerConfigs,
+  parseLakehouseMode,
 } from './ensure-cloudflare-inference-lakehouse.mjs';
 
 const environment = {
@@ -29,7 +31,18 @@ const tenAttemptRetryDelays = [
 ];
 const userTokenId = 'a'.repeat(32);
 const accountTokenId = 'b'.repeat(32);
-function accountDouble({ tokenOwner = 'account' } = {}) {
+const checkedInManifests = await Promise.all([
+  loadInferenceLakehouseManifest(),
+  loadAnalyticsLakehouseManifest(),
+]);
+const checkedInStreamIdByName = new Map(checkedInManifests.map((manifest) => [
+  manifest.regions.global.stream,
+  manifest.regions.global.streamId,
+]));
+function accountDouble({
+  tokenOwner = 'account',
+  createdStreamIdByName = checkedInStreamIdByName,
+} = {}) {
   const buckets = new Set();
   const catalogs = new Map();
   const entities = {
@@ -101,11 +114,17 @@ function accountDouble({ tokenOwner = 'account' } = {}) {
       const store = entities[kind];
       if (id) return store.has(id) ? success(store.get(id)) : missing();
       if (method === 'POST') {
-        const entity = { id: `${kind}-${nextId++}`, ...request.body };
+        const pinnedStreamId = kind === 'streams'
+          ? createdStreamIdByName.get(request.body.name)
+          : undefined;
+        const generatedId = (nextId++).toString(16).padStart(32, '0');
+        const entity = { id: pinnedStreamId ?? generatedId, ...request.body };
         store.set(entity.id, entity);
         return success(entity);
       }
       const name = url.searchParams.get('name');
+      // Cloudflare documents Pipeline list name filters as case-insensitive
+      // substring matches; production applies its own exact-name check.
       return success([...store.values()].filter((entity) =>
         !name || entity.name.toLowerCase().includes(name.toLowerCase())));
     }
@@ -287,72 +306,98 @@ test('mutating Cloudflare requests are never retried', async () => {
   assert.deepEqual(retryDelays, []);
 });
 
-test('an empty account is fully provisioned by one idempotent deploy preflight', async () => {
-  const account = accountDouble();
-  const outputDirectory = await mkdtemp(join(tmpdir(), 'avalon-lakehouse-test-'));
-  try {
-    const first = await ensureInferenceLakehouse({
+test('an empty account creates every stream before one reviewed pin update completes reconciliation', async () => {
+  const account = accountDouble({ createdStreamIdByName: new Map() });
+  const manifests = await Promise.all([
+    loadInferenceLakehouseManifest(),
+    loadAnalyticsLakehouseManifest(),
+  ]);
+  await assert.rejects(
+    ensureCloudflareLakehouses({
       environment,
       fetchImpl: account.fetchImpl,
       log: () => {},
-      materializeBindings: true,
-      outputDirectory,
-    });
-    const createsAfterFirstRun = account.requests.filter((request) => request.method === 'POST');
-    assert.equal(createsAfterFirstRun.length, 5);
-    assert.deepEqual([...account.buckets], ['avalon-global-inference-lakehouse']);
-    assert.equal(account.entities.streams.size, 1);
-    assert.equal(account.entities.sinks.size, 1);
-    assert.equal(account.entities.pipelines.size, 1);
+      manifests,
+    }),
+    (error) => {
+      assert.match(error.message, /avalon_global_inference_lakehouse_stream/u);
+      assert.match(error.message, /avalon_global_analytics_events_lakehouse_stream/u);
+      for (const stream of account.entities.streams.values()) {
+        assert.match(error.message, new RegExp(stream.id, 'u'));
+      }
+      return true;
+    },
+  );
+  assert.equal(account.entities.streams.size, 2);
+  assert.equal(account.entities.sinks.size, 0);
+  assert.equal(account.entities.pipelines.size, 0);
+  assert.equal(account.buckets.size, 0);
+  assert.equal(account.catalogs.size, 0);
+  assert.deepEqual(
+    account.requests.filter((request) =>
+      request.method === 'POST' && request.path.startsWith('/pipelines/v1/'))
+      .map((request) => request.path),
+    ['/pipelines/v1/streams', '/pipelines/v1/streams'],
+  );
 
-    assert.deepEqual([...account.catalogs.keys()], ['avalon-global-inference-lakehouse']);
-    const globalSink = [...account.entities.sinks.values()].find((sink) =>
-      sink.type === 'r2_data_catalog');
-    assert.equal(Object.hasOwn(globalSink.config, 'account_id'), false);
-    assert.equal(globalSink.config.token, environment.CLOUDFLARE_API_TOKEN);
-
-    const euResourceRequests = account.requests.filter((request) =>
-      request.path.includes('avalon-eu-inference-lakehouse'));
-    assert.equal(euResourceRequests.length, 0);
-    const globalResourceRequests = account.requests.filter((request) =>
-      request.path.includes('avalon-global-inference-lakehouse'));
-    assert.ok(globalResourceRequests.every((request) => request.headers['cf-r2-jurisdiction'] === undefined));
-
-    const euConfig = JSON.parse(await readFile(first.configs.eu, 'utf8'));
-    const globalConfig = JSON.parse(await readFile(first.configs.global, 'utf8'));
-    assert.equal(Object.hasOwn(euConfig, 'pipelines'), false);
-    assert.equal(euConfig.queues.producers.some((producer) =>
-      producer.binding === 'INFERENCE_LAKEHOUSE_QUEUE'), false);
-    assert.equal(euConfig.queues.consumers.some((consumer) =>
-      consumer.queue === 'avalon-eu-inference-lakehouse'), false);
-    assert.deepEqual(globalConfig.pipelines, [{
-      binding: 'INFERENCE_LAKEHOUSE',
-      stream: first.resources.global.stream.id,
-    }]);
-    assert.equal(first.resources.eu, undefined);
-    assert.equal(euConfig.name, 'avalon-api-eu');
-    assert.equal(globalConfig.name, 'avalon-api-global');
-
-    await ensureInferenceLakehouse({
-      environment,
-      fetchImpl: account.fetchImpl,
-      log: () => {},
-    });
-    assert.equal(account.requests.filter((request) => request.method === 'POST').length, createsAfterFirstRun.length);
-  } finally {
-    await rm(outputDirectory, { recursive: true, force: true });
+  const streamIdByName = new Map([...account.entities.streams.values()].map((stream) => [
+    stream.name,
+    stream.id,
+  ]));
+  const migratedManifests = manifests.map((manifest) => ({
+    ...manifest,
+    regions: {
+      ...manifest.regions,
+      global: {
+        ...manifest.regions.global,
+        streamId: streamIdByName.get(manifest.regions.global.stream),
+      },
+    },
+  }));
+  await ensureCloudflareLakehouses({
+    environment,
+    fetchImpl: account.fetchImpl,
+    log: () => {},
+    manifests: migratedManifests,
+  });
+  const createsAfterReconciliation = account.requests.filter((request) => request.method === 'POST');
+  assert.equal(createsAfterReconciliation.length, 10);
+  assert.deepEqual([...account.buckets].sort(), [
+    'avalon-global-analytics-events-lakehouse',
+    'avalon-global-inference-lakehouse',
+  ]);
+  assert.deepEqual([...account.catalogs.keys()].sort(), [
+    'avalon-global-analytics-events-lakehouse',
+    'avalon-global-inference-lakehouse',
+  ]);
+  assert.equal(account.entities.sinks.size, 2);
+  assert.equal(account.entities.pipelines.size, 2);
+  for (const sink of account.entities.sinks.values()) {
+    assert.equal(Object.hasOwn(sink.config, 'account_id'), false);
+    assert.equal(sink.config.token, environment.CLOUDFLARE_API_TOKEN);
   }
+  assert.equal(account.requests.some((request) => request.path.includes('avalon-eu-')), false);
+
+  await ensureCloudflareLakehouses({
+    environment,
+    fetchImpl: account.fetchImpl,
+    log: () => {},
+    manifests: migratedManifests,
+  });
+  assert.equal(
+    account.requests.filter((request) => request.method === 'POST').length,
+    createsAfterReconciliation.length,
+  );
 });
 
-test('one deploy preflight provisions both Global catalogs and materializes both bindings', async () => {
+test('explicit reconciliation provisions both Global catalogs', async () => {
   const account = accountDouble();
-  const outputDirectory = await mkdtemp(join(tmpdir(), 'avalon-lakehouses-test-'));
+  const outputDirectory = await mkdtemp(join(tmpdir(), 'avalon-reconcile-no-bindings-test-'));
   try {
     const result = await ensureCloudflareLakehouses({
       environment,
       fetchImpl: account.fetchImpl,
       log: () => {},
-      materializeBindings: true,
       outputDirectory,
     });
     assert.deepEqual([...account.buckets].sort(), [
@@ -366,69 +411,141 @@ test('one deploy preflight provisions both Global catalogs and materializes both
     assert.equal(account.entities.streams.size, 2);
     assert.equal(account.entities.sinks.size, 2);
     assert.equal(account.entities.pipelines.size, 2);
-    const globalConfig = JSON.parse(await readFile(result.configs.global, 'utf8'));
-    const euConfig = JSON.parse(await readFile(result.configs.eu, 'utf8'));
-    assert.deepEqual(globalConfig.pipelines.map((binding) => binding.binding), [
-      'INFERENCE_LAKEHOUSE',
-      'ANALYTICS_LAKEHOUSE',
-    ]);
-    assert.equal(Object.hasOwn(euConfig, 'pipelines'), false);
     assert.equal(result.provisioned[1].manifest.binding, 'ANALYTICS_LAKEHOUSE');
     assert.equal((await loadAnalyticsLakehouseManifest()).table, 'analytics_events');
+    assert.deepEqual(await readdir(outputDirectory), []);
   } finally {
     await rm(outputDirectory, { recursive: true, force: true });
   }
 });
 
-test('existing Pipeline resources are verified from list responses without detail reads', async () => {
-  const account = accountDouble();
-  const outputDirectory = await mkdtemp(join(tmpdir(), 'avalon-list-response-test-'));
+test('ordinary deploys materialize pinned bindings without a Cloudflare request', async () => {
+  const outputDirectory = await mkdtemp(join(tmpdir(), 'avalon-pinned-bindings-test-'));
+  const originalFetch = globalThis.fetch;
+  let cloudflareRequests = 0;
+  globalThis.fetch = async () => {
+    cloudflareRequests += 1;
+    throw new Error('materialization must not make a network request');
+  };
   try {
-    await ensureCloudflareLakehouses({
-      environment,
-      fetchImpl: account.fetchImpl,
-      log: () => {},
-    });
-    const requestCountBeforeVerification = account.requests.length;
-
-    const result = await ensureCloudflareLakehouses({
-      environment,
-      fetchImpl: account.fetchImpl,
-      log: () => {},
-      materializeBindings: true,
-      outputDirectory,
-    });
-
-    const verificationRequests = account.requests.slice(requestCountBeforeVerification);
-    const pipelineReads = verificationRequests.filter((request) =>
-      request.method === 'GET' && request.path.startsWith('/pipelines/v1/'));
-    assert.deepEqual(pipelineReads.map((request) => request.path), [
-      '/pipelines/v1/streams',
-      '/pipelines/v1/sinks',
-      '/pipelines/v1/pipelines',
-      '/pipelines/v1/streams',
-      '/pipelines/v1/sinks',
-      '/pipelines/v1/pipelines',
-    ]);
-    assert.equal(
-      pipelineReads.some((request) =>
-        /^\/pipelines\/v1\/(?:streams|sinks|pipelines)\/[^/]+$/u.test(request.path)),
-      false,
-    );
-    assert.equal(verificationRequests.some((request) => request.method === 'POST'), false);
-
+    const result = await materializePinnedLakehouseWranglerConfigs({ outputDirectory });
     const globalConfig = JSON.parse(await readFile(result.configs.global, 'utf8'));
+    const euConfig = JSON.parse(await readFile(result.configs.eu, 'utf8'));
+
+    assert.deepEqual(globalConfig.pipelines, checkedInManifests.map((manifest) => ({
+      binding: manifest.binding,
+      stream: manifest.regions.global.streamId,
+    })));
+    assert.equal(Object.hasOwn(euConfig, 'pipelines'), false);
     assert.deepEqual(
-      globalConfig.pipelines,
-      result.provisioned.map(({ manifest, resources }) => ({
-        binding: manifest.binding,
-        stream: resources.global.stream.id,
-      })),
+      result.manifests.map((manifest) => manifest.regions.global.streamId),
+      globalConfig.pipelines.map(({ stream }) => stream),
     );
-    assert.ok(globalConfig.pipelines.every(({ stream }) => account.entities.streams.has(stream)));
+    assert.equal(cloudflareRequests, 0);
   } finally {
+    globalThis.fetch = originalFetch;
     await rm(outputDirectory, { recursive: true, force: true });
   }
+});
+
+test('duplicate pinned stream IDs fail before config writes or Cloudflare requests', async () => {
+  const manifests = await Promise.all([
+    loadInferenceLakehouseManifest(),
+    loadAnalyticsLakehouseManifest(),
+  ]);
+  const duplicateId = manifests[0].regions.global.streamId;
+  const duplicateManifests = manifests.map((manifest) => ({
+    ...manifest,
+    regions: {
+      ...manifest.regions,
+      global: { ...manifest.regions.global, streamId: duplicateId },
+    },
+  }));
+  const originalFetch = globalThis.fetch;
+  const outputDirectory = await mkdtemp(join(tmpdir(), 'avalon-duplicate-pins-test-'));
+  let cloudflareRequests = 0;
+  const unexpectedFetch = async () => {
+    cloudflareRequests += 1;
+    throw new Error('duplicate validation must not make a network request');
+  };
+  globalThis.fetch = unexpectedFetch;
+  try {
+    await assert.rejects(
+      materializePinnedLakehouseWranglerConfigs({
+        manifests: duplicateManifests,
+        outputDirectory,
+      }),
+      /must not share pinned Pipeline stream ID/u,
+    );
+    await assert.rejects(
+      ensureCloudflareLakehouses({
+        environment,
+        fetchImpl: unexpectedFetch,
+        manifests: duplicateManifests,
+        outputDirectory,
+      }),
+      /must not share pinned Pipeline stream ID/u,
+    );
+    assert.deepEqual(await readdir(outputDirectory), []);
+    assert.equal(cloudflareRequests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(outputDirectory, { recursive: true, force: true });
+  }
+});
+
+test('the CLI accepts exactly one known lakehouse mode', () => {
+  for (const mode of ['--check', '--materialize-bindings', '--reconcile']) {
+    assert.equal(parseLakehouseMode([mode]), mode);
+  }
+  for (const arguments_ of [
+    [],
+    ['--check', '--reconcile'],
+    ['--materialize-bindings', '--materialize-bindings'],
+    ['--materialize-bindings', '--unknown'],
+    ['--unknown'],
+  ]) {
+    assert.throws(
+      () => parseLakehouseMode(arguments_),
+      /Choose exactly one lakehouse mode/u,
+    );
+  }
+});
+
+test('existing Pipeline resources are verified from list responses without detail reads', async () => {
+  const account = accountDouble();
+  await ensureCloudflareLakehouses({
+    environment,
+    fetchImpl: account.fetchImpl,
+    log: () => {},
+  });
+  const requestCountBeforeVerification = account.requests.length;
+
+  const result = await ensureCloudflareLakehouses({
+    environment,
+    fetchImpl: account.fetchImpl,
+    log: () => {},
+  });
+
+  const verificationRequests = account.requests.slice(requestCountBeforeVerification);
+  const pipelineReads = verificationRequests.filter((request) =>
+    request.method === 'GET' && request.path.startsWith('/pipelines/v1/'));
+  assert.deepEqual(pipelineReads.map((request) => request.path), [
+    '/pipelines/v1/streams',
+    '/pipelines/v1/sinks',
+    '/pipelines/v1/pipelines',
+    '/pipelines/v1/streams',
+    '/pipelines/v1/sinks',
+    '/pipelines/v1/pipelines',
+  ]);
+  assert.equal(
+    pipelineReads.some((request) =>
+      /^\/pipelines\/v1\/(?:streams|sinks|pipelines)\/[^/]+$/u.test(request.path)),
+    false,
+  );
+  assert.equal(verificationRequests.some((request) => request.method === 'POST'), false);
+  assert.ok(result.provisioned.every(({ resources }) =>
+    account.entities.streams.has(resources.global.stream.id)));
 });
 
 test('Pipeline list lookup ignores partial names and rejects exact duplicates', async () => {
@@ -462,7 +579,7 @@ test('--check reports missing infrastructure without creating any resource', asy
       log: () => {},
       create: false,
     }),
-    /Missing lakehouse R2 bucket: global\/avalon-global-inference-lakehouse/u,
+    /Missing lakehouse Pipeline stream: avalon_global_inference_lakehouse_stream/u,
   );
   assert.equal(account.requests.some((request) => request.method === 'POST'), false);
 });
@@ -491,6 +608,30 @@ test('the manifest rejects an EU analytical resource set', async () => {
   assert.equal(account.requests.length, 0);
 });
 
+test('the manifest rejects an unsafe pinned stream ID before using Cloudflare', async () => {
+  const manifest = await loadInferenceLakehouseManifest();
+  const account = accountDouble();
+  await assert.rejects(
+    ensureInferenceLakehouse({
+      environment,
+      fetchImpl: account.fetchImpl,
+      log: () => {},
+      manifest: {
+        ...manifest,
+        regions: {
+          ...manifest.regions,
+          global: {
+            ...manifest.regions.global,
+            streamId: 'not-a-stream-id',
+          },
+        },
+      },
+    }),
+    /Unsafe global lakehouse stream ID/u,
+  );
+  assert.equal(account.requests.length, 0);
+});
+
 test('immutable stream drift stops deployment instead of silently splitting the schema', async () => {
   const account = accountDouble();
   await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
@@ -502,6 +643,20 @@ test('immutable stream drift stops deployment instead of silently splitting the 
   await assert.rejects(
     ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
     /schema drifted; Pipeline stream schemas are immutable/u,
+  );
+});
+
+test('reconciliation rejects a stream whose ID differs from the pinned binding', async () => {
+  const account = accountDouble();
+  await ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} });
+  const stream = [...account.entities.streams.values()][0];
+  account.entities.streams.clear();
+  stream.id = 'f'.repeat(32);
+  account.entities.streams.set(stream.id, stream);
+
+  await assert.rejects(
+    ensureInferenceLakehouse({ environment, fetchImpl: account.fetchImpl, log: () => {} }),
+    /ID drifted from pinned deployment binding/u,
   );
 });
 
@@ -595,15 +750,22 @@ test('deployment credential replacement stops before creating conflicting immuta
   assert.equal(account.entities.sinks.size, 1);
 });
 
-test('the deploy provisions bindings before migration or Worker deployment', async () => {
+test('the deploy materializes pinned bindings without reconciling Pipelines', async () => {
   const workflow = await readFile(new URL('../.github/workflows/deploy-api.yml', import.meta.url), 'utf8');
-  const provision = workflow.indexOf('Ensure the Global lakehouses and materialize bindings');
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  const materialize = workflow.indexOf('Materialize pinned Global lakehouse bindings');
   const migrations = workflow.indexOf('List the pending remote migrations for EU');
   const deploy = workflow.indexOf('Deploy the EU Worker');
-  assert.ok(provision > 0 && provision < migrations && migrations < deploy);
+  assert.ok(materialize > 0 && materialize < migrations && migrations < deploy);
+  assert.match(
+    workflow,
+    /ensure-cloudflare-inference-lakehouse\.mjs --materialize-bindings/u,
+  );
+  assert.doesNotMatch(workflow, /ensure-cloudflare-inference-lakehouse\.mjs --reconcile/u);
   assert.match(workflow, /build:deployed:eu/u);
   assert.match(workflow, /build:deployed/u);
   assert.match(workflow, /--config "\$config"/u);
   assert.match(workflow, /\.wrangler\.lakehouses\.eu\.json/u);
   assert.match(workflow, /\.wrangler\.lakehouses\.global\.json/u);
+  assert.match(packageJson.scripts['cloudflare:lakehouses:ensure'], /--reconcile$/u);
 });

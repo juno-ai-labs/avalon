@@ -20,8 +20,8 @@ Global lakehouse.
 | `apps/api/src/services/analytics-lakehouse.ts` | Builds pointers, recovers pending outbox rows, verifies the canonical row, and maps all accepted metadata to the analytical record. |
 | `apps/api/src/queues/analytics-lakehouse-consumer.ts` | Applies queue poison/misroute policy and sends valid Global rows through `ANALYTICS_LAKEHOUSE`. |
 | `packages/db/migrations/0095_analytics_events_lakehouse_outbox.sql` | Adds the Global lakehouse delivery state to the existing acceptance outbox; historical rows remain ineligible. |
-| `config/analytics-events-lakehouse*.json` | Immutable Pipeline stream schema and names for the bucket, catalog, stream, sink, pipeline, namespace, table, and binding. |
-| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Idempotently provisions both Global lakehouses and materializes their generated stream IDs into deploy configs. |
+| `config/analytics-events-lakehouse*.json` | Immutable Pipeline stream schema plus the pinned stream ID and names for the bucket, catalog, stream, sink, pipeline, namespace, table, and binding. |
+| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Locally materializes both pinned bindings for deploys; explicit modes check or reconcile both Global lakehouses. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | Global declares the queue pair; EU declares the intentional absence. |
 
 ## How it works
@@ -63,11 +63,12 @@ The direct pipeline SQL writes zstd-compressed Parquet to Data Catalog namespace
 physical duplicates are possible; `event_id` is the logical deduplication key.
 
 On each merge to `main`, the API deployment first creates every declared queue,
-then idempotently creates both lakehouse buckets, catalogs, streams, immutable
-sinks, and pipelines. It discovers the generated stream IDs and writes ignored
-`.wrangler.lakehouses.<region>.json` configs before migrations or deployment.
-The Global config holds both Pipeline bindings; EU holds neither. There is no
-dashboard or other manual creation step.
+then reads the two pinned production stream IDs from the checked-in manifests
+and writes ignored `.wrangler.lakehouses.<region>.json` configs without calling
+the Pipelines management API. The Global config holds both Pipeline bindings;
+EU holds neither. Infrastructure checks and mutation are separate explicit
+operator modes documented in the inference lakehouse's
+[deployment and reconciliation procedure](inference-lakehouse.md#deployment-bindings-and-explicit-reconciliation).
 
 ## Invariants
 
@@ -138,10 +139,10 @@ through Cloudflare's authenticated HTTP APIs as documented in the
 covers client-shaped capture, complete record mapping, direct-ID exclusion,
 queue failure recovery, delivery state, and EU non-export against the checked-in
 D1 migrations. `node --test scripts/ensure-cloudflare-inference-lakehouse.test.mjs
-scripts/ensure-cloudflare-queues.test.mjs` covers empty-account provisioning,
-idempotency, immutable drift, combined binding materialization, queue pairing,
-and workflow order. Environment-contract and health tests cover the Global-only
-binding requirement.
+scripts/ensure-cloudflare-queues.test.mjs` covers two-pass empty-account
+reconciliation, immutable drift, zero-network pinned binding materialization,
+queue pairing, and workflow order. Environment-contract and health tests cover
+the Global-only binding requirement.
 
 ## Data model
 
@@ -195,6 +196,26 @@ safe query order are in the
   that lifecycle.
 
 ## Changelog
+
+### 2026-09-01 — Deploys materialize the pinned analytics stream locally
+
+**What changed:** The analytics stream's existing production ID is pinned in
+its schema-version-5 manifest. Application deploys materialize that binding
+locally, while explicit check and reconciliation modes retain the bucket,
+catalog, stream, credential-bound sink, and Pipeline assertions.
+
+**Why:** The Pipelines management API was intermittently returning HTTP 500 for
+healthy resources. An unrelated Worker release needs the stable binding ID but
+does not need to re-list immutable analytics infrastructure.
+
+**Considered and rejected:** Dropping infrastructure verification entirely, or
+deriving the ID from a failed live preflight. The first loses drift detection;
+the second keeps application delivery coupled to the failing control plane.
+
+**Consequences:** Ordinary releases make no Pipelines management request for
+analytics. Creating or recreating its stream is an explicit two-pass operation:
+create and review the generated ID, commit the new pin, then reconcile the sink
+and Pipeline.
 
 ### 2026-08-24 — Recovery distinguishes poison rows from unavailable dependencies
 
