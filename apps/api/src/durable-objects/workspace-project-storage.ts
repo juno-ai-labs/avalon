@@ -343,12 +343,13 @@ export class WorkspaceProjectStorage {
   /**
    * Every work stream this project holds, archived ones included.
    *
-   * The summary carries only what a surface can list, so anything acting on
-   * the project's behalf — the audience fan-out above all — reads the
-   * membership itself through here rather than through the shape sent to a
-   * client.
+   * Work streams, not participants: `project_participants` is the other thing
+   * a project has members of, and this is not it. The summary carries only
+   * what a surface can list, so anything acting on the project's behalf — the
+   * audience fan-out above all — reads the membership itself through here
+   * rather than through the shape sent to a client.
    */
-  members(userId: string, projectId: string): string[] | false {
+  memberWorkstreamIds(userId: string, projectId: string): string[] | false {
     if (!this.visibleProjectIds(userId).includes(projectId)
       && !this.listInactive(userId).items.some((project) => project.id === projectId)) return false;
     return this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(

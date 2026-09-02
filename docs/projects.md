@@ -282,6 +282,14 @@ change is about. `noteMemberArchivalChange` tests the membership and advances th
 waterline in one transaction, and its answer is what decides whether to
 publish.
 
+The one loading announcement in the sidebar is now tied to the wait rather than
+to the work-stream section's own placeholder. The three lists finish at
+different moments — a person who already has a note but no work streams sees
+that section's list while the projects and automations above are still
+placeholders — and an announcement nested in the branch that renders the
+work-stream skeletons went with them, leaving the remaining placeholders
+unannounced.
+
 **Consequences:** A count on a screen and the membership can now disagree, and
 that is the point — anything acting on the project's behalf must read
 `listProjectMembers` rather than the summary, or it will silently skip archived

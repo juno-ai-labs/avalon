@@ -1843,16 +1843,24 @@ export function Sidebar({
           )}
 
           <section aria-label="Work streams" className="sidebar-section workstreams-section">
-            {loading && workstreams.length === 0 && notes.length === 0 ? (
-              // The one announcement for the whole wait. The projects and
-              // automations above are loading from the same answer and finish
-              // with these, so a second live region in either of those sections
-              // would say the same thing twice.
+            {/* The one announcement for the whole wait, and the only one: the
+                projects and automations above load from the same answer, so a
+                live region in either of those sections would say the same thing
+                twice. It is tied to the wait rather than to this section's own
+                placeholder because they end at different moments — a person who
+                has notes but no work streams yet sees this section's list while
+                the sections above are still filling in, and an announcement
+                nested in the branch below would already be gone. */}
+            {loading && (
               <div role="status">
                 <span className="sr-only">Loading your projects, work streams, automations and notes</span>
+              </div>
+            )}
+            {loading && workstreams.length === 0 && notes.length === 0 ? (
+              <>
                 <SidebarSkeletonGroup count={4} />
                 <SidebarSkeletonGroup count={3} />
-              </div>
+              </>
             ) : groups.length === 0 ? (
               // Pinned work streams are work streams, so the empty line only
               // holds when nothing is pinned either; with everything pinned the

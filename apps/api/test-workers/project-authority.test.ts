@@ -547,6 +547,23 @@ describe("WorkspaceDO project authority", () => {
     })).resolves.toEqual({ ok: true, workstreamIds: [listed, archived] });
   });
 
+  it("given a member whose first directory projection has not landed, when the project is listed, then it still counts", async () => {
+    const created = await create("Startup stuff");
+    if (!created.ok) throw new Error("project_fixture_failed");
+    const unprojected = asWorkstreamId("00000000-0000-7000-8000-0000000009c6");
+    await seedMembership(created.project.id, unprojected);
+
+    // A work stream started inside a project is a member before its own object
+    // publishes it into the directory. The listable-member read joins against
+    // that directory, and an inner join would drop the work stream out of its
+    // own project for the seconds in between.
+    await expect(workspace().listProjects({ workspaceId: WORKSPACE_ID, userId: OWNER }))
+      .resolves.toMatchObject({
+        ok: true,
+        directory: { items: [{ workstreamIds: [unprojected] }] },
+      });
+  });
+
   it("given a subscribed viewer, when a member work stream is archived, then a newer project snapshot arrives without a project write", async () => {
     const created = await create("Startup stuff", "workspace");
     if (!created.ok) throw new Error("project_fixture_failed");

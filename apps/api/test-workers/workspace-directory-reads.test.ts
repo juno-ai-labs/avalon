@@ -1047,6 +1047,25 @@ describe("what the workspace object answers about its work streams", () => {
         .resolves.not.toContain(created);
     });
 
+    it("refuses an archived work stream to a reader who could otherwise open it", async () => {
+      const archived = await seedWorkstream({
+        title: "Finished and filed",
+        lastActivityAt: "2026-08-18T10:00:00.000Z",
+        scope: "workspace",
+        archivedAt: "2026-08-19T10:00:00.000Z",
+      });
+
+      // Archival is what takes a work stream out of every listing, and this is
+      // the read the routes ahead of those listings share: adding an archived
+      // work stream to a project, or routing activity into it, is refused here
+      // rather than by each caller.
+      await expect(workspace().canReadWorkstream({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        workstreamId: archived,
+      })).resolves.toBe(false);
+    });
+
     it("refuses a work stream it has never heard of", async () => {
       // The routing path treats `true` as permission to deliver an activity, so
       // an unknown id must not read as "nothing objected".
