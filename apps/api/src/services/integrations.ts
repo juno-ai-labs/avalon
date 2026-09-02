@@ -55,6 +55,8 @@ import {
   ModelPluginIdSchema,
   ToolDefinitionSchema,
   WorkstreamReadResourceOutputSchema,
+  WorkstreamSearchResourceOutputSchema,
+  WorkstreamSummarizeResourceOutputSchema,
   WorkstreamViewResourceOutputSchema,
   readStructuredFailure,
   asSubstreamId,
@@ -594,6 +596,7 @@ interface FailedAttachmentAccess {
 
 interface StartedAttachmentAccess {
   cursorOnly: boolean;
+  cursorRecoveryResourceIds: string[];
   resourceIds: string[];
   toolName: string;
 }
@@ -608,14 +611,18 @@ class AttachmentGroundingGuard {
   onStarted(event: Extract<HarnessEvent, { type: "tool_started" }>): void {
     if (!isAttachmentContentCapability(event.policy.capability)) return;
     const cursor = attachmentCursor(event.input);
+    const explicitResourceIds = attachmentResourceIds(event.input);
     const continuedResourceId = event.policy.capability === "workstream.resources.read" && cursor
       ? this.readContinuations.get(cursor)
       : undefined;
     this.started.set(event.toolCallId, {
-      cursorOnly: Boolean(cursor) && attachmentResourceIds(event.input).length === 0,
+      cursorOnly: Boolean(cursor) && explicitResourceIds.length === 0 && !continuedResourceId,
+      cursorRecoveryResourceIds: cursor && !continuedResourceId
+        ? [...new Set(this.readContinuations.values())]
+        : [],
       resourceIds: continuedResourceId
         ? [continuedResourceId]
-        : attachmentResourceIds(event.input),
+        : explicitResourceIds,
       toolName: event.toolName,
     });
   }
@@ -625,12 +632,7 @@ class AttachmentGroundingGuard {
     const access = this.started.get(event.toolCallId);
     this.started.delete(event.toolCallId);
     if (!access) return;
-    if (event.policy.capability === "workstream.resources.read") {
-      const parsed = WorkstreamReadResourceOutputSchema.safeParse(event.result.output);
-      if (parsed.success) {
-        this.replaceReadContinuation(parsed.data.resourceId, parsed.data.nextCursor);
-      }
-    }
+    this.recordReadCursorProvenance(event.policy.capability, event.result.output);
     if (event.policy.capability !== "workstream.resources.view") {
       const verifiedResourceIds = new Set([
         ...access.resourceIds,
@@ -671,8 +673,9 @@ class AttachmentGroundingGuard {
     if (resourceIds.length === 0
       && errorCode === "invalid_cursor"
       && access?.cursorOnly) {
-      const activeResourceIds = [...new Set(this.readContinuations.values())];
-      if (activeResourceIds.length === 1) resourceIds = activeResourceIds;
+      if (access.cursorRecoveryResourceIds.length === 1) {
+        resourceIds = access.cursorRecoveryResourceIds;
+      }
     }
     const failure: FailedAttachmentAccess = {
       resourceIds,
@@ -687,31 +690,63 @@ class AttachmentGroundingGuard {
   }
 
   /** Rebuild safety state from durable receipts before a resumed run emits. */
-  restoreReceipts(receipts: readonly ToolReceiptRecord[]): void {
+  async restoreReceipts(
+    receipts: readonly ToolReceiptRecord[],
+    loadCompletedOutput: (receipt: ToolReceiptRecord) => Promise<unknown | null> = async () => null,
+  ): Promise<void> {
     for (const receipt of receipts) {
       const plan = parseJson<{ capability?: unknown }>(receipt.executionPlanJson ?? "null", {});
       if (typeof plan.capability !== "string" || !isAttachmentContentCapability(plan.capability)) continue;
-      const resourceIds = attachmentResourceIds(parseJson(receipt.inputJson, {}));
+      const input = parseJson(receipt.inputJson, {});
+      let resourceIds = attachmentResourceIds(input);
       if (receipt.status === "completed") {
+        const output = receipt.outputRef && isReadCursorIssuerCapability(plan.capability)
+          ? await loadCompletedOutput(receipt)
+          : null;
+        if (output !== null) {
+          this.recordReadCursorProvenance(plan.capability, output);
+          resourceIds = [...new Set([...resourceIds, ...attachmentResourceIds(output)])];
+        }
         for (const resourceId of resourceIds) this.unresolved.delete(`resource:${resourceId}`);
         this.started.delete(receipt.toolCallId);
         continue;
       }
       if (receipt.status === "admitted" || receipt.status === "executing") {
+        const cursor = attachmentCursor(input);
+        const continuedResourceId = plan.capability === "workstream.resources.read" && cursor
+          ? this.readContinuations.get(cursor)
+          : undefined;
         this.started.set(receipt.toolCallId, {
-          cursorOnly: resourceIds.length === 0 && Boolean(attachmentCursor(parseJson(receipt.inputJson, {}))),
-          resourceIds,
+          cursorOnly: resourceIds.length === 0 && Boolean(cursor) && !continuedResourceId,
+          // A receipt restored in progress must not borrow continuations that
+          // complete later in the resumed process. The harness may re-emit
+          // tool_started, which replaces this entry with a live snapshot.
+          cursorRecoveryResourceIds: [],
+          resourceIds: continuedResourceId ? [continuedResourceId] : resourceIds,
           toolName: receipt.toolName,
         });
         continue;
       }
-      const error = parseJson<{ code?: unknown }>(receipt.errorJson ?? "null", {});
+      const error = parseJson<{ code?: unknown; data?: unknown }>(receipt.errorJson ?? "null", {});
+      const structured = readStructuredFailure(error.data);
       this.started.delete(receipt.toolCallId);
+      const errorCode = structured?.code
+        ?? (typeof error.code === "string" ? error.code : "attachment_receipt_failed");
+      if (resourceIds.length === 0) {
+        const structuredResourceId = structured?.details?.["resourceId"];
+        if (typeof structuredResourceId === "string") resourceIds = [structuredResourceId];
+      }
+      if (resourceIds.length === 0
+        && errorCode === "invalid_cursor"
+        && attachmentCursor(input)) {
+        const activeResourceIds = [...new Set(this.readContinuations.values())];
+        if (activeResourceIds.length === 1) resourceIds = activeResourceIds;
+      }
       const failure: FailedAttachmentAccess = {
         resourceIds,
         toolCallId: receipt.toolCallId,
         toolName: receipt.toolName,
-        errorCode: typeof error.code === "string" ? error.code : "attachment_receipt_failed",
+        errorCode,
       };
       const keys = resourceIds.length > 0
         ? resourceIds.map((resourceId) => `resource:${resourceId}`)
@@ -780,11 +815,43 @@ class AttachmentGroundingGuard {
     return [...this.unresolved.keys()].sort().map((key) => key.replace("resource:", "resource ").replace("tool_call:", "tool call "));
   }
 
-  private replaceReadContinuation(resourceId: string, nextCursor: string | null): void {
-    for (const [cursor, continuedResourceId] of this.readContinuations) {
-      if (continuedResourceId === resourceId) this.readContinuations.delete(cursor);
+  private recordReadCursorProvenance(capability: string, output: unknown): void {
+    if (capability === "workstream.resources.read") {
+      const parsed = WorkstreamReadResourceOutputSchema.safeParse(output);
+      if (parsed.success) {
+        this.rememberReadCursors(parsed.data.resourceId, [
+          parsed.data.previousCursor,
+          parsed.data.nextCursor,
+        ]);
+      }
+      return;
     }
-    if (nextCursor) this.readContinuations.set(nextCursor, resourceId);
+    if (capability === "workstream.resources.search") {
+      const parsed = WorkstreamSearchResourceOutputSchema.safeParse(output);
+      if (parsed.success) {
+        this.rememberReadCursors(
+          parsed.data.resourceId,
+          parsed.data.passages.map((passage) => passage.readCursor),
+        );
+      }
+      return;
+    }
+    if (capability === "workstream.resources.summarize") {
+      const parsed = WorkstreamSummarizeResourceOutputSchema.safeParse(output);
+      if (parsed.success) {
+        this.rememberReadCursors(
+          parsed.data.resourceId,
+          parsed.data.citations.map((citation) => citation.readCursor),
+        );
+      }
+    }
+  }
+
+  /** Retain every read-compatible cursor the host issued; older pages remain reusable. */
+  private rememberReadCursors(resourceId: string, cursors: readonly (string | null)[]): void {
+    for (const cursor of cursors) {
+      if (cursor) this.readContinuations.set(cursor, resourceId);
+    }
   }
 }
 
@@ -805,8 +872,18 @@ const ATTACHMENT_CONTENT_CAPABILITIES = [
   "workstream.resources.summarize",
 ] as const;
 
+const READ_CURSOR_ISSUER_CAPABILITIES = [
+  "workstream.resources.read",
+  "workstream.resources.search",
+  "workstream.resources.summarize",
+] as const;
+
 function isAttachmentContentCapability(capability: string): boolean {
   return (ATTACHMENT_CONTENT_CAPABILITIES as readonly string[]).includes(capability);
+}
+
+function isReadCursorIssuerCapability(capability: string): boolean {
+  return (READ_CURSOR_ISSUER_CAPABILITIES as readonly string[]).includes(capability);
 }
 
 function attachmentResourceIds(value: unknown): string[] {
@@ -2479,14 +2556,21 @@ export async function runWorkstreamHarness(
     });
   };
   const attachmentGrounding = new AttachmentGroundingGuard();
-  attachmentGrounding.restoreReceipts(await createToolReceiptObjectPort(
+  const attachmentGroundingReceipts = await createToolReceiptObjectPort(
     env,
     input.workspaceId,
     input.workstreamId,
   ).receiptsForRun({
     runId: input.harnessRunId,
     capabilities: ATTACHMENT_CONTENT_CAPABILITIES,
-  }));
+  });
+  const attachmentGroundingReplayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
+  await attachmentGrounding.restoreReceipts(
+    attachmentGroundingReceipts,
+    async (receipt) => receipt.outputRef
+      ? loadToolReplayOutput(env, receipt.outputRef, attachmentGroundingReplayDeadline)
+      : null,
+  );
   const runLimits = workstreamRunLimits();
   const runScopeLimits = {
     ...runLimits,
