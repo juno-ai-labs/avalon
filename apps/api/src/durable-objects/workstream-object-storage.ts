@@ -557,6 +557,14 @@ export class WorkstreamObjectStore {
     return row?.authority_generation === 0 || row?.authority_mode === "authoritative";
   }
 
+  /** Generation this object's realtime authority was activated under. */
+  realtimeAuthorityGeneration(): number | null {
+    const row = first(this.storage.sql.exec<{ authority_generation: number }>(
+      `SELECT authority_generation FROM workstream WHERE id = 1`,
+    ));
+    return row?.authority_generation ?? null;
+  }
+
   currentSequence(canonicalFloor = 0): number {
     return this.storage.transactionSync(() => {
       const row = first(this.storage.sql.exec<RealtimeStateRow>(

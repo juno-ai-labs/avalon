@@ -76,6 +76,11 @@ describe("socket ticket transport", () => {
       expect(request.headers.get("x-avalon-socket-after-sequence")).toBeNull();
       expect(request.headers.get("x-rally-socket-speculative")).toBe("true");
       expect(request.headers.get("x-avalon-socket-speculative")).toBeNull();
+      expect(request.headers.get("x-rally-socket-admission-version")).toBe("1");
+      expect(request.headers.get("x-rally-socket-admission-authority-generation")).toBe("7");
+      expect(request.headers.get("x-rally-socket-admission-role")).toBe("member");
+      expect(request.headers.get("x-rally-socket-analytics-workspace-id")).toBe("analytics-workspace");
+      expect(request.headers.get("x-avalon-socket-admission-role")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
     });
     const env = createTestEnv({
@@ -94,7 +99,13 @@ describe("socket ticket transport", () => {
       workspaceId,
       region: "global",
       role: "member",
-    }, workstreamId, "0", undefined, 42, true);
+    }, workstreamId, "0", undefined, 42, true, {
+      admission: {
+        authorityGeneration: 7,
+        role: "member",
+        analyticsWorkspaceId: "analytics-workspace",
+      },
+    });
     const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}/socket`, {
       headers: {
         Origin: "app://avalon",
@@ -104,6 +115,11 @@ describe("socket ticket transport", () => {
         "x-avalon-socket-after-sequence": "998",
         "x-rally-socket-speculative": "false",
         "x-avalon-socket-speculative": "true",
+        "x-rally-socket-admission-version": "999",
+        "x-rally-socket-admission-authority-generation": "999",
+        "x-rally-socket-admission-role": "owner",
+        "x-rally-socket-analytics-workspace-id": "forged",
+        "x-avalon-socket-admission-role": "admin",
       },
     });
 
@@ -123,6 +139,10 @@ describe("socket ticket transport", () => {
       expect(request.headers.get("x-avalon-socket-after-sequence")).toBeNull();
       expect(request.headers.get("x-rally-socket-speculative")).toBeNull();
       expect(request.headers.get("x-avalon-socket-speculative")).toBeNull();
+      expect(request.headers.get("x-rally-socket-admission-version")).toBeNull();
+      expect(request.headers.get("x-rally-socket-admission-authority-generation")).toBeNull();
+      expect(request.headers.get("x-rally-socket-admission-role")).toBeNull();
+      expect(request.headers.get("x-rally-socket-analytics-workspace-id")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
     });
     const env = createTestEnv({
@@ -151,6 +171,10 @@ describe("socket ticket transport", () => {
         "x-avalon-socket-after-sequence": "998",
         "x-rally-socket-speculative": "true",
         "x-avalon-socket-speculative": "true",
+        "x-rally-socket-admission-version": "1",
+        "x-rally-socket-admission-authority-generation": "7",
+        "x-rally-socket-admission-role": "owner",
+        "x-rally-socket-analytics-workspace-id": "forged",
       },
     });
 
