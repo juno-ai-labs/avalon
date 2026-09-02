@@ -169,6 +169,13 @@ describe('WorkstreamSocketPool', () => {
     act(() => vi.advanceTimersByTime(1_000));
     await flushPromises();
     expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getSocketTicket).toHaveBeenCalledWith(
+      workstreamId,
+      '0',
+      expect.any(String),
+      0,
+      true,
+    );
     expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
     const warmedSockets = FakeWebSocket.instances.filter(
       (socket) => String(socket.url).includes(workstreamId),
@@ -210,6 +217,20 @@ describe('WorkstreamSocketPool', () => {
     if (warmedSockets.length !== 2) throw new Error('The hovered work stream did not open its pair.');
     expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
     expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getSocketTicket).toHaveBeenCalledWith(
+      workstreamId,
+      '0',
+      expect.any(String),
+      0,
+      true,
+    );
+    const warmedFeed = warmedSockets.find((socket) => String(socket.url).endsWith('/feed'));
+    if (!warmedFeed) throw new Error('The hovered work stream opened no feed socket.');
+    act(() => {
+      warmedFeed.readyState = FakeWebSocket.OPEN;
+      warmedFeed.dispatchEvent(new Event('open'));
+    });
+    await flushPromises();
     fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
     const warmedContext = onReadContext.mock.lastCall?.[0] as WorkstreamSocketOpenContext;
     expect(warmedContext).toEqual({
@@ -234,6 +255,10 @@ describe('WorkstreamSocketPool', () => {
     ]);
     expect(FakeWebSocket.instances).toEqual(warmedSockets);
     expect(warmedSockets.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+    expect(warmedFeed.send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual([
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
+      { type: 'mark_opened' },
+    ]);
     fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
     expect(onReadContext).toHaveBeenLastCalledWith({
       state: 'retained_pair',

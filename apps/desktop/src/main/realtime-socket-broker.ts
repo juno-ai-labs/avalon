@@ -39,6 +39,13 @@ export type RealtimeSocketFactory = (
 
 export type RealtimeSocketProxyResolver = (url: string) => Promise<string>;
 
+export function directSocketServername(url: string): string {
+  // WHATWG URL keeps brackets around IPv6 literals, while `isIP` and TLS SNI
+  // both require the bare address.
+  const hostname = new URL(url).hostname.replace(/^\[|\]$/gu, '');
+  return isIP(hostname) ? '' : hostname;
+}
+
 interface OwnedSocket {
   active: boolean;
   client: RealtimeSocketClient;
@@ -138,12 +145,11 @@ function createNodeSocketAttempt(input: RealtimeSocketAttemptInput): RealtimeSoc
     if (typeof rawOptions !== 'object') {
       throw new TypeError('The WebSocket TLS connector requires object connection options');
     }
-    const hostname = new URL(input.url).hostname;
     const connection = secure
       ? tlsConnect({
           ...rawOptions,
           path: undefined,
-          servername: isIP(hostname) ? '' : hostname,
+          servername: directSocketServername(input.url),
         })
       : netConnect(rawOptions);
     connection.once('lookup', () => {

@@ -302,7 +302,12 @@ the first subscription normally share one Durable Object invocation. Older
 client/server combinations retain the explicit subscribe frame as a rolling
 deployment fallback. `durable_object.runtime_recovery` measures lease repair
 and alarm re-arming separately from schema/repository readiness, so a cold wake
-does not hide recovery work inside socket acceptance.
+does not hide recovery work inside socket acceptance. The edge and room spans
+both record `rally.socket.after_sequence`; speculative tickets additionally
+record `rally.socket.speculative`. A failed accept-time bootstrap records
+`rally.socket.subscription_bootstrap_outcome = failed` and closes the socket,
+while a failed runtime-recovery attempt is logged and retried by the next
+mutation rather than remaining a permanently rejected gate.
 
 **`workstream_message_send`** — the desktop sends over the workspace command
 socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
@@ -652,6 +657,8 @@ storage readiness.
 not be compared directly with the new click-only cohort. Feed-visible and
 send-ready remain the authoritative total. Operators should compare direct and
 proxied routes separately and join ticket/connection IDs into server phases.
+Speculative hover spans can be separated from committed opens without inferring
+intent from timing.
 
 ### 2026-08-26 — Work-stream open includes both transcript islands and usable composer
 

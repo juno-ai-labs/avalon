@@ -591,6 +591,7 @@ export function useWorkstreamSocket(
   controlSocketOwnedExternally = false,
   initialReason: Exclude<WorkstreamSocketStartReason, 'reconnect'> = 'active_workstream',
   socketLeaseId?: string,
+  openCommitted = true,
 ): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
   const {
@@ -601,6 +602,12 @@ export function useWorkstreamSocket(
   const resolvedSocketLeaseId = socketLeaseId ?? generatedSocketLeaseId;
   const initialReasonRef = useRef(initialReason);
   initialReasonRef.current = initialReason;
+  const openCommittedRef = useRef(openCommitted);
+  openCommittedRef.current = openCommitted;
+  const markOpenedRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    if (openCommitted) markOpenedRef.current();
+  }, [openCommitted]);
   useWorkstreamControlSocket(
     api,
     workstreamId,
@@ -668,6 +675,19 @@ export function useWorkstreamSocket(
     // they can read.
     let accessRevoked = false;
     let socket: RealtimeSocket | null = null;
+    let markOpenedRequired = false;
+    let markOpenedSent = false;
+    const markOpened = (): void => {
+      if (
+        !openCommittedRef.current
+        || !markOpenedRequired
+        || markOpenedSent
+        || socket?.readyState !== REALTIME_SOCKET_OPEN
+      ) return;
+      socket.send(JSON.stringify({ type: 'mark_opened' }));
+      markOpenedSent = true;
+    };
+    markOpenedRef.current = markOpened;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -1576,6 +1596,8 @@ export function useWorkstreamSocket(
         ) / 10,
       });
       try {
+        const speculative = initialReasonRef.current === 'hover_warmup'
+          && !openCommittedRef.current;
         // Called directly rather than through `trace.step`: the socket-ticket
         // lint rule recognizes a ticket only when the awaited call is the
         // declarator's own initializer, and a `mark` on the next line closes
@@ -1585,6 +1607,7 @@ export function useWorkstreamSocket(
           '0',
           trace.traceId,
           resumeState.lastSequence,
+          speculative,
         );
         trace.mark('socket_ticket');
         trace.annotate({ ticketId: socketTicket.ticketId ?? null });
@@ -1599,6 +1622,8 @@ export function useWorkstreamSocket(
           return;
         }
         const nextSocket = createRealtimeSocket('substream_feed', socketTicket.url, socketTicket.protocols);
+        markOpenedRequired = speculative;
+        markOpenedSent = !speculative;
         // Splits the wait between holding a ticket and being connected into the
         // two halves that have opposite fixes. Nothing is awaited between the
         // ticket resolving and this line, so `dial` can only be large if the
@@ -1649,6 +1674,7 @@ export function useWorkstreamSocket(
               publishPresence: false,
             }));
           }
+          markOpened();
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
         });
@@ -1800,6 +1826,7 @@ export function useWorkstreamSocket(
       closedByEffect = true;
       setSendReady(false);
       requestSnapshotRef.current = () => undefined;
+      markOpenedRef.current = () => undefined;
       openTrace?.end({ outcome: 'unmounted' });
       openTrace = null;
       createMessageRef.current = () => Promise.reject(new ApiError(
