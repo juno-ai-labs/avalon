@@ -191,6 +191,19 @@ describe('useCitations', () => {
     expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('board-deck', expect.anything());
   });
 
+  it('keeps audio preview bytes as audio instead of decoding them as text', async () => {
+    // The defect this is here for: audio went through the derivative reader,
+    // which calls `Blob.text()` on it, and the card announcing a recording
+    // rendered the file's bytes as replacement characters.
+    const blob = new Blob(['not text'], { type: 'audio/mpeg' });
+    const loadResourceContent = vi.fn(async () => blob);
+    const recording = { ...DECK, title: 'Inbox Brief.mp3', mimeType: 'audio/mpeg' };
+    const { result } = renderHook(() => useCitations({ loadResourceContent, resources: [recording] }));
+
+    expect(await result.current.preview!('board-deck')).toEqual({ kind: 'audio', blob });
+    expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('board-deck', expect.anything());
+  });
+
   it('opens nothing for a target that names an identity or nothing at all', () => {
     const { result } = renderHook(() => useCitations({ resources: [DECK] }));
 

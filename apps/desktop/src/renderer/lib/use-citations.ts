@@ -163,13 +163,21 @@ export function useCitations({ loadResourceContent, resources }: {
     const key = `${entry.citation.id}@${entry.version}`;
     const cached = state.inFlight.get(key);
     if (cached) return cached;
-    const image = classifyAttachmentKind({
+    // The two kinds the preview route answers with the resource's *own* bytes
+    // rather than with a readable derivative: an image the card draws, and an
+    // audio file it plays. Everything else is text by the time it arrives here,
+    // so the derivative reader is the right way to read it — and the wrong way
+    // to read either of these. An audio file sent through it was decoded as
+    // UTF-8, and the card announcing a recording showed a paragraph of
+    // replacement characters where its glance belongs.
+    const kind = classifyAttachmentKind({
       fileName: entry.citation.title,
       mimeType: entry.citation.mimeType,
-    }) === 'image';
-    const read: Promise<CitationPreview> = image
+    });
+    const media = kind === 'audio' || kind === 'image' ? kind : null;
+    const read: Promise<CitationPreview> = media
       ? loadResourceContent(entry.citation.id, state.controller.signal)
-        .then((blob) => ({ kind: 'image', blob }))
+        .then((blob) => ({ kind: media, blob }))
       : readResourcePreviewText(
           loadResourceContent,
           entry.citation.id,

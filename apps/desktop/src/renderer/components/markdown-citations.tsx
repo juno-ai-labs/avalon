@@ -11,8 +11,8 @@ import {
   parseCitationHref,
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { File, FileText, Image as ImageIcon, Link2, Volume2 } from 'lucide-react';
-import { createContext, useContext, useEffect, useState, type ComponentType } from 'react';
+import { File, FileText, Image as ImageIcon, Link2, Pause, Play, Volume2 } from 'lucide-react';
+import { createContext, useContext, useEffect, useRef, useState, type ComponentType } from 'react';
 
 /**
  * Citations, as the desktop draws them.
@@ -53,8 +53,17 @@ export interface CitationResource {
   readonly mimeType?: string;
 }
 
+/**
+ * What the host read for a card, in the form the card can actually use.
+ *
+ * The two media kinds keep the resource's own bytes — an image the card draws,
+ * an audio file it plays — and everything else is the readable derivative the
+ * rail's panel shows. The split is made at the read, not here: sending bytes
+ * through the derivative reader decodes them as UTF-8, which is how an audio
+ * card came to show a paragraph of replacement characters.
+ */
 export type CitationPreview =
-  | { readonly kind: 'image'; readonly blob: Blob }
+  | { readonly kind: 'audio' | 'image'; readonly blob: Blob }
   | { readonly kind: 'text'; readonly text: string };
 
 export interface CitationContext {
@@ -69,8 +78,9 @@ export interface CitationContext {
   open: (target: CitationTarget) => void;
   /**
    * The resource content for the embed card's preview, or `undefined` for a
-   * resource this context cannot resolve. Images keep their bytes so the card
-   * can draw a thumbnail; everything else is the preview route's readable
+   * resource this context cannot resolve. Images and audio files keep their
+   * bytes — one so the card can draw a thumbnail, the other so it can play the
+   * recording; everything else is the preview route's readable
    * derivative — a Word file's markdown, a PDF's OCR. The promise settles only
    * once the route has stopped answering "still preparing"; the card shows its
    * skeleton exactly as long as the promise is open. Optional because a surface
@@ -188,6 +198,18 @@ function resourceIconType(resource: CitationResource): string {
   return resource.resourceType;
 }
 
+/**
+ * Whether this resource is something to *hear*, and so gets the transport card.
+ *
+ * Read from the record rather than from the bytes that have not arrived yet, so
+ * the card is one shape for its whole life. Deciding it on the settled preview
+ * instead would swap a button for a container under a reader who had already
+ * focused it.
+ */
+function isAudioResource(resource: CitationResource): boolean {
+  return resourceIconType(resource) === 'audio';
+}
+
 /** The kind of thing a resource is, at a glance. Shared with the rail's own list. */
 export function ResourceIcon({ type }: { type: string }): React.JSX.Element {
   const normalized = type.toLowerCase();
@@ -237,6 +259,11 @@ function ResourceChip({ label, resource, onOpen }: {
  * (and text is `inert`), while the button's label stays the title alone. A still
  * render skips it entirely: a picture serialized mid-skeleton would keep the
  * skeleton forever.
+ *
+ * An audio resource is the one kind whose card is *not* a single button — it
+ * hands off to `ResourceAudioCard`, which has a control in it. This component
+ * still owns the read: one effect, one cache entry, one object URL to revoke,
+ * whichever shape the card takes.
  */
 function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   label: React.ReactNode;
@@ -245,7 +272,9 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   preview?: ((resourceId: string) => Promise<CitationPreview> | undefined) | undefined;
 }): React.JSX.Element {
   const { PreviewBody } = useCitationRender();
-  const [excerpt, setExcerpt] = useState<{ for: string; src?: string; text?: string; open?: boolean }>({ for: '' });
+  const [excerpt, setExcerpt] = useState<
+    { for: string; media?: 'audio' | 'image'; src?: string; text?: string; open?: boolean }
+  >({ for: '' });
   useEffect(() => {
     const request = preview?.(resource.id);
     if (!request) {
@@ -265,12 +294,12 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
     request
       .then((result) => {
         if (cancelled) return;
-        if (result.kind === 'image') {
-          objectUrl = URL.createObjectURL(result.blob);
-          setExcerpt({ for: resource.id, src: objectUrl });
+        if (result.kind === 'text') {
+          setExcerpt({ for: resource.id, text: previewExcerpt(result.text) });
           return;
         }
-        setExcerpt({ for: resource.id, text: previewExcerpt(result.text) });
+        objectUrl = URL.createObjectURL(result.blob);
+        setExcerpt({ for: resource.id, media: result.kind, src: objectUrl });
       })
       .catch(() => {
         // Every rejection — unavailable, unconvertible, retries spent — means
@@ -286,6 +315,17 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   // A commit can hand this mounted card a different resource before the effect
   // re-runs; matching on the id keeps the old resource's text off the new one.
   const settled = excerpt.for === resource.id ? excerpt : { for: resource.id };
+  if (isAudioResource(resource)) {
+    return (
+      <ResourceAudioCard
+        label={label}
+        loading={settled.open === true}
+        onOpen={onOpen}
+        resource={resource}
+        src={settled.media === 'audio' ? settled.src : undefined}
+      />
+    );
+  }
   return (
     <button
       aria-label={`Open ${resource.title}`}
@@ -300,7 +340,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
           <span /><span /><span />
         </span>
       )}
-      {settled.src && (
+      {settled.media === 'image' && settled.src && (
         <img
           alt=""
           aria-hidden="true"
@@ -328,6 +368,168 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
       </span>
     </button>
   );
+}
+
+/**
+ * The card that is playing, so that starting one stops it.
+ *
+ * Module-level rather than context, because it is not a piece of application
+ * state anybody renders from: nothing outside the card that owns the element
+ * needs to know which one is sounding, and a provider for it would have to be
+ * mounted by every one of the surfaces that render markdown. A run of announced
+ * recordings shares one row, and two of them playing at once is not a mix
+ * anybody chose.
+ */
+let sounding: HTMLAudioElement | null = null;
+
+/**
+ * The announcement form for a resource somebody is meant to *hear*.
+ *
+ * Every other embed card is one button whose room holds a picture of the
+ * document. A recording has no such picture — the preview route serves audio as
+ * its own bytes — and what a reader wants from an announced recording is to
+ * play it, not to look at it. So this card carries a transport where a glance
+ * would go, and it is the one card that is *not* a single button: a control
+ * cannot nest inside one, and a play button that opened the rail instead would
+ * be the same defect in the other direction. The tile keeps its shape — the
+ * badge slot becomes play/pause, the title block becomes the button that opens
+ * the rail — so a row of cards still reads as a row of cards.
+ *
+ * It is a transport, not a player: play, pause, and where you are. Scrubbing,
+ * volume and speed are the rail's own `<audio controls>`, one click away
+ * through the title, and a scrub target 150px wide inside a tile is a control
+ * nobody can land on. That is a trade, and it is the cheap one to reverse.
+ *
+ * The played position and the elapsed clock come from the element's own events
+ * rather than from the click, so the button can never claim to be playing
+ * something the element stopped — an audio file whose bytes will not decode
+ * fails on `play()` and the card goes back to saying "Play".
+ */
+function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
+  label: React.ReactNode;
+  loading: boolean;
+  onOpen: () => void;
+  resource: CitationResource;
+  /** The object URL for the resource's bytes, or `undefined` until they arrive. */
+  src: string | undefined;
+}): React.JSX.Element {
+  const element = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [position, setPosition] = useState(0);
+  const [duration, setDuration] = useState<number | null>(null);
+
+  // Bytes that changed under a mounted card start over. Carrying the position
+  // across is the same defect as an excerpt of the wrong revision: the clock
+  // would report one recording's place in another.
+  useEffect(() => {
+    setPlaying(false);
+    setPosition(0);
+    setDuration(null);
+  }, [src]);
+
+  // Removing a media element from the document does not stop it, so a card
+  // scrolled out of the transcript would go on playing with nothing on screen
+  // to stop it. The node is captured here rather than read in the cleanup
+  // because React has already detached the ref by then.
+  useEffect(() => {
+    const audio = element.current;
+    return () => {
+      audio?.pause();
+      if (sounding === audio) sounding = null;
+    };
+  }, [src]);
+
+  return (
+    <div className="citation-card citation-card-audio" data-resource-type={resource.resourceType}>
+      {src === undefined
+        ? <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type="audio" /></span>
+        : (
+          <button
+            aria-label={`${playing ? 'Pause' : 'Play'} ${resource.title}`}
+            className="citation-card-badge citation-card-play"
+            onClick={() => {
+              const audio = element.current;
+              if (!audio) return;
+              if (audio.paused) void audio.play().catch(() => setPlaying(false));
+              else audio.pause();
+            }}
+            type="button"
+          >
+            {playing ? <Pause size={14} /> : <Play size={14} />}
+          </button>
+        )}
+      {/* The bar shimmers while the bytes are on their way and sits empty when
+          no route offered them, which is also what a saved still holds. */}
+      <span className="citation-card-transport">
+        <span
+          aria-hidden="true"
+          className="citation-card-progress"
+          data-loading={loading ? 'true' : undefined}
+          style={{ '--citation-card-played': playedWidth(position, duration) } as React.CSSProperties}
+        />
+        {src !== undefined && (
+          <small className="citation-card-elapsed">
+            {clock(position)}{duration === null ? '' : ` / ${clock(duration)}`}
+          </small>
+        )}
+      </span>
+      {src !== undefined && (
+        <audio
+          className="citation-card-audio-source"
+          onDurationChange={(event) => {
+            // A stream whose container carries no duration reports Infinity,
+            // and a clock reading "Infinity" is worse than no clock at all.
+            const seconds = event.currentTarget.duration;
+            setDuration(Number.isFinite(seconds) ? seconds : null);
+          }}
+          onEnded={() => {
+            setPlaying(false);
+            setPosition(0);
+          }}
+          onPause={() => setPlaying(false)}
+          onPlay={() => {
+            if (sounding && sounding !== element.current) sounding.pause();
+            sounding = element.current;
+            setPlaying(true);
+          }}
+          onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
+          preload="metadata"
+          ref={element}
+          src={src}
+        />
+      )}
+      <button
+        aria-label={`Open ${resource.title}`}
+        className="citation-card-text citation-card-open"
+        onClick={onOpen}
+        type="button"
+      >
+        <strong className="citation-card-title">{label}</strong>
+        <small className="citation-card-kind">{resourceKindLabel(resource)}</small>
+      </button>
+    </div>
+  );
+}
+
+/** How much of the bar is played, as the width the stylesheet fills it to. */
+function playedWidth(position: number, duration: number | null): string {
+  if (duration === null || duration <= 0) return '0%';
+  return `${Math.min(100, (position / duration) * 100)}%`;
+}
+
+/**
+ * A position on the transport, in the clock a media player uses: `m:ss`, and
+ * `h:mm:ss` once a recording runs past the hour. `formatDuration` is the
+ * elapsed-time voice — "3m 45s" — which is right beside a run's timings and
+ * wrong beside a play button.
+ */
+function clock(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor(whole / 60) % 60;
+  const remainder = String(whole % 60).padStart(2, '0');
+  if (hours === 0) return `${minutes}:${remainder}`;
+  return `${hours}:${String(minutes).padStart(2, '0')}:${remainder}`;
 }
 
 /**

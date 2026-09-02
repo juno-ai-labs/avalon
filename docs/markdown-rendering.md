@@ -41,6 +41,7 @@ Ten call sites, all passing a markdown string as `children`:
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
 | A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document. Hosted as `.inspector-detail-document` in the rail's own scroll, not in a boxed inner pane, and sized to the rail's column so long prose wraps to the panel instead of clipping. |
 | The embed card's preview of that same derivative | `markdown-citations.tsx`, via `CitationPreviewBody` in `workstream-blocks.tsx` so the card does not import the renderer it lives inside |
+| An announced recording's play/pause transport | `ResourceAudioCard` in `markdown-citations.tsx`, over the same bytes the rail hands to its `<audio controls>` |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
@@ -248,7 +249,9 @@ An embed card also shows a **preview** of the resource between its badge and its
 title, when the host offers one. Images render from their source bytes in a
 fixed thumbnail box, centered and scaled with `object-fit: cover`; portrait and
 landscape files therefore fill the same card without distortion or changing a
-row's height. Other resources read the same `/resources/:id/preview` derivative
+row's height. Audio is the one kind whose card is not a preview at all — see
+[the audio card](#the-audio-card) below. Other resources read the same
+`/resources/:id/preview` derivative
 the rail's detail panel shows — a Word file's markdown, a PDF's OCR — so the card
 and the panel it opens onto cannot disagree about a document. A text preview is
 itself a `MarkdownBody`
@@ -269,6 +272,40 @@ gone, retries spent — leaves the card's empty room rather than an error
 inside a control. A still never asks at all. The preview draws in
 `sys.color.text.disabled`, the faintest typographic tone, so it recedes from
 the title beneath it.
+
+#### The audio card
+
+A resource that classifies as **audio** gets a transport instead of a glance.
+The preview route serves audio as the resource's own bytes, exactly as it does
+an image, so reading it through the derivative reader decoded a recording as
+UTF-8 and filled the card with replacement characters. The split is made at the
+read: `useCitations` classifies the resource once and sends both media kinds —
+image and audio — to the raw-bytes path, leaving the conversion-and-retry reader
+for things that really are text.
+
+The audio card is **the one card that is not a single button**, because a
+control cannot nest inside one. The tile keeps its shape: the badge slot becomes
+a play/pause button, the room becomes a played bar and an `m:ss` clock
+(`h:mm:ss` past the hour), and the title block becomes the button that opens the
+rail. Two controls, each with its own accessible name — "Play <title>" /
+"Pause <title>", and "Open <title>". The whole-card hover belongs to the cards
+that *are* one button, so it is written `button.citation-card:hover`; lighting
+the container would advertise a click it does not take.
+
+It is a transport, not a player. Scrubbing, volume and speed are the rail's own
+`<audio controls>`, one click away through the title: a scrub target 150px wide
+inside a tile is a control nobody can land on. Playing state and position come
+from the element's own `play`, `pause`, `ended`, `timeupdate` and
+`durationchange` events rather than from the click, so the button cannot claim
+to be playing something that failed to decode, and a container reporting an
+infinite duration shows the elapsed clock alone rather than "Infinity".
+The position is published as one custom property, `--citation-card-played`, and
+drawn on a pseudo-element — four state changes a second belong in one node's
+style, not in a child React reconciles. **Starting one card stops the one that
+was sounding**, through a module-level reference to the playing element: a run
+of announced recordings shares one row, and two of them at once is not a mix
+anybody chose. A card leaving the transcript pauses its element, because
+removing a media element from the document does not stop it.
 
 On a work stream, the latest embed card in the last two **text** turns also
 opens the inspector onto that document without a click. The window is those
@@ -668,6 +705,42 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-02 — An announced recording gets a player, not its own bytes as text
+
+**What changed:** Audio joins images on the raw-bytes preview path in
+`useCitations`, and an embed card whose resource classifies as audio renders a
+transport: a play/pause button in the badge slot, a played bar drawn from
+`--citation-card-played`, an `m:ss` clock, and the title block as the button
+that opens the rail. That card is a container rather than a single button, so
+the whole-card hover moved to `button.citation-card:hover`. Starting one card
+pauses whichever was sounding, and a card leaving the transcript pauses its own
+element. The export stylesheet keeps the tile and drops the playback, since a
+picture of a transport is a dead bar with a stopped clock.
+
+**Why:** Every non-image resource went through the derivative reader, which
+calls `Blob.text()`. An audio file has no readable derivative — the preview
+route returns its bytes verbatim, the same answer it gives for an image — so a
+card announcing a recording rendered a paragraph of replacement characters where
+its glance belongs, under a title that said "Audio". Fixing only the decode
+would have left the card a picture of nothing; what a reader wants from an
+announced recording is to play it, and the rail already proves the bytes play by
+handing the same blob to `<audio controls>`.
+
+**What a future change has to respect:** the card's shape is decided from the
+*record*, not from the settled preview — deciding it on arriving bytes would
+swap a button for a container under a reader who had already focused it. Keep
+the two controls separately named; the accessible name of the play button is the
+only place the playing state is announced, and it must keep following the
+element's events rather than the click. Keep the played position in the custom
+property rather than in a child element. A new class the card can emit needs a
+rule in the export stylesheet — `message-export.test.ts` reads the class list off
+this renderer and fails without one — and the track colour must be a fill token
+rather than a line token: on the dark themes the line ramp is within a few
+points of the card surface, and the empty bar disappeared. The transport is
+deliberately not seekable; the rail's own `<audio controls>` is the full reader,
+and adding a scrubber here means deciding it is worth the target size, not
+merely that it is possible.
 
 ### 2026-09-02 — Clicking a collapsed preview opens its section
 

@@ -11,6 +11,65 @@ vi.mock('../lib/platform', () => ({
 }));
 
 const DECK: CitationResource = { id: 'board-deck', title: 'Q3 board deck', resourceType: 'document' };
+const RECORDING: CitationResource = {
+  id: 'board-deck',
+  title: 'Inbox Brief.mp3',
+  resourceType: 'generated_file',
+  mimeType: 'audio/mpeg',
+};
+
+/**
+ * Playback, which jsdom does not implement: `play()` throws "not implemented",
+ * and `paused` is a getter frozen at true.
+ *
+ * The double dispatches the element's own events rather than resolving
+ * silently, because that is what the card reads — it never sets its label from
+ * the click. A stub that only recorded the call would leave every assertion
+ * about the button's name asserting on the double's configuration.
+ */
+function stubPlayback(): { played: HTMLMediaElement[]; restore: () => void } {
+  const media = HTMLMediaElement.prototype;
+  const paused = new WeakMap<HTMLMediaElement, boolean>();
+  const played: HTMLMediaElement[] = [];
+  const original = {
+    paused: Object.getOwnPropertyDescriptor(media, 'paused'),
+    play: media.play,
+    pause: media.pause,
+  };
+  Object.defineProperty(media, 'paused', {
+    configurable: true,
+    get(this: HTMLMediaElement) { return paused.get(this) ?? true; },
+  });
+  media.play = function play(this: HTMLMediaElement) {
+    paused.set(this, false);
+    played.push(this);
+    this.dispatchEvent(new Event('play'));
+    return Promise.resolve();
+  };
+  media.pause = function pause(this: HTMLMediaElement) {
+    paused.set(this, true);
+    this.dispatchEvent(new Event('pause'));
+  };
+  return {
+    played,
+    restore: () => {
+      if (original.paused) Object.defineProperty(media, 'paused', original.paused);
+      media.play = original.play;
+      media.pause = original.pause;
+    },
+  };
+}
+
+/** What the element would say about itself at one moment, and the event saying so. */
+function reportMedia(
+  element: HTMLMediaElement,
+  state: { currentTime: number; duration: number },
+  event: 'durationchange' | 'timeupdate',
+): void {
+  Object.defineProperty(element, 'currentTime', { configurable: true, value: state.currentTime });
+  Object.defineProperty(element, 'duration', { configurable: true, value: state.duration });
+  act(() => { element.dispatchEvent(new Event(event)); });
+}
 
 /** A work stream whose resource set holds exactly the deck, and which records opens. */
 function context(overrides: Partial<CitationContext> = {}): CitationContext & { open: ReturnType<typeof vi.fn> } {
@@ -301,6 +360,148 @@ describe('resource citations', () => {
     expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:bad-image-preview');
     createObjectURL.mockRestore();
     revokeObjectURL.mockRestore();
+  });
+
+  it('plays an announced recording from the card instead of printing its bytes', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const playback = stubPlayback();
+    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+
+    const { unmount } = render(
+      <MarkdownBody citations={context({ preview, resolve: () => RECORDING })}>
+        {'![Inbox Brief](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    const element = document.querySelector('audio')!;
+    expect(element).toHaveAttribute('src', 'blob:recording');
+    // The defect: audio read as a derivative filled the room with the file's
+    // own bytes decoded as text.
+    expect(document.querySelector('.citation-card-preview')).toBeNull();
+    expect(document.body.textContent).not.toContain('id3');
+
+    const play = screen.getByRole('button', { name: 'Play Inbox Brief.mp3' });
+    fireEvent.click(play);
+    expect(playback.played).toContain(element);
+    // The label follows the element, not the click, so it cannot claim to be
+    // playing something that stopped.
+    const pause = await screen.findByRole('button', { name: 'Pause Inbox Brief.mp3' });
+    fireEvent.click(pause);
+    expect(await screen.findByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
+
+    unmount();
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:recording');
+    playback.restore();
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+  });
+
+  it('shows where the recording is, in a media clock', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const playback = stubPlayback();
+    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+
+    const { unmount } = render(
+      <MarkdownBody citations={context({ preview, resolve: () => RECORDING })}>
+        {'![Inbox Brief](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    const element = document.querySelector('audio')!;
+
+    reportMedia(element, { duration: 225, currentTime: 45 }, 'durationchange');
+    reportMedia(element, { duration: 225, currentTime: 45 }, 'timeupdate');
+    expect(document.querySelector('.citation-card-elapsed')).toHaveTextContent('0:45 / 3:45');
+    // The bar is drawn from the property, so the position is one node's style
+    // rather than a child React reconciles on every tick.
+    expect(document.querySelector('.citation-card-progress')!.getAttribute('style'))
+      .toContain('--citation-card-played: 20%');
+
+    // A container that carries no duration reports Infinity; a clock reading
+    // "Infinity" is worse than a clock that only says where you are.
+    reportMedia(element, { duration: Number.POSITIVE_INFINITY, currentTime: 3661 }, 'durationchange');
+    reportMedia(element, { duration: Number.POSITIVE_INFINITY, currentTime: 3661 }, 'timeupdate');
+    expect(document.querySelector('.citation-card-elapsed')).toHaveTextContent('1:01:01');
+    expect(document.querySelector('.citation-card-elapsed')!.textContent).not.toContain('/');
+
+    // Unmounted before the prototype goes back: the card pauses its element on
+    // the way out, and jsdom's own `pause()` throws.
+    unmount();
+    playback.restore();
+    createObjectURL.mockRestore();
+    vi.mocked(URL.revokeObjectURL).mockRestore?.();
+  });
+
+  it('keeps the open click on the title and the play click on the transport', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const playback = stubPlayback();
+    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+    const citations = context({ preview, resolve: () => RECORDING });
+
+    const { unmount } = render(
+      <MarkdownBody citations={citations}>{'![Inbox Brief](resource://board-deck)'}</MarkdownBody>,
+    );
+
+    await waitFor(() => { expect(document.querySelector('audio')).not.toBeNull(); });
+    // The card is a container, not one button: a control cannot nest inside a
+    // button, and a play control that opened the rail would be the same defect
+    // the other way round.
+    expect(document.querySelector('.citation-card')!.tagName).toBe('DIV');
+    expect(document.querySelector('.citation-card button')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
+    expect(citations.open).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Inbox Brief.mp3' }));
+    expect(citations.open).toHaveBeenCalledExactlyOnceWith({ scheme: 'resource', resourceId: 'board-deck' });
+
+    // Unmounted before the prototype goes back: the card pauses its element on
+    // the way out, and jsdom's own `pause()` throws.
+    unmount();
+    playback.restore();
+    createObjectURL.mockRestore();
+    vi.mocked(URL.revokeObjectURL).mockRestore?.();
+  });
+
+  it('stops the recording that was playing when another card starts', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL')
+      .mockReturnValueOnce('blob:first')
+      .mockReturnValueOnce('blob:second');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const playback = stubPlayback();
+    const second = { ...RECORDING, id: 'standup', title: 'Standup recap.mp3' };
+    const preview = vi.fn(async () => ({ kind: 'audio' as const, blob: new Blob(['id3'], { type: 'audio/mpeg' }) }));
+
+    const { unmount } = render(
+      <MarkdownBody
+        citations={context({
+          preview,
+          resolve: (id) => (id === 'standup' ? second : RECORDING),
+        })}
+      >
+        {'![Inbox Brief](resource://board-deck)\n\n![Standup recap](resource://standup)'}
+      </MarkdownBody>,
+    );
+
+    await waitFor(() => { expect(document.querySelectorAll('audio')).toHaveLength(2); });
+    fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Play Standup recap.mp3' }));
+
+    // Two recordings sounding at once is not a mix anybody chose.
+    expect(await screen.findByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pause Standup recap.mp3' })).toBeInTheDocument();
+
+    // Unmounted before the prototype goes back: the card pauses its element on
+    // the way out, and jsdom's own `pause()` throws.
+    unmount();
+    playback.restore();
+    createObjectURL.mockRestore();
+    vi.mocked(URL.revokeObjectURL).mockRestore?.();
   });
 
   it('keeps two paragraphs as two paragraphs instead of collapsing the seam', async () => {
