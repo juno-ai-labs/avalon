@@ -303,20 +303,70 @@ export const SuggestedAttachmentToolCallSchema = z.discriminatedUnion("tool", [
 ]);
 export type SuggestedAttachmentToolCall = z.infer<typeof SuggestedAttachmentToolCallSchema>;
 
-export const AttachmentListResourcesArgumentsSchema = z.union([
-  z.strictObject({
-    limit: z.number().int().min(1).max(50).optional(),
-    attachmentKind: AttachmentKindSchema.optional(),
-  }),
-  z.strictObject({ cursor: CursorSchema }),
-]);
-export const AttachmentReadResourceArgumentsSchema = z.union([
-  z.strictObject({
-    resourceId: CanonicalUuidSchema,
-    startCharacter: NonNegativeIntegerSchema.optional(),
-  }),
-  z.strictObject({ cursor: CursorSchema }),
-]);
+/**
+ * These two are flat objects with a refinement rather than the union the choice
+ * they express would suggest, and that is a provider constraint rather than a
+ * preference.
+ *
+ * `z.union` emits a root `anyOf`, and Azure OpenAI rejects **any** root-level
+ * combinator on a tool's `parameters` — measured against the live `gpt-5.6-sol`
+ * deployment, which answers `invalid_function_parameters` and fails the whole
+ * request, every tool, not just the offending one. Adding `type: "object"`
+ * beside the `anyOf` does not help; the second error names
+ * `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` at the top level as the thing it
+ * will not take. `gpt-5.6-sol` is fenced to Azure with no fallback candidate,
+ * so a work stream pinned to it from the model picker died outright on
+ * 2026-09-02 with a bare `harness_execution_failed`.
+ *
+ * A union whose branches are all readable objects satisfies xAI's narrower rule
+ * and is what {@link nonObjectRootUnionBranches} was written to allow, so these
+ * two passed every guard the repository had and still could not reach Azure.
+ * `nonObjectRootSchema` is the rule that covers both providers, and a flat root
+ * is the shape that satisfies every one of them by construction.
+ *
+ * The exclusivity moves to `superRefine`, where `AttachmentViewResourceArgumentsSchema`
+ * below already keeps its uniqueness rule. It was never on the wire in any
+ * case: `z.toJSONSchema` cannot carry a refinement across the boundary, so the
+ * model has always learned this from the tool description and been corrected by
+ * the executor's parse. Both descriptions say to send a returned cursor by
+ * itself, and the messages here repeat it in the rejection.
+ */
+export const AttachmentListResourcesArgumentsSchema = z.strictObject({
+  limit: z.number().int().min(1).max(50).optional(),
+  attachmentKind: AttachmentKindSchema.optional(),
+  cursor: CursorSchema.optional(),
+}).superRefine((value, context) => {
+  if (value.cursor === undefined) return;
+  for (const key of ["limit", "attachmentKind"] as const) {
+    if (value[key] === undefined) continue;
+    context.addIssue({
+      code: "custom",
+      path: [key],
+      message: "Send a returned cursor by itself; limit and attachmentKind belong to the first page and are carried by the cursor",
+    });
+  }
+});
+export const AttachmentReadResourceArgumentsSchema = z.strictObject({
+  resourceId: CanonicalUuidSchema.optional(),
+  startCharacter: NonNegativeIntegerSchema.optional(),
+  cursor: CursorSchema.optional(),
+}).superRefine((value, context) => {
+  if ((value.resourceId === undefined) === (value.cursor === undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: ["resourceId"],
+      message: "Send exactly one of resourceId or cursor: resourceId to start a read, a returned cursor by itself to continue one",
+    });
+    return;
+  }
+  if (value.cursor !== undefined && value.startCharacter !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["startCharacter"],
+      message: "startCharacter belongs with resourceId; a cursor already carries its position",
+    });
+  }
+});
 export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
   resourceId: CanonicalUuidSchema,
   query: z.string().min(1).max(1_000),

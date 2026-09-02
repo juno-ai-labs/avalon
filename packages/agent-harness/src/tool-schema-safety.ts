@@ -18,9 +18,10 @@ const ROOT_UNION_KEYWORDS = ["anyOf", "oneOf"] as const;
 /**
  * Whether xAI will read one branch of a **root** union as an object.
  *
- * Shared by the report and the repair below so the two cannot drift: a rule
- * that only half the codebase enforces is worse than one nobody does, because
- * the guard goes green on exactly the schema the repair lets through.
+ * Read only by {@link nonObjectRootUnionBranches} now. The repair below no
+ * longer consults either, because the rule it enforces is strictly stronger:
+ * a root union is fatal whether or not xAI could read its branches, so knowing
+ * which of the two rules a schema broke does not change what is done about it.
  *
  * Every clause was measured against grok-4.3/4.5/4.6, and confirmed harmless on
  * gemini-3.5/3.6/3.7-flash and gpt-5.6-terra/sol/luna:
@@ -117,6 +118,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * A key two schemas share when they say the same thing, so that a property
+ * redeclared identically across branches stays one declaration.
+ *
+ * Key order carries no meaning in JSON Schema and two branches are written by
+ * hand, so object keys are sorted before comparing; plain `JSON.stringify`
+ * would read `{type,const}` and `{const,type}` as different and emit a union of
+ * a schema with itself.
+ */
+function stableKey(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableKey).join(",")}]`;
+  if (!isPlainObject(value)) return JSON.stringify(value) ?? "null";
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableKey(value[key])}`).join(",")}}`;
+}
+
+/**
  * Every `allOf`/`anyOf`/`oneOf` branch that sanitization strips a constraint
  * from, as a path with the reason.
  *
@@ -171,48 +187,255 @@ export function weakenedCompositionBranches(schema: Record<string, unknown>): st
 }
 
 /**
- * Make a schema Avalon did not write safe to put in front of a provider.
+ * Make any tool schema safe to put in front of every provider Rally routes to.
  *
- * The guard above is a build-time check over schemas this repository authors. A
- * hosted MCP server's `inputSchema` is not one of those: it arrives at run time,
- * from a third party, and goes to the model verbatim. Nothing in a test can see
- * it, and the blast radius is the same or worse — xAI rejects the **whole
- * request, every tool**, so one bad schema from one remote server takes down a
- * run that had nothing to do with it, including Avalon's own core tools.
+ * This is the corrector, and it is the load-bearing half of this module. The
+ * checks above are build-time reports over schemas this repository authors; a
+ * hosted MCP server's `inputSchema` is not one of those, and neither is a tool
+ * somebody adds next year. Both reach a provider verbatim, and a fatal root
+ * schema fails the **whole request, every tool** — one bad schema from one
+ * remote server takes down a run that had nothing to do with it, including
+ * Rally's own core tools.
  *
- * So the same measured rule is applied as a repair rather than a report, using
- * the literally same predicate — but only where the sanitizer's own output
- * would still be fatal. That gate is the whole design now: see the body for why
- * repairing unconditionally became worse than doing nothing.
+ * So it runs on every tool on the way to the wire rather than on remote ones
+ * alone. Two rules have been measured, and this satisfies the stricter:
  *
- * Repair rather than reject, because rejecting is worse in both directions: it
- * removes a capability the person connected on purpose, and it does so on a
- * judgement about a *provider's* schema dialect rather than anything the person
- * did. Nothing else is touched — Bind's sanitizer still runs afterwards and
+ * - xAI rejects a root union with a branch it cannot read as an object.
+ * - Azure OpenAI rejects a root-level combinator of any kind, readable branches
+ *   or not. See {@link ROOT_FORBIDDEN_KEYWORDS} for the measured error strings.
+ *
+ * **Merge rather than drop.** The earlier version deleted the offending root
+ * keywords, which is destructive in a way that was easy to miss: a schema whose
+ * root is *only* an `anyOf` — which is exactly what `z.union` emits, and what
+ * `workstream_list_resources` was — deletes down to `{}`, a tool advertising no
+ * parameters at all. The model then cannot pass the arguments the executor
+ * still requires. Flattening keeps every property the branches declared, and
+ * was verified against the live `gpt-5.6-sol` deployment: the same 28-tool
+ * surface that answered `invalid_function_parameters` is accepted once its two
+ * root unions are merged this way.
+ *
+ * What a merge cannot keep is the *exclusivity* — that branch A and branch B
+ * are alternatives. That is a real loss on xAI, which could read it, and it is
+ * accepted knowingly: a constraint no provider is guaranteed to receive is
+ * worth less than a request that reaches all of them, and `z.toJSONSchema`
+ * could never carry a `.refine()` across the boundary anyway. Exclusivity
+ * belongs in the tool's `description` and the executor's parse, which is where
+ * [`docs/agent-tools.md`](../../../docs/agent-tools.md) already puts it.
+ *
+ * Repair rather than reject, because rejecting removes a capability the person
+ * connected on purpose, over a judgement about a provider's schema dialect
+ * rather than anything they did. Bind's sanitizer still runs afterwards and
  * still owns every other dialect difference.
  */
-export function repairRootUnionForProviders(schema: Record<string, unknown>): Record<string, unknown> {
-  // Defer to the sanitizer, and intervene only where its output would still be
-  // fatal. This is not an optimization — repairing unconditionally is now
-  // *worse than doing nothing*. Bind 13 turns a remote
-  // `oneOf: [{required:["pageId"]}, {required:["discussionId"]}]` into
-  // self-sufficient object branches that every provider accepts and the model
-  // can read, whereas dropping it first throws that constraint away and tells
-  // the model nothing. Against Bind 11 and 12 the drop was the only thing
-  // standing between a third-party schema and a 400; against a sanitizer that
-  // repairs the shape properly it is pure loss.
+export function repairRootSchemaForProviders(schema: Record<string, unknown>): Record<string, unknown> {
+  // Gated on the report so the corrector is a no-op for the shapes already
+  // safe, and so it re-engages by itself for any shape a future sanitizer stops
+  // handling, without anyone having to notice.
+  if (nonObjectRootSchema(schema).length === 0) return schema;
+
+  // Every distinct declaration of each property name, kept apart by whether the
+  // keyword that carried it was conjunctive or disjunctive, because the two
+  // recombine differently and mixing them states something the schema did not.
   //
-  // Gating on `nonObjectRootUnionBranches` rather than deleting this outright
-  // keeps the backstop honest: it re-engages by itself for any shape a future
-  // sanitizer stops handling, without anyone having to notice.
-  if (nonObjectRootUnionBranches(schema).length === 0) return schema;
-  // Something fatal survives sanitization, so no root union on this schema can
-  // be trusted to reach the wire. Drop them all rather than reasoning from the
-  // authored branches, which may read as usable while their sanitized form does
-  // not.
-  return Object.fromEntries(
-    Object.entries(schema).filter(([key]) => !ROOT_UNION_KEYWORDS.some((keyword) => keyword === key)),
-  );
+  // A discriminated union — the commonest root union a hosted MCP server serves
+  // — redeclares its discriminator per branch with a different `const`, so
+  // first-declaration-wins would advertise one branch's value as the only legal
+  // one and silently delete the rest. That is a schema the model cannot argue
+  // with and no log would ever show, which is the failure this repository asks
+  // to be traded away rather than kept.
+  const unionVariants = new Map<string, unknown[]>();
+  const intersectionVariants = new Map<string, unknown[]>();
+  const declare = (into: Map<string, unknown[]>, name: string, subschema: unknown): void => {
+    const seen = into.get(name);
+    if (!seen) {
+      into.set(name, [subschema]);
+      return;
+    }
+    // A branch that repeats a declaration verbatim is the same constraint, not
+    // an alternative; only genuinely different shapes recombine.
+    if (!seen.some((entry) => stableKey(entry) === stableKey(subschema))) seen.push(subschema);
+  };
+  // A root `properties` applies to the instance whatever branch it satisfies,
+  // so it is conjunctive with every branch declaration rather than one more
+  // alternative beside them.
+  if (isPlainObject(schema.properties)) {
+    for (const [name, subschema] of Object.entries(schema.properties)) {
+      declare(intersectionVariants, name, subschema);
+    }
+  }
+
+  // `required` is intersected within each union keyword and unioned across
+  // keywords, which is the most the flattened root can still assert. Within one
+  // union the branches are alternatives, so only a name *every* branch demands
+  // is demanded by the whole. Across keywords they are conjunctive: sibling
+  // `anyOf` and `oneOf` must both be satisfied, so a name each of them demands
+  // in its own right is still demanded. One accumulator shared by both would
+  // intersect the two keywords against each other and emit neither.
+  const intersectionRequired = new Set<string>(requiredNames(schema));
+  // `$defs` and `definitions` are carried up from every branch. A branch may
+  // declare its own and reference it from a property the merge hoists to the
+  // root; deleting the branch would leave that `$ref` pointing into a subtree
+  // that no longer exists, and an unresolvable `$ref` in a tool's `parameters`
+  // is the same class of provider rejection this corrector exists to prevent.
+  const definitions = new Map<string, Record<string, unknown>>();
+  // Carried up only when *every* branch declared it and they agreed. A merged
+  // object admits any branch's properties, so one branch's `false` cannot be
+  // asserted over another's members — and a branch that said nothing is a
+  // branch that did not agree, which is why the count is compared rather than
+  // just the values collected.
+  const additionalProperties: unknown[] = [];
+  let mergedBranchCount = 0;
+
+  for (const keyword of ROOT_COMPOSITION_KEYWORDS) {
+    const branches = schema[keyword];
+    if (!Array.isArray(branches)) continue;
+    const conjunctive = keyword === "allOf";
+    let unionRequired: string[] | null = null;
+    for (const branch of branches) {
+      if (!isPlainObject(branch)) continue;
+      mergedBranchCount += 1;
+      if (isPlainObject(branch.properties)) {
+        for (const [name, subschema] of Object.entries(branch.properties)) {
+          declare(conjunctive ? intersectionVariants : unionVariants, name, subschema);
+        }
+      }
+      for (const key of ["$defs", "definitions"] as const) {
+        const carried = branch[key];
+        if (isPlainObject(carried)) definitions.set(key, { ...definitions.get(key), ...carried });
+      }
+      if ("additionalProperties" in branch) additionalProperties.push(branch.additionalProperties);
+      const names = requiredNames(branch);
+      if (conjunctive) {
+        for (const name of names) intersectionRequired.add(name);
+        continue;
+      }
+      unionRequired = unionRequired === null ? [...names] : unionRequired.filter((name) => names.includes(name));
+    }
+    for (const name of unionRequired ?? []) intersectionRequired.add(name);
+  }
+
+  // A name declared more than one way recombines *under* the property, which is
+  // the one place a provider accepts a composition: the same deployment that
+  // rejects a root `anyOf` accepts `table_query`'s nested recursive `$ref` union
+  // and `core_request_elicitation`'s nested nullable union. Alternatives become
+  // an `anyOf` and constraints that all apply become an `allOf`, so a union's
+  // branches are not silently narrowed to one and an intersection's are not
+  // silently widened to any.
+  const properties = Object.fromEntries([...new Set([...intersectionVariants.keys(), ...unionVariants.keys()])]
+    .map((name) => {
+      const union = unionVariants.get(name) ?? [];
+      const all = [
+        ...(intersectionVariants.get(name) ?? []),
+        ...(union.length === 0 ? [] : [union.length === 1 ? union[0] : { anyOf: union }]),
+      ];
+      return [name, all.length === 1 ? all[0] : { allOf: all }];
+    }));
+
+  // Only names the flattened root actually declares. A branch may require a
+  // property whose subschema lived on a sibling the merge could not read, and a
+  // `required` naming a property that is not there is the very shape Bind's
+  // sanitizer prunes away.
+  const required = [...intersectionRequired].filter((name) => name in properties);
+  const agreedAdditionalProperties = additionalProperties.length > 0
+    && additionalProperties.length === mergedBranchCount
+    && additionalProperties.every((entry) => stableKey(entry) === stableKey(additionalProperties[0]))
+    ? { additionalProperties: additionalProperties[0] }
+    : {};
+
+  return {
+    ...Object.fromEntries(
+      Object.entries(schema).filter(([key]) => (
+        key !== "required" && key !== "properties" && key !== "type"
+        && !ROOT_FORBIDDEN_KEYWORDS.some((keyword) => keyword === key)
+      )),
+    ),
+    ...agreedAdditionalProperties,
+    ...Object.fromEntries([...definitions].map(([key, value]) => [
+      key,
+      { ...(isPlainObject(schema[key]) ? schema[key] : {}), ...value },
+    ])),
+    type: "object",
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+  };
+}
+
+/**
+ * The keywords Azure OpenAI refuses at a tool parameter **root**, whatever else
+ * the root carries.
+ *
+ * Measured against the live `gpt-5.6-sol` Foundry deployment on 2026-09-02, and
+ * it is a stricter rule than the xAI one below rather than a variation on it.
+ * Two error strings, in this order:
+ *
+ * - A root with no `type` at all: `Invalid schema for function
+ *   'workstream_list_resources': schema must be a JSON Schema of 'type:
+ *   "object"', got 'type: "None"'.`
+ * - The same root with `type: "object"` added beside the union, which is the
+ *   obvious patch and **does not work**: `schema must have type 'object' and
+ *   not have 'oneOf'/'anyOf'/'allOf'/'enum'/'const'/'not' at the top level.`
+ *
+ * So there is no root-level combinator this provider accepts, readable branches
+ * or not, and `allOf` is in scope here even though it is deliberately out of
+ * scope for {@link ROOT_UNION_KEYWORDS}. A rejected schema fails the **whole
+ * request, every tool**, exactly as on xAI.
+ *
+ * Only the root is checked, and that is measured too: `table_query` carries a
+ * self-recursive `$defs`/`$ref` and `core_request_elicitation` a nested
+ * `anyOf` with a `null` branch, and the same deployment accepts both when they
+ * are the only tool sent.
+ */
+const ROOT_FORBIDDEN_KEYWORDS = ["anyOf", "oneOf", "allOf", "enum", "const", "not"] as const;
+
+/**
+ * The subset of {@link ROOT_FORBIDDEN_KEYWORDS} whose value is a list of
+ * **subschemas**, and therefore the only ones a merge may traverse.
+ *
+ * `enum` and `const` hold instance *values*, not schemas, and either may be an
+ * array — `enum` always is, and `const: [1, 2]` is a legal constant. Treating
+ * their elements as branches reads an object-valued enum such as
+ * `{ enum: [{ properties: { mode: "fast" } }] }` as a branch declaring a
+ * property `mode` whose subschema is the string `"fast"`, which is not a schema
+ * at all. `not` holds one subschema rather than a list, and negation has no
+ * merge: what it forbids cannot be expressed as properties to offer. All three
+ * are therefore stripped from the root and never walked.
+ */
+const ROOT_COMPOSITION_KEYWORDS = ["anyOf", "oneOf", "allOf"] as const;
+
+/**
+ * Why a tool's root schema is not the plain object every provider will read.
+ *
+ * This is the rule the fleet actually has to satisfy, and it is the one worth
+ * reaching for when authoring a tool: **a parameters root is
+ * `{ type: "object", properties: {…} }` and nothing else.** Both known provider
+ * rules are then satisfied by construction, and no third one can be violated by
+ * a shape this forbids.
+ *
+ * It supersedes {@link nonObjectRootUnionBranches} rather than replacing it.
+ * That check states xAI's rule, which is narrower — a root union whose branches
+ * all read as objects passes it and is still fatal here — and it is kept
+ * because it is what a future sanitizer regression would be measured against:
+ * a shape it starts reporting is one Bind stopped repairing, which this rule
+ * alone cannot tell apart from a schema that was always authored that way.
+ *
+ * Stated over the schema **as authored**, which is the one difference from
+ * every other rule in this module and the one that matters. Those are stated
+ * over `sanitizeToolSchema`'s output; this repository's own transports do not
+ * run it before serializing a tool, and the archived Azure request that failed
+ * on 2026-09-02 carried `workstream_list_resources` with the bare root `anyOf`
+ * exactly as `z.toJSONSchema` emitted it. Judging a sanitized copy would let
+ * through any schema the sanitizer repairs and the wire does not — a root with
+ * no `type` that gains one only in a form nobody sends is still a 400.
+ */
+export function nonObjectRootSchema(schema: Record<string, unknown>): string[] {
+  const root = schema;
+  const found = ROOT_FORBIDDEN_KEYWORDS
+    .filter((keyword) => keyword in root)
+    .map((keyword) => `/${keyword} (not allowed at the root)`);
+  if (root.type !== "object") {
+    found.push(`/type (root must be "object", got ${JSON.stringify(root.type ?? null)})`);
+  }
+  return found;
 }
 
 function requiredNames(node: Record<string, unknown>): string[] {

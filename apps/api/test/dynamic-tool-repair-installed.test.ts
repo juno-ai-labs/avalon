@@ -6,12 +6,17 @@ import type * as AgentHarness from "@rally/agent-harness";
  * That the host-side repair is still wired into `validateDynamicConnectorTools`.
  *
  * Its sibling in `tool-schema-sanitization.test.ts` asserts the outcome — that
- * nothing a remote server serves reaches the wire with an unreadable root branch
- * — which is the right property to assert, but under bind 13 the sanitizer
- * supplies it unaided. Deleting the repair from `integrations.ts` entirely left
- * that file green, so nothing pinned the layer's existence.
+ * nothing a remote server serves reaches the wire with a root schema a provider
+ * rejects. That property now holds even with this call deleted, because
+ * `toModelToolDefinitions` corrects every tool again at the wire, so nothing
+ * there pins this layer's existence.
  *
- * Stubbing `repairRootUnionForProviders` itself is what closes that: it proves
+ * It is still worth pinning. This is the only place that can name the connector
+ * and the tool in a log, and a run whose schemas were quietly rewritten with no
+ * record of which server served them is materially harder to debug than one
+ * where `dynamic_tool_root_schema_repaired` says so.
+ *
+ * Stubbing `repairRootSchemaForProviders` itself is what closes that: it proves
  * the gate is called for every discovered definition and that its return value
  * is the one carried forward, independently of what any bind version does with
  * the schema. The rule the real implementation applies is covered in the harness
@@ -23,7 +28,7 @@ const repairSpy = vi.hoisted(() => vi.fn(
 
 vi.mock("@rally/agent-harness", async (importOriginal) => ({
   ...(await importOriginal<typeof AgentHarness>()),
-  repairRootUnionForProviders: repairSpy,
+  repairRootSchemaForProviders: repairSpy,
 }));
 
 const { __integrationTesting } = await import("../src/services/integrations");

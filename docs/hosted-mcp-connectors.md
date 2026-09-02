@@ -128,25 +128,35 @@ while every newly opened MCP session uses the Rally initialization identity.
   from a separate Rally-authored policy; guessing from names or trusting a
   provider hint can turn a newly introduced mutation into an unconfirmed action.
 - **A remote schema may not sink the request it arrives in.** A hosted server's
-  `inputSchema` reaches the model verbatim, and a root `anyOf`/`oneOf` branch xAI
-  will not read as an object makes that provider reject the **whole request,
-  every tool** — a run's core tools taken down by one third-party schema, on a
-  connection the person set up correctly. `validateDynamicConnectorTools` applies
-  `repairRootUnionForProviders` to every discovered definition, **but only where
-  the sanitizer's own output would still be fatal**. That gate is load-bearing:
-  Bind 13 repairs the common shape into readable branches and keeps the
-  constraint, so dropping the composition first would destroy something the model
-  could otherwise have used. Against Bind 11 and 12 the unconditional drop was
-  the only thing between a third-party schema and a 400; against a sanitizer that
-  handles the shape it is pure loss. Deferring rather than deleting keeps the
-  backstop honest — it re-engages by itself for any shape a future sanitizer
-  stops handling. When it does fire, the offending root composition is dropped,
-  the rest of the schema is kept, the tool stays available, and it logs
-  `dynamic_tool_root_union_repaired`. It repairs rather than rejects because
+  `inputSchema` reaches the model verbatim, and a root-level combinator makes a
+  provider reject the **whole request, every tool** — a run's core tools taken
+  down by one third-party schema, on a connection the person set up correctly.
+  Azure OpenAI rejects any root `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not`, and
+  a root that declares no `type: "object"`, whatever the branches look like; xAI
+  rejects the narrower case of a root union with a branch it cannot read as an
+  object. **The guarantee is not made here.** `repairRootSchemaForProviders` runs
+  at `toModelToolDefinitions`, the single point where any tool — Rally's, a
+  connector's, a hosted server's, a skill's — becomes a provider payload, so a
+  remote schema is corrected on the way to the wire whether or not it arrived
+  through this path. `validateDynamicConnectorTools` calls it too, and that call
+  is now redundant for safety and kept for a different reason: this is the only
+  place that can name the connector and the tool in
+  `dynamic_tool_root_schema_repaired`, and a run whose schemas were rewritten
+  with no record of which server served them is materially harder to debug.
+  The correction **merges** rather than drops: branch properties are folded into
+  the root, `required` is intersected across a union and unioned across an
+  `allOf`, and a property the branches declare differently becomes a union under
+  that property, which providers accept below the root. An earlier version
+  deleted the offending keywords instead, which empties a schema whose root is
+  only its union — a tool then advertises no parameters while its executor still
+  demands them. What a merge cannot carry is the exclusivity between branches;
+  that is given up knowingly, because a constraint one provider honours is worth
+  less than a request another does not reject outright, and the remote server
+  validates its own arguments regardless. It repairs rather than rejects because
   refusing the tool spends the person's capability on a judgement about a
-  provider's schema dialect, and the remote server validates its own arguments
-  regardless. This is deliberately the *only* schema rewrite Rally performs;
-  Bind's sanitizer owns every other dialect difference. The measured rule and its limits live in
+  provider's schema dialect. This is deliberately the *only* schema rewrite Rally
+  performs; Bind's sanitizer owns every other dialect difference. The measured
+  rule and its limits live in
   [`agent-tools.md`](agent-tools.md#mechanics--where-the-rules-are-enforced).
 - **The remote name is forwarded exactly.** Rally may need a safe internal
   alias for a name outside its canonical-name grammar, but `tools/call` receives
@@ -249,6 +259,27 @@ current `tools/list` response when a formerly working prompt loses a tool—do n
 patch a historical snapshot into Rally.
 
 ## Changelog
+
+### 2026-09-02 — The root-schema correction moved to the wire and now merges
+
+**What changed:** The trust-model bullet above no longer describes
+`repairRootUnionForProviders`, its defer-to-the-sanitizer gate, or
+`dynamic_tool_root_union_repaired`. The corrector is
+`repairRootSchemaForProviders`, it runs for every tool at
+`toModelToolDefinitions` rather than only for discovered ones here, it merges a
+root combinator instead of deleting it, and the log event is
+`dynamic_tool_root_schema_repaired`.
+
+**Why:** Azure OpenAI rejects a root-level combinator whatever its branches look
+like, which is stricter than the xAI rule this section was written against, and
+a hosted server is not the only source of such a schema. Making the guarantee at
+the one chokepoint every tool passes through covers the sources no build-time
+test can see. Deleting the keywords was also wrong for a schema whose root is
+only its union: it leaves a tool with no parameters at all.
+
+**What a future change has to respect:** the call here is redundant for safety
+and exists for the log. Removing it loses the only signal that names which
+connector and tool served a schema that needed rewriting.
 
 ### 2026-08-29 — Granola meeting queries may run for five minutes
 
