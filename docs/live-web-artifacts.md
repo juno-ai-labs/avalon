@@ -371,6 +371,33 @@ artifact content and viewer sessions rather than workspace authority.
 
 ## Changelog
 
+### 2026-09-02 — The redeem bootstrap keeps its same-origin identity
+
+**What changed:** The Rally-authored `/__rally/open` bootstrap now carries
+`Referrer-Policy: same-origin`; artifact documents, errors, and every other
+response keep the default `no-referrer` policy.
+
+**Why:** A production Electron trace showed the bootstrap reaching the artifact
+Worker and preserving its one-time code, then Chromium submitting the
+same-origin redeem form with `Sec-Fetch-Site: same-origin` but `Origin: null`.
+The fetch-metadata fence correctly rejected that opaque origin with 403, so the
+rail rendered the neutral "Open this from Rally" page instead of the artifact.
+The `null` was produced by the bootstrap response inheriting the artifact
+page's `no-referrer` policy.
+
+**Considered and rejected:** Relaxing the origin mismatch check would admit an
+opaque initiator wherever fetch metadata happened to say same-origin; moving the
+code into a query parameter would put it in Cloudflare request logs; and
+changing the policy on artifact content would weaken a protection unrelated to
+redemption. The bootstrap is Rally-owned, has one same-origin form action, and
+never exposes its fragment in a Referer, so giving only that response a
+same-origin policy restores a non-opaque Origin without widening artifact code.
+
+**Consequences:** Electron can redeem the single-use code and receive its viewer
+cookie. Only the bootstrap path can be sent as a same-origin referrer, while the
+fragment proof remains client-only and the resulting artifact page continues to
+send no referrer.
+
 ### 2026-09-01 — Review closes navigation, retry, and local-setup gaps
 
 **What changed:** Artifact surfaces now fence redirects as well as ordinary
