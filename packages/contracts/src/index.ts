@@ -226,6 +226,7 @@ export const AGENT_MODEL_OVERRIDES = [
   "x-ai/grok-4.6",
   "x-ai/grok-4.5",
   "x-ai/grok-4.3",
+  "google/gemini-3.8-flash",
   "google/gemini-3.7-flash",
   "google/gemini-3.6-flash",
   "google/gemini-3.5-flash",
