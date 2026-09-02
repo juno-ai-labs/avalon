@@ -4612,6 +4612,12 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    side: do not add an exception that moves a turn based on its author, or the
    same transcript renders differently for each person reading it. */
 :is(.workstream-screen, .automation-chat-surface) .human-message {
+  /* The bubble's corner, named once and read twice: the bubble draws it, and
+     the identity line above stops where it begins. Two rules that each wrote
+     the number out would drift the first time either was tuned, and the drift
+     is a few pixels on one line — the kind of thing a screenshot pass looks
+     straight past. */
+  --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
   margin-left: var(--av-cmp-turn-margin);
   max-width: var(--av-cmp-turn-width);
   width: fit-content;
@@ -4627,7 +4633,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 :is(.workstream-screen, .automation-chat-surface) .human-message-bubble {
   background: var(--av-cmp-bubble-background);
   border: 1px solid var(--av-cmp-bubble-border);
-  border-radius: calc(var(--av-sys-size-radius-xl) + 6px);
+  border-radius: var(--turn-bubble-radius);
   max-width: 100%;
   padding: var(--av-cmp-bubble-padding);
   width: fit-content;
@@ -4703,11 +4709,19 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 /* Anchors the identity line to the bubble it labels. The block is
    `width: fit-content`, so a header narrower than the bubble would otherwise sit
-   flush left inside an otherwise right-aligned turn. */
+   flush left inside an otherwise right-aligned turn.
+
+   The inset is the bubble's own corner radius, so the line ends where the top
+   edge of the pill ends and the curve takes over rather than over the round of
+   the corner, where it reads as overhanging the shape it belongs to. It is
+   stated on the trailing edge because that is the edge a turn is aligned to;
+   a theme that aligns turns to the leading edge leaves the header flush there,
+   which is the same relationship on the other side. */
 :is(.workstream-screen, .automation-chat-surface) .human-message > header {
   gap: 5px;
   justify-content: var(--av-cmp-turn-align);
   margin-bottom: 4px;
+  padding-inline-end: var(--turn-bubble-radius);
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message .message-author-dot {
