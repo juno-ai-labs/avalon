@@ -1505,6 +1505,38 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-02 — Run-generated resources reach the open rail immediately
+
+**What changed:** The resident resource-attachment path now reads back only the
+committed canonical `WorkstreamResource`, invalidates any prepared feed snapshot,
+and publishes the same `resource_attached` room event as a member attachment.
+The desktop already upserts that event into the open work-stream detail cache.
+Origin attachment uses this publication too, so its older handcrafted second
+broadcast was removed. If canonical readback or event publication fails after
+the link commits, the attachment remains successful and subscribed clients are
+sent `resync_required`; a product event deferred behind semantic realtime uses
+the same canonical repair.
+
+**Why:** Multimodal and Terminal publication durably attached generated
+resources while a run was active, but emitted no resource event. The feed could
+therefore say generation completed while the open **Artifacts** rail remained
+empty until run settlement, reconnect, or another canonical snapshot.
+
+**Considered and rejected:** Making every completed tool call request a complete
+snapshot would refresh unrelated transcript and work-stream state for a fact
+that already has a typed incremental event. Waiting for run settlement leaves a
+successful output hidden during later work in the same run. Treating post-commit
+readback or broadcast failure as attachment failure would invite a model retry,
+duplicating both the durable artifact and its inference cost.
+
+**Consequences:** Generated audio, images, documents, and sites always appear as
+Artifacts, never Sources, and reach an open rail as soon as their resource link
+commits. Origin resources remain Sources and consume one room event rather than
+two. Canonical readback binds one resource ID rather than the complete inventory,
+so it stays below the engine's 100-parameter ceiling. Replayed publication
+upserts the same resource by ID; targeted resync and reconnect snapshots remain
+the recovery authority when incremental delivery cannot complete.
+
 ### 2026-09-02 — Main-feed preparation is capability-scoped and disposable
 
 **What changed:** SubstreamAgent exposes a typed preparation RPC for one signed
