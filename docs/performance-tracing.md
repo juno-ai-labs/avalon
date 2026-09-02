@@ -344,7 +344,11 @@ work. Speculative hover and retained background socket attempts still print a
 local flow but are not uploaded as opening samples. Direct Electron routes add
 PAC, DNS, TCP, TLS, and edge-upgrade milliseconds; proxied routes add one
 CONNECT/TLS/edge aggregate plus failed-route count because the inner tunnel
-phases are not observable truthfully. Message sends keep the UUIDv4 client-message identifier separate from the
+phases are not observable truthfully. The renderer adapter retains any phases
+that arrive before the work-stream hook registers its observer and delivers
+that finite backlog before later live phases. Missing phase fields therefore
+mean the main process did not observe the phase, rather than that the renderer
+registered too late. Message sends keep the UUIDv4 client-message identifier separate from the
 UUIDv7 operation identifier required by the telemetry envelope. Raw console
 fields such as cursors and close codes are omitted, as are URLs, errors,
 messages, attachment names, and arbitrary annotations. Product analytics
@@ -632,6 +636,30 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-09-02 — Ticket transit pays room wake and native phases are lossless at registration
+
+**What changed:** A feed-ticket request now schedules the ticketed
+SubstreamAgent's storage-ready `wake()` without awaiting it. The Electron
+renderer socket adapter queues handshake phases until its first phase observer
+is attached, then delivers the backlog in order before later live phases.
+
+**Why:** The Worker-to-object wake had no chance to overlap ticket transit or
+the client handshake, although both happen before the upgrade needs the room.
+The handshake instrumentation also had a registration race: main-process IPC
+could emit valid phases between socket construction and hook listener setup,
+making a slow handshake appear to contain no diagnostic phases.
+
+**Considered and rejected:** Awaiting warm-up would merely move room latency
+into the ticket block and couple availability to an optimization. Guessing a
+PAC cache or connection prewarm policy before trustworthy phase data would risk
+stale network policy and optimize an unverified cause.
+
+**Consequences:** `room_upgrade` remains the authoritative outcome of object
+admission. Failed warm-ups emit `workstream_socket_ticket_warm_failed` without
+failing ticket issue. The next packaged-client cohort should carry the direct
+phase fields or the proxy aggregate whenever main observed them, which makes the
+next edge optimization evidence-based.
 
 ### 2026-09-01 — Opening samples are click-scoped and cold wake recovery is named
 

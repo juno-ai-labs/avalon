@@ -104,6 +104,8 @@ class BrokeredHandshakePhaseEvent extends Event implements RealtimeSocketHandsha
 
 class BrokeredRealtimeSocket extends EventTarget implements RealtimeSocket {
   readyState = REALTIME_SOCKET_CONNECTING;
+  private readonly pendingHandshakePhases: BrokeredHandshakePhaseEvent[] = [];
+  private handshakePhaseObserverAttached = false;
   private readonly unsubscribe: () => void;
 
   constructor(
@@ -114,12 +116,14 @@ class BrokeredRealtimeSocket extends EventTarget implements RealtimeSocket {
     this.unsubscribe = subscribeToSocketEvents(this.bridge, input.socketId, (event) => {
       if (this.readyState === REALTIME_SOCKET_CLOSED) return;
       if (event.type === 'handshake_phase') {
-        this.dispatchEvent(new BrokeredHandshakePhaseEvent(
+        const phaseEvent = new BrokeredHandshakePhaseEvent(
           event.phase,
           event.durationMs,
           event.routeIndex,
           event.proxied,
-        ));
+        );
+        if (this.handshakePhaseObserverAttached) this.dispatchEvent(phaseEvent);
+        else this.pendingHandshakePhases.push(phaseEvent);
       } else if (event.type === 'open') {
         if (this.readyState !== REALTIME_SOCKET_CONNECTING) return;
         this.readyState = REALTIME_SOCKET_OPEN;
@@ -153,6 +157,9 @@ class BrokeredRealtimeSocket extends EventTarget implements RealtimeSocket {
       | ((event: RealtimeSocketHandshakePhaseEvent) => void),
   ): void {
     super.addEventListener(type, listener as EventListener);
+    if (type !== 'handshakephase' || this.handshakePhaseObserverAttached) return;
+    this.handshakePhaseObserverAttached = true;
+    for (const phase of this.pendingHandshakePhases.splice(0)) this.dispatchEvent(phase);
   }
 
   send(data: string): void {
