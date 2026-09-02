@@ -3141,6 +3141,12 @@ export interface RunHarnessInput {
   /** Exact durable head to resume. Absent only when this loop has never started. */
   bindLoopProjection?: BindLoopProjectionState | null;
   /**
+   * Model turns already reserved for this subordinate execution. Persistent
+   * loop turn indexes span many executions, so the host supplies the run-local
+   * count when resuming one after eviction or input.
+   */
+  modelIterationsUsed?: number;
+  /**
    * Enables provider-measured transcript compaction. The harness compares the
    * latest OpenRouter prompt + completion usage with 80% of the selected
    * model's advertised context window; it never estimates the prompt locally.

@@ -2349,6 +2349,7 @@ export async function runWorkstreamHarness(
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
       projection: BindLoopProjectionState | null;
+      modelIterationsUsed: number;
       transcriptThrough: number;
       /** Extends the singleton loop lease after its subordinate attempt heartbeat commits. */
       heartbeat?(): void | Promise<void>;
@@ -2972,6 +2973,7 @@ export async function runWorkstreamHarness(
         : modelMessages,
       ...(!blockDashboardRun && runtime?.persistentLoop ? {
         bindLoopProjection: runtime.persistentLoop.projection,
+        modelIterationsUsed: runtime.persistentLoop.modelIterationsUsed,
         activationInputs,
         onActivationBoundary: (activation) =>
           runtime.persistentLoop!.commitActivationInputs(activation),
