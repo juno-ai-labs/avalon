@@ -152,7 +152,9 @@ approximately the first three line-heights of whatever follows — a
 paragraph, the top of a table, the start of a fence — behind an opacity
 mask that starts at 60% on the first pixel and reaches transparent on the
 last, so the content fades into the next heading rather than cutting off
-as a hard clip. The chevron sits in a left gutter, coloured
+as a hard clip. The chevron sits in a left gutter — margin, not padding, so
+the heading and every paragraph under it start on the same left edge as the
+author line above them and only the chevron is outside it — coloured
 with `sys.color.text.muted` (the receding control tone, the same token the
 citation chip's icon uses), and carries a tooltip. Clicking the heading or
 the chevron toggles the section; a click that follows a text selection does
@@ -764,6 +766,37 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-02 — The heading gutter is margin, so an answer is never indented
+
+**What changed:** `.markdown-body:has(> .markdown-collapse) { padding-left: 20px }`
+is gone. The heading chevron keeps its `left: -20px`, which now places it
+outside the body rather than inside a strip the body had been padded to make
+for it. Every line of an answer — headings, paragraphs, cards, code — starts on
+the same left edge as the author line above it.
+
+**Why:** That padding indented the *whole answer* by 20px, and only for answers
+that happened to contain h2+ headings. So the column a reader scans down stepped
+in and out from turn to turn, and an answer with headings sat 20px off the
+"Rally" that introduced it. A gutter is the margin outside the text; putting the
+text inside it instead was the defect.
+
+**Considered and rejected:** Padding the author line to match, which would have
+squared the two up by indenting more rather than less, and would have left the
+feed's one text column starting at two different places depending on whether a
+turn had headings.
+
+**What a future change has to respect:** the chevron is now outside the content
+column, so the transcript's left padding is load-bearing — it has to clear the
+20px outdent *plus* the 3px this chevron's `:focus-visible` ring reaches beyond
+its own box, and `.transcript-scroll` is `overflow-x: hidden`, so anything less
+is cut off rather than scrolled to. Every padding on that column is currently
+above that floor, but only because the `max-width: 760px` override was raised
+from 18px to 24px in this change; it is the one to check when either number
+moves.
+The work accordion's chevron
+([`plugin-activity-rows.md`](plugin-activity-rows.md)) hangs at the same offset
+for the same reason; the two are meant to line up, and they do.
 
 ### 2026-09-02 — An announced recording gets a player, not its own bytes as text
 
