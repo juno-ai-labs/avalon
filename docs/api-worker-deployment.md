@@ -298,6 +298,43 @@ floating ranges elsewhere — `wrangler`, `workerd`, `miniflare`, `typescript-es
 and others that a full `pnpm update` would have carried along — keep the versions
 this deployment was profiled against.
 
+**One validation contract narrowed with it, and it is not a memory change.**
+zod 4.5 made seconds mandatory in `datetime()`. `TimestampSchema` in
+`packages/contracts/src/index.ts` is `z.string().datetime({ offset: true })`, and
+`.datetime(` appears at 113 non-test call sites across 42 files, so the narrowing
+is repository-wide:
+
+| Input | 4.4.3 | 4.5.4 |
+| --- | --- | --- |
+| `2026-09-02T12:30:00Z` | accept | accept |
+| `2026-09-02T12:30Z` | accept | **reject** |
+| `2026-09-02T12:30+01:00` | accept | **reject** |
+
+It reaches the emitted JSON Schema too: the optional-seconds group
+`(?::[0-5]\d(?:\.\d+)?)?` became mandatory `:[0-5]\d(?:\.\d+)?`. The same applies
+to bare `datetime()`, `{ local: true }`, and `z.iso.datetime()`.
+
+**The exposed surface is a string somebody else wrote, and mostly that somebody
+is a model.** Anything Rally serializes goes through `Date.prototype.toISOString()`
+— 440 non-test call sites — which always emits seconds, so persisted state,
+cursors, and spool files round-trip unaffected. What does not is the fifteen
+`datetime()` tool-argument schemas in `packages/connectors`: `calendar.list_events`
+takes required `timeMin`/`timeMax` through a throwing `.parse(rawArgs)`, and
+`github.commits.list`, `github.issues.list`, the Granola date filter, and Drive's
+`modifiedAfter` take optional ones. A model writes those strings token by token
+rather than through `toISOString()`, so a plausible `…T14:00Z` for "this
+afternoon" is now a hard reject where it used to parse. The stricter `pattern` does
+travel to the model in the tool's JSON Schema, which is the mitigation, but it is
+a pattern a model can ignore. Inbound third-party timestamps — `created_at` on the
+Resend webhook — are the smaller exposure: RFC 3339 has always required seconds,
+so a conforming producer was never sending the form that now fails.
+
+**A green suite does not clear this**, which is the part worth remembering. Every
+gate passed on the first run of this bump because no test in the tree exercised a
+second-less timestamp. `packages/contracts/src/index.test.ts` now pins the
+boundary in both directions so the next movement in either is a test failure
+rather than a discovery.
+
 **Why:** Both entries below reduced startup work by restructuring our own schema
 construction, and the profiles that justified them still attributed the bulk of
 active startup to Zod. 4.5 attacks the same cost inside the library: methods now
@@ -316,6 +353,20 @@ moves, so it also bumped `wrangler`, `workerd`, `miniflare`, `@cloudflare/worker
 turning a dependency bump into an unbisectable one. Pinning the catalog to `^4.5.4`
 was rejected separately: `latest` is the entry this repository deliberately keeps,
 and a pin would have to be maintained by hand at every future bump.
+
+**On repeating the narrow lockfile edit:** it is safe only because zod has no
+dependencies of its own and every dependent's declared range accepts the new
+version — but "dependent" is two populations, and `--frozen-lockfile` vouches for
+neither. Five packages take zod as a **peer** (`@hono/zod-validator`, `openai`,
+`@modelcontextprotocol/sdk`, `zod-to-json-schema`, `@juno-ai/bind`) and appear in
+the lockfile with a `(zod@…)` suffix. Three take it as a plain **dependency** and
+carry no suffix at all: `@openrouter/sdk` at `^3.25.0 || ^4.0.0`, and
+`@modelcontextprotocol/core` and `@modelcontextprotocol/server` at `^4.2.0`.
+`pnpm install --frozen-lockfile` validates each importer's `package.json` against
+the lockfile; it does not validate transitive ranges, so those three are exactly
+the edits it cannot check. Read them out of the published manifests by hand, as
+was done here, or the check that looks like proof is not covering the part most
+likely to be wrong.
 
 **Consequences:** zod's memory and startup profile is now good enough that the
 `deferredZodSchema()` lazy shells from the entry below buy considerably less than
