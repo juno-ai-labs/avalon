@@ -267,6 +267,18 @@ retained 31.7 MiB of heap under 4.4.3 and 16.6 MiB under 4.5.4. As with every
 figure above, these are local diagnostics of graph shape, not platform-time or
 platform-memory promises.
 
+**Compare only within a pair, never across the paragraphs above.** Each pair was
+profiled in its own session, on its own machine, against its own tree, and only
+the two numbers inside one pair share those conditions. The 4.4.3 side of the
+pair immediately above is the same library the deferred-schema paragraph
+measured, yet reads 351.7 ms against its 131.5 ms, and 8,102.83 KiB against its
+7,169.37 KiB. Neither gap is a regression in what those paragraphs describe: the
+timings come from different hardware, and the 933 KiB is roughly 180 commits of
+product landing on `main` in between. It follows that every absolute figure here
+ages out of date as soon as the tree moves, and that a later paragraph's baseline
+is not a measurement of the earlier paragraph's result. Re-measure both sides
+yourself before drawing a conclusion across them.
+
 Service Bindings add no monetary charge or network hop by default. A document,
 Terminal, or Global telemetry-destination operation adds a Worker invocation
 and subrequest, while ordinary API requests no longer initialize those provider
