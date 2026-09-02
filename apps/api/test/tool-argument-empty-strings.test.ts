@@ -1,6 +1,8 @@
 import { normalizeToolArguments, validateToolArguments } from "@rally/agent-harness";
 import type { ToolDefinition } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
+import { __integrationTesting } from "../src/services/integrations";
+import { createTestEnv } from "./helpers/cloudflare-test";
 import { createTestConnectorRegistry, unconfiguredConnectorTypes } from "./helpers/connector-registry";
 
 /**
@@ -100,6 +102,41 @@ describe("blanked tool arguments", () => {
     const normalized = normalizeToolArguments({ query: "", fileType: "spreadsheet" }, schema);
     expect(normalized).toEqual({ fileType: "spreadsheet" });
     expect(validateToolArguments(normalized, schema)).toBeNull();
+  });
+
+  it("keeps a remote server's required blank, however its schema says required", () => {
+    // A hosted MCP server authors its own schemas and Rally forwards the call
+    // without a local parse, so a required argument dropped here would reach a
+    // write tool as an omission rather than as the error it is. `required` and
+    // `properties` are routinely on different nodes in a generated schema.
+    const registry = createTestConnectorRegistry();
+    const adapter = registry.get("notion");
+    const capability = adapter.dynamicAgentTools?.capabilities[0];
+    if (!capability) throw new Error("expected Notion to declare a dynamic capability");
+
+    const [remote] = __integrationTesting.validateDynamicConnectorTools(
+      createTestEnv({}),
+      adapter,
+      "personal",
+      [capability],
+      "notion",
+      [{
+        name: "archive_record",
+        description: "A write tool served by a third-party MCP server.",
+        capability,
+        mode: "write",
+        idempotency: "record_before_execute",
+        inputSchema: {
+          type: "object",
+          properties: { recordId: { type: "string", minLength: 1 } },
+          allOf: [{ required: ["recordId"] }],
+        },
+      }],
+    );
+    if (!remote) throw new Error("expected the remote tool to survive validation");
+
+    expect(normalizeToolArguments({ recordId: "" }, remote.inputSchema as Record<string, unknown>))
+      .toEqual({ recordId: "" });
   });
 
   it("keeps an empty string that asks a tool for something", () => {
