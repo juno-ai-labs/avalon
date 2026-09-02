@@ -547,7 +547,12 @@ image input, returns text, supports agent tools, and has a 1,050k context window
 with a 128k output limit. Its version policy upgrades when a new default version
 is available, and the deployment has no spillover or priority target.
 Manual inference probes returned token usage but no dollar `cost` or `price`
-field. When that happens, the configured fallback is the unweighted arithmetic
+field. A repeated synthetic streaming Responses request in the live Foundry
+playground carried the `web_search` tool definition while explicitly declining
+to call it. The completed response reported 14,137 input tokens, 14,094 cached
+input tokens, five output tokens, and zero web-search requests, confirming that
+cached tokens are a subset of input tokens on a tool-bearing request to this
+deployment. When Azure omits price, the configured fallback is the unweighted arithmetic
 mean of OpenRouter's published endpoint prices for that canonical model—not the
 top-level model-catalog price, which OpenRouter documents as the lowest endpoint
 price. On 2026-08-30 the four 4.3 endpoints averaged $1.875 input, $0.30 cached
@@ -1215,8 +1220,11 @@ constraint during exactly the outages that trigger traversal.
 
 **Consequences:** Sol runs fail closed when Azure is unavailable, the Azure
 credential is absent, required capabilities do not match, or the scheduled
-price record cannot be trusted. Configured fallback *models* remain independent
-stages, but the Sol model itself can never be invoked through OpenRouter.
+price record cannot be trusted. PDF/file-parser and audio turns therefore fail
+before provider I/O on a Sol-pinned work stream; the immutable pin requires a
+new work stream to choose another model. Ace admits Sol only for roles whose
+complete path is wired to Azure. Configured fallback *models* remain independent
+stages, but Bind never invokes the Sol model itself through OpenRouter.
 
 ### 2026-09-02 — Model defaults and parallel tools are provider-boundary policy
 

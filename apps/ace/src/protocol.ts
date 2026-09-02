@@ -16,6 +16,27 @@ export const MODEL_CHOICES = [
   'google/gemini-2.5-flash-lite',
 ] as const;
 
+export const GPT_5_6_SOL_MODEL_ID = 'openai/gpt-5.6-sol' as const;
+
+/**
+ * These roles reach Bind with the regional Azure transport and pricing port.
+ * Every other role currently constructs a direct OpenRouter request somewhere
+ * in its execution path, so Ace must not let Sol enter that route.
+ */
+export const AZURE_ROUTED_MODEL_ROLES = [
+  'inline_child',
+  'block_dashboard',
+] as const satisfies readonly AgentModelRole[];
+const AZURE_ROUTED_MODEL_ROLE_SET = new Set<AgentModelRole>(AZURE_ROUTED_MODEL_ROLES);
+
+export function modelIsAllowedForRole(role: AgentModelRole, modelId: string): boolean {
+  return modelId !== GPT_5_6_SOL_MODEL_ID || AZURE_ROUTED_MODEL_ROLE_SET.has(role);
+}
+
+export function modelChoicesForRole(role: AgentModelRole): readonly string[] {
+  return MODEL_CHOICES.filter((modelId) => modelIsAllowedForRole(role, modelId));
+}
+
 interface ManagedModelDefinition {
   rank: number;
   rankReason: string;
@@ -143,7 +164,16 @@ export type { AgentModelRouting };
 export const ManagedModelUpdateSchema = z.object({
   role: ManagedModelRoleSchema,
   routing: AgentModelRoutingSchema,
-}).strict();
+}).strict().superRefine((update, context) => {
+  for (const [index, modelId] of [update.routing.model, ...update.routing.fallbackModels].entries()) {
+    if (modelIsAllowedForRole(update.role, modelId)) continue;
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'GPT-5.6 Sol is available only for roles whose complete path is routed through Azure.',
+      path: index === 0 ? ['routing', 'model'] : ['routing', 'fallbackModels', index - 1],
+    });
+  }
+});
 
 export type ManagedModelUpdate = z.infer<typeof ManagedModelUpdateSchema>;
 

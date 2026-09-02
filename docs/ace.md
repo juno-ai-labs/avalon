@@ -78,12 +78,18 @@ the code path the model serves and carries the same checked-in route the API
 Worker uses when Flagship is unavailable. The suggested model list combines
 the reviewed work-stream pin choices with the classifier model used only by
 fleet routing; either a primary or fallback input may also carry an arbitrary
-OpenRouter model id entered as free text.
-Suggested IDs describe canonical model identity, not the runtime provider
-route. In particular, choosing `openai/gpt-5.6-sol` does not imply an
-OpenRouter fallback: the harness applies its checked-in Azure-only policy when
-the run executes. Ace's public OpenRouter lookup only validates that the
-canonical ID exists; it does not select that provider.
+OpenRouter model id entered as free text. Sol is the exception: Ace suggests
+and accepts it only for `inline_child` and `block_dashboard`, the roles whose
+complete execution paths currently receive Bind's Azure configuration and
+pricing port. A role such as `workstream` is not safe merely because its main
+turn is routed: its attachment-summary pass still uses the structured
+OpenRouter gateway.
+
+Suggested IDs describe canonical model identity, not an Azure deployment name.
+Ace's public OpenRouter lookup validates that a canonical ID exists; it does not
+select that provider. The role policy is checked in the client and repeated by
+the PUT schema before either the public lookup or Flagship I/O. Bind remains the
+owner of the Azure-only runtime provider fence.
 
 The sidebar is an explicit stack rank, not alphabetical order. It weights a
 role's product criticality first and its execution frequency second: main runs,
@@ -313,22 +319,25 @@ When a save succeeds but clients do not change, inspect in order:
 
 ## Changelog
 
-### 2026-09-02 — Sol appears in model suggestions without a second model list
+### 2026-09-02 — Sol appears only for completely Azure-routed roles
 
-**What changed:** The Models editor now suggests `openai/gpt-5.6-sol` above
-Terra and Luna because its `MODEL_CHOICES` continues to derive from the shared
-work-stream pin contract. Protocol coverage fixes that family order.
+**What changed:** The Models editor suggests `openai/gpt-5.6-sol` above Terra
+and Luna for `inline_child` and `block_dashboard`. It omits and rejects Sol for
+every role with any direct OpenRouter path.
 
-**Why:** Operators need Sol available for managed agent roles, while the model
-ordering must match the developer selector's capability order.
+**Why:** Operators need Sol available for managed Azure-routed roles, while the
+cost constraint forbids making it configurable on a path that can execute the
+same canonical ID through OpenRouter.
 
-**Considered and rejected:** Adding an Ace-only Sol entry or teaching Ace about
-Azure deployment names. That would duplicate the shared catalog and mix model
-identity with provider routing, which the harness already owns.
+**Considered and rejected:** Treating all eleven roles as equivalent because
+they share one Flagship schema. Several roles construct direct structured
+OpenRouter requests, and the work-stream role mixes a Bind main turn with one
+of those attachment-summary passes.
 
-**Consequences:** Ace still validates the canonical ID against OpenRouter's
-public catalog, but that validation creates no OpenRouter execution route. Sol
-runs remain fenced to Azure by the provider registry.
+**Consequences:** The suggestions are role-aware and Ace fails an unsafe save
+before provider or Flagship I/O. Sol remains canonical in Flagship, is still
+validated against the public model catalog for the two admitted roles, and
+relies on Bind for runtime provider enforcement.
 
 ### 2026-09-01 — multiple-workspaces-enabled joins the catalog it was assumed to be in
 
