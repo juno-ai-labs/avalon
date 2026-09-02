@@ -283,12 +283,16 @@ socket-ticket route (`workstream.socket.ticket`), the edge upgrade
 (`workstream.socket.upgrade`), the room's acceptance
 (`workstream.room.socket.accept`), and the room's subscription
 (`workstream.room.socket.subscribe`). A main-feed ticket also emits
-`workstream_socket_ticket_warm_finished` after its deferred room wake settles;
-its `ticket_id`, `duration_ms`, and `outcome` show whether ticket transit had a
-chance to cover storage readiness before the joined upgrade arrived. When the
-subscription's plan is a
-snapshot, `workstream.room.snapshot.detail`, `…transcript`, and `…encode` sit
-inside it. `rally.snapshot.trims` is worth reading beside the byte size. A
+`workstream_socket_ticket_warm_finished` after its deferred room preparation
+settles; its `ticket_id`, `duration_ms`, `outcome`, and `preparation_outcome`
+show whether ticket transit covered storage readiness, admission, and snapshot
+assembly before the joined upgrade arrived. Upgrade records
+`rally.socket.admission_source` as `ticket_preparation` or `regional_fallback`,
+and snapshot delivery records `rally.snapshot.source` as `ticket_preparation`
+or `room_assembly`. When the subscription's plan needs a fresh room snapshot,
+`workstream.room.snapshot.detail`, `…transcript`, and `…encode` sit inside it;
+the prepared path has no upgrade-time detail span. `rally.snapshot.trims` is
+worth reading beside the byte size. A
 subscription snapshot also records `rally.subscribe.snapshot_reason` as
 `initial` or `history_unavailable`, so hibernation recovery can be separated
 from a cold open. The trim loop re-serializes the whole frame per dropped
@@ -647,6 +651,28 @@ a new recorded decision. But what enforces it is the absence of a line in
 both signals rather than trusting the comment there to survive.
 
 ## Changelog
+
+### 2026-09-02 — Prepared admission separates hidden work from upgrade fallback
+
+**What changed:** The ticket-correlated warm completion now reports whether it
+prepared a snapshot, admission alone, or neither. Room acceptance labels the
+admission source, and snapshot delivery labels whether detail was assembled
+during ticket transit or inside the upgrade.
+
+**Why:** A warm RPC finishing before upgrade did not establish that it removed
+any critical-path work; storage readiness could be warm while repeated regional
+authorization and snapshot detail still occupied the room block. The new labels
+make the optimized and fallback cohorts directly queryable.
+
+**Considered and rejected:** Inferring preparation from a short room duration
+would confound replay-only subscriptions and already-warm objects. Reusing the
+old binary warm outcome would call an admission-only preparation equivalent to
+a fully prepared first frame.
+
+**Consequences:** Compare exact ticket IDs across the warm event and room span.
+A prepared-snapshot cohort should omit both regional admission spans and the
+upgrade-time snapshot-detail span; a fallback retains the old shape and remains
+the correctness baseline.
 
 ### 2026-09-02 — Ticket transit pays main-room wake and factory phases are lossless
 

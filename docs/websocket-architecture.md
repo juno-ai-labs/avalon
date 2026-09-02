@@ -123,6 +123,9 @@ purpose-specific 60-second ticket over authenticated HTTP, then immediately
 hands the clean URL and `[rally.ticket.v1, ticket]` protocol offer to the
 browser-shaped adapter. Neither ticket request, broker admission, handshake,
 subscription, nor initial snapshot awaits the other member of the pair.
+For the main feed, the Worker also starts a best-effort ticket-scoped
+SubstreamAgent preparation without awaiting it, so admission and snapshot work
+can overlap the ticket's return trip and native handshake.
 
 In packaged Electron, the adapter allocates a UUID socket ID and invokes the
 preload bridge. Main validates the IPC payload and destination before creating a
@@ -151,9 +154,12 @@ the Electron swarm's independent Node handshakes.
 The regional Worker validates the route, upgrade, Origin, ticket signature,
 audience, region, and target identity. It strips the bearer ticket before
 forwarding the upgrade and passes only verified identity and the ticket ID to
-the target object. The object rechecks its own authorization boundary, consumes
-the ticket ID once, accepts the server socket, and serializes the attachment
-needed after eviction.
+the target object. A feed ticket additionally carries a signed role and
+authority generation. If its in-memory preparation still matches every claim
+and the object's local generation, SubstreamAgent reuses that admission and
+prepared snapshot; otherwise it rechecks the former regional boundary. Either
+way the object enforces its local visibility, consumes the ticket ID once,
+accepts the server socket, and serializes the attachment needed after eviction.
 
 WorkspaceDO, WorkstreamDO, SubstreamAgent, and AutomationAgent use Cloudflare's
 [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/).
@@ -438,6 +444,30 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-02 — Feed tickets pre-pay room admission and snapshot detail
+
+**What changed:** Main-feed ticket transit now invokes a request-scoped
+SubstreamAgent preparation for the signed identity, role, authority generation,
+cursor, and ticket ID. A snapshot replay plan also assembles its first canonical
+frame before upgrade. The upgrade uses that work only on an exact match and
+otherwise retains the former regional fallback.
+
+**Why:** Storage-only waking overlapped object construction but left regional
+authorization and viewer-specific snapshot detail serialized after the network
+handshake. Those two blocks were still material against the total two-second
+switch target.
+
+**Considered and rejected:** Persisting the preparation would add a second
+content cache with cleanup and invalidation semantics. Removing the fallback
+would make an optional optimization an availability dependency. Settling unseen
+state during ticket transit would mistake intent for an actual open.
+
+**Consequences:** The common prepared path should reach the first frame after
+only local generation/visibility checks, durable ticket consumption, socket
+registration, and frame send. Revocation removes pending preparation. A cold
+eviction, stale generation, changed sequence, failed preparation, or older
+ticket pays the previous path without changing protocol correctness.
 
 ### 2026-09-01 — Intent warmth covers the feed and handshakes expose their real phases
 

@@ -1338,8 +1338,8 @@ export class WorkstreamObjectProductService {
    * everything else a commit can fail on, none of which is worth a work stream
    * that will not open.
    */
-  private async markOpened(userId: string): Promise<void> {
-    if (!this.isUnseen(userId)) return;
+  private async markOpened(userId: string): Promise<boolean> {
+    if (!this.isUnseen(userId)) return true;
     const now = Date.now();
     try {
       await this.objectStore.commitWithRegionalEffects(
@@ -1350,12 +1350,14 @@ export class WorkstreamObjectProductService {
         ),
         () => [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }],
       );
+      return !this.isUnseen(userId);
     } catch (error) {
       logWarn(this.env, "workstream_mark_opened_failed", {
         workstreamId: this.root().workstream_key,
         userId,
         reason: error instanceof Error ? error.message : "unknown",
       });
+      return false;
     }
   }
 
@@ -1802,9 +1804,9 @@ export class WorkstreamObjectProductService {
   }
 
   /** Settle unseen state after a speculative socket is promoted by navigation. */
-  async markOpenedAdmitted(auth: AuthContext): Promise<void> {
+  async markOpenedAdmitted(auth: AuthContext): Promise<boolean> {
     this.locallyAuthorizedRoot(auth);
-    await this.markOpened(auth.userId);
+    return this.markOpened(auth.userId);
   }
 
   private async detailAfterAdmission(

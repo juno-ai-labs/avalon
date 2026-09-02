@@ -312,6 +312,8 @@ type TestableSubstreamAgent = {
   runtimeRecoveryAttempt: () => Promise<void>;
   startRuntimeRecovery(): Promise<void>;
   fulfillSubscription(...args: unknown[]): Promise<boolean>;
+  socketAuth(...args: unknown[]): Promise<unknown>;
+  assembleSocketSnapshot(...args: unknown[]): Promise<unknown>;
 };
 
 type TestableDispatchScheduler = {
@@ -5347,6 +5349,147 @@ describe("Durable Objects in the Workers runtime", () => {
       });
     });
     socket.close(1000, "test complete");
+  });
+
+  it("uses the exact ticket-prepared admission and snapshot on the upgrade fast path", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE participants SET first_opened_at = ? WHERE user_id = ?`,
+        Date.now(),
+        USER_ID,
+      );
+    });
+
+    const revokedTicketId = "00000000-0000-7000-8000-00000000060f";
+    const revokedTicketExpiresAt = Math.floor(Date.now() / 1_000) + 60;
+    expect(await stub.prepareSocketAdmission({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      substreamId: asSubstreamId("0"),
+      userId: USER_ID,
+      sessionId: SESSION_ID,
+      ticketId: revokedTicketId,
+      ticketExpiresAt: revokedTicketExpiresAt,
+      authorityGeneration: 1,
+      role: "member",
+      analyticsWorkspaceId: null,
+      afterSequence: 0,
+      speculative: false,
+    })).toEqual({ outcome: "snapshot_prepared" });
+    await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
+      .bind("2026-09-02T00:00:00.000Z", SESSION_ID).run();
+    await stub.revokeSocketAccess({
+      reason: "session_revoked",
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      sessionId: SESSION_ID,
+    });
+    const revoked = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": revokedTicketId,
+        "x-rally-socket-ticket-expires-at": String(revokedTicketExpiresAt),
+        "x-rally-socket-after-sequence": "0",
+        "x-rally-socket-admission-version": "1",
+        "x-rally-socket-admission-authority-generation": "1",
+        "x-rally-socket-admission-role": "member",
+      },
+    });
+    expect(revoked.status).toBe(403);
+    await revoked.arrayBuffer();
+    await env.DB.prepare(`UPDATE sessions SET revoked_at = NULL WHERE id = ?`).bind(SESSION_ID).run();
+
+    const ticketId = "00000000-0000-7000-8000-000000000610";
+    const ticketExpiresAt = Math.floor(Date.now() / 1_000) + 60;
+    await expect(stub.prepareSocketAdmission({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      substreamId: asSubstreamId("0"),
+      userId: USER_ID,
+      sessionId: SESSION_ID,
+      ticketId,
+      ticketExpiresAt,
+      authorityGeneration: 1,
+      role: "member",
+      analyticsWorkspaceId: null,
+      afterSequence: 0,
+      speculative: false,
+    })).resolves.toEqual({ outcome: "snapshot_prepared" });
+
+    // Once preparation has established the exact ticket-scoped decision, the
+    // upgrade must neither re-run D1 session authorization nor rebuild detail.
+    // Replacing both methods makes this test fail if either old blocking path
+    // returns to the fast path.
+    await runInDurableObject(stub, (instance) => {
+      const testable = instance as unknown as TestableSubstreamAgent;
+      testable.socketAuth = async () => { throw new Error("unexpected_session_authorization"); };
+      testable.assembleSocketSnapshot = async () => { throw new Error("unexpected_snapshot_assembly"); };
+    });
+
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": ticketId,
+        "x-rally-socket-ticket-expires-at": String(ticketExpiresAt),
+        "x-rally-socket-after-sequence": "0",
+        "x-rally-socket-admission-version": "1",
+        "x-rally-socket-admission-authority-generation": "1",
+        "x-rally-socket-admission-role": "member",
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    const delivered = nextMessage(socket);
+    socket.accept();
+    expect(JSON.parse(String((await delivered).data))).toMatchObject({
+      type: "snapshot",
+      reason: "initial",
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
+        ticketId,
+        role: "member",
+        subscribed: true,
+      });
+    });
+    socket.close(1000, "test complete");
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => state.getWebSockets().length),
+      { timeout: 5_000 },
+    ).toBe(0);
   });
 
   it("does not trust an unsigned bootstrap cursor from the room URL", async () => {
