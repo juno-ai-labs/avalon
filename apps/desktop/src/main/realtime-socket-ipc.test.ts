@@ -59,7 +59,8 @@ describe('realtime socket IPC', () => {
     expect(broker.open).toHaveBeenCalledWith(17, openInput(), expect.any(Function));
     const emit = broker.open.mock.calls[0]?.[2] as (socketEvent: DesktopRealtimeSocketEvent) => void;
     const socketEvent: DesktopRealtimeSocketEvent = {
-      type: 'message', socketId, data: '{"type":"snapshot"}',
+      type: 'handshake_phase', socketId, phase: 'tls',
+      durationMs: 24.6, routeIndex: 0, proxied: false,
     };
     emit(socketEvent);
 
