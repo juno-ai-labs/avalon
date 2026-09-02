@@ -5,7 +5,12 @@ import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkspaceA
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
 import { workspaceActivationFailureCode } from '../../common/workspace-activation-error';
-import { useAppSession } from '../lib/app-session';
+import {
+  AccountSignInFailedError,
+  AccountSignInSupersededError,
+  useAppSession,
+  WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
+} from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { uuidV7 } from '../lib/telemetry';
 import { useUiStore } from '../lib/ui-store';
@@ -219,7 +224,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     getOnboardingState,
     invitationApi,
     pendingInvitation,
-    reconnectAccountIdentity,
     session,
     signOut,
   } = useAppSession();
@@ -283,16 +287,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
   const workspaceDirectory = useQuery<DesktopWorkspaceOnboardingState>({
-    queryKey: ['workspace-account-directory'],
+    queryKey: WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY,
     queryFn: getOnboardingState,
     enabled: multipleWorkspacesEnabled,
   });
-  // A state the bridge reports, not an error string it retries: main lists the
-  // stored set whatever happened to discovery, and says which of three states
-  // the account is in. Every switch crosses Global activation, so while the
-  // identity credential is missing no other workspace can be opened — the menu
-  // marks those rows rather than losing them.
-  const accountReconnectRequired = workspaceDirectory.data?.identity === 'reconnect_required';
+  // Main lists the stored set whatever happened to discovery. The account's
+  // own state is not read here: a switch or a creation that finds the
+  // identity credential missing signs in through the browser and continues
+  // by itself (see `activateWorkspace`), so no row is ever marked on a state
+  // this renderer may be holding stale.
   const pendingInvitationPreview = useQuery({
     queryKey: ['workspace-invitation-preview', pendingInvitation?.region, pendingInvitation?.token],
     queryFn: ({ signal }) => invitationApi!.getInvitationPreview(pendingInvitation!.token, signal),
@@ -373,7 +376,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     return () => window.removeEventListener('focus', refresh);
   }, [attentionWorkspaceKeys.join(':'), multipleWorkspacesEnabled]);
   const [switchingWorkspaceKey, setSwitchingWorkspaceKey] = useState<string | null>(null);
+  const [signingInWorkspaceKey, setSigningInWorkspaceKey] = useState<string | null>(null);
   const [workspaceErrors, setWorkspaceErrors] = useState<Record<string, string | undefined>>({});
+  // Choosing a row again while it waits on the browser starts a newer switch;
+  // the earlier one then stands down without touching the row it shares.
+  const switchAttemptRef = useRef(0);
   const switchingWorkspace = knownWorkspaces.find((candidate) => (
     desktopWorkspaceIdentityKey(candidate.region, candidate.id) === switchingWorkspaceKey
   ));
@@ -444,7 +451,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       <Sidebar
         accountMenu={(
           <WorkspaceAccountMenu
-            accountReconnectRequired={accountReconnectRequired}
             activeWorkspace={activeWorkspace}
             attention={workspaceAttention.data ?? {}}
             currentUser={workspace.currentUser}
@@ -456,8 +462,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               clearPendingInvitation();
               await workspaceDirectory.refetch();
             }}
-            onCreateWorkspace={async (input, operationId) => {
-              await finishWorkspaceSetup(input.name, input.region, operationId);
+            onCreateWorkspace={async (input, operationId, progress) => {
+              await finishWorkspaceSetup(input.name, input.region, operationId, progress);
               await workspaceDirectory.refetch();
             }}
             onDeclineInvitation={async (invitation) => {
@@ -468,42 +474,36 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               void workspaceDirectory.refetch();
               if (attentionWorkspaces.length > 0) void workspaceAttention.refetch();
             }}
-            onReconnectAccount={async () => {
-              try {
-                await reconnectAccountIdentity();
-              } catch (error) {
-                await desktopBridge().showDeepLinkError(
-                  error instanceof Error ? error.message : 'Rally could not open the sign-in page.',
-                );
-              }
-            }}
             onInvitationPromptDismiss={clearPendingInvitation}
             onOpenSettings={() => { void desktopBridge().openSettings(); }}
             onSignOut={() => { void signOut().catch(() => undefined); }}
             onSwitchWorkspace={async (target) => {
               const targetKey = desktopWorkspaceIdentityKey(target.region, target.id);
-              if (accountReconnectRequired) {
-                setWorkspaceErrors((current) => ({
-                  ...current, [targetKey]: 'Reconnect your account to open this workspace',
-                }));
-                return false;
-              }
               if (!navigator.onLine) {
                 setWorkspaceErrors((current) => ({ ...current, [targetKey]: 'Connect to open this workspace' }));
                 return false;
               }
+              const attempt = ++switchAttemptRef.current;
               setWorkspaceErrors((current) => ({ ...current, [targetKey]: undefined }));
+              setSigningInWorkspaceKey(null);
               setSwitchingWorkspaceKey(targetKey);
               try {
-                await activateWorkspace(target.region, target.id, uuidV7());
+                await activateWorkspace(target.region, target.id, uuidV7(), {
+                  onSignInRequired: () => {
+                    if (switchAttemptRef.current === attempt) setSigningInWorkspaceKey(targetKey);
+                  },
+                });
                 return true;
               } catch (error) {
+                if (error instanceof AccountSignInSupersededError) return false;
                 const code = error instanceof Error && 'code' in error ? String(error.code) : undefined;
                 const message = error instanceof Error ? error.message : '';
                 const activationFailure = workspaceActivationFailureCode(error);
                 setWorkspaceErrors((current) => ({
                   ...current,
-                  [targetKey]: message === 'Finish or stop the recording before switching workspaces'
+                  [targetKey]: error instanceof AccountSignInFailedError
+                    ? error.message
+                    : message === 'Finish or stop the recording before switching workspaces'
                     ? message
                     : code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied'
                     ? 'You are no longer a member of this workspace'
@@ -514,9 +514,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
                 }
                 return false;
               } finally {
-                setSwitchingWorkspaceKey((current) => current === targetKey ? null : current);
+                if (switchAttemptRef.current === attempt) {
+                  setSwitchingWorkspaceKey(null);
+                  setSigningInWorkspaceKey(null);
+                }
               }
             }}
+            signingInWorkspaceKey={signingInWorkspaceKey}
             staleAt={workspaceAttention.isError && workspaceAttention.dataUpdatedAt > 0
               ? new Date(workspaceAttention.dataUpdatedAt).toISOString()
               : null}

@@ -1,4 +1,4 @@
-import { workspaceActivationFailure } from '../common/workspace-activation-error';
+import { workspaceActivationFailure, workspaceActivationFailureCode } from '../common/workspace-activation-error';
 
 export class RallyApiResponseError extends Error {
   override readonly name = 'RallyApiResponseError';
@@ -13,6 +13,9 @@ export class RallyApiResponseError extends Error {
 }
 
 export function workspaceActivationBridgeError(error: unknown): Error {
+  // A failure the bridge has already named — the device holding no identity
+  // credential — crosses as it is; wrapped, it would read as an outage.
+  if (error instanceof Error && workspaceActivationFailureCode(error)) return error;
   return workspaceActivationFailure(
     error instanceof RallyApiResponseError
       && (error.code === 'workspace_access_denied' || error.code === 'workspace_access_revoked')
