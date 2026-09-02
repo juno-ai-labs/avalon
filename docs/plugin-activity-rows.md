@@ -122,7 +122,7 @@ advances at the rate its own total accrues.
 one **Rally** row. `rally:terminal` and `rally:workstream` are Rally operating a
 machine, and are drawn as one **Computer** row. The named
 `rally:multimodal-generation` plugin keeps its own **Multimodal generation** row
-with the generic first-party plug glyph. A first-party plugin that is
+with Tabler's dedicated **image-generation** glyph. A first-party plugin that is
 absent from that map *and* has no display name of its own — which is how an
 undecided one appears, since the transcript falls back to the raw id as its
 label — joins Rally, so an internal identifier never reaches the feed. Every
@@ -380,6 +380,26 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-09-02 — Multimodal generation gets a media-specific glyph
+
+**What changed:** The `rally:multimodal-generation` activity row now draws
+Tabler's `image-generation` icon instead of the generic plug fallback. The
+canonical plugin id selects a dedicated group, so its icon does not depend on a
+display-name heuristic.
+
+**Why:** A plug communicates an unspecified integration, while this first-party
+plugin performs a specific, recognizable media-generation task. Its activity
+row should identify that task at a glance.
+
+**Considered and rejected:** Lucide's `pencil-ruler` icon, because the
+unbranded plugin glyph table on this surface uses Tabler icons. Also rejected
+matching only the display name, which would make first-party presentation
+depend on mutable prose instead of the plugin's stable identity.
+
+**Consequences:** The generic plug remains the fallback for unknown connectors.
+Future multimodal display-name changes retain the media glyph as long as the
+canonical plugin id remains `rally:multimodal-generation`.
 
 ### 2026-09-02 — The thinking row wears a brain
 

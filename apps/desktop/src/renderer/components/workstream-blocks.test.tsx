@@ -1587,6 +1587,20 @@ describe('MessageBlock plugin activity rows', () => {
     expect(screen.getByText('Rally worked for 4s')).toBeVisible();
     expect(screen.getByRole('img', { name: 'Plugin: Rally' })).toBeVisible();
   });
+
+  it('draws multimodal generation with Tabler\'s image-generation glyph', () => {
+    const { container } = render(<MessageBlock {...actions} message={pluginRow('message-multimodal', {
+      groupKey: 'name:Multimodal generation',
+      name: 'Multimodal generation',
+      icon: 'image-generation',
+      active: true,
+      durationMs: 6_000,
+    })} />);
+
+    expect(screen.getByText('Multimodal generation is working for 6s')).toBeVisible();
+    expect(container.querySelector('svg.tabler-icon-image-generation')).toBeVisible();
+    expect(container.querySelector('svg.tabler-icon-plug')).toBeNull();
+  });
 });
 
 describe('splitStreamingMarkdown', () => {
