@@ -199,6 +199,13 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument();
     expect(screen.queryByText('New automation')).not.toBeInTheDocument();
     expect(screen.getByRole('searchbox', { name: 'Search work streams' })).toBeInTheDocument();
+    const titlebar = document.querySelector('.sidebar-titlebar');
+    const commandbar = document.querySelector('.sidebar-commandbar');
+    expect(titlebar).not.toBeNull();
+    expect(commandbar).not.toBeNull();
+    expect(titlebar).toContainElement(screen.getByRole('link', { name: 'New work stream' }));
+    expect(commandbar).toContainElement(screen.getByRole('searchbox', { name: 'Search work streams' }));
+    expect(commandbar?.querySelector('.sidebar-new-button')).toBeNull();
   });
 
   afterEach(() => vi.unstubAllGlobals());
