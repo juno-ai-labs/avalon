@@ -4663,7 +4663,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       return { ok: false, code: "project_access_denied" };
     }
-    const workstreamIds = this.projectStorage().members(request.userId, request.projectId);
+    const workstreamIds = this.projectStorage()
+      .memberWorkstreamIds(request.userId, request.projectId);
     return workstreamIds === false
       ? { ok: false, code: "project_not_found" }
       : WorkspaceProjectMembersResultSchema.parse({ ok: true, workstreamIds });

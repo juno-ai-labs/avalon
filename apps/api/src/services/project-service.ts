@@ -133,7 +133,7 @@ export class ProjectService {
     // who may read the work stream, so a fan-out that skipped the archived
     // members would leave a removed participant reading whatever is unarchived
     // afterwards.
-    for (const workstreamId of await this.members(projectId)) {
+    for (const workstreamId of await this.memberWorkstreamIds(projectId)) {
       if (input.scope === "workspace") {
         await workstreams.update(workstreamId, { scope: "workspace" });
       } else {
@@ -316,11 +316,12 @@ export class ProjectService {
   /**
    * Every work stream the project holds, archived ones included.
    *
-   * `ProjectSummary.workstreamIds` is the members a surface can list, so
+   * Work streams, not participants. `ProjectSummary.workstreamIds` is the
+   * members a surface can list, so
    * anything acting on the project's behalf asks the authority instead of
    * reading the shape built for a screen.
    */
-  private async members(projectId: ProjectId): Promise<WorkstreamId[]> {
+  private async memberWorkstreamIds(projectId: ProjectId): Promise<WorkstreamId[]> {
     const result = WorkspaceProjectMembersResultSchema.parse(
       await (await this.workspace()).listProjectMembers({
         workspaceId: this.auth.workspaceId,
