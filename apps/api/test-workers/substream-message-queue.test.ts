@@ -238,7 +238,82 @@ function assistantTurn(text: string): readonly unknown[] {
   return [{ choices: [{ delta: { content: text }, finish_reason: "stop" }] }];
 }
 
+async function holdFirstExternalSettlement(
+  stub: DurableObjectStub,
+): Promise<{ entered: boolean; open: boolean }> {
+  return runInDurableObject(stub, (instance) => {
+    const gate = { entered: false, open: false };
+    const target = instance as unknown as {
+      settleAgentRun: (...args: unknown[]) => Promise<string | null>;
+    };
+    const settle = target.settleAgentRun.bind(target);
+    let held = false;
+    target.settleAgentRun = async (...args: unknown[]): Promise<string | null> => {
+      if (!held) {
+        held = true;
+        gate.entered = true;
+        while (!gate.open) await scheduler.wait(10);
+      }
+      return settle(...args);
+    };
+    return gate;
+  });
+}
+
 describe("a message queued behind a live run", () => {
+  it("starts the next inference while the previous run's external settlement is blocked", async () => {
+    const stub = agentStub();
+    let settlementGate: { entered: boolean; open: boolean } | null = null;
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          assistantTurn("answering the opening message"),
+          assistantTurn("answering without waiting for external delivery"),
+        ],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      await initializeWorkstream(stub, "opening message");
+      await waitForGatedProviderCall(stub);
+      const queued = await sendMessage(stub, {
+        text: "do not wait for settlement",
+        clientMessageId: "queue-settlement-independent-1",
+      });
+      settlementGate = await holdFirstExternalSettlement(stub);
+
+      await openProviderGate(stub);
+      await expect.poll(() => settlementGate?.entered ?? false, {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the opening run never entered external settlement",
+      }).toBe(true);
+      expect(settlementGate.open).toBe(false);
+      // This is the contract: the second provider call happens while the first
+      // run's delivery/metadata continuation is still deliberately blocked.
+      await expect.poll(async () => (await capturedProviderRequests(stub)).length, {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the next inference waited for external settlement",
+      }).toBe(2);
+      await settledInOrder(stub, [queued.turnId]);
+
+      settlementGate.open = true;
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM runs
+            WHERE terminalized_at IS NOT NULL AND external_settled_at IS NULL`,
+        ).one().count), {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 50,
+        message: "the independent settlement lane did not drain",
+      }).toBe(0);
+    } finally {
+      if (settlementGate) settlementGate.open = true;
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
   it("delivers every message queued during one run, in admission order, one run each", async () => {
     const stub = agentStub();
     try {

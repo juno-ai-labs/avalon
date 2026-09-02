@@ -117,8 +117,9 @@ alongside the directory rows. A hop that finds nothing to close costs one call.
 Four of the five `revokeSocketAccess` methods walk `state.getWebSockets()`, read
 the hibernation attachment, and ask `revocationClosesSocket` — one shared
 predicate rather than an inline copy each. Those four roles disagree about their own attachments:
-`SubstreamAgent` alone makes `sessionId` optional, because a socket accepted
-before the command gateway carries none. Written out per role, the natural
+`SubstreamAgent` alone makes `sessionId` and the admitted `role` optional,
+because sockets accepted before their respective command gateways carry none.
+Written out per role, the natural
 `attachment.sessionId !== request.sessionId` reads as *skip* for `undefined`,
 which is how the transcript feed came to be exempt from every logout and expiry
 in the first place. Shared, a schema change on one role cannot silently diverge
@@ -327,6 +328,28 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-09-01 — Closing the room socket ends its message authority
+
+**What changed:** The SubstreamAgent socket now spends its admitted attachment
+identity for `create_message` instead of sending the command through WorkspaceDO
+for a second session query. The existing revocation walk still closes that
+socket for workspace, work-stream, participant, or session loss.
+
+**Why:** Admission already verifies membership and local readability, and the
+queue is the system's one mechanism for ending open-socket access. Re-asking D1
+on every message made the revocation queue advisory for writes and added a
+second, slower authority boundary.
+
+**Considered and rejected:** Polling or per-command session verification would
+put D1 back on the hot path and allow its answer to race the queue that closes
+all sibling sockets. Trusting attachment identity without the close walk would
+let a disconnected authority continue writing, so the two changes cannot be
+separated.
+
+**Consequences:** A successful revocation delivery is now both read and write
+revocation proof. New authorization-loss cases must extend the same walk rather
+than adding a command-local check.
 
 ### 2026-09-01 — ArtifactHostDO joins the walk, holding sessions rather than sockets
 

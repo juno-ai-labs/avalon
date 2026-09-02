@@ -1,14 +1,16 @@
 import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
+  WorkstreamSocketCommandResultSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   type AgentCompactionState,
   type ActiveStreamCheckpoint,
-  type WorkspaceSocketClientEvent,
+  type ClientSocketEvent,
   type PersonalSocketEvent,
   type ServerSocketEvent,
   type PendingTranscriptInput,
   type WorkstreamTranscriptSnapshot,
+  type WorkstreamMessageAdmissionReceipt,
   type TranscriptRange,
   type TranscriptRangeResult,
 } from '@rally/contracts';
@@ -70,8 +72,6 @@ import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, 
 import { withDerivedUnread } from './workstream-state-store';
 import { evictCachedWorkstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
-import { useWorkspaceSocket } from './workspace-socket';
-import type { AcceptedWorkstreamTurn } from './workspace-socket';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
 export type { StreamCursor } from './workstream-socket-resume';
@@ -98,9 +98,10 @@ export interface CreateWorkstreamMessageInput {
 
 export interface WorkstreamSocketConnection {
   state: SocketState;
-  /** The workstream handler can admit sends to the workspace queue. The painted
+  /** The workstream handler can admit sends to the room-socket queue. The painted
    * telemetry milestone is reported separately after the consuming UI commits. */
   sendReady: boolean;
+  /** Legacy telemetry field name; this now reports the message-carrying room socket. */
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeCompaction: AgentCompactionState | null;
   createMessage(input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn>;
@@ -113,7 +114,16 @@ export interface WorkstreamSocketConnection {
   requestSnapshot(): void;
 }
 
-type CreateMessageSocketCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
+export type AcceptedWorkstreamTurn = WorkstreamMessageAdmissionReceipt['turn']
+  & Pick<WorkstreamMessageAdmissionReceipt, 'deliveryState'>;
+
+type CreateMessageSocketCommand = Extract<ClientSocketEvent, { type: 'create_message' }>;
+
+interface PendingMessageCommand {
+  command: CreateMessageSocketCommand;
+  resolve: (turn: AcceptedWorkstreamTurn) => void;
+  reject: (error: Error) => void;
+}
 
 const HEARTBEAT_BASE_MS = 45_000;
 const HEARTBEAT_JITTER_MS = 10_000;
@@ -641,10 +651,6 @@ export function useWorkstreamSocket(
   openCommitted = true,
 ): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
-  const {
-    createMessage: createWorkspaceMessage,
-    state: workspaceSocketState,
-  } = useWorkspaceSocket();
   const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
   const resolvedSocketLeaseId = socketLeaseId ?? generatedSocketLeaseId;
   const initialReasonRef = useRef(initialReason);
@@ -735,6 +741,17 @@ export function useWorkstreamSocket(
       markOpenedSent = true;
     };
     markOpenedRef.current = markOpened;
+    const pendingMessageCommands = new Map<string, PendingMessageCommand>();
+    const sendPendingMessages = (target: RealtimeSocket | null = socket): void => {
+      if (target?.readyState !== REALTIME_SOCKET_OPEN) return;
+      for (const pending of pendingMessageCommands.values()) {
+        target.send(JSON.stringify(pending.command));
+      }
+    };
+    const rejectPendingMessages = (error: Error): void => {
+      for (const pending of pendingMessageCommands.values()) pending.reject(error);
+      pendingMessageCommands.clear();
+    };
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -824,7 +841,7 @@ export function useWorkstreamSocket(
     let openTrace: PerfTrace | null = null;
 
     createMessageRef.current = async (input): Promise<AcceptedWorkstreamTurn> => {
-      // Keyed by the client message id, which WorkspaceDO records on its own
+      // Keyed by the client message id, which SubstreamAgent records on its own
       // span as `rally.message.client_id`: the command travels over an
       // already-open socket the platform traces as its own invocation, so this
       // is the only value the renderer and the server both hold.
@@ -856,8 +873,6 @@ export function useWorkstreamSocket(
         reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
         const command: CreateMessageSocketCommand = {
           type: 'create_message',
-          workstreamId,
-          substreamId: '0',
           operationId,
           payload: {
             text: input.text,
@@ -868,7 +883,16 @@ export function useWorkstreamSocket(
             ...(input.runMode ? { runMode: input.runMode } : {}),
           },
         };
-        const message = await trace.step('command_round_trip', () => createWorkspaceMessage(command));
+        const message = await trace.step('command_round_trip', () =>
+          new Promise<AcceptedWorkstreamTurn>((resolve, reject) => {
+            // The durable write is idempotent by clientMessageId. Keep this
+            // command across reconnects and resend the same identity: rejecting
+            // an ambiguous disconnect would invite the composer to mint a new
+            // identity and duplicate an already-accepted message.
+            pendingMessageCommands.set(input.clientId, { command, resolve, reject });
+            sendPendingMessages();
+            void connect();
+          }));
         trace.end();
         return message;
       } catch (error) {
@@ -877,7 +901,7 @@ export function useWorkstreamSocket(
       }
     };
     // Readiness means the work-stream-specific handler is installed and can
-    // hand a command to the workspace queue. The queue owns reconnecting
+    // hand a command to the room queue. The queue owns reconnecting
     // transport, so this intentionally does not wait for either socket to open.
     setSendReady(true);
 
@@ -1728,6 +1752,7 @@ export function useWorkstreamSocket(
             }));
           }
           markOpened();
+          sendPendingMessages(nextSocket);
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
         });
@@ -1739,6 +1764,26 @@ export function useWorkstreamSocket(
           }
           try {
             const parsed: unknown = JSON.parse(String(messageEvent.data));
+            const commandResult = WorkstreamSocketCommandResultSchema.safeParse(parsed);
+            if (commandResult.success) {
+              const pending = pendingMessageCommands.get(commandResult.data.clientMessageId);
+              if (!pending) return;
+              pendingMessageCommands.delete(commandResult.data.clientMessageId);
+              if (commandResult.data.type === 'client_command_succeeded') {
+                pending.resolve({
+                  ...commandResult.data.turn,
+                  deliveryState: commandResult.data.deliveryState,
+                });
+              } else {
+                pending.reject(new ApiError(
+                  commandResult.data.error.message,
+                  commandResult.data.error.status,
+                  commandResult.data.error.code,
+                  commandResult.data.error.details,
+                ));
+              }
+              return;
+            }
             const event = ServerSocketEventSchema.safeParse(parsed);
             if (event.success) {
               if (openTrace === trace) {
@@ -1790,6 +1835,11 @@ export function useWorkstreamSocket(
               retrying: false,
               cause: 'access_revoked',
             });
+            rejectPendingMessages(new ApiError(
+              'You can no longer access this work stream.',
+              403,
+              'workstream_access_revoked',
+            ));
             handleAccessRevoked();
             return;
           }
@@ -1893,6 +1943,11 @@ export function useWorkstreamSocket(
         'workstream_socket_unavailable',
       ));
       rejectPendingTranscriptRanges('The work stream changed while loading transcript ranges.');
+      rejectPendingMessages(new ApiError(
+        'The work stream changed while sending the message.',
+        409,
+        'workstream_socket_unavailable',
+      ));
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -1905,7 +1960,9 @@ export function useWorkstreamSocket(
       clearStabilityTimer();
       socket?.close();
     };
-  }, [api, createWorkspaceMessage, enabled, queryClient, resolvedSocketLeaseId, resumeState, workstreamId]);
+  }, [api, enabled, queryClient, resolvedSocketLeaseId, resumeState, workstreamId]);
+
+  const workspaceSocketState = state === 'idle' ? 'unavailable' : state;
 
   return useMemo(
     () => ({
