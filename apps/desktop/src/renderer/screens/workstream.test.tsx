@@ -779,12 +779,16 @@ const transcript: Message[] = [
 
 describe('right sidebar occupancy', () => {
   it('gives the slot to the inspector, so a failed preference write cannot open both', () => {
-    expect(blockDashboardHoldsSidebar(true, false)).toBe(true);
-    expect(blockDashboardHoldsSidebar(false, false)).toBe(false);
-    expect(blockDashboardHoldsSidebar(false, true)).toBe(false);
+    expect(blockDashboardHoldsSidebar(true, false, true)).toBe(true);
+    expect(blockDashboardHoldsSidebar(false, false, true)).toBe(false);
+    expect(blockDashboardHoldsSidebar(false, true, true)).toBe(false);
     // The stored preference can still say "visible" after a rolled-back write;
     // the panel the person just opened keeps the slot regardless.
-    expect(blockDashboardHoldsSidebar(true, true)).toBe(false);
+    expect(blockDashboardHoldsSidebar(true, true, true)).toBe(false);
+  });
+
+  it('leaves the slot empty for a preference this visit has not opened', () => {
+    expect(blockDashboardHoldsSidebar(true, false, false)).toBe(false);
   });
 });
 

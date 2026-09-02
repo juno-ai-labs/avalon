@@ -19,8 +19,20 @@ export const RAIL_CROSSFADE_MS = 190;
  * has already let go, so the slot is briefly empty in between. Carrying the
  * outgoing panel through that gap is what makes both directions cross-fade
  * rather than only the one that happens to change hands in a single commit.
+ *
+ * `scope` names what the panels belong to — the work stream, for the sidebar
+ * the work-stream screen owns. A panel does not fade out of a scope it is no
+ * longer in: it has nothing to dissolve into there, and holding it on screen
+ * would lay the arriving scope out around a panel from the one just left. So a
+ * changed scope adopts whatever is active in it and forgets everything about
+ * the old one, including a fade already running. Callers with one scope leave
+ * it out.
  */
-export function useRailCrossFade<PanelId extends string>(activeId: PanelId | null): PanelId | null {
+export function useRailCrossFade<PanelId extends string>(
+  activeId: PanelId | null,
+  scope?: string | null,
+): PanelId | null {
+  const [shownScope, setShownScope] = useState(scope);
   const [shownId, setShownId] = useState(activeId);
   // The same panel can start a second fade while its first one is still
   // pending — close it, reopen it, then hand the slot away. Storing the id
@@ -29,7 +41,11 @@ export function useRailCrossFade<PanelId extends string>(activeId: PanelId | nul
   // fade early. The count makes every departure a distinct value.
   const [leaving, setLeaving] = useState<{ id: PanelId; departure: number } | null>(null);
 
-  if (shownId !== activeId) {
+  if (shownScope !== scope) {
+    setShownScope(scope);
+    setShownId(activeId);
+    setLeaving(null);
+  } else if (shownId !== activeId) {
     setShownId(activeId);
     if (shownId !== null) {
       setLeaving((current) => ({ id: shownId, departure: (current?.departure ?? 0) + 1 }));
