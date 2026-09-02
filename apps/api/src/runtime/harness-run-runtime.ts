@@ -511,7 +511,11 @@ export async function persistImmutableRunScope(
     limitsJson: stableJson(canonicalScope.limits),
   });
   if (persisted.outcome === "ownership_lost") throw new RunOwnershipLostError();
-  if (persisted.outcome === "mismatch") throw new Error("immutable_run_scope_mismatch");
+  // `reused` means the run already has a recorded scope, and it wins. The hash
+  // computed just above describes the *current* attempt's build, so on a run
+  // resumed across a deploy it is legitimately a different value than the one
+  // stored — which is why nothing compares the two. `persistScope` carries the
+  // full reasoning and the incident it came from.
   return { scopeHash, reused: persisted.outcome === "reused" };
 }
 
@@ -606,7 +610,6 @@ export async function persistRunPluginActivation(
     toolSurfaceHash: plugin.toolSurfaceHash,
   });
   if (persisted.outcome === "ownership_lost") throw new RunOwnershipLostError();
-  if (persisted.outcome === "mismatch") throw new Error("plugin_activation_mismatch");
 }
 
 export async function heartbeatHarnessAttempt(

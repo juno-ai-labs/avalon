@@ -683,9 +683,12 @@ precede any LLM classification.
   boundary on the open internet. The engineering MCP is the explicit
   Access-authorized operator exception that may return requested EU Durable
   Object content through such a binding; product traffic has no equivalent.
-- **A run's authority can narrow but never widen.** Immutable run scopes plus live
+- **A run's authority can narrow but never widen.** Recorded run scopes plus live
   connection reauthorization mean progressive plugin activation cannot introduce a
-  connection or grant the run did not start with.
+  connection or grant the run did not start with. Live reauthorization is the
+  enforcing half: the recorded scope is not re-checked against a resumed
+  attempt's own recomputation, because a Worker deploy makes the two differ. See
+  [`agent-harness.md`](agent-harness.md).
 - **Business rules live in services or shared packages, never in route
   handlers.** A rule enforced in a handler is a rule the scheduler, the Queue
   consumer, and the Workflow do not get.
