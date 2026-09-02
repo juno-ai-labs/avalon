@@ -19,6 +19,7 @@ import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
 import { newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
 import { useDraftText } from './use-draft-text';
 import { RallyApi } from './api';
+import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { readDevicePreferences } from './device-preferences';
 import {
   consumeSurfaceEntrypoint,
@@ -39,6 +40,7 @@ let observedLeaveWorkspace: ((
 ) => Promise<unknown>) | null = null;
 let observedPendingConnectorOAuth: AppSessionValue['pendingConnectorOAuth'] = null;
 let observedSetPendingConnectorOAuth: AppSessionValue['setPendingConnectorOAuth'] | null = null;
+let observedActivateWorkspace: AppSessionValue['activateWorkspace'] | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
@@ -105,6 +107,7 @@ function SessionProbe(): React.JSX.Element {
   observedLeaveWorkspace = context.leaveWorkspace;
   observedPendingConnectorOAuth = context.pendingConnectorOAuth;
   observedSetPendingConnectorOAuth = context.setPendingConnectorOAuth;
+  observedActivateWorkspace = context.activateWorkspace;
   return (
     <>
       <output>
@@ -717,6 +720,71 @@ describe('single-platform desktop identity routing', () => {
       workspaceId: targetWorkspaceId,
     }));
     expect(await screen.findByText('global:Origin Workspace')).toBeVisible();
+  });
+
+  it('lands a chosen workspace on its new-work-stream page with its record already in the cache', async () => {
+    const workspaceA = '00000000-0000-7000-8000-000000000031';
+    window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000032';
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: '00000000-0000-7000-8000-000000000033', name: 'Workspace B', region: 'global', role: 'member' },
+    });
+    const activated: DesktopSession = {
+      ...globalIdentitySession,
+      accessToken: 'workspace-a-access-token-longer-than-twenty',
+      workspace: { id: workspaceA, name: 'Workspace A', region: 'global', role: 'owner' },
+    };
+    bridge.activateWorkspace.mockResolvedValueOnce(activated);
+    const record = {
+      id: workspaceA, name: 'Workspace A', region: 'global' as const, timezone: 'America/New_York',
+      currentUser: { id: 'user-1', email: 'invitee@example.com', name: 'Invitee', timezone: 'America/New_York', role: 'owner' as const },
+    };
+    let resolveRecord!: (value: typeof record) => void;
+    const getWorkspace = vi.spyOn(RallyApi.prototype, 'getWorkspace').mockImplementation(
+      () => new Promise((resolve) => { resolveRecord = resolve; }),
+    );
+    // Main announces the new session the moment it is persisted — before the
+    // activation has fetched what the shell needs — exactly as the desktop does.
+    bridge.activateWorkspace.mockImplementation(async () => {
+      sessionListener?.(activated);
+      return activated;
+    });
+    const client = renderProvider();
+    expect(await screen.findByText('global:Workspace B')).toBeVisible();
+    const flags = { developerSettings: true, multipleWorkspacesEnabled: true };
+    client.setQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY, flags);
+
+    let activation!: Promise<void>;
+    await act(async () => { activation = observedActivateWorkspace!('global', workspaceA); await Promise.resolve(); });
+    await waitFor(() => expect(getWorkspace).toHaveBeenCalledTimes(1));
+    // The early announcement did not take the previous workspace down.
+    expect(screen.getByText('global:Workspace B')).toBeVisible();
+    expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000032');
+    await act(async () => { resolveRecord(record); await activation; });
+
+    expect(await screen.findByText('global:Workspace A')).toBeVisible();
+    expect(window.location.hash).toBe('#/workstreams/new');
+    expect(client.getQueryData(['workspace', workspaceA, 'user-1'])).toEqual(record);
+    expect(client.getQueryData(CLIENT_FEATURE_FLAGS_QUERY_KEY)).toEqual(flags);
+    expect(client.getQueryState(CLIENT_FEATURE_FLAGS_QUERY_KEY)?.dataUpdatedAt).toBe(0);
+    getWorkspace.mockRestore();
+  });
+
+  it('keeps the route when the chosen workspace is the one already open', async () => {
+    window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000034';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockResolvedValueOnce({ ...euSession, accessToken: 'renewed-access-token-longer-than-twenty' });
+    const getWorkspace = vi.spyOn(RallyApi.prototype, 'getWorkspace').mockResolvedValue({
+      id: 'workspace-eu', name: 'European Research', region: 'eu', timezone: 'Europe/Berlin',
+      currentUser: { id: 'user-1', email: 'invitee@example.com', name: 'Invitee', timezone: 'Europe/Berlin', role: 'member' },
+    });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    await act(async () => { await observedActivateWorkspace!('eu', 'workspace-eu'); });
+
+    expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000034');
+    getWorkspace.mockRestore();
   });
 
   it('returns from workspace B to same-region workspace A for connector completion', async () => {

@@ -194,6 +194,9 @@ export function applyPinnedWorkstreamsIfCurrent(
  * latency hedge against one visible reorder, and the push behind it is what
  * makes the row correct.
  */
+/** How long the panes take to fade up on a new workspace; matches `workspace-enter` in `app.css`. */
+const WORKSPACE_ENTER_MS = 320;
+
 export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
   return useQuery<T[]>({
     queryKey,
@@ -374,6 +377,27 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const switchingWorkspace = knownWorkspaces.find((candidate) => (
     desktopWorkspaceIdentityKey(candidate.region, candidate.id) === switchingWorkspaceKey
   ));
+  // A switch is a dissolve rather than a cut. While the new credential is
+  // minted the screen dims in place, and once the session changes the same
+  // panes fade back up over the same backdrop showing the new workspace —
+  // possible because `activateWorkspace` fetches what this shell needs before
+  // the old workspace is torn down, so nothing blank sits between the two.
+  const workspaceKey = desktopWorkspaceIdentityKey(workspace.region, workspace.id);
+  const [enteringWorkspaceKey, setEnteringWorkspaceKey] = useState<string | null>(null);
+  const shownWorkspaceKey = useRef(workspaceKey);
+  useEffect(() => {
+    if (shownWorkspaceKey.current === workspaceKey) return undefined;
+    shownWorkspaceKey.current = workspaceKey;
+    setEnteringWorkspaceKey(workspaceKey);
+    const timer = window.setTimeout(() => setEnteringWorkspaceKey(null), WORKSPACE_ENTER_MS);
+    return () => window.clearTimeout(timer);
+  }, [workspaceKey]);
+  const shellClassName = [
+    'workspace-shell',
+    showShellRail ? 'rail-open' : '',
+    switchingWorkspaceKey !== null ? 'is-switching-workspace' : '',
+    enteringWorkspaceKey === workspaceKey ? 'is-entering-workspace' : '',
+  ].filter(Boolean).join(' ');
   const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
@@ -404,7 +428,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       api={api}
       backgroundWorkstreamIds={backgroundRealtimeIds}
     >
-      <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
+      <div className={shellClassName} style={shellStyle}>
       {/*
         The main window only. The standalone Settings and meeting windows reach
         their own surfaces before `AppShell` and deliberately do not mount this:
@@ -463,16 +487,17 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
                 setWorkspaceErrors((current) => ({
                   ...current, [targetKey]: 'Reconnect your account to open this workspace',
                 }));
-                return;
+                return false;
               }
               if (!navigator.onLine) {
                 setWorkspaceErrors((current) => ({ ...current, [targetKey]: 'Connect to open this workspace' }));
-                return;
+                return false;
               }
               setWorkspaceErrors((current) => ({ ...current, [targetKey]: undefined }));
               setSwitchingWorkspaceKey(targetKey);
               try {
                 await activateWorkspace(target.region, target.id, uuidV7());
+                return true;
               } catch (error) {
                 const code = error instanceof Error && 'code' in error ? String(error.code) : undefined;
                 const message = error instanceof Error ? error.message : '';
@@ -488,6 +513,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
                 if (code === 'workspace_access_denied' || activationFailure === 'workspace_access_denied') {
                   await workspaceDirectory.refetch();
                 }
+                return false;
               } finally {
                 setSwitchingWorkspaceKey((current) => current === targetKey ? null : current);
               }
@@ -758,11 +784,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         workspace={workspace}
         workstreams={workstreams.data ?? []}
       />
-        {switchingWorkspace && (
-          <div aria-live="polite" className="workspace-opening-overlay">
-            Opening {switchingWorkspace.name}…
-          </div>
-        )}
+        <span aria-live="polite" className="sr-only">
+          {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}
+        </span>
         <main className="main-pane">
           {children}
         </main>
