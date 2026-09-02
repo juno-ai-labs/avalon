@@ -101,11 +101,11 @@ let directorySeq = 0;
  * would — the projection a project reads to tell a member it can show from one
  * it cannot.
  */
-async function publishDirectory(
+function directoryEnvelope(
   workstreamId: WorkstreamId,
   archivedAt: string | null,
   sourceVersion: number,
-): Promise<void> {
+) {
   directorySeq += 1;
   const effect: WorkstreamRegionalEffect = {
     kind: "directory_common",
@@ -128,22 +128,30 @@ async function publishDirectory(
     updatedAt: "2026-08-01T00:00:00.000Z",
     resourceLinks: [],
   };
+  return {
+    kind: "workstream_regional_effect" as const,
+    contractVersion: 1 as const,
+    region: "global" as const,
+    workspaceId: WORKSPACE_ID,
+    workstreamId,
+    generation: 1,
+    messageId: `00000000-0000-7000-8000-${String(directorySeq).padStart(9, "0")}9e0`,
+    partitionKey: "common",
+    sourceVersion,
+    requiredProjectionVersion: null,
+    payloadHash: workstreamRegionalEffectHash(effect),
+    effect,
+  };
+}
+
+async function publishDirectory(
+  workstreamId: WorkstreamId,
+  archivedAt: string | null,
+  sourceVersion: number,
+): Promise<void> {
   await workspace().applyWorkstreamDirectoryEffects({
     workspaceId: WORKSPACE_ID,
-    envelopes: [{
-      kind: "workstream_regional_effect",
-      contractVersion: 1,
-      region: "global",
-      workspaceId: WORKSPACE_ID,
-      workstreamId,
-      generation: 1,
-      messageId: `00000000-0000-7000-8000-${String(directorySeq).padStart(9, "0")}9e0`,
-      partitionKey: "common",
-      sourceVersion,
-      requiredProjectionVersion: null,
-      payloadHash: workstreamRegionalEffectHash(effect),
-      effect,
-    }],
+    envelopes: [directoryEnvelope(workstreamId, archivedAt, sourceVersion)],
   });
 }
 
@@ -558,6 +566,37 @@ describe("WorkspaceDO project authority", () => {
       // same waterline is a replay to every client that receives it, so one
       // published without advancing it corrects nothing on screen.
       expect(projects.active.waterline).toBeGreaterThan(before.directory.waterline);
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("given an archival whose delivery is retried, when the same envelope replays, then the corrected snapshot is published again", async () => {
+    const created = await create("Startup stuff", "workspace");
+    if (!created.ok) throw new Error("project_fixture_failed");
+    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000009c5");
+    await seedMembership(created.project.id, workstreamId);
+    await publishDirectory(workstreamId, null, 1);
+    const archival = directoryEnvelope(workstreamId, "2026-09-01T00:00:00.000Z", 2);
+    await workspace().applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [archival],
+    });
+
+    const socket = await connectProjectViewer(OWNER, "925");
+    try {
+      const snapshot = nextProjectSnapshot(socket);
+      // The row and its receipt commit before the publications this method
+      // awaits, so a rejection in any of those redelivers an envelope whose
+      // archival is already recorded and has nothing left to compare against.
+      // Acknowledging that replay without republishing would leave every open
+      // window on the count this change exists to correct.
+      await workspace().applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [archival],
+      });
+      expect((await snapshot).projects.active.items)
+        .toEqual([expect.objectContaining({ workstreamIds: [] })]);
     } finally {
       socket.close(1000, "test complete");
     }

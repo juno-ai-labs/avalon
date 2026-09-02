@@ -261,6 +261,18 @@ directory projection: those arrive on ordinary activity, and republishing both
 project lists to every socket that often costs far more than the count is
 worth.
 
+The publication sits before the awaits that follow the envelope loop and
+outside the `directoryChanged` gate at the foot of that method, and a replayed
+common effect is reconciled the way the watch registrations beside it already
+are. The directory row and its receipt commit inside the loop while those
+publications happen after it, so a rejection in any of them redelivers an
+envelope whose archival is already recorded and has nothing left to compare
+against: acknowledging that replay without republishing would leave every open
+window on exactly the count this change exists to correct. A replay cannot be
+told from an ordinary edit, so every replayed common effect is treated as one;
+the membership test is what keeps that off the sockets, and a replay only
+happens on the retry path.
+
 The waterline advance is not incidental. A project directory at a waterline a
 client already holds is dropped as a replay, so the first version of this
 published a corrected snapshot that every open window discarded: driving the

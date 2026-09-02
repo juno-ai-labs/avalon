@@ -5987,7 +5987,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const envelope of request.envelopes) {
       const applied = this.applyDirectoryEnvelope(envelope, activeUsers, originLabels);
       directoryChanged = directoryChanged || applied.changed;
-      if (applied.archivalChanged) archivalChanges.add(envelope.workstreamId);
+      // A replay reconciles as well as a first application, the way the watch
+      // registrations below do. The row and its receipt commit inside the call
+      // above, while the publications happen after the awaits that follow this
+      // loop — so a redelivery caused by any of those rejecting arrives with
+      // the archival already recorded and nothing left to compare against. It
+      // cannot tell a replayed archival from a replayed ordinary edit, so it
+      // treats every replayed common effect as one; the membership test below
+      // is what keeps that off the sockets, and a replay only happens on the
+      // retry path.
+      if (applied.archivalChanged
+        || (applied.replayed && envelope.effect.kind === "directory_common")) {
+        archivalChanges.add(envelope.workstreamId);
+      }
       if (applied.changed && envelope.effect.kind === "directory_common") {
         commonChanges.add(envelope.workstreamId);
       } else if (applied.changed && envelope.effect.kind === "directory_user") {
@@ -6044,6 +6056,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }
       }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
+    }
+    // Before the first await below, and outside the `directoryChanged` gate at
+    // the foot of this method. Archiving a work stream is not a project
+    // mutation, so nothing else here touches project state — and without this
+    // the sidebar keeps counting a member it has just stopped being able to
+    // show until the next project write or reconnect. Publishing here means a
+    // rejection further down redelivers the envelope rather than losing the
+    // correction, and the gate below is the one that matters: the call
+    // advances the project waterline only when one of these work streams is
+    // actually in a project, which is both what makes the snapshot newer than
+    // the one its readers hold and what keeps this off the path every
+    // projection takes. Sending to a socket cannot throw — it is caught per
+    // socket — so nothing here can fail the batch.
+    if (archivalChanges.size > 0
+      && this.projectStorage().noteMemberArchivalChange([...archivalChanges])) {
+      this.publishProjectSnapshot();
     }
     await Promise.all([...watchReconciliations].map(([workstreamId, coordinate]) => (
       this.reconcileWorkstreamResourceRegistrations({
@@ -6111,16 +6139,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           ? []
           : [...users].map((userId) => this.publishWorkstreamState(workstreamId, userId))
       )));
-      // Archiving a work stream is not a project mutation, so nothing else
-      // here touches project state — and without this the sidebar keeps
-      // counting a member it has just stopped being able to show until the
-      // next project write or reconnect. The call advances the project
-      // waterline only when one of these work streams is actually in a
-      // project, which is both what makes the snapshot newer than the one its
-      // readers hold and what keeps this off the path every projection takes.
-      if (archivalChanges.size > 0 && this.projectStorage().noteMemberArchivalChange([...archivalChanges])) {
-        this.publishProjectSnapshot();
-      }
     }
     return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
   }
@@ -8851,7 +8869,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     envelope: WorkstreamRegionalEffectEnvelope,
     activeUsers: ReadonlySet<string>,
     originLabels: ReadonlyMap<string, string>,
-  ): { changed: boolean; participantMembershipChanged: boolean; archivalChanged: boolean } {
+  ): {
+    changed: boolean;
+    participantMembershipChanged: boolean;
+    archivalChanged: boolean;
+    replayed: boolean;
+  } {
     return this.state.storage.transactionSync(() => {
       const receipt = this.state.storage.sql.exec<{ payload_hash: string }>(
         `SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?`,
@@ -8861,7 +8884,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (receipt.payload_hash !== envelope.payloadHash) {
           throw new Error("workspace_directory_effect_idempotency_conflict");
         }
-        return { changed: false, participantMembershipChanged: false, archivalChanged: false };
+        return {
+          changed: false,
+          participantMembershipChanged: false,
+          archivalChanged: false,
+          replayed: true,
+        };
       }
 
       const now = Date.now();
@@ -9118,7 +9146,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         now,
       );
       if (changed) this.advanceDirectoryVersion(now);
-      return { changed, participantMembershipChanged, archivalChanged };
+      return { changed, participantMembershipChanged, archivalChanged, replayed: false };
     });
   }
 
