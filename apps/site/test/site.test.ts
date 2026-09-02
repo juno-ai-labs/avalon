@@ -14,18 +14,25 @@ import { normalizedTelemetryPathname, sitePageForPath } from '../src/telemetry';
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+const readRepositoryFile = (path: string): string =>
+  readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8');
+
+const supportConnectorPages = [
+  { provider: 'google', slug: 'google', title: 'Google' },
+  { provider: 'github', slug: 'github', title: 'GitHub' },
+  { provider: 'granola', slug: 'granola', title: 'Granola' },
+  { provider: 'linear', slug: 'linear', title: 'Linear' },
+  { provider: 'notion', slug: 'notion', title: 'Notion' },
+  { provider: 'slack', slug: 'slack', title: 'Slack' },
+  { provider: 'generic_webhook', slug: 'inbound-webhook', title: 'Inbound webhook' },
+  { provider: 'x', slug: 'x', title: 'Public X' },
+] as const;
+
 const supportPagePaths = [
   'support/index.html',
   'support/getting-started/index.html',
   'support/connectors/index.html',
-  'support/connectors/google/index.html',
-  'support/connectors/github/index.html',
-  'support/connectors/granola/index.html',
-  'support/connectors/linear/index.html',
-  'support/connectors/notion/index.html',
-  'support/connectors/slack/index.html',
-  'support/connectors/inbound-webhook/index.html',
-  'support/connectors/x/index.html',
+  ...supportConnectorPages.map(({ slug }) => `support/connectors/${slug}/index.html`),
   'support/contact/index.html',
 ] as const;
 
@@ -453,7 +460,7 @@ describe('public Rally site', () => {
     expect(landing).toContain('/trust/privacy');
     expect(privacy).toContain('does not scrape, mirror');
     expect(support).toContain('<title>Support Center · Rally</title>');
-    expect(support).toContain('rel="canonical" href="https://rallywith.ai/support"');
+    expect(support).toContain('rel="canonical" href="https://rallywith.ai/support/"');
     expect(support).toContain('within two business days');
     expect(support).toContain('Rally for Slack');
     expect(slackSupport).toContain('Slack App Management');
@@ -473,22 +480,27 @@ describe('public Rally site', () => {
     const hub = readProjectFile('support/index.html');
     const connectorHub = readProjectFile('support/connectors/index.html');
     const sitemap = readProjectFile('public/sitemap.xml');
-    const connectorPages = [
-      ['google', 'Google'],
-      ['github', 'GitHub'],
-      ['granola', 'Granola'],
-      ['linear', 'Linear'],
-      ['notion', 'Notion'],
-      ['slack', 'Slack'],
-      ['inbound-webhook', 'Inbound webhook'],
-      ['x', 'Public X'],
-    ] as const;
+    const desktopSettings = readRepositoryFile(
+      'apps/desktop/src/renderer/screens/workspace-settings.tsx',
+    );
+    const desktopCatalog = desktopSettings.match(
+      /const connectorProviders = \[(?<catalog>[\s\S]*?)\] as const;/u,
+    )?.groups?.catalog;
+    if (!desktopCatalog) throw new Error('Desktop connector catalog was not found');
+    const desktopProviders = new Set(
+      [...desktopCatalog.matchAll(/^\s+provider: '([^']+)' as const,/gmu)]
+        .map((match) => match[1]),
+    );
+    expect(desktopProviders).toEqual(
+      new Set(supportConnectorPages.map(({ provider }) => provider)),
+    );
 
     expect(hub).toContain('href="/support/getting-started/"');
     expect(hub).toContain('href="/support/connectors/"');
     expect(hub).toContain('href="/support/contact/"');
+    expect(sitemap).toContain('https://rallywith.ai/support/</loc>');
 
-    for (const [slug, title] of connectorPages) {
+    for (const { slug, title } of supportConnectorPages) {
       const route = `/support/connectors/${slug}/`;
       const page = readProjectFile(`support/connectors/${slug}/index.html`);
       expect(hub, slug).toContain(`href="${route}"`);
@@ -498,6 +510,13 @@ describe('public Rally site', () => {
       expect(page, slug).toContain(`rel="canonical" href="https://rallywith.ai${route}"`);
       expect(page, slug).toContain('href="/support/connectors/"');
       expect(page, slug).toContain('href="/support/contact/"');
+      if (slug !== 'slack') {
+        expect(page, slug).not.toContain('href="/support/connectors/" aria-current="page"');
+      }
+    }
+
+    for (const path of supportPagePaths) {
+      expect(readProjectFile(path), path).not.toMatch(/\bconnection test\b/iu);
     }
 
     expect(readProjectFile('support/contact/index.html')).toContain('Safe details to send');
@@ -526,10 +545,14 @@ describe('public Rally site', () => {
 
     for (const [path, route, title] of policies) {
       const page = readProjectFile(path);
+      const [document] = page.split('<footer class="legal-footer">');
       expect(page).toContain('<body class="legal-page">');
       expect(page).toContain(title);
       expect(page).toContain('Juno AI Labs');
       expect(page).toContain(`rel="canonical" href="https://rallywith.ai${route}/"`);
+      expect(document, path).not.toContain(
+        'href="/trust/">Trust Center</a><a href="/trust/security/">Security</a>',
+      );
       for (const [, linkedRoute] of policies) {
         expect(page).toContain(`href="${linkedRoute}/"`);
       }
@@ -551,6 +574,9 @@ describe('public Rally site', () => {
     expect(readProjectFile('trust/security/index.html')).not.toContain('SOC 2');
     expect(readProjectFile('trust/security/index.html')).not.toContain('<i aria-label="Implemented">');
     expect(readProjectFile('trust/security/index.html').match(/role="img" aria-label="Implemented"/gu)).toHaveLength(7);
+    const styles = readProjectFile('src/styles.css');
+    expect(styles).toContain('.trust-hero h1 em{color:#111210');
+    expect(styles).toContain('.trust-reporting h2 em{color:#111210');
     const [landingContent, landingFooter] = landing.split('<footer class="rally-footer">');
     expect(landingContent).not.toContain('/security/');
     expect(landingFooter).toContain('<a href="/trust/">Trust Center</a>');
@@ -565,7 +591,7 @@ describe('public Rally site', () => {
       'index.html', 'invite/index.html', 'slack/index.html', 'trust/terms/index.html',
       'trust/privacy/index.html', 'trust/acceptable-use/index.html', 'trust/dpa/index.html',
       'trust/subprocessors/index.html', 'trust/cookies/index.html', 'trust/index.html',
-      'trust/security/index.html',
+      'trust/security/index.html', ...supportPagePaths,
     ];
     for (const path of pages) {
       const page = readProjectFile(path);
@@ -634,7 +660,11 @@ describe('public Rally site', () => {
     expect(normalizedTelemetryPathname('/app/workspaces/eu/private-workspace'))
       .toBe('/app/workspaces/:region/:workspace/workstreams/:id');
     expect(normalizedTelemetryPathname('/trust/privacy/')).toBe('/trust/privacy/');
+    expect(sitePageForPath('/trust')).toBe('legal');
+    expect(sitePageForPath('/trust/')).toBe('legal');
     expect(sitePageForPath('/trust/privacy/')).toBe('legal');
+    expect(sitePageForPath('/support')).toBe('support');
+    expect(sitePageForPath('/support/')).toBe('support');
     expect(classifyDesktopHandoffTarget('avalon://workstreams/not-a-uuid')).toEqual({
       handoffType: 'workstream', validity: 'invalid',
     });
