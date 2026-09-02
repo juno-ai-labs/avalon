@@ -700,6 +700,14 @@ uncorrelated refusal is invisible and is reported as a timeout the room never
 had. A refusal keeps the room's own `code` — the two codes Electron steers on
 both mean "ask again", which a refusal does not.
 
+The identity cuts the other way too. `request_snapshot` carries no request id,
+so a frame that carries one is never its answer, and Electron stops on a
+correlated frame rather than letting it reach the check that releases the
+snapshot slot on any error. Releasing that slot early is not a lost frame but a
+duplicate request: the outstanding snapshot is still assembling, and the next
+reconciliation trigger would send a second one over the top of it — most likely
+during exactly the assembly window that produces a correlated refusal.
+
 A socket assembling its own `request_snapshot` is subscribed and may load
 ranges. The attachment lowers `subscribed` across that window only to keep
 broadcasts out of it; a range is a direct reply read from the fence the caller
@@ -1560,7 +1568,12 @@ this socket owes its refusals the same `requestId` — the client-side timeout i
 a backstop, not a protocol. The refusal reaching the caller with the room's own
 code means a range failure is now visible in the transcript's error banner
 instead of arriving as a timeout, so a genuinely unsubscribed socket reports
-what it is.
+what it is. A correlated frame also has to *stop* at its caller: the check that
+releases the snapshot slot fires on any `error`, and a refusal that fell into it
+would free a slot whose snapshot is still assembling, letting the next
+reconciliation trigger stack a second `request_snapshot` on the first. The
+request id is what distinguishes the two, so it decides both who is settled and
+where the frame ends.
 
 ### 2026-09-02 — Run-generated resources reach the open rail immediately
 

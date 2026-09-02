@@ -1135,9 +1135,17 @@ export function useWorkstreamSocket(
       // flattened to one client code — the two the callers steer on
       // (`workstream_socket_unavailable`, `transcript_snapshot_changed`) both
       // mean "ask again", which a refusal does not, and a wrong one would
-      // reconnect or retry against a room that just said no. Falls through:
-      // an error frame is still an answer to a snapshot request, which the
-      // ordering guard below reads.
+      // reconnect or retry against a room that just said no.
+      //
+      // Returns, like the `transcript_range` branch below, and for the reason
+      // the named identity establishes: `request_snapshot` carries no request
+      // id, so a frame that carries one cannot be its answer. Falling through
+      // would hand this refusal to the `answersSnapshotRequest` check, which
+      // releases the snapshot slot on any error — and this refusal is *most*
+      // likely while a reconciliation snapshot is assembling, which is when
+      // the room lowers `subscribed` in the first place. The next
+      // `harness_status_changed` would then send a second `request_snapshot`
+      // over the top of the outstanding one.
       if (event.type === 'error' && event.requestId !== null) {
         const pending = pendingTranscriptRanges.get(event.requestId);
         if (pending) {
@@ -1145,6 +1153,7 @@ export function useWorkstreamSocket(
           window.clearTimeout(pending.timeout);
           pending.reject(new ApiError(event.message, 409, event.code));
         }
+        return;
       }
       // Once replay history is unavailable, subsequent frames cannot safely be
       // applied on top of stale state. Reconnect only after the direct REST
