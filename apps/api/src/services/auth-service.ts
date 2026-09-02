@@ -11,7 +11,19 @@ import { openString, randomToken, sealString, sha256, timingSafeEqualText } from
 const encoder = new TextEncoder();
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 const ACCESS_TTL_SECONDS = 15 * 60;
-const REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
+/**
+ * How long a session may go without renewal, and how long it may live at all.
+ *
+ * Every renewal slides `expires_at` to thirty days from that moment, so a
+ * person who opens Rally at least once a month is never signed out by expiry
+ * alone; a session that stops being renewed dies thirty days after its last
+ * renewal. The ceiling is absolute: ninety days from the session's creation a
+ * fresh sign-in is required whatever happened in between, which bounds how
+ * long a leaked refresh token can keep itself alive. Both numbers were named
+ * by the team (2026-09-02); `refresh` is the one place they are applied.
+ */
+const SESSION_RENEWAL_WINDOW_SECONDS = 30 * 24 * 60 * 60;
+const SESSION_MAX_LIFETIME_SECONDS = 90 * 24 * 60 * 60;
 export const DEVELOPMENT_USER_ID = "00000000-0000-7000-8000-000000000001";
 export const DEVELOPMENT_WORKSPACE_ID = "00000000-0000-7000-8000-000000000002";
 
@@ -387,24 +399,38 @@ export class AuthService {
     const newHash = await sha256(newRefreshToken);
     const rotatedAt = nowIso();
     const replayGraceStart = new Date(Date.now() - 60_000).toISOString();
+    const renewedExpiry = new Date(Date.now() + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString();
+    // The ceiling is computed beside the row it bounds, in the same statement
+    // that rotates the token, so a renewal can never extend a session past it
+    // and a session already past it is refused rather than handed a token the
+    // bearer check would reject a moment later. `strftime` is given the exact
+    // shape `toISOString` writes, so the dates compared are one format and
+    // order as text the way they order in time.
+    const ceilingModifier = `+${SESSION_MAX_LIFETIME_SECONDS} seconds`;
     const row = await this.env.DB.prepare(
       `UPDATE sessions
        SET previous_refresh_token_hash = refresh_token_hash,
-           refresh_token_hash = ?, refresh_rotated_at = ?
+           refresh_token_hash = ?, refresh_rotated_at = ?,
+           expires_at = MIN(?, strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?))
        WHERE (
            refresh_token_hash = ?
            OR (previous_refresh_token_hash = ? AND refresh_rotated_at >= ?)
          )
          AND region = ? AND revoked_at IS NULL AND expires_at > ?
+         AND strftime('%Y-%m-%dT%H:%M:%fZ', created_at, ?) > ?
        RETURNING id, user_id, workspace_id`,
     )
       .bind(
         newHash,
         rotatedAt,
+        renewedExpiry,
+        ceilingModifier,
         oldHash,
         oldHash,
         replayGraceStart,
         this.env.AVALON_REGION,
+        rotatedAt,
+        ceilingModifier,
         rotatedAt,
       )
       .first<{ id: string; user_id: string; workspace_id: string | null }>();
@@ -581,7 +607,7 @@ export class AuthService {
         identity.workspace_id,
         this.env.AVALON_REGION,
         await sha256(refreshToken),
-        new Date(Date.now() + REFRESH_TTL_SECONDS * 1_000).toISOString(),
+        new Date(Date.now() + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
         at,
       )
       .run();
