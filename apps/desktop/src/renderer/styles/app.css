@@ -530,7 +530,10 @@ pre {
    hover partner; Terra Light's `elevated-hover` is the same as the menu base.
    The danger rule has equal specificity and follows this one, so source order
    preserves its dedicated tint. */
-.menu-item { align-items: center; border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 8px; min-height: 30px; outline: 0; padding: 4px 8px; text-align: start; width: 100%; }
+/* A Radix menu item is a div, and a div full of text shows the I-beam and lets
+   the text be dragged into a selection. It is a command: the same hand the
+   buttons in the same menu already get, and nothing in it to highlight. */
+.menu-item { align-items: center; border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); cursor: pointer; display: flex; font-size: 12px; gap: 8px; min-height: 30px; outline: 0; padding: 4px 8px; text-align: start; user-select: none; width: 100%; }
 .menu-item[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .menu-item[data-disabled] { opacity: 0.42; }
 .menu-item-danger { color: var(--av-sys-color-danger-base); }
@@ -1106,6 +1109,10 @@ pre {
 .workspace-menu-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
+/* A workspace this device still lists but cannot open until the account is
+   reconnected says so in the muted caption every row uses for its second
+   line, with the longer reason in a tooltip. Nothing about it is an alarm. */
+.workspace-menu-tooltip { line-height: 1.4; max-width: 240px; }
 .workspace-region-tag {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-sys-color-border-subtle);
@@ -1114,34 +1121,34 @@ pre {
   font-size: var(--av-sys-font-size-meta);
   padding: 1px 5px;
 }
-.workspace-attention-count {
-  background: var(--av-sys-color-surface-subtle);
-  border-radius: var(--av-sys-size-radius-pill);
-  font-size: var(--av-sys-font-size-meta);
-  font-variant-numeric: tabular-nums;
-  min-width: 18px;
-  padding: 1px 5px;
-  text-align: center;
-}
-.workspace-attention-count.is-mentioned { color: var(--av-sys-color-workstream-mentioned); }
-.workspace-attention-count.is-needs-input { color: var(--av-sys-color-workstream-needs-input); }
-.workspace-attention-count.is-unseen { color: var(--av-sys-color-workstream-unseen); }
 .workspace-counts-stale { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
 .workspace-region-choice { border: 0; display: flex; gap: 12px; margin: 12px 0 0; padding: 0; }
 .workspace-region-choice legend { color: var(--av-sys-color-text-subtle); font-size: var(--av-sys-font-size-meta); margin-bottom: 6px; }
 .workspace-region-choice label { align-items: center; display: flex; gap: 5px; }
 .workspace-region-choice label > span { display: flex; flex-direction: column; }
 .workspace-region-choice label small { color: var(--av-sys-color-text-muted); font-weight: 400; }
-.workspace-opening-overlay {
-  align-items: center;
-  background: var(--av-sys-color-scrim-subtle);
-  color: var(--av-sys-color-text-default);
-  display: flex;
-  font-size: var(--av-sys-font-size-base);
-  inset: 0;
-  justify-content: center;
-  position: absolute;
-  z-index: 30;
+/* Switching workspaces is a dissolve, not a cut. While the new credential is
+   minted the current panes dim in place — no scrim and no caption; the menu
+   row's spinner already says what is happening — and once the session has
+   changed the same panes fade back up over the unchanged backdrop, now showing
+   the new workspace. The shell fetches the new workspace before the old one is
+   torn down, so no blank "opening" screen sits between the two. */
+.workspace-shell .sidebar,
+.workspace-shell .main-pane { transition: opacity 220ms ease; }
+.workspace-shell.is-switching-workspace .sidebar,
+.workspace-shell.is-switching-workspace .main-pane { opacity: 0.55; }
+.workspace-shell.is-switching-workspace .main-pane { pointer-events: none; }
+.workspace-shell.is-entering-workspace .sidebar,
+.workspace-shell.is-entering-workspace .main-pane { animation: workspace-enter 320ms ease-out; }
+/* From the dimmed level, not from nothing: the panes were sitting at 0.55 with
+   the old workspace when the session changed, so the new one picks up the same
+   brightness and rises — a dip to zero would flash the bare backdrop between. */
+@keyframes workspace-enter { from { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .workspace-shell .sidebar,
+  .workspace-shell .main-pane { transition: none; }
+  .workspace-shell.is-entering-workspace .sidebar,
+  .workspace-shell.is-entering-workspace .main-pane { animation: none; }
 }
 .mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
 .sidebar-scrim { display: none; }
@@ -4145,6 +4152,8 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .run-duration { color: var(--av-ref-color-neutral-9); font-size: 9px; text-align: right; }
 .form-field { display: grid; gap: 6px; }
 .form-field > span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
+.form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); outline: 0; padding: 9px 10px; width: 100%; }
+.form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .form-field textarea { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-sm); line-height: 1.5; outline: 0; padding: 10px; resize: vertical; width: 100%; }
 .granola-key-guide { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-md); margin-bottom: 16px; padding: 13px 14px; }
 .granola-key-guide h3 { color: var(--av-sys-color-text-default); font-size: 11.5px; margin: 0; }

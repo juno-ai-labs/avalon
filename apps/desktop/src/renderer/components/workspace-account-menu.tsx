@@ -1,7 +1,8 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import type { WorkspaceAttention } from '@rally/contracts';
 import { Check, ChevronDown, LoaderCircle, LogOut, Plus, Settings } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 
 import type {
   DesktopPendingWorkspaceInvitation,
@@ -21,7 +22,6 @@ export interface WorkspaceAccountMenuProps {
   currentUser: WorkspaceMember;
   enabled: boolean;
   invitations: DesktopPendingWorkspaceInvitation[];
-  loadingAttention: boolean;
   promptedInvitation?: DesktopPendingWorkspaceInvitation | null;
   staleAt: string | null;
   switchingWorkspaceKey?: string | null;
@@ -35,31 +35,57 @@ export interface WorkspaceAccountMenuProps {
   onInvitationPromptDismiss: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
-  onSwitchWorkspace: (workspace: DesktopWorkspaceSummary) => Promise<void>;
+  /** Resolves true once the switch has taken; the menu closes on that and stays
+   * open — with the row's error beneath it — when it did not. */
+  onSwitchWorkspace: (workspace: DesktopWorkspaceSummary) => Promise<boolean>;
 }
+
+/** Why a background workspace is outlined while the account needs reconnecting.
+ * Every switch crosses Global activation with the identity credential, so
+ * without one no other workspace can be opened — but it is still a workspace
+ * this device knows, so it stays listed rather than vanishing. */
+export const WORKSPACE_NEEDS_ACCOUNT_RECONNECT =
+  'This workspace can\'t be opened until you reconnect your account: the account sign-in on this device has expired. '
+  + 'Choose Reconnect account… below.';
 
 function regionLabel(region: RallyRegion): string {
   return region === 'eu' ? 'European Union' : 'Global';
 }
 
-function countClass(attention: WorkspaceAttention): string {
-  return attention.waitingReason === 'mentioned'
-    ? 'is-mentioned'
-    : attention.waitingReason === 'needs_input'
-      ? 'is-needs-input'
-      : 'is-unseen';
-}
+/** What the dot means when nothing is waiting on this person. */
+export const UNREAD_ACTIVITY_DESCRIPTION = 'New activity since you last looked. Nothing is waiting on you.';
 
+/**
+ * One green dot marks a background workspace with any activity at all; the
+ * detail — how many work streams are waiting on this person and the
+ * strongest reason among them, in the order WorkspaceDO ranks them — is
+ * kept for the tooltip and the accessible name rather than shown as a count.
+ */
 function attentionLabel(attention: WorkspaceAttention): string | null {
-  if (attention.waitingForYou > 0) {
-    const subject = attention.waitingReason === 'mentioned'
-      ? 'mentions'
+  const count = attention.waitingForYou;
+  if (count > 0) {
+    const plural = count === 1 ? '' : 's';
+    return attention.waitingReason === 'mentioned'
+      ? `${count} mention${plural} waiting for you`
       : attention.waitingReason === 'needs_input'
-        ? 'items needing input'
-        : 'unseen items';
-    return `${attention.waitingForYou} ${subject}`;
+        ? `${count} work stream${plural} waiting for your input`
+        : `${count} new work stream${plural} you have not opened`;
   }
   return attention.hasUnreadActivity ? 'Unread activity' : null;
+}
+
+function IndicatorTooltip({ children, label }: { children: React.ReactElement; label: string }): React.JSX.Element {
+  return (
+    <Tooltip.Root delayDuration={300}>
+      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content className="tooltip" side="top" sideOffset={6}>
+          {label}
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  );
 }
 
 function actionErrorMessage(error: unknown, fallback: string): string {
@@ -74,7 +100,6 @@ export function WorkspaceAccountMenu({
   currentUser,
   enabled,
   invitations,
-  loadingAttention,
   promptedInvitation = null,
   staleAt,
   switchingWorkspaceKey = null,
@@ -91,6 +116,7 @@ export function WorkspaceAccountMenu({
   onSwitchWorkspace,
 }: WorkspaceAccountMenuProps): React.JSX.Element {
   const [invitation, setInvitation] = useState<DesktopPendingWorkspaceInvitation | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('');
   const [workspaceRegion, setWorkspaceRegion] = useState<RallyRegion>('global');
@@ -137,7 +163,13 @@ export function WorkspaceAccountMenu({
 
   return (
     <>
-      <DropdownMenu.Root onOpenChange={(open) => { if (open && enabled) onMenuOpen(); }}>
+      <DropdownMenu.Root
+        onOpenChange={(open) => {
+          setMenuOpen(open);
+          if (open && enabled) onMenuOpen();
+        }}
+        open={menuOpen}
+      >
         <DropdownMenu.Trigger asChild>
           <button
             aria-label={[
@@ -166,43 +198,65 @@ export function WorkspaceAccountMenu({
                   const workspaceKey = desktopWorkspaceIdentityKey(workspace.region, workspace.id);
                   const active = workspace.id === activeWorkspace.id && workspace.region === activeWorkspace.region;
                   const workspaceAttention = active ? undefined : attention[workspaceKey];
-                  const count = workspaceAttention?.waitingForYou ?? 0;
                   const attentionDescription = workspaceAttention ? attentionLabel(workspaceAttention) : null;
+                  const activityDetail = workspaceAttention && workspaceAttention.waitingForYou > 0
+                    ? attentionDescription
+                    : UNREAD_ACTIVITY_DESCRIPTION;
                   const switching = workspaceKey === switchingWorkspaceKey;
+                  const unavailable = !active && accountReconnectRequired;
                   const error = workspaceErrors[workspaceKey];
                   const label = [
                     workspace.name,
                     ...(multipleRegions ? [regionLabel(workspace.region)] : []),
                     ...(active ? ['Current'] : []),
                     ...(attentionDescription ? [attentionDescription] : []),
+                    ...(unavailable ? [WORKSPACE_NEEDS_ACCOUNT_RECONNECT] : []),
                     ...(error ? [error] : []),
                   ].join(', ');
-                  return (
+                  const item = (
                     <DropdownMenu.Item
                       aria-label={label}
-                      className="menu-item workspace-menu-item"
-                      key={workspaceKey}
+                      className={unavailable ? 'menu-item workspace-menu-item is-unavailable' : 'menu-item workspace-menu-item'}
                       onSelect={(event) => {
                         if (active || switching) return;
+                        // The menu stays open while the switch is pending, so
+                        // the row's spinner and any error land where the
+                        // person is looking; it closes itself once it took.
                         event.preventDefault();
-                        void onSwitchWorkspace(workspace);
+                        void onSwitchWorkspace(workspace).then(
+                          (switched) => { if (switched) setMenuOpen(false); },
+                          () => undefined,
+                        );
                       }}
                     >
                       <span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span>
                       <span className="workspace-menu-copy">
                         <span>{workspace.name}</span>
-                        {error && <small className="workspace-menu-error">{error}</small>}
+                        {error
+                          ? <small className="workspace-menu-error">{error}</small>
+                          : unavailable && <small className="workspace-menu-note">Reconnect your account to open</small>}
                       </span>
                       {multipleRegions && <small className="workspace-region-tag">{regionLabel(workspace.region)}</small>}
                       {switching && <LoaderCircle aria-label="Opening workspace" className="spin" size={14} />}
                       {active && <Check aria-label="Current" size={14} />}
-                      {!active && !switching && count > 0 && workspaceAttention && (
-                        <span className={`workspace-attention-count ${countClass(workspaceAttention)}`}>{count}</span>
-                      )}
-                      {!active && !switching && count === 0 && !loadingAttention && workspaceAttention?.hasUnreadActivity && (
-                        <span aria-label="Unread activity" className="workspace-activity-dot" />
+                      {!active && !switching && attentionDescription && activityDetail && (
+                        <IndicatorTooltip label={activityDetail}>
+                          <span aria-label={attentionDescription} className="workspace-activity-dot" />
+                        </IndicatorTooltip>
                       )}
                     </DropdownMenu.Item>
+                  );
+                  if (!unavailable) return <Fragment key={workspaceKey}>{item}</Fragment>;
+                  return (
+                    <Tooltip.Root delayDuration={300} key={workspaceKey}>
+                      <Tooltip.Trigger asChild>{item}</Tooltip.Trigger>
+                      <Tooltip.Portal>
+                        <Tooltip.Content className="tooltip workspace-menu-tooltip" side="right" sideOffset={8}>
+                          {WORKSPACE_NEEDS_ACCOUNT_RECONNECT}
+                          <Tooltip.Arrow className="tooltip-arrow" />
+                        </Tooltip.Content>
+                      </Tooltip.Portal>
+                    </Tooltip.Root>
                   );
                 })}
                 {invitations.length > 0 && (
@@ -350,7 +404,7 @@ export function WorkspaceAccountMenu({
         open={creating}
         title="Create a workspace"
       >
-        <label className="field">
+        <label className="form-field">
           <span>Workspace name</span>
           <input
             maxLength={120}

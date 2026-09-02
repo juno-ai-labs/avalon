@@ -1,7 +1,12 @@
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WorkspaceAccountMenu } from './workspace-account-menu';
+import {
+  UNREAD_ACTIVITY_DESCRIPTION,
+  WORKSPACE_NEEDS_ACCOUNT_RECONNECT,
+  WorkspaceAccountMenu,
+} from './workspace-account-menu';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 
 const currentUser = { id: 'user-1', name: 'Ada', email: 'ada@example.com', timezone: 'America/New_York' };
@@ -25,7 +30,6 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     currentUser,
     enabled: true,
     invitations: [],
-    loadingAttention: false,
     onAcceptInvitation: vi.fn(async () => undefined),
     onCreateWorkspace: vi.fn(async () => undefined),
     onDeclineInvitation: vi.fn(async () => undefined),
@@ -34,12 +38,12 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     onReconnectAccount: vi.fn(async () => undefined),
     onOpenSettings: vi.fn(),
     onSignOut: vi.fn(),
-    onSwitchWorkspace: vi.fn(async () => undefined),
+    onSwitchWorkspace: vi.fn(async () => true),
     staleAt: null,
     workspaces: [active, eu],
     ...overrides,
   };
-  render(<WorkspaceAccountMenu {...props} />);
+  render(<Tooltip.Provider><WorkspaceAccountMenu {...props} /></Tooltip.Provider>);
   return props;
 }
 
@@ -59,11 +63,50 @@ describe('workspace account menu', () => {
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText('Workspaces')).toBeVisible();
     expect(within(menu).getByRole('menuitem', { name: /Global Studio.*Global.*Current/u })).toBeVisible();
-    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*European Union.*3/u });
-    expect(europe.querySelector('.workspace-attention-count')).toHaveClass('is-mentioned');
+    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio.*European Union.*3 mentions waiting for you/u });
+    // One dot for any activity, never a count.
+    expect(europe.querySelector('.workspace-activity-dot')).toHaveAccessibleName('3 mentions waiting for you');
+    expect(europe).not.toHaveTextContent('3');
 
     fireEvent.click(europe);
     expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
+  });
+
+  it('explains the activity dot on hover', async () => {
+    renderMenu();
+    openMenu();
+    const waiting = screen.getByLabelText('3 mentions waiting for you');
+    fireEvent.pointerMove(waiting);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('3 mentions waiting for you');
+    fireEvent.pointerLeave(waiting);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    renderMenu({
+      attention: {
+        [desktopWorkspaceIdentityKey(eu.region, eu.id)]: {
+          waitingForYou: 0, waitingReason: null, hasUnreadActivity: true,
+        },
+      },
+    });
+    const triggers = screen.getAllByRole('button', { name: /Ada/u });
+    fireEvent.pointerDown(triggers[triggers.length - 1]!, { button: 0, ctrlKey: false });
+    const dot = (await screen.findAllByLabelText('Unread activity')).at(-1)!;
+    fireEvent.pointerMove(dot);
+    await waitFor(() => expect(screen.getAllByRole('tooltip').at(-1)).toHaveTextContent(UNREAD_ACTIVITY_DESCRIPTION));
+  });
+
+  it('closes once a switch has taken and stays open while it has not', async () => {
+    const onSwitchWorkspace = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    renderMenu({ onSwitchWorkspace, workspaceErrors: { [desktopWorkspaceIdentityKey(eu.region, eu.id)]: undefined } });
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Europe Studio/u }));
+    await waitFor(() => expect(onSwitchWorkspace).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('menu')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /Europe Studio/u }));
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
   });
 
   it('marks unread-only activity on the account trigger', () => {
@@ -100,7 +143,7 @@ describe('workspace account menu', () => {
     openMenu();
 
     expect(screen.getByText('Counts last updated 7 minutes ago')).toBeVisible();
-    expect(screen.getByText('3')).toBeVisible();
+    expect(screen.getByLabelText('3 mentions waiting for you')).toBeVisible();
   });
 
   it('keeps the legacy one-workspace anatomy while the flag is off', () => {
@@ -119,6 +162,34 @@ describe('workspace account menu', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect account…' }));
     expect(props.onReconnectAccount).toHaveBeenCalledOnce();
+  });
+
+  it('keeps every other workspace listed while the account needs reconnecting, outlined with the reason', async () => {
+    const props = renderMenu({ accountReconnectRequired: true, attention: {} });
+    openMenu();
+
+    const menu = screen.getByRole('menu');
+    const current = within(menu).getByRole('menuitem', { name: /Global Studio.*Current/u });
+    expect(current).not.toHaveClass('is-unavailable');
+    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio/u });
+    expect(europe).toBeVisible();
+    expect(europe).toHaveClass('is-unavailable');
+    expect(within(europe).getByText('Reconnect your account to open')).toBeVisible();
+    expect(europe).toHaveAccessibleName(new RegExp(WORKSPACE_NEEDS_ACCOUNT_RECONNECT.slice(0, 40), 'u'));
+
+    fireEvent.pointerMove(europe);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(WORKSPACE_NEEDS_ACCOUNT_RECONNECT);
+    fireEvent.click(europe);
+    expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
+  });
+
+  it('does not outline any workspace while the account is connected', () => {
+    renderMenu({ accountReconnectRequired: false });
+    openMenu();
+
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: /Europe Studio/u })).not.toHaveClass('is-unavailable');
+    expect(within(menu).queryByRole('menuitem', { name: 'Reconnect account…' })).not.toBeInTheDocument();
   });
 
   it('confirms an invitation and creates a workspace from the same menu', async () => {
