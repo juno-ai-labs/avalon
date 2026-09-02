@@ -501,6 +501,16 @@ models remain OpenRouter-only. A file-parser request, audio input, or another
 capability an Azure binding has not proved skips that candidate before any
 network request rather than sending a body the deployment may reject.
 
+Inference defaults that belong to a model rather than to one task live in the
+harness's canonical-model defaults registry. Models absent from that registry
+send no reasoning control and therefore retain the provider default. An
+explicit task/run effort overrides the registry. `x-ai/grok-4.6` currently
+defaults to `low` everywhere: routed work-stream turns and direct structured or
+streaming OpenRouter calls all resolve the setting after the actual primary or
+fallback model is selected. Tool-bearing Chat Completions requests also opt in
+to parallel tool calls on both OpenRouter and Azure; requests with no tools omit
+the field.
+
 The Azure transport is enabled only when its dedicated endpoint and API key are
 both present. Those values are separate from realtime-dictation configuration,
 so configuring an EU dictation resource cannot accidentally send an EU work
@@ -1166,6 +1176,34 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-09-02 — Model defaults and parallel tools are provider-boundary policy
+
+**What changed:** The harness now has one canonical-model defaults registry,
+used by routed Bind turns and by the direct OpenRouter structured and streaming
+clients. An omitted call-level reasoning effort resolves through that registry;
+`x-ai/grok-4.6` is the first entry and defaults to `low`. All other models still
+omit reasoning unless a caller explicitly asks for it. Tool-bearing OpenRouter
+and Azure Chat Completions bodies now send `parallel_tool_calls: true`.
+
+**Why:** Rally needs Grok 4.6 to run at `low` unless a task deliberately asks
+for something else. Setting that independently in every model-using role would
+drift as flags, fallbacks, and new inference entrypoints change. Parallel tool
+execution was already a Bind behavior after tool calls were returned; the
+request had to state that the model may return the batch in the first place.
+
+**Considered and rejected:** Setting Grok's effort on each Flagship role. That
+would make a property of the selected model part of eleven task configurations
+and would miss a Grok fallback selected after another model failed. Applying the
+default before routing was also rejected because a fallback may have a different
+default; resolution happens against the candidate actually sent.
+
+**Consequences:** A new app-wide model behavior belongs in the registry, while
+role-specific requests continue to use explicit overrides. A model absent from
+the registry must continue to serialize no reasoning field. Provider bindings
+for a model with a reasoning default must declare the reasoning capability, so
+Bind can reject an incompatible candidate before I/O. Parallel-tool policy is
+only serialized when tools exist.
+
 ### 2026-09-01 — Stream-declared provider outages traverse the route
 
 **What changed:** The shared provider-failure classifier now treats the bounded
@@ -1459,6 +1497,7 @@ pricing metadata and must not be extended to workspace state. Do not make
 the Azure client carry OpenRouter Broadcast fields or plugins. Keep turn
 requirements accurate: an Azure candidate that cannot serve a file parser,
 input modality, reasoning control, or tool surface must be skipped before I/O.
+
 Missing final Azure usage is a failed attempt, never a free one. Provider
 ordering remains policy, so changing Azure-first behavior belongs in the route
 registry rather than in request code.

@@ -44,6 +44,7 @@ import type {
   BindLoopTransition,
   BindProviderBoundary,
 } from "./bind-loop-projection";
+import { modelDefaultReasoningEffort } from "./model-inference-defaults";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
@@ -90,6 +91,12 @@ export {
   type SkillRuntime,
 } from "./skills";
 export { parseSkillMarkdown, type SkillSummary } from "@juno-ai/bind/skills";
+export {
+  MODEL_INFERENCE_DEFAULTS,
+  modelDefaultReasoningEffort,
+  type ModelInferenceDefaults,
+  type ModelReasoningEffort,
+} from "./model-inference-defaults";
 export {
   AUTOMATIONS_PLUGIN_ID,
   AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
@@ -339,6 +346,7 @@ export interface OpenRouterInferencePayload {
   stream_options: { include_usage: true };
   tools?: ModelRequestTool[];
   tool_choice?: "auto";
+  parallel_tool_calls?: true;
   plugins?: Array<Record<string, unknown>>;
   reasoning?: { effort: "none" | "low" | "medium" | "high" };
   /** Azure's OpenAI-compatible Chat Completions reasoning control. */
@@ -764,6 +772,8 @@ export class OpenRouterClient {
                 trace: { ...builtTracePayload.trace, trace_id: traceId },
               }
             : undefined;
+          const reasoningEffort = input.reasoningEffort
+            ?? modelDefaultReasoningEffort(model);
           const requestPayload = serializeOpenRouterChatRequest({
             model,
             messages: repairMessages ?? schemaMessages,
@@ -777,8 +787,8 @@ export class OpenRouterClient {
               }
             },
             plugins: [{ id: "response-healing" }],
-            ...(structuredReasoning(input.reasoningEffort)
-              ? { reasoning: structuredReasoning(input.reasoningEffort)! }
+            ...(structuredReasoning(reasoningEffort)
+              ? { reasoning: structuredReasoning(reasoningEffort)! }
               : {}),
             ...(tracePayload ? {
               ...(tracePayload.user ? { user: tracePayload.user } : {}),
@@ -1045,6 +1055,7 @@ export class OpenRouterClient {
         max_total_results: input.maxWebResults ?? 8
       });
     }
+    const reasoningEffort = input.reasoningEffort ?? modelDefaultReasoningEffort(model);
     try {
       const requestPayload = serializeOpenRouterChatRequest({
         model,
@@ -1054,9 +1065,10 @@ export class OpenRouterClient {
         ...(tools.length > 0 ? {
           tools,
           toolChoice: input.toolChoice ?? "auto",
+          parallelToolCalls: true,
         } : {}),
         ...(input.plugins?.length ? { plugins: input.plugins } : {}),
-        ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
+        ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
         ...(input.trace ? {
           ...(input.trace.user ? { user: input.trace.user } : {}),
           ...(input.trace.session_id ? { sessionId: input.trace.session_id } : {}),
@@ -1246,6 +1258,7 @@ export class AzureOpenAIClient {
         ...(input.tools?.length ? {
           tools: input.tools,
           tool_choice: input.toolChoice ?? "auto",
+          parallel_tool_calls: true as const,
         } : {}),
         ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
       };
@@ -1387,6 +1400,7 @@ function serializeOpenRouterChatRequest(input: {
   streamOptions?: { includeUsage: boolean };
   tools?: ModelRequestTool[];
   toolChoice?: "auto" | "none";
+  parallelToolCalls?: boolean;
   plugins?: Array<Record<string, unknown>>;
   reasoning?: { effort: "none" | "low" | "medium" | "high" };
   responseFormat?: OpenRouterChatRequest["responseFormat"];
@@ -1402,6 +1416,9 @@ function serializeOpenRouterChatRequest(input: {
       ...(input.streamOptions ? { streamOptions: input.streamOptions } : {}),
       ...(input.tools ? { tools: toSdkTools(input.tools) } : {}),
       ...(input.toolChoice ? { toolChoice: input.toolChoice } : {}),
+      ...(input.parallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: input.parallelToolCalls }),
       ...(input.plugins ? { plugins: toSdkPlugins(input.plugins) } : {}),
       ...(input.reasoning ? { reasoning: input.reasoning } : {}),
       ...(input.responseFormat ? { responseFormat: input.responseFormat } : {}),
