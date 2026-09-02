@@ -380,6 +380,29 @@ artifact content and viewer sessions rather than workspace authority.
 
 ## Changelog
 
+### 2026-09-02 — Pop-outs keep artifact content below the window controls
+
+**What changed:** The desktop artifact pop-out now uses Electron's compact
+native title bar instead of extending model-authored content into a hidden inset
+title area.
+
+**Why:** Artifact pages own their complete document and have no Rally layout
+contract. A page whose navigation begins at the top edge therefore rendered
+under the macOS traffic lights, obscuring both the site's title and the window
+controls. Reserving the space in the window is the only fix that applies to
+every existing and future artifact without rewriting its content.
+
+**Considered and rejected:** Injecting padding or CSS into the artifact would
+alter model-authored layout and could be undone by the page; wrapping the page
+in Rally renderer content would cross the isolation boundary that keeps remote
+artifact code out of the application DOM. A native title bar already owns the
+controls, shows the bounded artifact title, and keeps the content surface
+unchanged.
+
+**Consequences:** Pop-outs gain a small native title area, and artifact content
+starts below it on macOS. The embedded rail preview is unchanged because it has
+no native window controls.
+
 ### 2026-09-02 — The redeem bootstrap keeps its same-origin identity
 
 **What changed:** The Rally-authored `/__rally/open` bootstrap now carries
