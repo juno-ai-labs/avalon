@@ -129,7 +129,11 @@ property's own schema says the empty string is not one of its values —
 excluding it, through `$ref`, `allOf`, and every branch of an `anyOf`/`oneOf`.
 Nothing else counts: `pattern` and `format` are not consulted, an unreadable
 schema keeps the value, and a **required** property keeps it too so validation
-can name the field. Small models blank an optional parameter rather than
+can name the field. Requiredness is resolved across the whole composed
+schema — `$ref`, `allOf`, and every `anyOf`/`oneOf` branch — because a generated
+schema routinely puts `required` on one node and `properties` on another, and a
+key any branch requires is treated as required. If that walk cannot finish, no
+blank is dropped at all. Small models blank an optional parameter rather than
 omitting it, and the blank then either fails the tool's own parse or reaches the
 provider — Linear answers an empty GraphQL cursor with a bare
 `Argument Validation Error` naming no field, which a model cannot act on and
@@ -831,7 +835,12 @@ prevent. Tying the strip to what the schema declares is what makes it safe, and
 it is why the obligation is on the schema rather than on the normalizer's
 judgement. Also rejected: consulting `pattern` or `format`, which needs a regex
 or format vocabulary evaluated to answer a question `minLength` answers plainly
-and which the model reads more easily.
+and which the model reads more easily. Also rejected: reading `required` off the
+node that carries `properties`, which two review passes caught — a schema
+declaring `required` in an `allOf` branch or behind a `$ref` would have had its
+required blank deleted, and a hosted MCP write tool, whose arguments Rally
+forwards without a local parse, would then have run with the argument missing
+rather than refusing it.
 
 **Consequences:** A tool that wants the tolerance must declare it; adding a
 string parameter whose empty value is meaningless without `minLength: 1` leaves

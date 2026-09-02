@@ -2102,7 +2102,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "gmail.search") {
         const args = z.strictObject({
-          query: z.string().max(2_000),
+          query: z.string().min(1).max(2_000),
           maxResults: z.number().int().min(1).max(25).default(10),
           pageToken: z.string().min(1).max(2_000).optional()
         }).parse(rawArgs);
@@ -2294,7 +2294,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             calendarId: z.string().min(1).max(1_024).optional(),
             timeMin: z.string().datetime({ offset: true }),
             timeMax: z.string().datetime({ offset: true }),
-            query: z.string().max(2_000).optional(),
+            query: z.string().min(1).max(2_000).optional(),
             maxResults: z.number().int().min(1).max(100).default(25),
             pageToken: z.string().min(1).max(2_000).optional()
           })
