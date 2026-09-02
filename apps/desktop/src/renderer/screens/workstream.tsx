@@ -2272,6 +2272,7 @@ export function WorkstreamScreen(): React.JSX.Element {
             <MessageFeed
               citations={citations}
               currentUserId={session?.user.id}
+              currentUserName={session?.user.name}
               firstUnreadIndex={firstUnreadIndex}
               loadAttachmentContent={loadAttachmentContent}
               messages={visibleTranscript}
