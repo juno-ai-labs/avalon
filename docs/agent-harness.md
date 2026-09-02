@@ -594,6 +594,10 @@ ID across every model turn, including tool call, tool result, and final-answer
 turns. Every model turn has its own `span_name`; the OpenRouter request is the
 generation inside that span. `turn_id`, inference request, and route cursor
 fields distinguish the individual generations and retries.
+Every request also sends `HTTP-Referer: https://rallywith.ai`, independently of
+the regional API origin that initiated it, so OpenRouter attributes Global, EU,
+structured, and routed traffic to the Rally product rather than to a transport
+hostname.
 For work-stream inference, `session_id` is exactly
 `<workstream_id>-<substream_id>`. Both OpenRouter's top-level `user` and trace
 `user_id` are the opaque Rally workspace ID, giving Broadcast and PostHog one
@@ -1184,6 +1188,8 @@ clients. An omitted call-level reasoning effort resolves through that registry;
 `x-ai/grok-4.6` is the first entry and defaults to `low`. All other models still
 omit reasoning unless a caller explicitly asks for it. Tool-bearing OpenRouter
 and Azure Chat Completions bodies now send `parallel_tool_calls: true`.
+OpenRouter requests now use `https://rallywith.ai` as their stable HTTP referer
+instead of whichever regional API base URL constructed the client.
 
 **Why:** Rally needs Grok 4.6 to run at `low` unless a task deliberately asks
 for something else. Setting that independently in every model-using role would

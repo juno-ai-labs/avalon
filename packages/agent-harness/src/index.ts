@@ -118,7 +118,8 @@ export interface OpenRouterConfig {
   fallbackModels?: string[];
   /** Additional attempts on one model for transport failures before fallback. */
   sameModelRetries?: number;
-  appUrl?: string;
+  /** Product site attributed to OpenRouter through its HTTP-Referer header. */
+  httpReferer?: string;
   appName?: string;
   fetch?: typeof globalThis.fetch;
   /** Maximum time to establish an HTTP response from OpenRouter. */
@@ -141,6 +142,9 @@ export interface AzureOpenAIConfig {
 
 /** Shared freshness horizon for OpenRouter catalog-derived metadata. */
 export const OPENROUTER_CATALOG_CACHE_TTL_MS = 60 * 60 * 1_000;
+
+/** Stable product attribution for every Rally OpenRouter request. */
+export const RALLY_OPENROUTER_HTTP_REFERER = "https://rallywith.ai";
 
 /** One host-resolved token-rate tier Bind can use to bill an Azure attempt. */
 export interface AzureModelTokenRates {
@@ -1195,7 +1199,7 @@ export class OpenRouterClient {
       "Content-Type": "application/json",
       "X-OpenRouter-Metadata": "enabled",
       ...(sessionId ? { "X-Session-ID": sessionId } : {}),
-      ...(this.config.appUrl ? { "HTTP-Referer": this.config.appUrl } : {}),
+      "HTTP-Referer": this.config.httpReferer ?? RALLY_OPENROUTER_HTTP_REFERER,
       ...(this.config.appName ? { "X-Title": this.config.appName } : {})
     };
   }

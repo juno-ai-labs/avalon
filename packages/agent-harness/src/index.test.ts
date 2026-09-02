@@ -391,6 +391,7 @@ describe("agent harness", () => {
       },
     });
     expect(requestHeaders!.get("X-OpenRouter-Metadata")).toBe("enabled");
+    expect(requestHeaders!.get("HTTP-Referer")).toBe("https://rallywith.ai");
     expect(requestBody).toMatchObject({
       user: "workspace-1",
       session_id: "workstream-1-substream-1",
