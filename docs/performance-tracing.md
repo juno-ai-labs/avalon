@@ -282,7 +282,11 @@ distribution as a first one.
 socket-ticket route (`workstream.socket.ticket`), the edge upgrade
 (`workstream.socket.upgrade`), the room's acceptance
 (`workstream.room.socket.accept`), and the room's subscription
-(`workstream.room.socket.subscribe`). When the subscription's plan is a
+(`workstream.room.socket.subscribe`). A main-feed ticket also emits
+`workstream_socket_ticket_warm_finished` after its deferred room wake settles;
+its `ticket_id`, `duration_ms`, and `outcome` show whether ticket transit had a
+chance to cover storage readiness before the joined upgrade arrived. When the
+subscription's plan is a
 snapshot, `workstream.room.snapshot.detail`, `…transcript`, and `…encode` sit
 inside it. `rally.snapshot.trims` is worth reading beside the byte size. A
 subscription snapshot also records `rally.subscribe.snapshot_reason` as
@@ -344,11 +348,12 @@ work. Speculative hover and retained background socket attempts still print a
 local flow but are not uploaded as opening samples. Direct Electron routes add
 PAC, DNS, TCP, TLS, and edge-upgrade milliseconds; proxied routes add one
 CONNECT/TLS/edge aggregate plus failed-route count because the inner tunnel
-phases are not observable truthfully. The renderer adapter retains any phases
-that arrive before the work-stream hook registers its observer and delivers
-that finite backlog before later live phases. Missing phase fields therefore
-mean the main process did not observe the phase, rather than that the renderer
-registered too late. Message sends keep the UUIDv4 client-message identifier separate from the
+phases are not observable truthfully. The main broker supplies its phase
+callback before client construction and retains any synchronous construction
+phase only until socket ownership is registered, then relays later phases live.
+This removes a fragile main-process registration order; it does not prove that
+historical missing fields came from that gap. Check the packaged-client version
+and native phase emission before attributing an absence. Message sends keep the UUIDv4 client-message identifier separate from the
 UUIDv7 operation identifier required by the telemetry envelope. Raw console
 fields such as cursors and close codes are omitted, as are URLs, errors,
 messages, attachment names, and arbitrary annotations. Product analytics
@@ -637,29 +642,36 @@ both signals rather than trusting the comment there to survive.
 
 ## Changelog
 
-### 2026-09-02 — Ticket transit pays room wake and native phases are lossless at registration
+### 2026-09-02 — Ticket transit pays main-room wake and factory phases are lossless
 
-**What changed:** A feed-ticket request now schedules the ticketed
-SubstreamAgent's storage-ready `wake()` without awaiting it. The Electron
-renderer socket adapter queues handshake phases until its first phase observer
-is attached, then delivers the backlog in order before later live phases.
+**What changed:** A main-feed ticket request now schedules the recorded
+SubstreamAgent's storage-ready `wake()` without awaiting it and records a
+ticket-correlated completion duration and outcome. The Electron broker supplies
+the phase callback before socket-client construction, holds any synchronous
+construction phases until ownership is recorded, and then relays phases live.
 
 **Why:** The Worker-to-object wake had no chance to overlap ticket transit or
 the client handshake, although both happen before the upgrade needs the room.
-The handshake instrumentation also had a registration race: main-process IPC
-could emit valid phases between socket construction and hook listener setup,
-making a slow handshake appear to contain no diagnostic phases.
+The initial diagnosis attributed missing phases to a renderer listener race.
+Full-path review disproved that cause because renderer construction and listener
+attachment share one uninterrupted turn. The main factory/listener ordering was
+the defensible boundary to harden, while the historical missing-field cause
+remains unknown.
 
 **Considered and rejected:** Awaiting warm-up would merely move room latency
 into the ticket block and couple availability to an optimization. Guessing a
 PAC cache or connection prewarm policy before trustworthy phase data would risk
-stale network policy and optimize an unverified cause.
+stale network policy and optimize an unverified cause. Warming non-main UUIDs
+without first validating a parent-directory record would make ticket requests
+an object-materialization primitive. Renderer buffering was also removed because
+its event order cannot occur and control sockets never attach a phase observer.
 
 **Consequences:** `room_upgrade` remains the authoritative outcome of object
-admission. Failed warm-ups emit `workstream_socket_ticket_warm_failed` without
-failing ticket issue. The next packaged-client cohort should carry the direct
-phase fields or the proxy aggregate whenever main observed them, which makes the
-next edge optimization evidence-based.
+admission. Main-feed warm-ups emit `workstream_socket_ticket_warm_finished` with
+ticket ID, outcome, and duration without gating ticket issue; non-main tickets
+do not warm. The next packaged-client cohort can compare warm completion with
+room upgrade and should carry any phases observed after factory callback
+registration, while absence still needs version and emission checks.
 
 ### 2026-09-01 — Opening samples are click-scoped and cold wake recovery is named
 

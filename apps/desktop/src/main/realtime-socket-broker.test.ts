@@ -260,7 +260,10 @@ describe('RealtimeSocketBroker', () => {
   it('relays lifecycle and text frames and addresses sends by renderer owner', () => {
     const socket = new FakeSocket();
     const events: DesktopRealtimeSocketEvent[] = [];
-    const broker = new RealtimeSocketBroker(() => socket);
+    const broker = new RealtimeSocketBroker((_url, _protocols, onHandshakePhase) => {
+      if (onHandshakePhase) socket.onHandshakePhase(onHandshakePhase);
+      return socket;
+    });
     broker.open(7, openInput(), (event) => events.push(event));
 
     socket.readyState = 1;
@@ -285,6 +288,31 @@ describe('RealtimeSocketBroker', () => {
       { type: 'message', socketId, data: '{"type":"snapshot"}' },
       { type: 'close', socketId, code: 1000, reason: 'done', wasClean: true },
     ]);
+  });
+
+  it('retains a handshake phase emitted during client construction until ownership is registered', () => {
+    const socket = new FakeSocket();
+    const events: DesktopRealtimeSocketEvent[] = [];
+    const broker = new RealtimeSocketBroker((_url, _protocols, onHandshakePhase) => {
+      onHandshakePhase?.({
+        phase: 'proxy_resolution',
+        durationMs: 8.7,
+        routeIndex: 0,
+        proxied: false,
+      });
+      return socket;
+    });
+
+    broker.open(7, openInput(), (event) => events.push(event));
+
+    expect(events).toEqual([{
+      type: 'handshake_phase',
+      socketId,
+      phase: 'proxy_resolution',
+      durationMs: 8.7,
+      routeIndex: 0,
+      proxied: false,
+    }]);
   });
 
   it('terminates every socket owned by a renderer and suppresses late events', () => {
