@@ -277,7 +277,7 @@
    * application as a `bundled` font source — a family the app only names is a
    * family the platform substitutes, and weight then resolves against whatever
    * it picked. */
-  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
@@ -387,7 +387,7 @@
    * reason. */
   --av-cmp-turn-align: flex-end;
   --av-cmp-turn-margin: auto;
-  --av-cmp-turn-width: min(74%, 650px);
+  --av-cmp-turn-width: min(72%, 620px);
 
   /* The reading column, and the label over a turn in it. */
   --av-cmp-feed-width: 860px;
@@ -646,33 +646,33 @@
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
-  --av-sys-font-size-base: 14px;
-  --av-sys-font-size-prose: 14px;
-  --av-sys-font-size-row: 14px;
-  --av-sys-font-size-hint: 13px;
-  --av-sys-font-size-action: 14px;
-  --av-sys-font-size-meta: 12px;
-  --av-sys-font-size-author: 12px;
-  --av-sys-font-size-title: 13px;
+  --av-sys-font-size-base: 15px;
+  --av-sys-font-size-prose: 16.5px;
+  --av-sys-font-size-row: 14.5px;
+  --av-sys-font-size-hint: 11px;
+  --av-sys-font-size-action: 14.5px;
+  --av-sys-font-size-meta: 10.5px;
+  --av-sys-font-size-author: 12.5px;
+  --av-sys-font-size-title: 15px;
 
-  --av-sys-font-leading-prose: 1.428571;
-  --av-sys-font-leading-base: 1.428571;
+  --av-sys-font-leading-prose: 1.85;
+  --av-sys-font-leading-base: 1.75;
 
-  --av-sys-font-weight-strong: 600;
-  --av-sys-font-weight-heading: 600;
+  --av-sys-font-weight-strong: 450;
+  --av-sys-font-weight-heading: 480;
   --av-sys-font-weight-emphasis: 500;
 
-  --av-sys-label-font-size: 12px;
-  --av-sys-label-tracking: 0;
-  --av-sys-label-transform: none;
-  --av-sys-label-weight: 400;
+  --av-sys-label-font-size: 10px;
+  --av-sys-label-tracking: 0.18em;
+  --av-sys-label-transform: uppercase;
+  --av-sys-label-weight: 500;
 
   --av-cmp-pane-background: #fcfcfc;
 
   --av-cmp-sidebar-background: #f7f7f7;
   --av-cmp-sidebar-background-solid: #f7f7f7;
-  --av-cmp-sidebar-border: rgba(20, 20, 20, 0.05);
-  --av-cmp-sidebar-width: 320px;
+  --av-cmp-sidebar-border: rgba(20, 20, 20, 0.10);
+  --av-cmp-sidebar-width: 280px;
 
   --av-cmp-marker-inline-size: 2px;
   --av-cmp-marker-radius: 2px;
@@ -697,12 +697,12 @@
   --av-cmp-bubble-border: transparent;
   --av-cmp-bubble-padding: 0;
 
-  --av-cmp-composer-background: #f3f3f3;
-  --av-cmp-composer-border-color: rgba(20, 20, 20, 0.10);
+  --av-cmp-composer-background: #fcfcfc;
+  --av-cmp-composer-border-color: rgba(20, 20, 20, 0.30);
   --av-cmp-composer-border-color-focus: rgba(20, 20, 20, 0.20);
-  --av-cmp-composer-border-width: 1px;
+  --av-cmp-composer-border-width: 0.5px;
   --av-cmp-composer-radius: 22px;
-  --av-cmp-composer-shadow: none;
+  --av-cmp-composer-shadow: 0 2px 8px -1px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03), 0 0 0 1px rgba(228, 228, 228, 0.04);
   --av-cmp-composer-rule-color: rgba(45, 38, 30, 0.14);
   --av-cmp-composer-rule-color-focus: rgba(210, 130, 44, 0.3);
   --av-cmp-composer-padding: 20px 2px 6px;
@@ -712,7 +712,7 @@
 
   --av-cmp-turn-align: flex-start;
   --av-cmp-turn-margin: 0;
-  --av-cmp-turn-width: min(74%, 650px);
+  --av-cmp-turn-width: 100%;
 
   --av-cmp-feed-width: 880px;
   --av-cmp-feed-width-wide: 940px;
@@ -955,33 +955,33 @@
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
-  --av-sys-font-size-base: 14px;
-  --av-sys-font-size-prose: 14px;
-  --av-sys-font-size-row: 14px;
-  --av-sys-font-size-hint: 13px;
-  --av-sys-font-size-action: 14px;
-  --av-sys-font-size-meta: 12px;
-  --av-sys-font-size-author: 12px;
-  --av-sys-font-size-title: 13px;
+  --av-sys-font-size-base: 15px;
+  --av-sys-font-size-prose: 16.5px;
+  --av-sys-font-size-row: 14.5px;
+  --av-sys-font-size-hint: 11px;
+  --av-sys-font-size-action: 14.5px;
+  --av-sys-font-size-meta: 10.5px;
+  --av-sys-font-size-author: 12.5px;
+  --av-sys-font-size-title: 15px;
 
-  --av-sys-font-leading-prose: 1.428571;
-  --av-sys-font-leading-base: 1.428571;
+  --av-sys-font-leading-prose: 1.85;
+  --av-sys-font-leading-base: 1.75;
 
-  --av-sys-font-weight-strong: 600;
-  --av-sys-font-weight-heading: 600;
+  --av-sys-font-weight-strong: 450;
+  --av-sys-font-weight-heading: 480;
   --av-sys-font-weight-emphasis: 500;
 
-  --av-sys-label-font-size: 12px;
-  --av-sys-label-tracking: 0;
-  --av-sys-label-transform: none;
-  --av-sys-label-weight: 400;
+  --av-sys-label-font-size: 10px;
+  --av-sys-label-tracking: 0.18em;
+  --av-sys-label-transform: uppercase;
+  --av-sys-label-weight: 500;
 
   --av-cmp-pane-background: #070707;
 
   --av-cmp-sidebar-background: #111111;
   --av-cmp-sidebar-background-solid: #111111;
-  --av-cmp-sidebar-border: rgba(252, 252, 252, 0.05);
-  --av-cmp-sidebar-width: 320px;
+  --av-cmp-sidebar-border: rgba(252, 252, 252, 0.10);
+  --av-cmp-sidebar-width: 280px;
 
   --av-cmp-marker-inline-size: 2px;
   --av-cmp-marker-radius: 2px;
@@ -995,7 +995,7 @@
   --av-cmp-row-hint-gap: 7px;
   --av-cmp-row-height-dense: 44px;
   --av-cmp-row-background-hover: rgba(119, 119, 119, 0.17);
-  --av-cmp-row-background-selected: #313131;
+  --av-cmp-row-background-selected: rgba(119, 119, 119, 0.32);
 
   --av-cmp-group-label-height: 34px;
   --av-cmp-group-label-gap: 22px;
@@ -1007,11 +1007,11 @@
   --av-cmp-bubble-padding: 0;
 
   --av-cmp-composer-background: #2f2f2f;
-  --av-cmp-composer-border-color: rgba(252, 252, 252, 0.10);
+  --av-cmp-composer-border-color: rgba(252, 252, 252, 0.15);
   --av-cmp-composer-border-color-focus: rgba(252, 252, 252, 0.20);
-  --av-cmp-composer-border-width: 1px;
+  --av-cmp-composer-border-width: 0.5px;
   --av-cmp-composer-radius: 22px;
-  --av-cmp-composer-shadow: none;
+  --av-cmp-composer-shadow: 0 2px 8px -1px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03), 0 0 0 1px rgba(228, 228, 228, 0.04);
   --av-cmp-composer-rule-color: rgba(239, 230, 218, 0.09);
   --av-cmp-composer-rule-color-focus: rgba(232, 161, 92, 0.3);
   --av-cmp-composer-padding: 20px 2px 6px;
@@ -1021,7 +1021,7 @@
 
   --av-cmp-turn-align: flex-start;
   --av-cmp-turn-margin: 0;
-  --av-cmp-turn-width: min(74%, 650px);
+  --av-cmp-turn-width: 100%;
 
   --av-cmp-feed-width: 880px;
   --av-cmp-feed-width-wide: 940px;
@@ -1260,7 +1260,7 @@
 
   --av-sys-space-prose-gap: 15px;
 
-  --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-sys-font-family-ui: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --av-sys-font-family-display: var(--av-sys-font-family-ui);
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
@@ -1330,7 +1330,7 @@
 
   --av-cmp-turn-align: flex-end;
   --av-cmp-turn-margin: auto;
-  --av-cmp-turn-width: min(74%, 650px);
+  --av-cmp-turn-width: min(72%, 620px);
 
   --av-cmp-feed-width: 860px;
   --av-cmp-feed-width-wide: 920px;
