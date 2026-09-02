@@ -133,11 +133,12 @@ one **Rally** row. `rally:terminal` and `rally:workstream` are Rally operating a
 machine, and are drawn as one **Computer** row. The
 `rally:multimodal-generation` plugin keeps its own **Multimodal generation** row;
 its canonical id maps it to Tabler's dedicated **image-generation** glyph rather
-than the generic plug. A first-party plugin that is absent from that map *and*
-has no display name of its own — which is how an undecided one appears, since
-the transcript falls back to the raw id as its label — joins Rally, so an
-internal identifier never reaches the feed. Every other plugin keeps its own
-row.
+than the generic plug, and `rally:automations` keeps its own **Automations** row
+the same way, drawing Tabler's **keyframes** glyph. A first-party plugin that is
+absent from that map *and* has no display name of its own — which is how an
+undecided one appears, since the transcript falls back to the raw id as its
+label — joins Rally, so an internal identifier never reaches the feed. Every
+other plugin keeps its own row.
 
 A connector's row is keyed on its **display name**, not its id. Two connections
 to the same service are one place as far as a reader is concerned, and the name
@@ -501,6 +502,25 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-09-02 — Automations draws Tabler's keyframes glyph
+
+**What changed:** The `rally:automations` activity row draws Tabler's
+`keyframes` icon instead of the generic plug. Like multimodal generation, it is
+pinned in `GROUPED_PLUGIN_IDS` under its canonical id and keeps its own
+**Automations** row, so the glyph does not ride on the display-name heuristic
+that would otherwise land it on the plug.
+
+**Why:** The plug is the glyph for a connector this surface has not learned
+about yet; reading it on a first-party plugin tells a reader nothing about what
+Rally was doing. Automations are a scheduled or triggered sequence, and
+keyframes is the shape that says so.
+
+**Consequences:** The plug stays the fallback for an unrecognized connector. A
+later rename of the plugin's display name keeps the keyframes glyph as long as
+its canonical id stays `rally:automations` — but the row's key is still
+`name:Automations`, so the live pre-canonical row and the canonical block merge
+on that name the way every other row does.
 
 ### 2026-09-02 — A finished run closes behind its own total
 

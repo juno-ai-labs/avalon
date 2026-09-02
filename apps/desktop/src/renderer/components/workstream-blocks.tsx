@@ -3,6 +3,7 @@ import {
   IconBrain,
   IconDeviceDesktop,
   IconImageGeneration,
+  IconKeyframes,
   IconPlug,
   IconWebhook,
   IconWorldSearch,
@@ -1543,6 +1544,7 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
  * from `PLUGIN_BRAND_MARKS` instead.
  */
 const unbrandedIconByKey: Record<Exclude<PluginGroupIcon, PluginBrandMark | 'rally'>, TablerIcon> = {
+  automations: IconKeyframes,
   computer: IconDeviceDesktop,
   'image-generation': IconImageGeneration,
   plug: IconPlug,
