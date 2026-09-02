@@ -72,7 +72,7 @@ describe('SessionGate identity-first ordering', () => {
     window.history.replaceState({}, '', '/');
     sessionState.booting = false;
     sessionState.session = null;
-    sessionState.getOnboardingState.mockResolvedValue({ workspace: null, invitations: [] });
+    sessionState.getOnboardingState.mockResolvedValue({ identity: 'connected', workspace: null, invitations: [] });
     sessionState.activateWorkspace.mockResolvedValue(undefined);
     sessionState.api.getWorkspace.mockResolvedValue({
       id: 'workspace-1',
@@ -177,7 +177,7 @@ describe('SessionGate identity-first ordering', () => {
 
   it('shows authenticated invitations before workspace setup', async () => {
     sessionState.session = identitySession;
-    sessionState.getOnboardingState.mockResolvedValue({
+    sessionState.getOnboardingState.mockResolvedValue({ identity: 'connected',
       workspace: null,
       invitations: [{ id: 'invite-1' }],
     });
@@ -196,7 +196,7 @@ describe('SessionGate identity-first ordering', () => {
 
   it('automatically activates an existing workspace discovered through the one identity service', async () => {
     sessionState.session = identitySession;
-    sessionState.getOnboardingState.mockResolvedValue({
+    sessionState.getOnboardingState.mockResolvedValue({ identity: 'connected',
       workspace: {
         id: 'workspace-eu',
         name: 'European Research',

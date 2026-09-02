@@ -352,7 +352,10 @@ const browserBridge: RallyDesktopBridge = {
     notifyBrowserSession();
   },
   async getOnboardingState() {
-    return browserOnboardingRequest<DesktopWorkspaceOnboardingState>('/onboarding');
+    // The browser holds no stored set to merge and no identity credential to
+    // lose: a discovery it can make is the whole directory.
+    const state = await browserOnboardingRequest<Omit<DesktopWorkspaceOnboardingState, 'identity'>>('/onboarding');
+    return { ...state, identity: 'connected' as const };
   },
   async getWorkspaceAttention({ region, workspaceId }) {
     if (
