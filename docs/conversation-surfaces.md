@@ -25,12 +25,12 @@ thing to argue for rather than a thing to preserve.
 - `apps/desktop/src/renderer/components/expanded-composer.tsx`,
   `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
   shell, local text persistence, and staged-file lifecycle.
-- `apps/desktop/src/renderer/screens/workstream.tsx` adapts a SubstreamAgent feed.
-  Its tool rows are not rendered one per call: they collapse into one row per
-  plugin, which [`plugin-activity-rows.md`](plugin-activity-rows.md) owns
-  entirely. The automation adapter below deliberately keeps a row per call.
-- `apps/desktop/src/renderer/screens/new-automation.tsx` adapts an AutomationAgent
-  draft feed.
+- `apps/desktop/src/renderer/screens/workstream.tsx` adapts a SubstreamAgent feed,
+  and is now the only adapter. Its tool rows are not rendered one per call: they
+  collapse into one row per plugin, which
+  [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
+  retired automation-draft adapter kept a row per call, which is the divergence
+  that made the collapse a decision worth recording rather than an obvious one.
 
 ## Contract
 
@@ -68,6 +68,66 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-02 — Every human turn carries the same identity line, the reader's own included
+
+**What changed:** `MessageBlock` no longer suppresses the header over the
+signed-in person's own turn. Every human row — own, coworker, Slack-relayed, and
+a settled elicitation answer — now renders the same three parts in the same
+order: the person-accent dot, the author's name, and the time. The header is no
+longer conditional at all; the `contextLabel` exception that was the only reason
+it rendered over an own turn is now just one more part of the line, between the
+name and the time. In `app.css` the human bubble's corner radius becomes a
+rule-local `--turn-bubble-radius`, and the header takes it as
+`padding-inline-end`, so the line stops where the pill's top edge stops and the
+curve begins rather than overhanging the round of the corner.
+
+**Why:** "you know who you are" is true of the turn you are typing and false of
+the transcript you are reading back. A work stream is a room, and scrolling one
+is reading a conversation: whose words these are and when they were said is the
+same question about your own turn as about anybody else's, and the old rule made
+the reader's own messages the one thing on screen with no time against them —
+so the only way to date your own message was to find somebody else's near it.
+Suppression also cost the feed its rhythm, because a column of turns that
+sometimes has a line above it and sometimes does not reads as two kinds of row.
+
+**Considered and rejected:** showing the time on an own turn but not the name.
+It keeps the asymmetry it was meant to fix — a header that is one shape here and
+another there — and buys a few pixels of height on the one row the reader is
+least likely to be puzzled by. Also rejected: naming the corner radius twice,
+once in the bubble and once in the header inset. The two must agree or the line
+sits over the curve, and a mismatch of a few pixels on one line is exactly what
+a screenshot pass looks past; `--turn-bubble-radius` makes the agreement
+structural, and `app.css.node.test.ts` holds both rules to it.
+
+**Consequences:** own and coworker turns differ only in the `own-human-message` /
+`coworker-message` class and in the accent the author id resolves to; no CSS
+distinguishes them, and nothing should start to — a class that changes the look
+of your own turn is the rule this entry removed, coming back. Air, which aligns
+turns to the leading edge, leaves the header flush there and the inset does
+nothing, which is the same relationship on the other side.
+
+**Two things a header that used to be suppressed had been hiding.** Both were
+found in review, and both are the cost of making a line render that previously
+did not:
+
+- The settled-elicitation row never stated `--person-accent`. Both halves of the
+  line resolve through it — the dot paints its background with it, the name takes
+  its colour from it — so without it the dot's background is invalid at
+  computed-value time and falls back to `transparent`, and the name, a colour
+  being inherited, falls back to the ambient body text. Confirmed in a real
+  window: stripping the property off a settled human row moves the dot from
+  `rgb(79, 74, 158)` to `rgba(0, 0, 0, 0)` and the name to `rgb(26, 24, 20)`, and
+  the dot vanishes. Both human rows now take the accent from one `turnAccent`
+  helper rather than from a copied expression — "these two rows are the same row"
+  is this file's claim, and a duplicated expression is how it stops being true.
+- Answering an elicitation marks the assistant's *question* turn answered where
+  it stands, and that turn carries no author record until the canonical human
+  turn lands a moment later. The row was therefore labelled "Your elicitation
+  response" while visibly attributing the reader's own answer to a "Workspace
+  member". `MessageBlock` now takes `currentUserName` and names the reader from
+  the session for exactly that window. `Workspace member` remains the fallback
+  for a row that is genuinely unattributed.
 
 ### 2026-09-02 — An in-flight turn is the bubble it is about to become
 
