@@ -403,7 +403,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
 }
 
 /**
- * The card that is playing, so that starting one stops it.
+ * The element the reader last *asked* to play. Every other card stays silent.
  *
  * Module-level rather than context, because it is not a piece of application
  * state anybody renders from: nothing outside the card that owns the element
@@ -411,8 +411,16 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
  * mounted by every one of the surfaces that render markdown. A run of announced
  * recordings shares one row, and two of them playing at once is not a mix
  * anybody chose.
+ *
+ * It tracks the *request*, not the first element to start, and that distinction
+ * is the whole of it: `play()` is asynchronous, so a reader who clicks one card
+ * and then another can have the two begin in whichever order their buffers fill.
+ * Deciding exclusivity when the `play` event arrived let the earlier click come
+ * back and pause the card they had just chosen. So the previous element is
+ * stopped where the reader asks, and a start that arrives for anything but the
+ * current request pauses itself instead of taking over.
  */
-let sounding: HTMLAudioElement | null = null;
+let requested: HTMLAudioElement | null = null;
 
 /**
  * The announcement form for a resource somebody is meant to *hear*.
@@ -478,7 +486,7 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
     const audio = element.current;
     return () => {
       audio?.pause();
-      if (sounding === audio) sounding = null;
+      if (requested === audio) requested = null;
     };
   }, [src]);
 
@@ -507,12 +515,19 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
         {src !== undefined && (
           <button
             aria-label={`${playing ? 'Pause' : 'Play'} ${resource.title}`}
+            aria-pressed={playing}
             className="icon-button citation-card-play"
             onClick={() => {
               const audio = element.current;
               if (!audio) return;
-              if (audio.paused) void audio.play().catch(() => setPlaying(false));
-              else audio.pause();
+              if (!audio.paused) {
+                if (requested === audio) requested = null;
+                audio.pause();
+                return;
+              }
+              if (requested && requested !== audio) requested.pause();
+              requested = audio;
+              void audio.play().catch(() => setPlaying(false));
             }}
             type="button"
           >
@@ -532,11 +547,16 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
           onEnded={() => {
             setPlaying(false);
             setPosition(0);
+            // A recording that ran out is no longer the request, so the next
+            // card to start has nothing to stop.
+            if (requested === element.current) requested = null;
           }}
           onPause={() => setPlaying(false)}
           onPlay={() => {
-            if (sounding && sounding !== element.current) sounding.pause();
-            sounding = element.current;
+            if (requested !== element.current) {
+              element.current?.pause();
+              return;
+            }
             setPlaying(true);
           }}
           onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}

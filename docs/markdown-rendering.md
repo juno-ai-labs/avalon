@@ -302,7 +302,9 @@ recording — the room becomes a played bar, an `m:ss` clock (`h:mm:ss` past the
 hour) and a small play/pause button beneath them, and the title block becomes
 the button that opens the rail. So the card reads top to bottom as what this is,
 where it is, and what to press. Two controls, each with its own accessible name
-— "Play <title>" / "Pause <title>", and "Open <title>". The whole-card hover
+— "Play <title>" / "Pause <title>", and "Open <title>". The play control also
+carries `aria-pressed`, which is how the header's own toggles are written here:
+a state-bearing name *and* the state, rather than one or the other. The whole-card hover
 belongs to the cards that *are* one button, so it is written
 `button.citation-card:hover`; lighting the container would advertise a click it
 does not take.
@@ -351,10 +353,17 @@ second commit and the empty one in between unmounted the `audio` element. The
 skeleton is therefore chosen at render from the card having nothing to show, not
 from the flag alone. A failed re-ask keeps the bytes too: it is the route's
 answer about the next read, not a reason to stop a recording someone is
-listening to. **Starting one card stops the one that
-was sounding**, through a module-level reference to the playing element: a run
-of announced recordings shares one row, and two of them at once is not a mix
-anybody chose. A card leaving the transcript pauses its element, because
+listening to. **Starting one card stops the one the
+reader asked for before it**, through a module-level reference: a run of
+announced recordings shares one row, and two of them at once is not a mix
+anybody chose. That reference tracks the *request*, not the first element to
+start, and the distinction is load-bearing. `play()` is asynchronous, so two
+quick clicks can begin in whichever order their buffers fill; deciding
+exclusivity when the `play` event arrived let the earlier click come back and
+pause the card the reader had just moved to. The previous element is stopped
+where the reader asks, and a start that arrives for anything but the current
+request pauses itself instead of taking over. A recording that runs out clears
+the request, and a card leaving the transcript pauses its element, because
 removing a media element from the document does not stop it.
 
 On a work stream, the latest embed card in the last two **text** turns also
@@ -776,6 +785,15 @@ its glance belongs, under a title that said "Audio". Fixing only the decode
 would have left the card a picture of nothing; what a reader wants from an
 announced recording is to play it, and the rail already proves the bytes play by
 handing the same blob to `<audio controls>`.
+
+**Follow-up in the same change (bot review):** exclusivity moved from the `play`
+event to the click, because `play()` is asynchronous and the earlier of two
+quick clicks could come back and pause the card the reader had moved to; `ended`
+now clears the request rather than leaving it pointing at a stopped element; the
+play control gained `aria-pressed` to match the header's toggles; and the export
+stylesheet's `.citation-card-open` moved below `.citation-card-text`, since the
+open button carries both classes and their shared declarations were being
+decided by source order.
 
 **Follow-up in the same change (design):** the badge went back to the speaker
 glyph and the play/pause control moved out of it, into a button under the bar

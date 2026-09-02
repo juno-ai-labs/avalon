@@ -27,7 +27,12 @@ const RECORDING: CitationResource = {
  * the click. A stub that only recorded the call would leave every assertion
  * about the button's name asserting on the double's configuration.
  */
-function stubPlayback(): { played: HTMLMediaElement[]; restore: () => void } {
+function stubPlayback({ autoStart = true }: { autoStart?: boolean } = {}): {
+  played: HTMLMediaElement[];
+  /** Begin playback on one element, for a test that ordered the starts itself. */
+  start: (element: HTMLMediaElement) => void;
+  restore: () => void;
+} {
   const media = HTMLMediaElement.prototype;
   const paused = new WeakMap<HTMLMediaElement, boolean>();
   const played: HTMLMediaElement[] = [];
@@ -36,14 +41,20 @@ function stubPlayback(): { played: HTMLMediaElement[]; restore: () => void } {
     play: media.play,
     pause: media.pause,
   };
+  const begin = (element: HTMLMediaElement): void => {
+    paused.set(element, false);
+    element.dispatchEvent(new Event('play'));
+  };
   Object.defineProperty(media, 'paused', {
     configurable: true,
     get(this: HTMLMediaElement) { return paused.get(this) ?? true; },
   });
   media.play = function play(this: HTMLMediaElement) {
+    // `paused` goes false when play() is *called*, as the spec has it, whether
+    // or not this stub is going to start the element for the caller.
     paused.set(this, false);
     played.push(this);
-    this.dispatchEvent(new Event('play'));
+    if (autoStart) this.dispatchEvent(new Event('play'));
     return Promise.resolve();
   };
   media.pause = function pause(this: HTMLMediaElement) {
@@ -52,6 +63,7 @@ function stubPlayback(): { played: HTMLMediaElement[]; restore: () => void } {
   };
   return {
     played,
+    start: (element) => { act(() => begin(element)); },
     restore: () => {
       if (original.paused) Object.defineProperty(media, 'paused', original.paused);
       media.play = original.play;
@@ -97,7 +109,7 @@ function deferredRecording(): {
 function reportMedia(
   element: HTMLMediaElement,
   state: { currentTime: number; duration: number },
-  event: 'durationchange' | 'timeupdate',
+  event: 'durationchange' | 'ended' | 'timeupdate',
 ): void {
   Object.defineProperty(element, 'currentTime', { configurable: true, value: state.currentTime });
   Object.defineProperty(element, 'duration', { configurable: true, value: state.duration });
@@ -556,6 +568,83 @@ describe('resource citations', () => {
     // the way out, and jsdom's own `pause()` throws.
     unmount();
     expect(sounding!.paused).toBe(true);
+    playback.restore();
+    createObjectURL.mockRestore();
+    vi.mocked(URL.revokeObjectURL).mockRestore?.();
+  });
+
+  it('honours the card the reader asked for last, whichever one starts first', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL')
+      .mockReturnValueOnce('blob:first')
+      .mockReturnValueOnce('blob:second');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    // The starts are ordered by this test rather than by the click, because
+    // that is the whole case: `play()` is asynchronous, and two cards can begin
+    // in whichever order their buffers fill.
+    const playback = stubPlayback({ autoStart: false });
+    const second = { ...RECORDING, id: 'standup', title: 'Standup recap.mp3' };
+    const { deliver, preview } = deferredRecording();
+
+    const { unmount } = render(
+      <MarkdownBody
+        citations={context({
+          preview,
+          resolve: (id) => (id === 'standup' ? second : RECORDING),
+        })}
+      >
+        {'![Inbox Brief](resource://board-deck)\n\n![Standup recap](resource://standup)'}
+      </MarkdownBody>,
+    );
+
+    await deliver();
+    const [first, latest] = [...document.querySelectorAll('audio')];
+    fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Play Standup recap.mp3' }));
+
+    // The second card wins because it was asked for second — not because it
+    // happened to start second. Here it starts *first*, and the recording the
+    // reader moved on from arrives late.
+    playback.start(latest!);
+    playback.start(first!);
+
+    expect(first!.paused).toBe(true);
+    expect(latest!.paused).toBe(false);
+    expect(screen.getByRole('button', { name: 'Pause Standup recap.mp3' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' })).toHaveAttribute('aria-pressed', 'false');
+
+    unmount();
+    playback.restore();
+    createObjectURL.mockRestore();
+    vi.mocked(URL.revokeObjectURL).mockRestore?.();
+  });
+
+  it('returns to the start when a recording runs out', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recording');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const playback = stubPlayback();
+    const { deliver, preview } = deferredRecording();
+
+    const { unmount } = render(
+      <MarkdownBody citations={context({ preview, resolve: () => RECORDING })}>
+        {'![Inbox Brief](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    await deliver();
+    const element = document.querySelector('audio')!;
+    reportMedia(element, { duration: 225, currentTime: 0 }, 'durationchange');
+    fireEvent.click(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' }));
+    reportMedia(element, { duration: 225, currentTime: 225 }, 'timeupdate');
+    expect(document.querySelector('.citation-card-elapsed')).toHaveTextContent('3:45 / 3:45');
+
+    reportMedia(element, { duration: 225, currentTime: 225 }, 'ended');
+
+    // The clock goes back to the head of the recording, and the control offers
+    // to play it again rather than to pause something that stopped.
+    expect(document.querySelector('.citation-card-elapsed')).toHaveTextContent('0:00 / 3:45');
+    expect(screen.getByRole('button', { name: 'Play Inbox Brief.mp3' })).toBeInTheDocument();
+
+    unmount();
     playback.restore();
     createObjectURL.mockRestore();
     vi.mocked(URL.revokeObjectURL).mockRestore?.();
