@@ -40,6 +40,11 @@ export default defineConfig({
     },
   },
   renderer: {
+    server: {
+      // Parallel visual explorations can each choose an isolated renderer port
+      // without editing the project or colliding with another Electron run.
+      port: Number.parseInt(process.env.RALLY_RENDERER_PORT ?? '5173', 10),
+    },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer'),

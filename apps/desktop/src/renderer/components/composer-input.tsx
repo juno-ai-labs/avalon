@@ -1,6 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
-import { ArrowUp, AtSign, Check, ChevronDown, LoaderCircle, Mic, Paperclip } from 'lucide-react';
+import { ArrowUp, AtSign, Check, ChevronDown, LoaderCircle, Mic, Plus } from 'lucide-react';
 import {
   forwardRef,
   Fragment,
@@ -372,7 +372,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
               <AtSign size={15} />
             </IconButton>
             <IconButton disabled={submitting} label="Attach a file" onClick={() => fileInputRef.current?.click()}>
-              {uploading ? <LoaderCircle className="spin" size={15} /> : <Paperclip size={15} />}
+              {uploading ? <LoaderCircle className="spin" size={15} /> : <Plus size={16} />}
             </IconButton>
             <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
               <IconButton

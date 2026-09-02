@@ -183,6 +183,28 @@ on purpose. A row that scrolls away open and comes back closed re-measures
 shorter than the size cache expects, and the virtualizer declines to compensate
 a re-measurement during a backward scroll, so the transcript jumps under the
 reader by the whole delta.
+### 2026-09-02 — Work streams adopt the compact conversation shell
+
+**What changed:** The main frontend now uses deterministic color/icon work-stream
+identities, compact searchable navigation with participant face piles, attributed
+right-aligned human bubbles, open Rally prose, an attached details rail, a small
+plus attachment action, and a Rally-plus-people `@` picker. The Electron window
+grows with the details rail when the display has spare width.
+
+**Why:** The previous screen distributed one conversation across visually
+unrelated navigation, feed, composer, and inspector treatments. The new shell
+makes the work stream the stable visual object and keeps human and agent turns
+immediately distinguishable without changing their durable contracts.
+
+**Considered and rejected:** A theme-only skin could not change row hierarchy,
+message attribution, mention candidates, or window geometry. Bubbling Rally's
+output was also rejected because long agent prose is easier to read as an open
+document and the product requirement keeps that distinction explicit.
+
+**Consequences:** Shared renderer primitives retain neutral defaults; the main
+work-stream screen opts into the new feed treatment. Work-stream ids now seed
+appearance, so changing the hash or palette order is a visible migration.
+Electron window geometry remains a narrow main-window-only capability.
 
 ### 2026-09-02 — Every human turn carries the same identity line, the reader's own included
 

@@ -435,6 +435,10 @@ const browserBridge: RallyDesktopBridge = {
   async copyText(text) {
     await navigator.clipboard.writeText(text);
   },
+  async setConversationDetailsOpen() {
+    // A browser tab cannot resize its own top-level window. The attached rail
+    // still opens inside the viewport, which is the browser-safe fallback.
+  },
   async exportMessage() {
     // Rendering a card and choosing where it goes are both main-process work.
     // A browser has neither, and the buttons that call this are hidden there.

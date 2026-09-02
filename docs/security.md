@@ -838,6 +838,25 @@ platform is what refuses that link before the window moves.
 **Consequences:** The 2026-09-01 entry “External workspace targets cannot rely
 on local authority” still holds for every target that is not active. Shipped
 in #484.
+### 2026-09-02 — Conversation rail gets a bounded window-geometry capability
+
+**What changed:** The sandboxed main renderer can tell main whether its attached
+conversation details rail is open and how wide the rendered rail is. Main may
+grow only the primary Rally window within its current display work area and
+reverses only the growth it recorded.
+
+**Why:** An attached details panel should add room when the desktop has it;
+shrinking the transcript in an otherwise non-maximized window makes opening
+context destroy the conversation layout.
+
+**Considered and rejected:** Exposing `BrowserWindow`, coordinates, generic
+resize IPC, or admitting Settings/meeting renderers would turn a presentation
+detail into a broad window-control capability. Resizing from the renderer with
+web APIs cannot control an Electron BrowserWindow reliably.
+
+**Consequences:** Future geometry requests stay main-window-only and accept
+semantic state rather than arbitrary bounds. Maximized and full-screen windows
+remain untouched.
 
 ### 2026-09-02 — Prepared feed admission remains revocable and one-use
 
