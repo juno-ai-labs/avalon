@@ -316,6 +316,17 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   if (onboarding.error) {
     return <ServiceSetupState error={onboarding.error} onRetry={() => void onboarding.refetch()} />;
   }
+  if (onboarding.data.identity !== 'connected') {
+    // Main answers with a state rather than rejecting so the account menu can
+    // keep listing the stored set; on this screen there is no stored set to
+    // show, and the state reads as the setup failure it is.
+    return (
+      <ServiceSetupState
+        error={new Error(onboarding.data.identityError ?? 'Rally could not check your workspaces.')}
+        onRetry={() => void onboarding.refetch()}
+      />
+    );
+  }
   if (onboarding.data.workspace) {
     if (activationError) {
       return (

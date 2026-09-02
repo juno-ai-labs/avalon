@@ -286,6 +286,10 @@ export interface DesktopWorkspaceSummary {
   region: RallyRegion;
   role: 'owner' | 'admin' | 'member';
   createdAt: string;
+  /** Whether this device holds a regional credential for the workspace — the
+   * only thing that can read its background attention. Absent from a row the
+   * browser bridge relays straight from the API. */
+  credentialStored?: boolean;
 }
 
 export interface DesktopPendingWorkspaceInvitation {
@@ -299,10 +303,27 @@ export interface DesktopPendingWorkspaceInvitation {
   expiresAt: string;
 }
 
+/**
+ * Whether Global discovery answered, and if not, why.
+ *
+ * - `connected`: discovery answered; `workspaces` is the account's complete
+ *   membership merged with what this device has stored.
+ * - `reconnect_required`: no identity credential is stored, so nothing can be
+ *   discovered or activated until the account is reconnected. `workspaces` is
+ *   what this device has stored plus the last answer this run received.
+ * - `unavailable`: discovery failed for another reason — no network, a
+ *   regional outage, an unexpected answer. `workspaces` is assembled as above.
+ */
+export type DesktopAccountIdentityState = 'connected' | 'reconnect_required' | 'unavailable';
+
 export interface DesktopWorkspaceOnboardingState {
   workspace: DesktopWorkspaceSummary | null;
   workspaces: DesktopWorkspaceSummary[];
   invitations: DesktopPendingWorkspaceInvitation[];
+  identity: DesktopAccountIdentityState;
+  /** The failure behind a state other than `connected`, in the words the
+   * renderer may show. */
+  identityError?: string;
 }
 
 export type DesktopMediaPermissionStatus =

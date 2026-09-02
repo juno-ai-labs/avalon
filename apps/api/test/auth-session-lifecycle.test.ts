@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { sha256 } from "../src/lib/crypto";
 import { AuthService } from "../src/services/auth-service";
@@ -103,6 +103,34 @@ describe("authentication session lifecycle", () => {
       user: { email: "member@example.com" },
       workspace: null,
     });
+  });
+
+  it("retires the earlier of two concurrent rotations once the replay grace has passed", async () => {
+    // The grace clause above exists for a lost response, and it makes a
+    // *concurrent* pair of refreshes with the same token succeed twice: each
+    // rotates, and the earlier answer's token is only honoured as the
+    // "previous" one for the next sixty seconds. A desktop that persists the
+    // earlier answer is therefore holding a token that dies quietly a minute
+    // later — the reason the desktop single-flights its refreshes
+    // (apps/desktop/src/main/credential-refresh.ts).
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-02T12:00:00.000Z"));
+      const [earlier, later] = await Promise.all([
+        service.refresh(oldRefreshToken),
+        service.refresh(oldRefreshToken),
+      ]);
+      expect(earlier.refreshToken).not.toBe(later.refreshToken);
+
+      vi.setSystemTime(new Date("2026-09-02T12:01:01.000Z"));
+      await expect(service.refresh(earlier.refreshToken)).rejects.toMatchObject({
+        status: 401,
+        code: "invalid_refresh_token",
+      });
+      await expect(service.refresh(later.refreshToken)).resolves.toMatchObject({ workspace: null });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("revokes the verified bearer session even when the supplied refresh token is stale", async () => {
