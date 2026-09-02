@@ -243,15 +243,15 @@ export function SiteResourceDetail({
           disabled={!access}
           onClick={() => {
             if (!access) return;
-            // The canonical link, which carries no access code — that is
-            // precisely what makes it safe to paste anywhere.
+            // The canonical public link carries no access code or viewer
+            // identity. Copying it shares the current site with anyone.
             void surface.copyText(access.canonicalUrl).then(() => {
               setCopied(true);
               window.setTimeout(() => setCopied(false), 1_500);
             });
           }}
         >
-          <Copy size={14} /> {copied ? 'Copied' : 'Copy link'}
+          <Copy size={14} /> {copied ? 'Copied' : 'Copy public link'}
         </Button>
         <Button
           disabled={!access}

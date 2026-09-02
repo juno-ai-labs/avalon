@@ -47,6 +47,7 @@ import {
 import { artifactHostDOName } from "../durable-objects/names";
 import type { ArtifactHostDO } from "../durable-objects/artifact-host-do";
 import { durableObjectStubForArtifact } from "../lib/durable-object-namespace";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
   artifactSecurityHeaders,
   classifyFetchMetadata,
@@ -265,9 +266,20 @@ export default {
       // Identity is an optional enhancement to a public response. If the
       // visibility hop fails, degrade to anonymous rather than making a viewer
       // with an old cookie less able to open the site than a crawler is.
-      const checked = session
-        ? await artifact.checkSession(session, VISIBILITY_CACHE_MS).catch(() => null)
-        : null;
+      let checked: Awaited<ReturnType<ArtifactHostDO["checkSession"]>> | null = null;
+      if (session) {
+        try {
+          checked = await artifact.checkSession(session, VISIBILITY_CACHE_MS);
+        } catch (error) {
+          logWarn({
+            LOG_LEVEL: "info",
+            AVALON_REGION: env.AVALON_REGION,
+          }, "artifact_viewer_session_check_failed", {
+            artifact_id: artifactId,
+            code: diagnosticErrorCode(error, "session_check_failed"),
+          });
+        }
+      }
       if (
         checked?.ok
         && checked.viewerId
@@ -298,6 +310,14 @@ export default {
         stateful: state.stateful,
         manifest: state.manifest,
       };
+    }
+
+    // Public means readable, not anonymously writable. Fetch metadata is a
+    // browser CSRF signal rather than caller authentication, and a non-browser
+    // client can spell those headers itself. Preserve the former session gate
+    // for every method that may mutate model-owned state.
+    if (!admitted.viewerId && request.method !== "GET" && request.method !== "HEAD") {
+      return html(neutralPage(), 401);
     }
 
     const mount = splitVersionMount(url.pathname);
@@ -381,14 +401,20 @@ async function serveCurrent(
     const response = await runArtifactModule(env, ctx, artifact, artifactId, request, admitted);
     return withSecurityHeaders(response);
   } catch (error) {
-    // The viewer never sees a stack trace; the participant does, in the rail,
-    // where it can be pasted back into chat for the model to fix.
-    await artifact.recordError({
-      version: manifest.artifactVersion,
-      requestPath: url.pathname,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? (error.stack ?? null) : null,
-    }).catch(() => undefined);
+    // The viewer never sees a stack trace. For an identified participant it
+    // lands in the rail, where it can be pasted back into chat for the model.
+    // The rail error ring is participant-facing and bounded. Letting an
+    // anonymous caller append would let 50 crafted failures evict every useful
+    // diagnosis and plant attacker-chosen paths in a surface people paste back
+    // into chat.
+    if (admitted.viewerId) {
+      await artifact.recordError({
+        version: manifest.artifactVersion,
+        requestPath: url.pathname,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? (error.stack ?? null) : null,
+      }).catch(() => undefined);
+    }
     return html(plainErrorPage("This artifact hit an error. Ask Rally in the work stream to fix it."), 500);
   }
 }

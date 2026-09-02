@@ -105,8 +105,10 @@ that works the first time.
 
    **Sites are public by default.** Rally adds trusted viewer headers
    only when the request has a valid Rally viewer session; a direct
-   public visit or crawler has neither header. If this site must be
-   protected, put this guard at the very start of the handler, before
+   public visit or crawler has neither header. Anonymous visitors may
+   make only \`GET\` and \`HEAD\` requests; Rally refuses unsafe methods
+   before they reach the handler. If this site must be protected, put
+   this guard at the very start of the handler, before
    API routing and before \`env.ASSETS.fetch\`, so it protects the HTML
    and every asset as well as computed routes:
 

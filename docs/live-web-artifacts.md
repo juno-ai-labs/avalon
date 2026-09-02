@@ -121,7 +121,13 @@ Artifact content is public by default. A direct browser, crawler, or unfurler
 can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
 current manifest from `ArtifactHostDO`, strips any inbound cookie and viewer
 header before model code runs, and injects no identity. Static sites therefore
-cannot be private.
+cannot be private. Anonymous unsafe methods are refused before model code runs:
+public means readable, not anonymously writable.
+
+The four-word hostname is a readable routing label with roughly 30 bits of
+combinations, not an access secret. Search crawlers receive
+`X-Robots-Tag: noindex`, but that is indexing etiquette rather than a security
+boundary; anyone holding or discovering the URL can read the current site.
 
 An author who needs a protected site must publish an **active** site whose
 handler checks `x-rally-viewer-id` before every route and before its asset
@@ -210,6 +216,11 @@ is the only place that can forward into it.
   superseded spellings alike. That strip is the entire anti-spoof mechanism; a
   header family whose readers widen to a legacy prefix and whose stripper does
   not has a forgeable back door.
+- **Anonymous access is read-only.** Fetch metadata protects browsers from
+  sibling-artifact CSRF; it does not authenticate a non-browser caller, which
+  can spell those headers itself. `GET` and `HEAD` may fall back to the public
+  representation, while every unsafe method still requires a valid Rally
+  viewer session.
 - **The renderer never embeds, fetches, or parses artifact content.** An
   `<iframe>` would widen the renderer's CSP to a wildcard artifact host and graft
   remote model-authored content into the application DOM as a navigable,
@@ -316,7 +327,13 @@ facet that holds a stateful artifact's data. It does not own:
 - **Viewer identity cannot be checked.** Identity is an optional enhancement to
   public serving, so a failed visibility hop falls back to the anonymous
   representation rather than making a browser with an old cookie less able to
-  read than a crawler. A protected active site's header guard still refuses it.
+  read than a crawler. The failure emits a structured warning; a protected
+  active site's header guard still refuses the anonymous request.
+- **An anonymous request makes the model handler throw.** It receives the same
+  neutral 500 response, but cannot append to the participant-facing error ring:
+  otherwise crafted public requests could evict every useful diagnosis and
+  plant attacker-controlled paths in a surface participants paste into chat.
+  Reproducing the failure through Rally records it with trusted viewer context.
 - **A prior version of a stateful artifact.** Source only, never live: one facet
   runs one class, so serving old code would abort the facet under current
   viewers, and old code against a live schema is undefined besides.
@@ -417,7 +434,9 @@ anonymous even if they carry a cookie; same-origin requests and top-level
 navigations receive trusted viewer headers only after a valid Rally session is
 checked. The site-building guidance now says that a protected site must be
 active and reject requests without `x-rally-viewer-id` before routing or serving
-assets.
+assets. Anonymous unsafe methods remain session-gated, public responses opt out
+of search indexing, and the rail action names what it copies: **Copy public
+link**.
 
 **Why:** The stable URL is a product output intended to open in browsers and
 unfurl in crawlers. Requiring every reader to enter through Rally made copied
@@ -439,7 +458,10 @@ Unsafe cross-origin requests remain refused, public reads never receive a
 viewer identity, and all responses retain the platform CSP and security
 headers. Historical-version mounts remain session-gated because an old active
 version cannot run its protection guard, and a stateless active site returns
-503 rather than exposing assets when its handler cannot run.
+503 rather than exposing assets when its handler cannot run. The readable
+hostname is not treated as secrecy; its finite vocabulary is accepted because
+the content is public, while `noindex` avoids turning sharing into search
+discovery.
 
 ### 2026-09-02 — Pop-outs keep artifact content below the window controls
 

@@ -55,6 +55,7 @@ function fixture(route: unknown | null, options: {
   redeemCode: ReturnType<typeof vi.fn>;
   checkSession: ReturnType<typeof vi.fn>;
   currentState: ReturnType<typeof vi.fn>;
+  recordError: ReturnType<typeof vi.fn>;
 } {
   const readRoute = vi.fn(async () => route === null ? null : route);
   const prepare = vi.fn((sql: string) => {
@@ -73,9 +74,10 @@ function fixture(route: unknown | null, options: {
     return options.checkSessionResult ?? null;
   });
   const currentState = vi.fn(async () => options.currentStateResult ?? null);
+  const recordError = vi.fn(async () => undefined);
   const hosts = createCloudflareTestBinding<ArtifactServingEnv["ARTIFACT_HOSTS"]>({
     idFromName,
-    get: () => ({ redeemCode, checkSession, currentState }),
+    get: () => ({ redeemCode, checkSession, currentState, recordError }),
   });
   return {
     readRoute,
@@ -84,6 +86,7 @@ function fixture(route: unknown | null, options: {
     redeemCode,
     checkSession,
     currentState,
+    recordError,
     env: {
       APP_ENV: "test",
       AVALON_REGION: "global",
@@ -252,6 +255,41 @@ describe("artifact serving hostname routes", () => {
     expect(currentState).toHaveBeenCalledOnce();
   });
 
+  it("keeps unsafe methods behind a valid Rally viewer session", async () => {
+    const forwarded = vi.fn(async () => Response.json({ ok: true }));
+    const { env, checkSession, currentState } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    }, {
+      currentStateResult: {
+        artifactId: ARTIFACT,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
+        workstreamId: "00000000-0000-7000-8000-0000000000d1",
+        resourceId: "00000000-0000-7000-8000-0000000000e1",
+        version: 1,
+        mode: "active",
+        stateful: false,
+        manifest: ACTIVE_MANIFEST,
+      },
+      loaderFetch: forwarded,
+    });
+    const origin = `https://${STUB}-g.rallyusercontent.test`;
+
+    const response = await artifactWorker.fetch(new Request(`${origin}/api/vote`, {
+      method: "POST",
+      headers: {
+        origin,
+        "sec-fetch-site": "same-origin",
+      },
+    }), env, context());
+
+    expect(response.status).toBe(401);
+    expect(checkSession).not.toHaveBeenCalled();
+    expect(currentState).toHaveBeenCalledOnce();
+    expect(forwarded).not.toHaveBeenCalled();
+  });
+
   it("keeps prior versions behind a valid Rally viewer session", async () => {
     const { env, checkSession } = fixture({
       hostname_stub: STUB,
@@ -352,6 +390,7 @@ describe("artifact serving hostname routes", () => {
   });
 
   it("falls back to the public representation when identity validation is unavailable", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { env, checkSession, currentState } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
@@ -384,6 +423,73 @@ describe("artifact serving hostname routes", () => {
     expect(response.status).toBe(200);
     expect(checkSession).toHaveBeenCalledOnce();
     expect(currentState).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      event: "artifact_viewer_session_check_failed",
+      artifact_id: ARTIFACT,
+    }));
+    warn.mockRestore();
+  });
+
+  it("falls back to public without identity after work-stream visibility is lost", async () => {
+    const { env, checkSession, currentState } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    }, {
+      checkSessionResult: { ok: false, reason: "not_visible" },
+      currentStateResult: {
+        artifactId: ARTIFACT,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
+        workstreamId: "00000000-0000-7000-8000-0000000000d1",
+        resourceId: "00000000-0000-7000-8000-0000000000e1",
+        version: 1,
+        mode: "static",
+        stateful: false,
+        manifest: MANIFEST,
+      },
+    });
+    const origin = `https://${STUB}-g.rallyusercontent.test`;
+
+    const response = await artifactWorker.fetch(new Request(origin, {
+      headers: {
+        cookie: "__rally_artifact_session=revoked",
+        origin,
+        "sec-fetch-site": "same-origin",
+      },
+    }), env, context());
+
+    expect(response.status).toBe(200);
+    expect(checkSession).toHaveBeenCalledOnce();
+    expect(currentState).toHaveBeenCalledOnce();
+  });
+
+  it("does not let anonymous failures evict the participant error ring", async () => {
+    const { env, recordError } = fixture({
+      hostname_stub: STUB,
+      artifact_id: ARTIFACT,
+      region: "global",
+    }, {
+      currentStateResult: {
+        artifactId: ARTIFACT,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
+        workstreamId: "00000000-0000-7000-8000-0000000000d1",
+        resourceId: "00000000-0000-7000-8000-0000000000e1",
+        version: 1,
+        mode: "active",
+        stateful: false,
+        manifest: ACTIVE_MANIFEST,
+      },
+      loaderFetch: async () => { throw new Error("public failure"); },
+    });
+
+    const response = await artifactWorker.fetch(
+      new Request(`https://${STUB}-g.rallyusercontent.test/throws`),
+      env,
+      context(),
+    );
+
+    expect(response.status).toBe(500);
+    expect(recordError).not.toHaveBeenCalled();
   });
 
   it("returns the neutral 404 when the route is absent or crosses regions", async () => {
