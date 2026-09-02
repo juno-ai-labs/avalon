@@ -337,8 +337,16 @@ It deliberately does **not** cover:
   That is deliberate and is the safe direction: the turn that would have ended
   the run may be in the part nobody loaded, and joining across it would report
   work as one stretch that a sentence from Rally had in fact separated. Loading
-  the gap does not re-join the rows, because each pass sees only what is
-  loaded.
+  the gap closes it and the two rows become one, which is a **remount**, not
+  just a row disappearing: the surviving row takes the earlier thought's id.
+- **A collapsed thinking total is a sum over rows**, and each row's duration is
+  its whole activity's. It stays honest only while a turn contributes one
+  thinking block, which is what the authority writes today — one block per
+  assistant turn, pointed at that turn's own thinking activity. A second block
+  on one turn would resolve to the same activity and be counted twice, as one
+  row quietly doubled rather than two rows visibly repeating a number. Whoever
+  projects thinking per attempt or per segment has to key the sum on the
+  activity instead.
 - No caps, quotas, or timeouts: the whole module is a pure function over a list
   that is already bounded by the transcript's own paging.
 
