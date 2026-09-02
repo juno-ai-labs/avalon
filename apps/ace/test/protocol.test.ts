@@ -1,3 +1,5 @@
+import { readdir, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import {
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_ROLES,
@@ -12,13 +14,94 @@ import {
   ManagedModelUpdateSchema,
 } from '../src/protocol';
 
+const repositoryDirectory = fileURLToPath(new URL('../../..', import.meta.url));
+
+/**
+ * Keys the API Worker deliberately resolves outside Ace, each with the reason
+ * it is not a managed product Boolean. This is an allowlist rather than a
+ * filter: anything else the Worker serves without an `-enabled` key fails the
+ * naming test below rather than quietly falling outside Ace the way
+ * `multiple-workspaces-enabled` did.
+ */
+const NOT_ACE_MANAGED = new Map([
+  ['developer-settings', 'a per-device staff toggle, targeted through Wrangler'],
+  ['control-tower-refresh-seconds', 'a cadence with no off, so it is not a Boolean'],
+]);
+
+/**
+ * Every flag key the API resolves, read out of the Worker rather than restated
+ * here. The flag modules follow one convention — `const <NAME>_FLAG_KEY =
+ * "<key>"` in a `*flags.ts` beside the resolver — so the directory is scanned
+ * instead of a file list: `docs/feature-flags.md` says a value with no safe off
+ * gets a module of its own beside the others, and a hardcoded list would stop
+ * seeing exactly the flag that module adds.
+ *
+ * Declarations are counted before their values are parsed, and the two counts
+ * must agree. A declaration this scan cannot read as a plain quoted literal
+ * contributes no key, and a scan that silently returned one fewer key would
+ * leave both sides of the comparison below unchanged — passing while the flag
+ * it named went unmanaged, which is the exact regression this file exists to
+ * prevent. Nothing enforces quote style here (there is no `quotes` ESLint rule
+ * and no Prettier config, and Ace's own source is single-quoted), so both
+ * styles are read and anything else fails loudly instead of disappearing.
+ */
+async function servedFlagKeys(): Promise<string[]> {
+  const services = `${repositoryDirectory}/apps/api/src/services`;
+  const modules = (await readdir(services)).filter((file) => file.endsWith('flags.ts'));
+  const keys: string[] = [];
+  for (const file of modules) {
+    const source = await readFile(`${services}/${file}`, 'utf8');
+    const declared = source.match(/(?:const|let|var)\s+[A-Z0-9_]*_FLAG_KEY\b/gu) ?? [];
+    const parsed = Array.from(
+      source.matchAll(/(?:const|let|var)\s+[A-Z0-9_]*_FLAG_KEY\b[^=\n]*=\s*['"]([^'"]+)['"]/gu),
+      (match) => match[1]!,
+    );
+    expect(
+      parsed.length,
+      `${file} declares a *_FLAG_KEY whose value this scan cannot read as a quoted string literal. `
+        + 'Give it a plain literal, or teach this scan the new form — do not leave it unread, '
+        + 'because an unread declaration is a flag nobody manages.',
+    ).toBe(declared.length);
+    keys.push(...parsed);
+  }
+  return [...new Set(keys)].sort();
+}
+
 describe('Ace managed flag protocol', () => {
+  it('manages every client-visible product Boolean the API serves, and nothing it does not', async () => {
+    // The gap this closes runs API → Ace, and it is the only direction nothing
+    // else checks. `deployment-contract.test.ts` walks outward from this
+    // catalog to `deploy.mjs`, and the test below pins the catalog to the
+    // contracts enum — both start here, so a flag added to the Worker alone
+    // passes every one of them while being uncreatable in Flagship, invisible
+    // in Ace's list, and rejected by its save route. That is exactly how
+    // `multiple-workspaces-enabled` shipped in #464 resolving off for everyone
+    // with no way for an operator to turn it on.
+    const served = await servedFlagKeys();
+    expect(served.filter((key) => key.endsWith('-enabled')))
+      .toEqual([...MANAGED_FLAGS.map((flag) => flag.key)].sort());
+  });
+
+  it('refuses a served flag that opts out of Ace by not being named -enabled', async () => {
+    // The suffix is what routes a flag to Ace (`docs/ace.md`), so it is also
+    // the one thing standing between a new product Boolean and the state this
+    // file exists to prevent: a key named `multiple-workspaces` would be
+    // unmanaged, permanently off, and invisible to the test above, which only
+    // ever looks at `-enabled` keys. Naming an escape hatch is what makes
+    // taking it deliberate — a genuinely non-Ace flag is added here with its
+    // reason, and everything else fails until it is renamed and registered.
+    const served = await servedFlagKeys();
+    expect(served.filter((key) => !key.endsWith('-enabled') && !NOT_ACE_MANAGED.has(key)))
+      .toEqual([]);
+  });
+
   it('keeps every application boolean explicit about its enabled state', () => {
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual([
       'hypersight-enabled',
       'meeting-recording-enabled',
       'suggested-work-enabled',
       'automation-workspace-templates-enabled',
+      'multiple-workspaces-enabled',
       'digests-enabled',
     ]);
     expect(MANAGED_FLAGS.map((flag) => flag.key)).toEqual(ProductFeatureFlagKeySchema.options);
