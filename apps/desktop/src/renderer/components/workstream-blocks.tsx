@@ -49,6 +49,7 @@ import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
+import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
 import type { ElicitationData, Message, MessageMention } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
@@ -1509,12 +1510,12 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
   const thought = message.thoughtEvent;
   if (!thought) return null;
   const active = thought.status === 'started';
-  const verb = thought.activeVerb ?? 'working';
   // Only the model's own reasoning gets the brain. The other row this block
   // draws is the response's overall total — tool calls and all — and it keeps
   // the orb, the shape that stands for work in general rather than for
-  // thinking. The verb is what tells them apart, here as everywhere else.
-  const thinking = verb === 'thinking';
+  // thinking. The verb is what tells them apart, through the same predicate
+  // the collapse and the fold read it with.
+  const thinking = isThinkingEvent(thought);
   return (
     <AgentWorkTiming
       active={active}
@@ -1522,7 +1523,7 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
       // This block renders both kinds of thought row — a turn's thinking and a
       // response's overall work — so the subject comes from the row's own verb
       // rather than being fixed here: "Rally is thinking", "Rally is working".
-      activeName={`Rally is ${verb}`}
+      activeName={`Rally is ${thoughtVerb(thought)}`}
       durationMs={thought.durationMs}
       monotonicStartedAt={thought.monotonicStartedAt}
       timingAccuracy={thought.timingAccuracy}
