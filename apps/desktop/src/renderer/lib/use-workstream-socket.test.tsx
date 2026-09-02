@@ -3674,6 +3674,50 @@ describe('useWorkstreamSocket', () => {
     });
   });
 
+  it('keeps the snapshot slot held when a correlated range refusal arrives', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, 'workstream-one', true),
+      { wrapper: createWrapper() },
+    );
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => result.current.requestSnapshot());
+    const settled = result.current.loadTranscriptRange({
+      snapshotId: '00000000-0000-7000-8000-000000000777',
+      range: { startInclusive: 1, endExclusive: 2 },
+      resumeAfterEventSequence: 0,
+    }).then(() => null, (error: unknown) => error);
+    const requestId = (sentFrames(socket).at(-1) as { requestId: string }).requestId;
+
+    // The refusal this PR correlates is likeliest exactly here, with a
+    // reconciliation snapshot still assembling — which is why the room lowered
+    // `subscribed` at all. It answers the range, never the snapshot request,
+    // which carries no request id to answer.
+    act(() => socket.message({
+      type: 'error',
+      sequence: 4,
+      occurredAt: '2026-09-02T17:00:00.000Z',
+      code: 'subscription_required',
+      message: 'Subscribe before loading transcript ranges',
+      requestId,
+    }));
+    await expect(settled).resolves.toMatchObject({ code: 'subscription_required' });
+
+    // The original snapshot is still outstanding, so a later reconciliation
+    // trigger must not put a second one over the top of it.
+    act(() => result.current.requestSnapshot());
+    expect(sentFrames(socket).filter((frame) => frame.type === 'request_snapshot')).toHaveLength(1);
+  });
+
   it('leaves an in-flight transcript range alone when an unrelated error arrives', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApiWith({
