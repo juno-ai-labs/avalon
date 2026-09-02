@@ -78,7 +78,18 @@ the code path the model serves and carries the same checked-in route the API
 Worker uses when Flagship is unavailable. The suggested model list combines
 the reviewed work-stream pin choices with the classifier model used only by
 fleet routing; either a primary or fallback input may also carry an arbitrary
-OpenRouter model id entered as free text.
+OpenRouter model id entered as free text. Sol is the exception: Ace suggests
+and accepts it only for `inline_child` and `block_dashboard`, the roles whose
+complete execution paths currently receive Bind's Azure configuration and
+pricing port. A role such as `workstream` is not safe merely because its main
+turn is routed: its attachment-summary pass still uses the structured
+OpenRouter gateway.
+
+Suggested IDs describe canonical model identity, not an Azure deployment name.
+Ace's public OpenRouter lookup validates that a canonical ID exists; it does not
+select that provider. The role policy is checked in the client and repeated by
+the PUT schema before either the public lookup or Flagship I/O. Bind remains the
+owner of the Azure-only runtime provider fence.
 
 The sidebar is an explicit stack rank, not alphabetical order. It weights a
 role's product criticality first and its execution frequency second: main runs,
@@ -307,6 +318,26 @@ When a save succeeds but clients do not change, inspect in order:
    response even if a live notification was lost.
 
 ## Changelog
+
+### 2026-09-02 — Sol appears only for completely Azure-routed roles
+
+**What changed:** The Models editor suggests `openai/gpt-5.6-sol` above Terra
+and Luna for `inline_child` and `block_dashboard`. It omits and rejects Sol for
+every role with any direct OpenRouter path.
+
+**Why:** Operators need Sol available for managed Azure-routed roles, while the
+cost constraint forbids making it configurable on a path that can execute the
+same canonical ID through OpenRouter.
+
+**Considered and rejected:** Treating all eleven roles as equivalent because
+they share one Flagship schema. Several roles construct direct structured
+OpenRouter requests, and the work-stream role mixes a Bind main turn with one
+of those attachment-summary passes.
+
+**Consequences:** The suggestions are role-aware and Ace fails an unsafe save
+before provider or Flagship I/O. Sol remains canonical in Flagship, is still
+validated against the public model catalog for the two admitted roles, and
+relies on Bind for runtime provider enforcement.
 
 ### 2026-09-01 — multiple-workspaces-enabled joins the catalog it was assumed to be in
 

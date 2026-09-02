@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AgentModelRoutingSchema,
   MANAGED_MODELS,
-  MODEL_CHOICES,
   ManagedModelUpdateSchema,
+  modelChoicesForRole,
+  modelIsAllowedForRole,
   type AgentModelRouting,
   type ManagedModelRole,
 } from '../protocol';
@@ -24,7 +25,7 @@ interface ModelConfiguration {
 }
 
 type ValidationState =
-  | { status: 'incomplete' | 'checking' | 'valid' | 'unavailable'; invalidModelIds: string[] }
+  | { status: 'incomplete' | 'checking' | 'valid' | 'unavailable' | 'unsupported'; invalidModelIds: string[] }
   | { status: 'invalid'; invalidModelIds: string[] };
 
 async function responseBody<Result>(response: Response): Promise<Result> {
@@ -120,9 +121,10 @@ export function ModelsView(): React.JSX.Element {
     )));
   };
   const suggestedModels = useMemo(() => Array.from(new Set([
-    ...MODEL_CHOICES,
-    ...configurations.flatMap((configuration) => [configuration.routing.model, ...configuration.routing.fallbackModels]),
-  ])), [configurations]);
+    ...modelChoicesForRole(selectedRole),
+    ...[selected.routing.model, ...selected.routing.fallbackModels]
+      .filter((modelId) => modelIsAllowedForRole(selectedRole, modelId)),
+  ])), [selectedRole, selected.routing.model, selected.routing.fallbackModels]);
   const validationFingerprint = JSON.stringify([
     selectedRole,
     selected.routing.model,
@@ -135,6 +137,11 @@ export function ModelsView(): React.JSX.Element {
     const [, ...modelIds] = JSON.parse(validationFingerprint) as string[];
     if (modelIds.some((modelId) => modelId.trim().length === 0)) {
       setValidation({ status: 'incomplete', invalidModelIds: [] });
+      return undefined;
+    }
+    const unsupportedModelIds = modelIds.filter((modelId) => !modelIsAllowedForRole(selectedRole, modelId));
+    if (unsupportedModelIds.length > 0) {
+      setValidation({ status: 'unsupported', invalidModelIds: unsupportedModelIds });
       return undefined;
     }
 
@@ -171,7 +178,7 @@ export function ModelsView(): React.JSX.Element {
     const parsed = ManagedModelUpdateSchema.safeParse({ role: selectedRole, routing: selected.routing });
     if (!parsed.success) {
       setStatusIsError(true);
-      setStatus('Choose a primary model and complete or remove every fallback model.');
+      setStatus(parsed.error.issues[0]?.message ?? 'Choose a primary model and complete or remove every fallback model.');
       return;
     }
     setSaving(true); setStatus(''); setStatusIsError(false);
@@ -217,7 +224,7 @@ export function ModelsView(): React.JSX.Element {
       <section className="model-routing"><div className="section-title"><div><h3>Default route</h3><p>The primary model is tried first. Fallbacks are traversed in the order shown when Bind classifies a failure as routable.</p></div></div>
         <Panel className="model-route-card">
           <Field label="Primary model"><input aria-invalid={invalidModelIds.has(selected.routing.model) || selected.routing.model.trim().length === 0} list="ace-model-choices" onChange={(event) => updateRouting({ ...selected.routing, model: event.target.value })} placeholder="provider/model" spellCheck={false} value={selected.routing.model} /></Field>
-          <small className="model-input-help">Choose a known model or enter any OpenRouter model ID.</small>
+          <small className="model-input-help">Choose a known model or enter a model ID allowed for this role. Sol appears only when the entire role is Azure-routed.</small>
           <div className="fallback-heading"><div><h3>Fallback model array</h3><p>Ordered from first backup to last.</p></div><Button onClick={() => updateRouting({ ...selected.routing, fallbackModels: [...selected.routing.fallbackModels, ''] })} type="button">＋ Add fallback</Button></div>
           <div className="fallback-stack">
             {selected.routing.fallbackModels.map((model, index) => <div className="fallback-row" key={index}>
@@ -228,10 +235,11 @@ export function ModelsView(): React.JSX.Element {
             {selected.routing.fallbackModels.length === 0 && <EmptyState title="No fallback models" description="This role stops after the primary model's route plan is exhausted." />}
           </div>
           <p className={`model-validation ${validation.status}`} role="status">{
-            validation.status === 'checking' ? 'Checking this route against OpenRouter…'
-              : validation.status === 'valid' ? 'All model IDs are available through OpenRouter.'
-                : validation.status === 'invalid' ? `OpenRouter does not recognize or currently route: ${validation.invalidModelIds.join(', ')}`
-                  : validation.status === 'unavailable' ? 'OpenRouter validation is temporarily unavailable. Saving is disabled.'
+            validation.status === 'checking' ? 'Checking this model route…'
+              : validation.status === 'valid' ? 'All model IDs are available for this role.'
+                : validation.status === 'invalid' ? `The model catalog does not recognize or currently route: ${validation.invalidModelIds.join(', ')}`
+                  : validation.status === 'unsupported' ? `This role cannot use the Azure-only model: ${validation.invalidModelIds.join(', ')}`
+                    : validation.status === 'unavailable' ? 'Model validation is temporarily unavailable. Saving is disabled.'
                     : 'Complete or remove every model entry before saving.'
           }</p>
         </Panel>
