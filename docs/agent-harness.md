@@ -1308,6 +1308,28 @@ resumed run's authority is its current state, and live revalidation is what
 bounds it. Anyone reading this as an oversight should change it deliberately,
 not patch it.
 
+**A third site of the same shape survives, one step downstream, and this change
+is what makes it reachable.** The tool-receipt path compares a recomputed
+per-plugin `toolSurfaceHash` against a stored one in `storedToolPolicyMatches`
+(`integrations.ts`) and compares a recomputed `execution_plan_hash` against a
+stored one in `admit` (`workstream-tool-receipt-storage.ts`); the plan hash folds
+in that same surface hash, and receipt coordinates are deterministic, so a
+resumed attempt re-issues the same coordinate and both comparisons go false
+after a deploy. `compatiblePriorPlanHashes` covers only the legacy
+canonical-name variant. The consequence is not a killed run on the root path but
+a worse answer on a narrower one: a completed tool call is not replayed from its
+durable receipt, cannot be rebound, and `admit` reports
+`ambiguous_external_write` for a call that definitively completed — and on the
+inline-child path `integrations.ts` throws `tool_receipt_execution_plan_mismatch`,
+which is uncoded and becomes the same terminal `harness_execution_failed` this
+entry set out to remove. So read this entry's title narrowly: a deploy no longer
+kills an interrupted run *through the scope and activation writes*. Fixing the
+receipt path was deliberately left out of this change because it moves what
+counts as "the same plan" for replay, which is the machinery that keeps a
+completed external write from being re-sent, and that deserves its own change
+and its own tests. The rule below is what it needs: compare stored against
+stored, or exclude the build fields.
+
 The removed value comparison was also doing a second job by accident. Because a
 stale executor carries a different attempt ID, it fell to `mismatch` and threw,
 which fenced it; `persistPluginActivation` had no other ownership assertion at
