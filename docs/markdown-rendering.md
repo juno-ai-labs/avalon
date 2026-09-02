@@ -307,12 +307,16 @@ belongs to the cards that *are* one button, so it is written
 `button.citation-card:hover`; lighting the container would advertise a click it
 does not take.
 
-The play button is filled where the badge is outlined: it is the control, not
-the mark, and the fill ties it to the track above it. It also has to be visible
-on four themes, and `surface.raised` — what the shared icon button rests on — is
-the same colour as this card on Terra and one point off it on Air Dark, while
-the line ramp the badge uses all but disappears on the dark ones.
-`shimmer.default` is a fill and reads on all four.
+The play button **is** the app's `.icon-button` — the control the work-stream
+header's own icons are — and it takes that class rather than restating it, so
+the two cannot drift: transparent at rest with a transparent 1px border holding
+the box, `text.subtle`, 30px, filling on hover and keyboard focus. The one thing
+it resolves for itself is that fill. `.icon-button` fills with `surface.raised`,
+the step above a *header*, and this button sits on a card that is already
+`surface.elevated` — the same colour on Terra, one point off it on Air Dark, so
+the hover would not show. It uses the card's own `surface.elevated.hover`
+instead, written against `.citation-card-audio` so it wins on specificity rather
+than on sitting below `.icon-button:hover:not(:disabled)` in the file.
 
 Its container is a `span`, and **every node in it is phrasing content**. A lone
 embed keeps the paragraph the markdown put it in — the row pass merges runs of
@@ -774,10 +778,12 @@ announced recording is to play it, and the rail already proves the bytes play by
 handing the same blob to `<audio controls>`.
 
 **Follow-up in the same change (design):** the badge went back to the speaker
-glyph and the play/pause control moved out of it, into a small button under the
-bar and the clock. The badge is what every card uses to say what it is, and
-spending it on the one card's control both hid the kind and put the control
-above the position it moves.
+glyph and the play/pause control moved out of it, into a button under the bar
+and the clock. The badge is what every card uses to say what it is, and spending
+it on the one card's control both hid the kind and put the control above the
+position it moves. That button is the shared `.icon-button`, so it matches the
+header's icons rather than inventing a control shape for one card; only its
+hover fill is resolved against the card's surface.
 
 **Follow-up in the same change (review):** the object URL is held per blob and
 the asking state merges rather than replaces, so a `resource_attached` arriving

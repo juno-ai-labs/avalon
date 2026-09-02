@@ -507,7 +507,7 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
         {src !== undefined && (
           <button
             aria-label={`${playing ? 'Pause' : 'Play'} ${resource.title}`}
-            className="citation-card-play"
+            className="icon-button citation-card-play"
             onClick={() => {
               const audio = element.current;
               if (!audio) return;
@@ -516,7 +516,7 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
             }}
             type="button"
           >
-            {playing ? <Pause size={12} /> : <Play size={12} />}
+            {playing ? <Pause size={15} /> : <Play size={15} />}
           </button>
         )}
       </span>
