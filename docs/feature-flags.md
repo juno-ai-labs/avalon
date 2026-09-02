@@ -607,12 +607,14 @@ stream open is not connected to, and a flag change is not worth a second
 channel. A sign-in re-asks immediately rather than waiting out the interval; a
 sign-out closes the section on the way past.
 
-Each renderer subscribes to application-setting changes before asking for its
-initial snapshot, and a live change makes that pending snapshot obsolete. This
-ordering matters because the main process broadcasts transitions rather than
-repeating the same value on every poll: accepting an older snapshot after the
-transition would leave that renderer stale with no later identical poll to
-repair it.
+Each renderer treats a live application-settings event as newer than every
+snapshot read or mutation reply that was already in flight. The listener is
+installed before the initial read to make that lifetime explicit, but the
+generation check carries the ordering: `ipcRenderer.invoke` replies and
+`webContents.send` events are independent asynchronous channels. The main
+process broadcasts transitions rather than repeating the same value on every
+poll, so accepting an older reply after the transition would leave that
+renderer stale with no later identical poll to repair it.
 
 The effective preference the renderer sees is the stored **Debug enabled**
 choice *and* the flag, computed once in `desktopApplicationSettings()`:
@@ -808,7 +810,7 @@ correctly provisioned flag.
 | Desktop menu, sidebar, work-stream, and meeting suites | Every visible entry point remains hidden until explicitly enabled while product actions remain otherwise unchanged. |
 | `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
 | `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
-| `apps/desktop/src/renderer/screens/workspace-settings.test.tsx`, `apps/desktop/src/renderer/lib/use-debug-enabled.test.tsx` | Live application-setting broadcasts win over an older initial snapshot in both directions, so a poll can reveal or withdraw Developer without a relaunch. |
+| `apps/desktop/src/renderer/screens/workspace-settings.test.tsx`, `apps/desktop/src/renderer/lib/use-debug-enabled.test.tsx` | Live application-setting broadcasts win over older reads, read failures, and mutation replies, so a poll can reveal or withdraw Developer without a relaunch. |
 | `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | The selector's **Debug enabled** gate, that an untouched control sends no override, and that an explicit pin to the flag's own default is still sent. |
 | `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a work stream: the same gate, the run's model ahead of the pin, the pin where a run recorded none, an id outside the closed set, and that it opens no menu. |
 | `apps/api/test/workstream-row-contracts.test.ts` | That the stored pin is re-validated on read, and that a retired model reads as unpinned rather than failing the response. |
@@ -1132,9 +1134,10 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 ### 2026-09-02 — Live application settings outrank an older initial snapshot
 
 **What changed:** The Settings pane and the shared debug-preference hook now
-subscribe before reading their initial application-settings snapshot and ignore
-that snapshot if a live change arrives first. Causal renderer tests cover stale
-off-after-on and stale on-after-off orderings.
+ignore an initial application-settings snapshot if a live change arrives first.
+The Settings pane applies the same generation rule to every in-flight mutation
+reply and suppresses stale read failures. Causal renderer tests cover stale
+off-after-on, stale on-after-off, stale mutation, and stale failure orderings.
 
 **Why:** The main process announces only transitions. A renderer could apply the
 new flag value, then overwrite it with the older snapshot it requested while
@@ -1143,14 +1146,15 @@ screen. Relaunching happened to remount the renderer and read the current value.
 
 **Considered and rejected:** Re-broadcasting every successful one-minute poll.
 That would mask the ordering error with a delayed repair while continuing to let
-old snapshots overwrite newer state. Adding a revision to the cross-process
-contract would also order every answer, but the only concurrent sources are the
-one initial read and the already-ordered live stream, so invalidating that read
-on the first live update solves the actual race without widening the contract.
+old replies overwrite newer state. Adding a revision to the cross-process
+contract would order every answer, but the renderer only needs to invalidate
+operations already pending when its ordered live stream advances, so a local
+generation solves the race without widening the contract.
 
-**Consequences:** A live application-settings event is authoritative for the
-life of the pending initial read, including over an older read failure. Both
-renderers still accept the initial snapshot when no live event has arrived.
+**Consequences:** A live application-settings event is authoritative over every
+older pending read and Settings mutation, including over an older read failure.
+Both renderers still accept the initial snapshot when no live event has arrived,
+and a mutation reply remains usable when no live event overtook it.
 
 ### 2026-09-01 — Serving a flag key is not adding a flag
 

@@ -25,7 +25,7 @@ function announce(settings: DesktopApplicationSettings): void {
 function applicationSettings(debugEnabled: boolean): DesktopApplicationSettings {
   return {
     lockdownMode: false,
-    lockdownAvailable: false,
+    lockdownAvailable: true,
     debugEnabled,
     developerSettingsAvailable: true,
     menuBarEnabled: true,
@@ -44,12 +44,7 @@ describe('useDebugEnabled', () => {
   beforeEach(() => {
     settingsListeners.clear();
     getApplicationSettings.mockReset();
-    getApplicationSettings.mockResolvedValue({
-      lockdownMode: false,
-      lockdownAvailable: false,
-      debugEnabled: false,
-      developerSettingsAvailable: true,
-    });
+    getApplicationSettings.mockResolvedValue(applicationSettings(false));
   });
 
   it('starts off and adopts the stored preference', async () => {

@@ -154,6 +154,27 @@ function announceApplicationSettings(settings: DesktopApplicationSettings): void
   });
 }
 
+function applicationSettings(
+  overrides: Partial<DesktopApplicationSettings> = {},
+): DesktopApplicationSettings {
+  return {
+    lockdownMode: false,
+    lockdownAvailable: true,
+    debugEnabled: false,
+    developerSettingsAvailable: true,
+    menuBarEnabled: true,
+    menuBarAvailable: true,
+    menuBarPresent: true,
+    launchAtLogin: true,
+    launchAtLoginAvailable: true,
+    productAnalyticsEnabled: true,
+    productAnalyticsEffective: true,
+    productAnalyticsPreferencePending: false,
+    nativeCrashRestartRequired: false,
+    ...overrides,
+  };
+}
+
 describe('Workspace settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -297,86 +318,14 @@ describe('Workspace settings', () => {
     copyText.mockResolvedValue(undefined);
     openExternal.mockResolvedValue(undefined);
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
-    getApplicationSettings.mockResolvedValue({
-      lockdownMode: false,
-      lockdownAvailable: true,
-      debugEnabled: false,
-      developerSettingsAvailable: true,
-      menuBarEnabled: true,
-      menuBarAvailable: true,
-      menuBarPresent: true,
-      launchAtLogin: true,
-      launchAtLoginAvailable: true,
-      productAnalyticsEnabled: true,
-      productAnalyticsEffective: true,
-      productAnalyticsPreferencePending: false,
-      nativeCrashRestartRequired: false,
-    });
-    setLockdownMode.mockImplementation(async (lockdownMode: boolean) => ({
-      lockdownMode,
-      lockdownAvailable: true,
-      debugEnabled: false,
-      developerSettingsAvailable: true,
-      menuBarEnabled: true,
-      menuBarAvailable: true,
-      menuBarPresent: true,
-      launchAtLogin: true,
-      launchAtLoginAvailable: true,
-      productAnalyticsEnabled: true,
-      productAnalyticsEffective: true,
-      productAnalyticsPreferencePending: false,
-      nativeCrashRestartRequired: false,
-    }));
-    setDebugEnabled.mockImplementation(async (debugEnabled: boolean) => ({
-      lockdownMode: false,
-      lockdownAvailable: true,
-      debugEnabled,
-      developerSettingsAvailable: true,
-      menuBarEnabled: true,
-      menuBarAvailable: true,
-      menuBarPresent: true,
-      launchAtLogin: true,
-      launchAtLoginAvailable: true,
-      productAnalyticsEnabled: true,
-      productAnalyticsEffective: true,
-      productAnalyticsPreferencePending: false,
-      nativeCrashRestartRequired: false,
-    }));
-    setMenuBarEnabled.mockImplementation(async (menuBarEnabled: boolean) => ({
-      lockdownMode: false,
-      lockdownAvailable: true,
-      debugEnabled: false,
-      developerSettingsAvailable: true,
-      menuBarEnabled,
-      menuBarAvailable: true,
-      menuBarPresent: true,
-      launchAtLogin: true,
-      launchAtLoginAvailable: true,
-    }));
-    setLaunchAtLogin.mockImplementation(async (launchAtLogin: boolean) => ({
-      lockdownMode: false,
-      lockdownAvailable: true,
-      debugEnabled: false,
-      developerSettingsAvailable: true,
-      menuBarEnabled: true,
-      menuBarAvailable: true,
-      menuBarPresent: true,
-      launchAtLogin,
-      launchAtLoginAvailable: true,
-    }));
-    setProductAnalyticsEnabled.mockImplementation(async (productAnalyticsEnabled: boolean) => ({
-      lockdownMode: false,
-      lockdownAvailable: true,
-      debugEnabled: false,
-      developerSettingsAvailable: true,
-      menuBarEnabled: true,
-      menuBarAvailable: true,
-      menuBarPresent: true,
-      launchAtLogin: true,
-      launchAtLoginAvailable: true,
+    getApplicationSettings.mockResolvedValue(applicationSettings());
+    setLockdownMode.mockImplementation(async (lockdownMode: boolean) => applicationSettings({ lockdownMode }));
+    setDebugEnabled.mockImplementation(async (debugEnabled: boolean) => applicationSettings({ debugEnabled }));
+    setMenuBarEnabled.mockImplementation(async (menuBarEnabled: boolean) => applicationSettings({ menuBarEnabled }));
+    setLaunchAtLogin.mockImplementation(async (launchAtLogin: boolean) => applicationSettings({ launchAtLogin }));
+    setProductAnalyticsEnabled.mockImplementation(async (productAnalyticsEnabled: boolean) => applicationSettings({
       productAnalyticsEnabled,
       productAnalyticsEffective: productAnalyticsEnabled,
-      productAnalyticsPreferencePending: false,
       nativeCrashRestartRequired: !productAnalyticsEnabled,
     }));
     getTelemetryInspector.mockResolvedValue([{
@@ -2025,20 +1974,9 @@ describe('Workspace settings', () => {
       openSettingsSection('Application');
       await waitFor(() => expect(applicationSettingsListeners.size).toBe(1));
 
-      const settings = (enabled: boolean): DesktopApplicationSettings => ({
-        lockdownMode: false,
-        lockdownAvailable: true,
+      const settings = (enabled: boolean): DesktopApplicationSettings => applicationSettings({
         debugEnabled: enabled,
         developerSettingsAvailable: enabled,
-        menuBarEnabled: true,
-        menuBarAvailable: true,
-        menuBarPresent: true,
-        launchAtLogin: true,
-        launchAtLoginAvailable: true,
-        productAnalyticsEnabled: true,
-        productAnalyticsEffective: true,
-        productAnalyticsPreferencePending: false,
-        nativeCrashRestartRequired: false,
       });
       announceApplicationSettings(settings(liveEnabled));
       expect(screen.queryByRole('switch', { name: 'Debug enabled' }) !== null).toBe(liveEnabled);
@@ -2050,6 +1988,58 @@ describe('Workspace settings', () => {
       expect(screen.queryByRole('switch', { name: 'Debug enabled' }) !== null).toBe(liveEnabled);
     },
   );
+
+  it('keeps a live flag withdrawal when an older settings mutation settles afterward', async () => {
+    let resolveMutation!: (settings: DesktopApplicationSettings) => void;
+    setDebugEnabled.mockReturnValue(new Promise((resolve) => {
+      resolveMutation = resolve;
+    }));
+    renderSettings();
+    openSettingsSection('Application');
+    const debugToggle = await screen.findByRole('switch', { name: 'Debug enabled' });
+
+    fireEvent.click(debugToggle);
+    await waitFor(() => expect(setDebugEnabled).toHaveBeenCalledWith(true));
+    announceApplicationSettings(applicationSettings({
+      debugEnabled: false,
+      developerSettingsAvailable: false,
+    }));
+    expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
+
+    await act(async () => {
+      resolveMutation(applicationSettings({ debugEnabled: true }));
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
+  });
+
+  it('clears an existing application-settings load error when a live value arrives', async () => {
+    getApplicationSettings.mockRejectedValue(new Error('Application settings could not be read.'));
+    renderSettings();
+    openSettingsSection('Application');
+    expect(await screen.findByText('Application settings could not be read.')).toBeVisible();
+
+    announceApplicationSettings(applicationSettings());
+    expect(screen.queryByText('Application settings could not be read.')).toBeNull();
+  });
+
+  it('does not surface a stale read failure after a live value arrives', async () => {
+    let rejectInitial!: (error: Error) => void;
+    getApplicationSettings.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectInitial = reject;
+    }));
+    renderSettings();
+    openSettingsSection('Application');
+    await waitFor(() => expect(applicationSettingsListeners.size).toBe(1));
+
+    announceApplicationSettings(applicationSettings());
+    await act(async () => {
+      rejectInitial(new Error('Application settings could not be read.'));
+      await Promise.resolve();
+    });
+    expect(screen.queryByText('Application settings could not be read.')).toBeNull();
+    expect(screen.getByRole('switch', { name: 'Debug enabled' })).toBeVisible();
+  });
 
   it('shows application-setting load failures inline', async () => {
     getApplicationSettings.mockRejectedValue(new Error('Application settings could not be read.'));
