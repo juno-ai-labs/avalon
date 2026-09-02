@@ -2,6 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
 
+function attachmentReadPage(resourceId: string, nextCursor: string | null) {
+  return {
+    resourceId,
+    title: "Call transcript",
+    sourceMimeType: "text/plain",
+    modelMimeType: "text/plain",
+    version: { sha256: "a".repeat(64), extractorVersion: "text-v1" },
+    range: { start: 0, end: 12_000 },
+    totalCharacters: 24_000,
+    charactersBefore: 0,
+    charactersReturned: 12_000,
+    charactersAfter: 12_000,
+    text: "verified first page",
+    previousCursor: null,
+    nextCursor,
+  };
+}
+
 describe("Bind host durability boundaries", () => {
   it("requires an explicit protocol turn identity for every durable final response", () => {
     expect(__integrationTesting.resolveHarnessFinalTurnId("accepted response", "run-1:turn:2"))
@@ -416,6 +434,128 @@ describe("Bind host durability boundaries", () => {
     } as never);
     expect(guard.boundary()).toBeNull();
   });
+
+  it("recovers a uniquely active read after the model corrupts its opaque cursor", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    const resourceId = "00000000-0000-7000-8000-000000000774";
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-first-page",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-first-page",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      result: {
+        output: attachmentReadPage(resourceId, "issued-cursor"),
+        summary: "Read first page",
+      },
+    } as never);
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-corrupted-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { cursor: "issued-curs0r" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-corrupted-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      error: "Attachment cursor is invalid",
+      data: { code: "invalid_cursor" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+    expect(guard.boundary()).toContain(resourceId);
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-explicit-recovery",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId, startCharacter: 12_000 },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-explicit-recovery",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      result: { output: { resourceId }, summary: "Read recovery page" },
+    } as never);
+
+    expect(guard.boundary()).toBeNull();
+  });
+
+  it("keeps a corrupted cursor anonymous when more than one read continuation is active", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    const resourceIds = [
+      "00000000-0000-7000-8000-000000000775",
+      "00000000-0000-7000-8000-000000000776",
+    ];
+    resourceIds.forEach((resourceId, index) => {
+      const toolCallId = `tool-read-page-${index}`;
+      guard.onStarted({
+        type: "tool_started",
+        toolCallId,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy,
+        input: { resourceId },
+      } as never);
+      guard.onCompleted({
+        type: "tool_completed",
+        toolCallId,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy,
+        result: {
+          output: attachmentReadPage(resourceId, `issued-cursor-${index}`),
+          summary: "Read first page",
+        },
+      } as never);
+    });
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-ambiguous-corrupted-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { cursor: "unknown-corrupted-cursor" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-ambiguous-corrupted-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      error: "Attachment cursor is invalid",
+      data: { code: "invalid_cursor" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+
+    const boundary = guard.boundary();
+    expect(boundary).toContain("tool-read-ambiguous-corrupted-cursor");
+    expect(boundary).not.toContain(resourceIds[0]);
+    expect(boundary).not.toContain(resourceIds[1]);
+  });
+
   it("returns preload candidates to Bind only after their activation is persisted", async () => {
     const order: string[] = [];
     const persisted = new Set<string>();
