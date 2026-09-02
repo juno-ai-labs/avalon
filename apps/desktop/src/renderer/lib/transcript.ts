@@ -1,6 +1,6 @@
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
-import type { ElicitationData, Message, MessageMention, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
+import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
 import {
   AutomationDraftProposedV1Schema,
@@ -271,6 +271,23 @@ export function orderedTranscriptMessages(
     }
   }
   const turnsById = new Map(orderedTurns.map((turn) => [turn.turnId, turn]));
+  // The turns that open a stretch of transcript after one this client has not
+  // loaded. A snapshot's coverage is not one interval — the opening one
+  // commonly holds an unread island and a separate latest island — and the
+  // flatten above puts both in one list with nothing between them. Marking the
+  // seam is what stops a pass over adjacent rows from joining work across turns
+  // nobody has seen. Computed from the snapshot's own coverage rather than from
+  // a jump in `transcriptSequence`, which cannot tell a hidden turn from a
+  // sequence the transcript never assigned.
+  const gaps = transcriptGaps(snapshot);
+  const gapLeadingTurnIds = new Set<string>();
+  for (let index = 1; index < orderedTurns.length; index += 1) {
+    const previous = orderedTurns[index - 1]!.transcriptSequence;
+    const current = orderedTurns[index]!.transcriptSequence;
+    const hidden = gaps.some((gap) =>
+      gap.startInclusive < current && gap.endExclusive > previous + 1);
+    if (hidden) gapLeadingTurnIds.add(orderedTurns[index]!.turnId);
+  }
   // A plugin activity is addressed by the turn it hangs off and the plugin it
   // is about; its own id is the backend's composition of exactly those two.
   // Reading it back through the parent link rather than rebuilding that string
@@ -308,7 +325,7 @@ export function orderedTranscriptMessages(
       // Older Workers may have projected a Suggested context block before the
       // feature was retired. It is no longer part of the feed.
       .filter((block) => !(block.type === 'text' && block.messageType === 'suggestion'))
-      .map((block): Message => {
+      .map((block, blockPosition): Message => {
         const rememberOrder = (messageId: string): void => {
           // An open elicitation and its durable answer deliberately share one
           // UI identity. Keep the question's first position while the answered
@@ -338,6 +355,12 @@ export function orderedTranscriptMessages(
           ...(turn.clientMessageId ? { clientMessageId: turn.clientMessageId } : {}),
           ...(turn.actor === 'external' && turn.externalActor
             ? { externalActor: { ...turn.externalActor } }
+            : {}),
+          // Only the turn's first row carries the seam. Repeating it would
+          // close the run again between this turn's own blocks, which are
+          // contiguous by definition.
+          ...(blockPosition === 0 && gapLeadingTurnIds.has(turn.turnId)
+            ? { precededByTranscriptGap: true }
             : {}),
           createdAt: turn.createdAtUtc,
         };
@@ -483,6 +506,7 @@ export function orderedTranscriptMessages(
       text: 'This message is too large to display.',
       createdAt: turn.createdAtUtc,
       blocksOmittedPlaceholder: true,
+      ...(gapLeadingTurnIds.has(turn.turnId) ? { precededByTranscriptGap: true } : {}),
     });
   }
   for (const activity of snapshot.activities) {
@@ -997,6 +1021,10 @@ function pluginGroupContribution(message: Message): {
  * answers does close it: a sentence from Rally is a report on the work above
  * it, and folding work that came after the sentence back into a row printed
  * before it would put the feed out of order with its own narration.
+ *
+ * This answers only what a row *is*. A row that opens a stretch of transcript
+ * after an unloaded one closes the run too, whatever its type, and each caller
+ * checks `precededByTranscriptGap` itself — see `Message`.
  */
 function continuesPluginActivityRun(message: Message): boolean {
   return message.messageType === 'tool_event'
@@ -1043,6 +1071,12 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
   let open = new Map<string, GroupTiming>();
   const rows: Message[] = [];
   for (const message of messages) {
+    // A seam closes the run before this row is considered, rather than instead
+    // of considering it: the first row after a gap is work in its own right and
+    // opens the next run, which is why this is not folded into
+    // `continuesPluginActivityRun` — that answer would also push the row
+    // through unchanged.
+    if (message.precededByTranscriptGap) open = new Map();
     if (!continuesPluginActivityRun(message)) {
       open = new Map();
       rows.push(message);
@@ -1561,6 +1595,121 @@ function activityTiming(activity: TranscriptActivity | undefined): {
     monotonicStartedAt: receivedAt,
     timingAccuracy,
   };
+}
+
+/**
+ * A row's own reasoning segment, or nothing.
+ *
+ * Keyed on the verb because that is what separates the two kinds of thought
+ * row the projection produces: `thinking` is one turn's own reasoning and
+ * several belong to a message, `working` is the response's total and there is
+ * one of it, which `foldSettledWorkIntoMessages` moves into the header.
+ *
+ * A segment's duration is its whole activity's, so summing segments is honest
+ * only while each row names a different activity. That holds because the
+ * authority writes one thinking block per assistant turn, pointed at that
+ * turn's own thinking activity. A second block on one turn would resolve to
+ * the same activity, and the collapse would then report that activity's time
+ * once per block — as one row quietly doubled, where today it would be two
+ * rows visibly repeating the same number.
+ */
+function thinkingSegment(message: Message): ThoughtEventData | null {
+  const thought = message.thoughtEvent;
+  if (!thought || message.messageType !== 'thought') return null;
+  return (thought.activeVerb ?? 'working') === 'thinking' ? thought : null;
+}
+
+/**
+ * Collapse a run of thinking into one row carrying the whole run's time.
+ *
+ * The model thinks between every pair of tool calls, so a run that used one
+ * plugin four times arrives as four thinking rows around a single grouped
+ * plugin row — "thought for 29s / thought for 38s / thought for 17s / thought
+ * for 14s", four spent timers stacked in the feed saying one thing each. What
+ * a reader wants from them is the same thing the plugin row gives: that Rally
+ * was reasoning, and for how long in total. So the run becomes one row,
+ * "thinking for …" while any segment is still going and "thought for …" once
+ * they have all settled.
+ *
+ * The run is bounded exactly as a plugin group's is — see
+ * `continuesPluginActivityRun`. Anything a person reads closes it, so thinking
+ * that happens after Rally has said something starts a second row under that
+ * sentence rather than being summed into the one above it. Plugin rows do not
+ * close it, which is what puts the four rows above into one; the plugin row
+ * they surround keeps its own place, because grouping already anchors it at
+ * the first call in the run. A row that opens a stretch of transcript after an
+ * unloaded one closes it too: the sentence that would have ended the run may
+ * be sitting in the part nobody has loaded.
+ *
+ * The collapsed row sits where the run's *first* thinking row sat and inherits
+ * its identity, so the feed's order stays the order work happened in and the
+ * row's id does not move as the run grows.
+ */
+export function groupThinkingMessages(messages: readonly Message[]): Message[] {
+  interface Run {
+    row: number;
+    segments: ThoughtEventData[];
+  }
+  const runs: Run[] = [];
+  let open: Run | null = null;
+  const rows: Message[] = [];
+  for (const message of messages) {
+    if (message.precededByTranscriptGap || !continuesPluginActivityRun(message)) open = null;
+    const segment = thinkingSegment(message);
+    if (!segment) {
+      rows.push(message);
+      continue;
+    }
+    if (open) {
+      open.segments.push(segment);
+      continue;
+    }
+    open = { row: rows.length, segments: [segment] };
+    runs.push(open);
+    rows.push(message);
+  }
+  for (const run of runs) {
+    if (run.segments.length === 1) continue;
+    const row = rows[run.row]!;
+    // One unknown segment makes the whole run unknowable rather than shorter:
+    // summing only the segments that reported understates the reasoning by
+    // exactly the one that did not, and presents the shortfall as certain. The
+    // total is carried as nullable through the fold rather than guarded by a
+    // flag beside it, so there is no arm that adds a duration the guard has
+    // already ruled out.
+    const durationMs = run.segments.reduce<number | null>(
+      (total, segment) => total === null || segment.durationMs === null
+        ? null
+        : total + segment.durationMs,
+      0,
+    );
+    const monotonicStartedAt = run.segments.flatMap((segment) => segment.monotonicStartedAt === undefined
+      ? []
+      : typeof segment.monotonicStartedAt === 'number'
+        ? [segment.monotonicStartedAt]
+        : [...segment.monotonicStartedAt]);
+    // A wall-clock start cannot be aggregated — the row has one field and
+    // several segments could be running — so it survives only when the run has
+    // exactly one, which is the case it was written for. Every producer today
+    // reports a running segment monotonically, and those do sum.
+    const startedAt = run.segments.flatMap((segment) => segment.startedAt === undefined ? [] : [segment.startedAt]);
+    const first = run.segments[0]!;
+    rows[run.row] = {
+      ...row,
+      thoughtEvent: {
+        status: run.segments.some((segment) => segment.status === 'started') ? 'started' : 'completed',
+        durationMs,
+        ...(startedAt.length === 1 ? { startedAt: startedAt[0]! } : {}),
+        ...(monotonicStartedAt.length === 0 ? {} : { monotonicStartedAt }),
+        ...(run.segments.some((segment) => segment.timingAccuracy === 'upper_bound')
+          ? { timingAccuracy: 'upper_bound' as const }
+          : {}),
+        ...(first.activeVerb === undefined ? {} : { activeVerb: first.activeVerb }),
+        ...(first.completedVerb === undefined ? {} : { completedVerb: first.completedVerb }),
+      },
+    };
+  }
+  return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
 
 /**
