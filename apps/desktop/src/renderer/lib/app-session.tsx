@@ -112,7 +112,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'openExternal'
   | 'openSettings'
   | 'refreshSession'
-  | 'selectWorkspace'
+  | 'reselectActiveWorkspace'
   | 'showDeepLinkError'
   | 'surrenderActiveWorkspace'
 >;
@@ -178,8 +178,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const applySession = useCallback((nextSession: DesktopSession | null): void => {
     const previousSession = sessionRef.current;
     sessionRef.current = nextSession;
-    setSession(nextSession);
+    // Cleared before the state commit, so no frame draws the new session over
+    // the old workspace's cache — the same order the broadcast handler keeps.
     if (!sessionsShareCacheScope(previousSession, nextSession)) queryClient.clear();
+    setSession(nextSession);
     if (!nextSession) {
       setDeviceSelectedRegion('global');
       setRegion('global');
@@ -259,9 +261,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   ]);
   const renewCredential = useCallback(async (): Promise<DesktopSession> => {
     const renewed = await bridge.refreshSession();
-    setSession(renewed);
+    applySession(renewed);
     return renewed;
-  }, [bridge]);
+  }, [applySession, bridge]);
 
   useLayoutEffect(() => {
     // Access-token rotation must not replace the API client: it owns transient
@@ -360,15 +362,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
 
   const refreshSession = useCallback(async (): Promise<DesktopSession> => {
     const nextSession = await bridge.refreshSession();
-    setSession(nextSession);
-    if (nextSession.workspace) {
-      setDeviceSelectedRegion(nextSession.workspace.region);
-      setDeviceWorkspaceName(nextSession.workspace.name);
-      setRegion(nextSession.workspace.region);
-      setWorkspaceNameState(nextSession.workspace.name);
-    }
+    // Through `applySession` like every other session writer, so the ref
+    // moves with the state and a same-scope renewal keeps the cache.
+    applySession(nextSession);
     return nextSession;
-  }, [bridge]);
+  }, [applySession, bridge]);
 
   const finishWorkspaceSetup = useCallback(async (name: string, selectedRegion: Region, operationId?: string): Promise<void> => {
     const normalized = name.trim();
@@ -439,6 +437,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     const departing = session?.workspace ?? null;
     const nextSession = await bridge.surrenderActiveWorkspace();
     if (departing) await clearWorkspaceDrafts(departing.region, departing.id);
+    // Kept alongside `applySession`'s own scope check: with nothing left to
+    // select, previous and next are both null and read as the same scope.
     queryClient.clear();
     applySession(nextSession);
   }, [applySession, bridge, queryClient, session?.workspace]);
@@ -519,40 +519,44 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       });
       return targetApi;
     };
-    const sessionTargets = (candidate: DesktopSession | null, target: WorkspaceTarget): boolean => (
-      Boolean(candidate?.workspace) && workspaceTargetsEqual({
-        region: candidate!.workspace!.region,
-        workspaceId: candidate!.workspace!.id,
-      }, target)
-    );
+    const sessionMatchesTarget = (candidate: DesktopSession, target: WorkspaceTarget): boolean => {
+      const workspace = candidate.workspace;
+      return workspace !== null
+        && workspaceTargetsEqual({ region: workspace.region, workspaceId: workspace.id }, target);
+    };
     /**
-     * Put the link's workspace in front, the cheapest way that is honest.
+     * Put the link's workspace in front.
      *
-     * A link carries routing, not authority: the regional API re-checks
-     * membership on every request the workspace credential makes, and a
-     * revoked credential is surrendered on its first rejection whichever path
-     * selected it. So the target that is already active is used as it stands,
-     * a target this device holds a credential for is selected locally, and
-     * only a target with nothing stored goes to the platform — the one path
-     * that can mint a credential that does not exist yet.
+     * A link to the workspace already in front of the person is used as it
+     * stands: main answers with the session in use and takes a selection
+     * intent, so the link is the newest selection and an activation still in
+     * flight cannot take over the window afterwards. Nothing is fetched and
+     * nothing is reset — the regional API re-checks membership on every request
+     * this credential makes, which is the same check a fresh activation would
+     * have minted a credential for.
+     *
+     * Any other workspace goes to platform activation, which revalidates the
+     * membership before the window moves. A stored credential is not enough to
+     * switch on: an ended membership leaves its session row alive, so the first
+     * read would fail inside a workspace the person cannot leave, rather than
+     * refusing the link and leaving them where they were.
      */
     const enterDeepLinkWorkspace = async (
       target: WorkspaceTarget,
     ): Promise<{ api: RallyApi; workspaceChanged: boolean }> => {
-      const current = sessionRef.current;
-      if (!current) throw new Error('Sign in before opening a workspace link.');
-      if (sessionTargets(current, target)) {
-        return { api: apiForSession(current, target), workspaceChanged: false };
+      if (!sessionRef.current) throw new Error('Sign in before opening a workspace link.');
+      const reclaimed = await bridge.reselectActiveWorkspace({
+        region: target.region,
+        workspaceId: target.workspaceId,
+      });
+      if (reclaimed && sessionMatchesTarget(reclaimed, target)) {
+        return { api: apiForSession(reclaimed, target), workspaceChanged: false };
       }
-      const selected = await bridge.selectWorkspace({
+      const nextSession = await bridge.activateWorkspace({
         region: target.region,
         workspaceId: target.workspaceId,
       });
-      const nextSession = selected ?? await bridge.activateWorkspace({
-        region: target.region,
-        workspaceId: target.workspaceId,
-      });
-      if (!sessionTargets(nextSession, target)) {
+      if (!sessionMatchesTarget(nextSession, target)) {
         throw new Error('The requested workspace could not be activated.');
       }
       applySession(nextSession);

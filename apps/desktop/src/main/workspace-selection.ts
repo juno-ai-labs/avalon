@@ -1,49 +1,45 @@
 import type { RallyRegion } from '../common/desktop';
-import {
-  selectStoredWorkspace,
-  storedWorkspaceCredential,
-  type StoredAuth,
-  type StoredAuthSet,
-} from './stored-auth';
 
 export interface WorkspaceSelectionTarget {
   region: RallyRegion;
   workspaceId: string;
 }
 
-export interface WorkspaceSelectionDependencies<Session, Result> {
-  loadAuthSet(): Promise<StoredAuthSet | null>;
-  /** The cached session for one stored credential, or null when its profile
-   * cache is missing and only a network activation can rebuild it. */
-  sessionForCredential(credential: StoredAuth): Promise<Session | null>;
-  /** Persist the selection and hand the renderer its session. Runs under the
-   * caller's session mutation lock. */
-  commit(auth: StoredAuthSet, session: Session): Promise<Result>;
+interface WorkspaceBoundSession {
+  workspace: { id: string; region: RallyRegion } | null;
+}
+
+export interface ActiveWorkspaceClaimDependencies<Session extends WorkspaceBoundSession> {
+  activeSession: Session | null;
+  /** Mint the next selection intent. Claiming makes this link the newest
+   * selection, so a network activation still in flight keeps its credential
+   * when it lands but no longer takes over the window. */
+  nextSelectionIntent(): number;
 }
 
 /**
- * Make an already-stored workspace the active one without a network request.
+ * Claim the active workspace for a link that names it, without a request.
  *
- * A stored credential selects a workspace; it never authorizes a read. The
- * regional API re-checks membership on every request that credential makes,
- * and a revoked one is surrendered on its first rejection exactly as it would
- * be after a network activation. What this skips is the platform round trip
- * that minted a fresh credential for a workspace the device already holds one
- * for.
+ * A link carries routing, not authority: the regional API re-checks membership
+ * on every request the workspace credential makes, so a link to the workspace
+ * already in front of the person gains nothing from the platform round trip
+ * that minted a fresh credential for it. What the round trip did provide was
+ * ordering — it took a selection intent — and that is kept here.
  *
- * Resolves `null` when nothing is stored for the target — no credential, or a
- * credential whose profile cache is gone — so the caller falls back to platform
- * activation, which is the only path that can create what is missing.
+ * Resolves `null` when the target is not the active workspace, so the caller
+ * goes to platform activation, which is the only path that revalidates
+ * membership for a workspace the person is switching into.
  */
-export async function selectStoredWorkspaceLocally<Session, Result>(
+export function claimActiveWorkspace<Session extends WorkspaceBoundSession>(
   target: WorkspaceSelectionTarget,
-  dependencies: WorkspaceSelectionDependencies<Session, Result>,
-): Promise<Result | null> {
-  const auth = await dependencies.loadAuthSet();
-  if (!auth) return null;
-  const credential = storedWorkspaceCredential(auth, target.workspaceId, target.region);
-  if (!credential) return null;
-  const session = await dependencies.sessionForCredential(credential);
-  if (!session) return null;
-  return dependencies.commit(selectStoredWorkspace(auth, target.workspaceId, target.region), session);
+  dependencies: ActiveWorkspaceClaimDependencies<Session>,
+): Session | null {
+  const active = dependencies.activeSession;
+  if (
+    !active?.workspace
+    || active.workspace.id !== target.workspaceId
+    || active.workspace.region !== target.region
+  ) return null;
+  dependencies.nextSelectionIntent();
+  return active;
 }

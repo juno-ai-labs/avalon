@@ -30,7 +30,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { WorkspaceChangeGuard } from './workspace-change-guard';
 import { revalidateWorkspaceActivation } from './workspace-activation';
-import { selectStoredWorkspaceLocally } from './workspace-selection';
+import { claimActiveWorkspace } from './workspace-selection';
 import {
   acceptedDeepLink,
   shouldDeliverConnectorResultToSettings,
@@ -2353,13 +2353,12 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
 }
 
 /**
- * Switch to a workspace this device already holds a credential for, locally.
- *
- * Bumping the selection intent is what makes this the newest selection: a
- * network activation still in flight keeps its credential when it lands but
- * no longer takes over the window, the same rule the account menu relies on.
+ * Answer a link that names the active workspace with the session already in
+ * use, taking a selection intent so the link is the newest selection. Nothing
+ * is written: the credential, its file, and the broadcast state are all
+ * unchanged. Any other target gets `null`, and the caller activates it.
  */
-async function selectWorkspace(input: unknown): Promise<DesktopSession | null> {
+async function reselectActiveWorkspace(input: unknown): Promise<DesktopSession | null> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   if (Object.keys(candidate).some((key) => !['region', 'workspaceId'].includes(key))) {
     throw new Error('Invalid workspace selection request');
@@ -2368,27 +2367,12 @@ async function selectWorkspace(input: unknown): Promise<DesktopSession | null> {
     region: candidate['region'], workspaceId: candidate['workspaceId'],
   });
   if (!parsed.success) throw new Error('Invalid workspace selection request');
-  const changeId = beginWorkspaceChange(parsed.data);
-  try {
-    return await withSessionMutation(() => selectStoredWorkspaceLocally(parsed.data, {
-      loadAuthSet: loadStoredAuthSet,
-      sessionForCredential: storedSessionForCredential,
-      commit: async (auth, session) => {
-        if (loggingOut) throw new Error('Rally is signing out');
-        workspaceSelectionIntent += 1;
-        await writeStoredAuthFile(
-          userDataDirectory(),
-          encryptStoredSessionValue(JSON.stringify(auth)),
-        );
-        inMemoryAuthSet = auth;
-        inMemorySession = session;
-        broadcastSessionChanged(session);
-        return publicSession(session);
-      },
-    }));
-  } finally {
-    workspaceChangeGuard.finishChange(changeId);
-  }
+  if (loggingOut) return null;
+  const claimed = claimActiveWorkspace(parsed.data, {
+    activeSession: await loadStoredSession(),
+    nextSelectionIntent: () => ++workspaceSelectionIntent,
+  });
+  return claimed ? publicSession(claimed) : null;
 }
 
 async function createWorkspace(input: unknown): Promise<DesktopSession> {
@@ -3112,9 +3096,9 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return activateWorkspace(input);
   });
-  ipcMain.handle('workspace:select', (event, input: unknown) => {
+  ipcMain.handle('workspace:reselect-active', (event, input: unknown) => {
     assertTrustedIpcSender(event);
-    return selectWorkspace(input);
+    return reselectActiveWorkspace(input);
   });
   ipcMain.handle('onboarding:create-workspace', (event, input: unknown) => {
     assertTrustedIpcSender(event);
