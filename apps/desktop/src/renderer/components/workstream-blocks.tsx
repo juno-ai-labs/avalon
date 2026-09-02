@@ -1508,7 +1508,7 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
   return (
     <AgentWorkTiming
       active={active}
-      {...(thinking ? { icon: <ThinkingGlyph active={active} /> } : {})}
+      icon={thinking ? <ThinkingGlyph active={active} /> : undefined}
       // This block renders both kinds of thought row — a turn's thinking and a
       // response's overall work — so the subject comes from the row's own verb
       // rather than being fixed here: "Rally is thinking", "Rally is working".
