@@ -88,7 +88,7 @@ const linearTools: ToolDefinition[] = [
       properties: {
         query: { type: "string", minLength: 1, maxLength: 500 },
         first: { type: "integer", minimum: 1, maximum: 25 },
-        after: { type: ["string", "null"], maxLength: 500 },
+        after: { type: ["string", "null"], minLength: 1, maxLength: 500 },
       },
       required: ["query"],
     },
@@ -139,9 +139,9 @@ const linearTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        teamId: { type: ["string", "null"], maxLength: 200, description: "Limit the result to one team, from list_teams." },
+        teamId: { type: ["string", "null"], minLength: 1, maxLength: 200, description: "Limit the result to one team, from list_teams." },
         first: { type: "integer", minimum: 1, maximum: 50, description: "Defaults to 50." },
-        after: { type: ["string", "null"], maxLength: 500 },
+        after: { type: ["string", "null"], minLength: 1, maxLength: 500 },
       },
     },
   },
@@ -159,10 +159,10 @@ const linearTools: ToolDefinition[] = [
         title: { type: "string", minLength: 1, maxLength: 500 },
         description: { type: ["string", "null"], maxLength: 40_000 },
         priority: { type: ["integer", "null"], minimum: 0, maximum: 4 },
-        projectId: { type: ["string", "null"], maxLength: 200 },
-        assigneeId: { type: ["string", "null"], maxLength: 200 },
-        stateId: { type: ["string", "null"], maxLength: 200 },
-        dueDate: { type: ["string", "null"], format: "date" },
+        projectId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
+        assigneeId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
+        stateId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
+        dueDate: { type: ["string", "null"], minLength: 1, format: "date" },
       },
       required: ["teamId", "title"],
     },
@@ -180,11 +180,11 @@ const linearTools: ToolDefinition[] = [
         issueId: { type: "string", minLength: 1, maxLength: 200 },
         title: { type: "string", minLength: 1, maxLength: 500 },
         description: { type: ["string", "null"], maxLength: 40_000 },
-        stateId: { type: ["string", "null"], maxLength: 200 },
-        assigneeId: { type: ["string", "null"], maxLength: 200 },
-        projectId: { type: ["string", "null"], maxLength: 200 },
+        stateId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
+        assigneeId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
+        projectId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
         priority: { type: ["integer", "null"], minimum: 0, maximum: 4 },
-        dueDate: { type: ["string", "null"], format: "date" },
+        dueDate: { type: ["string", "null"], minLength: 1, format: "date" },
       },
       required: ["issueId"],
       minProperties: 2,
@@ -231,22 +231,25 @@ export const LinearAgentPluginDescriptor = defineConnectorAgentPlugin({
  * issue is then wrong in a way nothing in the run can notice. Both fields are
  * accepted on create now, and anything genuinely undeclared is an error.
  */
+// Linear rejects an empty pagination cursor with a bare "Argument Validation
+// Error", so an empty one must never leave here.
+const cursorSchema = z.string().min(1).max(500).nullable().optional();
 const searchIssuesSchema = z.strictObject({
   query: z.string().min(1).max(500),
   first: z.number().int().min(1).max(25).default(20),
-  after: z.string().max(500).nullable().optional(),
+  after: cursorSchema,
 });
 const idSchema = z.string().min(1).max(200);
 const pageSchema = (maximum: number) => z.strictObject({
   first: z.number().int().min(1).max(maximum).default(Math.min(maximum, 25)),
-  after: z.string().max(500).nullable().optional(),
+  after: cursorSchema,
 });
 const listWorkflowStatesSchema = z.strictObject({
   teamId: idSchema.nullable().optional(),
   // 50, matching `list_teams` rather than inventing a third page ceiling for a
   // family a model generalizes across.
   first: z.number().int().min(1).max(50).default(50),
-  after: z.string().max(500).nullable().optional(),
+  after: cursorSchema,
 });
 const createIssueSchema = z.strictObject({
   teamId: idSchema,
@@ -1663,7 +1666,7 @@ function idInputSchema(name: string): Record<string, unknown> {
 function pageInputSchema(maximum: number): Record<string, unknown> {
   return {
     type: "object", additionalProperties: false,
-    properties: { first: { type: "integer", minimum: 1, maximum }, after: { type: ["string", "null"], maxLength: 500 } },
+    properties: { first: { type: "integer", minimum: 1, maximum }, after: { type: ["string", "null"], minLength: 1, maxLength: 500 } },
   };
 }
 

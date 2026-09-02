@@ -645,7 +645,7 @@ export class WorkstreamToolReceiptStorage {
       `SELECT ${RECEIPT_COLUMNS} FROM tool_effects
         WHERE run_id = ?
           AND json_extract(execution_plan_json, '$.capability') IN (${placeholders})
-        ORDER BY COALESCE(started_at, 0), effect_intent_id`,
+        ORDER BY tool_position`,
       input.runId,
       ...input.capabilities,
     ).toArray().map(receiptRecord);

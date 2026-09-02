@@ -97,6 +97,30 @@ describe("X connector", () => {
     expect(JSON.stringify(tweet.nested)).toContain("[truncated]");
   });
 
+  it("reports a last page as no cursor rather than as a blank one", async () => {
+    // X spells "no more pages" as `next_cursor: ""`. Handed that verbatim, a
+    // model told to keep paging while a cursor comes back re-reads page one
+    // forever, because the request side reads the blank as no cursor.
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/twitter/tweet/thread_context") {
+        return jsonResponse({ replies: [{ id: "302", conversationId: "300", isReply: true }], next_cursor: "" });
+      }
+      return jsonResponse({ tweets: [{ id: "300", conversationId: "300", isReply: false }], next_cursor: "" });
+    };
+    const adapter = xAdapter(fetcher);
+
+    for (const [name, args] of [
+      ["get_user_timeline", { userId: "301" }],
+      ["get_tweet_replies_v2", { tweetId: "302" }],
+      ["list_timeline", { listId: "303" }],
+      ["get_tweet_thread_context", { tweetId: "302" }],
+    ] as const) {
+      const result = await execute(adapter, name, args);
+      expect(result.output).toMatchObject({ next_cursor: null });
+    }
+  });
+
   it("adds the original post when thread context omits it", async () => {
     const requested: URL[] = [];
     const fetcher: FetchLike = async (input) => {

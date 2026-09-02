@@ -600,7 +600,19 @@ async function delayUnlessAborted(ms: number, signal: AbortSignal): Promise<void
 
 export async function runHarnessWithBind(input: RunHarnessInput): Promise<HarnessOutcome> {
   const onTurnWouldEnd = input.onTurnWouldEnd;
-  const maxIterations = input.config.maxIterations ?? Number.POSITIVE_INFINITY;
+  const runMaxIterations = input.config.maxIterations ?? Number.POSITIVE_INFINITY;
+  const modelIterationsUsed = input.modelIterationsUsed ?? 0;
+  if (!Number.isSafeInteger(modelIterationsUsed) || modelIterationsUsed < 0) {
+    throw new Error("run_model_iterations_used_invalid");
+  }
+  // A resumed activation is not a fresh execution budget. Count this
+  // execution's prior reservations so eviction, human input, and other
+  // resumptions cannot each reset the run-wide ceiling. Do not use the
+  // projection's global turn index: one persistent loop serves many runs.
+  const maxIterations = Math.max(
+    0,
+    runMaxIterations - modelIterationsUsed,
+  );
   const deadline = input.config.maxWallClockMs === undefined
     ? null
     : createRunDeadline({
@@ -1537,10 +1549,22 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               error: "Tool arguments were not valid JSON; correct them and try again",
             }) };
         }
-        // Models sometimes serialize schema-declared numbers as JSON strings.
-        // Normalize that one unambiguous representation before hashing or durable
-        // planning so `1` and `"1"` are the same request everywhere downstream.
-        args = normalizeToolArguments(args, dispatched.tool.definition.inputSchema);
+        // Models sometimes serialize schema-declared numbers as JSON strings, and
+        // blank an optional argument rather than omitting it. Normalize those two
+        // unambiguous representations before hashing or durable planning, so that
+        // `1` and `"1"` — and, on a read, `{}` and `{ after: "" }` — are one
+        // request, and one `inputHash`, everywhere downstream. This is the line a
+        // blanked argument disappears at: whoever arrives here from a receipt
+        // wondering where an argument went is looking at it.
+        //
+        // The blank rule is read-only by design. On a write, `""` and an omission
+        // can mean different things — clearing a field versus leaving it alone —
+        // so nothing is dropped and the executor rejects it by name instead.
+        args = normalizeToolArguments(
+          args,
+          dispatched.tool.definition.inputSchema,
+          dispatched.tool.definition.mode,
+        );
         const inputHash = await canonicalToolInputHash(args);
         const receiptId = position
           ? `${input.loopId}:turn:${position.turn}:tool:${position.index}`
@@ -1877,7 +1901,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       return outcome("stopped", streamedContent || content, model, state, routedAttempts, resultStats);
     }
     if (result.stopReason === "iteration_limit") {
-      throw new HarnessLimitError("run_iteration_limit_exceeded", `Harness exceeded ${maxIterations} model iterations`);
+      throw new HarnessLimitError("run_iteration_limit_exceeded", `Harness exceeded ${runMaxIterations} model iterations`);
     }
     const completedReservation = bindLoopProjection?.lastAssistantReservation;
     if (completedWithoutAcceptedAssistant && completedReservation?.status === "failed") {

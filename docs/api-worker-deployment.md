@@ -284,8 +284,8 @@ Terminal, or Global telemetry-destination operation adds a Worker invocation
 and subrequest, while ordinary API requests no longer initialize those provider
 libraries. That cost is bounded to the capability that uses it and is visible
 as a platform invocation.
-The pricing graph runs once per hour in Global and performs fourteen OpenRouter
-catalog reads plus fourteen small KV writes; inference performs only the KV reads
+The pricing graph runs once per hour in Global and performs sixteen OpenRouter
+catalog reads plus sixteen small KV writes; inference performs only the KV reads
 for Azure-bound models in its route plan.
 
 ## Changelog
