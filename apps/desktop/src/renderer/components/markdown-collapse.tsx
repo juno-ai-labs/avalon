@@ -13,7 +13,8 @@ import {
 import { collapsibleSectionIds } from '../lib/markdown-collapse';
 
 interface MarkdownCollapseValue {
-  readonly expanded: ReadonlySet<string>;
+  /** Sections the reader has closed. A missing id is open. */
+  readonly collapsed: ReadonlySet<string>;
   readonly sectionIds: readonly string[];
   readonly allExpanded: boolean;
   toggle: (id: string) => void;
@@ -31,8 +32,9 @@ export function useMarkdownCollapse(): MarkdownCollapseValue | null {
  * Holds which heading sections are expanded for one markdown body (or for
  * the agent turn that hosts the collapse-all control next to **Worked for**).
  *
- * Default is collapsed: a missing id is closed. New sections that stream in
- * are therefore closed without anyone having to say so.
+ * Default is expanded: the set holds the sections the reader has closed, so a
+ * missing id is open. New sections that stream in are therefore open without
+ * anyone having to say so.
  */
 export function MarkdownCollapseController({
   children,
@@ -56,9 +58,9 @@ export function MarkdownCollapseController({
   if (computedIds.join('\0') !== sectionIds.join('\0')) {
     setSectionIds(computedIds);
   }
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = useCallback((id: string) => {
-    setExpanded((current) => {
+    setCollapsed((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -66,12 +68,12 @@ export function MarkdownCollapseController({
     });
   }, []);
   const setAll = useCallback((nextExpanded: boolean) => {
-    setExpanded(nextExpanded ? new Set(sectionIds) : new Set());
+    setCollapsed(nextExpanded ? new Set() : new Set(sectionIds));
   }, [sectionIds]);
-  const allExpanded = sectionIds.length > 0 && sectionIds.every((id) => expanded.has(id));
+  const allExpanded = sectionIds.length > 0 && sectionIds.every((id) => !collapsed.has(id));
   const value = useMemo<MarkdownCollapseValue>(
-    () => ({ allExpanded, expanded, sectionIds, setAll, toggle }),
-    [allExpanded, expanded, sectionIds, setAll, toggle],
+    () => ({ allExpanded, collapsed, sectionIds, setAll, toggle }),
+    [allExpanded, collapsed, sectionIds, setAll, toggle],
   );
   return (
     <MarkdownCollapseContext.Provider value={value}>
@@ -90,7 +92,7 @@ export function MarkdownCollapseSection({
   id: string;
 }): React.JSX.Element {
   const collapse = useMarkdownCollapse();
-  const expanded = collapse?.expanded.has(id) ?? false;
+  const expanded = !(collapse?.collapsed.has(id) ?? false);
   return (
     <MarkdownCollapseSectionIdContext.Provider value={id}>
       <div className={clsx('markdown-collapse', expanded ? 'is-expanded' : 'is-collapsed')}>
@@ -119,7 +121,7 @@ function CollapseHeading({
   const id = useContext(MarkdownCollapseSectionIdContext);
   const collapse = useMarkdownCollapse();
   if (!id || !collapse) return <Tag {...props}>{children}</Tag>;
-  const expanded = collapse.expanded.has(id);
+  const expanded = !collapse.collapsed.has(id);
   const label = expanded ? 'Collapse section' : 'Expand section';
   return (
     <Tag
