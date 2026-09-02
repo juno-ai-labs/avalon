@@ -262,7 +262,7 @@ export function repairRootSchemaForProviders(schema: Record<string, unknown>): R
   let unionRequired: string[] | null = null;
   const intersectionRequired = new Set<string>(rootRequired);
 
-  for (const keyword of ROOT_FORBIDDEN_KEYWORDS) {
+  for (const keyword of ROOT_COMPOSITION_KEYWORDS) {
     const branches = schema[keyword];
     if (!Array.isArray(branches)) continue;
     for (const branch of branches) {
@@ -340,6 +340,21 @@ export function repairRootSchemaForProviders(schema: Record<string, unknown>): R
 const ROOT_FORBIDDEN_KEYWORDS = ["anyOf", "oneOf", "allOf", "enum", "const", "not"] as const;
 
 /**
+ * The subset of {@link ROOT_FORBIDDEN_KEYWORDS} whose value is a list of
+ * **subschemas**, and therefore the only ones a merge may traverse.
+ *
+ * `enum` and `const` hold instance *values*, not schemas, and either may be an
+ * array — `enum` always is, and `const: [1, 2]` is a legal constant. Treating
+ * their elements as branches reads an object-valued enum such as
+ * `{ enum: [{ properties: { mode: "fast" } }] }` as a branch declaring a
+ * property `mode` whose subschema is the string `"fast"`, which is not a schema
+ * at all. `not` holds one subschema rather than a list, and negation has no
+ * merge: what it forbids cannot be expressed as properties to offer. All three
+ * are therefore stripped from the root and never walked.
+ */
+const ROOT_COMPOSITION_KEYWORDS = ["anyOf", "oneOf", "allOf"] as const;
+
+/**
  * Why a tool's root schema is not the plain object every provider will read.
  *
  * This is the rule the fleet actually has to satisfy, and it is the one worth
@@ -351,9 +366,9 @@ const ROOT_FORBIDDEN_KEYWORDS = ["anyOf", "oneOf", "allOf", "enum", "const", "no
  * It supersedes {@link nonObjectRootUnionBranches} rather than replacing it.
  * That check states xAI's rule, which is narrower — a root union whose branches
  * all read as objects passes it and is still fatal here — and it is kept
- * because it is what a future sanitizer regression would be measured against,
- * and because {@link repairRootUnionForProviders} needs to know which of the
- * two rules a third-party schema broke.
+ * because it is what a future sanitizer regression would be measured against:
+ * a shape it starts reporting is one Bind stopped repairing, which this rule
+ * alone cannot tell apart from a schema that was always authored that way.
  *
  * Stated over the schema **as authored**, which is the one difference from
  * every other rule in this module and the one that matters. Those are stated

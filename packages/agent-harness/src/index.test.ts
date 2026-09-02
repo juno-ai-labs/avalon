@@ -4041,6 +4041,57 @@ describe("agent harness", () => {
     expect(onAmbiguousExternalWrite).toHaveBeenCalledOnce();
   });
 
+  it("corrects a fatal root schema on the way to the provider, whatever the tool's source", async () => {
+    // The wire-level guarantee itself, asserted on the bytes rather than on the
+    // corrector. Every other test of this covers the helper in isolation or the
+    // dynamic-connector call site, so removing the call in
+    // `toModelToolDefinitions` would leave all of them green while every
+    // provider request went back to carrying a schema Azure rejects.
+    //
+    // The tool comes from a loaded plugin, which is a source no build-time walk
+    // over this repository's authored schemas can see, and its schema is the
+    // exact shape that took production down: a root `anyOf` with fully readable
+    // object branches and no root `type`.
+    const requestBodies: Array<{ tools?: Array<{ function: { name: string; parameters?: Record<string, unknown> } }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+    const plugin: HarnessPlugin = {
+      canonicalId: "rally:probe",
+      modelId: "rally_probe",
+      shortWireName: "probe",
+      description: "Probe",
+      preload: true,
+      explicit: false,
+      tools: [{
+        definition: {
+          name: "page",
+          description: "Page through something",
+          capability: "probe.page",
+          mode: "read",
+          idempotency: "safe",
+          inputSchema: {
+            anyOf: [
+              { type: "object", properties: { limit: { type: "integer" } } },
+              { type: "object", properties: { cursor: { type: "string" } }, required: ["cursor"] },
+            ],
+          },
+        },
+        execute: async () => ({ output: {}, summary: "Paged" }),
+      }],
+    };
+
+    const outcome = await runHarness({ ...runInput(fetcher), corePlugins: [plugin] });
+
+    expect(outcome).toMatchObject({ status: "completed" });
+    const sent = requestBodies[0]!.tools!.find((tool) => tool.function.name === "probe_page");
+    expect(sent!.function.parameters).toEqual({
+      type: "object",
+      properties: { limit: { type: "integer" }, cursor: { type: "string" } },
+    });
+  });
+
   it("stops instead of retrying when a record-before-execute write response is invalid", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{
