@@ -19,7 +19,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The asynchronous Mermaid SVG render, strict untrusted-input configuration, active-token configuration, and source fallback. Mermaid's module-wide configuration and render calls are serialized here so two diagrams cannot race one another's theme. |
 | `apps/desktop/src/renderer/components/markdown-mermaid-theme.ts` | Maps Mermaid's rendering roles onto the active computed Rally design tokens. It owns no palette and does not branch on an appearance id. |
 | `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
-| `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that keeps an expanded section open while a later heading streams in. |
+| `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that holds which sections a reader has closed while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the image-syntax announcement scan, and the plain-text rewrite that outbound email and Slack delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
@@ -144,7 +144,9 @@ a blockquote stay in that container: `- Item 2\n---` is a list plus a
 thematic break, not a setext h2, and `  ## heading` under a list item is
 list content, not a section boundary.
 
-When enabled, a section starts collapsed. The heading stays fully visible; the body shows
+When enabled, a section starts expanded: the state a section is in when nobody
+has touched it is open, and the set the controller keeps is of the sections a
+reader has *closed*. A closed section keeps its heading fully visible; its body shows
 approximately the first three line-heights of whatever follows — a
 paragraph, the top of a table, the start of a fence — behind an opacity
 mask that starts at 60% on the first pixel and reaches transparent on the
@@ -166,13 +168,13 @@ view state and must never decide which words are audible.
 
 The collapse-all control lives in the agent-message header, immediately to
 the right of **Worked for**. It expands or collapses every section in that
-turn. New sections that stream in are collapsed regardless of that
-control's last action, because a heading that has only just arrived is the
-thing the reader has not chosen to open.
+turn. New sections that stream in are open regardless of that control's last
+action, because a heading that has only just arrived is not one the reader has
+chosen to close.
 
 Streaming keeps the existing settled-segment memo: complete sections
 render as memoised chunks, and only the last section's body goes through
-`splitStreamingMarkdown`. An expanded section stays expanded as its body
+`splitStreamingMarkdown`. A collapsed section stays collapsed as its body
 grows. Because collapse keeps one `react-markdown` mount per section even
 after the stream settles, GFM footnote definitions and link-reference
 definitions that live under a later heading are appended onto fragments
@@ -652,6 +654,28 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-09-02 — Heading sections start open
+
+**What changed:** `MarkdownCollapseController` now keeps the set of sections a
+reader has *closed* rather than the set they have opened, so a section with no
+recorded state renders expanded. The feed's first paint shows every heading's
+body, the chevron starts rotated, and the header control starts as **Collapse
+all sections**. A section that streams in after a collapse-all is open, the
+mirror of the previous rule.
+
+**Why:** Default-collapsed was chosen so a long streaming reply would land as a
+scannable outline, but in the feed it hid the answer behind a click for every
+reply, including the short ones where there was nothing to scan. Reading is the
+common case and folding is the exception, so the exception is what a reader now
+asks for.
+
+**What a future change has to respect:** the stored set is *collapsed* ids —
+membership means closed, and absence means open. Inverting it back is what
+makes a streamed-in heading default the wrong way, because the id of a section
+that does not exist yet cannot be in any set. Keep the collapse-all control's
+`allExpanded` derived from that set rather than tracked separately, or the
+button and the sections will disagree after a stream appends a heading.
 
 ### 2026-08-31 — Image embed cards preview the image
 
