@@ -177,6 +177,14 @@ falsely claiming the click started it. Global lakehouse/PostHog rows can thus
 join one click to its requests, socket attempts, and pre-existing pooled lease
 without putting a route or title in an event.
 
+`renderer_perf_flow` is exported for a socket only when that socket starts under
+a pending click opening. Speculative hover, retention, and background reconnect
+flows remain device-local, preventing connection lifetime from masquerading as
+click latency. Direct Electron attempts may add PAC, DNS, TCP, TLS, and edge
+upgrade durations; proxy attempts add one CONNECT/TLS/edge aggregate and a
+failed-route count. These are closed diagnostic properties, not new product
+outcomes.
+
 Work-stream collaboration records authoritative participant changes, resource
 attach/detach/watch/preview/open-source outcomes, stop/retry actions, unread
 attention consumption, and HyperSight open/configuration/run outcomes. Terminal
@@ -677,6 +685,28 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-09-01 — Renderer socket diagnostics describe clicks, not retained lifetime
+
+**What changed:** `renderer_perf_flow` accepts bounded native handshake phases
+and uploads socket-opening flows only when a pending work-stream opening attempt
+owns them. Background/speculative flows remain in local performance logging.
+
+**Why:** A 72-hour analysis found retained and background traces with hours-long
+effect-to-request gaps in the same distribution used to investigate 5–15 second
+clicks. The event was valid transport logging but invalid evidence for the
+product-open question.
+
+**Considered and rejected:** Query-side duration cutoffs would silently choose a
+new product definition and retain plausible background rows. Exporting every
+local phase would recreate the open schema this registry forbids. Proxy
+subphases remain aggregate because their boundaries are not observable.
+
+**Consequences:** Pre-change and post-change socket-flow percentiles are
+different cohorts. `workstream_feed_visible` and `workstream_send_ready` remain
+the authoritative total; the click-scoped diagnostic event only locates its
+transport contributors. All new properties remain diagnostic and optional for
+rolling client versions.
 
 ### 2026-09-01 — Telemetry destinations gain one Global service boundary
 

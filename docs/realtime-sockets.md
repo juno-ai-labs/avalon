@@ -49,7 +49,7 @@ connection lifecycle around that admission protocol.
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled SubstreamAgent feed, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
 | `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free WorkstreamDO control socket after a one-second sidebar hover, and retains recently viewed work-stream pairs without remounting their connection hooks. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free control/feed pair after a one-second sidebar hover, and retains recently viewed pairs without remounting their connection hooks. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Preserves the browser `WebSocket` event/readiness contract for the work-stream hooks while routing Electron transport through one socket-ID-multiplexed privileged-bridge listener; browser development keeps the native constructor. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Share strict dependency-free event/channel validation and register the main-window-only IPC capability. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Electron's WorkstreamDO and SubstreamAgent TCP/TLS handshakes in Node, fixes the application Origin, follows the complete ordered PAC route, enforces the shared frame ceiling, and closes every owned connection when its renderer goes away. |
@@ -190,19 +190,16 @@ does not spend another ticket request, handshake, subscribe, or snapshot. The
 five-minute clock restarts each time the work stream leaves the foreground;
 background-running, pinned, and five-most-recent conversation streams remain
 connected beyond it while they retain that role. Holding a
-pointer over any sidebar work-stream row for one second warms only its
-WorkstreamDO control socket before navigation. For a row that is neither
-active, pinned, recent, running, nor retained, the SubstreamAgent feed remains
-closed until the work stream is actually selected; hover by itself never adds a
-feed. Selection immediately admits the
-feed and starts its snapshot while the independently owned control socket
-connects alongside it; neither waits for detail REST or the other's metadata.
+pointer over any sidebar work-stream row for one second warms its WorkstreamDO
+control socket and presence-free SubstreamAgent feed before navigation.
+Selection reuses that complete pair; neither socket waits for detail REST or
+the other's metadata.
 Leaving, cancelling the pointer, unmounting the row, or opening it before the
 second passes cancels the warm-up. Once the control socket opens, it can remain for up
 to five minutes, and a newly qualified hover replaces any other unopened warm
-socket; speculative warming is therefore bounded to one connection. If the
-work stream opens, the retained owner adds its feed without reopening the warm
-control socket. Keyboard focus alone does not warm a socket. Block sockets still
+pair; speculative warming is therefore bounded to one row. If the work stream
+opens, the retained owner reuses both sockets. Keyboard focus alone does not
+warm a socket. Block sockets still
 close with the panel and recover from durable checkpoints when it is opened
 again. Access revocation is not delayed: the server closes every affected
 retained socket immediately, and that socket permanently stops reconnecting.
@@ -407,6 +404,19 @@ clear foreground attachments, and the renderer drops its cached snapshot on a
 route change or transport loss.
 After the socket's ordinary ticket handshake, presence never uses REST for
 write, read, replay, or recovery.
+
+The feed ticket signs the renderer's last applied sequence. A current
+SubstreamAgent performs session/membership admission once, stores that admitted
+role in the hibernation attachment, and completes the presence-free subscription
+before returning the upgrade. An explicit client `subscribe` remains only as a
+compatibility path for an older server that did not advertise ticket bootstrap.
+Revocation still closes the admitted attachment; admission reuse is not a new
+authorization lifetime.
+
+The Electron broker emits PAC resolution, DNS, TCP, TLS, and edge HTTP-upgrade
+durations for direct routes. Proxy CONNECT, TLS, and edge work is deliberately
+one aggregate because the proxy agent exposes no reliable inner transition.
+Failed PAC routes are counted and timed before the next ordered route begins.
 
 Checkpoint, queued/running, and terminal publications enter one per-agent
 serial queue only after their SQLite transition commits. Adjacent unsent
@@ -633,6 +643,28 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-01 — Hover warms the complete pair and upgrade bootstraps the feed
+
+**What changed:** Deliberate row hover now retains a presence-free control/feed
+pair. The feed cursor is signed into its ticket, admission is reused for the
+initial snapshot, and a current server queues that snapshot during the upgrade.
+The main-process broker reports direct-route handshake phases and a truthful
+proxy aggregate.
+
+**Why:** A warm metadata socket still left the feed's Worker forwarding, object
+wake, authorization, and first frame on the click path. Those are the costs a
+two-second total target cannot leave hidden behind a generic handshake bucket.
+
+**Considered and rejected:** A second unsigned cursor header would let the
+renderer change replay state after ticket issue. Publishing hover presence would
+misstate attention. Splitting proxy internals at guessed callback boundaries
+would make the diagnosis less reliable.
+
+**Consequences:** Hover may wake and snapshot one additional SubstreamAgent, but
+never publishes viewer presence and remains bounded to one speculative row.
+Older client/server combinations still use explicit subscribe. Revocation and
+attachment serialization remain the lifetime boundary after admission.
 
 ### 2026-08-29 — Dictation admission becomes one question to WorkspaceDO
 

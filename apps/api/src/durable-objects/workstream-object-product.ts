@@ -1783,6 +1783,28 @@ export class WorkstreamObjectProductService {
 
   async get(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<WorkstreamDetail> {
     const root = await this.authorize(auth);
+    return this.detailAfterAdmission(auth, root, viewers);
+  }
+
+  /**
+   * Detail for a socket whose session and membership were admitted at upgrade.
+   * Revocation closes that socket; repeating the regional membership read
+   * while assembling its first frame only lengthens the admission it already
+   * passed.
+   */
+  async getAdmitted(
+    auth: AuthContext,
+    viewers: WorkstreamDetail["viewers"] = [],
+  ): Promise<WorkstreamDetail> {
+    const root = this.locallyAuthorizedRoot(auth);
+    return this.detailAfterAdmission(auth, root, viewers);
+  }
+
+  private async detailAfterAdmission(
+    auth: AuthContext,
+    root: RootRow,
+    viewers: WorkstreamDetail["viewers"],
+  ): Promise<WorkstreamDetail> {
     // Both ways of opening a work stream — the socket's snapshot and
     // `GET /workstreams/:id` — assemble their answer here, so this is where
     // "they have now seen it" is true. Ordered before the read below so the

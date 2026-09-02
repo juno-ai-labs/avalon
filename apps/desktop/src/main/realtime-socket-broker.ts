@@ -1,10 +1,12 @@
 import { IdSchema, WORKSTREAM_REALTIME_MAX_FRAME_BYTES } from '@rally/contracts';
 import { SOCKET_TICKET_SUBPROTOCOL } from '@rally/contracts/socket-tickets';
-import { getCACertificates } from 'node:tls';
+import { connect as netConnect, isIP, type NetConnectOpts, type Socket } from 'node:net';
+import { connect as tlsConnect, getCACertificates } from 'node:tls';
 import { ProxyAgent } from 'proxy-agent';
 import { WebSocket } from 'ws';
 import {
   RALLY_RENDERER_ORIGIN,
+  type DesktopRealtimeSocketHandshakePhase,
   type DesktopRealtimeSocketEvent,
   type DesktopRealtimeSocketOpenInput,
 } from '../common/realtime-socket';
@@ -16,10 +18,18 @@ export interface RealtimeSocketClient {
   close(code?: number, reason?: string): void;
   onClose(listener: (code: number, reason: Uint8Array) => void): void;
   onError(listener: () => void): void;
+  onHandshakePhase(listener: (phase: RealtimeSocketHandshakeTiming) => void): void;
   onMessage(listener: (data: unknown) => void): void;
   onOpen(listener: () => void): void;
   send(data: string): void;
   terminate(): void;
+}
+
+export interface RealtimeSocketHandshakeTiming {
+  phase: DesktopRealtimeSocketHandshakePhase;
+  durationMs: number;
+  routeIndex: number;
+  proxied: boolean;
 }
 
 export type RealtimeSocketFactory = (
@@ -34,7 +44,10 @@ interface OwnedSocket {
   client: RealtimeSocketClient;
 }
 
-function wrapWebSocket(socket: WebSocket): RealtimeSocketClient {
+function wrapWebSocket(
+  socket: WebSocket,
+  onHandshakePhase: (listener: (phase: RealtimeSocketHandshakeTiming) => void) => void,
+): RealtimeSocketClient {
   return {
     get extensions() { return socket.extensions; },
     get protocol() { return socket.protocol; },
@@ -42,6 +55,7 @@ function wrapWebSocket(socket: WebSocket): RealtimeSocketClient {
     close: (code, reason) => socket.close(code, reason),
     onClose: (listener) => socket.on('close', listener),
     onError: (listener) => socket.on('error', listener),
+    onHandshakePhase,
     onMessage: (listener) => socket.on('message', (data) => listener(data)),
     onOpen: (listener) => socket.on('open', listener),
     send: (data) => socket.send(data),
@@ -76,7 +90,9 @@ export interface RealtimeSocketAttemptInput {
   maxPayload: number;
   protocols: readonly string[];
   proxyUrl: string;
+  routeIndex: number;
   url: string;
+  onHandshakePhase: (phase: RealtimeSocketHandshakeTiming) => void;
 }
 
 export type RealtimeSocketAttemptFactory = (
@@ -84,15 +100,88 @@ export type RealtimeSocketAttemptFactory = (
 ) => RealtimeSocketClient;
 
 function createNodeSocketAttempt(input: RealtimeSocketAttemptInput): RealtimeSocketClient {
-  const agent = new ProxyAgent({
-    ca: [...input.ca],
-    getProxyForUrl: () => input.proxyUrl,
-  });
-  return wrapWebSocket(new WebSocket(input.url, [...input.protocols], {
-    agent,
+  const startedAt = performance.now();
+  let dnsAt: number | null = null;
+  let tcpAt: number | null = null;
+  let tlsAt: number | null = null;
+  const secure = new URL(input.url).protocol === 'wss:';
+  const phaseListeners = new Set<(phase: RealtimeSocketHandshakeTiming) => void>();
+  const emit = (phase: DesktopRealtimeSocketHandshakePhase, durationMs: number): void => {
+    const timing = {
+      phase,
+      durationMs: Math.max(0, Math.round(durationMs * 10) / 10),
+      routeIndex: input.routeIndex,
+      proxied: input.proxyUrl !== '',
+    };
+    input.onHandshakePhase(timing);
+    for (const listener of phaseListeners) listener(timing);
+  };
+  const options = {
     maxPayload: input.maxPayload,
     origin: RALLY_RENDERER_ORIGIN,
-  }));
+    ca: [...input.ca],
+  };
+  // `ws` declares this hook with net.connect's overload even for `wss:`, but
+  // its runtime passes the HTTPS/TLS options and expects a TLSSocket.
+  function createDirectConnection(rawOptions: NetConnectOpts): Socket;
+  function createDirectConnection(
+    port: number,
+    host?: string,
+    connectionListener?: () => void,
+  ): Socket;
+  function createDirectConnection(path: string, connectionListener?: () => void): Socket;
+  function createDirectConnection(
+    rawOptions: NetConnectOpts | number | string,
+    ...additionalArguments: Array<string | (() => void) | undefined>
+  ): Socket {
+    void additionalArguments;
+    if (typeof rawOptions !== 'object') {
+      throw new TypeError('The WebSocket TLS connector requires object connection options');
+    }
+    const hostname = new URL(input.url).hostname;
+    const connection = secure
+      ? tlsConnect({
+          ...rawOptions,
+          path: undefined,
+          servername: isIP(hostname) ? '' : hostname,
+        })
+      : netConnect(rawOptions);
+    connection.once('lookup', () => {
+      dnsAt = performance.now();
+      emit('dns', dnsAt - startedAt);
+    });
+    connection.once('connect', () => {
+      tcpAt = performance.now();
+      emit('tcp', tcpAt - (dnsAt ?? startedAt));
+    });
+    if (secure) {
+      connection.once('secureConnect', () => {
+        tlsAt = performance.now();
+        emit('tls', tlsAt - (tcpAt ?? dnsAt ?? startedAt));
+      });
+    }
+    return connection;
+  }
+  const socket = input.proxyUrl === ''
+    ? new WebSocket(input.url, [...input.protocols], {
+        ...options,
+        createConnection: createDirectConnection,
+      })
+    : new WebSocket(input.url, [...input.protocols], {
+        ...options,
+        agent: new ProxyAgent({
+          ca: [...input.ca],
+          getProxyForUrl: () => input.proxyUrl,
+        }),
+      });
+  socket.once('upgrade', () => {
+    if (input.proxyUrl === '') {
+      emit('edge_upgrade', performance.now() - (tlsAt ?? tcpAt ?? dnsAt ?? startedAt));
+    } else {
+      emit('proxy_connect_tls_edge', performance.now() - startedAt);
+    }
+  });
+  return wrapWebSocket(socket, (listener) => phaseListeners.add(listener));
 }
 
 /** One browser-shaped client that advances through Electron's PAC route. */
@@ -100,6 +189,9 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
   private readonly closeListeners = new Set<(code: number, reason: Uint8Array) => void>();
   private readonly errorListeners = new Set<() => void>();
   private readonly messageListeners = new Set<(data: unknown) => void>();
+  private readonly handshakePhaseListeners = new Set<
+    (phase: RealtimeSocketHandshakeTiming) => void
+  >();
   private readonly openListeners = new Set<() => void>();
   private current: RealtimeSocketClient | null = null;
   private generation = 0;
@@ -117,8 +209,15 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
     resolveProxy: RealtimeSocketProxyResolver,
     private readonly createAttempt: RealtimeSocketAttemptFactory,
   ) {
+    const proxyStartedAt = performance.now();
     void resolveProxy(url)
       .then((resolution) => {
+        this.emitHandshakePhase({
+          phase: 'proxy_resolution',
+          durationMs: Math.max(0, Math.round((performance.now() - proxyStartedAt) * 10) / 10),
+          routeIndex: 0,
+          proxied: resolution.trim().toUpperCase() !== 'DIRECT',
+        });
         this.routes = proxyUrlsFromElectronResolution(resolution);
         this.openNext();
       })
@@ -139,6 +238,9 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
 
   onClose(listener: (code: number, reason: Uint8Array) => void): void { this.closeListeners.add(listener); }
   onError(listener: () => void): void { this.errorListeners.add(listener); }
+  onHandshakePhase(listener: (phase: RealtimeSocketHandshakeTiming) => void): void {
+    this.handshakePhaseListeners.add(listener);
+  }
   onMessage(listener: (data: unknown) => void): void { this.messageListeners.add(listener); }
   onOpen(listener: () => void): void { this.openListeners.add(listener); }
 
@@ -161,12 +263,14 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
       this.finishClose(this.closeCode, Buffer.from(this.closeReason));
       return;
     }
-    const proxyUrl = this.routes[this.routeIndex++];
+    const routeIndex = this.routeIndex++;
+    const proxyUrl = this.routes[routeIndex];
     if (proxyUrl === undefined) {
       this.failFinal();
       return;
     }
     const generation = this.generation += 1;
+    const routeStartedAt = performance.now();
     let attempt: RealtimeSocketClient;
     try {
       attempt = this.createAttempt({
@@ -174,9 +278,12 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
         maxPayload: WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
         protocols: this.protocols,
         proxyUrl,
+        routeIndex,
         url: this.url,
+        onHandshakePhase: (phase) => this.emitHandshakePhase(phase),
       });
     } catch {
+      this.emitRouteFailure(routeIndex, proxyUrl, routeStartedAt);
       this.openNext();
       return;
     }
@@ -197,7 +304,7 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
         for (const listener of this.errorListeners) listener();
         return;
       }
-      this.failAttempt(attempt);
+      this.failAttempt(attempt, routeIndex, proxyUrl, routeStartedAt);
     });
     attempt.onClose((code, reason) => {
       if (!this.isCurrent(generation, attempt)) return;
@@ -205,7 +312,7 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
         this.finishClose(code, reason);
         return;
       }
-      this.failAttempt(attempt);
+      this.failAttempt(attempt, routeIndex, proxyUrl, routeStartedAt);
     });
   }
 
@@ -213,11 +320,30 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
     return this.generation === generation && this.current === attempt;
   }
 
-  private failAttempt(attempt: RealtimeSocketClient): void {
+  private failAttempt(
+    attempt: RealtimeSocketClient,
+    routeIndex: number,
+    proxyUrl: string,
+    routeStartedAt: number,
+  ): void {
+    this.emitRouteFailure(routeIndex, proxyUrl, routeStartedAt);
     this.generation += 1;
     this.current = null;
     attempt.terminate();
     this.openNext();
+  }
+
+  private emitRouteFailure(routeIndex: number, proxyUrl: string, startedAt: number): void {
+    this.emitHandshakePhase({
+      phase: 'route_failed',
+      durationMs: Math.max(0, Math.round((performance.now() - startedAt) * 10) / 10),
+      routeIndex,
+      proxied: proxyUrl !== '',
+    });
+  }
+
+  private emitHandshakePhase(phase: RealtimeSocketHandshakeTiming): void {
+    for (const listener of this.handshakePhaseListeners) listener(phase);
   }
 
   private failFinal(): void {
@@ -348,6 +474,11 @@ export class RealtimeSocketBroker {
       socketId: input.socketId,
       protocol: owned.client.protocol,
       extensions: owned.client.extensions,
+    }));
+    owned.client.onHandshakePhase((phase) => emitWhileOwned({
+      type: 'handshake_phase',
+      socketId: input.socketId,
+      ...phase,
     }));
     owned.client.onMessage((data) => emitWhileOwned({
       type: 'message',

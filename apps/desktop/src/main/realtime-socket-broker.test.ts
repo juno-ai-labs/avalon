@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WORKSTREAM_REALTIME_MAX_FRAME_BYTES } from '@rally/contracts';
+import { createServer } from 'node:http';
+import { WebSocketServer } from 'ws';
 import {
   DesktopRealtimeSocketCloseInputSchema,
   DesktopRealtimeSocketEventSchema,
@@ -41,11 +43,15 @@ class FakeSocket implements RealtimeSocketClient {
   readonly terminate = vi.fn();
   private closeListener: ((code: number, reason: Uint8Array) => void) | null = null;
   private errorListener: (() => void) | null = null;
+  private handshakePhaseListener: Parameters<RealtimeSocketClient['onHandshakePhase']>[0] | null = null;
   private messageListener: ((data: unknown) => void) | null = null;
   private openListener: (() => void) | null = null;
 
   onClose(listener: (code: number, reason: Uint8Array) => void): void { this.closeListener = listener; }
   onError(listener: () => void): void { this.errorListener = listener; }
+  onHandshakePhase(listener: Parameters<RealtimeSocketClient['onHandshakePhase']>[0]): void {
+    this.handshakePhaseListener = listener;
+  }
   onMessage(listener: (data: unknown) => void): void { this.messageListener = listener; }
   onOpen(listener: () => void): void { this.openListener = listener; }
   emitClose(code: number, reason: string): void {
@@ -53,6 +59,11 @@ class FakeSocket implements RealtimeSocketClient {
     this.closeListener?.(code, Buffer.from(reason));
   }
   emitError(): void { this.errorListener?.(); }
+  emitHandshakePhase(): void {
+    this.handshakePhaseListener?.({
+      phase: 'proxy_resolution', durationMs: 12.3, routeIndex: 0, proxied: false,
+    });
+  }
   emitMessage(data: string): void { this.messageListener?.(Buffer.from(data)); }
   emitOpen(): void { this.openListener?.(); }
 }
@@ -111,8 +122,10 @@ describe('proxyUrlsFromElectronResolution', () => {
     const socket = factory(openInput().url, openInput().protocols);
     const opened = vi.fn();
     const failed = vi.fn();
+    const phases: string[] = [];
     socket.onOpen(opened);
     socket.onError(failed);
+    socket.onHandshakePhase((phase) => phases.push(phase.phase));
     await Promise.resolve();
 
     expect(attempts).toHaveBeenCalledTimes(1);
@@ -121,6 +134,7 @@ describe('proxyUrlsFromElectronResolution', () => {
       maxPayload: WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
     });
     first.emitError();
+    expect(phases).toEqual(['proxy_resolution', 'route_failed']);
     expect(attempts).toHaveBeenCalledTimes(2);
     expect(attempts.mock.calls[1]?.[0]).toMatchObject({
       proxyUrl: 'http://secondary.example:8080',
@@ -132,6 +146,42 @@ describe('proxyUrlsFromElectronResolution', () => {
     expect(opened).toHaveBeenCalledOnce();
     expect(failed).not.toHaveBeenCalled();
     expect(first.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('uses plain TCP for a direct local WebSocket and reports no TLS phase', async () => {
+    const httpServer = createServer();
+    const server = new WebSocketServer({
+      server: httpServer,
+      handleProtocols: (protocols) => protocols.has('rally.ticket.v1')
+        ? 'rally.ticket.v1'
+        : false,
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = httpServer.address();
+      if (!address || typeof address === 'string') throw new Error('Missing local test address');
+      const socket = createNodeRealtimeSocketFactory(async () => 'DIRECT')(
+        `ws://127.0.0.1:${address.port}`,
+        openInput().protocols,
+      );
+      const phases: string[] = [];
+      socket.onHandshakePhase((phase) => phases.push(phase.phase));
+      await new Promise<void>((resolve, reject) => {
+        socket.onOpen(resolve);
+        socket.onError(() => reject(new Error('Local direct WebSocket failed')));
+      });
+
+      expect(socket.protocol).toBe('rally.ticket.v1');
+      expect(phases).toContain('edge_upgrade');
+      expect(phases).not.toContain('tls');
+      socket.close(1_000, 'test complete');
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve, reject) => server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      }));
+    }
   });
 });
 
@@ -181,6 +231,7 @@ describe('RealtimeSocketBroker', () => {
     broker.open(7, openInput(), (event) => events.push(event));
 
     socket.readyState = 1;
+    socket.emitHandshakePhase();
     socket.emitOpen();
     socket.emitMessage('{"type":"snapshot"}');
     broker.send(7, socketId, 'ping');
@@ -189,6 +240,14 @@ describe('RealtimeSocketBroker', () => {
 
     expect(socket.send).toHaveBeenCalledWith('ping');
     expect(events).toEqual([
+      {
+        type: 'handshake_phase',
+        socketId,
+        phase: 'proxy_resolution',
+        durationMs: 12.3,
+        routeIndex: 0,
+        proxied: false,
+      },
       expect.objectContaining({ type: 'open', socketId }),
       { type: 'message', socketId, data: '{"type":"snapshot"}' },
       { type: 'close', socketId, code: 1000, reason: 'done', wasClean: true },
