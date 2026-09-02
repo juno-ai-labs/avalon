@@ -441,6 +441,7 @@ ${syntax}
   .citation-card-audio { display: flex; flex-direction: column; gap: 9px; }
   .citation-card-audio-source, .citation-card-elapsed, .citation-card-play,
   .citation-card-progress, .citation-card-transport { display: none; }
+  .citation-card-text { display: flex; flex-direction: column; gap: 3px; margin-top: auto; }
   .citation-card-open {
     background: none;
     border: 0;
@@ -454,7 +455,6 @@ ${syntax}
     padding: 0;
     text-align: left;
   }
-  .citation-card-text { display: flex; flex-direction: column; gap: 3px; margin-top: auto; }
   .citation-card-title { font-size: 0.97em; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* No text-transform: the renderer already turns the system identifier into
      words, and capitalizing each of them made the card say "Github Pull
