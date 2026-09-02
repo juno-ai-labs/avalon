@@ -503,13 +503,14 @@ network request rather than sending a body the deployment may reject.
 
 Inference defaults that belong to a model rather than to one task live in the
 harness's canonical-model defaults registry. Models absent from that registry
-send no reasoning control and therefore retain the provider default. An
-explicit task/run effort overrides the registry. `x-ai/grok-4.6` currently
-defaults to `low` everywhere: routed work-stream turns and direct structured or
-streaming OpenRouter calls all resolve the setting after the actual primary or
-fallback model is selected. Tool-bearing Chat Completions requests also opt in
-to parallel tool calls on both OpenRouter and Azure; requests with no tools omit
-the field.
+send no reasoning control and therefore retain the provider default. Omission
+accepts the registry setting when present; an explicit task/run effort,
+including structured inference's `none`, overrides it. `x-ai/grok-4.6`
+currently defaults to `low` everywhere: routed work-stream turns and direct
+structured or streaming OpenRouter calls all resolve the setting after the
+actual primary or fallback model is selected. Tool-bearing Chat Completions
+requests also opt in to parallel tool calls on both OpenRouter and Azure;
+requests with no tools omit the field.
 
 The Azure transport is enabled only when its dedicated endpoint and API key are
 both present. Those values are separate from realtime-dictation configuration,
@@ -1503,10 +1504,10 @@ pricing metadata and must not be extended to workspace state. Do not make
 the Azure client carry OpenRouter Broadcast fields or plugins. Keep turn
 requirements accurate: an Azure candidate that cannot serve a file parser,
 input modality, reasoning control, or tool surface must be skipped before I/O.
-
 Missing final Azure usage is a failed attempt, never a free one. Provider
 ordering remains policy, so changing Azure-first behavior belongs in the route
 registry rather than in request code.
+
 ### 2026-08-30 — Document generation is standing policy, not a gated section
 
 **What changed:** `DOCUMENT_GENERATION_POLICY` moves into the work-stream
