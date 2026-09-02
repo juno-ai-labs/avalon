@@ -11,10 +11,10 @@ on:
     # site merge changes nothing a user could install, so it must not spend a
     # 90-minute signed and notarized build.
     #
-    # This list is the release trigger, so it is the thing to check first when a
-    # merge does not release: a push that matches nothing here produces no run
-    # at all, not a run that explains itself. `docs/runbook.md` documents that
-    # diagnosis, and release-workflow.test.mjs pins the list.
+    # This list admits changes to the cheap Ubuntu planner. The planner derives
+    # the production contract-module closure and stops there when a contracts
+    # change cannot affect the installed app; it never claims macOS just because
+    # this deliberately broad filter matched.
     #
     # Keep in sync with the Documentation note in docs/runbook.md. A path filter
     # is evaluated against the push's own diff, which GitHub does not guarantee
@@ -22,7 +22,7 @@ on:
     # the planner's check for work since the last release decides instead.
     paths:
       - 'apps/desktop/**'
-      - 'packages/**'
+      - 'packages/contracts/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -57,9 +57,8 @@ permissions:
 # is read, and nothing downstream has to reason about a stale plan.
 #
 # It costs what it used to buy: a plan now waits behind a 90-minute release
-# before it can even skip. That is affordable because the `paths:` filter above
-# already keeps non-desktop merges out of the workflow entirely, so the runs
-# that queue here are release candidates rather than ordinary merges.
+# before it can even skip. The `paths:` filter keeps unrelated packages out;
+# contract-only runs that cannot affect the app stop in this cheap job.
 #
 # This group holds releases only. The site deployment deliberately keeps its
 # own, because a queued site job sharing this one would satisfy `single` by
@@ -98,14 +97,132 @@ jobs:
       - name: Fetch the tip the plan is made from
         run: git fetch --no-tags origin main
 
+      # The contract classifier reads source files from the working tree. A run
+      # can wait in the queue while main advances, so put that tree at the same
+      # tip whose watermark diff the planner examines. Otherwise an older run
+      # could classify new contract imports using an older import graph.
+      - name: Check out the tip the plan is made from
+        if: github.event_name == 'push'
+        run: git checkout --detach origin/main
+
       - name: Plan the release
         id: plan
         env:
           RELEASE_INPUT_TAG: ${{ inputs.tag }}
         run: node apps/desktop/scripts/plan-release.mjs
 
-  release:
+  # Freeze the release commit and run every portable gate before claiming an
+  # Apple runner. The version bump belongs here because the exact commit that
+  # passes these checks is the one macOS must build; letting the later job reset
+  # to a newer main tip would put unverified code in the signed application.
+  verify:
     needs: plan
+    if: needs.plan.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_commit: ${{ steps.release_commit.outputs.sha }}
+    env:
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - name: Check out the planned release commit
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.ref }}
+          # The bump below pushes to main with this job's GITHUB_TOKEN. That
+          # push deliberately starts no second release workflow.
+          persist-credentials: true
+
+      # Nobody bumps a version by hand: stamp the planner's next minor onto the
+      # newest main tip, push it, and then freeze that exact commit for both the
+      # portable verification below and the macOS build.
+      #
+      # A failure after the push is resumable. The published record still names
+      # the preceding version, so the next attempt selects this same minor and
+      # recognizes the already-stamped manifests.
+      - name: Bump the workspace version and record it on the default branch
+        if: needs.plan.outputs.create_tag == 'true'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            git fetch origin main
+            # A newer tip arrived after planning. Include it before freezing the
+            # release commit; anything later waits for the next queued run.
+            git reset --hard origin/main
+            node apps/desktop/scripts/apply-release-version.mjs "$RELEASE_VERSION"
+            if git diff --quiet; then
+              # main already carries this version, which is either an earlier
+              # attempt that pushed its bump and then failed before publishing —
+              # a resume — or a release that shipped it and whose record this
+              # plan had not seen. The remote tag distinguishes those states.
+              if [ -n "$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}")" ]; then
+                echo "::error::${RELEASE_TAG} has already been published, so this plan was stale. Refusing to release it a second time." >&2
+                exit 1
+              fi
+              echo "main already declares ${RELEASE_VERSION}; resuming a release that did not publish it"
+              exit 0
+            fi
+            git add package.json apps/desktop/package.json
+            git -c user.name='github-actions[bot]' \
+                -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                commit -m "Bump Rally to ${RELEASE_VERSION} for release"
+            if git push origin HEAD:main; then
+              echo "bumped main to ${RELEASE_VERSION}"
+              exit 0
+            fi
+            echo "main moved during attempt ${attempt}; retrying"
+          done
+          echo "Could not record the version bump on main after 3 attempts" >&2
+          exit 1
+
+      - name: Resolve the release commit
+        id: release_commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Pull-request CI cannot gate a later push workflow directly. Repeat the
+      # portable gates on the frozen release commit, on the inexpensive runner,
+      # before signing and notarization can claim macOS.
+      - name: Lint
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: pnpm lint
+
+      - name: Typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: pnpm typecheck
+
+      - name: Test
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: pnpm test
+
+      - name: Run release invariants
+        run: pnpm --filter @rally/desktop test:release
+
+  release:
+    needs: [plan, verify]
     if: needs.plan.outputs.should_release == 'true'
     # Concurrency is declared at workflow level, above, so that the plan is made
     # inside the queue rather than before it.
@@ -119,6 +236,7 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+      RALLY_RELEASE_COMMIT: ${{ needs.verify.outputs.release_commit }}
       # The certificate is imported into an explicit keychain below. Keeping
       # CSC_LINK out of the packaging environment prevents electron-builder
       # from hiding the identity in a transient keychain that the final DMG
@@ -147,73 +265,12 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ needs.plan.outputs.ref }}
-          # The bump below pushes to main, which the job's own GITHUB_TOKEN can
-          # do. Persisting it is what makes that push possible at all — and it
-          # deliberately does not start another run of this workflow.
+          # The Ubuntu job froze and verified this SHA. Never replace it with
+          # a later main tip here: that would sign code the portable gates did
+          # not see.
+          ref: ${{ needs.verify.outputs.release_commit }}
+          # The release still pushes its tag and published release record.
           persist-credentials: true
-
-      # Nobody bumps a version by hand any more: the planner chose the next
-      # minor and this step stamps it onto the workspace manifests and commits
-      # that bump to main, so the tag, the manifests, and the artifacts all
-      # agree without anyone remembering to edit a file.
-      #
-      # The bump lands on main *before* the build, which is what keeps the
-      # released commit an ancestor of main and therefore usable as the
-      # planner's watermark. A release that fails after this point leaves main
-      # bumped and unpublished; that is resumable rather than broken, because
-      # the record still names the old version, so the next plan picks the same
-      # next minor, finds the manifests already stamped, and rebuilds it.
-      - name: Bump the workspace version and record it on the default branch
-        if: needs.plan.outputs.create_tag == 'true'
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            git fetch origin main
-            # main may have moved since the plan ran. Building its tip is
-            # correct: the newer commit carries strictly more work, and the
-            # version being cut does not depend on which push triggered the run.
-            git reset --hard origin/main
-            node apps/desktop/scripts/apply-release-version.mjs "$RELEASE_VERSION"
-            if git diff --quiet; then
-              # main already carries this version, which is either an earlier
-              # attempt that pushed its bump and then failed before publishing —
-              # a resume — or a release that shipped it and whose record this
-              # plan had not seen. The pushed tag is what tells them apart: it is
-              # created locally and pushed only once the release has published,
-              # so a tag on the remote means those bytes are already live. Cut
-              # that version again and the run dies at `git tag` a few steps
-              # later with nothing but `already exists` to explain itself, and
-              # would republish an existing release if it got past that.
-              if [ -n "$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}")" ]; then
-                echo "::error::${RELEASE_TAG} has already been published, so this plan was stale. Refusing to release it a second time." >&2
-                exit 1
-              fi
-              echo "main already declares ${RELEASE_VERSION}; resuming a release that did not publish it"
-              exit 0
-            fi
-            git add package.json apps/desktop/package.json
-            git -c user.name='github-actions[bot]' \
-                -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-                commit -m "Bump Rally to ${RELEASE_VERSION} for release"
-            if git push origin HEAD:main; then
-              echo "bumped main to ${RELEASE_VERSION}"
-              exit 0
-            fi
-            echo "main moved during attempt ${attempt}; retrying"
-          done
-          echo "Could not record the version bump on main after 3 attempts" >&2
-          exit 1
-
-      # Everything downstream records or verifies this exact commit: the tag
-      # points at it, and the published release config names it as the
-      # watermark the next plan measures new desktop work against.
-      - name: Resolve the release commit
-        shell: bash
-        run: echo "RALLY_RELEASE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The tag is created locally so every downstream guard sees it, but it is
       # not pushed until the release has actually published. A failed run
@@ -261,27 +318,6 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-
-      # ci.yml runs on the same push but cannot gate this workflow: both start
-      # together, so a release could publish from a commit whose CI ultimately
-      # failed. Verify here, before the build is spent.
-      - name: Lint
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
-        run: pnpm lint
-
-      - name: Typecheck
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
-        run: pnpm typecheck
-
-      - name: Test
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
-        run: pnpm test
-
-      - name: Run release invariants
-        run: pnpm --filter @rally/desktop test:release
 
       # This is a separate minimal packaged Electron app. It proves the exact
       # Electron version can collect a renderer minidump without a submission

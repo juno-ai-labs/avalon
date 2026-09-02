@@ -24,7 +24,7 @@ const branchPush = (overrides = {}) => ({
   headSha: 'abc123',
   publishedVersion: '1.33.0',
   releasedCommit: RELEASED,
-  changedPaths: ['apps/desktop/src/main/index.ts'],
+  releaseInputPaths: ['apps/desktop/src/main/index.ts'],
   ...overrides,
 });
 
@@ -170,7 +170,7 @@ test('desktop work since the released commit releases the next minor', () => {
 test('nobody has to bump a version for the change to ship', () => {
   // The whole point of the watermark: the merge that changed the desktop app
   // carries no version edit, and it still releases.
-  const plan = planRelease(branchPush({ changedPaths: ['apps/desktop/src/renderer/App.tsx'] }));
+  const plan = planRelease(branchPush({ releaseInputPaths: ['apps/desktop/src/renderer/App.tsx'] }));
   assert.equal(plan.shouldRelease, true);
   assert.equal(plan.version, '1.34.0');
 });
@@ -182,7 +182,7 @@ test('the state a completed release actually leaves behind skips', () => {
   // the watermark always contains apps/site/release.config.json. Feeding []
   // tested a state that cannot occur and left the skip below dead — a re-plan
   // of a finished release cut an empty minor.
-  const plan = planRelease(branchPush({ changedPaths: [RELEASE_RECORD_PATH] }));
+  const plan = planRelease(branchPush({ releaseInputPaths: [RELEASE_RECORD_PATH] }));
   assert.equal(plan.shouldRelease, false);
   assert.match(plan.reason, /nothing but the release record/u);
 });
@@ -190,14 +190,14 @@ test('the state a completed release actually leaves behind skips', () => {
 test('the record is excluded by name, not by being the only path', () => {
   // Real work landing alongside the record still releases.
   const plan = planRelease(branchPush({
-    changedPaths: [RELEASE_RECORD_PATH, 'apps/desktop/src/main/index.ts'],
+    releaseInputPaths: [RELEASE_RECORD_PATH, 'apps/desktop/src/main/index.ts'],
   }));
   assert.equal(plan.shouldRelease, true);
   assert.match(plan.reason, /1 path\(s\) changed/u);
 });
 
 test('a merge with nothing at all since the release skips', () => {
-  const plan = planRelease(branchPush({ changedPaths: [] }));
+  const plan = planRelease(branchPush({ releaseInputPaths: [] }));
   assert.equal(plan.shouldRelease, false);
 });
 
@@ -205,7 +205,7 @@ test('a bump left behind by a failed release is picked back up', () => {
   // The bump pushed to main before a build that then failed is not the
   // watermark, so it shows as unreleased work and the same version is retried
   // — apply-release-version.mjs finds the manifests already stamped.
-  const plan = planRelease(branchPush({ changedPaths: ['package.json', 'apps/desktop/package.json'] }));
+  const plan = planRelease(branchPush({ releaseInputPaths: ['package.json', 'apps/desktop/package.json'] }));
   assert.equal(plan.shouldRelease, true);
   assert.equal(plan.version, '1.34.0');
 });
@@ -214,7 +214,7 @@ test('work stranded by an earlier discarded run ships with the next release', ()
   // The `paths:` filter only sees the newest push. The watermark is what makes
   // a release carry everything since the last one that actually published.
   const plan = planRelease(branchPush({
-    changedPaths: ['apps/desktop/src/main/older-merge.ts', 'apps/desktop/src/main/newest-merge.ts'],
+    releaseInputPaths: ['apps/desktop/src/main/older-merge.ts', 'apps/desktop/src/main/newest-merge.ts'],
   }));
   assert.equal(plan.shouldRelease, true);
   assert.match(plan.reason, /2 path\(s\) changed/u);
@@ -229,9 +229,9 @@ test('an unrecorded watermark fails open rather than retiring work silently', ()
 });
 
 test('an unreachable watermark fails open too', () => {
-  // changedPaths is null when git cannot reach the recorded commit — a force
+  // releaseInputPaths is null when git cannot reach the recorded commit — a force
   // push, or a pruned object.
-  const plan = planRelease(branchPush({ changedPaths: null }));
+  const plan = planRelease(branchPush({ releaseInputPaths: null }));
   assert.equal(plan.shouldRelease, true);
   assert.match(plan.reason, /unreachable/u);
 });
@@ -252,7 +252,7 @@ test('the stable promotion stays a human decision', () => {
 test('a version already published is never cut twice', () => {
   // Every published payload is immutable under v<version>. The watermark moves
   // with each release, so the same version cannot come around again.
-  const afterRelease = planRelease(branchPush({ publishedVersion: '1.34.0', changedPaths: [] }));
+  const afterRelease = planRelease(branchPush({ publishedVersion: '1.34.0', releaseInputPaths: [] }));
   assert.equal(afterRelease.shouldRelease, false);
   const next = planRelease(branchPush({ publishedVersion: '1.34.0' }));
   assert.equal(next.version, '1.35.0');
@@ -308,10 +308,9 @@ test('the plan is idempotent across repeated merges', () => {
   assert.deepEqual(planRelease(branchPush()), planRelease(branchPush()));
 });
 
-test('the planner no longer second-guesses the trigger it sits behind', () => {
-  // The `paths:` filter decides release-worthiness now. Re-applying a path list
-  // here would mean two lists to keep in sync, and the stricter of the two
-  // would silently win — so any change at all since the watermark releases.
-  const plan = planRelease(branchPush({ changedPaths: ['docs/runbook.md'] }));
-  assert.equal(plan.shouldRelease, true);
+test('a trigger with no release input since the watermark stops on Ubuntu', () => {
+  // Every contracts change reaches the workflow, but the classifier removes an
+  // API-only or test-only change before the pure planner sees it.
+  const plan = planRelease(branchPush({ releaseInputPaths: [] }));
+  assert.equal(plan.shouldRelease, false);
 });

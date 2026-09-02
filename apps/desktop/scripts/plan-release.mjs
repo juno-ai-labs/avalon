@@ -9,13 +9,12 @@
 // onto the manifests itself (apply-release-version.mjs), commits that bump,
 // and builds it.
 //
-// The workflow's `paths:` filter decides whether a push is release-worthy at
-// all, so by the time this runs the push has already touched something the
-// installed app is built from. What is left for the planner is the version and
-// the durable half of the question: `paths:` sees only this push's diff, so it
-// cannot tell whether the last release actually shipped. The watermark can, and
-// it is what makes a re-run after a discarded or failed run pick up everything
-// still unreleased rather than only the newest push's contents.
+// The workflow's `paths:` filter cheaply excludes unrelated packages and admits
+// every contracts change. This planner then derives the contract modules the
+// production desktop actually reaches and decides whether any release input has
+// changed since the last published watermark. Classifying the whole watermark
+// diff matters: `paths:` sees only one push, and the concurrency queue may
+// discard that push's run in favor of a newer one.
 //
 // It also closes the loop the pipeline's own commits would otherwise create.
 // The release writes two commits back to main. The version bump becomes the new
@@ -62,7 +61,7 @@ export function planRelease({
   headSha,
   publishedVersion,
   releasedCommit,
-  changedPaths,
+  releaseInputPaths,
 }) {
   if (eventName === 'workflow_dispatch') {
     if (!inputTag) throw new Error('A manual release dispatch must name the tag to replay');
@@ -96,12 +95,12 @@ export function planRelease({
   if (!releasedCommit) {
     return release(`no released commit is recorded, so ${version} ships the current tree`);
   }
-  if (changedPaths === null) {
+  if (releaseInputPaths === null) {
     return release(`the recorded release commit is unreachable, so ${version} ships the current tree`);
   }
 
   const short = releasedCommit.slice(0, 7);
-  const outstanding = changedPaths.filter((path) => path !== RELEASE_RECORD_PATH);
+  const outstanding = releaseInputPaths.filter((path) => path !== RELEASE_RECORD_PATH);
   if (outstanding.length === 0) {
     return skip(`nothing but the release record has landed since the released commit ${short}`);
   }
@@ -134,17 +133,18 @@ function gitOutput(args) {
  * `git tag`, and the bump step's resume path cannot tell that apart from a
  * release that failed before publishing.
  *
- * Main's tip is also the commit the release job actually builds — its bump step
- * resets to `origin/main` on the same reasoning — so planning from it removes a
- * disagreement between the two rather than introducing one. An unreadable tip
- * falls back to the checkout, which is the behaviour this replaces.
+ * The Ubuntu verification job starts from main's tip, applies the version bump,
+ * and then freezes the resulting commit for both its portable gates and the
+ * macOS build. Planning from the tip therefore removes a disagreement between
+ * those phases rather than introducing one. An unreadable tip falls back to the
+ * checkout, which is the behaviour this replaces.
  */
 export function planningCommit(headSha, tipSha) {
   return tipSha ?? headSha;
 }
 
 // The release record as it stands at a commit, rather than in the working tree,
-// so the plan reads the same state the release job will build against.
+// so the plan reads the same state the verification job will freeze and test.
 export function releaseRecordAt(commit) {
   const contents = gitOutput(['show', `${commit}:${RELEASE_RECORD_PATH}`]);
   if (contents === null) return null;
@@ -184,7 +184,7 @@ async function main() {
   // anyway would let a record that is missing or malformed at the checked-out
   // tag fail the plan step at exactly the wrong moment.
   if (eventName === 'workflow_dispatch') {
-    return report(planRelease({ eventName, inputTag, headSha, changedPaths: [] }));
+    return report(planRelease({ eventName, inputTag, headSha, releaseInputPaths: [] }));
   }
 
   // A branch push plans from main's tip.
@@ -192,6 +192,11 @@ async function main() {
   const siteRelease = releaseRecordAt(planFrom)
     ?? await readFile(resolve(repositoryDirectory, RELEASE_RECORD_PATH), 'utf8').then(JSON.parse);
   const releasedCommit = typeof siteRelease.commit === 'string' ? siteRelease.commit : undefined;
+  const changedPaths = releasedCommit ? changedPathsSince(releasedCommit, planFrom) : [];
+  const releaseInputPaths = changedPaths === null
+    ? null
+    : await import('./desktop-release-inputs.mjs')
+      .then(({ desktopReleaseInputPaths }) => desktopReleaseInputPaths(changedPaths));
 
   return report(planRelease({
     eventName,
@@ -199,7 +204,7 @@ async function main() {
     headSha: planFrom,
     publishedVersion: siteRelease.version,
     releasedCommit,
-    changedPaths: releasedCommit ? changedPathsSince(releasedCommit, planFrom) : [],
+    releaseInputPaths,
   }));
 }
 
