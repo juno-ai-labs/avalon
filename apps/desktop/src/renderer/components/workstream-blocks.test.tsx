@@ -296,6 +296,35 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Compare offer vs. RSPA');
   });
 
+  it('names the reader on their own answer before the canonical turn lands', () => {
+    // Answering marks the assistant's question turn answered where it stands,
+    // so for that window the row is the reader's own answer carried on a turn
+    // with no author record. Falling through to the anonymous label there put
+    // "Workspace member" on a row this same branch labels as the reader's.
+    const optimistic: Message = {
+      ...baseMessage,
+      id: 'message-optimistic-elicitation-answer',
+      authorType: 'agent',
+      author: undefined,
+      messageType: 'elicitation',
+      text: '',
+      elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' },
+    };
+
+    render(
+      <MessageBlock
+        {...actions}
+        currentUserId="user-adam"
+        currentUserName="Adam"
+        message={optimistic}
+      />,
+    );
+
+    const response = screen.getByLabelText('Your elicitation response');
+    expect(response.querySelector('.message-author')).toHaveTextContent('Adam');
+    expect(screen.queryByText('Workspace member')).not.toBeInTheDocument();
+  });
+
   it('keeps a coworker visible on their elicitation response', () => {
     const elicitationMessage: Message = {
       ...baseMessage,

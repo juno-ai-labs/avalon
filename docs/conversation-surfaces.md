@@ -105,9 +105,29 @@ structural, and `app.css.node.test.ts` holds both rules to it.
 distinguishes them, and nothing should start to — a class that changes the look
 of your own turn is the rule this entry removed, coming back. Air, which aligns
 turns to the leading edge, leaves the header flush there and the inset does
-nothing, which is the same relationship on the other side. A human row with no
-author record renders "Workspace member" rather than nothing; that fallback was
-already the main row's, and the elicitation answer now shares it.
+nothing, which is the same relationship on the other side.
+
+**Two things a header that used to be suppressed had been hiding.** Both were
+found in review, and both are the cost of making a line render that previously
+did not:
+
+- The settled-elicitation row never stated `--person-accent`. Both halves of the
+  line resolve through it — the dot paints its background with it, the name takes
+  its colour from it — so without it the dot's background is invalid at
+  computed-value time and falls back to `transparent`, and the name, a colour
+  being inherited, falls back to the ambient body text. Confirmed in a real
+  window: stripping the property off a settled human row moves the dot from
+  `rgb(79, 74, 158)` to `rgba(0, 0, 0, 0)` and the name to `rgb(26, 24, 20)`, and
+  the dot vanishes. Both human rows now take the accent from one `turnAccent`
+  helper rather than from a copied expression — "these two rows are the same row"
+  is this file's claim, and a duplicated expression is how it stops being true.
+- Answering an elicitation marks the assistant's *question* turn answered where
+  it stands, and that turn carries no author record until the canonical human
+  turn lands a moment later. The row was therefore labelled "Your elicitation
+  response" while visibly attributing the reader's own answer to a "Workspace
+  member". `MessageBlock` now takes `currentUserName` and names the reader from
+  the session for exactly that window. `Workspace member` remains the fallback
+  for a row that is genuinely unattributed.
 
 ### 2026-09-02 — An in-flight turn is the bubble it is about to become
 
