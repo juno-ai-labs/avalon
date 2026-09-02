@@ -3633,6 +3633,145 @@ describe('useWorkstreamSocket', () => {
     await expect(settled).resolves.toMatchObject({ code: 'workstream_socket_unavailable' });
   });
 
+  it('releases an in-flight transcript range on the room\'s correlated refusal', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, 'workstream-one', true),
+      { wrapper: createWrapper() },
+    );
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const settled = result.current.loadTranscriptRange({
+      snapshotId: '00000000-0000-7000-8000-000000000777',
+      range: { startInclusive: 1, endExclusive: 2 },
+      resumeAfterEventSequence: 0,
+    }).then(() => null, (error: unknown) => error);
+    const requestId = (sentFrames(socket).at(-1) as { requestId: string }).requestId;
+
+    // Without the correlation this frame is indistinguishable from an
+    // unsolicited protocol error, and the caller waits out its own 15-second
+    // timeout before reporting a timeout the room never had.
+    act(() => socket.message({
+      type: 'error',
+      sequence: 9,
+      occurredAt: '2026-09-02T17:00:00.000Z',
+      code: 'subscription_required',
+      message: 'Subscribe before loading transcript ranges',
+      requestId,
+    }));
+
+    // The room's code steers; its protocol prose stays off the banner and on
+    // `details`, where a report can still recover it.
+    await expect(settled).resolves.toMatchObject({
+      code: 'subscription_required',
+      message: 'This part of the transcript could not be loaded.',
+      details: 'Subscribe before loading transcript ranges',
+    });
+  });
+
+  it('keeps the snapshot slot held when a correlated range refusal arrives', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, 'workstream-one', true),
+      { wrapper: createWrapper() },
+    );
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => result.current.requestSnapshot());
+    const settled = result.current.loadTranscriptRange({
+      snapshotId: '00000000-0000-7000-8000-000000000777',
+      range: { startInclusive: 1, endExclusive: 2 },
+      resumeAfterEventSequence: 0,
+    }).then(() => null, (error: unknown) => error);
+    const requestId = (sentFrames(socket).at(-1) as { requestId: string }).requestId;
+
+    // The refusal this PR correlates is likeliest exactly here, with a
+    // reconciliation snapshot still assembling — which is why the room lowered
+    // `subscribed` at all. It answers the range, never the snapshot request,
+    // which carries no request id to answer.
+    act(() => socket.message({
+      type: 'error',
+      sequence: 4,
+      occurredAt: '2026-09-02T17:00:00.000Z',
+      code: 'subscription_required',
+      message: 'Subscribe before loading transcript ranges',
+      requestId,
+    }));
+    await expect(settled).resolves.toMatchObject({ code: 'subscription_required' });
+
+    // The original snapshot is still outstanding, so a later reconciliation
+    // trigger must not put a second one over the top of it.
+    act(() => result.current.requestSnapshot());
+    expect(sentFrames(socket).filter((frame) => frame.type === 'request_snapshot')).toHaveLength(1);
+  });
+
+  it('leaves an in-flight transcript range alone when an unrelated error arrives', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, 'workstream-one', true),
+      { wrapper: createWrapper() },
+    );
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    let outcome: unknown = 'pending';
+    void result.current.loadTranscriptRange({
+      snapshotId: '00000000-0000-7000-8000-000000000777',
+      range: { startInclusive: 1, endExclusive: 2 },
+      resumeAfterEventSequence: 0,
+    }).then((range) => { outcome = range; }, (error: unknown) => { outcome = error; });
+
+    act(() => socket.message({
+      type: 'error',
+      sequence: 9,
+      occurredAt: '2026-09-02T17:00:00.000Z',
+      code: 'rest_required',
+      message: 'Persist this action through the work-stream API before publishing it.',
+      requestId: null,
+    }));
+    await flushPromises();
+
+    expect(outcome).toBe('pending');
+
+    // A correlated refusal naming a range this socket is not holding is the
+    // case that proves the lookup rather than the null check: two readers can
+    // have ranges in flight at once, and one refusal settles exactly one.
+    act(() => socket.message({
+      type: 'error',
+      sequence: 10,
+      occurredAt: '2026-09-02T17:00:01.000Z',
+      code: 'subscription_required',
+      message: 'Subscribe before loading transcript ranges',
+      requestId: '00000000-0000-7000-8000-0000000009f9',
+    }));
+    await flushPromises();
+
+    expect(outcome).toBe('pending');
+  });
+
   it('counts one drop when a resync frame lands in the same batch as an abrupt close', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
