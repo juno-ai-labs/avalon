@@ -100,14 +100,14 @@ admission is split in two.
    rejects a region or work-stream mismatch.
 4. **Admit.** A feed upgrade reaches the exact `SubstreamAgent`. When the
    in-memory preparation matches every verified ticket claim and the object's
-   local authority generation, the room reuses its current session/membership
-   decision and eligible prepared snapshot; otherwise it re-reads
-   session/membership. Both paths re-read current regional authority because a
-   maintenance transition can close a generation in place, recheck object-local
-   visibility, and atomically consume the durable ticket receipt. Preparation
-   never consumes a ticket. A constant-size revocation fence prevents older
-   in-flight preparation from reappearing, and only the newest room admission
-   and newest completed snapshot are retained. A
+   local authority generation, the room reuses its ticket-transit
+   session/membership decision and eligible prepared snapshot; otherwise it
+   re-reads session/membership. Both paths re-read current regional authority
+   because a maintenance transition can close a generation in place, recheck
+   object-local visibility, and atomically consume the durable ticket receipt.
+   Preparation never consumes a ticket. A constant-size revocation fence
+   prevents older in-flight preparation from reappearing, and only the newest
+   room admission and newest completed snapshot are retained. A
    metadata upgrade reaches the exact `WorkstreamDO`, which verifies D1
    membership plus its local visibility projection. A workspace upgrade reaches
    the workspace's `WorkspaceDO`, which consumes a separate audience ticket and
