@@ -3,7 +3,7 @@ import { useMemo, useState, type RefObject } from 'react';
 import type { AttachmentPreview } from './attachments';
 import type { CitationContext } from './markdown-citations';
 import type { Message } from '../lib/types';
-import { MessageBlock, type SystemRowDisclosure } from './workstream-blocks';
+import { MessageBlock, type RowDisclosure } from './workstream-blocks';
 
 /**
  * The ordered feed both conversation surfaces render.
@@ -102,18 +102,20 @@ export function MessageFeed({
   acceptDraftError,
   virtualizer,
 }: MessageFeedProps): React.JSX.Element {
-  // Held here rather than by each adapter: which system rows a reader has
-  // opened is feed state, it resets when the feed unmounts, and neither screen
-  // did anything else with it.
-  const [expandedSystemRows, setExpandedSystemRows] = useState<ReadonlySet<string>>(new Set());
-  const systemRowDisclosure = useMemo<SystemRowDisclosure>(() => ({
-    expanded: expandedSystemRows,
-    onToggle: (messageId) => setExpandedSystemRows((current) => {
+  // Held here rather than by each adapter: which rows a reader has opened is
+  // feed state, it resets when the feed unmounts, and neither screen did
+  // anything else with it. One set for both kinds of collapsible row — a
+  // clamped system note and a settled run's work accordion — because message
+  // ids are unique and the question is the same one.
+  const [expandedRows, setExpandedRows] = useState<ReadonlySet<string>>(new Set());
+  const rowDisclosure = useMemo<RowDisclosure>(() => ({
+    expanded: expandedRows,
+    onToggle: (messageId) => setExpandedRows((current) => {
       const next = new Set(current);
       if (!next.delete(messageId)) next.add(messageId);
       return next;
     }),
-  }), [expandedSystemRows]);
+  }), [expandedRows]);
   const row = (message: Message, index: number): React.JSX.Element => (
     <>
       {index === firstUnreadIndex && (
@@ -133,7 +135,7 @@ export function MessageFeed({
           message={message}
           onAnswerElicitation={onAnswerElicitation}
           onOpenAttachment={onOpenAttachment}
-          systemRowDisclosure={systemRowDisclosure}
+          rowDisclosure={rowDisclosure}
           {...(onClaimExecutionPrincipal ? { onClaimExecutionPrincipal } : {})}
           claimingExecutionPrincipalFor={claimingExecutionPrincipalFor ?? null}
           claimExecutionPrincipalError={claimExecutionPrincipalError}

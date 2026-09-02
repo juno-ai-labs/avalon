@@ -18,7 +18,7 @@ thing to argue for rather than a thing to preserve.
   transcript viewport, follow controller, and **Jump to latest** integration.
 - `apps/desktop/src/renderer/components/message-feed.tsx` renders the ordered
   list itself — every row, the unread divider, the oversized-message
-  placeholder, and system-row disclosure — and `workstream-blocks.tsx` renders
+  placeholder, and row disclosure — and `workstream-blocks.tsx` renders
   the human, assistant, tool, activity, attachment, and failure rows it
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
@@ -68,6 +68,27 @@ change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
 
 ## Changelog
+
+### 2026-09-02 — One open-row set, for every kind of collapsible row
+
+**What changed:** `SystemRowDisclosure` is `RowDisclosure`, the `MessageBlock`
+prop is `rowDisclosure`, and `MessageFeed` holds a single `expandedRows` set
+that now serves two kinds of row: the clamped system note, and the work
+accordion a settled run collapses into
+([`plugin-activity-rows.md`](plugin-activity-rows.md)).
+
+**Why:** The type was already general — a set of message ids and a toggle — and
+its docblock's reasoning was about virtualization, not about system rows. The
+second collapsible row needed exactly the same thing for exactly the same
+reason, and message ids are unique, so a second state beside the first would
+have been the same feed state split in two with nothing deciding which half a
+new row belongs in.
+
+**What a future change has to respect:** the set lives above the virtual window
+on purpose. A row that scrolls away open and comes back closed re-measures
+shorter than the size cache expects, and the virtualizer declines to compensate
+a re-measurement during a backward scroll, so the transcript jumps under the
+reader by the whole delta.
 
 ### 2026-09-02 — Every human turn carries the same identity line, the reader's own included
 
