@@ -802,6 +802,38 @@ describe("agent harness", () => {
     expect(requestBodies[1]?.reasoning).toEqual({ effort: "low" });
   });
 
+  it("enables parallel tool calls on a direct OpenRouter stream request", async () => {
+    let requestBody: Record<string, unknown> = {};
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      fetch: fetcher,
+    });
+
+    await expect(client.stream({
+      messages: [{ role: "user", content: "test" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "lookup",
+          description: "Look up a value",
+          parameters: { type: "object", additionalProperties: false },
+        },
+      }],
+    }, () => {})).resolves.toMatchObject({ content: "done" });
+
+    expect(requestBody).toMatchObject({
+      tool_choice: "auto",
+      parallel_tool_calls: true,
+    });
+  });
+
   it("treats OpenRouter auth failures as terminal", async () => {
     const fetcher = vi.fn(async () => Response.json(
       { error: { message: "invalid key" } },
@@ -2196,6 +2228,67 @@ describe("agent harness", () => {
       reasoningTokens: 12,
       cachedInputTokens: 40,
       costCents: 0.0585,
+    });
+  });
+
+  it("lets an explicit routed reasoning effort override the Grok 4.6 default", async () => {
+    let requestBody: Record<string, unknown> = {};
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        choices: [{ delta: { content: "explicit effort" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
+      }]);
+    }) as typeof fetch;
+
+    await expect(runHarness(runInput(fetcher, {
+      primaryModel: "x-ai/grok-4.6",
+      azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+      reasoningEffort: "high",
+      workspaceId: "workspace-azure-grok-46-explicit-reasoning",
+    }))).resolves.toMatchObject({ status: "completed", content: "explicit effort" });
+
+    expect(requestBody).toMatchObject({
+      model: "grok-4.6",
+      reasoning_effort: "high",
+    });
+  });
+
+  it("resolves the Grok 4.6 default after a routed fallback reaches that model", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push({ url, body });
+      if (url === "https://openrouter.ai/api/v1/chat/completions") {
+        return Response.json({ error: { message: "primary unavailable" } }, { status: 503 });
+      }
+      return streamResponse([{
+        choices: [{ delta: { content: "fallback effort" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
+      }]);
+    }) as typeof fetch;
+
+    await expect(runHarness(runInput(fetcher, {
+      primaryModel: "test/model",
+      fallbackModels: ["x-ai/grok-4.6"],
+      azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+      transportRetries: 0,
+      workspaceId: "workspace-routed-grok-46-fallback-reasoning",
+    }))).resolves.toMatchObject({
+      status: "completed",
+      model: "x-ai/grok-4.6",
+      content: "fallback effort",
+    });
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.body).not.toHaveProperty("reasoning");
+    expect(requests[1]).toMatchObject({
+      url: "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+      body: {
+        model: "grok-4.6",
+        reasoning_effort: "low",
+      },
     });
   });
 

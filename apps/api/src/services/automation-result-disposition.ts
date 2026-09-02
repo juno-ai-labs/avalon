@@ -87,10 +87,11 @@ export async function classifyAutomationResult(
       jsonSchema: automationResultDispositionJsonSchema(input.reach),
       parse: (value) => DecisionSchema.parse(value),
       ...(input.signal ? { signal: input.signal } : {}),
-      // `reasoningEffort` is deliberately not set. The other one-turn structured
-      // roles pass "none" because they are mechanical mappings and thinking buys
-      // them nothing; this one judges whether to interrupt a room full of
-      // people, once per completed occurrence, off the critical path.
+      // `reasoningEffort` is deliberately not set, so this role accepts the
+      // selected model's Rally default (or its provider default when none is
+      // registered). The other one-turn structured roles pass "none" because
+      // they are mechanical mappings; this one judges whether to interrupt a
+      // room full of people, once per completed occurrence, off the critical path.
     });
     // An arm the schema did not offer cannot arrive, but a model that returned
     // one anyway would be asking for reach nobody granted. Treated as the
