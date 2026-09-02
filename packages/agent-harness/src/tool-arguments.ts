@@ -21,6 +21,9 @@ type RequiredKeys = { keys: ReadonlySet<string>; complete: boolean };
 
 const NO_REQUIRED_KEYS: RequiredKeys = { keys: new Set(), complete: true };
 
+/** A tool's declared `mode`; the blank-argument rule below applies only to reads. */
+export type ToolArgumentMode = "read" | "write";
+
 /**
  * Apply the model-tolerance rules shared by every harness tool.
  *
@@ -30,21 +33,29 @@ const NO_REQUIRED_KEYS: RequiredKeys = { keys: new Set(), complete: true };
  *    learn the preferred shape. String alternatives remain strings: identifiers
  *    and free text must not change meaning merely because their characters look
  *    numeric.
- * 2. An optional property given `""` is treated as absent when the property's
- *    own schema says the empty string is not one of its values. Models blank
- *    out optional cursors, ids, and filters rather than omitting them, and the
- *    tool then either rejects the call or forwards the blank to a provider that
- *    rejects it. Neither outcome carried any intent the tool could have
- *    honored, because the value was already declared invalid.
+ * 2. On a **read**, an optional property given `""` is treated as absent when
+ *    the property's own schema says the empty string is not one of its values.
+ *    Models blank out optional cursors, ids, and filters rather than omitting
+ *    them, and the tool then either rejects the call or forwards the blank to a
+ *    provider that rejects it. On a read there is nothing else a blank could
+ *    have meant: absence is the only alternative to a value.
  *
- * The second rule never reaches a value a tool would have accepted: a field
+ * The second rule never reaches a value a tool would have accepted. A field
  * where the empty string means something — clearing a description, listing a
- * repository's root — does not declare it invalid, so it is left alone. That is
- * the whole of the boundary, and it is why the strip is not the silent drop
- * `docs/agent-tools.md` forbids.
+ * repository's root — does not declare it invalid, so it is left alone. And it
+ * does not apply to a write at all, because there a blank is genuinely
+ * ambiguous: `assigneeId: null` clears an assignee while omitting it leaves the
+ * assignee alone, so reading the blank as either one silently picks an intent
+ * the model did not state. A write keeps the blank and its executor rejects it,
+ * naming the field, which is one correction away from `null`. Both halves are
+ * why this is not the silent drop `docs/agent-tools.md` forbids.
  */
-export function normalizeToolArguments(input: unknown, schema: Record<string, unknown>): unknown {
-  return normalizeValue(input, schema, schema, 0, { remaining: MAX_SCHEMA_VISITS }).value;
+export function normalizeToolArguments(
+  input: unknown,
+  schema: Record<string, unknown>,
+  mode: ToolArgumentMode = "write",
+): unknown {
+  return normalizeValue(input, schema, schema, 0, { remaining: MAX_SCHEMA_VISITS }, NO_REQUIRED_KEYS, mode).value;
 }
 
 /**
@@ -85,6 +96,7 @@ function normalizeValue(
   depth: number,
   budget: SchemaVisitBudget,
   inheritedRequired: RequiredKeys = NO_REQUIRED_KEYS,
+  mode: ToolArgumentMode = "write",
 ): Normalized {
   if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue) || !consumeSchemaVisit(budget)) {
     return { value: input, changed: false };
@@ -101,14 +113,14 @@ function normalizeValue(
 
   const reference = typeof schema.$ref === "string" ? resolveLocalReference(rootSchema, schema.$ref) : null;
   if (reference) {
-    current = mergeNormalized(current, normalizeValue(current.value, reference, rootSchema, depth + 1, budget, required));
+    current = mergeNormalized(current, normalizeValue(current.value, reference, rootSchema, depth + 1, budget, required, mode));
   }
 
-  current = mergeNormalized(current, normalizeDirect(current.value, schema, rootSchema, depth + 1, budget, required));
+  current = mergeNormalized(current, normalizeDirect(current.value, schema, rootSchema, depth + 1, budget, required, mode));
 
   if (Array.isArray(schema.allOf)) {
     for (const branch of schema.allOf) {
-      current = mergeNormalized(current, normalizeValue(current.value, branch, rootSchema, depth + 1, budget, required));
+      current = mergeNormalized(current, normalizeValue(current.value, branch, rootSchema, depth + 1, budget, required, mode));
     }
   }
 
@@ -119,7 +131,7 @@ function normalizeValue(
       : null;
   if (alternatives?.length) {
     const candidates = alternatives.map((branch, index) => {
-      const normalized = normalizeValue(current.value, branch, rootSchema, depth + 1, budget, required);
+      const normalized = normalizeValue(current.value, branch, rootSchema, depth + 1, budget, required, mode);
       return {
         ...normalized,
         index,
@@ -145,6 +157,7 @@ function normalizeDirect(
   depth: number,
   budget: SchemaVisitBudget,
   required: RequiredKeys = NO_REQUIRED_KEYS,
+  mode: ToolArgumentMode = "write",
 ): Normalized {
   const numericKind = exclusiveNumericKind(schema);
   if (numericKind && typeof input === "string") {
@@ -157,7 +170,7 @@ function normalizeDirect(
     const prefixItems = Array.isArray(schema.prefixItems) ? schema.prefixItems : [];
     const values = input.map((item, index) => {
       const itemSchema = prefixItems[index] ?? schema.items;
-      const normalized = normalizeValue(item, itemSchema, rootSchema, depth + 1, budget);
+      const normalized = normalizeValue(item, itemSchema, rootSchema, depth + 1, budget, NO_REQUIRED_KEYS, mode);
       changed ||= normalized.changed;
       return normalized.value;
     });
@@ -173,6 +186,7 @@ function normalizeDirect(
     const declared = Object.prototype.hasOwnProperty.call(properties, key);
     if (
       value === ""
+      && mode === "read"
       && declared
       && required.complete
       && !required.keys.has(key)
@@ -183,9 +197,9 @@ function normalizeDirect(
     }
     let normalized: Normalized = { value, changed: false };
     if (declared) {
-      normalized = normalizeValue(value, properties[key], rootSchema, depth + 1, budget);
+      normalized = normalizeValue(value, properties[key], rootSchema, depth + 1, budget, NO_REQUIRED_KEYS, mode);
     } else if (isObject(schema.additionalProperties)) {
-      normalized = normalizeValue(value, schema.additionalProperties, rootSchema, depth + 1, budget);
+      normalized = normalizeValue(value, schema.additionalProperties, rootSchema, depth + 1, budget, NO_REQUIRED_KEYS, mode);
     }
     changed ||= normalized.changed;
     entries.push([key, normalized.value]);
