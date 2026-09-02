@@ -304,7 +304,11 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Sam')).toBeInTheDocument();
   });
 
-  it('renders an optimistic turn as a neutral skeleton instead of previewing client text', () => {
+  it('renders an in-flight turn as the bubble it is about to become', () => {
+    // The words are the person's own and are already on their screen in the
+    // composer they came from; a placeholder standing in for them buys nothing
+    // and costs the resize when the room accepts the turn. The only thing the
+    // sending state changes is that it says it is still going.
     render(
       <MessageBlock
         {...actions}
@@ -313,11 +317,11 @@ describe('MessageBlock human identity', () => {
       />,
     );
 
-    const skeleton = screen.getByLabelText('Sending message');
-    expect(skeleton).toHaveAttribute('aria-busy', 'true');
-    expect(skeleton).toHaveClass('is-sending');
-    expect(skeleton.querySelector('.message-skeleton')).toBeInTheDocument();
-    expect(screen.queryByText('Client-only mention rendering')).not.toBeInTheDocument();
+    const inFlight = screen.getByLabelText('Sending message');
+    expect(inFlight).toHaveAttribute('aria-busy', 'true');
+    expect(inFlight).toHaveClass('is-sending');
+    expect(inFlight.querySelector('.human-message-bubble')).toBeInTheDocument();
+    expect(screen.getByText('Client-only mention rendering')).toBeInTheDocument();
   });
 
   it('keeps the signed-in person implicit on their own compact prompt', () => {
