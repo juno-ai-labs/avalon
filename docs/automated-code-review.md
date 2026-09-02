@@ -86,8 +86,9 @@ Global and EU runtime boundary does not apply.
 
 ## Failure modes and limits
 
-- Each reviewer times out after 25 minutes. The acknowledgment job times out
-  after two minutes.
+- Each reviewer job times out after 30 minutes, while its prompt tells the
+  reviewer it has 15 minutes. The acknowledgment job times out after two
+  minutes.
 - A newer run of the same reviewer for the same pull request cancels its older
   run. Because command detection uses substring matching, quoting
   `/cline review` in an ordinary comment also starts reviewers.
@@ -105,7 +106,8 @@ Global and EU runtime boundary does not apply.
 `pnpm test:scripts` runs
 `scripts/azure-reviewer-workflow.test.mjs`. It checks that only the five Azure
 jobs exist and that each retains Monad's positional prompt, checkout placement,
-automatic approval, permissions, and fixed post path.
+automatic approval, permissions, fixed post path, 30-minute job ceiling, and
+15-minute reviewer-facing budget.
 
 Run the repository quality gates after any workflow change:
 
@@ -153,6 +155,23 @@ Use the Actions run for checkout, installation, endpoint-validation, provider,
 and model errors.
 
 ## Changelog
+
+### 2026-09-01 — Reviewer job and prompt budgets separated
+
+**What changed:** All five Azure Cline reviewer jobs now have a 30-minute GitHub
+Actions timeout, while every reviewer prompt says it has 15 minutes. The
+workflow contract test pins both values for every reviewer.
+
+**Why:** The requested operating contract gives the workflow a larger execution
+ceiling than the time the models are told to spend reviewing.
+
+**Considered and rejected:** Giving the job and reviewer the same 30-minute
+budget, or retaining the former 25-minute job ceiling and 20-minute prompt.
+Neither preserves the requested deliberate separation.
+
+**Consequences:** A reviewer is instructed to finish within 15 minutes, but
+GitHub Actions can keep the job alive for setup, authentication, checkout,
+publication, and any overrun until the 30-minute ceiling.
 
 ### 2026-08-28 — Grok reviewer upgraded to Grok 4.6
 
