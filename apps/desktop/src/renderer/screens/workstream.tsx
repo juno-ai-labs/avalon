@@ -63,6 +63,7 @@ import {
   createTextMessage,
   foldSettledWorkIntoMessages,
   groupPluginToolMessages,
+  messageMentionsFromSelection,
   orderedTranscriptMessages,
   applyPendingInputQueueOrder,
   assignPendingInputQueueSequences,
@@ -1894,6 +1895,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         authorType: 'human',
         author: workspaceMemberFromSession(session),
         text,
+        mentions: messageMentionsFromSelection(mentions),
         attachments: readyAttachments.flatMap((attachment) => attachment.resource ? [{
           id: attachment.resource.id,
           fileName: attachment.file.name,

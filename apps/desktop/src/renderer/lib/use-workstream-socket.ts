@@ -456,13 +456,26 @@ export function applyHarnessStatus(
  *
  * The one thing it must not get wrong is the reader's own turn. A message is
  * read by the person who wrote it — the room says so, advancing that author's
- * `seen_attention_ordinal` to their own message and clearing their manual mark
- * in the same write that stores it — and this runs a beat before that state
- * arrives. Guessing "unread" in the gap is not a harmless early guess: it is
- * corrected within a few hundred milliseconds, and what a person sees in those
- * milliseconds is an **Unread messages** divider drawn above the message they
- * just sent, and their own sidebar dot lighting for it. So the same rule is
- * applied here rather than waited for.
+ * `seen_attention_ordinal` to their own message in the same write that stores
+ * it — and this runs a beat before that state arrives. Guessing "unread" in the
+ * gap is not a harmless early guess: it is corrected within a few hundred
+ * milliseconds, and what a person sees in those milliseconds is an **Unread
+ * messages** divider drawn above the message they just sent, and their own
+ * sidebar dot lighting for it. So the waterline is advanced here rather than
+ * waited for.
+ *
+ * **The manual mark is deliberately left alone.** The room clears it in that
+ * same write, and this function does not, because it cannot tell a mark that
+ * predates the turn from one made after it. `markUnread` stores
+ * `manual_unread_from_ordinal = latest`, which for a turn the reader just sent
+ * is that turn's own ordinal, so no ordinal comparison separates the two; the
+ * ordering lives in `manualUnreadGeneration`, and a turn frame does not carry
+ * the generation it was written under. A delayed or replayed own turn — this
+ * client reconnecting, or the same account marking the stream unread on another
+ * device — would therefore erase a newer decision the room is still honouring.
+ * Leaving it costs nothing the flash cared about: a mark is null on an ordinary
+ * send, and when it is not, the reader asked for that divider and the room's own
+ * viewer state is what clears it.
  *
  * `viewerUserId` is null before sign-in, when nothing is anybody's own message.
  */
@@ -482,17 +495,12 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   const readThroughSequenceNumber = ownTurn
     ? Math.max(workstream.readThroughSequenceNumber, message.attentionSequenceNumber)
     : workstream.readThroughSequenceNumber;
-  const manualUnreadFromSequenceNumber = ownTurn
-    ? null
-    : workstream.manualUnreadFromSequenceNumber;
   if (latestAttentionSequenceNumber === workstream.latestAttentionSequenceNumber
-    && readThroughSequenceNumber === workstream.readThroughSequenceNumber
-    && manualUnreadFromSequenceNumber === workstream.manualUnreadFromSequenceNumber) return workstream;
+    && readThroughSequenceNumber === workstream.readThroughSequenceNumber) return workstream;
   return withDerivedUnread({
     ...workstream,
     latestAttentionSequenceNumber,
     readThroughSequenceNumber,
-    manualUnreadFromSequenceNumber,
     lastActivityAt: message.createdAt > workstream.lastActivityAt
       ? message.createdAt
       : workstream.lastActivityAt,

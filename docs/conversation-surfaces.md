@@ -95,7 +95,14 @@ has.
 the human bubble now reaches the sending state without being asked to. The
 sending state's only geometry is `overflow`/`position` on the bubble, for the
 shimmer to clip against; anything else written under `.is-sending` will drift
-from the row it is supposed to be indistinguishable from.
+from the row it is supposed to be indistinguishable from. What the optimistic
+turn does not carry, the row does not draw, which is why the composer's selected
+mentions are now projected onto it by `messageMentionsFromSelection` — a
+connection mention that became a chip only at the canonical turn was the one
+width change this row still had in it. A *person* mention stays plain text until
+then: the chip comes from the `[@Name](person://<id>)` Markdown the room writes
+into the stored text, and reproducing that rewrite here would put a second copy
+of it on this side of the wire.
 
 ### 2026-09-01 — An automation's result is a message in the room, named Automation
 
