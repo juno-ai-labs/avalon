@@ -25,7 +25,7 @@ automations, [`automation-lifecycle.md`](automation-lifecycle.md).
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, and the opportunity/ranking product pass. Owns `refreshSchedule`. |
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, so a wake-up a run scheduled fires from the object that owns it. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, while execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for regional-effect and block-dashboard outboxes, all of which stay derived. |
 | `apps/api/src/durable-objects/automation-agent.ts` | Adopts it for one automation: two stored kinds — `compiler_dispatch` and `automation_schedule` — and two derived lanes, the effect outbox and the next run awaiting provisioning. |
 
@@ -45,7 +45,9 @@ takes the earliest of both:
   their own writers and no separate identity is needed: each outbox's
   `MIN(not_before)`, the oldest activity event plus its retention, an in-memory
   keep-alive lease. SubstreamAgent includes both regional-effect delivery and
-  semantic-realtime publication outboxes independently. Every independent lane is returned so an overdue one cannot
+  semantic-realtime publication outboxes independently, plus separate candidates
+  for executable loop work and the oldest externally unsettled terminal run.
+  Every independent lane is returned so an overdue one cannot
   hide a real future deadline during the pre-work recovery arm.
 
 The rule of thumb: if it can fail in a way that should hold *it* back without
@@ -118,15 +120,16 @@ before a full re-arm.
 
 The first arm defaults to the bounded recovery re-derivation and the second to
 the exact post-work answer. Both are hooks for one case: an object whose alarm
-*is* the worker for a reason it derives. `SubstreamAgent` is the one — its run
-lane is derived from the persistent-loop singleton, immutable pending inputs,
-and subordinate execution receipts. While the alarm is servicing that lane,
-re-deriving the executing singleton's lease would hand the same activation
-straight back. Its
-`armAlarmDuringRunDrain` leaves the run lane out and floors the alarm at one
-keep-alive heartbeat instead, which bounds recovery from a cancelled
-continuation without looping. It takes the first arm always, and the second only
-when the drain reported the run still owned elsewhere.
+*is* the worker for a reason it derives. `SubstreamAgent` is the one — its
+execution lane is derived from the persistent-loop singleton, immutable pending
+inputs, and subordinate execution receipts, while its external-settlement lane
+is derived independently from the oldest terminal receipt whose
+`external_settled_at` is null. While the alarm is servicing either lane,
+immediately re-deriving the same due row would hand the work straight back.
+`armAlarmDuringRunDrain` floors recovery at one keep-alive heartbeat instead,
+which bounds recovery from a cancelled continuation without looping. It takes
+the first arm always, and the second while either a run remains owned elsewhere
+or the eager settlement drain is active.
 
 An entry that returns is settled: a one-shot is deleted, a repeating one
 advances to the first occurrence strictly *after* now (an object that hibernated
@@ -266,7 +269,8 @@ that a particular target was interrupted.
   of "the earliest thing" will disagree with the base's, and the disagreement
   shows up as work that silently never runs. `SubstreamAgent.armAlarmDuringRunDrain`
   uses the base with an explicit candidate override described under *Firing*:
-  the run lane is the one derived reason whose worker is this alarm. Two kinds
+  the execution and external-settlement lanes are derived reasons whose worker
+  is this alarm. Two kinds
   of call site still arm directly, and both are deliberate. A SubstreamAgent
   arms immediately after committing a pending loop input, an unlinked execution
   receipt, or the mailbox reservation that precedes a prepared input, and
@@ -500,6 +504,29 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-09-01 — Substream external settlement becomes an independent derived lane
+
+**What changed:** `SubstreamAgent` now derives the oldest externally unsettled
+terminal receipt separately from executable loop work. An eager `waitUntil`
+drain handles it without blocking inference; the shared alarm retains the
+durable recovery candidate and parks it at the run-drain recovery horizon while
+that continuation is active.
+
+**Why:** `nextLoopWorkAt` previously combined terminal delivery/maintenance
+with executable receipts, and the persistent loop always selected settlement
+first. A connector or metadata refresh could therefore delay the next provider
+call despite having no effect on its transcript or Bind fence.
+
+**Considered and rejected:** A stored alarm entry per terminal run duplicates
+the due and retry fields on `runs`, while omitting settlement from alarm
+derivation makes an eviction capable of losing it. Leaving active settlement at
+an immediately due instant recreates the overlapping hot-alarm shape the
+recovery horizon exists to prevent.
+
+**Consequences:** The object alarm has two independent run-related candidates.
+External settlement failure holds external ordering but never loop execution;
+every terminalization and settlement retry must re-arm from the persisted head.
 
 ### 2026-09-01 — An unsettled message admission is a SubstreamAgent wake reason
 

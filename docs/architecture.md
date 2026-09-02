@@ -368,11 +368,13 @@ the delivery guarantee — the eager call is one bounded, unawaited attempt to
 arrive first, and the outbox row it would ack is returned to `pending` if it
 fails.
 
-The WorkspaceDO command receipt is private and outside the published version
+The SubstreamAgent message receipt is private and outside the published room
 sequence. If a connection drops before that receipt, Electron reconnects and
-resends the stable client message/operation ID; object-local command receipts
-make the retry idempotent. Feed sockets never accept `create_message`, so a
-long-lived child subscription is not a mutation grant.
+resends the stable client message/operation ID; object-local message identity
+makes the retry idempotent. The socket is a mutation grant only for the exact
+workspace/work-stream/substream/user/session/role tuple serialized at admission.
+The revocation walk closes it when that grant ends, and the message transaction
+still enforces object-local participation.
 
 SubstreamAgent sequences replayable events and keeps a bounded in-memory replay
 window. Its SQLite transaction commits accumulated text and Bind cursor before a
@@ -821,6 +823,26 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-09-01 — Existing-room sends stop crossing the workspace parent
+
+**What changed:** The retained SubstreamAgent socket now accepts
+`create_message`, commits it in the owning room, and returns the private
+correlated receipt. WorkspaceDO continues to serve released clients during the
+rollout but is no longer in the current desktop path.
+
+**Why:** Socket admission already resolves the exact child and authorizes its
+session/member identity; access loss already walks the hierarchy and closes the
+connection. Repeating the decision at WorkspaceDO created a parent bottleneck
+and paid another D1 read plus a child binding call on every send.
+
+**Considered and rejected:** Per-command session revalidation on the room would
+retain two competing definitions of socket authority. Immediate removal of the
+parent command would make the API/desktop rolling deployment unsafe.
+
+**Consequences:** Access-revocation delivery is now part of message-write
+correctness. A room command may use only attachment-scoped identity and local
+authority, and its private receipt stays outside canonical event ordering.
 
 ### 2026-09-01 — Telemetry destinations leave both regional startup graphs
 

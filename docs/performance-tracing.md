@@ -35,7 +35,7 @@ necessarily keeps apart.
 | `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The workspace command socket's `create_message`, which is how the desktop actually sends a message. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Workspace synchronization and the released-client compatibility handler for the former parent-routed `create_message`. |
 | `apps/api/test/helpers/cloudflare-workers.ts` | The Node suite's stand-in for `tracing`, and `recordedSpans()`, which is how a Node test asserts on span names and attributes. |
 | `apps/desktop/src/renderer/lib/perf-trace.ts` | The renderer tracer, its governed diagnostic projection, and `newRequestId`. Not OpenTelemetry — see [The desktop half](#the-desktop-half). |
 | `apps/desktop/src/main/native-performance-log.ts`, `apps/desktop/native/unified-log/UnifiedLog.mm` | The main-owned, schema-closed bridge from a renderer performance event to macOS Unified Logging. |
@@ -225,7 +225,7 @@ attribute is simply not there.
 | --- | --- | --- |
 | Anything rooted in an HTTP request | yes | yes |
 | A Durable Object reached over a binding call | inherited — the span is a child of the HTTP root above | inherited |
-| `workstream.room.socket.accept` / `…subscribe`, `workstream.message.send` on WorkspaceDO | no | yes |
+| `workstream.room.socket.accept` / `…subscribe` / `…create_message` on SubstreamAgent, `workstream.message.send` on the legacy WorkspaceDO path | no | yes |
 
 The socket-rooted spans are their own traces, so they need identity of their
 own. They get the workspace surrogate from the `workspaces` row their
@@ -262,7 +262,7 @@ would never meet.
 | Sidebar click → each retried `GET /workstreams/:id` | `rally.operation.id`, from the click-scoped `x-rally-operation-id`. Each HTTP call keeps its own `rally.request.id`. |
 | `GET …/socket` → the WebSocket upgrade → the room | `rally.socket.ticket_id`. A browser can attach no header to a handshake — see [`realtime-sockets.md`](realtime-sockets.md) — so the ticket id, which the issuing route logs and the room consumes, is the only shared value. |
 | The room's upgrade → the `subscribe` that follows | `rally.socket.connection_id`. `subscribe` arrives on a later invocation, possibly on a woken isolate. |
-| Renderer → workspace command socket → WorkspaceDO | `rally.message.client_id`, which the renderer, the command, and the command result all carry. |
+| Renderer → admitted SubstreamAgent socket | `rally.message.client_id`, which the renderer, the command, and the private command result all carry. |
 
 ### The three flows
 
@@ -309,11 +309,17 @@ record `rally.socket.speculative`. A failed accept-time bootstrap records
 while a failed runtime-recovery attempt is logged and retried by the next
 mutation rather than remaining a permanently rejected gate.
 
-**`workstream_message_send`** — the desktop sends over the workspace command
-socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
-`…authority_read`, `…session_auth`, `…object_write`, `…respond`, with the room's
-`workstream.room.create_message` nested under the write. `POST /:id/messages`
-traces the same flow for the HTTP path, distinguished by `rally.transport`.
+**`workstream_message_send`** — the desktop sends over the already-admitted
+SubstreamAgent socket, so `workstream.room.create_message` is the trace to read:
+`workstream.room.product.create_message`, optional `…loop.activate`, and
+`…respond`. There is no WorkspaceDO span, second session query, or parent-to-child
+binding call on the current desktop path. `POST /:id/messages` traces the same
+flow for the HTTP path, distinguished by `rally.transport`; the old
+`workstream.message.send` WorkspaceDO trace now identifies a released desktop
+using the rollout-compatibility handler.
+The renderer's `resolve_mentions` phase performs a workspace-roster request only
+when the outgoing text contains `@` or `person://`; ordinary text proceeds
+directly to the socket command round trip.
 
 ### The desktop half
 
@@ -659,6 +665,49 @@ send-ready remain the authoritative total. Operators should compare direct and
 proxied routes separately and join ticket/connection IDs into server phases.
 Speculative hover spans can be separated from committed opens without inferring
 intent from timing.
+### 2026-09-01 — Message-send tracing starts at the admitted room
+
+**What changed:** Current desktop sends produce a socket-rooted
+`workstream.room.create_message` trace in SubstreamAgent. Its child spans cover
+the local product write, loop activation when needed, and the private receipt.
+The former `workstream.message.send` WorkspaceDO trace remains only for old
+desktop compatibility traffic. The existing `workstream_send_ready` event keeps
+its `workspaceSocketState` field for telemetry-schema continuity, but the value
+now describes the message-carrying SubstreamAgent socket.
+
+**Why:** The selected substream socket already carries the exact route and
+admitted identity. The parent trace described work the product no longer needs:
+a WorkspaceDO invocation, D1 session/membership recheck, and a child binding
+call before the owner could write.
+
+**Considered and rejected:** Keeping an empty parent correlation span would
+misrepresent the runtime path. Reusing the old span name in the child would hide
+the authority change and make old/new production samples indistinguishable.
+
+**Consequences:** Diagnose current send latency from
+`workstream.room.create_message`; seeing `workstream.message.send` means the
+client has not yet upgraded. Both still join the renderer by
+`rally.message.client_id`.
+
+### 2026-09-01 — Plain message sends do not fetch the workspace roster
+
+**What changed:** `messageMentionPayload` returns an empty mention payload
+without calling `/workspace/members` unless the outgoing text contains `@` or
+the durable `person://` mention scheme. The existing resolution path is
+unchanged once either marker is present.
+
+**Why:** Production send traces showed every plain message paying 100–118 ms for
+a roster it could not use before the workspace socket command began. Mention
+resolution needs that roster; a message with no mention syntax does not.
+
+**Considered and rejected:** caching the roster on this path would still add
+cache ownership and invalidation semantics to messages that need no roster at
+all. Inferring from `selected` alone would miss hand-typed `@Name` mentions and
+pasted durable mention Markdown.
+
+**Consequences:** `resolve_mentions` remains a measured phase, but it is local
+and effectively immediate for plain text. New mention syntaxes must be added to
+this gate when they are added to resolution.
 
 ### 2026-08-26 — Work-stream open includes both transcript islands and usable composer
 
