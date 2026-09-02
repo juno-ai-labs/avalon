@@ -1994,7 +1994,7 @@ export function Sidebar({
             <DropdownMenu.Content align="start" className="menu-content" side="top" sideOffset={8}>
               <DropdownMenu.Label className="menu-label">
                 <span>{workspace.currentUser.email}</span>
-                <small>{workspace.region === 'eu' ? 'European Union' : 'Global'} workspace</small>
+                <small>{workspace.region === 'eu' ? 'EU' : 'US'} workspace</small>
               </DropdownMenu.Label>
               <DropdownMenu.Separator className="menu-separator" />
               <DropdownMenu.Item asChild className="menu-item">

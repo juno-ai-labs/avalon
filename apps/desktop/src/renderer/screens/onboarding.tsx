@@ -40,7 +40,7 @@ function RegionOptions({ selected, onChange }: {
         />
         <span className="region-icon"><Globe2 aria-hidden="true" size={18} /></span>
         <span className="region-option-copy">
-          <strong>Global</strong>
+          <strong>United States</strong>
           <span>US-Jurisdiction storage</span>
         </span>
         {selected === 'global' && <Check aria-hidden="true" className="region-check" size={17} />}
@@ -297,7 +297,7 @@ export function InvitationOnboarding({
               <div>
                 <strong>{invitation.workspaceName}</strong>
                 <span>Invited by {invitation.invitedByName} · {invitation.role === 'admin' ? 'Administrator' : 'Member'}</span>
-                <span>{invitation.region === 'eu' ? 'European Union' : 'Global'} data region</span>
+                <span>{invitation.region === 'eu' ? 'European Union' : 'United States'} data region</span>
               </div>
               <div className="invitation-choice-actions">
                 <Button disabled={workingId !== null} onClick={() => void decline(invitation)}>Decline</Button>
