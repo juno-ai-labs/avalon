@@ -1741,6 +1741,19 @@ describe('MarkdownBody heading collapse', () => {
     expect(first).toHaveClass('is-expanded');
   });
 
+  it('follows a link in a collapsed heading without opening the section', () => {
+    const { container } = render(
+      <MarkdownBody collapseHeadings>{'## See [the note](https://example.com/note)\n\nBody copy.\n'}</MarkdownBody>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse section' }));
+    const section = container.querySelector('.markdown-collapse');
+    expect(section).toHaveClass('is-collapsed');
+    // The heading declines to toggle on a link click; the section must not
+    // expand on the same click as it bubbles past.
+    fireEvent.click(screen.getByRole('link', { name: 'the note' }));
+    expect(section).toHaveClass('is-collapsed');
+  });
+
   it('resolves a reference-style link whose definition lives under a later heading', () => {
     const { container } = render(
       <MarkdownBody collapseHeadings>
