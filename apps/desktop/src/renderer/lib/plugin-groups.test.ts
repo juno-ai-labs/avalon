@@ -50,6 +50,9 @@ describe('pluginGroup', () => {
         completedVerb: 'Used Web',
       },
     );
+  });
+
+  it('pins multimodal generation to its canonical id regardless of display name', () => {
     expect(pluginGroup('rally:multimodal-generation', 'Multimodal generation')).toEqual(
       {
         key: 'name:Multimodal generation',
@@ -59,9 +62,6 @@ describe('pluginGroup', () => {
         completedVerb: 'Used Multimodal generation',
       },
     );
-  });
-
-  it('pins multimodal generation to its canonical id regardless of display name', () => {
     expect(pluginGroup('rally:multimodal-generation', 'Image generation')).toMatchObject({
       key: 'name:Multimodal generation',
       icon: 'image-generation',
