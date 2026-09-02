@@ -81,7 +81,7 @@ export const notionTools: ToolDefinition[] = [
         query: { type: "string", minLength: 1, maxLength: 500 },
         object: { type: "string", enum: ["page", "data_source"] },
         pageSize: { type: "integer", minimum: 1, maximum: 25 },
-        startCursor: { type: ["string", "null"], maxLength: 500 },
+        startCursor: { type: ["string", "null"], minLength: 1, maxLength: 500 },
       },
       required: ["query"],
     },
@@ -114,7 +114,7 @@ export const notionTools: ToolDefinition[] = [
       properties: {
         dataSourceId: { type: "string", minLength: 1, maxLength: 200 },
         pageSize: { type: "integer", minimum: 1, maximum: 25 },
-        startCursor: { type: ["string", "null"], maxLength: 500 },
+        startCursor: { type: ["string", "null"], minLength: 1, maxLength: 500 },
       },
       required: ["dataSourceId"],
     },
@@ -129,7 +129,7 @@ export const notionTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        parentPageId: { type: ["string", "null"], maxLength: 200 },
+        parentPageId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
         title: { type: "string", minLength: 1, maxLength: 300 },
         markdown: { type: ["string", "null"], maxLength: 40_000 },
       },
@@ -194,7 +194,7 @@ export const notionTools: ToolDefinition[] = [
       properties: {
         blockId: { type: "string", minLength: 1, maxLength: 200 },
         pageSize: { type: "integer", minimum: 1, maximum: 25 },
-        startCursor: { type: ["string", "null"], maxLength: 500 },
+        startCursor: { type: ["string", "null"], minLength: 1, maxLength: 500 },
       },
       required: ["blockId"],
     },

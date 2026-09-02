@@ -1549,10 +1549,22 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               error: "Tool arguments were not valid JSON; correct them and try again",
             }) };
         }
-        // Models sometimes serialize schema-declared numbers as JSON strings.
-        // Normalize that one unambiguous representation before hashing or durable
-        // planning so `1` and `"1"` are the same request everywhere downstream.
-        args = normalizeToolArguments(args, dispatched.tool.definition.inputSchema);
+        // Models sometimes serialize schema-declared numbers as JSON strings, and
+        // blank an optional argument rather than omitting it. Normalize those two
+        // unambiguous representations before hashing or durable planning, so that
+        // `1` and `"1"` — and, on a read, `{}` and `{ after: "" }` — are one
+        // request, and one `inputHash`, everywhere downstream. This is the line a
+        // blanked argument disappears at: whoever arrives here from a receipt
+        // wondering where an argument went is looking at it.
+        //
+        // The blank rule is read-only by design. On a write, `""` and an omission
+        // can mean different things — clearing a field versus leaving it alone —
+        // so nothing is dropped and the executor rejects it by name instead.
+        args = normalizeToolArguments(
+          args,
+          dispatched.tool.definition.inputSchema,
+          dispatched.tool.definition.mode,
+        );
         const inputHash = await canonicalToolInputHash(args);
         const receiptId = position
           ? `${input.loopId}:turn:${position.turn}:tool:${position.index}`
