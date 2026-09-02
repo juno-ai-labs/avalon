@@ -19,6 +19,7 @@
  * See `docs/live-web-artifacts.md`.
  */
 import {
+  ARTIFACT_MAX_ASSET_COUNT,
   ArtifactHostnameStubSchema,
   SITE_MANIFEST_MIME_TYPE,
   artifactAssetKey,
@@ -35,6 +36,7 @@ import { artifactHostDOName } from "../../durable-objects/names";
 import { sha256Hex } from "../../lib/crypto";
 import { durableObjectStubForArtifact, workspacePlacementAffinity } from "../../lib/durable-object-namespace";
 import { assetContentType } from "./site-publish";
+import { prepareSocialPreview } from "./site-social-preview";
 import { TerminalToolError } from "./tools";
 
 export interface SitePublishFile {
@@ -54,6 +56,8 @@ export interface SitePublishInput {
   mode: ArtifactMode;
   stateful: boolean;
   files: readonly SitePublishFile[];
+  /** Human-readable fallback when the page did not author a title. */
+  fallbackTitle: string;
   serverModuleSha256: string | null;
 }
 
@@ -77,12 +81,16 @@ export interface SitePublishResult {
  * and the import tool is how the model reads it back.
  */
 export async function writeArtifactVersion(
-  env: Env,
+  env: Pick<Env, "PAYLOADS">,
   input: SitePublishInput,
 ): Promise<SitePublishResult> {
   const artifactId = input.artifactId ?? newId();
   const serverEntry = input.mode === "active" ? "index.js" : null;
-  const assets = input.files
+  const preparedPreview = await prepareSocialPreview(input.files, input.fallbackTitle);
+  const storedFiles = preparedPreview.generatedFile
+    ? [...input.files, preparedPreview.generatedFile]
+    : [...input.files];
+  const assets = storedFiles
     .filter((file) => file.path !== serverEntry)
     .map((file) => ({
       path: file.path,
@@ -90,6 +98,13 @@ export async function writeArtifactVersion(
       sizeBytes: file.bytes.byteLength,
       sha256: file.sha256,
     }));
+  if (assets.length > ARTIFACT_MAX_ASSET_COUNT) {
+    throw new TerminalToolError(
+      "resource_publish_failed",
+      `This site has too many served files to add its generated social preview. Keep the directory below ${ARTIFACT_MAX_ASSET_COUNT} served files and publish it again.`,
+      { field: "filePath", reason: "Remove at least one served file, then publish the directory again." },
+    );
+  }
   const manifest: ArtifactManifest = {
     version: 1,
     artifactId: asArtifactId(artifactId),
@@ -98,12 +113,13 @@ export async function writeArtifactVersion(
     stateful: input.stateful,
     serverModuleSha256: input.serverModuleSha256,
     assets,
-    totalBytes: input.files.reduce((total, file) => total + file.bytes.byteLength, 0),
+    socialPreview: preparedPreview.socialPreview,
+    totalBytes: storedFiles.reduce((total, file) => total + file.bytes.byteLength, 0),
     publishedAt: nowIso(),
   };
 
   try {
-    for (const file of input.files) {
+    for (const file of storedFiles) {
       await env.PAYLOADS.put(
         artifactAssetKey(artifactId, input.version, file.path),
         file.bytes,

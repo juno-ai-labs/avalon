@@ -1,5 +1,6 @@
 import {
   AttachmentKindSchema,
+  ArtifactManifestSchema,
   type ArtifactHostnameStub,
   SITE_MANIFEST_MIME_TYPE,
   artifactOrigin,
@@ -64,6 +65,22 @@ function fileName(path: string): string {
  */
 function normalizePublishPath(path: string): string {
   return path.split("/").filter((segment) => segment && segment !== ".").join("/");
+}
+
+async function storedArtifactHasSocialPreview(
+  env: Pick<Env, "PAYLOADS">,
+  manifestRef: string | null,
+): Promise<boolean> {
+  if (!manifestRef) return false;
+  const object = await env.PAYLOADS.get(manifestRef);
+  if (!object) return false;
+  try {
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    const manifest = ArtifactManifestSchema.parse(JSON.parse(new TextDecoder().decode(bytes)) as unknown);
+    return manifest.socialPreview !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -686,7 +703,10 @@ export function createTerminalResourceBridge(
       const previous = settled
         ? await existingArtifactForResource(workspace, context.workspaceId, settled.id)
         : null;
-      if (settled && previous && settled.content_sha256 === contentDigest) {
+      const currentHasSocialPreview = settled && previous && settled.content_sha256 === contentDigest
+        ? await storedArtifactHasSocialPreview(env, settled.content_ref)
+        : false;
+      if (settled && previous && settled.content_sha256 === contentDigest && currentHasSocialPreview) {
         // Equal content covers both a crash-replay of a settled call and a
         // republish that changed nothing.
         const hostnameStub = previous.hostnameStub ?? await ensureArtifactHostname(env, {
@@ -714,6 +734,7 @@ export function createTerminalResourceBridge(
 
       const resourceId = settled?.id ?? newId();
       const version = (previous?.version ?? 0) + 1;
+      const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const written = await writeArtifactVersion(env, {
         workspaceId: context.workspaceId,
         workstreamId: context.workstreamId,
@@ -724,6 +745,7 @@ export function createTerminalResourceBridge(
         mode: site.mode,
         stateful: site.stateful,
         files: site.files,
+        fallbackTitle: title,
         serverModuleSha256: site.serverModuleSha256,
       });
       // Reserve the stable public origin before mutating the reusable resource
@@ -735,7 +757,6 @@ export function createTerminalResourceBridge(
         artifactId: written.artifactId,
       });
       const timestamp = nowIso();
-      const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const metadata = JSON.stringify({
         sourcePath: input.filePath,
         size: written.manifest.totalBytes,
