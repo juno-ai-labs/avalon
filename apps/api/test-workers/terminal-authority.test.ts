@@ -439,15 +439,39 @@ describe("Terminal authority on real workerd", () => {
     });
   });
 
-  it("keeps resident-agent resource attachments in the owning event", async () => {
+  it("keeps resident-agent resource attachments in the owning artifact event and broadcasts them", async () => {
     const stub = mainAgent();
     await boot(stub);
     const resourceId = "00000000-0000-7000-8000-00000000aa03";
-    const calls = await runInDurableObject(stub, async (instance, state) => {
+    const outcome = await runInDurableObject(stub, async (instance, state) => {
       seedWorkstreamRoot(state);
       const recorded: unknown[][] = [];
+      const emitted: unknown[] = [];
+      const resource = {
+        id: resourceId,
+        slug: null,
+        workspaceId: WORKSPACE_ID,
+        connectionId: null,
+        resourceType: "generated_file",
+        provider: "avalon_generated",
+        providerResourceId: "generated:effect",
+        title: "Generated recording.mp3",
+        mimeType: "audio/mpeg",
+        canonicalUrl: null,
+        refreshSupported: false,
+        watchEnabled: false,
+        watchStatus: "unsupported" as const,
+        lastHydratedAt: null,
+        createdAt: "2026-09-02T10:35:06.000Z",
+        updatedAt: "2026-09-02T10:35:06.000Z",
+        contentAvailable: true,
+        sizeBytes: 1_024,
+        currentVersion: 1,
+        relationshipType: "generated" as const,
+        direction: "artifact" as const,
+      };
       const product = (instance as unknown as {
-        product: { attachRuntimeResource(...args: unknown[]): Promise<void> };
+        product: { attachRuntimeResource(...args: unknown[]): Promise<typeof resource> };
       }).product;
       const attacher = (instance as unknown as {
         localRuntimeResourceAttacher(
@@ -455,13 +479,29 @@ describe("Terminal authority on real workerd", () => {
           workstreamId: string,
         ): (input: Record<string, unknown>) => Promise<void>;
       }).localRuntimeResourceAttacher(WORKSPACE_ID, WORKSTREAM_ID);
+      const snapshotState = instance as unknown as {
+        preparedSocketAdmissions: Map<string, { snapshot: unknown }>;
+        preparedSocketSnapshotTicketId: string | null;
+        socketSnapshotRevision: number;
+      };
+      const preparedTicketId = "00000000-0000-7000-8000-00000000aa05";
+      snapshotState.preparedSocketAdmissions.set(preparedTicketId, { snapshot: { stale: true } });
+      snapshotState.preparedSocketSnapshotTicketId = preparedTicketId;
+      const snapshotRevisionBefore = snapshotState.socketSnapshotRevision;
       Object.defineProperty(instance, "attachRuntimeResource", {
         configurable: true,
         value: () => { throw new Error("resident_resource_self_rpc"); },
       });
       Object.defineProperty(product, "attachRuntimeResource", {
         configurable: true,
-        value: async (...args: unknown[]) => { recorded.push(args); },
+        value: async (...args: unknown[]) => {
+          recorded.push(args);
+          return resource;
+        },
+      });
+      Object.defineProperty(instance, "broadcast", {
+        configurable: true,
+        value: (event: unknown) => { emitted.push(event); },
       });
       try {
         await attacher({
@@ -471,19 +511,216 @@ describe("Terminal authority on real workerd", () => {
           attachedByUserId: null,
           relationshipType: "generated",
         });
-        return recorded;
+        const realtime = state.storage.sql.exec<{ event_sequence: number }>(
+          `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+        ).toArray()[0];
+        return {
+          recorded,
+          emitted,
+          eventSequence: realtime?.event_sequence ?? null,
+          preparedSnapshot: snapshotState.preparedSocketAdmissions.get(preparedTicketId)?.snapshot,
+          preparedSnapshotTicketId: snapshotState.preparedSocketSnapshotTicketId,
+          snapshotRevision: snapshotState.socketSnapshotRevision,
+          snapshotRevisionBefore,
+        };
       } finally {
+        snapshotState.preparedSocketAdmissions.delete(preparedTicketId);
         delete (instance as unknown as Record<string, unknown>).attachRuntimeResource;
+        delete (instance as unknown as Record<string, unknown>).broadcast;
         delete (product as unknown as Record<string, unknown>).attachRuntimeResource;
       }
     });
 
-    expect(calls).toEqual([[
+    expect(outcome.recorded).toEqual([[
       WORKSPACE_ID,
       resourceId,
       null,
       "generated",
     ]]);
+    expect(outcome.eventSequence).toBe(1);
+    expect(outcome.preparedSnapshot).toBeNull();
+    expect(outcome.preparedSnapshotTicketId).toBeNull();
+    expect(outcome.snapshotRevision).toBe(outcome.snapshotRevisionBefore + 1);
+    expect(outcome.emitted).toEqual([
+      expect.objectContaining({
+        sequence: 1,
+        type: "resource_attached",
+        resource: expect.objectContaining({
+          id: resourceId,
+          relationshipType: "generated",
+          direction: "artifact",
+          title: "Generated recording.mp3",
+        }),
+      }),
+    ]);
+  });
+
+  it("forces canonical resync when a committed resource event is deferred", async () => {
+    const stub = mainAgent();
+    await boot(stub);
+    const resourceId = "00000000-0000-7000-8000-00000000aa06";
+    const outcome = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      const resource = {
+        id: resourceId,
+        slug: null,
+        workspaceId: WORKSPACE_ID,
+        connectionId: null,
+        resourceType: "generated_file",
+        provider: "avalon_generated",
+        providerResourceId: "generated:deferred",
+        title: "Deferred recording.mp3",
+        mimeType: "audio/mpeg",
+        canonicalUrl: null,
+        refreshSupported: false,
+        watchEnabled: false,
+        watchStatus: "unsupported" as const,
+        lastHydratedAt: null,
+        createdAt: "2026-09-02T10:35:06.000Z",
+        updatedAt: "2026-09-02T10:35:06.000Z",
+        contentAvailable: true,
+        sizeBytes: 1_024,
+        currentVersion: 1,
+        relationshipType: "generated" as const,
+        direction: "artifact" as const,
+      };
+      const product = (instance as unknown as {
+        product: { attachRuntimeResource(...args: unknown[]): Promise<typeof resource> };
+      }).product;
+      const attacher = (instance as unknown as {
+        localRuntimeResourceAttacher(
+          workspaceId: string,
+          workstreamId: string,
+        ): (input: Record<string, unknown>) => Promise<void>;
+      }).localRuntimeResourceAttacher(WORKSPACE_ID, WORKSTREAM_ID);
+      const captured: unknown[] = [];
+      Object.defineProperty(product, "attachRuntimeResource", {
+        configurable: true,
+        value: async () => resource,
+      });
+      Object.defineProperty(instance, "flushSemanticRealtimeOutboxBestEffort", {
+        configurable: true,
+        value: async () => false,
+      });
+      Object.defineProperty(instance, "broadcast", {
+        configurable: true,
+        value: (event: unknown) => { captured.push(event); },
+      });
+      (instance as unknown as { semanticRealtimePending: boolean }).semanticRealtimePending = true;
+      const sequenceBefore = state.storage.sql.exec<{ event_sequence: number }>(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).toArray()[0]?.event_sequence ?? 0;
+      try {
+        await attacher({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          resourceId,
+          attachedByUserId: null,
+          relationshipType: "generated",
+        });
+        const sequenceAfter = state.storage.sql.exec<{ event_sequence: number }>(
+          `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+        ).toArray()[0]?.event_sequence ?? 0;
+        return { captured, sequenceBefore, sequenceAfter };
+      } finally {
+        (instance as unknown as { semanticRealtimePending: boolean }).semanticRealtimePending = false;
+        delete (instance as unknown as Record<string, unknown>).flushSemanticRealtimeOutboxBestEffort;
+        delete (instance as unknown as Record<string, unknown>).broadcast;
+        delete (product as unknown as Record<string, unknown>).attachRuntimeResource;
+      }
+    });
+
+    expect(outcome.sequenceAfter).toBe(outcome.sequenceBefore);
+    expect(outcome.captured).toEqual([
+      expect.objectContaining({
+        type: "resync_required",
+        reason: "history_unavailable",
+        sequence: outcome.sequenceAfter,
+        latestSequence: outcome.sequenceAfter,
+      }),
+    ]);
+  });
+
+  it("keeps committed resource attachments successful when readback or publication fails", async () => {
+    const stub = mainAgent();
+    await boot(stub);
+    const readbackFailureId = "00000000-0000-7000-8000-00000000aa07";
+    const publishFailureId = "00000000-0000-7000-8000-00000000aa08";
+    const outcome = await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state);
+      const resource = {
+        id: publishFailureId,
+        slug: null,
+        workspaceId: WORKSPACE_ID,
+        connectionId: null,
+        resourceType: "generated_file",
+        provider: "avalon_generated",
+        providerResourceId: "generated:publish-failure",
+        title: "Committed recording.mp3",
+        mimeType: "audio/mpeg",
+        canonicalUrl: null,
+        refreshSupported: false,
+        watchEnabled: false,
+        watchStatus: "unsupported" as const,
+        lastHydratedAt: null,
+        createdAt: "2026-09-02T10:35:06.000Z",
+        updatedAt: "2026-09-02T10:35:06.000Z",
+        contentAvailable: true,
+        sizeBytes: 1_024,
+        currentVersion: 1,
+        relationshipType: "generated" as const,
+        direction: "artifact" as const,
+      };
+      const product = (instance as unknown as {
+        product: { attachRuntimeResource(...args: unknown[]): Promise<typeof resource | null> };
+      }).product;
+      const attacher = (instance as unknown as {
+        localRuntimeResourceAttacher(
+          workspaceId: string,
+          workstreamId: string,
+        ): (input: Record<string, unknown>) => Promise<void>;
+      }).localRuntimeResourceAttacher(WORKSPACE_ID, WORKSTREAM_ID);
+      const captured: unknown[] = [];
+      const published: unknown[] = [];
+      Object.defineProperty(product, "attachRuntimeResource", {
+        configurable: true,
+        value: async (_workspaceId: string, resourceId: string) =>
+          resourceId === readbackFailureId ? null : resource,
+      });
+      Object.defineProperty(instance, "publishLocalProductEvent", {
+        configurable: true,
+        value: async (...args: unknown[]) => {
+          published.push(args);
+          throw new Error("room unavailable");
+        },
+      });
+      Object.defineProperty(instance, "broadcast", {
+        configurable: true,
+        value: (event: unknown) => { captured.push(event); },
+      });
+      try {
+        for (const resourceId of [readbackFailureId, publishFailureId]) {
+          await attacher({
+            workspaceId: WORKSPACE_ID,
+            workstreamId: WORKSTREAM_ID,
+            resourceId,
+            attachedByUserId: null,
+            relationshipType: "generated",
+          });
+        }
+        return { captured, published };
+      } finally {
+        delete (instance as unknown as Record<string, unknown>).publishLocalProductEvent;
+        delete (instance as unknown as Record<string, unknown>).broadcast;
+        delete (product as unknown as Record<string, unknown>).attachRuntimeResource;
+      }
+    });
+
+    expect(outcome.published).toHaveLength(1);
+    expect(outcome.captured).toEqual([
+      expect.objectContaining({ type: "resync_required", reason: "history_unavailable" }),
+      expect.objectContaining({ type: "resync_required", reason: "history_unavailable" }),
+    ]);
   });
 
   it("refuses local Terminal and resource authority in a non-main child", async () => {

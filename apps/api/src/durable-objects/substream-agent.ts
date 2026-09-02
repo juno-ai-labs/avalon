@@ -2639,12 +2639,34 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.externalSubstreamId() !== "0") {
       throw new Error("workstream_runtime_identity_mismatch");
     }
-    await this.product.attachRuntimeResource(
+    const resource = await this.product.attachRuntimeResource(
       input.workspaceId,
       input.resourceId,
       input.attachedByUserId,
       input.relationshipType,
     );
+    this.invalidatePreparedSocketSnapshots();
+    if (!resource) {
+      await this.requestCanonicalRoomResyncBestEffort("resource_readback_failed_after_commit");
+      return;
+    }
+    try {
+      const publication = await this.publishLocalProductEvent(
+        identity,
+        { type: "resource_attached", resource },
+      );
+      if (publication === "deferred") {
+        await this.requestCanonicalRoomResyncBestEffort("resource_event_deferred_after_commit");
+      }
+    } catch (error) {
+      logWarn(this.env, "workstream_resource_event_failed_after_commit", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        resource_id: input.resourceId,
+        reason: diagnosticErrorCode(error, "resource_event_publish_failed"),
+      });
+      await this.requestCanonicalRoomResyncBestEffort("resource_event_failed_after_commit");
+    }
   }
 
   private async acceptRuntimeBootstrap(request: Request): Promise<Response> {
@@ -5330,7 +5352,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private async publishLocalProductEvent(
     attachment: Pick<SocketAttachment, "workspaceId" | "workstreamId">,
     event: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<"published" | "deferred"> {
     const response = await this.acceptEvent(new Request(
       "https://room.internal/internal/events",
       {
@@ -5344,6 +5366,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       },
     ));
     if (!response.ok) throw new Error("workstream_local_event_publish_failed");
+    const outcome = await response.json().catch(() => null) as {
+      deferredBehindCanonical?: unknown;
+    } | null;
+    return outcome?.deferredBehindCanonical === true ? "deferred" : "published";
+  }
+
+  private async requestCanonicalRoomResyncBestEffort(cause: string): Promise<void> {
+    try {
+      const currentSequence = await this.currentSequence();
+      this.broadcast(this.resyncRequiredEvent(currentSequence, "history_unavailable"));
+    } catch (error) {
+      const identity = this.objectStore.identity();
+      logWarn(this.env, "workstream_resource_resync_failed_after_commit", {
+        workspace_id: identity?.workspaceId,
+        workstream_id: identity?.workstreamId,
+        cause,
+        reason: diagnosticErrorCode(error, "resource_resync_failed"),
+      });
+    }
   }
 
   /**
@@ -6460,7 +6501,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     currentSequence: number,
     reason: "history_unavailable" | "snapshot_expired" | "sequence_ahead",
   ): void {
-    const event = ServerSocketEventSchema.parse({
+    socket.send(JSON.stringify(this.resyncRequiredEvent(currentSequence, reason)));
+  }
+
+  private resyncRequiredEvent(
+    currentSequence: number,
+    reason: "history_unavailable" | "snapshot_expired" | "sequence_ahead",
+  ): ServerSocketEvent {
+    return ServerSocketEventSchema.parse({
       type: "resync_required",
       sequence: currentSequence,
       occurredAt: new Date().toISOString(),
@@ -6471,7 +6519,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         : [],
       activeCompaction: this.objectStore.activeCompaction(),
     });
-    socket.send(JSON.stringify(event));
   }
 
   private async sendSnapshot(
