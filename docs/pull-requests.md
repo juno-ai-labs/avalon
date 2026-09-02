@@ -148,7 +148,10 @@ own history bisectable and makes it obvious which `main` the change was tested
 against.
 
 Always `--force-with-lease` rather than `--force`, so a push is refused if
-someone else has touched the branch since you last fetched it.
+someone else has touched the branch since you last fetched it. Rebase when the branch
+needs `main`'s content — a conflict, a dependency on something that just landed
+— not on a schedule and not as a pre-merge ritual; a clean branch merges as it
+is, per [the section below](#a-moving-main-is-not-a-reason-to-hold-a-clean-merge).
 
 Two things to know before rebasing:
 
@@ -176,6 +179,38 @@ over preserved per-branch work: each merge commit is one reviewed change that
 can be reverted as a unit, and the individual commits underneath it stay intact.
 Configure branch protection and auto-merge accordingly — allow merge commits,
 disable squash merging and rebase merging.
+
+### A moving `main` is not a reason to hold a clean merge
+
+Merge as soon as two things hold: the pull request's own head is green, and
+GitHub reports the branch mergeable. `main` having advanced since those checks
+started is **not** a third condition. Do not rebase, force-push, and wait for a
+replacement run purely to have CI observe a head that sits on the newest `main`
+— by the time that run finishes `main` has usually moved again, so the rule
+costs a cycle per attempt and lands the change no more safely.
+
+```bash
+gh pr view <n> --json mergeable,mergeStateStatus,statusCheckRollup
+```
+
+`MERGEABLE` means Git has a clean merge and the merge is allowed to proceed.
+`CONFLICTING` is the case the rebase above exists for: bring the branch up to
+date, re-run the gates, force-push, and merge on the replacement run. Leave
+branch protection's *Require branches to be up to date before merging* off,
+because turning it on encodes exactly the chase this section forbids.
+
+Rebase before merging a *mergeable* branch only when something concrete about
+`main`'s new commits interacts with this change — a migration prefix that now
+collides per **Database migrations** above, a rename or signature change landing
+in the same files, a contract both sides edited. That is a judgement about two
+specific diffs, not a reflex triggered by any new commit on `main`.
+
+The residual risk is a semantic conflict that Git merges cleanly and neither
+side's CI saw. It is real, it is rare, and repeating a pre-merge run does not
+catch it either: the run that would catch it is `main`'s own, after the merge.
+Merge commits are what make that cheap to resolve — one `git revert -m 1` takes
+the whole change back out while the branch's commits stay intact for a second
+attempt.
 
 ## Conventions
 
