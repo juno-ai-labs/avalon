@@ -349,6 +349,12 @@ export class ArtifactPreviewController {
 
   private applyBounds(): void {
     if (!this.view || !this.bounds) return;
+    // Two halves gating two different calls: `contentSize()` below reads the
+    // window, `setBounds()` reads the view. Only the view half is falsifiable,
+    // here and in production — Electron destroys a window's views with it, so
+    // a destroyed window implies a destroyed view and the first half can never
+    // be the one that returns. It stays because it names what `contentSize()`
+    // needs, and that stops the day the two stop dying together.
     if (this.window.destroyed() || this.view.destroyed()) return;
     if (this.hiddenByOverlay) {
       // Collapsed rather than detached: a zero rectangle keeps the page loaded
