@@ -283,8 +283,46 @@ describe('MessageBlock human identity', () => {
     const response = screen.getByLabelText('Your elicitation response');
     expect(response).toHaveClass('human-message', 'own-human-message', 'elicitation-response-message');
     expect(response).not.toHaveClass('transcript-event');
+    // An answer is a turn, and every turn says who and when — the reader's own
+    // answer included.
+    expect(response.querySelector('.message-author')).toHaveTextContent('Adam');
+    expect(response.querySelector('time')).toBeInTheDocument();
+    // And it carries the accent that line is drawn with. The dot's background
+    // and the name's colour both resolve through `--person-accent`; a row that
+    // does not state it paints a transparent dot and an uncoloured name, which
+    // is a header that renders and cannot be seen.
+    expect(response.style.getPropertyValue('--person-accent')).not.toBe('');
     expect(screen.getByLabelText('Elicitation response')).toHaveClass('human-message-bubble');
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Compare offer vs. RSPA');
+  });
+
+  it('names the reader on their own answer before the canonical turn lands', () => {
+    // Answering marks the assistant's question turn answered where it stands,
+    // so for that window the row is the reader's own answer carried on a turn
+    // with no author record. Falling through to the anonymous label there put
+    // "Workspace member" on a row this same branch labels as the reader's.
+    const optimistic: Message = {
+      ...baseMessage,
+      id: 'message-optimistic-elicitation-answer',
+      authorType: 'agent',
+      author: undefined,
+      messageType: 'elicitation',
+      text: '',
+      elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' },
+    };
+
+    render(
+      <MessageBlock
+        {...actions}
+        currentUserId="user-adam"
+        currentUserName="Adam"
+        message={optimistic}
+      />,
+    );
+
+    const response = screen.getByLabelText('Your elicitation response');
+    expect(response.querySelector('.message-author')).toHaveTextContent('Adam');
+    expect(screen.queryByText('Workspace member')).not.toBeInTheDocument();
   });
 
   it('keeps a coworker visible on their elicitation response', () => {
@@ -341,18 +379,24 @@ describe('MessageBlock human identity', () => {
     expect(inFlight.querySelector('.human-message-content')).toBeInTheDocument();
   });
 
-  it('keeps the signed-in person implicit on their own compact prompt', () => {
+  it('names the signed-in person over their own prompt, like every other turn', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} />);
 
-    expect(screen.getByLabelText('Message from Adam')).toHaveClass('own-human-message');
-    expect(screen.queryByText('Adam')).not.toBeInTheDocument();
+    const own = screen.getByLabelText('Message from Adam');
+    expect(own).toHaveClass('own-human-message');
+    // The same three parts a coworker's turn carries, in the same order: the
+    // reader's own messages are not the one row in the feed with no time
+    // against them.
+    expect(screen.getByText('Adam')).toHaveClass('message-author');
+    expect(own.querySelector('.message-author-dot')).toBeInTheDocument();
+    expect(own.querySelector('time')).toHaveAttribute('dateTime', baseMessage.createdAt);
   });
 
-  it('explains an own turn nobody typed, without naming the person back to themselves', () => {
+  it('explains an own turn nobody typed, beside the name it is attributed to', () => {
     // A suggested-work brief is stored as the selecting member's turn but is
     // written by Rally. The label is the only thing on screen that accounts for
-    // a long brief appearing under their own name, so it survives the header
-    // suppression that own turns otherwise get.
+    // a long brief appearing under their own name, so it sits in the same
+    // header, between the name and the time.
     const briefMessage: Message = {
       ...baseMessage,
       id: 'message-brief',
@@ -364,8 +408,7 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Expanded by Rally from suggested work'))
       .toHaveClass('message-context-label');
     expect(screen.getByLabelText('Message from Adam')).toHaveClass('own-human-message');
-    expect(screen.queryByText('Adam')).not.toBeInTheDocument();
-    expect(document.querySelector('.message-author-dot')).not.toBeInTheDocument();
+    expect(screen.getByText('Adam')).toHaveClass('message-author');
   });
 
   it('shows compact identity for a coworker prompt', () => {

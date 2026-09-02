@@ -46,10 +46,16 @@ class FakeWebSocket extends EventTarget {
   }
 }
 
-function createWrapper(): ({ children }: PropsWithChildren) => React.JSX.Element {
+function createWrapper(
+  canonicalWorkstreamIds: readonly string[] = [],
+): ({ children }: PropsWithChildren) => React.JSX.Element {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  for (const workstreamId of canonicalWorkstreamIds) {
+    queryClient.setQueryData(['workstream', workstreamId], { id: workstreamId });
+    queryClient.setQueryData(['ordered-transcript', workstreamId], {});
+  }
   return function Wrapper({ children }: PropsWithChildren): React.JSX.Element {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
   };
@@ -154,7 +160,7 @@ describe('WorkstreamSocketPool', () => {
       <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
         <HoverWarmTarget workstreamId={workstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([workstreamId]) },
     );
     const target = view.getByRole('button', { name: 'Warm work stream' });
 
@@ -176,6 +182,7 @@ describe('WorkstreamSocketPool', () => {
       expect.any(String),
       0,
       true,
+      expect.any(AbortSignal),
     );
     expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
     const warmedSockets = FakeWebSocket.instances.filter(
@@ -205,7 +212,7 @@ describe('WorkstreamSocketPool', () => {
         <ActiveConnection api={api} enabled={false} workstreamId={workstreamId} />
         <OpenContextTarget onRead={onReadContext} workstreamId={workstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([workstreamId]) },
     );
 
     fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
@@ -224,6 +231,7 @@ describe('WorkstreamSocketPool', () => {
       expect.any(String),
       0,
       true,
+      expect.any(AbortSignal),
     );
     const warmedFeed = warmedSockets.find((socket) => String(socket.url).endsWith('/feed'));
     if (!warmedFeed) throw new Error('The hovered work stream opened no feed socket.');
@@ -278,7 +286,7 @@ describe('WorkstreamSocketPool', () => {
         <HoverWarmTarget workstreamId={firstWorkstreamId} />
         <HoverWarmTarget workstreamId={secondWorkstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
     const targets = view.getAllByRole('button', { name: 'Warm work stream' });
     const firstTarget = targets[0];
@@ -313,7 +321,7 @@ describe('WorkstreamSocketPool', () => {
         <ActiveConnection api={api} enabled workstreamId={activeWorkstreamId} />
         <HoverWarmTarget onRender={rendered} workstreamId="another-workstream" />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([activeWorkstreamId]) },
     );
     await flushPromises();
     const rendersBeforeConnectionChange = rendered.mock.calls.length;
@@ -348,7 +356,7 @@ describe('WorkstreamSocketPool', () => {
           workstreamId={activeWorkstreamId}
         />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([activeWorkstreamId, backgroundWorkstreamId]) },
     );
     await flushPromises();
     const rendersBeforeBackgroundChange = rendered.mock.calls.length;
@@ -374,7 +382,7 @@ describe('WorkstreamSocketPool', () => {
       <WorkstreamSocketPool activeWorkstreamId={workstreamId} api={api} backgroundWorkstreamIds={[]}>
         <HoverWarmTarget workstreamId={workstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([workstreamId]) },
     );
 
     fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
@@ -394,7 +402,7 @@ describe('WorkstreamSocketPool', () => {
       <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
         <HoverWarmTarget workstreamId={workstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([workstreamId]) },
     );
 
     fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
@@ -418,7 +426,7 @@ describe('WorkstreamSocketPool', () => {
       <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
         <HoverWarmTarget workstreamId={workstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([workstreamId]) },
     );
 
     fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
@@ -470,7 +478,7 @@ describe('WorkstreamSocketPool', () => {
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
         <ActiveConnection api={api} enabled={false} workstreamId={firstWorkstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
     await flushPromises();
 
@@ -502,7 +510,7 @@ describe('WorkstreamSocketPool', () => {
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
         <ActiveConnection api={api} enabled workstreamId={firstWorkstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
     await flushPromises();
     const firstPair = FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId));
@@ -554,7 +562,7 @@ describe('WorkstreamSocketPool', () => {
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
         <ActiveConnection api={api} enabled workstreamId={firstWorkstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
     await flushPromises();
     const firstPair = FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId));
@@ -591,7 +599,7 @@ describe('WorkstreamSocketPool', () => {
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
         <ActiveConnection api={api} enabled workstreamId={firstWorkstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
     await flushPromises();
     const firstPair = FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId));
