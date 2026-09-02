@@ -1,68 +1,48 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { StoredAuth, StoredAuthSet } from './stored-auth';
-import { selectStoredWorkspaceLocally } from './workspace-selection';
+import { claimActiveWorkspace } from './workspace-selection';
 
-const workspaceA = '00000000-0000-7000-8000-000000000001';
-const workspaceB = '00000000-0000-7000-8000-000000000002';
-
-function credential(workspaceId: string, region: 'global' | 'eu' = 'global'): StoredAuth {
-  return {
-    version: 1,
-    accessToken: `access-${workspaceId}`,
-    refreshToken: `refresh-${workspaceId}`,
-    expiresAt: '2030-01-01T00:00:00.000Z',
-    binding: { userId: 'user-1', workspaceId, region },
-  };
-}
-
-const authSet: StoredAuthSet = {
-  version: 2,
-  account: null,
-  workspaces: [credential(workspaceA), credential(workspaceB)],
-  activeWorkspace: { workspaceId: workspaceA, region: 'global' },
-  workspaceRecency: [{ workspaceId: workspaceA, region: 'global' }],
+const workspaceId = '00000000-0000-7000-8000-000000000001';
+const activeSession = {
+  accessToken: 'active-token',
+  workspace: { id: workspaceId, region: 'global' as const },
 };
 
-describe('local workspace selection', () => {
-  it('commits the stored credential for the target as the active selection', async () => {
-    const commit = vi.fn(async (auth: StoredAuthSet, session: string) => `${session}:${auth.activeWorkspace?.workspaceId}`);
-    const sessionForCredential = vi.fn(async (stored: StoredAuth) => `session-${stored.binding.workspaceId}`);
+describe('claiming the active workspace for a link', () => {
+  it('returns the active session and takes a selection intent when the link names it', () => {
+    const nextSelectionIntent = vi.fn(() => 4);
 
-    const result = await selectStoredWorkspaceLocally(
-      { region: 'global', workspaceId: workspaceB },
-      { loadAuthSet: async () => authSet, sessionForCredential, commit },
+    const claimed = claimActiveWorkspace(
+      { region: 'global', workspaceId },
+      { activeSession, nextSelectionIntent },
     );
 
-    expect(result).toBe(`session-${workspaceB}:${workspaceB}`);
-    expect(sessionForCredential).toHaveBeenCalledWith(credential(workspaceB));
-    const committed = commit.mock.calls[0]![0];
-    expect(committed.activeWorkspace).toEqual({ workspaceId: workspaceB, region: 'global' });
-    expect(committed.workspaceRecency[0]).toEqual({ workspaceId: workspaceB, region: 'global' });
-    // Selection rewrites only the active binding; every credential survives.
-    expect(committed.workspaces).toEqual(authSet.workspaces);
+    expect(claimed).toBe(activeSession);
+    // The intent is what makes this the newest selection: an activation still
+    // in flight for another workspace must not take over the window later.
+    expect(nextSelectionIntent).toHaveBeenCalledOnce();
   });
 
-  it('yields to platform activation when the device holds no credential for the target', async () => {
-    const commit = vi.fn();
+  it.each([
+    { name: 'another workspace', target: { region: 'global' as const, workspaceId: '00000000-0000-7000-8000-000000000002' } },
+    { name: 'the same id in another region', target: { region: 'eu' as const, workspaceId } },
+  ])('yields to platform activation for $name without taking an intent', ({ target }) => {
+    const nextSelectionIntent = vi.fn(() => 5);
 
-    const result = await selectStoredWorkspaceLocally(
-      { region: 'eu', workspaceId: workspaceB },
-      { loadAuthSet: async () => authSet, sessionForCredential: async () => 'never', commit },
-    );
-
-    expect(result).toBeNull();
-    expect(commit).not.toHaveBeenCalled();
+    expect(claimActiveWorkspace(target, { activeSession, nextSelectionIntent })).toBeNull();
+    expect(nextSelectionIntent).not.toHaveBeenCalled();
   });
 
-  it('yields to platform activation when the credential has no cached profile', async () => {
-    const commit = vi.fn();
+  it('yields to platform activation when nothing is active', () => {
+    const nextSelectionIntent = vi.fn(() => 6);
 
-    const result = await selectStoredWorkspaceLocally(
-      { region: 'global', workspaceId: workspaceB },
-      { loadAuthSet: async () => authSet, sessionForCredential: async () => null, commit },
-    );
-
-    expect(result).toBeNull();
-    expect(commit).not.toHaveBeenCalled();
+    expect(claimActiveWorkspace(
+      { region: 'global', workspaceId },
+      { activeSession: { ...activeSession, workspace: null }, nextSelectionIntent },
+    )).toBeNull();
+    expect(claimActiveWorkspace(
+      { region: 'global', workspaceId },
+      { activeSession: null, nextSelectionIntent },
+    )).toBeNull();
+    expect(nextSelectionIntent).not.toHaveBeenCalled();
   });
 });

@@ -431,14 +431,14 @@ export interface RallyDesktopBridge {
   }) => Promise<WorkspaceDeparture>;
   activateWorkspace: (input: { region: RallyRegion; workspaceId: string; operationId?: string }) => Promise<DesktopSession>;
   /**
-   * Makes a workspace the device already holds a credential for the active
-   * one, without a network request. Resolves `null` when nothing is stored for
-   * it, in which case `activateWorkspace` is the only way in. Membership is
-   * not re-checked here: the regional API checks it on every request the
-   * credential makes, and a revoked credential is surrendered on its first
-   * rejection.
+   * Answers a link that names the active workspace with the session already
+   * in use, taking a selection intent so the link is the newest selection and
+   * an activation still in flight cannot take over the window. Resolves `null`
+   * for any other workspace, which `activateWorkspace` must then enter. No
+   * network, no write: membership for the active workspace is what the
+   * regional API re-checks on every request the credential makes.
    */
-  selectWorkspace: (input: { region: RallyRegion; workspaceId: string }) => Promise<DesktopSession | null>;
+  reselectActiveWorkspace: (input: { region: RallyRegion; workspaceId: string }) => Promise<DesktopSession | null>;
   createWorkspace: (input: { region: RallyRegion; name: string; operationId?: string }) => Promise<DesktopSession>;
   acceptInvitation: (input: { region: RallyRegion; invitationId: string; operationId?: string }) => Promise<DesktopSession>;
   declineInvitation: (input: { region: RallyRegion; invitationId: string }) => Promise<void>;
