@@ -32,6 +32,7 @@ connection lifecycle around that admission protocol.
 | --- | --- |
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the shared helpers both sides use. The single source of the wire format. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, HyperSight-block, and automation ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
+| `apps/api/src/services/workstream-service.ts` | Gates a feed ticket on current visibility and starts the recorded main SubstreamAgent's storage-ready wake as measurable, failure-isolated request background work. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its WorkspaceDO replay receipt and session lease, and the Azure upgrade. |
 | `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, automation, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
@@ -75,7 +76,13 @@ admission is split in two.
    never the credential — because the upgrade it authorizes opens a new
    connection carrying no request id, and it is the only value the issuing
    route, the edge, and the room all hold. See
-   [`performance-tracing.md`](performance-tracing.md).
+   [`performance-tracing.md`](performance-tracing.md). Once a main-feed ticket is
+   minted, its request schedules that recorded SubstreamAgent's side-effect-free
+   `wake()` under `waitUntil`. The response does not await that work: object
+   initialization overlaps the ticket's transit and client handshake, while a
+   failed or unfinished warm-up leaves the ordinary cold upgrade as the fallback.
+   A non-main UUID is not warmed merely because its parent is visible; product
+   creation must first record that child in the parent directory.
 2. **Present.** The client opens the socket with the ticket as the second
    protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
    from the `WebSocket` constructor; Electron's work-stream broker passes the
@@ -443,6 +450,13 @@ The Electron broker emits PAC resolution, DNS, TCP, TLS, and edge HTTP-upgrade
 durations for direct routes. Proxy CONNECT, TLS, and edge work is deliberately
 one aggregate because the proxy agent exposes no reliable inner transition.
 Failed PAC routes are counted and timed before the next ordered route begins.
+The broker gives the phase callback to its socket factory before client
+construction. A phase emitted synchronously during construction is held only
+until the broker records renderer ownership, then relayed before later phases
+flow live. This closes the main-process factory/listener gap defensively. It
+does not establish that the gap caused historical missing fields; an absent
+phase still requires checking the packaged-client version and whether that
+native phase was emitted.
 
 Checkpoint, queued/running, and terminal publications enter one per-agent
 serial queue only after their SQLite transition commits. Adjacent unsent
@@ -689,6 +703,40 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-09-02 — Ticket transit overlaps main-room wake and construction cannot drop phases
+
+**What changed:** Issuing a main-feed ticket now schedules its recorded
+SubstreamAgent's storage-ready `wake()` as best-effort request background work
+and records the ticket ID, outcome, and duration. The Electron broker now gives
+its phase callback to the socket factory before construction and briefly holds
+any synchronous phase until renderer ownership is registered.
+
+**Why:** Cold object initialization was paid only after the ticket request and
+native handshake had completed, leaving that transit time unused. Review of the
+full renderer/preload ordering showed the originally suspected renderer race
+could not occur: the hook attaches synchronously and IPC cannot interrupt that
+turn. The factory boundary was the actual fragile ordering because construction
+preceded the broker's phase subscription, even though today's PAC resolution is
+asynchronous.
+
+**Considered and rejected:** Awaiting `wake()` before returning the ticket would
+put initialization on the critical path and let an optimization fail a valid
+ticket request. Warming arbitrary non-main UUIDs was rejected because those
+children do not yet have a product creation path that records them in the parent
+directory. Renderer-side buffering was removed because it modeled an impossible
+event order and retained unused setup state on control sockets. Caching PAC
+results was also rejected without phase evidence: proxy selection may depend on
+the full URL and current network policy.
+
+**Consequences:** A main-feed ticket performs one additional idempotent Durable
+Object RPC. Ticket correctness and response latency do not depend on it; the
+`workstream_socket_ticket_warm_finished` event makes success, failure, and
+duration joinable to the upgrade by ticket ID, and the upgrade remains the
+cold-start fallback. Non-main tickets do not materialize objects. New
+packaged-client samples can distinguish direct PAC/DNS/TCP/TLS/edge time from
+the truthful proxy aggregate without a main-process construction blind spot,
+but historical missing fields retain an unknown cause.
 
 ### 2026-09-02 — A client no longer marks a work stream unread for the reader's own turn
 
