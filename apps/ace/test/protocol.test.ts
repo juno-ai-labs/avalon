@@ -203,6 +203,12 @@ describe('Ace managed model protocol', () => {
     ]);
   });
 
+  it('offers Gemini 3.8 Flash to every managed role', () => {
+    for (const { role } of MANAGED_MODELS) {
+      expect(modelChoicesForRole(role), role).toContain('google/gemini-3.8-flash');
+    }
+  });
+
   it('offers Sol only to roles whose complete execution path is Azure-routed', () => {
     expect(AZURE_ROUTED_MODEL_ROLES).toEqual(['inline_child', 'block_dashboard']);
     expect(modelChoicesForRole('inline_child')).toContain(GPT_5_6_SOL_MODEL_ID);
