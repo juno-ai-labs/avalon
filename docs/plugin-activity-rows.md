@@ -23,7 +23,7 @@ them.
 | `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, one `@thesvg/react` component per brand, and `connectorBrandMark` — the one table saying which mark a connector wears. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `ConnectorMark`, the one component that draws one. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
-| `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, and `groupThinkingMessages` collapses the thinking left in it. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, and `groupThinkingMessages` collapses the thinking left in it. `thoughtVerb` and `isThinkingEvent` are the one place the two thought rows are told apart. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Applies `groupPluginToolMessages` and then `groupThinkingMessages` to the composed transcript, and is the only caller of either. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row; `ThinkingGlyph` draws the thinking row's brain and `ThoughtBlock` decides which of the two thought rows gets it. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark, or the thinking row's brain, stand in for the orb. |
@@ -407,7 +407,11 @@ first time the column's size or neutral changed.
 **What a future change has to respect:** the brain rides on the row's
 `activeVerb` being `thinking`. A projection that renames that verb silently
 returns this row to the orb rather than failing, so the verb, the fold, and the
-collapse move together.
+collapse move together — which is why the comparison is `isThinkingEvent` in
+`transcript.ts` rather than a third copy of the string in the renderer. The fold
+still names `'working'` outright: not-thinking is a wider set than the
+response's own total, and a scope added later must not reach a message header
+just because it is not reasoning.
 
 ### 2026-09-02 — A run of thinking is one row
 
