@@ -21,6 +21,9 @@ import {
   socketHeartbeatDelay,
   socketReconnectDelay,
   useWorkstreamSocket,
+  WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS,
+  WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
+  workstreamOpenTimeoutMs,
   type WorkstreamSocketApi,
 } from './use-workstream-socket';
 import {
@@ -389,6 +392,260 @@ describe('useWorkstreamSocket', () => {
     expect(result.current).toBe(first);
   });
 
+  it('times out opening after 10, 20, and 40 seconds, then waits for an explicit retry', async () => {
+    vi.useFakeTimers({ now: new Date('2026-09-01T12:00:00.000Z') });
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-00000000063a';
+    const getSocketTicket = vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    expect(WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS).toBe(3);
+    expect([
+      workstreamOpenTimeoutMs(0),
+      workstreamOpenTimeoutMs(1),
+      workstreamOpenTimeoutMs(2),
+      workstreamOpenTimeoutMs(3),
+    ]).toEqual([
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS * 2,
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS * 4,
+      WORKSTREAM_OPEN_TIMEOUT_BASE_MS * 4,
+    ]);
+    expect(getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(9_999));
+    expect(result.current.state).toBe('connecting');
+    expect(getSocketTicket).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(result.current.state).toBe('reconnecting');
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    await act(async () => vi.advanceTimersByTimeAsync(19_999));
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    expect(result.current.state).toBe('reconnecting');
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    await act(async () => vi.advanceTimersByTimeAsync(1_500));
+    expect(getSocketTicket).toHaveBeenCalledTimes(3);
+    expect(FakeWebSocket.instances).toHaveLength(3);
+
+    await act(async () => vi.advanceTimersByTimeAsync(39_999));
+    expect(result.current.openingError).toBeUndefined();
+    expect(getSocketTicket).toHaveBeenCalledTimes(3);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(result.current.state).toBe('unavailable');
+    expect(result.current.openingError).toBe('The live connection timed out after 3 attempts.');
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(getSocketTicket).toHaveBeenCalledTimes(3);
+
+    act(() => result.current.retryOpening());
+    await flushPromises();
+    expect(result.current.openingError).toBeUndefined();
+    expect(getSocketTicket).toHaveBeenCalledTimes(4);
+  });
+
+  it('aborts a timed-out ticket request and fences its late response', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-00000000073a';
+    const ticket = {
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    };
+    let resolveFirstTicket: ((value: typeof ticket) => void) | undefined;
+    let requestCount = 0;
+    const getSocketTicket = vi.fn((
+      ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
+    ) => {
+      void args;
+      requestCount += 1;
+      if (requestCount === 1) {
+        return new Promise<typeof ticket>((resolve) => {
+          resolveFirstTicket = resolve;
+        });
+      }
+      return Promise.resolve(ticket);
+    });
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const firstSignal = getSocketTicket.mock.calls[0]?.[5] as AbortSignal | undefined;
+    expect(firstSignal?.aborted).toBe(false);
+    await act(async () => vi.advanceTimersByTimeAsync(9_999));
+    expect(firstSignal?.aborted).toBe(false);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(firstSignal?.aborted).toBe(true);
+    expect(result.current.state).toBe('reconnecting');
+
+    await act(async () => {
+      resolveFirstTicket?.(ticket);
+      await Promise.resolve();
+    });
+    expect(FakeWebSocket.instances).toHaveLength(0);
+
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('starts cacheless retained opens from sequence zero and ignores replay-only frames', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-00000000073b';
+    const getSocketTicket = vi.fn(async (
+      ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
+    ) => {
+      void args;
+      return {
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      };
+    });
+    const api = socketApiWith({ getSocketTicket });
+    function Wrapper({ children }: PropsWithChildren): React.JSX.Element {
+      return (
+        <QueryClientProvider client={queryClient}>
+          <WorkstreamSocketResumeProvider scope="user-one:workspace-one">
+            {children}
+          </WorkstreamSocketResumeProvider>
+        </QueryClientProvider>
+      );
+    }
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useWorkstreamSocket(api, workstreamId, enabled),
+      { initialProps: { enabled: true }, wrapper: Wrapper },
+    );
+
+    await flushPromises();
+    const firstSocket = FakeWebSocket.instances[0]!;
+    act(() => {
+      firstSocket.open();
+      firstSocket.message(snapshotFrame({
+        sequence: 5,
+        workstream: { id: workstreamId },
+      }));
+    });
+    rerender({ enabled: false });
+    queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });
+    queryClient.removeQueries({ queryKey: ['ordered-transcript', workstreamId], exact: true });
+    rerender({ enabled: true });
+    await flushPromises();
+
+    expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
+    const secondSocket = FakeWebSocket.instances[1]!;
+    act(() => {
+      secondSocket.open();
+      secondSocket.message({
+        type: 'workstream_renamed',
+        sequence: 6,
+        occurredAt: '2026-09-01T12:00:00.000Z',
+        title: 'Replay without base state',
+        titleStatus: 'automatic',
+      });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+
+    expect(result.current.state).toBe('reconnecting');
+    expect(secondSocket.readyState).toBe(FakeWebSocket.CLOSED);
+  });
+
+  it('accepts canonical REST caches that arrive before the opening deadline', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-00000000073c';
+    const getSocketTicket = vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    await act(async () => vi.advanceTimersByTimeAsync(9_999));
+    queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId }));
+    queryClient.setQueryData(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+
+    expect(result.current.openingError).toBeUndefined();
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(result.current.openingError).toBeUndefined();
+    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds canonical REST resync with the active opening deadline', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-00000000073d';
+    let resyncSignal: AbortSignal | undefined;
+    const getWorkstream = vi.fn((_id: string, signal?: AbortSignal) =>
+      new Promise<WorkstreamBoot>((_resolve, reject) => {
+        resyncSignal = signal;
+        signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        }, { once: true });
+      }));
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+      getWorkstream,
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => {
+      socket.open();
+      socket.message({
+        type: 'resync_required',
+        sequence: 14,
+        latestSequence: 14,
+        occurredAt: '2026-09-01T12:00:00.000Z',
+        reason: 'history_unavailable',
+        activeStreams: [],
+        activeCompaction: null,
+      });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getWorkstream).toHaveBeenCalledOnce();
+    expect(resyncSignal?.aborted).toBe(false);
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+
+    expect(resyncSignal?.aborted).toBe(true);
+    expect(result.current.state).toBe('reconnecting');
+  });
+
   it('installs an oversized authoritative pending snapshot only after every ordered chunk arrives', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
@@ -460,6 +717,11 @@ describe('useWorkstreamSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000621';
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000622';
+    const queryClient = new QueryClient();
+    for (const workstreamId of [firstWorkstreamId, secondWorkstreamId]) {
+      queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId }));
+      queryClient.setQueryData(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
+    }
     const api = socketApiWith({
       getSocketTicket: vi.fn(async (workstreamId: string) => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -475,7 +737,7 @@ describe('useWorkstreamSocket', () => {
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
         <ActiveConnection workstreamId={firstWorkstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper(queryClient) },
     );
     await flushPromises();
     const firstSocket = FakeWebSocket.instances[0]!;
@@ -507,6 +769,11 @@ describe('useWorkstreamSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000623';
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000624';
+    const queryClient = new QueryClient();
+    for (const workstreamId of [firstWorkstreamId, secondWorkstreamId]) {
+      queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId }));
+      queryClient.setQueryData(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
+    }
     const api = socketApiWith({
       getSocketTicket: vi.fn(async (workstreamId: string) => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -522,7 +789,7 @@ describe('useWorkstreamSocket', () => {
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
         <ActiveConnection workstreamId={firstWorkstreamId} />
       </WorkstreamSocketPool>,
-      { wrapper: createWrapper() },
+      { wrapper: createWrapper(queryClient) },
     );
     await flushPromises();
     const firstSocket = FakeWebSocket.instances[0]!;
@@ -774,6 +1041,7 @@ describe('useWorkstreamSocket', () => {
       expect.any(String),
       0,
       false,
+      expect.any(AbortSignal),
     );
   });
 
@@ -2400,6 +2668,8 @@ describe('useWorkstreamSocket', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000061';
     const messageId = '00000000-0000-7000-8000-000000000062';
     const harnessRunId = '00000000-0000-7000-8000-000000000063';
+    queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId }));
+    queryClient.setQueryData(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
     const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -2642,9 +2912,15 @@ describe('useWorkstreamSocket', () => {
     );
 
     await flushPromises();
-    act(() => FakeWebSocket.instances[0]!.open());
+    act(() => {
+      FakeWebSocket.instances[0]!.open();
+      FakeWebSocket.instances[0]!.message(snapshotFrame({
+        sequence: 1,
+        workstream: { id: workstreamId },
+      }));
+    });
     act(() => FakeWebSocket.instances[0]!.close());
-    await vi.advanceTimersByTimeAsync(90_000);
+    await vi.advanceTimersByTimeAsync(750);
     await flushPromises();
 
     // The revoked case must not have turned every close into a dead end.
@@ -3000,6 +3276,10 @@ describe('useWorkstreamSocket', () => {
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000402';
     const messageId = '00000000-0000-7000-8000-000000000403';
     const harnessRunId = '00000000-0000-7000-8000-000000000404';
+    for (const workstreamId of [firstWorkstreamId, secondWorkstreamId]) {
+      queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId }));
+      queryClient.setQueryData(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
+    }
     const api = socketApiWith({
       getSocketTicket: vi.fn(async (workstreamId: string) => ({
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
@@ -3147,16 +3427,21 @@ describe('useWorkstreamSocket', () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000731';
     const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/workstreams/workstream-one',
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = socketApiWith({ getSocketTicket });
-    renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper() });
 
     await flushPromises();
     act(() => {
       FakeWebSocket.instances[0]?.open();
+      FakeWebSocket.instances[0]?.message(snapshotFrame({
+        sequence: 1,
+        workstream: { id: workstreamId },
+      }));
       FakeWebSocket.instances[0]?.close();
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(749); });
@@ -3433,16 +3718,20 @@ describe('useWorkstreamSocket', () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000732';
     const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/workstreams/workstream-one',
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
     const api = socketApiWith({ getSocketTicket });
-    renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper() });
 
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
+    act(() => {
+      socket.open();
+      socket.message(snapshotFrame({ sequence: 1, workstream: { id: workstreamId } }));
+    });
     await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
     expect(socket.send).toHaveBeenCalledWith('ping');
     act(() => socket.rawMessage('pong'));

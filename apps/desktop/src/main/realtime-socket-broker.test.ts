@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WORKSTREAM_REALTIME_MAX_FRAME_BYTES } from '@rally/contracts';
 import { createServer } from 'node:http';
-import { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import {
   DesktopRealtimeSocketCloseInputSchema,
   DesktopRealtimeSocketEventSchema,
@@ -152,6 +152,27 @@ describe('proxyUrlsFromElectronResolution', () => {
     expect(opened).toHaveBeenCalledOnce();
     expect(failed).not.toHaveBeenCalled();
     expect(first.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('closes immediately when the renderer cancels while PAC resolution is pending', async () => {
+    let resolveProxy!: (resolution: string) => void;
+    const attempts = vi.fn();
+    const factory = createNodeRealtimeSocketFactory(
+      () => new Promise<string>((resolve) => { resolveProxy = resolve; }),
+      attempts,
+    );
+    const socket = factory(openInput().url, openInput().protocols);
+    const closed = vi.fn();
+    socket.onClose(closed);
+
+    socket.close(1_000, 'opening timeout');
+
+    expect(socket.readyState).toBe(WebSocket.CLOSED);
+    expect(closed).toHaveBeenCalledWith(1_000, Buffer.from('opening timeout'));
+    resolveProxy('DIRECT');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(attempts).not.toHaveBeenCalled();
   });
 
   it('uses plain TCP for a direct local WebSocket and reports no TLS phase', async () => {

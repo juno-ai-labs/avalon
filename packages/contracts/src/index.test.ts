@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   readStructuredFailure,
   ActivityQueueMessageSchema,
@@ -47,6 +48,7 @@ import {
   WorkstreamContextSchema,
   WorkstreamSchema,
   WorkstreamResourceSchema,
+  TimestampSchema,
   WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema,
   WORKSTREAM_SIDEBAR_FACEPILE_LIMIT,
@@ -1607,5 +1609,35 @@ describe("resource version provenance", () => {
       ...workstream,
       participantUserIds: ids,
     }).success).toBe(false);
+  });
+});
+
+describe("TimestampSchema seconds requirement", () => {
+  // zod 4.5 made seconds mandatory in datetime(). Nothing in the tree exercised a
+  // second-less timestamp, so the whole suite stayed green through that narrowing
+  // and it was found by reading the library's behavior rather than by a failure.
+  // TimestampSchema backs 102 fields in this file alone and fifteen connector
+  // tool-argument schemas a model writes strings into, so pin both directions:
+  // a re-widening is as much a contract change as the narrowing was.
+  it("accepts an offset timestamp that carries seconds", () => {
+    for (const input of [
+      "2026-09-02T12:30:00.000Z",
+      "2026-09-02T12:30:00Z",
+      "2026-09-02T12:30:00+01:00",
+    ]) {
+      expect(TimestampSchema.safeParse(input).success).toBe(true);
+    }
+  });
+
+  it("rejects an offset timestamp that omits seconds", () => {
+    for (const input of ["2026-09-02T12:30Z", "2026-09-02T12:30+01:00"]) {
+      expect(TimestampSchema.safeParse(input).success).toBe(false);
+    }
+  });
+
+  it("requires seconds in the JSON Schema pattern it hands a model", () => {
+    const { pattern } = z.toJSONSchema(TimestampSchema) as { pattern: string };
+    expect(pattern).toContain(":[0-5]\\d(?:\\.\\d+)?");
+    expect(pattern).not.toContain("(?::[0-5]\\d(?:\\.\\d+)?)?");
   });
 });
