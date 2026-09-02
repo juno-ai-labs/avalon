@@ -763,12 +763,12 @@ export function useWorkstreamSocket(
     let openingTimer: number | null = null;
     let openingTimedOutAttempts = 0;
     let openingTerminal = false;
-    let openingCompleted = queryClient.getQueryData<WorkstreamDetail>(
-      ['workstream', workstreamId],
-    )?.id === workstreamId
+    const canonicalCachesAvailable = (): boolean =>
+      queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.id === workstreamId
       && queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
         ['ordered-transcript', workstreamId],
       ) !== undefined;
+    let openingCompleted = canonicalCachesAvailable();
     let connectGeneration = 0;
     let activeTicketAbort: AbortController | null = null;
     let ticketRequestInFlight = false;
@@ -1506,6 +1506,15 @@ export function useWorkstreamSocket(
       openingTimer = null;
     };
 
+    const completeOpeningFromCanonicalCaches = (): boolean => {
+      if (!canonicalCachesAvailable()) return false;
+      clearOpeningTimer();
+      openingCompleted = true;
+      openingTimedOutAttempts = 0;
+      setOpeningError(undefined);
+      return true;
+    };
+
     const scheduleStabilityReset = (target: RealtimeSocket): void => {
       clearStabilityTimer();
       stabilityTimer = window.setTimeout(() => {
@@ -1585,77 +1594,6 @@ export function useWorkstreamSocket(
         return;
       }
       clearReconnectTimer();
-      if (canonicalResyncTarget !== null) {
-        canonicalResyncInFlight = true;
-        try {
-          const targetSequence = canonicalResyncTarget;
-          const canonicalWorkstream = await api.getWorkstream(workstreamId);
-          if (closedByEffect) return;
-          const { transcript: canonicalTranscript, ...detail } = canonicalWorkstream;
-          queryClient.setQueryData(['workstream', workstreamId], detail);
-          queryClient.setQueryData(['ordered-transcript', workstreamId], canonicalTranscript);
-          const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
-          setActiveCompaction((current) => mayStillEmitRealtime
-            && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
-            ? current
-            : null);
-          const validatedActiveStreams = mayStillEmitRealtime
-            ? canonicalResyncActiveStreams.filter((checkpoint) =>
-                checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
-            : [];
-          const canonicalMessages = orderedTranscriptMessages(canonicalTranscript, workstreamId);
-          streamCursors.clear();
-          const authoritativeOverlays = [
-            ...canonicalTranscript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
-              input,
-              workstreamId,
-              { source: 'socket_snapshot', snapshotId: canonicalTranscript.snapshotId },
-            )),
-            ...activeStreamCheckpointOverlays(
-              validatedActiveStreams,
-              workstreamId,
-              canonicalTranscript.snapshotId,
-              canonicalTranscript.snapshotThrough,
-              streamCursors,
-            ),
-            ...detailTranscriptOverlays(
-              detail,
-              canonicalTranscript.snapshotId,
-              canonicalTranscript.snapshotThrough,
-              canonicalTranscript.eventSequence,
-            ),
-          ];
-          queryClient.setQueryData<TranscriptOverlay[]>(
-            transcriptOverlaysQueryKey(workstreamId),
-            (current) => reconcileAuthoritativeTranscriptOverlays(
-              canonicalMessages,
-              current,
-              authoritativeOverlays,
-            ),
-          );
-          void Promise.all([
-            queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
-            queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-            syncBlockDashboardQueries(),
-          ]);
-          resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
-          if (canonicalResyncTarget === targetSequence) {
-            canonicalResyncTarget = null;
-            canonicalResyncActiveStreams = [];
-          }
-        } catch {
-          scheduleReconnect();
-          return;
-        } finally {
-          canonicalResyncInFlight = false;
-        }
-        // A newer resync target can arrive only from the socket being closed,
-        // but handle it defensively before issuing another one-time ticket.
-        if (canonicalResyncTarget !== null) {
-          scheduleReconnect();
-          return;
-        }
-      }
       ticketRequestInFlight = true;
       setState(attempts.current === 0 ? 'connecting' : 'reconnecting');
       const generation = connectGeneration += 1;
@@ -1675,12 +1613,14 @@ export function useWorkstreamSocket(
       });
       openTrace?.end({ outcome: 'superseded' });
       openTrace = trace;
+      let effectiveAfterSequence = openingCompleted ? resumeState.lastSequence : 0;
       if (!openingCompleted) {
         const timeoutMs = workstreamOpenTimeoutMs(openingTimedOutAttempts);
         clearOpeningTimer();
         openingTimer = window.setTimeout(() => {
           if (closedByEffect || openingTerminal || generation !== connectGeneration) return;
           openingTimer = null;
+          const recoveredCanonically = completeOpeningFromCanonicalCaches();
           connectGeneration += 1;
           if (activeTicketAbort === ticketAbort) {
             activeTicketAbort = null;
@@ -1694,6 +1634,11 @@ export function useWorkstreamSocket(
           timedOutSocket?.close();
           trace.end({ outcome: 'timeout', timeoutMs });
           if (openTrace === trace) openTrace = null;
+          if (recoveredCanonically) {
+            socketTelemetry.disconnected({ attempts: attempts.current, retrying: true });
+            scheduleReconnect();
+            return;
+          }
           openingTimedOutAttempts += 1;
           const retrying = openingTimedOutAttempts < WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS;
           socketTelemetry.disconnected({ attempts: attempts.current, retrying });
@@ -1717,7 +1662,7 @@ export function useWorkstreamSocket(
       );
       trace.annotate({
         attempt: attempts.current,
-        afterSequence: resumeState.lastSequence,
+        afterSequence: effectiveAfterSequence,
         // On attempt zero this is dead time nobody has measured: the work
         // stream is on screen and no request has been made yet. On a reconnect
         // it is the age of the effect, and the backoff explains it.
@@ -1726,6 +1671,76 @@ export function useWorkstreamSocket(
         ) / 10,
       });
       try {
+        if (canonicalResyncTarget !== null) {
+          canonicalResyncInFlight = true;
+          try {
+            const targetSequence = canonicalResyncTarget;
+            const canonicalWorkstream = await api.getWorkstream(workstreamId, ticketAbort.signal);
+            if (closedByEffect || generation !== connectGeneration) return;
+            const { transcript: canonicalTranscript, ...detail } = canonicalWorkstream;
+            queryClient.setQueryData(['workstream', workstreamId], detail);
+            queryClient.setQueryData(['ordered-transcript', workstreamId], canonicalTranscript);
+            const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
+            setActiveCompaction((current) => mayStillEmitRealtime
+              && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
+              ? current
+              : null);
+            const validatedActiveStreams = mayStillEmitRealtime
+              ? canonicalResyncActiveStreams.filter((checkpoint) =>
+                  checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
+              : [];
+            const canonicalMessages = orderedTranscriptMessages(canonicalTranscript, workstreamId);
+            streamCursors.clear();
+            const authoritativeOverlays = [
+              ...canonicalTranscript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
+                input,
+                workstreamId,
+                { source: 'socket_snapshot', snapshotId: canonicalTranscript.snapshotId },
+              )),
+              ...activeStreamCheckpointOverlays(
+                validatedActiveStreams,
+                workstreamId,
+                canonicalTranscript.snapshotId,
+                canonicalTranscript.snapshotThrough,
+                streamCursors,
+              ),
+              ...detailTranscriptOverlays(
+                detail,
+                canonicalTranscript.snapshotId,
+                canonicalTranscript.snapshotThrough,
+                canonicalTranscript.eventSequence,
+              ),
+            ];
+            queryClient.setQueryData<TranscriptOverlay[]>(
+              transcriptOverlaysQueryKey(workstreamId),
+              (current) => reconcileAuthoritativeTranscriptOverlays(
+                canonicalMessages,
+                current,
+                authoritativeOverlays,
+              ),
+            );
+            void Promise.all([
+              queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
+              queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
+              syncBlockDashboardQueries(),
+            ]);
+            resumeState.lastSequence = Math.max(resumeState.lastSequence, targetSequence);
+            if (canonicalResyncTarget === targetSequence) {
+              canonicalResyncTarget = null;
+              canonicalResyncActiveStreams = [];
+            }
+            completeOpeningFromCanonicalCaches();
+            effectiveAfterSequence = resumeState.lastSequence;
+          } finally {
+            canonicalResyncInFlight = false;
+          }
+          // A newer resync target can arrive only from the socket being closed,
+          // but handle it defensively before issuing another one-time ticket.
+          if (canonicalResyncTarget !== null) {
+            scheduleReconnect();
+            return;
+          }
+        }
         const speculative = initialReasonRef.current === 'hover_warmup'
           && !openCommittedRef.current;
         // Called directly rather than through `trace.step`: the socket-ticket
@@ -1736,7 +1751,7 @@ export function useWorkstreamSocket(
           workstreamId,
           '0',
           trace.traceId,
-          resumeState.lastSequence,
+          effectiveAfterSequence,
           speculative,
           ticketAbort.signal,
         );
@@ -1803,7 +1818,7 @@ export function useWorkstreamSocket(
           if (!socketTicket.subscriptionBootstrap) {
             nextSocket.send(JSON.stringify({
               type: 'subscribe',
-              afterSequence: resumeState.lastSequence,
+              afterSequence: effectiveAfterSequence,
               publishPresence: false,
             }));
           }
@@ -1821,15 +1836,13 @@ export function useWorkstreamSocket(
             const parsed: unknown = JSON.parse(String(messageEvent.data));
             const event = ServerSocketEventSchema.safeParse(parsed);
             if (event.success) {
-              clearOpeningTimer();
-              openingCompleted = true;
-              openingTimedOutAttempts = 0;
-              setOpeningError(undefined);
-              if (openTrace === trace) {
+              applyEvent(event.data);
+              const completedFromFrame = completeOpeningFromCanonicalCaches();
+              if (completedFromFrame && openTrace === trace) {
                 // The first server frame after `subscribe` is the one that
-                // fills the screen — a snapshot, a replayed event, or the
-                // resync that sends the client to HTTP instead. Which of the
-                // three arrived is most of the diagnosis.
+                // made canonical state renderable. Replay-only events cannot
+                // complete a cacheless open; their deadline stays armed until
+                // a snapshot or bounded REST resync installs both base caches.
                 trace.mark('first_frame');
                 trace.end({
                   outcome: event.data.type,
@@ -1842,7 +1855,6 @@ export function useWorkstreamSocket(
                 });
                 openTrace = null;
               }
-              applyEvent(event.data);
               return;
             }
             const personalEvent = PersonalSocketEventSchema.safeParse(parsed);
