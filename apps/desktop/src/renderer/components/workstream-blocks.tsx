@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import {
+  IconBrain,
   IconDeviceDesktop,
   IconPlug,
   IconWebhook,
@@ -48,6 +49,7 @@ import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
+import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
 import type { ElicitationData, Message, MessageMention } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { AgentWorkTiming } from './agent-work-timing';
@@ -1473,16 +1475,55 @@ function workSummaryLabel(summary: NonNullable<Message['workSummary']>): string 
     : `Worked for ${duration}`;
 }
 
+/**
+ * The mark a thinking row wears, in the orb's place.
+ *
+ * The orb says only that something is running, which the shimmering label
+ * beside it already says. Every other row in this column names the place the
+ * work happened — Slack, the web, a computer, Rally — through a mark, and
+ * reasoning is a place like any of them, so it gets the one glyph that names
+ * it. It borrows the plugin marks' own box and pulse rather than growing a
+ * second set: this is the same 20px column, and a thinking row that is still
+ * going has exactly the fact to convey that a running plugin row does.
+ *
+ * `active` is the row's reported status, which is what a plugin mark pulses on
+ * too — not `AgentWorkTiming`'s narrower `running`, which additionally demands
+ * a start to count from. The orb answered that question the other way, and the
+ * difference shows in one state: an activity still marked active whose
+ * intervals have all closed parks the number and the label's shimmer, and the
+ * mark keeps breathing. That row is reporting a live activity, so the mark is
+ * saying the true thing and the frozen number beside it is the defect; the
+ * plugin rows have carried the same pair since they replaced their spinners.
+ */
+function ThinkingGlyph({ active }: { active: boolean }): React.JSX.Element {
+  return (
+    <span
+      aria-hidden="true"
+      className={clsx('plugin-face', active && 'plugin-face-active')}
+    >
+      <IconBrain size={15} stroke={1.8} />
+    </span>
+  );
+}
+
 function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | null {
   const thought = message.thoughtEvent;
   if (!thought) return null;
+  const active = thought.status === 'started';
+  // Only the model's own reasoning gets the brain. The other row this block
+  // draws is the response's overall total — tool calls and all — and it keeps
+  // the orb, the shape that stands for work in general rather than for
+  // thinking. The verb is what tells them apart, through the same predicate
+  // the collapse and the fold read it with.
+  const thinking = isThinkingEvent(thought);
   return (
     <AgentWorkTiming
-      active={thought.status === 'started'}
+      active={active}
+      icon={thinking ? <ThinkingGlyph active={active} /> : undefined}
       // This block renders both kinds of thought row — a turn's thinking and a
       // response's overall work — so the subject comes from the row's own verb
       // rather than being fixed here: "Rally is thinking", "Rally is working".
-      activeName={`Rally is ${thought.activeVerb ?? 'working'}`}
+      activeName={`Rally is ${thoughtVerb(thought)}`}
       durationMs={thought.durationMs}
       monotonicStartedAt={thought.monotonicStartedAt}
       timingAccuracy={thought.timingAccuracy}

@@ -1598,6 +1598,35 @@ function activityTiming(activity: TranscriptActivity | undefined): {
 }
 
 /**
+ * The verb a thought row reports, with the projection's default applied.
+ *
+ * Every reader of a thought row has to resolve the same absent-verb case, and
+ * an omitted verb has always meant the response's total — the scope that
+ * predates the per-turn thinking row. One function so a reader cannot resolve
+ * it a fourth way.
+ */
+export function thoughtVerb(thought: ThoughtEventData): string {
+  return thought.activeVerb ?? 'working';
+}
+
+/**
+ * Whether a thought row is one turn's own reasoning.
+ *
+ * The verb is the only thing separating the two rows the projection produces,
+ * and three places act on that distinction: this module's collapse, its fold,
+ * and the renderer that decides which glyph the row wears. Sharing the
+ * predicate makes them move together, rather than each carrying its own copy
+ * of the string and the changelog carrying the warning.
+ *
+ * The fold deliberately does *not* use the negation of this. Not-thinking is a
+ * wider set than the response's own total, and a third scope must not be
+ * folded into a message header just because it is not reasoning.
+ */
+export function isThinkingEvent(thought: ThoughtEventData): boolean {
+  return thoughtVerb(thought) === 'thinking';
+}
+
+/**
  * A row's own reasoning segment, or nothing.
  *
  * Keyed on the verb because that is what separates the two kinds of thought
@@ -1616,7 +1645,7 @@ function activityTiming(activity: TranscriptActivity | undefined): {
 function thinkingSegment(message: Message): ThoughtEventData | null {
   const thought = message.thoughtEvent;
   if (!thought || message.messageType !== 'thought') return null;
-  return (thought.activeVerb ?? 'working') === 'thinking' ? thought : null;
+  return isThinkingEvent(thought) ? thought : null;
 }
 
 /**
@@ -1734,7 +1763,9 @@ export function foldSettledWorkIntoMessages(messages: readonly Message[]): Messa
       && message.messageType === 'thought'
       && thought.status !== 'started'
       // 'thinking' is a turn's own reasoning; 'working' is the whole response.
-      && (thought.activeVerb ?? 'working') === 'working';
+      // Named rather than negated, per `isThinkingEvent`: only the response's
+      // own total belongs in a message header.
+      && thoughtVerb(thought) === 'working';
     if (!settledResponseWork) {
       rows.push(message);
       continue;
