@@ -1,4 +1,4 @@
-import { RALLY_HEADERS } from "@rally/contracts/http-headers";
+import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import { jwtVerify, SignJWT } from "jose";
 import {
   asBlockId,
@@ -47,6 +47,7 @@ interface SocketClaims {
   ticketId: string;
   expiresAt: number;
   afterSequence?: number;
+  speculative?: true;
 }
 
 interface WorkspaceSocketClaims {
@@ -119,6 +120,7 @@ export async function issueSocketTicket(
   substreamId = "0",
   ticketId: string = uuidV7(),
   afterSequence?: number,
+  speculative = false,
 ): Promise<string> {
   assertSessionPrincipal(auth);
   const now = Math.floor(Date.now() / 1_000);
@@ -130,6 +132,7 @@ export async function issueSocketTicket(
     ssid: substreamId,
     region: auth.region,
     ...(afterSequence === undefined ? {} : { after: afterSequence }),
+    ...(speculative ? { warm: true } : {}),
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
@@ -232,6 +235,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       && payload.after >= 0
       ? payload.after
       : undefined;
+    const speculative = payload.warm === true;
     return {
       sessionId: payload.sid,
       userId: asUserId(payload.sub),
@@ -242,6 +246,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       ticketId: payload.jti,
       expiresAt: payload.exp,
       ...(afterSequence === undefined ? {} : { afterSequence }),
+      ...(speculative ? { speculative: true as const } : {}),
     };
   } catch {
     throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
@@ -513,7 +518,13 @@ export class SocketService {
         sessionId: claims.sessionId,
         substreamId: claims.substreamId,
       },
-      attributes: { "rally.socket.ticket_id": claims.ticketId },
+      attributes: {
+        "rally.socket.ticket_id": claims.ticketId,
+        ...(claims.afterSequence === undefined ? {} : {
+          "rally.socket.after_sequence": claims.afterSequence,
+        }),
+        ...(claims.speculative ? { "rally.socket.speculative": true } : {}),
+      },
     }, async (span) => {
       const stub = await span.step("workstream.socket.room_stub", () => durableObjectStubForWorkspace(
         this.env,
@@ -537,9 +548,18 @@ export class SocketService {
       headers.set(RALLY_HEADERS.USER_ID, claims.userId);
       headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
       headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
+      // These two are decisions signed into the ticket. Clear every inbound
+      // spelling before adding the verified values so a native client cannot
+      // smuggle an unsigned cursor or speculative mode through the copied
+      // upgrade headers when the corresponding claim is absent.
+      for (const name of [
+        ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE),
+        ...rallyHeaderAliases(RALLY_HEADERS.SOCKET_SPECULATIVE),
+      ]) headers.delete(name);
       if (claims.afterSequence !== undefined) {
         headers.set(RALLY_HEADERS.SOCKET_AFTER_SEQUENCE, String(claims.afterSequence));
       }
+      if (claims.speculative) headers.set(RALLY_HEADERS.SOCKET_SPECULATIVE, "true");
       // No trace header is written: the room's spans are already children of
       // this one, because a Durable Object call is a traced binding call and
       // everything inside it runs in this span's async context.

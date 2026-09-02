@@ -1886,10 +1886,13 @@ export class RallyApi {
     substreamId = '0',
     requestId?: string,
     afterSequence?: number,
+    speculative = false,
   ): Promise<SocketTicket> {
-    const query = afterSequence === undefined
-      ? ''
-      : `?afterSequence=${encodeURIComponent(afterSequence)}`;
+    const queryParams = new URLSearchParams();
+    if (afterSequence !== undefined) queryParams.set('afterSequence', String(afterSequence));
+    if (speculative) queryParams.set('speculative', 'true');
+    const encodedQuery = queryParams.toString();
+    const query = encodedQuery === '' ? '' : `?${encodedQuery}`;
     return this.request(
       `/workstreams/${encodeURIComponent(id)}/substreams/${encodeURIComponent(substreamId)}/socket${query}`,
       { schema: socketTicketSchema, ...(requestId ? { requestId } : {}) },

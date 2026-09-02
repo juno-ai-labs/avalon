@@ -73,6 +73,9 @@ describe("socket ticket transport", () => {
       expect(request.headers.get("x-rally-user-id")).toBe(userId);
       expect(request.headers.get("sec-websocket-protocol")).toBeNull();
       expect(request.headers.get("x-rally-socket-after-sequence")).toBe("42");
+      expect(request.headers.get("x-avalon-socket-after-sequence")).toBeNull();
+      expect(request.headers.get("x-rally-socket-speculative")).toBe("true");
+      expect(request.headers.get("x-avalon-socket-speculative")).toBeNull();
       return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
     });
     const env = createTestEnv({
@@ -91,12 +94,63 @@ describe("socket ticket transport", () => {
       workspaceId,
       region: "global",
       role: "member",
-    }, workstreamId, "0", undefined, 42);
+    }, workstreamId, "0", undefined, 42, true);
     const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}/socket`, {
       headers: {
         Origin: "app://avalon",
         Upgrade: "websocket",
         "Sec-WebSocket-Protocol": socketTicketProtocols(ticket).join(", "),
+        "x-rally-socket-after-sequence": "999",
+        "x-avalon-socket-after-sequence": "998",
+        "x-rally-socket-speculative": "false",
+        "x-avalon-socket-speculative": "true",
+      },
+    });
+
+    const response = await new SocketService(env).upgrade(workstreamId, "0", undefined, request);
+
+    expect(response.status).toBe(401);
+    expect(roomFetch).toHaveBeenCalledOnce();
+  });
+
+  it("strips unsigned cursor and speculative headers when the ticket has no claims", async () => {
+    const sessionId = "00000000-0000-7000-8000-000000000741";
+    const userId = asUserId("00000000-0000-7000-8000-000000000742");
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000743");
+    const workstreamId = "00000000-0000-7000-8000-000000000744";
+    const roomFetch = vi.fn(async (request: Request) => {
+      expect(request.headers.get("x-rally-socket-after-sequence")).toBeNull();
+      expect(request.headers.get("x-avalon-socket-after-sequence")).toBeNull();
+      expect(request.headers.get("x-rally-socket-speculative")).toBeNull();
+      expect(request.headers.get("x-avalon-socket-speculative")).toBeNull();
+      return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
+    });
+    const env = createTestEnv({
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+      ALLOWED_ORIGINS: "app://avalon",
+      SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
+      SUBSTREAM_AGENTS: createCloudflareTestBinding<DurableObjectNamespace>({
+        idFromName: () => createTestDurableObjectId("room-id"),
+        get: () => ({ fetch: roomFetch }),
+      }),
+    });
+    const ticket = await issueSocketTicket(env, {
+      sessionId,
+      userId,
+      workspaceId,
+      region: "global",
+      role: "member",
+    }, workstreamId);
+    const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}/socket`, {
+      headers: {
+        Origin: "app://avalon",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Protocol": socketTicketProtocols(ticket).join(", "),
+        "x-rally-socket-after-sequence": "999",
+        "x-avalon-socket-after-sequence": "998",
+        "x-rally-socket-speculative": "true",
+        "x-avalon-socket-speculative": "true",
       },
     });
 

@@ -129,7 +129,15 @@ function RetainedWorkstreamSocket({
     ? 'hover_warmup'
     : active ? 'active_workstream' : background ? 'background_workstream' : 'retained_workstream';
   useWorkstreamControlSocket(api, workstreamId, controlWarm || feedEnabled, initialReason, socketLeaseId);
-  const connection = useWorkstreamSocket(api, workstreamId, feedEnabled, true, initialReason, socketLeaseId);
+  const connection = useWorkstreamSocket(
+    api,
+    workstreamId,
+    feedEnabled,
+    true,
+    initialReason,
+    socketLeaseId,
+    active || admitted,
+  );
   useLayoutEffect(() => {
     if (active || admitted) onConnection(workstreamId, connection);
   }, [active, admitted, connection, onConnection, workstreamId]);

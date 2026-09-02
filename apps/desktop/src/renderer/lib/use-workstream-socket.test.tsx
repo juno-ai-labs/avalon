@@ -722,6 +722,7 @@ describe('useWorkstreamSocket', () => {
       '0',
       expect.any(String),
       0,
+      false,
     );
   });
 

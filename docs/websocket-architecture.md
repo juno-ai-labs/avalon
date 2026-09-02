@@ -112,7 +112,9 @@ five minutes. It stays longer when it still qualifies as pinned, recent, or
 running. A one-second deliberate pointer hover may add one complete
 WorkstreamDO and SubstreamAgent pair for an otherwise-cold row. The feed
 subscription is presence-free, so transport warmth does not claim that the
-person is viewing the row.
+person is viewing the row or clear its unseen marker. When navigation commits,
+the renderer promotes that same admitted socket with `mark_opened`; no new
+ticket, handshake, or snapshot enters the paint path.
 
 ### Opening a pair
 
@@ -344,7 +346,7 @@ move WorkspaceDO, HyperSight block, or dictation transport into Node.
 | `apps/desktop/src/main/realtime-socket-broker.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-broker.test.ts` | Destination confinement, ordered PAC fallback, shared payload limit, event relay, normal close cleanup, sends, and renderer-owner teardown. |
 | `apps/desktop/src/main/realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-ipc.test.ts src/common/realtime-socket-validation.test.ts` | Shared channel wiring, main-window authorization, request confinement, broker relay, and strict dependency-free event validation. |
 | `apps/desktop/src/renderer/lib/realtime-socket.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/realtime-socket.test.ts` | Browser-shaped state/events, IPC calls, and one multiplexed preload listener for a socket swarm. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Pair ownership, independent starts, route retention, expiry, overlap, and control-only hover warming. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Pair ownership, independent starts, route retention, expiry, overlap, speculative pair warming, and navigation promotion. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
@@ -458,10 +460,11 @@ produce precise-looking false data. Removing the explicit subscribe immediately
 would break an old-server/new-client rolling deployment.
 
 **Consequences:** One qualified speculative row may now consume a complete pair
-and initial snapshot. Feed warmth remains bounded by the existing single hover
-candidate and retention policy. Direct and proxied handshake cohorts must be
-read separately, and product totals continue to come from feed-visible and
-send-ready rather than background transport traces.
+and initial snapshot without changing its unseen state. Navigation sends one
+promotion frame on that retained socket. Feed warmth remains bounded by the
+existing single hover candidate and retention policy. Direct and proxied
+handshake cohorts must be read separately, and product totals continue to come
+from feed-visible and send-ready rather than background transport traces.
 
 ### 2026-08-31 — The singleton workspace socket follows the active workspace
 

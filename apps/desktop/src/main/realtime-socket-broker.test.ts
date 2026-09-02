@@ -11,6 +11,7 @@ import {
 import {
   RealtimeSocketBroker,
   createNodeRealtimeSocketFactory,
+  directSocketServername,
   proxyUrlsFromElectronResolution,
   realtimeSocketTargetAllowed,
   type RealtimeSocketClient,
@@ -94,6 +95,11 @@ describe('realtimeSocketTargetAllowed', () => {
 });
 
 describe('proxyUrlsFromElectronResolution', () => {
+  it('omits TLS SNI for bracketed IPv6 literals', () => {
+    expect(directSocketServername('wss://[::1]:8787/socket')).toBe('');
+    expect(directSocketServername('wss://api.rallywith.ai/socket')).toBe('api.rallywith.ai');
+  });
+
   it('preserves Electron proxy directives and fallbacks in order', () => {
     expect(proxyUrlsFromElectronResolution('DIRECT')).toEqual(['']);
     expect(proxyUrlsFromElectronResolution(
@@ -181,6 +187,12 @@ describe('proxyUrlsFromElectronResolution', () => {
         if (error) reject(error);
         else resolve();
       }));
+      if (httpServer.listening) {
+        await new Promise<void>((resolve, reject) => httpServer.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        }));
+      }
     }
   });
 });
