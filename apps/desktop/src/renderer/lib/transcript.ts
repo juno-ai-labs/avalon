@@ -1,4 +1,5 @@
-import type { ElicitationData, Message, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
+import type { MentionIdentity } from './api';
+import type { ElicitationData, Message, MessageMention, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
 import {
   AutomationDraftProposedV1Schema,
@@ -115,6 +116,41 @@ const activityReceiptMonotonic = new WeakMap<TranscriptActivity, {
 
 export function createTextMessage({ text, ...message }: TextMessageInput): Message {
   return { ...message, messageType: 'text', text };
+}
+
+/**
+ * The composer's selected mentions, in the shape a rendered turn carries them.
+ *
+ * An optimistic turn is rendered by the same block as the canonical one, so
+ * what it does not carry, it does not draw. Without this the connection
+ * mentions in a message being sent render as the plain `@name` the person
+ * typed and become chips only when the canonical turn lands — a width change
+ * on a row whose whole point is to already be the shape it will settle at.
+ *
+ * A selection with no offsets is dropped rather than guessed at: the offsets
+ * are what `withConnectorMentionLinks` slices, and a wrong pair would dress
+ * the wrong span as a mention. Person mentions are projected too — they cost
+ * nothing here and the queue rows read them — but they are not what makes a
+ * chip. That takes the `[@Name](person://<id>)` Markdown the *room* writes
+ * into the stored text, and rewriting the text client-side to match would put
+ * a second copy of the room's rewrite on this side of the wire, free to
+ * disagree with it. A person mention therefore stays plain text until the turn
+ * is canonical, which is what it did before an in-flight turn was drawn at all.
+ */
+export function messageMentionsFromSelection(
+  selected: readonly MentionIdentity[],
+): MessageMention[] {
+  return selected.flatMap((mention) => {
+    if (mention.startOffset === undefined || mention.endOffset === undefined) return [];
+    return [{
+      type: mention.type,
+      ...(mention.userId ? { personId: mention.userId } : {}),
+      ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
+      displayName: mention.label,
+      startOffset: mention.startOffset,
+      endOffset: mention.endOffset,
+    }];
+  });
 }
 
 export function createToolEventMessage({ toolEvent, ...message }: ToolEventMessageInput): Message {
