@@ -365,15 +365,15 @@ describe('OpeningState', () => {
    * appearance has to arrive as a prop. A light window with a dark-pinned orb
    * drew near-white dots on near-white ground.
    */
-  it('draws the orb for the appearance the window is in', () => {
+  it.each([['light'], ['dark']] as const)('draws the orb for a %s window', (mode) => {
     window.localStorage.setItem(
       DEVICE_PREFERENCES_STORAGE_KEY,
-      JSON.stringify({ version: 1, theme: { family: 'terra', mode: 'light' } }),
+      JSON.stringify({ version: 1, theme: { family: 'terra', mode } }),
     );
 
     render(<OpeningState label="Opening automation…" />);
 
-    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-theme', 'light');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-theme', mode);
   });
 });
 

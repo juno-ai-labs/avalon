@@ -586,7 +586,12 @@ depend on that:
   branch the theme on. The library's own `auto` mode is not a substitute: it
   looks for `data-theme="dark"` or `data-theme="light"`, ours says `terra-light`,
   and it would fall through to `prefers-color-scheme` and draw dark-window ink
-  for somebody who pinned Light against a dark Mac.
+  for somebody who pinned Light against a dark Mac. What it answers is the
+  *window's* lighting, not the nearest themed ancestor's: it reads the applied
+  appearance off `<html>`, while a rule honours `data-theme` wherever it sits —
+  and the Settings swatches put one on a descendant. Nothing draws an orb inside
+  such a subtree today, and one dropped there would take the window's ink rather
+  than the swatch's.
 - **`themeWindowBackground` equals each theme's own `--av-sys-color-surface-canvas`.** It is the one
   value written down twice, and a test compares the copies.
 - **The Tailwind palette resolves to tokens, never to literals.** It is currently
