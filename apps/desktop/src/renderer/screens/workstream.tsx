@@ -23,7 +23,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   MESSAGE_MAX_CHARACTERS,
@@ -237,9 +237,20 @@ export function workstreamPayloadBelongsToRoute(
  * back, so the rail holds the slot until that write settles: a failed write can
  * leave the stored preference disagreeing with the screen, never two panels
  * stacked in one slot with both controls reading as open.
+ *
+ * HyperSight's preference is stored per work stream and outlives the visit that
+ * set it, so it only holds the slot once this visit has opened it. Switching
+ * work streams is a move to another feed, not to its sidebar: a stream left
+ * with HyperSight open must not hand a sidebar to the next stream opened from
+ * it, and the preference itself is left alone so the toggle still means what it
+ * did.
  */
-export function blockDashboardHoldsSidebar(preferenceVisible: boolean, railOpen: boolean): boolean {
-  return preferenceVisible && !railOpen;
+export function blockDashboardHoldsSidebar(
+  preferenceVisible: boolean,
+  railOpen: boolean,
+  openedThisVisit: boolean,
+): boolean {
+  return preferenceVisible && !railOpen && openedThisVisit;
 }
 
 export function manualElicitationResponse(
@@ -903,6 +914,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
+  const inspect = useUiStore((state) => state.inspect);
   const inspector = useUiStore((state) => state.inspector);
   const openRail = useUiStore((state) => state.openRail);
   const railOpen = useUiStore((state) => state.railOpen);
@@ -911,6 +923,17 @@ export function WorkstreamScreen(): React.JSX.Element {
   const setRailScope = useUiStore((state) => state.setRailScope);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  // Whether HyperSight was opened during this visit to this work stream. Its
+  // stored preference is per work stream and survives the visit that set it, so
+  // the panel is only allowed the sidebar in the visit that asked for it; the
+  // route is part of the record so that leaving a work stream and coming back
+  // is a new visit rather than a continuation of the one that opened it. Reset
+  // while rendering rather than from an effect, so the first frame of a work
+  // stream is never the previous one's panel.
+  const [blockDashboardVisit, setBlockDashboardVisit] = useState<{ workstreamId: string; opened: boolean }>(
+    { workstreamId: id, opened: false },
+  );
+  if (blockDashboardVisit.workstreamId !== id) setBlockDashboardVisit({ workstreamId: id, opened: false });
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
   const [resourceSearch, setResourceSearch] = useState('');
@@ -944,7 +967,18 @@ export function WorkstreamScreen(): React.JSX.Element {
     [api],
   );
 
-  useEffect(() => () => closeRail(), [closeRail, id]);
+  // Leaving a work stream closes the right sidebar, and switching to another one
+  // is leaving this one: the panel was opened against this feed and has nothing
+  // to say about the next. The selection goes with it, because a resource id
+  // from the stream just left names nothing in the one arriving — the one case
+  // where clearing under the closing panel's fade beats what it would otherwise
+  // be showing, which is a detail it can no longer find. A layout effect so the
+  // close lands in the commit that changes the route, rather than a frame after
+  // the work stream underneath it has already been painted.
+  useLayoutEffect(() => () => {
+    closeRail();
+    inspect(null);
+  }, [closeRail, id, inspect]);
 
   // Each work stream keeps its own width for each panel, so the sidebar opens
   // at the width this stream was last left at rather than the last one visited.
@@ -1165,8 +1199,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     staleTime: Number.POSITIVE_INFINITY,
   });
   const blockDashboardPreferred = blockDashboardPreference.data?.visible ?? false;
+  const blockDashboardOpenedThisVisit = blockDashboardVisit.workstreamId === id && blockDashboardVisit.opened;
   const blockDashboardOpen = featureFlags.data?.hypersightEnabled === true
-    && blockDashboardHoldsSidebar(blockDashboardPreferred, railOpen);
+    && blockDashboardHoldsSidebar(blockDashboardPreferred, railOpen, blockDashboardOpenedThisVisit);
   // Handing the sidebar from one panel to the other keeps the panel that lost
   // it on screen a moment longer, fading out over the one that took it while
   // the slot animates between their two widths.
@@ -1612,8 +1647,9 @@ export function WorkstreamScreen(): React.JSX.Element {
   // off.
   const setBlockDashboardVisible = useCallback((visible: boolean): void => {
     if (visible) closeRail();
+    setBlockDashboardVisit({ workstreamId: id, opened: visible });
     persistBlockDashboardPreference(visible);
-  }, [closeRail, persistBlockDashboardPreference]);
+  }, [closeRail, id, persistBlockDashboardPreference]);
 
   const openRailVariant = useCallback((variant: RailVariant): void => {
     openRail(variant);
