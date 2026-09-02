@@ -36,8 +36,9 @@ import {
   createTestEnv,
   createTestJurisdictionalDurableObjectId,
 } from "./helpers/cloudflare-test";
+import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
 import { createTestSqlStorage } from "./helpers/sql-storage";
-import { sqliteD1 } from "./helpers/sqlite-d1";
+import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 function timing(overrides: Partial<ScheduleTiming> = {}): ScheduleTiming {
   return {
@@ -56,6 +57,168 @@ afterEach(() => {
 });
 
 describe("runtime component invariants", () => {
+  it("reads back only the runtime attachment and derives its work-stream direction", async () => {
+    const database = new DatabaseSync(":memory:");
+    const sql = createTestSqlStorage(database);
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      transactionSync: (callback: () => unknown) => callback(),
+      setAlarm: async () => undefined,
+      sql,
+    });
+    const store = new WorkstreamObjectStore(storage, "runtime-resource-test", "global");
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000061");
+    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000062");
+    const creatorId = asUserId("00000000-0000-7000-8000-000000000063");
+    const generatedId = "00000000-0000-7000-8000-000000000064";
+    const originId = "00000000-0000-7000-8000-000000000065";
+    const readbackFailureId = "00000000-0000-7000-8000-000000000066";
+    store.ensureIdentity({ workspaceId, workstreamId }, "global");
+    sql.exec(
+      `UPDATE workstream
+          SET authority_mode = 'authoritative', authority_generation = 1,
+              created_by_user_id = ?
+        WHERE id = 1`,
+      creatorId,
+    );
+    for (let index = 1; index <= 99; index += 1) {
+      const resourceId = `00000000-0000-7000-9000-${String(index).padStart(12, "0")}`;
+      sql.exec(
+        `INSERT INTO workstream_resource_links
+           (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+            resource_json, attached_at, updated_at)
+         VALUES (?, NULL, 0, 'attachment', '{}', ?, ?)`,
+        resourceId,
+        index,
+        index,
+      );
+    }
+
+    const workspace = preRetirementProductSqliteDatabase();
+    workspace.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('${creatorId}', 'runtime-resource-user', 'runtime@example.com', 'Runtime',
+              '2026-09-02', '2026-09-02');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('${workspaceId}', 'Runtime', 'runtime-resource', 'global', '${creatorId}',
+              '2026-09-02', '2026-09-02');
+    `);
+    const descriptors = [
+      { id: generatedId, title: "Generated recording.mp3", relationship: "generated" },
+      { id: originId, title: "Slack thread", relationship: "origin" },
+      { id: readbackFailureId, title: "Committed before readback failed", relationship: "generated" },
+    ].map((entry) => ({
+      id: entry.id,
+      connection_id: null,
+      resource_type: "generated_file",
+      provider: "avalon_generated",
+      provider_resource_id: `runtime:${entry.id}`,
+      title: entry.title,
+      mime_type: entry.relationship === "generated" ? "audio/mpeg" : "text/plain",
+      content_ref: `global/${entry.id}`,
+      content_sha256: "a".repeat(64),
+      canonical_url: null,
+      metadata_json: JSON.stringify({ size: 1_024 }),
+      model_content_ref: null,
+      model_mime_type: null,
+      model_content_sha256: null,
+      model_metadata_json: null,
+      model_content_status: "unsupported" as const,
+      model_content_extractor_version: null,
+      model_content_error_code: null,
+      created_at: "2026-09-02T10:35:06.000Z",
+      updated_at: "2026-09-02T10:35:06.000Z",
+    }));
+    for (const descriptor of descriptors) {
+      workspace.prepare(
+        `INSERT INTO resources
+           (id, workspace_id, resource_type, provider, provider_resource_id, title,
+            mime_type, content_ref, content_sha256, metadata_json, attachment_status,
+            model_content_status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'attached', ?, ?, ?)`,
+      ).run(
+        descriptor.id,
+        workspaceId,
+        descriptor.resource_type,
+        descriptor.provider,
+        descriptor.provider_resource_id,
+        descriptor.title,
+        descriptor.mime_type,
+        descriptor.content_ref,
+        descriptor.content_sha256,
+        descriptor.metadata_json,
+        descriptor.model_content_status,
+        descriptor.created_at,
+        descriptor.updated_at,
+      );
+    }
+    const workspaceBinding = testSubstreamAgentsBinding(workspace, {
+      extra: {
+        resourceDescriptors: vi.fn(async (input: { resourceIds: string[] }) => ({
+          items: descriptors.filter((descriptor) => input.resourceIds.includes(descriptor.id)),
+        })),
+      },
+    });
+    const workspaceStub = workspaceBinding.get(workspaceBinding.idFromName("runtime-resource-test")) as unknown as {
+      executeRuntimeSql(input: { statements: Array<{ params: unknown[] }> }): unknown;
+    };
+    const executeRuntimeSql = workspaceStub.executeRuntimeSql.bind(workspaceStub);
+    workspaceStub.executeRuntimeSql = (input) => {
+      for (const statement of input.statements) {
+        if (statement.params.length > 100) throw new Error("too many SQL variables");
+      }
+      return executeRuntimeSql(input);
+    };
+    const product = new WorkstreamObjectProductService(
+      storage,
+      store,
+      createTestEnv({
+        DB: sqliteD1(workspace),
+        WORKSPACE_DOS: workspaceBinding,
+        AVALON_REGION: "global",
+      }),
+    );
+
+    await expect(product.attachRuntimeResource(
+      workspaceId,
+      generatedId,
+      creatorId,
+      "generated",
+    )).resolves.toMatchObject({
+      id: generatedId,
+      relationshipType: "generated",
+      direction: "artifact",
+      sizeBytes: 1_024,
+    });
+    await expect(product.attachRuntimeResource(
+      workspaceId,
+      originId,
+      creatorId,
+      "origin",
+    )).resolves.toMatchObject({
+      id: originId,
+      relationshipType: "origin",
+      direction: "source",
+    });
+    expect(sql.exec<{ relationship_type: string }>(
+      `SELECT relationship_type FROM workstream_resource_links WHERE resource_id = ?`,
+      generatedId,
+    ).one()).toEqual({ relationship_type: "generated" });
+    workspaceStub.executeRuntimeSql = () => { throw new Error("workspace read unavailable"); };
+    await expect(product.attachRuntimeResource(
+      workspaceId,
+      readbackFailureId,
+      creatorId,
+      "generated",
+    )).resolves.toBeNull();
+    expect(sql.exec<{ relationship_type: string }>(
+      `SELECT relationship_type FROM workstream_resource_links WHERE resource_id = ?`,
+      readbackFailureId,
+    ).one()).toEqual({ relationship_type: "generated" });
+
+    workspace.close();
+    database.close();
+  });
+
   it("applies queued batch reads and archives once, including stopping an active run", async () => {
     const database = new DatabaseSync(":memory:");
     const sql = createTestSqlStorage(database);
