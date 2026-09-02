@@ -439,15 +439,39 @@ describe("Terminal authority on real workerd", () => {
     });
   });
 
-  it("keeps resident-agent resource attachments in the owning event", async () => {
+  it("keeps resident-agent resource attachments in the owning artifact event and broadcasts them", async () => {
     const stub = mainAgent();
     await boot(stub);
     const resourceId = "00000000-0000-7000-8000-00000000aa03";
-    const calls = await runInDurableObject(stub, async (instance, state) => {
+    const outcome = await runInDurableObject(stub, async (instance, state) => {
       seedWorkstreamRoot(state);
       const recorded: unknown[][] = [];
+      const emitted: unknown[] = [];
+      const resource = {
+        id: resourceId,
+        slug: null,
+        workspaceId: WORKSPACE_ID,
+        connectionId: null,
+        resourceType: "generated_file",
+        provider: "avalon_generated",
+        providerResourceId: "generated:effect",
+        title: "Generated recording.mp3",
+        mimeType: "audio/mpeg",
+        canonicalUrl: null,
+        refreshSupported: false,
+        watchEnabled: false,
+        watchStatus: "unsupported" as const,
+        lastHydratedAt: null,
+        createdAt: "2026-09-02T10:35:06.000Z",
+        updatedAt: "2026-09-02T10:35:06.000Z",
+        contentAvailable: true,
+        sizeBytes: 1_024,
+        currentVersion: 1,
+        relationshipType: "generated" as const,
+        direction: "artifact" as const,
+      };
       const product = (instance as unknown as {
-        product: { attachRuntimeResource(...args: unknown[]): Promise<void> };
+        product: { attachRuntimeResource(...args: unknown[]): Promise<typeof resource> };
       }).product;
       const attacher = (instance as unknown as {
         localRuntimeResourceAttacher(
@@ -461,7 +485,14 @@ describe("Terminal authority on real workerd", () => {
       });
       Object.defineProperty(product, "attachRuntimeResource", {
         configurable: true,
-        value: async (...args: unknown[]) => { recorded.push(args); },
+        value: async (...args: unknown[]) => {
+          recorded.push(args);
+          return resource;
+        },
+      });
+      Object.defineProperty(instance, "broadcast", {
+        configurable: true,
+        value: (event: unknown) => { emitted.push(event); },
       });
       try {
         await attacher({
@@ -471,19 +502,36 @@ describe("Terminal authority on real workerd", () => {
           attachedByUserId: null,
           relationshipType: "generated",
         });
-        return recorded;
+        const realtime = state.storage.sql.exec<{ event_sequence: number }>(
+          `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+        ).toArray()[0];
+        return { recorded, emitted, eventSequence: realtime?.event_sequence ?? null };
       } finally {
         delete (instance as unknown as Record<string, unknown>).attachRuntimeResource;
+        delete (instance as unknown as Record<string, unknown>).broadcast;
         delete (product as unknown as Record<string, unknown>).attachRuntimeResource;
       }
     });
 
-    expect(calls).toEqual([[
+    expect(outcome.recorded).toEqual([[
       WORKSPACE_ID,
       resourceId,
       null,
       "generated",
     ]]);
+    expect(outcome.eventSequence).toBe(1);
+    expect(outcome.emitted).toEqual([
+      expect.objectContaining({
+        sequence: 1,
+        type: "resource_attached",
+        resource: expect.objectContaining({
+          id: resourceId,
+          relationshipType: "generated",
+          direction: "artifact",
+          title: "Generated recording.mp3",
+        }),
+      }),
+    ]);
   });
 
   it("refuses local Terminal and resource authority in a non-main child", async () => {

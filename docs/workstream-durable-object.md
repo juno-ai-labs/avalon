@@ -1505,6 +1505,28 @@ directory write at all.
 
 ## Changelog
 
+### 2026-09-02 — Run-generated resources reach the open rail immediately
+
+**What changed:** The resident generated-resource attachment path now reads back
+the canonical `WorkstreamResource`, invalidates any prepared feed snapshot, and
+publishes the same `resource_attached` room event as a member attachment. The
+desktop already upserts that event into the open work-stream detail cache.
+
+**Why:** Multimodal and Terminal publication durably attached generated
+resources while a run was active, but emitted no resource event. The feed could
+therefore say generation completed while the open **Artifacts** rail remained
+empty until run settlement, reconnect, or another canonical snapshot.
+
+**Considered and rejected:** Making every completed tool call request a complete
+snapshot would refresh unrelated transcript and work-stream state for a fact
+that already has a typed incremental event. Waiting for run settlement leaves a
+successful output hidden during later work in the same run.
+
+**Consequences:** Generated audio, images, documents, and sites always appear as
+Artifacts, never Sources, and reach an open rail as soon as their resource link
+commits. Replayed publication upserts the same resource by ID, and reconnect
+snapshots remain the recovery authority.
+
 ### 2026-09-02 — Main-feed preparation is capability-scoped and disposable
 
 **What changed:** SubstreamAgent exposes a typed preparation RPC for one signed

@@ -2639,12 +2639,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.externalSubstreamId() !== "0") {
       throw new Error("workstream_runtime_identity_mismatch");
     }
-    await this.product.attachRuntimeResource(
+    const resource = await this.product.attachRuntimeResource(
       input.workspaceId,
       input.resourceId,
       input.attachedByUserId,
       input.relationshipType,
     );
+    this.invalidatePreparedSocketSnapshots();
+    await this.publishLocalProductEvent(identity, { type: "resource_attached", resource });
   }
 
   private async acceptRuntimeBootstrap(request: Request): Promise<Response> {
