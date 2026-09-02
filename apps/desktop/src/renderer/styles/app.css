@@ -5474,11 +5474,11 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .workstream-screen .human-message-bubble .markdown-body,
 .workstream-screen .human-message-bubble .markdown-body :is(p, strong, em, code, a) { color: var(--av-cmp-bubble-human-foreground); }
-.workstream-screen .human-message > header { margin-bottom: 5px; padding-right: 4px; }
+.workstream-screen .human-message > header { margin-bottom: 5px; padding-right: 18px; }
 .workstream-screen .human-message .message-author { color: var(--av-sys-color-text-subtle); font-size: 12px; }
 .workstream-screen .human-message time { color: var(--av-sys-color-text-muted); }
 .workstream-screen .agent-message { padding-left: 2px; }
-.workstream-screen .agent-message > header { margin-bottom: 7px; }
+.workstream-screen .agent-message > header { margin-bottom: 7px; padding-left: 18px; }
 
 /* GrokBot uses four text roles throughout its conversation surfaces rather
    than per-theme typography. Keep Rally's extra author/time labels on the same
