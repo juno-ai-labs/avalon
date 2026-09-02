@@ -215,6 +215,24 @@ describe('the right sidebar does not follow a work-stream switch', () => {
     expect(useUiStore.getState().railLeaving).toBeNull();
   });
 
+  it('hands the shell no sidebar to lay out when the switch closes HyperSight', async () => {
+    renderScreen();
+    await screen.findByText('First work stream');
+    fireEvent.click(screen.getByRole('button', { name: 'Show HyperSight' }));
+    await waitFor(() => expect(screen.getByRole('complementary', { name: 'HyperSight' })).toBeInTheDocument());
+
+    switchWorkstream();
+
+    await screen.findByText('Second work stream');
+    expect(document.querySelector('.rail-surface')).toBeNull();
+    // Both halves of what AppShell lays the main pane out against. The screen
+    // is the only thing that knows HyperSight has the slot, so a mirror that
+    // catches up after paint leaves the arriving feed padded for a panel that
+    // is not there.
+    expect(useUiStore.getState().blockDashboardOpen).toBe(false);
+    expect(useUiStore.getState().railLeaving).toBeNull();
+  });
+
   it('leaves HyperSight closed in the work stream switched to, whatever its stored preference says', async () => {
     renderScreen((queryClient) => {
       queryClient.setQueryData<BlockDashboardPreference>(
