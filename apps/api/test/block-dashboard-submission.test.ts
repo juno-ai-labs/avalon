@@ -61,6 +61,7 @@ function frozenSurface(corePlugins: HarnessPlugin[]): Parameters<typeof resolveH
     tools: [],
     plugins: [],
     builtinPluginIds: new Set(),
+    loadedAutomationPluginIds: new Set(),
     frozenConnections: new Map(),
     pluginSurfaceHashes: new Map(),
     legacyPluginSurfaceHashes: new Map(),

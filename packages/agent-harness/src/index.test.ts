@@ -1187,6 +1187,101 @@ describe("agent harness", () => {
     expect(pendingFetch).not.toHaveBeenCalled();
   });
 
+  it("continues at the next model turn after the host settles an interrupted reservation", async () => {
+    let projection: BindLoopProjectionState | null = null;
+    const commit = (transition: BindLoopTransition): void => {
+      projection = applyBindLoopTransition(projection, transition);
+    };
+    commit({
+      kind: "state_initialized",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 1,
+      systemProjection: {
+        revision: 1,
+        rendererVersion: "test-v1",
+        inputHash: "test-system",
+        message: { role: "system", content: "System" },
+      },
+      nonSystemMessages: [{ role: "user", content: "Question" }],
+      nonSystemMessageOrigins: [{
+        originKind: "derived",
+        sourceKind: "participant_turn",
+        sourceId: "question-1",
+        sourceRevision: 1,
+      }],
+    });
+    commit({
+      kind: "assistant_reserved",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 2,
+      turnId: "persistent-loop:turn:1",
+      modelTurnIndex: 1,
+      transcriptSequence: 10,
+    });
+    commit({
+      kind: "assistant_reservation_settled",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 3,
+      turnId: "persistent-loop:turn:1",
+      modelTurnIndex: 1,
+      transcriptSequence: 10,
+      outcome: "failed",
+    });
+    if (!projection) throw new Error("recovery projection missing");
+
+    const cappedFetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
+    const cappedInput = runInput(cappedFetcher);
+    await expect(runHarness({
+      ...cappedInput,
+      config: { ...cappedInput.config, maxIterations: 1 },
+      loopId: "persistent-loop",
+      harnessRunId: "recovered-execution-at-limit",
+      bindLoopProjection: projection,
+      modelIterationsUsed: 1,
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_iteration_limit_exceeded" },
+    });
+    expect(cappedFetcher).not.toHaveBeenCalled();
+
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "Recovered answer" }, finish_reason: "stop" }],
+    }])) as typeof fetch;
+    const transitions: BindLoopTransition[] = [];
+    const resumedInput = runInput(fetcher);
+    await expect(runHarness({
+      ...resumedInput,
+      config: { ...resumedInput.config, maxIterations: 1 },
+      loopId: "persistent-loop",
+      harnessRunId: "recovered-execution",
+      bindLoopProjection: projection,
+      // The projection's turn 1 belongs to an earlier execution in this case;
+      // a new run gets its own budget even though turn numbering stays global.
+      modelIterationsUsed: 0,
+      onAssistantTurnReserved: (turn) => {
+        expect(turn).toMatchObject({
+          turnId: "persistent-loop:turn:2",
+          modelTurnIndex: 2,
+        });
+        return { transcriptSequence: 11 };
+      },
+      onBindLoopTransition: (transition) => {
+        transitions.push(transition);
+      },
+    })).resolves.toMatchObject({ status: "completed", content: "Recovered answer" });
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(transitions.find((transition) => transition.kind === "assistant_accepted"))
+      .toMatchObject({
+        turnId: "persistent-loop:turn:2",
+        modelTurnIndex: 2,
+        transcriptSequence: 11,
+      });
+  });
+
   it("durably synchronizes activation-only input at the resumed head before provider I/O", async () => {
     let projection: BindLoopProjectionState | null = null;
     const commit = (transition: BindLoopTransition): void => {
