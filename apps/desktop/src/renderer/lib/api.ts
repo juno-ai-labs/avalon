@@ -1567,7 +1567,7 @@ export class RallyApi {
     endOffset: number;
   }>> {
     // Most sends contain no mention syntax. Keep their command path on the
-    // already-open workspace socket instead of putting a roster request in
+    // already-open work-stream room socket instead of putting a roster request in
     // front of it. `person://` covers durable mention Markdown that is pasted
     // or replayed; `@` covers composer and hand-typed mentions.
     if (!text.includes('@') && !text.includes('person://')) return [];

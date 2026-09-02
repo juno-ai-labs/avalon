@@ -610,6 +610,41 @@ describe('useWorkstreamSocket', () => {
     await expect(admission).resolves.toEqual(acceptedTurn);
   });
 
+  it('rejects a pending message when an older worker returns an uncorrelated command error', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000605';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+      messageMentionPayload: vi.fn(async () => []),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const admission = result.current.createMessage({
+      text: 'Please continue.',
+      clientId: 'client-message-old-worker-error',
+      runMode: 'queue',
+    });
+    await flushPromises();
+    act(() => socket.message({
+      type: 'error',
+      sequence: 0,
+      occurredAt: '2026-09-01T12:00:00.000Z',
+      code: 'workspace_socket_required',
+      message: 'Reconnect before sending messages.',
+    }));
+
+    await expect(admission).rejects.toMatchObject({ code: 'workspace_socket_required' });
+  });
+
   it('shows durable compaction activity and ignores a stale finish', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-000000000611';
