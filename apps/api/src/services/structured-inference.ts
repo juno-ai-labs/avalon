@@ -57,7 +57,6 @@ export async function runEmbeddingInference(
     apiKey: env.OPENROUTER_API_KEY,
     primaryModel: MEMORY_EMBEDDING_MODEL,
     fallbackModels: [],
-    appUrl: env.PUBLIC_API_BASE_URL,
     appName: "Rally",
     traceContext: {
       source: MEMORY_EMBEDDING_FEATURE,
@@ -156,7 +155,6 @@ export async function runStructuredInference<T>(
     apiKey: env.OPENROUTER_API_KEY,
     primaryModel: routing.model,
     fallbackModels: routing.fallbackModels,
-    appUrl: env.PUBLIC_API_BASE_URL,
     appName: "Rally",
     traceContext: {
       source: input.role,
