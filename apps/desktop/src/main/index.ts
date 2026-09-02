@@ -30,6 +30,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { WorkspaceChangeGuard } from './workspace-change-guard';
 import { revalidateWorkspaceActivation } from './workspace-activation';
+import { selectStoredWorkspaceLocally } from './workspace-selection';
 import {
   acceptedDeepLink,
   shouldDeliverConnectorResultToSettings,
@@ -2351,6 +2352,45 @@ async function activateWorkspace(input: unknown): Promise<DesktopSession> {
   });
 }
 
+/**
+ * Switch to a workspace this device already holds a credential for, locally.
+ *
+ * Bumping the selection intent is what makes this the newest selection: a
+ * network activation still in flight keeps its credential when it lands but
+ * no longer takes over the window, the same rule the account menu relies on.
+ */
+async function selectWorkspace(input: unknown): Promise<DesktopSession | null> {
+  const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  if (Object.keys(candidate).some((key) => !['region', 'workspaceId'].includes(key))) {
+    throw new Error('Invalid workspace selection request');
+  }
+  const parsed = ActivateWorkspaceRequestSchema.safeParse({
+    region: candidate['region'], workspaceId: candidate['workspaceId'],
+  });
+  if (!parsed.success) throw new Error('Invalid workspace selection request');
+  const changeId = beginWorkspaceChange(parsed.data);
+  try {
+    return await withSessionMutation(() => selectStoredWorkspaceLocally(parsed.data, {
+      loadAuthSet: loadStoredAuthSet,
+      sessionForCredential: storedSessionForCredential,
+      commit: async (auth, session) => {
+        if (loggingOut) throw new Error('Rally is signing out');
+        workspaceSelectionIntent += 1;
+        await writeStoredAuthFile(
+          userDataDirectory(),
+          encryptStoredSessionValue(JSON.stringify(auth)),
+        );
+        inMemoryAuthSet = auth;
+        inMemorySession = session;
+        broadcastSessionChanged(session);
+        return publicSession(session);
+      },
+    }));
+  } finally {
+    workspaceChangeGuard.finishChange(changeId);
+  }
+}
+
 async function createWorkspace(input: unknown): Promise<DesktopSession> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   if (Object.keys(candidate).some((key) => !['region', 'name', 'operationId'].includes(key))) {
@@ -3071,6 +3111,10 @@ function registerIpc(): void {
   ipcMain.handle('onboarding:activate-workspace', (event, input: unknown) => {
     assertTrustedIpcSender(event);
     return activateWorkspace(input);
+  });
+  ipcMain.handle('workspace:select', (event, input: unknown) => {
+    assertTrustedIpcSender(event);
+    return selectWorkspace(input);
   });
   ipcMain.handle('onboarding:create-workspace', (event, input: unknown) => {
     assertTrustedIpcSender(event);

@@ -112,6 +112,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'openExternal'
   | 'openSettings'
   | 'refreshSession'
+  | 'selectWorkspace'
   | 'showDeepLinkError'
   | 'surrenderActiveWorkspace'
 >;
@@ -162,12 +163,26 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const bridge = useMemo<AppSessionDesktopBridge>(() => desktopBridge(), []);
   const queryClient = useQueryClient();
 
+  /**
+   * Adopt a session main just produced. React state commits later, so the
+   * ref is moved here as well: an imperative caller in the same turn — a
+   * second queued deep link, a renewal — must see the session that was just
+   * applied rather than the one drawn before it.
+   *
+   * The cache is cleared only when the session's scope changed. A renewed
+   * credential or a re-activation of the same workspace names the same user
+   * and workspace, and every cached list is still theirs; discarding it made
+   * the whole shell reload behind a link that was going to open one work
+   * stream.
+   */
   const applySession = useCallback((nextSession: DesktopSession | null): void => {
+    const previousSession = sessionRef.current;
+    sessionRef.current = nextSession;
     setSession(nextSession);
+    if (!sessionsShareCacheScope(previousSession, nextSession)) queryClient.clear();
     if (!nextSession) {
       setDeviceSelectedRegion('global');
       setRegion('global');
-      queryClient.clear();
       return;
     }
     const nextRegion = nextSession.workspace?.region
@@ -178,7 +193,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       setDeviceWorkspaceName(nextSession.workspace.name);
       setWorkspaceNameState(nextSession.workspace.name);
     }
-    queryClient.clear();
   }, [queryClient, runtime]);
 
   useEffect(() => {
@@ -500,57 +514,63 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }, target))) {
           throw new Error('The requested workspace could not be renewed.');
         }
-        sessionRef.current = renewedSession;
         applySession(renewedSession);
         return renewedSession;
       });
       return targetApi;
     };
-    const activateDeepLinkWorkspace = async (
+    const sessionTargets = (candidate: DesktopSession | null, target: WorkspaceTarget): boolean => (
+      Boolean(candidate?.workspace) && workspaceTargetsEqual({
+        region: candidate!.workspace!.region,
+        workspaceId: candidate!.workspace!.id,
+      }, target)
+    );
+    /**
+     * Put the link's workspace in front, the cheapest way that is honest.
+     *
+     * A link carries routing, not authority: the regional API re-checks
+     * membership on every request the workspace credential makes, and a
+     * revoked credential is surrendered on its first rejection whichever path
+     * selected it. So the target that is already active is used as it stands,
+     * a target this device holds a credential for is selected locally, and
+     * only a target with nothing stored goes to the platform — the one path
+     * that can mint a credential that does not exist yet.
+     */
+    const enterDeepLinkWorkspace = async (
       target: WorkspaceTarget,
     ): Promise<{ api: RallyApi; workspaceChanged: boolean }> => {
-      if (!sessionRef.current) throw new Error('Sign in before opening a workspace link.');
-      const previousWorkspace = sessionRef.current.workspace;
-      // An explicit target is an authorization request, even when it names the
-      // workspace currently drawn. Main asks the platform to rediscover the
-      // membership on every addressed link so a stale cached credential can
-      // never turn a removed membership into access.
-      const nextSession = await bridge.activateWorkspace({
+      const current = sessionRef.current;
+      if (!current) throw new Error('Sign in before opening a workspace link.');
+      if (sessionTargets(current, target)) {
+        return { api: apiForSession(current, target), workspaceChanged: false };
+      }
+      const selected = await bridge.selectWorkspace({
         region: target.region,
         workspaceId: target.workspaceId,
       });
-      if (!nextSession.workspace || !workspaceTargetsEqual({
-        region: nextSession.workspace.region,
-        workspaceId: nextSession.workspace.id,
-      }, target)) {
+      const nextSession = selected ?? await bridge.activateWorkspace({
+        region: target.region,
+        workspaceId: target.workspaceId,
+      });
+      if (!sessionTargets(nextSession, target)) {
         throw new Error('The requested workspace could not be activated.');
       }
-      // React state commits later. Keep the imperative deep-link path on the
-      // session it just activated so two callbacks in the same turn cannot
-      // apply the second one to the workspace that was active before them.
-      sessionRef.current = nextSession;
       applySession(nextSession);
-      return {
-        api: apiForSession(nextSession, target),
-        workspaceChanged: !previousWorkspace || !workspaceTargetsEqual({
-          region: previousWorkspace.region,
-          workspaceId: previousWorkspace.id,
-        }, target),
-      };
+      return { api: apiForSession(nextSession, target), workspaceChanged: true };
     };
     const runInDeepLinkWorkspace = async (
       target: WorkspaceTarget,
       action: (targetApi: RallyApi) => void | Promise<void>,
     ): Promise<void> => {
       try {
-        const activated = await activateDeepLinkWorkspace(target);
+        const entered = await enterDeepLinkWorkspace(target);
         // A changed workspace must never leave a resource route from the old
         // workspace behind it. Resource actions below immediately replace this
         // safe landing; separate-window actions leave it ready when they close.
-        if (activated.workspaceChanged) {
+        if (entered.workspaceChanged) {
           window.location.hash = '/workstreams/new';
         }
-        await action(activated.api);
+        await action(entered.api);
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : '';
         const activationFailure = workspaceActivationFailureCode(error);
@@ -749,7 +769,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           ticket: intent.ticket!,
           attemptId: intent.attemptId!,
         });
-        sessionRef.current = nextSession;
         applySession(nextSession);
       } catch (error: unknown) {
         reportDeepLinkFailure(error instanceof Error ? error.message : 'Sign in could not be completed.');
