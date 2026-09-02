@@ -147,6 +147,7 @@ describe('socket-first work-stream open', () => {
       activeCompaction: null,
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
+      retryOpening: vi.fn(),
       sendReady: false,
       state: 'connecting',
       workspaceSocketState: 'connecting',
@@ -167,6 +168,7 @@ describe('socket-first work-stream open', () => {
       activeCompaction: null,
       createMessage: vi.fn(),
       requestSnapshot,
+      retryOpening: vi.fn(),
       sendReady: true,
       state: 'connected',
       workspaceSocketState: 'connected',
@@ -261,10 +263,12 @@ describe('socket-first work-stream open', () => {
   });
 
   it('offers REST recovery after the first socket attempt fails', async () => {
+    const retryOpening = vi.fn();
     retainedSocket.mockReturnValue({
       activeCompaction: null,
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
+      retryOpening,
       sendReady: false,
       state: 'reconnecting',
       workspaceSocketState: 'connecting',
@@ -277,7 +281,26 @@ describe('socket-first work-stream open', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
+    expect(retryOpening).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(api.getWorkstream).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows the terminal error after all three timed opening attempts expire', async () => {
+    retainedSocket.mockReturnValue({
+      activeCompaction: null,
+      createMessage: vi.fn(),
+      openingError: 'The live connection timed out after 3 attempts.',
+      requestSnapshot: vi.fn(),
+      retryOpening: vi.fn(),
+      sendReady: false,
+      state: 'unavailable',
+      workspaceSocketState: 'connecting',
+    });
+
+    renderScreen();
+
+    expect(await screen.findByText('Work stream could not be opened')).toBeInTheDocument();
+    expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();
   });
 
   it('keeps a newer socket snapshot when REST recovery resolves late', async () => {
@@ -285,6 +308,7 @@ describe('socket-first work-stream open', () => {
       activeCompaction: null,
       createMessage: vi.fn(),
       requestSnapshot: vi.fn(),
+      retryOpening: vi.fn(),
       sendReady: true,
       state: 'reconnecting',
       workspaceSocketState: 'connecting',

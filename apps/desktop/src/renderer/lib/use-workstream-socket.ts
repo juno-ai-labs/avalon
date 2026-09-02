@@ -98,6 +98,10 @@ export interface CreateWorkstreamMessageInput {
 
 export interface WorkstreamSocketConnection {
   state: SocketState;
+  /** Terminal opening failure shown after the bounded socket attempts expire. */
+  openingError?: string;
+  /** Starts a fresh bounded opening sequence after a terminal opening failure. */
+  retryOpening(): void;
   /** The workstream handler can admit sends to the workspace queue. The painted
    * telemetry milestone is reported separately after the consuming UI commits. */
   sendReady: boolean;
@@ -120,6 +124,16 @@ const HEARTBEAT_JITTER_MS = 10_000;
 const PONG_TIMEOUT_MS = 15_000;
 const TRANSCRIPT_RANGE_TIMEOUT_MS = 15_000;
 export const SOCKET_STABLE_CONNECTION_MS = 30_000;
+export const WORKSTREAM_OPEN_TIMEOUT_BASE_MS = 10_000;
+export const WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS = 3;
+
+export function workstreamOpenTimeoutMs(timedOutAttempts: number): number {
+  const attemptIndex = Math.min(
+    Math.max(0, timedOutAttempts),
+    WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS - 1,
+  );
+  return WORKSTREAM_OPEN_TIMEOUT_BASE_MS * 2 ** attemptIndex;
+}
 
 export function socketHeartbeatDelay(random = Math.random): number {
   return HEARTBEAT_BASE_MS + Math.floor(random() * HEARTBEAT_JITTER_MS);
@@ -664,9 +678,15 @@ export function useWorkstreamSocket(
   );
   const resumeState = useWorkstreamSocketResumeState(workstreamId);
   const [state, setState] = useState<SocketState>('idle');
+  const [openingError, setOpeningError] = useState<string>();
+  const [openingRetryGeneration, setOpeningRetryGeneration] = useState(0);
   const [sendReady, setSendReady] = useState(false);
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   const attempts = useRef(0);
+  const retryOpening = useCallback((): void => {
+    setOpeningError(undefined);
+    setOpeningRetryGeneration((current) => current + 1);
+  }, []);
   const createMessageRef = useRef<(input: CreateWorkstreamMessageInput) => Promise<AcceptedWorkstreamTurn>>(
     () => Promise.reject(new ApiError(
       'The work stream is not ready to receive messages.',
@@ -698,6 +718,7 @@ export function useWorkstreamSocket(
   useEffect(() => {
     attempts.current = 0;
     setActiveCompaction(null);
+    setOpeningError(undefined);
     if (!api || !enabled) {
       setState('idle');
       setSendReady(false);
@@ -739,6 +760,17 @@ export function useWorkstreamSocket(
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
     let stabilityTimer: number | null = null;
+    let openingTimer: number | null = null;
+    let openingTimedOutAttempts = 0;
+    let openingTerminal = false;
+    let openingCompleted = queryClient.getQueryData<WorkstreamDetail>(
+      ['workstream', workstreamId],
+    )?.id === workstreamId
+      && queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+        ['ordered-transcript', workstreamId],
+      ) !== undefined;
+    let connectGeneration = 0;
+    let activeTicketAbort: AbortController | null = null;
     let ticketRequestInFlight = false;
     let canonicalResyncInFlight = false;
     let canonicalResyncTarget: number | null = null;
@@ -1469,6 +1501,11 @@ export function useWorkstreamSocket(
       stabilityTimer = null;
     };
 
+    const clearOpeningTimer = (): void => {
+      if (openingTimer !== null) window.clearTimeout(openingTimer);
+      openingTimer = null;
+    };
+
     const scheduleStabilityReset = (target: RealtimeSocket): void => {
       clearStabilityTimer();
       stabilityTimer = window.setTimeout(() => {
@@ -1510,12 +1547,17 @@ export function useWorkstreamSocket(
       streamCursors.clear();
       setActiveCompaction(null);
       clearReconnectTimer();
+      clearOpeningTimer();
+      connectGeneration += 1;
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
+      ticketRequestInFlight = false;
       setState('unavailable');
       evictCachedWorkstream(queryClient, workstreamId);
     };
 
     const scheduleReconnect = (): void => {
-      if (closedByEffect || accessRevoked) return;
+      if (closedByEffect || accessRevoked || openingTerminal) return;
       clearReconnectTimer();
       attempts.current += 1;
       if (isOffline()) {
@@ -1532,6 +1574,7 @@ export function useWorkstreamSocket(
     const connect = async (): Promise<void> => {
       if (
         closedByEffect
+        || openingTerminal
         || ticketRequestInFlight
         || canonicalResyncInFlight
         || socket?.readyState === REALTIME_SOCKET_CONNECTING
@@ -1615,6 +1658,9 @@ export function useWorkstreamSocket(
       }
       ticketRequestInFlight = true;
       setState(attempts.current === 0 ? 'connecting' : 'reconnecting');
+      const generation = connectGeneration += 1;
+      const ticketAbort = new AbortController();
+      activeTicketAbort = ticketAbort;
       // Opening a work stream is a ticket, a handshake, a subscribe, and a
       // snapshot, and only the last of those puts the transcript on screen. The
       // trace ends on the frame that answers the subscribe, so its total is what
@@ -1629,6 +1675,37 @@ export function useWorkstreamSocket(
       });
       openTrace?.end({ outcome: 'superseded' });
       openTrace = trace;
+      if (!openingCompleted) {
+        const timeoutMs = workstreamOpenTimeoutMs(openingTimedOutAttempts);
+        clearOpeningTimer();
+        openingTimer = window.setTimeout(() => {
+          if (closedByEffect || openingTerminal || generation !== connectGeneration) return;
+          openingTimer = null;
+          connectGeneration += 1;
+          if (activeTicketAbort === ticketAbort) {
+            activeTicketAbort = null;
+            ticketAbort.abort();
+          }
+          ticketRequestInFlight = false;
+          clearHeartbeat();
+          clearStabilityTimer();
+          const timedOutSocket = socket;
+          socket = null;
+          timedOutSocket?.close();
+          trace.end({ outcome: 'timeout', timeoutMs });
+          if (openTrace === trace) openTrace = null;
+          openingTimedOutAttempts += 1;
+          const retrying = openingTimedOutAttempts < WORKSTREAM_OPEN_TIMEOUT_ATTEMPTS;
+          socketTelemetry.disconnected({ attempts: attempts.current, retrying });
+          if (!retrying) {
+            openingTerminal = true;
+            setOpeningError('The live connection timed out after 3 attempts.');
+            setState('unavailable');
+            return;
+          }
+          scheduleReconnect();
+        }, timeoutMs);
+      }
       reportWorkstreamSocketStarted(
         workstreamId,
         resolvedSocketLeaseId,
@@ -1661,7 +1738,10 @@ export function useWorkstreamSocket(
           trace.traceId,
           resumeState.lastSequence,
           speculative,
+          ticketAbort.signal,
         );
+        if (closedByEffect || generation !== connectGeneration) return;
+        if (activeTicketAbort === ticketAbort) activeTicketAbort = null;
         trace.mark('socket_ticket');
         trace.annotate({ ticketId: socketTicket.ticketId ?? null });
         if (closedByEffect) {
@@ -1741,6 +1821,10 @@ export function useWorkstreamSocket(
             const parsed: unknown = JSON.parse(String(messageEvent.data));
             const event = ServerSocketEventSchema.safeParse(parsed);
             if (event.success) {
+              clearOpeningTimer();
+              openingCompleted = true;
+              openingTimedOutAttempts = 0;
+              setOpeningError(undefined);
               if (openTrace === trace) {
                 // The first server frame after `subscribe` is the one that
                 // fills the screen — a snapshot, a replayed event, or the
@@ -1773,6 +1857,7 @@ export function useWorkstreamSocket(
         });
         nextSocket.addEventListener('close', (closeEvent) => {
           if (socket !== nextSocket) return;
+          clearOpeningTimer();
           if (openTrace === trace) {
             trace.end({ outcome: 'closed', closeCode: closeEvent.code });
             openTrace = null;
@@ -1829,6 +1914,8 @@ export function useWorkstreamSocket(
           }
         });
       } catch {
+        if (closedByEffect || generation !== connectGeneration) return;
+        clearOpeningTimer();
         trace.end({ outcome: 'failed' });
         if (openTrace === trace) openTrace = null;
         if (!closedByEffect) {
@@ -1840,12 +1927,13 @@ export function useWorkstreamSocket(
         }
         scheduleReconnect();
       } finally {
-        ticketRequestInFlight = false;
+        if (activeTicketAbort === ticketAbort) activeTicketAbort = null;
+        if (generation === connectGeneration) ticketRequestInFlight = false;
       }
     };
 
     const handleOnline = (): void => {
-      if (closedByEffect || accessRevoked) return;
+      if (closedByEffect || accessRevoked || openingTerminal) return;
       if (socket?.readyState === REALTIME_SOCKET_CONNECTING || socket?.readyState === REALTIME_SOCKET_OPEN) return;
       clearReconnectTimer();
       void connect();
@@ -1855,6 +1943,11 @@ export function useWorkstreamSocket(
       clearReconnectTimer();
       clearHeartbeat();
       clearStabilityTimer();
+      clearOpeningTimer();
+      connectGeneration += 1;
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
+      ticketRequestInFlight = false;
       setState('unavailable');
       if (socket) socketTelemetry.willClose('offline');
       socket?.close();
@@ -1903,13 +1996,27 @@ export function useWorkstreamSocket(
       clearReconnectTimer();
       clearHeartbeat();
       clearStabilityTimer();
+      clearOpeningTimer();
+      activeTicketAbort?.abort();
+      activeTicketAbort = null;
       socket?.close();
     };
-  }, [api, createWorkspaceMessage, enabled, queryClient, resolvedSocketLeaseId, resumeState, workstreamId]);
+  }, [
+    api,
+    createWorkspaceMessage,
+    enabled,
+    openingRetryGeneration,
+    queryClient,
+    resolvedSocketLeaseId,
+    resumeState,
+    workstreamId,
+  ]);
 
   return useMemo(
     () => ({
       state,
+      ...(openingError ? { openingError } : {}),
+      retryOpening,
       sendReady,
       workspaceSocketState,
       activeCompaction,
@@ -1921,7 +2028,9 @@ export function useWorkstreamSocket(
       activeCompaction,
       createMessage,
       loadTranscriptRange,
+      openingError,
       requestSnapshot,
+      retryOpening,
       sendReady,
       state,
       workspaceSocketState,

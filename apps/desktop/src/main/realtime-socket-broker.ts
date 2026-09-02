@@ -240,6 +240,7 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
     this.closeCode = code;
     this.closeReason = reason;
     if (this.current) this.current.close(code, reason);
+    else this.finishClose(code, Buffer.from(reason));
   }
 
   onClose(listener: (code: number, reason: Uint8Array) => void): void { this.closeListeners.add(listener); }
