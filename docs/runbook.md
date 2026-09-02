@@ -2220,7 +2220,7 @@ Two failure codes an operator will see, both distinct from
 
 | Code | Meaning | Triage |
 | --- | --- | --- |
-| `provider_unavailable` | Rally called and got nothing — no response, a 408, a 429, or a 5xx — and its retries are spent. | The provider. Runs are safe to retry once it recovers. |
+| `provider_unavailable` | Rally called and got nothing — no response, a 408, a 429, a 5xx, or an HTTP-200 stream declaring `unavailable`, `service_unavailable`, or a numeric 408/429/5xx — and its retries are spent. | The provider. Runs are safe to retry once it recovers. |
 | `provider_circuit_open` | Rally did not call: the breaker had already opened, so the run was refused before a request went out. | Read the *earlier* failures that opened it. The breaker also opens on 401/402/403, which are Rally's credential or credit, so this code does not by itself accuse the provider. |
 
 A run failing with either while the provider is healthy points at credentials or
