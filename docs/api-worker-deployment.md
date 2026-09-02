@@ -254,6 +254,19 @@ diagnose the trade: a small code-size increase and a first-use cost for each
 capability in exchange for less startup evaluation. They are not Cloudflare CPU
 limits or production latency predictions.
 
+The single largest remaining source of that startup work was Zod itself, and
+zod 4.5 removed most of it in the library rather than in our source. It moves a
+schema's methods onto memoized prototype getters, so a schema that is never
+narrowed or transformed never allocates the bound closures for the methods that
+would do it. Six alternating local Wrangler 4.126.0 profiles of the exact Global
+API bundle under zod 4.4.3 and 4.5.4 measured median active startup at 351.7 ms
+versus 203.9 ms and median garbage collection at 62.4 ms versus 19.7 ms; the
+bundle fell from 8,102.83 KiB to 7,544.76 KiB uncompressed and 1,624.29 KiB to
+1,542.76 KiB gzipped. Importing `@rally/contracts` alone — 325 exported schemas —
+retained 31.7 MiB of heap under 4.4.3 and 16.6 MiB under 4.5.4. As with every
+figure above, these are local diagnostics of graph shape, not platform-time or
+platform-memory promises.
+
 Service Bindings add no monetary charge or network hop by default. A document,
 Terminal, or Global telemetry-destination operation adds a Worker invocation
 and subrequest, while ordinary API requests no longer initialize those provider
@@ -264,6 +277,42 @@ catalog reads plus fourteen small KV writes; inference performs only the KV read
 for Azure-bound models in its route plan.
 
 ## Changelog
+
+### 2026-09-02 — Take zod 4.5's prototype memoization for API startup headroom
+
+**What changed:** The `zod` catalog entry resolves to 4.5.4 instead of 4.4.3. No
+source changed. The lockfile edit is confined to zod's own resolution so that the
+floating ranges elsewhere — `wrangler`, `workerd`, `miniflare`, `typescript-eslint`,
+and others that a full `pnpm update` would have carried along — keep the versions
+this deployment was profiled against.
+
+**Why:** Both entries below reduced startup work by restructuring our own schema
+construction, and the profiles that justified them still attributed the bulk of
+active startup to Zod. 4.5 attacks the same cost inside the library: methods now
+live as memoized getters on the prototype and bind themselves on first access, so
+an unused method costs nothing. Six alternating local profiles of the exact Global
+API bundle put median active startup at 351.7 ms under 4.4.3 and 203.9 ms under
+4.5.4, with median garbage collection falling 62.4 ms to 19.7 ms and the bundle
+falling 558 KiB. That margin is the point: the API graph is the artifact that has
+twice failed production upload with error 10021, and this is the largest single
+reduction to it that costs us no code.
+
+**Considered and rejected:** Running `pnpm update zod -r`, which is the ordinary
+way to do this. pnpm re-resolves every floating range once anything in the graph
+moves, so it also bumped `wrangler`, `workerd`, `miniflare`, `@cloudflare/workers-types`,
+`typescript-eslint`, `react-router`, and six others — the Workers runtime included —
+turning a dependency bump into an unbisectable one. Pinning the catalog to `^4.5.4`
+was rejected separately: `latest` is the entry this repository deliberately keeps,
+and a pin would have to be maintained by hand at every future bump.
+
+**Consequences:** zod's memory and startup profile is now good enough that the
+`deferredZodSchema()` lazy shells from the entry below buy considerably less than
+the 22.7 ms they were measured to buy. That machinery is not removed here — this
+change is a version bump and nothing else — but whoever next profiles API startup
+should re-measure it before assuming it still earns its complexity. The lockfile
+carries a hand-narrowed zod resolution; the next `pnpm update` anyone runs will
+still produce the wider re-resolution described above, which is a decision to make
+deliberately rather than as a side effect.
 
 ### 2026-09-01 — Defer cold schema graphs to capability use
 
