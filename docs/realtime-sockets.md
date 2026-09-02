@@ -524,14 +524,25 @@ client sends one and no block-ticket bearer is ever issued in a URL.
 - **A ticket is single-use.** Each target object and the dictation bridge consume
   the `jti` atomically; a replay is refused rather than opening a second socket.
 - **A turn is read by the person who wrote it, on the client too.** The room
-  advances the author's own `seen_attention_ordinal` and clears their manual
-  mark in the write that stores their message, but the canonical turn reaches
-  their own client first, and `advanceWorkstreamAttention` decides unread from
-  it before that viewer state arrives. Guessing "unread" in that gap is visible:
-  it draws the **Unread messages** divider above the turn the person just sent
-  and lights their own sidebar dot for it, for as long as the correction takes.
-  Any local advance of attention state applies the room's own author rule rather
-  than waiting to be corrected by it.
+  advances the author's own `seen_attention_ordinal` in the write that stores
+  their message, but the canonical turn reaches their own client first, and
+  `advanceWorkstreamAttention` decides unread from it before that viewer state
+  arrives. Guessing "unread" in that gap is visible: it draws the **Unread
+  messages** divider above the turn the person just sent and lights their own
+  sidebar dot for it, for as long as the correction takes. Any local advance of
+  attention state applies the room's own author rule rather than waiting to be
+  corrected by it.
+- **A local advance moves waterlines, never the manual mark.** The room clears
+  `manual_unread_from_ordinal` in that same write and a client must not, because
+  a turn frame carries no ordering against it: `markUnread` stores the mark at
+  the *latest* ordinal, which for a turn the reader just sent is that turn's own,
+  so no ordinal comparison separates a mark made before the write from one made
+  after it, and the generation that does order them is not on the frame. A
+  delayed or replayed own turn — a reconnect, or the same account marking the
+  stream unread on another device — would otherwise erase a decision the room is
+  still honouring. A waterline is a fact about what arrived and is safe to
+  predict; the manual mark is somebody's instruction, and only the room revokes
+  it.
 - **A close code says why the socket closed.** On the workspace command socket,
   released clients reserve `1008` for an actual access revocation. Invalid JSON
   or an event that fails the shared schema closes with application code `4400`;
@@ -662,10 +673,12 @@ what that leaves exposed.
 
 **What changed:** `advanceWorkstreamAttention` takes the signed-in user, read
 from `RallyApi.viewerUserId`, and applies the room's own author rule to a turn
-the reader wrote: their read waterline moves to that message's attention ordinal
-and their manual mark clears, exactly as the write that stored it did in the
-room. It also stopped carrying its own copy of the unread derivation and now
-calls `withDerivedUnread`, the one the versioned state store already used.
+the reader wrote: their read waterline moves to that message's attention
+ordinal, as the write that stored it did in the room. It also stopped carrying
+its own copy of the unread derivation and now calls `withDerivedUnread`, the one
+the versioned state store already used. The room's other half of that rule — the
+manual mark clearing — is deliberately *not* mirrored; the invariant above says
+why.
 
 **Why:** the local advance ran a few hundred milliseconds ahead of the viewer
 state the room publishes, and in that window it was wrong in the one way a
@@ -681,7 +694,10 @@ lighting for your own message and put a second, disagreeing copy of "who has
 read this" in a component whose job is to render turns. Also rejected: waiting
 for the room's viewer push and simply not advancing attention locally at all —
 that gives up the responsiveness the local advance exists for, and it is a
-coworker's message, not your own, that the divider is *for*.
+coworker's message, not your own, that the divider is *for*. And, on review,
+rejected a generation fence around the manual mark: a fence is machinery for
+keeping a prediction that has no business being made, and not predicting is both
+smaller and strictly safer.
 
 **Consequences:** `WorkstreamSocketApi` now includes `viewerUserId`, so a test
 double for the feed declares who is reading; passing `null` reproduces the old

@@ -1850,6 +1850,76 @@ describe('useWorkstreamSocket', () => {
     });
   });
 
+  it('leaves a manual unread mark standing when the reader\'s own turn arrives', async () => {
+    // The room clears the author's mark in the write that stores their turn,
+    // but this runs on a frame that carries no ordering: `markUnread` records
+    // `manual_unread_from_ordinal = latest`, which for a turn just sent is that
+    // turn's own ordinal, so nothing here can tell a mark made before the write
+    // from one made after it — on another device, or before a replay. Erasing a
+    // newer decision is the worse failure, so the mark is left to the room.
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-00000000070e';
+    const viewerUserId = '00000000-0000-7000-8000-00000000070b';
+    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+      emptyTranscriptSnapshot(),
+    );
+    queryClient.setQueryData(
+      ['workstream', workstreamId],
+      workstreamDetail({
+        id: workstreamId,
+        latestAttentionSequenceNumber: 4,
+        readThroughSequenceNumber: 4,
+        manualUnreadFromSequenceNumber: 3,
+        manualUnreadGeneration: 2,
+      }),
+    );
+    const api = socketApiWith({
+      viewerUserId,
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'transcript_turn_upserted',
+      sequence: 1,
+      occurredAt: '2026-08-23T12:00:00.000Z',
+      turn: {
+        transcriptSequence: 1,
+        turnId: 'own-turn-after-mark',
+        entryKind: 'conversation',
+        actor: 'human',
+        authorUserId: viewerUserId,
+        authorSnapshot: { userId: viewerUserId, displayName: 'Adam', avatarUrl: null },
+        attentionOrdinal: 5,
+        createdAtUtc: '2026-08-23T12:00:00.000Z',
+        revision: 1,
+        blocks: [{
+          type: 'text', blockId: 'own-turn-after-mark:text:0', blockIndex: 0, text: 'noice', streaming: false,
+        }],
+        activityId: null,
+      },
+    }));
+    await flushPromises();
+
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])).toMatchObject({
+      readThroughSequenceNumber: 5,
+      manualUnreadFromSequenceNumber: 3,
+      hasUnread: true,
+      firstUnreadSequenceNumber: 3,
+    });
+  });
+
   it('marks a work stream unread for a coworker\'s arriving turn', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();

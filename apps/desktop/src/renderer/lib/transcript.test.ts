@@ -6,6 +6,7 @@ import {
   createElicitationMessage,
   adjacentTranscriptRange,
   createTextMessage,
+  messageMentionsFromSelection,
   createToolEventMessage,
   orderedTranscriptMessages,
   composeTranscript,
@@ -156,6 +157,26 @@ describe('transcript messages', () => {
       ...base,
       elicitation: { id: 'question-one', prompt: 'Choose', responseType: 'single_select', status: 'open' },
     })).toMatchObject({ messageType: 'elicitation', elicitation: { id: 'question-one' } });
+  });
+
+  it('projects the composer\'s selected mentions onto an optimistic turn, dropping ones with no offsets', () => {
+    // The in-flight bubble is rendered by the block that draws the settled one,
+    // so a connection mention only becomes a chip there if the turn carries the
+    // offsets `withConnectorMentionLinks` slices. A selection without offsets
+    // has nothing to slice and is dropped rather than guessed at.
+    expect(messageMentionsFromSelection([
+      {
+        type: 'connector', label: '@Linear', userId: null, connectorType: 'linear',
+        startOffset: 6, endOffset: 13,
+      },
+      { type: 'person', label: '@Sam', userId: 'user-sam', connectorType: null, startOffset: 0, endOffset: 4 },
+      { type: 'person', label: '@Nobody', userId: 'user-nobody', connectorType: null },
+    ])).toEqual([
+      {
+        type: 'connector', connectorType: 'linear', displayName: '@Linear', startOffset: 6, endOffset: 13,
+      },
+      { type: 'person', personId: 'user-sam', displayName: '@Sam', startOffset: 0, endOffset: 4 },
+    ]);
   });
 
   it('replaces logical client and persisted messages without moving their transcript position', () => {
