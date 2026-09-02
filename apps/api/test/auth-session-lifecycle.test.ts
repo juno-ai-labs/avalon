@@ -27,7 +27,10 @@ class SessionDatabase {
         },
         first: async <T>() => {
           if (sql.startsWith("UPDATE sessions SET previous_refresh_token_hash")) {
-            const [newHash, nextRotatedAt, presentedCurrent, presentedPrevious, graceStart] = values as string[];
+            // Positions follow the statement in `AuthService.refresh`: the
+            // renewed expiry and ceiling modifier sit between the rotation
+            // stamp and the presented hashes.
+            const [newHash, nextRotatedAt, , , presentedCurrent, presentedPrevious, graceStart] = values as string[];
             const currentMatches = presentedCurrent === this.currentHash;
             const previousMatches = presentedPrevious === this.previousHash
               && this.rotatedAt !== null
