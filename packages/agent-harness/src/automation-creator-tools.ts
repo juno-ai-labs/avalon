@@ -71,6 +71,42 @@ export interface AutomationCreatorToolHost {
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
 }
 
+export function rememberAutomationPeopleSearchResult(
+  output: unknown,
+  resolvedPersonIds: Set<string>,
+): void {
+  const people = asRecord(output).people;
+  if (!Array.isArray(people)) return;
+  for (const person of people) {
+    const id = asRecord(person).id;
+    if (typeof id === "string") resolvedPersonIds.add(id);
+  }
+}
+
+export function rememberAutomationResourceSearchResult(
+  output: unknown,
+  resolvedResources: AutomationCreatorToolHost["resolvedResources"],
+): void {
+  const resources = asRecord(output).resources;
+  if (!Array.isArray(resources)) return;
+  for (const resource of resources) {
+    const row = asRecord(resource);
+    if (
+      typeof row.id === "string"
+      && typeof row.pluginId === "string"
+      && typeof row.resourceType === "string"
+    ) {
+      resolvedResources.set(row.id, {
+        pluginId: row.pluginId,
+        resourceType: row.resourceType,
+        sourceBindingKeys: Array.isArray(row.sourceBindingKeys)
+          ? row.sourceBindingKeys.filter((value): value is string => typeof value === "string")
+          : [],
+      });
+    }
+  }
+}
+
 export function createAutomationCreatorTools(input: AutomationCreatorToolHost): HarnessTool[] {
   const catalog = input.catalog;
   const inspectedAutomationPluginIds = input.inspectedPluginIds;
@@ -117,13 +153,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
         const { query } = z.strictObject({ query: z.string().min(1) }).parse(raw);
         const output = await input.draftResearchPort.searchPeople(query);
-        const people = asRecord(output).people;
-        if (Array.isArray(people)) {
-          for (const person of people) {
-            const id = asRecord(person).id;
-            if (typeof id === "string") resolvedAutomationPersonIds.add(id);
-          }
-        }
+        rememberAutomationPeopleSearchResult(output, resolvedAutomationPersonIds);
         return {
           output,
           summary: "Searched workspace people",
@@ -140,25 +170,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
         const { query } = z.strictObject({ query: z.string().min(1) }).parse(raw);
         const output = await input.draftResearchPort.searchResources(query);
-        const resources = asRecord(output).resources;
-        if (Array.isArray(resources)) {
-          for (const resource of resources) {
-            const row = asRecord(resource);
-            if (
-              typeof row.id === "string"
-              && typeof row.pluginId === "string"
-              && typeof row.resourceType === "string"
-            ) {
-              resolvedAutomationResources.set(row.id, {
-                pluginId: row.pluginId,
-                resourceType: row.resourceType,
-                sourceBindingKeys: Array.isArray(row.sourceBindingKeys)
-                  ? row.sourceBindingKeys.filter((value): value is string => typeof value === "string")
-                  : [],
-              });
-            }
-          }
-        }
+        rememberAutomationResourceSearchResult(output, resolvedAutomationResources);
         return {
           output,
           summary: "Searched authorized resources",

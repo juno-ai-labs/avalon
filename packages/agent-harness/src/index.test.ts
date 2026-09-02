@@ -1232,6 +1232,20 @@ describe("agent harness", () => {
     });
     if (!projection) throw new Error("recovery projection missing");
 
+    const cappedFetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
+    const cappedInput = runInput(cappedFetcher);
+    await expect(runHarness({
+      ...cappedInput,
+      config: { ...cappedInput.config, maxIterations: 1 },
+      loopId: "persistent-loop",
+      harnessRunId: "recovered-execution-at-limit",
+      bindLoopProjection: projection,
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_iteration_limit_exceeded" },
+    });
+    expect(cappedFetcher).not.toHaveBeenCalled();
+
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{ delta: { content: "Recovered answer" }, finish_reason: "stop" }],
     }])) as typeof fetch;
