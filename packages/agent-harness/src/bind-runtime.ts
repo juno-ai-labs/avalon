@@ -3170,12 +3170,33 @@ function replaceSystemMessage(messages: ProviderMessages, content: string): void
   else messages.unshift(next);
 }
 
+function providerDeclaredTransportKind(details: unknown): "server_error" | null {
+  const code = (details as { providerError?: OpenRouterProviderError } | undefined)
+    ?.providerError?.code;
+  if (typeof code !== "string") return null;
+
+  // Some OpenAI-compatible providers accept the HTTP request and then report
+  // availability through an SSE error envelope. There is no failing HTTP
+  // status for Bind to classify in that case, so preserve the provider's
+  // bounded machine code as the transport signal. Keep this allowlist narrow:
+  // other statusless codes can describe request, policy, or model defects that
+  // replaying against another endpoint must not disguise.
+  switch (code.trim().toLowerCase().replaceAll("-", "_")) {
+    case "unavailable":
+    case "service_unavailable":
+      return "server_error";
+    default:
+      return null;
+  }
+}
+
 function classifyProviderFailure(error: unknown) {
   if (error instanceof OpenRouterCompletionDefectError) {
     return { kind: error.defect, statusCode: null, retryAfterMs: null } as const;
   }
   if (error instanceof OpenRouterError || error instanceof AzureOpenAIError) {
     const status = error.status ?? null;
+    const providerKind = status === null ? providerDeclaredTransportKind(error.details) : null;
     return {
       kind: status === 429
         ? "rate_limit" as const
@@ -3183,7 +3204,7 @@ function classifyProviderFailure(error: unknown) {
           ? "server_error" as const
           : status === 402
             ? "no_credits" as const
-            : "api" as const,
+            : providerKind ?? ("api" as const),
       statusCode: status,
       retryAfterMs: retryAfterMsFromHeaders((error.details as { headers?: unknown } | undefined)?.headers),
     };
