@@ -96,13 +96,23 @@ the human bubble now reaches the sending state without being asked to. The
 sending state's only geometry is `overflow`/`position` on the bubble, for the
 shimmer to clip against; anything else written under `.is-sending` will drift
 from the row it is supposed to be indistinguishable from. What the optimistic
-turn does not carry, the row does not draw, which is why the composer's selected
-mentions are now projected onto it by `messageMentionsFromSelection` — a
-connection mention that became a chip only at the canonical turn was the one
-width change this row still had in it. A *person* mention stays plain text until
-then: the chip comes from the `[@Name](person://<id>)` Markdown the room writes
-into the stored text, and reproducing that rewrite here would put a second copy
-of it on this side of the wire.
+turn does not carry, the row does not draw, which is why `optimisticMentionRendering`
+now builds its text and mentions: a mention chip is rendered *from* the
+`[@Name](person://<id>)` Markdown in the message text, which the composer's draft
+does not have, so the bubble showed a plain `@Name` that widened into a chip at
+the canonical turn — the one width change this row still had in it. That rewrite
+is the room's `prepareMentionMarkdown`, moved into `@rally/contracts` and called
+by both sides rather than written twice; a second implementation would have to
+agree with the first about escaping, overlap, ordering, and which selections are
+dropped. Only the *rendered* text is rewritten — what is sent is still the draft
+the person typed, and the room rewrites its own copy.
+
+The shimmer hangs off `.human-message-content`, not the bubble: a send can be
+attachments alone, and the bubble is drawn only for a turn with text. Under
+`prefers-reduced-motion` the sweep is parked over the row rather than travelling
+across it, because the global reduced-motion block would otherwise run it once
+at 0.001ms and leave it clipped outside the wrapper — an in-flight turn with no
+cue at all, and less marked than a queued one.
 
 ### 2026-09-01 — An automation's result is a message in the room, named Automation
 

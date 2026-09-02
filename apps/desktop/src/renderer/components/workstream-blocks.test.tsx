@@ -324,6 +324,23 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Client-only mention rendering')).toBeInTheDocument();
   });
 
+  it('gives an attachment-only turn the same in-flight wrapper as one with text', () => {
+    // The bubble is drawn only for a turn with text, and a send can be
+    // attachments alone. The shimmer hangs off the content wrapper so that turn
+    // is not the one message that goes out saying nothing about itself.
+    render(
+      <MessageBlock
+        {...actions}
+        currentUserId="user-adam"
+        message={{ ...baseMessage, deliveryState: 'sending', text: '' }}
+      />,
+    );
+
+    const inFlight = screen.getByLabelText('Sending message');
+    expect(inFlight.querySelector('.human-message-bubble')).not.toBeInTheDocument();
+    expect(inFlight.querySelector('.human-message-content')).toBeInTheDocument();
+  });
+
   it('keeps the signed-in person implicit on their own compact prompt', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} />);
 
