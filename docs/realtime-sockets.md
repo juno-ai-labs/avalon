@@ -223,7 +223,10 @@ in-flight ticket before reconnect jitter runs. After the third total attempt,
 the socket stops reconnecting and the opening screen shows a terminal error.
 Its **Try again** action starts a fresh three-attempt sequence. Once canonical
 caches exist, ordinary background reconnects remain governed by heartbeat and
-reconnect behavior rather than this cold-open limit.
+reconnect behavior rather than this cold-open limit. Explicit ticket failures
+and pre-state socket closes are not elapsed deadlines: they continue through
+the existing jittered reconnect loop and do not consume one of the three timed
+attempts.
 
 Opening telemetry treats the composer as send-ready only after its active
 work-stream handler is installed and the committed composer crosses a paint.
@@ -747,8 +750,10 @@ preserve the indefinite-spinner failure under a different state. Applying the
 same cap to a feed that has already populated caches would unnecessarily stop
 background live-update recovery.
 
-**Consequences:** A cold open can spend at most 70 seconds in timed attempts,
-plus reconnect jitter between attempts, before presenting the error. Canonical
+**Consequences:** Three stalled attempts consume at most 70 seconds of deadline
+time, plus reconnect jitter, before presenting the error. Explicit failures and
+pre-state closes do not consume that budget and may continue reconnecting; this
+change bounds silence, not every wall-clock path to canonical state. Canonical
 cache installation permanently removes the opening deadline for that retained
 connection; an unrelated valid feed event does not. Closing during PAC
 resolution must complete immediately so a timed attempt cannot leave a
