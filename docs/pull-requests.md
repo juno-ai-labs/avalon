@@ -148,10 +148,11 @@ own history bisectable and makes it obvious which `main` the change was tested
 against.
 
 Always `--force-with-lease` rather than `--force`, so a push is refused if
-someone else has touched the branch since you last fetched it. Rebase when the branch
-needs `main`'s content — a conflict, a dependency on something that just landed
-— not on a schedule and not as a pre-merge ritual; a clean branch merges as it
-is, per [the section below](#a-moving-main-is-not-a-reason-to-hold-a-clean-merge).
+someone else has touched the branch since you last fetched it. Rebase when the
+branch needs `main`'s content — a conflict, a dependency on something that just
+landed — not on a schedule and not as a pre-merge ritual; a clean branch merges
+as it is, per [A moving `main` is not a reason to hold a clean
+merge](#a-moving-main-is-not-a-reason-to-hold-a-clean-merge) below.
 
 Two things to know before rebasing:
 
@@ -183,22 +184,31 @@ disable squash merging and rebase merging.
 ### A moving `main` is not a reason to hold a clean merge
 
 A branch is ready to merge as soon as two conditions are met: the pull request's
-own head is green, and GitHub reports the branch mergeable. `main` having
-advanced since those checks started is **not** a third condition. Do not rebase,
-force-push, and wait for a replacement run purely to have CI observe a head that
-sits on the newest `main` — by the time that run finishes `main` has usually
-moved again, so the rule costs a cycle per attempt and lands the change no more
-safely.
+own head is green, and the repository's own merge requirements are satisfied —
+no conflict, plus whatever reviews and required checks branch protection asks
+for. `main` having advanced since those checks started is **not** a third
+condition. Do not rebase, force-push, and wait for a replacement run purely to
+have CI observe a head that sits on the newest `main`: by the time that run
+finishes `main` has usually moved again, so each attempt costs a cycle and
+reopens the same gap it just closed. What that gap is, and what it is worth, is
+the last part of this section.
 
 ```bash
 gh pr view <n> --json mergeable,mergeStateStatus,statusCheckRollup
 ```
 
-`MERGEABLE` means Git has a clean merge and the merge is allowed to proceed.
-`CONFLICTING` is the case the rebase above exists for: bring the branch up to
-date, re-run the gates, force-push, and merge on the replacement run. Leave
-branch protection's *Require branches to be up to date before merging* off,
-because turning it on encodes exactly the chase this section forbids.
+`mergeable` answers one question only: whether Git can produce the merge without
+a conflict. It is not permission to merge, and a `MERGEABLE` branch can still be
+held by a required review or a required check — that is what `mergeStateStatus`
+carries, so read both. `BLOCKED` is a policy gate to satisfy, `UNSTABLE` is
+checks still running or a non-required one red, and `CONFLICTING` is the case
+the rebase above exists for: bring the branch up to date, re-run the gates,
+force-push, and merge on the replacement run. What none of those states report
+is how far behind `main` the head sits, which is the point: satisfy the
+repository's own requirements and merge.
+
+Leave branch protection's *Require branches to be up to date before merging*
+off, because turning it on encodes exactly the chase this section forbids.
 
 Rebase before merging a *mergeable* branch only when something concrete about
 `main`'s new commits interacts with this change — a migration prefix that now
@@ -206,12 +216,34 @@ collides per **Database migrations** above, a rename or signature change landing
 in the same files, a contract both sides edited. That is a judgement about two
 specific diffs, not a reflex triggered by any new commit on `main`.
 
-The residual risk is a semantic conflict that Git merges cleanly and neither
-side's CI saw. It is real, it is rare, and repeating a pre-merge run does not
-catch it either: the run that would catch it is `main`'s own, after the merge.
-Merge commits are what make that cheap to resolve — one `git revert -m 1` takes
-the whole change back out while the branch's commits stay intact for a second
-attempt.
+The residual risk is a semantic conflict: two changes that Git merges without a
+conflict and that break each other. Be precise about what the chase would buy,
+because it is not nothing. A `pull_request` run tests GitHub's merge of the
+branch into `main` **as of when that run started**, so re-running against a
+newer `main` genuinely does test a newer combination. What it cannot do is close
+the window — `main` can move between the run finishing and the merge landing —
+so the choice is between a window of minutes and a rebase loop that never ends,
+not between a risk and no risk.
+
+Know where that risk actually lands here. `.github/workflows/ci.yml` triggers on
+`pull_request` only: **nothing runs the suite on `main` after a merge.** The
+deployment workflows that do trigger on a push to `main` are path-filtered and
+verify a deployment, not the tree. So the first run to exercise the merged
+content is the *next* pull request's, which merges its branch into the `main`
+this change just became part of — soon, on a repository this active, and by
+someone who did not write it. That is the cost being accepted, and it is why the
+exceptions above are worth applying with some care rather than waved through.
+
+A merge queue with a `merge_group` trigger on CI is the option that would give
+both: GitHub tests the combined state itself, without an author rebasing for it.
+Nobody has set one up, and whether the wait it adds to every merge is worth it
+here is the team's call, not a rule this document should invent.
+
+When it does go wrong, the merge-commit style keeps the fix small: `git revert
+-m 1 <merge-sha>` on `main` takes the whole change back out as a unit. Note the
+trap on the way back in — the reverted merge is still in `main`'s ancestry, so
+re-merging the same branch brings back nothing. Revert the revert, or land the
+work as new commits.
 
 ## Conventions
 
