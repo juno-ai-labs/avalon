@@ -486,6 +486,14 @@ export class ProviderWebhookService {
       // receipt insert conflicts, `existingWorkspaceReceipt` loads,
       // `shouldApplyWorkspaceEffects` sees the null `processed_at`, and
       // `finishWorkspaceReceipt` enqueues the connector events. Fall through.
+      //
+      // With one known gap, recorded in the `connectors.md` changelog: the
+      // re-normalization mints a fresh `occurredAt` for an event whose subject
+      // carries no timestamp of its own, and `occurredAt` is hashed into the
+      // connector event's payload hash — so where a previous attempt already
+      // committed the event, the redelivery is rejected as identity reuse and
+      // dead-letters instead. Fixing it means changing either the normalizer
+      // contract or the hash, both shared by all three providers.
     }
 
     let connections = await this.loadMatchingConnections(

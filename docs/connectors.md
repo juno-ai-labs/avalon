@@ -954,6 +954,38 @@ it outright would have been cleaner still and was left alone: it is the
 only coverage `provider-webhooks.test.ts` has, since that suite binds no
 `WORKSPACE_DOS` and therefore exercises the legacy path exclusively.
 
+**Known, and deliberately not fixed here:** for one class of event the
+fall-through trades the permanent 500 for a permanent dead letter. The window
+the repair exists for is a crash *inside* `finishWorkspaceReceipt`, which
+enqueues each connector event and sets `processed_at` last — so a failure on the
+second of two enqueues leaves the first already committed in WorkspaceDO with a
+pending receipt. The redelivery falls through and re-normalizes, minting a fresh
+activity id and, for an event whose subject carries no timestamp, a fresh
+`occurredAt`: `normalizeGitHubWebhook` falls back to `delivery.receivedAt`
+(`github.ts:2491`), which is `new Date(this.now())`.
+`workspaceConnectorEventPayloadHash` zeroes only `id` and `receivedAt`, so
+`occurredAt` is hashed and the redelivery hashes differently. Identity does not
+move — `providerEventId` is the delivery id and `dedupeKey` is
+`github:<deliveryId>` — so in `ingestConnectorEvent` the ingress receipt misses
+on the new id, `byProvider`/`byDedupe` hits the committed event, and the hash
+mismatch throws `connector_event_identity_reused_with_different_content`
+(`workspace-do.ts:5017`), which retries to the dead-letter queue on every
+redelivery. `installation_repositories` is a concrete instance: its subject is
+`{action, repositoriesAdded, repositoriesRemoved}` and matches none of the
+timestamps `webhookOccurredAt` looks for.
+
+This is an identity-hashing problem rather than a routing one, and every fix for
+it is cross-cutting: leaving `occurredAt` absent when it is a `receivedAt`
+fallback and defaulting it in the object, marking a defaulted `occurredAt`
+delivery-only in the hash, or reusing the existing ingress identity on the
+fall-through. All three touch the normalizer contract or the hash shared by all
+three providers, so the change belongs to whoever takes that on with the whole
+picture, not to a routing fix. Recording it because the alternative is the claim
+that the modern path simply handles this case, which is true for every event
+carrying its own timestamp and not for the ones that do not. The `test-workers`
+redelivery cases do not reach it: they seed a pending receipt with no prior
+connector event in the object, and use `issues`, whose subject has `updated_at`.
+
 **What a future change has to respect:** an idempotency check answers a
 delivery from its receipt, so it belongs before anything that can fail for a
 reason unrelated to the delivery. Narrowing a pre-cutover guard is not the same
