@@ -1,3 +1,4 @@
+import type { ProductFeatureFlagKey } from "@rally/contracts";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
@@ -38,8 +39,14 @@ import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
  * saved configuration ever changes underneath it.
  */
 
-/** Flagship flag key. Boolean; defaults to on, so an outage cannot silently stop delivery. */
-export const DIGESTS_ENABLED_FLAG_KEY = "digests-enabled";
+/**
+ * Flagship flag key. Boolean; defaults to on, so an outage cannot silently stop
+ * delivery. Typed rather than a bare string for the reason
+ * `client-feature-flags.ts` gives above its own keys: the annotation is what
+ * makes an unregistered key a typecheck error instead of a flag that quietly
+ * never gets created.
+ */
+export const DIGESTS_ENABLED_FLAG_KEY: ProductFeatureFlagKey = "digests-enabled";
 
 interface DigestsEnabledSubject {
   userId: string;
