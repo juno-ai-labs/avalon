@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import type { Message, ThoughtEventData } from './types';
 import {
+  collapseSettledWorkIntoAccordion,
   foldSettledWorkIntoMessages,
   createElicitationMessage,
   adjacentTranscriptRange,
@@ -2041,6 +2042,168 @@ describe('foldSettledWorkIntoMessages', () => {
   it('carries an unknown total as unknown', () => {
     const folded = foldSettledWorkIntoMessages([answer('turn-1'), work('turn-1', { durationMs: null })]);
     expect(folded[0]!.workSummary).toEqual({ durationMs: null });
+  });
+});
+
+describe('collapseSettledWorkIntoAccordion', () => {
+  const base = {
+    workstreamId: 'workstream-one', sequenceNumber: 0, attentionSequenceNumber: 7,
+    createdAt: '2026-08-26T12:00:00.000Z', transcriptSequence: 1,
+    authorType: 'agent' as const,
+  };
+  const answer = (turnId: string, over: Partial<Message> = {}): Message => ({
+    ...base, id: `${turnId}:text`, transcriptTurnId: turnId,
+    messageType: 'text', text: 'Answer', workSummary: { durationMs: 2_477_000 }, ...over,
+  });
+  const plugin = (id: string, name: string, over: Partial<Message> = {}): Message => ({
+    ...base, id, messageType: 'plugin_activity',
+    pluginActivity: {
+      groupKey: `name:${name}`, name, icon: 'plug', active: false, durationMs: 4_000,
+      activeVerb: `Using ${name}`, completedVerb: `Used ${name}`,
+    },
+    ...over,
+  });
+  const thinking = (id: string, over: Partial<Message> = {}): Message => ({
+    ...base, id, messageType: 'thought',
+    thoughtEvent: {
+      status: 'completed', durationMs: 50_000, activeVerb: 'thinking', completedVerb: 'thought',
+    },
+    ...over,
+  });
+  const said = (id: string): Message => ({
+    ...base, id, authorType: 'human', messageType: 'text', text: 'Please investigate.',
+  });
+
+  it('folds a settled run behind its own total, above the answer it produced', () => {
+    const collapsed = collapseSettledWorkIntoAccordion([
+      said('human-one'),
+      thinking('thought-one'),
+      plugin('plugin-google', 'Google Mail + Calendar'),
+      plugin('plugin-web', 'Web'),
+      answer('turn-1'),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType)).toEqual(['text', 'work_accordion', 'text']);
+    const accordion = collapsed[1]!;
+    // Where the run's first row sat, and holding every row of it in order.
+    expect(accordion.workAccordion?.rows.map((row) => row.id))
+      .toEqual(['thought-one', 'plugin-google', 'plugin-web']);
+    // The answer's own total, moved rather than copied: one duration, one place.
+    expect(accordion.workAccordion?.durationMs).toBe(2_477_000);
+    expect(collapsed[2]!.workSummary).toBeUndefined();
+  });
+
+  it('keeps the total in the header when the turn reached for nothing', () => {
+    // No machinery above the answer means no drawer to put the receipt in, and
+    // an empty accordion is worse than the line it replaced.
+    const collapsed = collapseSettledWorkIntoAccordion([said('human-one'), answer('turn-1')]);
+
+    expect(collapsed.map((message) => message.messageType)).toEqual(['text', 'text']);
+    expect(collapsed[1]!.workSummary).toEqual({ durationMs: 2_477_000 });
+  });
+
+  it('stops at the last thing a person read, so one answer never swallows another turn', () => {
+    const collapsed = collapseSettledWorkIntoAccordion([
+      plugin('plugin-early', 'Slack'),
+      answer('turn-1', { id: 'turn-1:text', workSummary: undefined }),
+      thinking('thought-two'),
+      answer('turn-2'),
+    ]);
+
+    // The first answer carries no settled total, so its own run stays in the
+    // feed; the second one's drawer holds only the work that came after it.
+    expect(collapsed.map((message) => message.messageType))
+      .toEqual(['plugin_activity', 'text', 'work_accordion', 'text']);
+    expect(collapsed[2]!.workAccordion?.rows.map((row) => row.id)).toEqual(['thought-two']);
+  });
+
+  it('stops at a stretch of transcript nobody has loaded', () => {
+    // The sentence that closed the earlier run may be sitting in the gap, so
+    // the row after it opens the accordion rather than joining what precedes.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      plugin('plugin-before-gap', 'Slack'),
+      thinking('thought-after-gap', { precededByTranscriptGap: true }),
+      plugin('plugin-web', 'Web'),
+      answer('turn-1'),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType))
+      .toEqual(['plugin_activity', 'work_accordion', 'text']);
+    expect(collapsed[1]!.workAccordion?.rows.map((row) => row.id))
+      .toEqual(['thought-after-gap', 'plugin-web']);
+  });
+
+  it('stops when the answer itself opens a newly loaded stretch', () => {
+    // The projection marks only a turn's first row, so an answer that opens its
+    // turn is where this shape appears. What sits above it is the previous
+    // island's work, and folding it in would attribute it to this answer.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      plugin('plugin-before-gap', 'Slack'),
+      thinking('thought-before-gap'),
+      answer('turn-1', { precededByTranscriptGap: true }),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType))
+      .toEqual(['plugin_activity', 'thought', 'text']);
+    // No drawer to move it to, so the total stays in the header.
+    expect(collapsed[2]!.workSummary).toEqual({ durationMs: 2_477_000 });
+  });
+
+  it('keeps the turn\'s attention ordinal, so the unread divider lands above the run', () => {
+    // The divider is placed at the first row carrying an ordinal. The rows that
+    // carried it are inside the accordion now, so the accordion carries it or
+    // an unread turn's work ends up above the divider, in the read section.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      // A grouped plugin row already carries none; the thinking row behind it
+      // is where the turn's ordinal survives, and it is the one to inherit.
+      plugin('plugin-web', 'Web', { attentionSequenceNumber: null }),
+      thinking('thought-one', { attentionSequenceNumber: 12 }),
+      answer('turn-1', { attentionSequenceNumber: 12 }),
+    ]);
+
+    expect(collapsed[0]!.messageType).toBe('work_accordion');
+    expect(collapsed[0]!.attentionSequenceNumber).toBe(12);
+  });
+
+  it('leaves a running loop expanded, because its rows are the progress being watched', () => {
+    // `foldSettledWorkIntoMessages` writes `workSummary` only once the response
+    // timer settles, so a live run reaches this pass with nothing to collapse on.
+    const collapsed = collapseSettledWorkIntoAccordion([
+      plugin('plugin-web', 'Web', { pluginActivity: {
+        groupKey: 'name:Web', name: 'Web', icon: 'web', active: true, durationMs: 7_000,
+        activeVerb: 'Using Web', completedVerb: 'Used Web',
+      } }),
+      answer('turn-1', { workSummary: undefined }),
+    ]);
+
+    expect(collapsed.map((message) => message.messageType)).toEqual(['plugin_activity', 'text']);
+  });
+
+  it('gives the accordion a derived id, no attention ordinal, and a renumbered feed', () => {
+    const collapsed = collapseSettledWorkIntoAccordion([
+      said('human-one'),
+      thinking('thought-one'),
+      plugin('plugin-web', 'Web'),
+      answer('turn-1'),
+    ]);
+
+    // Derived, because the row it sits in place of is still in the feed inside
+    // it, and two elements answering to one `message-<id>` anchor is worse than
+    // none.
+    expect(collapsed[1]!.id).toBe('thought-one:work-accordion');
+    // Nothing downstream should read the first row's own timing off the wrapper.
+    expect(collapsed[1]!.thoughtEvent).toBeUndefined();
+    expect(collapsed.map((message) => message.sequenceNumber)).toEqual([1, 2, 3]);
+  });
+
+  it('carries an unknown total and a recovered accuracy through to the drawer', () => {
+    const collapsed = collapseSettledWorkIntoAccordion([
+      thinking('thought-one'),
+      answer('turn-1', { workSummary: { durationMs: null, timingAccuracy: 'upper_bound' } }),
+    ]);
+
+    expect(collapsed[0]!.workAccordion?.durationMs).toBeNull();
+    expect(collapsed[0]!.workAccordion?.timingAccuracy).toBe('upper_bound');
   });
 });
 

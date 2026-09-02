@@ -807,6 +807,19 @@ describe('transcript read positioning', () => {
       { ...transcript[2]!, id: 'transient', sequenceNumber: 4, attentionSequenceNumber: null },
     ], [3], 2)).toBe(0);
   });
+
+  it('does not acknowledge a settled run\'s accordion, which is machinery', () => {
+    // It carries its turn's ordinal so the unread divider lands above it rather
+    // than between it and its answer — but scrolling it into view, or scrolling
+    // through an open one, says nothing about having read that answer.
+    expect(highestVisibleAttentionSequence([
+      ...transcript,
+      {
+        ...transcript[2]!, id: 'work-accordion', sequenceNumber: 4,
+        messageType: 'work_accordion' as const, attentionSequenceNumber: 2,
+      },
+    ], [3], 2)).toBe(0);
+  });
 });
 
 const openElicitation: ElicitationData = {

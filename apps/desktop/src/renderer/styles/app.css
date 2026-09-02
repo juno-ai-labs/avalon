@@ -3288,6 +3288,70 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
   color: transparent;
   -webkit-background-clip: text;
 }
+/* A settled run's work, closed behind its own total.
+
+   The label takes the type of the timing rows it hides, because it stands for
+   them: same size, same weight, same neutral, so opening the drawer changes
+   what is on screen rather than how the column reads.
+
+   The chevron is the markdown headings' own, from `.markdown-collapse-chevron`
+   above: same glyph, same 14px at 1.8, same muted neutral, same quarter turn on
+   the same 140ms. A reader has already learned it on the answer below this row,
+   and two collapse controls drawn two ways a few pixels apart read as two
+   different kinds of thing.
+
+   Its gutter is this column's own — `.plugin-face`'s 20px box and the timing
+   row's 7px gap, in flow rather than the heading's negative offset — so the
+   chevron lands in the same column as the marks of the rows it hides and the
+   total lands in the same column as their labels. The heading's own offset is
+   measured in `em` against a heading's line and would sit a few pixels off
+   here; what has to agree is the glyph, the colour, and the turn. */
+.work-accordion { display: grid; gap: 12px; }
+
+.work-accordion-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--av-ref-color-neutral-9);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 480;
+  gap: 7px;
+  justify-self: start;
+  min-height: 20px;
+  padding: 0;
+}
+
+.work-accordion-toggle:hover { color: var(--av-ref-color-neutral-11); }
+.work-accordion-toggle:focus-visible {
+  outline: 2px solid var(--av-sys-color-border-highlight);
+  outline-offset: 1px;
+}
+
+.work-accordion-chevron {
+  align-items: center;
+  color: var(--av-sys-color-text-muted);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 20px;
+  justify-content: center;
+  width: 20px;
+}
+
+.work-accordion-toggle:hover .work-accordion-chevron,
+.work-accordion-toggle:focus-visible .work-accordion-chevron { color: var(--av-sys-color-text-subtle); }
+.work-accordion-chevron svg { display: block; transition: transform 140ms ease; }
+.work-accordion-toggle[aria-expanded='true'] .work-accordion-chevron svg { transform: rotate(90deg); }
+
+/* The rows inside carry the feed's own bottom margin, which spaces one row from
+   the next in a column that has nothing else in it. Inside the drawer the grid
+   gap does that job, and the margin would add a run's worth of empty space
+   under the last row. */
+.work-accordion-rows { display: grid; gap: 12px; }
+.work-accordion-rows .agent-work-timing { margin: 0; }
+
 .run-failure-notice {
   align-items: flex-start;
   background: color-mix(in srgb, var(--av-sys-color-danger-base) 10%, var(--av-sys-color-surface-subtle));
@@ -4828,7 +4892,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   margin: -17px 0 18px;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .transcript-event:has(.agent-work-timing) {
+/* `.work-accordion` is named alongside the timing row it wraps because a closed
+   accordion contains no timing row at all, and a transcript event that changed
+   its own outer margin on being opened would shift the answer under it. */
+:is(.workstream-screen, .automation-chat-surface) .transcript-event:is(:has(.agent-work-timing), :has(.work-accordion)) {
   margin: -12px 0 18px;
 }
 

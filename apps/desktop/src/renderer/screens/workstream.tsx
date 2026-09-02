@@ -59,6 +59,7 @@ import {
 } from '../lib/telemetry';
 import {
   adjacentTranscriptRange,
+  collapseSettledWorkIntoAccordion,
   composeTranscript,
   createTextMessage,
   foldSettledWorkIntoMessages,
@@ -867,6 +868,11 @@ export function highestVisibleAttentionSequence(
       !message
       || message.realtimeOrder !== undefined
       || message.messageType === 'tool_event'
+      // A settled run's accordion carries its turn's ordinal so the unread
+      // divider lands above it rather than between it and its answer, but it is
+      // machinery: scrolling it into view, or scrolling through an open one,
+      // says nothing about having read the sentence it sits above.
+      || message.messageType === 'work_accordion'
       || message.attentionSequenceNumber == null
       || message.attentionSequenceNumber > latestAttentionSequenceNumber
     ) return highest;
@@ -1335,9 +1341,11 @@ export function WorkstreamScreen(): React.JSX.Element {
     () => {
       const feedOverlays = (transcriptOverlays.data ?? []).filter((overlay) =>
         !isComposerQueueOverlay(overlay, { harnessRunning }));
-      return foldSettledWorkIntoMessages(
-        groupThinkingMessages(
-          groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+      return collapseSettledWorkIntoAccordion(
+        foldSettledWorkIntoMessages(
+          groupThinkingMessages(
+            groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+          ),
         ),
       );
     },

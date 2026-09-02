@@ -1754,6 +1754,12 @@ export function groupThinkingMessages(messages: readonly Message[]): Message[] {
  * Only the response scope moves. A turn's thinking row stays where it is: it
  * annotates one step inside the run rather than summarizing the whole of it,
  * and several of them can belong to a single message.
+ *
+ * The header is where the total *lands*, not always where it is printed:
+ * {@link collapseSettledWorkIntoAccordion} runs after this and moves it onto
+ * the accordion it builds over the run, wherever there is a run to build one
+ * over. What this pass answers either way is which message the total belongs
+ * to, which is the question the accordion would otherwise have to ask again.
  */
 export function foldSettledWorkIntoMessages(messages: readonly Message[]): Message[] {
   const rows: Message[] = [];
@@ -1796,6 +1802,120 @@ export function foldSettledWorkIntoMessages(messages: readonly Message[]): Messa
         ...(thought.timingAccuracy === undefined ? {} : { timingAccuracy: thought.timingAccuracy }),
       },
     };
+  }
+  return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
+}
+
+/**
+ * A row the accordion swallows: machinery, not something a person read.
+ *
+ * The same two types `continuesPluginActivityRun` keeps a run open across,
+ * minus the tool rows grouping has already removed from this feed. Sharing the
+ * *set* with that predicate rather than the predicate itself is deliberate:
+ * that one answers whether a row leaves a run open, which a text row does not
+ * and an accordion's boundary agrees with; this one answers whether a row goes
+ * inside, and a tool row that reached here ungrouped would be the one thing in
+ * the drawer wearing a tool name.
+ */
+function isCollapsedWorkRow(message: Message): boolean {
+  return message.messageType === 'plugin_activity' || message.messageType === 'thought';
+}
+
+/**
+ * Fold a finished run's machinery behind the total it added up to.
+ *
+ * While the loop runs, every row of it is progress: the reader watches which
+ * places Rally is working in and how long each is taking, and that is the whole
+ * point of the rows. The moment the loop finishes they stop being progress and
+ * become a receipt — four spent timers stacked above an answer, saying what the
+ * one line under them ("Worked for 41m 17s") already says. So the run collapses
+ * into a single closed row carrying that total, and a reader who wants the
+ * breakdown opens it.
+ *
+ * The total is the response's own, which {@link foldSettledWorkIntoMessages}
+ * has already moved onto the answer as its `workSummary` — the settled response
+ * timer being exactly the "the loop is complete" signal this pass needs, and
+ * already resolved to the message it belongs to. This pass *moves* it again
+ * rather than copying it: printing it on the accordion and in the header a line
+ * below would be one duration competing with itself. An answer with no
+ * machinery above it — a turn that reached for nothing — has no accordion to
+ * move it to and keeps it in the header, which is why both renderings stay.
+ *
+ * The rows collapsed are the ones immediately above the answer, back to the
+ * first thing a person read, which is the boundary `groupPluginToolMessages`
+ * and `groupThinkingMessages` already grouped within — so the accordion holds
+ * exactly one run's worth of rows, each already collapsed to one per plugin.
+ * A stretch of transcript nobody has loaded ends it too, for the reason every
+ * pass here stops there: the sentence that closed the earlier run may be
+ * sitting in the part nobody loaded. That seam is checked at *both* ends of the
+ * scan. An answer that carries it is itself the first row of a newly loaded
+ * island, so the machinery above it belongs to an earlier one and is not this
+ * answer's to fold — the projection marks only a turn's first row, so an answer
+ * that opens its turn is exactly the shape where that happens.
+ *
+ * The accordion keeps the attention ordinal of the first row it swallowed,
+ * because the unread divider is placed at the first row carrying one and the
+ * machinery of an unread turn belongs under that divider with the answer it
+ * produced. Carrying the ordinal is not the same as having been read, though:
+ * `highestVisibleAttentionSequence` excludes this row for the reason it already
+ * excludes a tool row — an accordion scrolling into view, or a long one being
+ * scrolled through, must not acknowledge a sentence still below the fold.
+ *
+ * The accordion sits where the run's first row sat and takes a derived id: it
+ * is a different row from the one it replaces, and that row is still in the
+ * feed — inside it — so reusing the id would put the same `message-<id>` anchor
+ * on the document twice.
+ */
+export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): Message[] {
+  const rows: Message[] = [];
+  for (const message of messages) {
+    const summary = message.workSummary;
+    if (summary === undefined || message.messageType !== 'text' || message.authorType !== 'agent'
+      // The answer opens a newly loaded island, so what sits above it in this
+      // list is the previous island's work, not this run's.
+      || message.precededByTranscriptGap) {
+      rows.push(message);
+      continue;
+    }
+    let start = rows.length;
+    while (start > 0 && isCollapsedWorkRow(rows[start - 1]!)) {
+      start -= 1;
+      // The seam's own row opens the visible stretch, so the run starts at it
+      // rather than before it.
+      if (rows[start]!.precededByTranscriptGap) break;
+    }
+    const collapsed = rows.splice(start);
+    if (collapsed.length === 0) {
+      rows.push(message);
+      continue;
+    }
+    const first = collapsed[0]!;
+    rows.push({
+      ...first,
+      id: `${first.id}:work-accordion`,
+      messageType: 'work_accordion',
+      // The unread divider is placed at the first row carrying an ordinal, so a
+      // row that swallowed the ones that carried it has to carry it too or the
+      // divider slides down past the accordion and leaves an unread turn's work
+      // sitting in the read section above it. Acknowledgement is the separate
+      // question, and the answer there is still no: see the docblock.
+      attentionSequenceNumber: collapsed.find(
+        (row) => row.attentionSequenceNumber != null,
+      )?.attentionSequenceNumber ?? null,
+      // The row's own work is inside it now; nothing downstream should read the
+      // first row's timing back off the wrapper.
+      pluginActivity: undefined,
+      thoughtEvent: undefined,
+      toolEvent: undefined,
+      workAccordion: {
+        durationMs: summary.durationMs,
+        ...(summary.timingAccuracy === undefined ? {} : { timingAccuracy: summary.timingAccuracy }),
+        rows: collapsed,
+      },
+    });
+    const host: Message = { ...message };
+    delete host.workSummary;
+    rows.push(host);
   }
   return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
