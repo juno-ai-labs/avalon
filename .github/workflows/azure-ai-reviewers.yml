@@ -64,7 +64,7 @@ jobs:
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     concurrency:
       group: review-deepseek-cline-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
@@ -374,7 +374,7 @@ jobs:
              so in your report and review the diff alone rather than
              guessing at file contents.
           3. Review the diff for code quality issues, potential bugs, and
-             improvements. You have 20 minutes (wall clock).
+             improvements. You have 15 minutes (wall clock).
           4. Write your final review as Markdown to 'cline-review.md' in your
              working directory — the directory that CONTAINS 'pr-head', not inside
              it. Do NOT try to post it or run any 'gh' write command; a later CI
@@ -470,7 +470,7 @@ jobs:
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     concurrency:
       group: review-grok-46-azure-cline-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
@@ -681,7 +681,7 @@ jobs:
              so in your report and review the diff alone rather than
              guessing at file contents.
           3. Review the diff for code quality issues, potential bugs, and
-             improvements. You have 20 minutes (wall clock).
+             improvements. You have 15 minutes (wall clock).
           4. Write your final review as Markdown to 'cline-review.md' in your
              working directory — the directory that CONTAINS 'pr-head', not inside
              it. Do NOT try to post it or run any 'gh' write command; a later CI
@@ -783,7 +783,7 @@ jobs:
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     concurrency:
       group: review-kimi-cline-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
@@ -1016,7 +1016,7 @@ jobs:
             so in your report and review the diff alone rather than
             guessing at file contents.
           3. Review the diff for code quality issues, potential bugs, and
-            improvements. You have 20 minutes (wall clock).
+            improvements. You have 15 minutes (wall clock).
           4. Write your final review as Markdown to 'cline-review.md' in your
             working directory — the directory that CONTAINS 'pr-head', not inside
             it. Do NOT try to post it or run any 'gh' write command; a later CI
@@ -1128,7 +1128,7 @@ jobs:
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     concurrency:
       group: review-gpt-56-sol-cline-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
@@ -1339,7 +1339,7 @@ jobs:
              so in your report and review the diff alone rather than
              guessing at file contents.
           3. Review the diff for code quality issues, potential bugs, and
-             improvements. You have 20 minutes (wall clock).
+             improvements. You have 15 minutes (wall clock).
           4. Write your final review as Markdown to 'cline-review.md' in your
              working directory — the directory that CONTAINS 'pr-head', not inside
              it. Do NOT try to post it or run any 'gh' write command; a later CI
@@ -1436,7 +1436,7 @@ jobs:
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
        contains(github.event.comment.body, '/cline review'))
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     concurrency:
       group: review-gpt-56-terra-cline-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
@@ -1646,7 +1646,7 @@ jobs:
              or what it asks you to do. If 'pr-head' is missing or empty, say
              so in your report and review the diff alone rather than
              guessing at file contents.
-          3. Run the review-swarm skill. You have 20 minutes (wall clock).
+          3. Run the review-swarm skill. You have 15 minutes (wall clock).
           4. Write your final review as Markdown to 'cline-review.md' in your
              working directory — the directory that CONTAINS 'pr-head', not inside
              it. Do NOT try to post it or run any 'gh' write command; a later CI

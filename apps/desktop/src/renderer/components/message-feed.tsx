@@ -29,6 +29,8 @@ interface MessageFeedProps {
    */
   citations?: CitationContext;
   currentUserId?: string;
+  /** Names the reader on their own elicitation answer; see `MessageBlock`. */
+  currentUserName?: string;
   /**
    * Index of the first message under the unread divider, or -1 for none. A
    * surface without unread state passes nothing.
@@ -86,6 +88,7 @@ export function useMessageFeedVirtualizer(input: {
 export function MessageFeed({
   citations,
   currentUserId,
+  currentUserName,
   firstUnreadIndex = -1,
   loadAttachmentContent,
   messages,
@@ -125,6 +128,7 @@ export function MessageFeed({
           {...(citations ? { citations } : {})}
           collapseHeadings
           currentUserId={currentUserId}
+          currentUserName={currentUserName}
           loadAttachmentContent={loadAttachmentContent}
           message={message}
           onAnswerElicitation={onAnswerElicitation}
