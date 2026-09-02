@@ -96,6 +96,19 @@ An external-event definition must set evaluators before submission. Timer-only
 and manual-only definitions clear staged event rules rather than calling the
 evaluator tool with an empty array.
 
+`admitAuthoredDraft` enforces that, on the rules themselves rather than on
+whether the tool was called: a **ready** draft carrying a `connector_activity`,
+`semantic_activity` or `webhook` trigger is refused when its staged set is
+absent **or** empty. It is not merely the same condition `prepareAcceptance`
+applies but literally the same predicate — `evaluatorRulesMissing`, over
+`externalEventTriggers` — so a new trigger kind reaches both boundaries or
+neither. A
+draft that is not ready is exempt — a partial submission paired with a
+clarifying question has not chosen its rules yet, and acceptance refuses it on
+`ready` alone. Submission is the last point at which missing rules are the
+drafting loop's problem to fix; past it the refusal has nowhere to land but a
+proposal card whose Create button never works.
+
 Deleting a draft bumps the authority generation, cancels any live compiler run,
 marks the object `deleted`, and projects that lifecycle to the directory. It is
 not archived into a second draft store.
@@ -488,7 +501,7 @@ email is addressed and rendered
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; an event-driven authored submission refused when its rules are absent or empty, exempted while the draft is not ready, and admitted through to acceptance once they are set; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions; the REST boundary's own three create refusals answering their statuses rather than a 500, a directory membership refusal answering 403, an `ApiError` raised inside the object surviving the RPC hop with its own status, and workspace abandonment retiring compiler, schedule, run, and outbox lanes before external work. |
 | `apps/api/test-workers/automation-delivery-targets.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` and `slack_user_links` in WorkspaceDO and deliberately absent from D1: saving and removing a Slack destination; each refusal separately — no connection, a disabled one, another person's personal one, no Slack link, a link belonging to someone else, an inactive link; binding a connector plugin at acceptance, including when a disabled row still holds the same plugin id; and the service answering a detail rather than an unmapped 500. Its first test asserts the two tables are absent from D1, because that absence is what makes the rest evidence. |
 | `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
@@ -591,6 +604,70 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-01 — An event-driven draft must carry its rules to be submitted
+
+**What changed:** `admitAuthoredDraft` refuses a ready draft that has an
+external-event trigger and no evaluator rules — absent or empty, the same
+condition `prepareAcceptance` already applied. A draft that is not ready is
+exempt.
+
+**Why:** the two ends disagreed about who enforces the invariant, so neither
+did. `admitAuthoredDraft` takes `evaluatorRules` as
+`AutomationSetEvaluatorRulesInputV1Schema.nullable().default(null)` and wrote the
+row only `if (request.evaluatorRules)`, with no check that an event-driven draft
+had any; the drafting loop's `submitDraft` port passed whatever local
+`stagedEvaluatorRules` happened to hold, `null` until the model called
+`set_evaluator_rules`. The draft was then admitted **ready** and posted as a
+proposal card, and `prepareAcceptance` threw `automation_evaluator_rules_required`
+when somebody pressed Create. Reproduced on real workerd before the fix.
+
+`automation_authored_evaluator_sets` was added so an authored draft's rules had
+somewhere to live — its own schema comment names this failure, *"an event-driven
+draft written in a work stream is proposed as ready and then refused at
+acceptance for rules it had no way to record"* — but giving them a home did not
+make recording them required. This adds the requirement.
+
+Create is the wrong place for the refusal: the drafting loop has ended by then,
+so nothing can repair the submission, and what is left is a card whose button
+cannot work. A refused tool call inside the loop is repaired and retried
+instead. The `ready` exemption is deliberate and load-bearing: without it a
+partial submission paired with a clarifying question — the ordinary way a draft
+asks for a missing detail — would be refused, and the test asserts that case for
+that reason.
+
+The drafting tool refuses first, with a sentence rather than a code. A tool
+executor's thrown `Error` reaches the model as `error.message` verbatim, tagged
+an external fault, so the object's `automation_evaluator_rules_required` arrives
+naming nothing it can act on — and a model given that resubmits the same draft
+until the loop runs out, which `set_evaluator_rules`' own `validateInput`
+comment already records happening. `submit_draft` therefore carries the same
+check phrased as an instruction, beside the load-and-inspect refusal it mirrors,
+and `submit_draft`'s tool description states the requirement so the round trip
+is usually avoided. The object's throw stays as the one no caller can bypass.
+
+Both boundaries in the object call one predicate, `evaluatorRulesMissing`, over
+`isExternalEventTrigger` in `@rally/contracts`, rather than each spelling the
+condition out. The first draft of this change duplicated it and
+left a note saying the two must be kept identical; review pointed out that a
+note is what failed last time. The same class of defect was fixed once before in
+the compiler path this replaced and recurred here because each end read the
+state its own way, so the requirement is structural now — dropping a trigger
+kind from `isExternalEventTrigger` breaks the regression test rather than
+silently teaching one boundary and not the other. The predicate lives in
+contracts beside the trigger union; the several other places in the tree that
+spell the three kinds out predate this and are not converted here.
+
+Author review added the drafting-tool half. The guard alone made the refusal
+*possible* to repair; what the model actually received still did not say how,
+which is the difference between a loop that recovers and one that repeats
+itself. It also caught a stale claim in the pull request description — copy
+quoted from a file the drafting-stack deletion had already removed — and noted
+what this does not close: `automation_evaluator_source_binding_mismatch`,
+`automation_evaluator_connection_missing` and `automation_plugin_unavailable`
+still refuse at Create in the same dead-end shape. Those depend on the accepting
+person's chosen connections rather than on the submitted draft, so they cannot
+move to submission the way this one could; the class is narrowed, not closed.
 
 ### 2026-09-01 — The disposition classifier gets a corpus, and it is a gate
 

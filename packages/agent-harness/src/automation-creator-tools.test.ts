@@ -6,7 +6,7 @@ import {
   type AutomationCreatorToolHost,
 } from "./automation-creator-tools";
 
-function host(): AutomationCreatorToolHost {
+function host(overrides: Partial<AutomationCreatorToolHost> = {}): AutomationCreatorToolHost {
   return {
     catalog: [],
     inspectedPluginIds: new Set(),
@@ -15,7 +15,42 @@ function host(): AutomationCreatorToolHost {
     resolvedPersonIds: new Set(),
     draftState: { submitted: null },
     model: "test/model",
+    ...overrides,
   };
+}
+
+/** A ready draft whose one trigger needs evaluator rules. */
+const eventDrivenDraft = {
+  name: "Report on new pages",
+  description: "Report when a page is created.",
+  overview: "Reports newly created pages.",
+  instructions: "Report the page.",
+  triggers: [{
+    type: "connector_activity",
+    connectorType: "notion",
+    sourceBindingKey: "notion_source",
+    suggestedSourcePluginId: "plugin_notion",
+    eventTypes: ["notion.page.created"],
+    deterministicFilters: {},
+  }],
+  requiredCapabilities: [],
+  expectedOutputs: [],
+  requestedDelivery: [],
+  defaultBehavior: {},
+  recommendedPlugins: [],
+  memoryTables: [],
+  suggestedScope: "personal",
+  followUpQuestion: null,
+  elicitation: null,
+  ready: true,
+};
+
+const toolContext = { toolCallId: "call-1" } as never;
+
+function toolNamed(tools: ReturnType<typeof createAutomationsPlugin>["tools"], name: string) {
+  const tool = tools.find((candidate) => candidate.definition.name === name);
+  if (!tool) throw new Error(`missing tool: ${name}`);
+  return tool;
 }
 
 describe("the automations plugin", () => {
@@ -71,5 +106,61 @@ describe("the automations plugin", () => {
     expect(modes).not.toContain("activate");
     expect(createAutomationsPlugin(host()).systemMessage)
       .toContain("you never activate one");
+  });
+});
+
+describe("submitting a draft that needs evaluator rules", () => {
+  /**
+   * A host whose plugin is loaded and inspected, so the submission reaches the
+   * evaluator check rather than stopping at the plugin one above it.
+   */
+  function readyHost(): AutomationCreatorToolHost {
+    return host({
+      loadedPluginIds: new Set(["plugin_notion"]),
+      inspectedPluginIds: new Set(["plugin_notion"]),
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true as const }),
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+      },
+    });
+  }
+
+  it("tells the model which tool to call rather than handing it an error code", async () => {
+    const tools = createAutomationsPlugin(readyHost()).tools;
+
+    // AutomationAgent refuses this too, but its message reaches the model as a
+    // bare `automation_evaluator_rules_required` tagged an external fault. A
+    // model given that resubmits the same draft; the sentence names the tool.
+    await expect(toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext))
+      .rejects.toThrow(/Call set_evaluator_rules .* before submitting a ready draft/u);
+  });
+
+  it("admits the same draft once the rules have been set", async () => {
+    const state = readyHost();
+    const tools = createAutomationsPlugin(state).tools;
+    await toolNamed(tools, "set_evaluator_rules").execute({
+      schemaVersion: 1,
+      evaluators: [],
+    }, toolContext);
+
+    // An empty set is the tool's documented way to *clear* rules, so it must
+    // not satisfy the requirement either.
+    await expect(toolNamed(tools, "submit_draft").execute(eventDrivenDraft, toolContext))
+      .rejects.toThrow(/Call set_evaluator_rules/u);
+  });
+
+  it("leaves a partial draft and a draft with no event trigger alone", async () => {
+    const tools = createAutomationsPlugin(readyHost()).tools;
+
+    // The clarifying-question flow: rules are not chosen yet, and the object
+    // refuses a non-ready draft at acceptance on `ready` alone anyway.
+    await expect(toolNamed(tools, "submit_draft")
+      .execute({ ...eventDrivenDraft, ready: false }, toolContext)).resolves.toMatchObject({
+        output: { accepted: true },
+      });
+    await expect(toolNamed(tools, "submit_draft").execute({
+      ...eventDrivenDraft,
+      triggers: [{ type: "manual" }],
+    }, toolContext)).resolves.toMatchObject({ output: { accepted: true } });
   });
 });
