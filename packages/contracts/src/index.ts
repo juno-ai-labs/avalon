@@ -1298,6 +1298,25 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
 ]);
 
 /**
+ * Whether a trigger's events are decided by an external-event evaluator rule.
+ *
+ * The three kinds are spelled out in several places across the tree; this is
+ * the one that the enforcement path reads. Both boundaries that require rules —
+ * `admitAuthoredDraft` when a draft is submitted, `prepareAcceptance` when one
+ * is accepted — go through it, because the defect they exist to catch is what
+ * happens when they disagree about which triggers need rules. It lives beside
+ * the union it discriminates so a kind added there is one file away from the
+ * question of whether it needs an evaluator.
+ */
+export function isExternalEventTrigger(
+  trigger: z.infer<typeof TriggerDefinitionSchema>,
+): boolean {
+  return trigger.type === "connector_activity"
+    || trigger.type === "semantic_activity"
+    || trigger.type === "webhook";
+}
+
+/**
  * Where the person asked for the result to go, as the compiler understood it.
  *
  * A *request*, not a destination: the destinations are chosen on the create
