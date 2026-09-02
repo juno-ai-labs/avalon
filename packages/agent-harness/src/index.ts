@@ -101,6 +101,8 @@ export {
   AUTOMATIONS_PLUGIN_ID,
   AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
   createAutomationsPlugin,
+  rememberAutomationPeopleSearchResult,
+  rememberAutomationResourceSearchResult,
   type AutomationCreatorToolHost,
 } from "./automation-creator-tools";
 export {
@@ -2720,7 +2722,9 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
     "Ask a structured blocking question and pause this harness run for human input. Call this only for what no authorized tool can determine: a value a connector, memory, or a durable table could look up is not missing input, so search for it first and ask only if that search comes back empty. Check the plugin catalog as part of that search — a connector listed there can answer even though its tools are absent from the current turn, and the tools in front of you are only the ones already loaded. State in the prompt what you already searched and what it returned.",
   capability: "elicitation.write",
   mode: "write",
-  idempotency: "record_before_execute",
+  // The question ID is derived from this receipt key, so a replay converges on
+  // the same durable elicitation instead of creating a second prompt.
+  idempotency: "provider_key",
   get inputSchema() {
     return requestElicitationInputJsonSchema();
   },
@@ -3136,6 +3140,12 @@ export interface RunHarnessInput {
   messages: ModelMessage[];
   /** Exact durable head to resume. Absent only when this loop has never started. */
   bindLoopProjection?: BindLoopProjectionState | null;
+  /**
+   * Model turns already reserved for this subordinate execution. Persistent
+   * loop turn indexes span many executions, so the host supplies the run-local
+   * count when resuming one after eviction or input.
+   */
+  modelIterationsUsed?: number;
   /**
    * Enables provider-measured transcript compaction. The harness compares the
    * latest OpenRouter prompt + completion usage with 80% of the selected

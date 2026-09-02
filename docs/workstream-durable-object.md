@@ -587,12 +587,15 @@ Token frames never write regional D1 and never update the sidebar.
 Streamed assistant bytes are presentation-only until the provider response is
 accepted. A failed or interrupted attempt clears its overlay and materializes a
 small typed failure pill at the already reserved transcript position; arbitrary
-partial prefixes never become canonical assistant messages. Retry or provider
-fallback is allowed only before any assistant bytes are published and before
-any tool effect begins. Once output or an effect is observable, failure closes
-the step and a later attempt is a new step. An already-started tool is allowed
-to settle and persist its receipt; stop never claims to cancel or roll back its
-external effect.
+partial prefixes never become canonical assistant messages. Within one live
+provider route, transparent retry or fallback is allowed only before any
+assistant bytes are published and before any tool effect begins. If the object
+instance disappears while a reservation is still pending, takeover closes that
+lost preview as an interrupted step and starts a new model turn in the same
+durable execution. This is safe after observable text because no assistant
+response was accepted and no tool from that response could have started. An
+already-started tool is instead allowed to settle and persist its receipt; stop
+never claims to cancel or roll back its external effect.
 
 Compaction uses the same ordered publication boundary but no token checkpoint.
 `compaction_started` writes the singleton `active_agent_compaction` with its run,
@@ -1130,7 +1133,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Foreground renderer or application moves to the background | Electron sends a revisioned `set_presence` with no foreground work stream; WorkspaceDO immediately rebuilds viewer-scoped presence while the retained work-stream sockets remain open. An unclean socket close/error has the same removal effect, and the renderer clears its last snapshot until a live socket replaces it. |
 | Foreground viewer loses work-stream visibility | The applied directory effect revalidates live attachments before yielding, clears the inaccessible foreground state, and rebuilds only for the remaining authorized viewers. Restoring visibility does not resurrect the cleared state; the client must report a newer foreground revision. |
 | Workstream metadata socket hibernates | Runtime restores identity; subscribe returns a complete authoritative viewer snapshot and later effects push newer revisions. |
-| Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. |
+| Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. A pending assistant reservation becomes an interruption status turn and the same execution retries at the next model-turn index; accepted assistant/tool batches recover through their durable receipts instead of being replayed blindly. |
 | Feed replay window lost | Child sends a canonical snapshot on the admitted socket, catches up events published during assembly, and keeps the subscription open. |
 | Transcript range requested | The agent accepts a snapshot-fenced half-open sequence interval. A per-socket request times out after 15,000 ms and is queued again after reconnect without advancing the room cursor. If the client accepts a newer snapshot first, it rejects the old-fence reply and retries the newly adjacent gap rather than reporting a successful no-op. |
 | Encoded transcript range would exceed the shared 1,000,000-byte realtime-frame limit | The agent removes whole turns from the response tail until the frame fits and reports the exact shorter covered prefix. The original requested interval remains in the response, so Electron leaves the uncovered suffix as a canonical gap. If one turn is itself indivisible at that size, the response retains its exact sequence as a payload-free envelope (`blocksOmitted: true` with the true block count) and the client renders a "too large to display" placeholder, so ordering never depends on payload delivery. |
@@ -1159,8 +1162,10 @@ maps persistent loop ownership, reserve-before-await ordering, safe controls,
 exact settlement, recovery, atomic realtime delivery, bounded ranges,
 authority, and renderer convergence to actual test names. Every focused
 scenario now has a named implementation; exact-head CI and the repository's
-deliberate-break practice remain the acceptance proof. This documentation pass
-ran no suites and recorded no deliberate-break failure proof.
+deliberate-break practice remain the acceptance proof.
+`test-workers/workstream-transcript-runtime.test.ts` also forces object eviction
+with a streaming assistant reservation and proves takeover keeps the loop
+executing while settling the lost turn as retryable.
 
 Run:
 
@@ -1586,6 +1591,36 @@ would free a slot whose snapshot is still assembling, letting the next
 reconciliation trigger stack a second `request_snapshot` on the first. The
 request id is what distinguishes the two, so it decides both who is settled and
 where the frame ends.
+
+### 2026-09-02 — An unaccepted assistant turn self-heals after object eviction
+
+**What changed:** Replacement `SubstreamAgent` instances now settle a pending
+assistant reservation as an interruption status turn, close its stale stream,
+and continue the same durable execution at the next model-turn index. An
+explicit stop still settles the reservation and terminalizes the run. Real
+workerd coverage forces eviction with a streaming reservation and checks the
+new execution epoch, canonical status turn, and still-executing singleton. The
+Bind runtime subtracts assistant reservations belonging to the current
+subordinate execution from the configured run ceiling, so takeover does not
+refresh that budget and the loop's lifetime turn index does not charge later
+executions.
+
+**Why:** A production instance reset closed the feed sockets while an automation
+authoring response was reserved. Recovery successfully reclaimed the durable
+attempt, then deliberately terminalized it as `assistant_turn_interrupted` even
+though no assistant response or tool call from that turn had been accepted.
+That turned a recoverable host reset into the final user-visible failure.
+
+**Considered and rejected:** Retrying the same provider stream or preserving its
+partial prefix. Neither is recoverable after the instance disappears, and
+either would make presentation bytes an authority. Also rejected was retrying
+after an accepted assistant/tool batch; those steps recover through durable tool
+receipts because an outward effect may already have happened.
+
+**Consequences:** A host/socket reset can leave a visible interruption pill, but
+it no longer ends side-effect-safe work. Model-turn IDs advance rather than
+reusing the abandoned reservation, cancellation remains terminal, and the
+existing run-wide model-turn ceiling remains effective across every takeover.
 
 ### 2026-09-02 — Run-generated resources reach the open rail immediately
 
