@@ -677,8 +677,8 @@ request description is not reachable from the repository.
 
 | Suite | What it covers |
 | --- | --- |
-| `scripts/build-theme-css.test.mjs` | The JSON half: that the committed stylesheet is what the JSON produces, that themes set only declared paths, that aliases resolve and never cycle, that every theme restates every colour and declares every token, that both ramps are ordered by contrast, and that a backdrop layer — gradient, fetched URL, or drawn SVG — becomes the CSS it should. Runs in CI through `pnpm test:scripts`. |
-| `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every `var()` naming a declared token, lines coming off the line ramp, the navigation tint and the backdrop each painted once, and the duplicated window background. Runs against the files on disk. |
+| `scripts/build-theme-assets.test.mjs` | The JSON half: that the committed stylesheet is what the JSON produces, that themes set only declared paths, that aliases resolve and never cycle, that every theme restates every colour and declares every token, that both ramps are ordered by contrast, that a card composer states its top edge as its frame while a rule keeps a visible one, and that a backdrop layer — gradient, fetched URL, or drawn SVG — becomes the CSS it should. Runs in CI through `pnpm test:scripts`. |
+| `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every `var()` naming a declared token, lines coming off the line ramp, the navigation tint and the backdrop each painted once, the duplicated window background, and the composer's top edge being drawn from `rule-color` — the coupling the token invariant above rests on. Runs against the files on disk. |
 | `src/main/theme-assets.test.ts` | The backdrop policy and URL parsing, and the font cache: fetch-once, integrity, the size limit, concurrent asks collapsing to one request, and a 404 for every id no theme declared. |
 | `src/common/themes.test.ts` | Resolution and parsing, including that a deliberate choice is never overridden by the Mac. |
 | `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, the unknown-theme fallback, and that a reader takes the applied appearance rather than a store the broadcast has outrun. |
@@ -731,6 +731,17 @@ outranks
 `.workstream-composer:focus-within`; the work stream's composer is the
 long-lived field, and taking its one focus signal away to match an accident is
 not symmetry worth having.
+
+**What it also fixed, which was not the goal:** the launch hand-off.
+`new-workstream.tsx` puts `workstream-screen is-launching` on the root while a
+work stream is being created, so mid-transition the composer stops matching
+`.workstream-launch-screen:not(.is-launching) .launch-composer` and falls to the
+tokenised rule — with `transition: border-color 240ms` still running on it. The
+frame therefore animated `line.3` → `line.4` *and faded its top edge away* on
+the way across, then the destination screen painted the same. Both endpoints are
+now `line.3`, so the lid no longer opens during the hand-off. The
+`work-stream launch surface geometry` suite exists to protect that transition
+and had no way to see this: it reasons about geometry, and this was colour.
 
 **What a future change has to respect:** a card theme states `rule-color` as its
 own border colour. Leaving it `transparent` does not turn the rule off — it

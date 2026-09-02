@@ -14,7 +14,7 @@ const app = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 
 /**
  * The design-token JSON, two directories up at the repository root. It is the
  * source of truth for what a token is and what each theme sets; `themes.css` is
- * generated from it, and `scripts/build-theme-css.test.mjs` holds the two
+ * generated from it, and `scripts/build-theme-assets.test.mjs` holds the two
  * together. What is left for this file is the half that JSON cannot see: how
  * `app.css` and the main process use the vocabulary.
  */
@@ -279,62 +279,24 @@ describe('Terra Light row hover', () => {
 });
 
 /**
- * A card theme draws its composer's top edge from `rule-color`.
+ * The composer's top edge comes from `rule-color`, in both of its shapes.
  *
- * The stylesheet writes `border-top` from that token in both shapes, so the
- * token is not a rule theme's opt-in — it is the top edge, always. Terra set it
- * to `transparent` on the reading that it belonged to Air, and shipped a card
- * with three sides: the work-stream composer was open along the top while the
- * new-work-stream screen, which writes its own card, was closed. Nothing else
- * sees this. The generated CSS is valid, every token resolves, and the missing
- * edge is one hairline on one screen.
- *
- * Read from `themes.css` rather than the JSON because the generator fills in
- * what a theme inherits: Terra Light declares no `border-color` of its own.
+ * That coupling is what makes the token set's own guard — a card states
+ * `rule-color` as its `border-color`, in `scripts/build-theme-assets.test.mjs`
+ * — mean anything. `border-top` is written from the token unconditionally and
+ * before `border-width`, so a theme that leaves it `transparent` does not turn
+ * a rule off: it erases the top of a card, which is exactly what Terra shipped.
+ * Anchored here so that the day this declaration gains a real opt-in for the
+ * rule shape, the premise fails rather than four themes downstream of it.
  */
-describe('a card composer closes its frame', () => {
-  const themes = readFileSync(resolve(process.cwd(), 'src/renderer/styles/themes.css'), 'utf8');
+describe('the composer top edge is drawn from rule-color', () => {
+  it('writes border-top from the token in the shared rule', () => {
+    expect(app).toContain(
+      'border-top: var(--av-sys-size-border-hairline) solid var(--av-cmp-composer-rule-color);',
+    );
+  });
 
-  // Balanced to the block's own closing brace rather than to the first one at
-  // the start of a line. The generated file is flat today, so the two agree —
-  // but a nested at-rule or a reflowed brace would end the naive span early and
-  // silently, in the middle of the declarations this guard reads.
-  function block(theme: string): string {
-    const start = themes.indexOf(`[data-theme='${theme}']`);
-    expect(start, `${theme} has no block`).toBeGreaterThan(-1);
-
-    let depth = 0;
-    for (let index = start; index < themes.length; index += 1) {
-      if (themes[index] === '{') depth += 1;
-      if (themes[index] !== '}') continue;
-      depth -= 1;
-      if (depth === 0) return themes.slice(start, index + 1);
-    }
-
-    throw new Error(`${theme}'s block is never closed`);
-  }
-
-  function token(theme: string, name: string): string {
-    const match = new RegExp(`--av-cmp-composer-${name}:\\s*([^;]+);`, 'u').exec(block(theme));
-    expect(match, `${theme} declares no ${name}`).not.toBeNull();
-    return match![1]!.trim();
-  }
-
-  it.each(resolvedThemes.map((theme) => [theme] as const))('%s draws four edges or none', (theme) => {
-    // A rule theme zeroes the border width; a card carries one.
-    if (token(theme, 'border-width') === '0') {
-      expect(token(theme, 'border-color')).toBe('transparent');
-      expect(token(theme, 'border-color-focus')).toBe('transparent');
-      // The hairline is the whole shape here, and `rule-color-focus` is the only
-      // thing left saying the field is live. Either one going transparent leaves
-      // a composer with no edge at all, which is the same defect as the card's
-      // missing top read from the other side.
-      expect(token(theme, 'rule-color')).not.toBe('transparent');
-      expect(token(theme, 'rule-color-focus')).not.toBe('transparent');
-      return;
-    }
-
-    expect(token(theme, 'rule-color')).toBe(token(theme, 'border-color'));
-    expect(token(theme, 'rule-color-focus')).toBe(token(theme, 'border-color-focus'));
+  it('writes the focus top edge from rule-color-focus', () => {
+    expect(app).toContain('border-top-color: var(--av-cmp-composer-rule-color-focus);');
   });
 });
