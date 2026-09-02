@@ -450,7 +450,7 @@ document per [`module-documents.md`](module-documents.md) and register it in
 ## Security and trust model  <!-- optional -->
 ## Agent behavior            <!-- required when adding/changing an agent tool or plugin -->
 ## Provider configuration    <!-- optional -->
-## Rollout                   <!-- optional -->
+## Rollout                   <!-- required for a user-visible feature -->
 ## Acceptance                <!-- optional -->
 ## Open questions            <!-- optional -->
 ```

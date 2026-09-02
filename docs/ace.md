@@ -312,9 +312,10 @@ When a save succeeds but clients do not change, inspect in order:
 
 **What changed:** `multiple-workspaces-enabled` was added to `MANAGED_FLAGS`,
 to `ProductFeatureFlagKeySchema`, and to `deploy.mjs`, making it Ace's sixth
-managed product flag and its fifth presentation control. A new
-`protocol.test.ts` case fails when a product Boolean the API resolves is absent
-from this catalog.
+managed product flag and its fifth presentation control. Two new
+`protocol.test.ts` cases fail when a product Boolean the API resolves is absent
+from this catalog, and when a served key opts out of Ace by not being named
+`-enabled` without being listed as a deliberate exception.
 
 **Why:** The flag shipped in #464 resolved by the API and consumed by Electron,
 but registered nowhere here. Nothing created it in Flagship, so it did not
