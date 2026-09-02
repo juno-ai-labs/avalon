@@ -95,17 +95,25 @@ export interface ArtifactServingEnv {
   };
 }
 
-function withSecurityHeaders(response: Response): Response {
+function withSecurityHeaders(
+  response: Response,
+  options: Readonly<{ referrerPolicy?: "same-origin" }> = {},
+): Response {
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(artifactSecurityHeaders())) headers.set(name, value);
+  if (options.referrerPolicy) headers.set("referrer-policy", options.referrerPolicy);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function html(body: string, status: number): Response {
+function html(
+  body: string,
+  status: number,
+  securityOptions: Readonly<{ referrerPolicy?: "same-origin" }> = {},
+): Response {
   return withSecurityHeaders(new Response(body, {
     status,
     headers: { "content-type": "text/html; charset=utf-8" },
-  }));
+  }), securityOptions);
 }
 
 function readCookie(request: Request, name: string): string | null {
@@ -193,7 +201,18 @@ export default {
     // in a body, so the proof stays out of Cloudflare's invocation log, the
     // Logpush export, and every trace span.
     if (url.pathname === `${ARTIFACT_RESERVED_PREFIX}/open`) {
-      return html(redeemBootstrapPage(`${ARTIFACT_RESERVED_PREFIX}/redeem`), 200);
+      return html(
+        redeemBootstrapPage(`${ARTIFACT_RESERVED_PREFIX}/redeem`),
+        200,
+        {
+          // The default no-referrer policy serializes this same-origin form
+          // POST's Origin as `null` in Chromium. The redeem fence correctly
+          // rejects that opaque origin. This Rally-authored page only posts to
+          // itself, fragments never enter a Referer, and the artifact document
+          // loaded after redemption returns to the default no-referrer policy.
+          referrerPolicy: "same-origin",
+        },
+      );
     }
 
     // **This endpoint never serves artifact content.** It consumes the code,
