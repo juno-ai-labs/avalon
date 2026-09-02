@@ -2722,15 +2722,19 @@ pre {
 .markdown-body h5,
 .markdown-body h6 { font-size: var(--av-cmp-markdown-heading-4); font-weight: var(--av-sys-font-weight-heading); }
 
-/* Heading collapse. h2+ become a one-level accordion: the chevron lives in a
-   gutter to the left of the heading, and a collapsed section keeps ~3 lines of
+/* Heading collapse. h2+ become a one-level accordion: the chevron hangs in the
+   margin to the left of the heading, and a collapsed section keeps ~3 lines of
    whatever follows (a paragraph, the top of a table) behind a fade that starts
    at 60% opacity on the first pixel and reaches transparent on the last, so the
    next heading is what the eye lands on. Nested headings are content, not
-   nested accordions — an h3 under an h2 has no chevron. */
-.markdown-body:has(> .markdown-collapse) {
-  padding-left: 20px;
-}
+   nested accordions — an h3 under an h2 has no chevron.
+
+   The gutter is margin, not padding. Indenting the body to make room for the
+   chevron moved every line of an answer that happens to have headings 20px off
+   the author line above it — and off the answers that have none, so the column
+   a reader scans down stepped in and out by turn. Only the chevron is outside
+   the text now, which is what a gutter is, and it lands on the same x as the
+   work accordion's above it. */
 .markdown-body > .markdown-collapse:first-child .markdown-collapse-heading { margin-top: 0; }
 .markdown-collapse-heading { cursor: pointer; position: relative; }
 .markdown-collapse-chevron {
@@ -3300,12 +3304,14 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
    and two collapse controls drawn two ways a few pixels apart read as two
    different kinds of thing.
 
-   Its gutter is this column's own — `.plugin-face`'s 20px box and the timing
-   row's 7px gap, in flow rather than the heading's negative offset — so the
-   chevron lands in the same column as the marks of the rows it hides and the
-   total lands in the same column as their labels. The heading's own offset is
-   measured in `em` against a heading's line and would sit a few pixels off
-   here; what has to agree is the glyph, the colour, and the turn. */
+   It hangs in the gutter, the heading's way: outdented into the margin so the
+   total starts on the transcript's own left edge, level with the author line
+   and the answer's paragraphs, and the chevron is the only thing outside that
+   edge. Taking the mark column in flow instead — the first thing tried here —
+   put the total 27px inside the edge every other row starts at, which reads as
+   a row that drifted rather than one hung off the column. The offset is a flat
+   20px rather than the heading's `em`-derived one because this row's line box
+   is a fixed 20px, not a heading's. */
 .work-accordion { display: grid; gap: 12px; }
 
 .work-accordion-toggle {
@@ -3318,10 +3324,10 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
   font: inherit;
   font-size: 11.5px;
   font-weight: 480;
-  gap: 7px;
   justify-self: start;
   min-height: 20px;
   padding: 0;
+  position: relative;
 }
 
 .work-accordion-toggle:hover { color: var(--av-ref-color-neutral-11); }
@@ -3334,9 +3340,11 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
   align-items: center;
   color: var(--av-sys-color-text-muted);
   display: inline-flex;
-  flex: 0 0 auto;
-  height: 20px;
+  height: 100%;
   justify-content: center;
+  left: -20px;
+  position: absolute;
+  top: 0;
   width: 20px;
 }
 
