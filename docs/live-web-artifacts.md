@@ -352,6 +352,13 @@ facet that holds a stateful artifact's data. It does not own:
   tell it apart from one the current page made, so the escape cannot be closed
   at the request path. What remains is a page whose client script may read the
   current version's data — a wrong reading rather than an unauthorized one.
+- **The window goes before the preview does.** A rail preview is a
+  `WebContentsView` in a window Electron can destroy at any moment — quitting to
+  install an update is the ordinary way — and the teardown that follows runs
+  from that window's own `closed` event, after the view tree is already gone.
+  Both surfaces are therefore asked whether they still exist before they are
+  detached or closed; the window and the view are asked separately, because a
+  view whose contents closed themselves is still attached to a live window.
 - **Numeric limits.** Viewer session lifetime is 24 hours, fixed from mint and
   never sliding — the shape, not just the number, is the sleep guarantee, since
   compute per open is bounded by rate ceiling × lifetime. The open code lives 60
@@ -432,6 +439,37 @@ compromise of the serving Worker exposes artifact content and viewer sessions
 rather than workspace authority.
 
 ## Changelog
+
+### 2026-09-02 — Preview teardown asks whether its surfaces still exist
+
+**What changed:** `ArtifactViewHandle` and `ArtifactHostWindow` gained a
+`destroyed()` predicate, and `ArtifactPreviewController` consults it before
+detaching, closing, laying out, or presenting.
+
+**Why:** Quitting with an artifact open in the rail crashed the app instead of
+quitting it. `electron-updater` closes every window to install; the window's
+`closed` handler then tore the preview down, and reading `contentView` off a
+window Electron had already destroyed threw `TypeError: Object has been
+destroyed` from inside an event handler — which the main process reports as an
+uncaught exception dialog. The teardown was correct about *what* to clean up and
+wrong about *when* it was still possible.
+
+**Considered and rejected:** Tearing down on `close` instead of `closed`, which
+would run while the window still exists — but `close` is cancellable and can
+fire more than once, so the preview would be destroyed under a person who then
+kept the window. Wrapping the teardown in `try`/`catch` would hide the same
+class of ordering bug everywhere else it occurs. Guarding inside the Electron
+adapter in `index.ts` would have worked and been untestable: this module holds
+no `electron` import precisely so its decisions can be unit tested, and *when a
+surface may be touched* is a decision.
+
+**Consequences:** The lifecycle is now part of the two interfaces, so any future
+host or view implementation has to answer for it. A destroyed window is asked to
+detach nothing, because destroying it already destroyed its children; the view
+is asked separately, so one that closed itself is still detached from the live
+window holding it. Closing the preview over IPC also stops dropping the
+controller from the per-window map, which was adding a second `closed` listener
+to the same window on every subsequent presentation.
 
 ### 2026-09-02 — A cancelled detail cannot resurrect its preview
 

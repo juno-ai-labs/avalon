@@ -2714,6 +2714,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
   if (existing) return existing;
   const controller = new ArtifactPreviewController(
     {
+      destroyed: () => window.isDestroyed(),
       contentSize: () => {
         const [width = 0, height = 0] = window.getContentSize();
         return { width, height };
@@ -2728,13 +2729,18 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
       const view = new WebContentsView({
         webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
       });
-      artifactWebContents.add(view.webContents);
-      confineToArtifactOrigin(view.webContents, new URL(request.url).origin);
+      // Captured once rather than read back off `view` on each call: a
+      // destroyed web contents still answers `isDestroyed()` honestly, and it
+      // is the only part of a torn-down surface that can be asked anything.
+      const contents = view.webContents;
+      artifactWebContents.add(contents);
+      confineToArtifactOrigin(contents, new URL(request.url).origin);
       window.contentView.addChildView(view);
       const handle: ArtifactViewHandle = {
+        destroyed: () => contents.isDestroyed(),
         setBounds: (bounds) => view.setBounds(bounds),
-        loadURL: async (url) => await view.webContents.loadURL(url),
-        close: () => view.webContents.close(),
+        loadURL: async (url) => await contents.loadURL(url),
+        close: () => contents.close(),
       };
       // The controller speaks in handles, not Electron objects, so the window
       // needs this to find the child it is removing.
@@ -3147,8 +3153,11 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window) return;
+    // The controller stays registered. It is reusable once destroyed, and
+    // dropping it here would make the next presentation build a second one —
+    // and with it a second `closed` listener on the same window, until Node
+    // starts warning about the leak.
     artifactPreviews.get(window)?.destroy();
-    artifactPreviews.delete(window);
   });
   ipcMain.handle('artifact:pop-out', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);
