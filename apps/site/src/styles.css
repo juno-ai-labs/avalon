@@ -188,7 +188,7 @@ html.js .reveal.is-visible { opacity: 1; transform: none; }
 .trust-hero-copy{align-self:center;max-width:930px;padding:clamp(4rem,8vw,8rem) clamp(1.4rem,6vw,6.5rem)}
 .trust-kicker,.trust-section-heading>div>p,.trust-reporting>p:first-child{font-family:monospace;font-size:9px;font-weight:750;letter-spacing:.08em;margin:0;text-transform:uppercase}
 .trust-hero h1{font-size:clamp(4.3rem,8vw,8.8rem);font-weight:850;letter-spacing:-.078em;line-height:.84;margin:1.4rem 0 2rem}
-.trust-hero h1 em{color:#f0efe8;font-style:normal}
+.trust-hero h1 em{color:#111210;font-style:normal;text-decoration:underline;text-decoration-thickness:.08em;text-underline-offset:.08em}
 .trust-hero-copy>p:not(.trust-kicker){font-size:clamp(1rem,1.4vw,1.25rem);line-height:1.65;margin:0;max-width:720px}
 .trust-contact-row{display:flex;flex-wrap:wrap;gap:1rem 2rem;margin-top:2.3rem}
 .trust-contact-row a,.trust-text-link{border-bottom:2px solid #111210;font-size:10px;font-weight:800;letter-spacing:.035em;padding-bottom:5px;text-transform:uppercase;transition:color 160ms ease,gap 160ms ease}
@@ -250,7 +250,7 @@ html.js .reveal.is-visible { opacity: 1; transform: none; }
 .trust-reporting{background:#ff6337;border:2px solid #111210;margin:clamp(5rem,9vw,9rem) 0;overflow:hidden;padding:clamp(3rem,7vw,7rem);position:relative;scroll-margin-top:142px}
 .trust-reporting::after{aspect-ratio:1/1;border:25px solid #ccff00;border-radius:50%;content:'';height:min(27vw,400px);opacity:.7;position:absolute;right:-10%;top:-20%;width:min(27vw,400px)}
 .trust-reporting h2{position:relative;z-index:2}
-.trust-reporting h2 em{color:#f0efe8;font-style:normal}
+.trust-reporting h2 em{color:#111210;font-style:normal;text-decoration:underline;text-decoration-thickness:.08em;text-underline-offset:.08em}
 .trust-reporting>p:not(:first-child){font-size:14px;line-height:1.7;max-width:760px;position:relative;z-index:2}
 .trust-reporting>a{background:#111210;border:2px solid #111210;color:#f0efe8;display:inline-flex;font-size:10px;font-weight:800;gap:22px;letter-spacing:.04em;margin-top:1.5rem;padding:14px 16px;position:relative;text-transform:uppercase;transition:background 160ms ease,color 160ms ease,transform 160ms ease;z-index:2}
 .trust-reporting>a:hover{background:#ccff00;color:#111210;transform:translate(-3px,-3px)}
