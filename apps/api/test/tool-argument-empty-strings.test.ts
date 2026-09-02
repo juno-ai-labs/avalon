@@ -71,7 +71,7 @@ describe("blanked tool arguments", () => {
         .filter((name) => stringCursorSchema(tool, name) !== null)
         .filter((name) => {
           const schema = tool.inputSchema as Record<string, unknown>;
-          const normalized = normalizeToolArguments({ [name]: "" }, schema) as Record<string, unknown>;
+          const normalized = normalizeToolArguments({ [name]: "" }, schema, tool.mode) as Record<string, unknown>;
           return Object.prototype.hasOwnProperty.call(normalized, name);
         })
         .map((name) => `${connector}.${tool.name}.${name}`));
@@ -85,7 +85,7 @@ describe("blanked tool arguments", () => {
     if (!listTeams) throw new Error("expected the Linear connector to expose list_teams");
     const schema = listTeams.inputSchema as Record<string, unknown>;
 
-    const normalized = normalizeToolArguments({ first: 50, after: "" }, schema);
+    const normalized = normalizeToolArguments({ first: 50, after: "" }, schema, listTeams.mode);
     expect(normalized).toEqual({ first: 50 });
     expect(validateToolArguments(normalized, schema)).toBeNull();
   });
@@ -99,7 +99,7 @@ describe("blanked tool arguments", () => {
     if (!driveSearch) throw new Error("expected the Google connector to expose drive.search");
     const schema = driveSearch.inputSchema as Record<string, unknown>;
 
-    const normalized = normalizeToolArguments({ query: "", fileType: "spreadsheet" }, schema);
+    const normalized = normalizeToolArguments({ query: "", fileType: "spreadsheet" }, schema, driveSearch.mode);
     expect(normalized).toEqual({ fileType: "spreadsheet" });
     expect(validateToolArguments(normalized, schema)).toBeNull();
   });
@@ -135,8 +135,24 @@ describe("blanked tool arguments", () => {
     );
     if (!remote) throw new Error("expected the remote tool to survive validation");
 
-    expect(normalizeToolArguments({ recordId: "" }, remote.inputSchema as Record<string, unknown>))
+    expect(normalizeToolArguments({ recordId: "" }, remote.inputSchema as Record<string, unknown>, remote.mode))
       .toEqual({ recordId: "" });
+  });
+
+  it("leaves a write's blanked field to the executor, which can name it", () => {
+    // `assigneeId: null` clears an assignee and omitting it leaves the assignee
+    // alone, so a dropped blank here would report a partial update as a
+    // complete one. The declared schema still says `""` is not an assignee, so
+    // the executor rejects the call and names the field.
+    const updateIssue = connectorTools()
+      .find(({ connector, tool }) => connector === "linear" && tool.name === "update_issue")?.tool;
+    if (!updateIssue) throw new Error("expected the Linear connector to expose update_issue");
+    const schema = updateIssue.inputSchema as Record<string, unknown>;
+    const asked = { issueId: "issue-1", priority: 3, assigneeId: "" };
+
+    expect(updateIssue.mode).toBe("write");
+    expect(normalizeToolArguments(asked, schema, updateIssue.mode)).toEqual(asked);
+    expect(validateToolArguments(asked, schema)).not.toBeNull();
   });
 
   it("keeps an empty string that asks a tool for something", () => {
@@ -151,12 +167,14 @@ describe("blanked tool arguments", () => {
     expect(normalizeToolArguments(
       { issueId: "issue-1", description: "" },
       updateIssue.inputSchema as Record<string, unknown>,
+      updateIssue.mode,
     )).toEqual({ issueId: "issue-1", description: "" });
 
     // Listing a repository's root directory.
     expect(normalizeToolArguments(
       { repositoryId: "repo-1", path: "" },
       contentsList.inputSchema as Record<string, unknown>,
+      contentsList.mode,
     )).toEqual({ repositoryId: "repo-1", path: "" });
   });
 });

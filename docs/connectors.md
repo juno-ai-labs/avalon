@@ -917,6 +917,10 @@ deliberately untouched, because `description: ""` on `linear_update_issue` and
 its own `next_cursor: ""` to absence, that empty cursor being one its API emits
 rather than one a model invented.
 
+X additionally reports a last page as `next_cursor: null` rather than
+passing X's own `""` to the model, which read as "there is another page" and
+sent it back to page one indefinitely.
+
 **Why:** A run failed to file a Linear ticket after sending `after: ""` on
 `linear_list_teams` and `linear_search_issues`. The declared schema said only
 `{ "type": ["string", "null"], "maxLength": 500 }`, the executor's parse agreed,

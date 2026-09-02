@@ -56,7 +56,7 @@ describe("tool argument normalization", () => {
       teamId: "",
       first: "",
       sort: "",
-    }, schema)).toEqual({ query: "flaky rebase test" });
+    }, schema, "read")).toEqual({ query: "flaky rebase test" });
   });
 
   it("keeps an empty string wherever it is a value the tool accepts", () => {
@@ -72,7 +72,7 @@ describe("tool argument normalization", () => {
     };
     const input = { description: "", path: "", label: "", note: "" };
 
-    expect(normalizeToolArguments(input, schema)).toBe(input);
+    expect(normalizeToolArguments(input, schema, "read")).toBe(input);
   });
 
   it("keeps a blanked required field so validation names it", () => {
@@ -82,10 +82,38 @@ describe("tool argument normalization", () => {
       required: ["query"],
     };
 
-    expect(normalizeToolArguments({ query: "" }, schema)).toEqual({ query: "" });
+    expect(normalizeToolArguments({ query: "" }, schema, "read")).toEqual({ query: "" });
     const error = validateToolArguments({ query: "" }, schema);
     expect(error).not.toBeNull();
     expect(formatToolArgumentValidationError(error!)).toContain("query");
+  });
+
+  it("keeps a blank on a write, where absence and null mean different things", () => {
+    // On a read, absence is the only alternative to a value. On a write it is
+    // not: clearing a field and leaving it alone are different requests, so
+    // reading `""` as either one picks an intent the model never stated. The
+    // executor rejects it by name instead, which is one correction away from
+    // the `null` that actually clears.
+    const schema = {
+      type: "object",
+      properties: {
+        issueId: { type: "string", minLength: 1 },
+        priority: { type: ["integer", "null"], minimum: 0 },
+        assigneeId: { type: ["string", "null"], minLength: 1 },
+      },
+      required: ["issueId"],
+    };
+    const input = { issueId: "i1", priority: 3, assigneeId: "" };
+
+    expect(normalizeToolArguments(input, schema, "write")).toEqual(input);
+    expect(normalizeToolArguments(input, schema, "read"))
+      .toEqual({ issueId: "i1", priority: 3 });
+  });
+
+  it("defaults to the write behavior when no mode is given", () => {
+    const schema = { type: "object", properties: { after: { type: "string", minLength: 1 } } };
+
+    expect(normalizeToolArguments({ after: "" }, schema)).toEqual({ after: "" });
   });
 
   it("keeps a blank required by a schema composed into the one declaring it", () => {
@@ -110,9 +138,9 @@ describe("tool argument normalization", () => {
       anyOf: [{ required: ["target"] }, { required: ["all"] }],
     };
 
-    expect(normalizeToolArguments({ target: "" }, viaAllOf)).toEqual({ target: "" });
-    expect(normalizeToolArguments({ target: "" }, viaRef)).toEqual({ target: "" });
-    expect(normalizeToolArguments({ target: "" }, viaBranch)).toEqual({ target: "" });
+    expect(normalizeToolArguments({ target: "" }, viaAllOf, "read")).toEqual({ target: "" });
+    expect(normalizeToolArguments({ target: "" }, viaRef, "read")).toEqual({ target: "" });
+    expect(normalizeToolArguments({ target: "" }, viaBranch, "read")).toEqual({ target: "" });
   });
 
   it("keeps every blank when it cannot finish reading what the schema requires", () => {
@@ -122,7 +150,7 @@ describe("tool argument normalization", () => {
       $ref: "#/$defs/missing",
     };
 
-    expect(normalizeToolArguments({ target: "" }, unresolvable)).toEqual({ target: "" });
+    expect(normalizeToolArguments({ target: "" }, unresolvable, "read")).toEqual({ target: "" });
   });
 
   it("still drops a blank the composition leaves optional", () => {
@@ -135,7 +163,7 @@ describe("tool argument normalization", () => {
       allOf: [{ required: ["target"] }],
     };
 
-    expect(normalizeToolArguments({ target: "issue-1", after: "" }, schema))
+    expect(normalizeToolArguments({ target: "issue-1", after: "" }, schema, "read"))
       .toEqual({ target: "issue-1" });
   });
 
@@ -153,8 +181,8 @@ describe("tool argument normalization", () => {
       },
     };
 
-    expect(normalizeToolArguments({ ref: "" }, rejecting)).toEqual({});
-    expect(normalizeToolArguments({ ref: "" }, accepting)).toEqual({ ref: "" });
+    expect(normalizeToolArguments({ ref: "" }, rejecting, "read")).toEqual({});
+    expect(normalizeToolArguments({ ref: "" }, accepting, "read")).toEqual({ ref: "" });
   });
 
   it("leaves an undeclared blank alone so a strict parse still reports it", () => {
@@ -164,7 +192,7 @@ describe("tool argument normalization", () => {
       properties: { query: { type: "string", minLength: 1 } },
     };
 
-    expect(normalizeToolArguments({ query: "release notes", preview: "" }, schema))
+    expect(normalizeToolArguments({ query: "release notes", preview: "" }, schema, "read"))
       .toEqual({ query: "release notes", preview: "" });
   });
 
