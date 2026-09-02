@@ -1616,7 +1616,7 @@ describe('collapsing a run of thinking', () => {
     });
   });
 
-  it('keeps the run open across the plugin rows the thinking surrounds', () => {
+  it('keeps the run open across a plugin row that precedes the thinking', () => {
     // The production shape: one grouped plugin row anchored at the run's first
     // call, with the model's thinking between every later call stacked under it.
     const rows = groupThinkingMessages([

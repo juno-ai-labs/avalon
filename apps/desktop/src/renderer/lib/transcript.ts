@@ -1604,6 +1604,14 @@ function activityTiming(activity: TranscriptActivity | undefined): {
  * row the projection produces: `thinking` is one turn's own reasoning and
  * several belong to a message, `working` is the response's total and there is
  * one of it, which `foldSettledWorkIntoMessages` moves into the header.
+ *
+ * A segment's duration is its whole activity's, so summing segments is honest
+ * only while each row names a different activity. That holds because the
+ * authority writes one thinking block per assistant turn, pointed at that
+ * turn's own thinking activity. A second block on one turn would resolve to
+ * the same activity, and the collapse would then report that activity's time
+ * once per block — as one row quietly doubled, where today it would be two
+ * rows visibly repeating the same number.
  */
 function thinkingSegment(message: Message): ThoughtEventData | null {
   const thought = message.thoughtEvent;
@@ -1665,8 +1673,16 @@ export function groupThinkingMessages(messages: readonly Message[]): Message[] {
     const row = rows[run.row]!;
     // One unknown segment makes the whole run unknowable rather than shorter:
     // summing only the segments that reported understates the reasoning by
-    // exactly the one that did not, and presents the shortfall as certain.
-    const durationKnown = run.segments.every((segment) => segment.durationMs !== null);
+    // exactly the one that did not, and presents the shortfall as certain. The
+    // total is carried as nullable through the fold rather than guarded by a
+    // flag beside it, so there is no arm that adds a duration the guard has
+    // already ruled out.
+    const durationMs = run.segments.reduce<number | null>(
+      (total, segment) => total === null || segment.durationMs === null
+        ? null
+        : total + segment.durationMs,
+      0,
+    );
     const monotonicStartedAt = run.segments.flatMap((segment) => segment.monotonicStartedAt === undefined
       ? []
       : typeof segment.monotonicStartedAt === 'number'
@@ -1682,9 +1698,7 @@ export function groupThinkingMessages(messages: readonly Message[]): Message[] {
       ...row,
       thoughtEvent: {
         status: run.segments.some((segment) => segment.status === 'started') ? 'started' : 'completed',
-        durationMs: durationKnown
-          ? run.segments.reduce((total, segment) => total + (segment.durationMs ?? 0), 0)
-          : null,
+        durationMs,
         ...(startedAt.length === 1 ? { startedAt: startedAt[0]! } : {}),
         ...(monotonicStartedAt.length === 0 ? {} : { monotonicStartedAt }),
         ...(run.segments.some((segment) => segment.timingAccuracy === 'upper_bound')
