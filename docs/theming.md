@@ -669,7 +669,7 @@ request description is not reachable from the repository.
 | `src/renderer/styles/themes.css.node.test.ts` | The structural invariants: no literal colour in `app.css`, every `var()` naming a declared token, lines coming off the line ramp, the navigation tint and the backdrop each painted once, and the duplicated window background. Runs against the files on disk. |
 | `src/main/theme-assets.test.ts` | The backdrop policy and URL parsing, and the font cache: fetch-once, integrity, the size limit, concurrent asks collapsing to one request, and a 404 for every id no theme declared. |
 | `src/common/themes.test.ts` | Resolution and parsing, including that a deliberate choice is never overridden by the Mac. |
-| `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, and the unknown-theme fallback. |
+| `src/renderer/lib/theme.test.ts` | Applying, persisting, the `system` watcher, the unknown-theme fallback, and that a reader takes the applied appearance rather than a store the broadcast has outrun. |
 | `src/renderer/components/theme-picker.test.tsx` | The picker, including that each swatch previews with its own `data-theme`. |
 | `src/renderer/components/agent-work-timing.test.tsx`, `primitives.test.tsx` | That the orb — the one surface handed an appearance rather than a token — is given the one the window is drawn in. |
 | `src/renderer/lib/device-preferences.test.ts` | That an unknown theme is dropped without discarding the record. |
@@ -715,9 +715,22 @@ ink this change exists to remove. Stamping a second `dark`/`light` class on
 `<html>` would make `auto` work and was rejected for the same reason: the
 document carries one theme signal, and a second one drifts.
 
+**Also in this change:** `useTheme()` now snapshots the *document* — the three
+attributes `applyTheme` stamps — and re-reads it once inside its subscribing
+effect, rather than initializing from the device store. The store is not what is
+on screen during the window `watchThemeBroadcast` deliberately opens: it applies
+an IPC payload without waiting for the `localStorage` write behind it, so a
+surface that mounted in that gap read the previous choice and had already missed
+the announcement that would have corrected it. Every reader was exposed to it —
+Mermaid, the backdrop, the picker — but the orb is where it becomes permanent
+and visible, an inverted canvas until something else applies a theme.
+
 **What a future change has to respect:** a component still may not name a
 colour. `useAppearance()` returns a lighting, not a value, and exists for
-surfaces that paint outside CSS; anything that can name a token names one.
+surfaces that paint outside CSS; anything that can name a token names one. And
+the document remains the one record of what is being drawn: do not add a second
+copy of the applied state beside it, which is the shape this fix started as and
+which drifts the moment anything sets one without the other.
 
 ### 2026-09-02 — The identity line stopped being a theme's open question
 
