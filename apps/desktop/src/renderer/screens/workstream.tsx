@@ -63,6 +63,7 @@ import {
   createTextMessage,
   foldSettledWorkIntoMessages,
   groupPluginToolMessages,
+  groupThinkingMessages,
   optimisticMentionRendering,
   orderedTranscriptMessages,
   applyPendingInputQueueOrder,
@@ -1273,7 +1274,9 @@ export function WorkstreamScreen(): React.JSX.Element {
       const feedOverlays = (transcriptOverlays.data ?? []).filter((overlay) =>
         !isComposerQueueOverlay(overlay, { harnessRunning }));
       return foldSettledWorkIntoMessages(
-        groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+        groupThinkingMessages(
+          groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+        ),
       );
     },
     [canonicalTranscript, harnessRunning, transcriptOverlays.data],
