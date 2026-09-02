@@ -37,12 +37,17 @@ Create independent resource sets for `global` and `eu`:
 - Queues need no manual step: the deployment preflight creates every queue the
   Wrangler files declare, and Cloudflare creates each dead-letter queue on first
   deploy (see [the migration tracker section](#the-durable-object-migration-tracker)).
-  The inference lakehouse is also automatic: the API deployment creates the
-  Global analytical R2 bucket, enables Data Catalog, creates the Global stream,
-  sink, and Pipeline, and materializes its generated ID into the Global Worker
-  deploy config. EU inference analytics are intentionally deferred, so the EU
-  config has no inference Queue or Pipeline binding. The general payload and
-  telemetry R2 buckets remain one-time resources created by hand.
+  Lakehouse infrastructure is explicit: before a first deploy or intentional
+  stream replacement, run `pnpm cloudflare:lakehouses:ensure`. If Cloudflare
+  generates IDs that differ from the manifests, the command creates every
+  missing stream, reports all new IDs, and stops before their downstream
+  resources. Update all reported pins in one reviewed commit and rerun
+  reconciliation.
+  Ordinary API deployment only materializes those checked-in IDs into the
+  Global Worker config without calling the Pipelines management API. EU
+  inference analytics are intentionally deferred, so the EU config has no
+  inference Queue or Pipeline binding. The general payload and telemetry R2
+  buckets remain one-time resources created by hand.
 - The Worker, Durable Object namespaces, Workflows, and `CRASH_SYMBOLICATOR`
   Container declared in the regional Wrangler file
 
@@ -63,10 +68,10 @@ queue half reports any queue a deployment would create without creating it
 (`pnpm cloudflare:queues:ensure` creates them from a laptop, for break-glass
 only), and the lakehouse half verifies both complete immutable Global resource
 chains. The API deployment runs the same general R2 check before any
-remote migration or Worker deploy, creates the missing queues, then creates or
-verifies both Global lakehouses and resolves their generated Pipeline stream
-IDs. EU has no lakehouse analytical chain by design. A missing general
-bucket is an infrastructure failure even if
+remote migration or Worker deploy, creates missing queues, then locally writes
+the pinned Global Pipeline bindings. It does not check or reconcile lakehouse
+infrastructure. EU has no lakehouse analytical chain by design. A missing
+general bucket is an infrastructure failure even if
 the Wrangler dry build and Worker binding are otherwise deployable.
 
 `avalon-api` and its per-agent flags are provisioned, and both regional Wrangler
@@ -356,11 +361,12 @@ Use a custom token restricted to the Rally Cloudflare account and the `rallywith
 - Account: Workers Scripts Write (shown as Edit in older dashboards)
 - Account: D1 Write/Edit
 - Account: Workers R2 Storage Write/Edit
-- Account: R2 Admin Read & Write — used by the inference-lakehouse preflight to
-  create the Global analytical bucket and Data Catalog and as the
-  non-interactive credential source for the Global Catalog sink
-- Account: Pipelines Write/Edit — to create and inspect the Global stream, sink,
-  and pipeline; Worker ingestion itself uses the generated binding
+- Account: R2 Admin Read & Write — used by explicit lakehouse reconciliation to
+  create the Global analytical buckets and Data Catalogs and as the
+  non-interactive credential source for their Global Catalog sinks
+- Account: Pipelines Write/Edit — used by explicit lakehouse reconciliation to
+  create and inspect Global streams, sinks, and pipelines; ordinary deployment
+  and Worker ingestion use the pinned bindings instead
 - Account: Queues Write/Edit — to attach a consumer on deploy and for the
   preflight to create a declared queue. A token that can only list queues fails
   the create with `Authentication error [code: 10000]`.
@@ -889,9 +895,12 @@ For ordinary releases after both entrypoints exist:
    configurations with dry runs, and retain all seven startup profiles. See
    [`api-worker-deployment.md`](api-worker-deployment.md).
 2. Create or confirm each region's named Cloudflare resources. The deployment
-   automatically creates and verifies the Global inference Queue, analytical R2
-   bucket, Data Catalog, sink, stream, Pipeline, and generated binding. EU has no
-   inference analytics resources in its Worker config. Scoped
+   automatically creates the Global inference Queue and locally materializes
+   the checked-in Pipeline stream IDs. It does not create or verify the
+   analytical R2 buckets, Data Catalogs, sinks, streams, or pipelines; use the
+   explicit lakehouse reconciliation procedure above for a fresh account or an
+   intentional replacement. EU has no inference analytics resources in its
+   Worker config. Scoped
    memory still requires `avalon-global-memory` and `avalon-eu-memory` Vectorize
    indexes with 1,024 dimensions and cosine distance. Memory embeddings use
    OpenRouter `qwen/qwen3-embedding-8b` with an explicit 1,024-dimension
@@ -925,7 +934,7 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop Vitest suite uses two shards, the API Vitest suite uses three, and the workers suite uses two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
-- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: eight exact-artifact dry-runs and startup profiles, remote D1 migrations, service-first two-region version upload or direct deployment, EU promotion and health, Global service/PostHog/pricing/API promotion and health, and final regional health. The profiles and build manifests are retained even on failure. Before any migration or Worker upload, it fetches a canonical `/app/workspaces/<region>/<workspace>/workstreams/<id>` probe from the live site and requires the work-stream handoff marker; it also requires `latest-mac.yml` on the live update channel to carry the addressed-reader marker written into verified desktop releases. The site, desktop, and API deploy independently on the same merge, so an API run that reaches this gate before either reader—or after a failed reader release—stops safely and is re-run after both are live; the previous API keeps emitting only link shapes deployed readers understand. Wrangler-config, Durable Object migration, Container-image, and first-service releases select direct deployment because Cloudflare Versions cannot establish that platform state; successful releases tag each active version with the immutable verified Git SHA. Its verify matrix shards the workers suite the same way CI does (`api-tests-workers-1-of-n` / `2-of-n`) rather than appending an unsharded `test:workers` onto a Node lane — that split is load, not coverage, and an unsharded full-suite Miniflare is more `reset()` interleave than PR CI ever sees. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies both Global lakehouses before migrations; the EU deploy config intentionally contains no lakehouse binding. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: eight exact-artifact dry-runs and startup profiles, remote D1 migrations, service-first two-region version upload or direct deployment, EU promotion and health, Global service/PostHog/pricing/API promotion and health, and final regional health. The profiles and build manifests are retained even on failure. Before any migration or Worker upload, it fetches a canonical `/app/workspaces/<region>/<workspace>/workstreams/<id>` probe from the live site and requires the work-stream handoff marker; it also requires `latest-mac.yml` on the live update channel to carry the addressed-reader marker written into verified desktop releases. The site, desktop, and API deploy independently on the same merge, so an API run that reaches this gate before either reader—or after a failed reader release—stops safely and is re-run after both are live; the previous API keeps emitting only link shapes deployed readers understand. Wrangler-config, Durable Object migration, Container-image, and first-service releases select direct deployment because Cloudflare Versions cannot establish that platform state; successful releases tag each active version with the immutable verified Git SHA. Its verify matrix shards the workers suite the same way CI does (`api-tests-workers-1-of-n` / `2-of-n`) rather than appending an unsharded `test:workers` onto a Node lane — that split is load, not coverage, and an unsharded full-suite Miniflare is more `reset()` interleave than PR CI ever sees. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and locally materializes the two pinned Global lakehouse bindings before migrations without calling the Pipelines management API; the EU deploy config intentionally contains no lakehouse binding. Lakehouse creation and drift verification use explicit operator reconciliation. The workflow does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
 - **The durable automation lifecycle cutover ran on 2026-08-28** and its three
   one-shot deploy steps — the single-region refusal, the preflight, and the
