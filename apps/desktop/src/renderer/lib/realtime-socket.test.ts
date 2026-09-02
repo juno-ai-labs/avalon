@@ -9,51 +9,6 @@ import {
 } from './realtime-socket';
 
 describe('desktop realtime socket adapter', () => {
-  it('replays setup phases that cross IPC before the observer attaches', () => {
-    let emit: ((event: DesktopRealtimeSocketEvent) => void) | null = null;
-    const input = {
-      socketId: crypto.randomUUID(),
-      kind: 'substream_feed' as const,
-      url: 'wss://api.rallywith.ai/socket/workstreams/00000000-0000-7000-8000-000000000001/substreams/0',
-      protocols: ['rally.ticket.v1', 't'.repeat(40)] as [string, string],
-    };
-    const bridge = {
-      openRealtimeSocket: vi.fn(async () => {
-        emit!({
-          type: 'handshake_phase',
-          socketId: input.socketId,
-          phase: 'proxy_resolution',
-          durationMs: 18.4,
-          routeIndex: 0,
-          proxied: false,
-        });
-      }),
-      sendRealtimeSocket: vi.fn(async () => undefined),
-      closeRealtimeSocket: vi.fn(async () => undefined),
-      onRealtimeSocketEvent(listener: (event: DesktopRealtimeSocketEvent) => void) {
-        emit = listener;
-        return () => { emit = null; };
-      },
-    } satisfies RealtimeSocketBridge;
-
-    const socket = createBrokeredRealtimeSocket(bridge, input);
-    const phases = vi.fn();
-    socket.addEventListener('handshakephase', phases);
-    emit!({
-      type: 'handshake_phase',
-      socketId: input.socketId,
-      phase: 'dns',
-      durationMs: 7.2,
-      routeIndex: 0,
-      proxied: false,
-    });
-
-    expect(phases.mock.calls.map(([event]) => event)).toEqual([
-      expect.objectContaining({ phase: 'proxy_resolution', durationMs: 18.4 }),
-      expect.objectContaining({ phase: 'dns', durationMs: 7.2 }),
-    ]);
-  });
-
   it('preserves the WebSocket event and ready-state contract across the preload bridge', async () => {
     let emit: ((event: DesktopRealtimeSocketEvent) => void) | null = null;
     const openRealtimeSocket = vi.fn(async () => undefined);

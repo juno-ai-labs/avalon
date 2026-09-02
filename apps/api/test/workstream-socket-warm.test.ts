@@ -31,6 +31,7 @@ function environment(
   wake: () => Promise<void>,
   substreamObjectName: (name: string) => DurableObjectId = () =>
     createTestDurableObjectId("substream"),
+  getSubstream: (id: DurableObjectId) => object = () => ({ wake }),
 ): Env {
   return createTestEnv({
     APP_ENV: "test",
@@ -43,18 +44,75 @@ function environment(
     }),
     SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
       idFromName: substreamObjectName,
-      get: () => ({ wake }),
+      get: getSubstream,
     }),
   });
 }
 
 describe("work-stream socket ticket warming", () => {
-  it("defers a storage-ready wake for the exact ticketed substream", async () => {
+  it("defers a measurable storage-ready wake for the main feed object", async () => {
     const wake = vi.fn(async () => undefined);
     const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
     const deferred: Promise<unknown>[] = [];
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const service = new WorkstreamService(
       environment(wake, substreamObjectName),
+      auth,
+      (promise) => deferred.push(promise),
+    );
+
+    const ticket = await service.socketTicket(workstreamId);
+
+    expect(ticket.url).toContain(`/socket/workstreams/${workstreamId}/substreams/0`);
+    expect(deferred).toHaveLength(1);
+    await expect(deferred[0]).resolves.toBeUndefined();
+    expect(substreamObjectName).toHaveBeenCalledWith(
+      substreamAgentName("global", workspaceId, workstreamId),
+    );
+    expect(wake).toHaveBeenCalledOnce();
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({
+      event: "workstream_socket_ticket_warm_finished",
+      workspace_id: workspaceId,
+      workstream_id: workstreamId,
+      substream_id: "0",
+      ticket_id: ticket.ticketId,
+      duration_ms: expect.any(Number),
+      outcome: "success",
+    }));
+  });
+
+  it("returns the ticket when the best-effort wake fails", async () => {
+    const wake = vi.fn(async () => { throw new Error("probe wake failed"); });
+    const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
+    const deferred: Promise<unknown>[] = [];
+    const env = environment(wake, substreamObjectName);
+    const service = new WorkstreamService(env, auth, (promise) => deferred.push(promise));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const ticket = await service.socketTicket(workstreamId);
+    await expect(deferred[0]).resolves.toBeUndefined();
+    expect(substreamObjectName).toHaveBeenCalledWith(
+      substreamAgentName("global", workspaceId, workstreamId),
+    );
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "workstream_socket_ticket_warm_finished",
+      workspace_id: workspaceId,
+      workstream_id: workstreamId,
+      substream_id: "0",
+      ticket_id: ticket.ticketId,
+      duration_ms: expect.any(Number),
+      outcome: "failure",
+      error_name: "Error",
+    }));
+  });
+
+  it("does not materialize an unrecorded non-main substream from a ticket request", async () => {
+    const wake = vi.fn(async () => undefined);
+    const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
+    const getSubstream = vi.fn(() => ({ wake }));
+    const deferred: Promise<unknown>[] = [];
+    const service = new WorkstreamService(
+      environment(wake, substreamObjectName, getSubstream),
       auth,
       (promise) => deferred.push(promise),
     );
@@ -62,31 +120,9 @@ describe("work-stream socket ticket warming", () => {
     const ticket = await service.socketTicket(workstreamId, substreamId);
 
     expect(ticket.url).toContain(`/socket/workstreams/${workstreamId}/substreams/${substreamId}`);
-    expect(deferred).toHaveLength(1);
-    await expect(deferred[0]).resolves.toBeUndefined();
-    expect(substreamObjectName).toHaveBeenCalledWith(
-      substreamAgentName("global", workspaceId, workstreamId, substreamId),
-    );
-    expect(wake).toHaveBeenCalledOnce();
-  });
-
-  it("returns the ticket when the best-effort wake fails", async () => {
-    const wake = vi.fn(async () => { throw new Error("probe wake failed"); });
-    const deferred: Promise<unknown>[] = [];
-    const env = environment(wake);
-    const service = new WorkstreamService(env, auth, (promise) => deferred.push(promise));
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    await expect(service.socketTicket(workstreamId)).resolves.toMatchObject({
-      ticketId: expect.any(String),
-    });
-    await expect(deferred[0]).resolves.toBeUndefined();
-    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
-      event: "workstream_socket_ticket_warm_failed",
-      workspace_id: workspaceId,
-      workstream_id: workstreamId,
-      substream_id: "0",
-      error_name: "Error",
-    }));
+    expect(deferred).toEqual([]);
+    expect(substreamObjectName).not.toHaveBeenCalled();
+    expect(getSubstream).not.toHaveBeenCalled();
+    expect(wake).not.toHaveBeenCalled();
   });
 });
