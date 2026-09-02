@@ -216,6 +216,7 @@ moved on its own.
 The set of ids a pin may name is closed — `AGENT_MODEL_OVERRIDES` in
 `@rally/contracts` — because a pin bypasses the rollout, so what it can reach
 is a reviewed product decision rather than whatever string a client sends. The
+OpenAI family is ordered by capability: Sol appears above Terra and Luna. The
 API validates it on write and again on read, which is what lets a model be
 retired from the list without a migration: the work streams still naming it log
 `workstream_model_override_unknown` and return to the flag. `resolveWorkstreamModelRouting`
@@ -1135,6 +1136,26 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-09-02 — GPT-5.6 Sol joins the closed pin list above Terra and Luna
+
+**What changed:** `openai/gpt-5.6-sol` was added to the shared pinnable-model
+contract and its desktop presentation, ordered above Terra and Luna. The same
+contract-derived order now appears in the new-work-stream and new-automation
+developer selectors and in Ace's model suggestions.
+
+**Why:** Sol is the strongest GPT-5.6 family member and is deployed in Rally's
+Azure resource, so operators need to be able to pin work streams and choose it
+for managed model roles without displaying it below less capable siblings.
+
+**Considered and rejected:** Duplicating Sol in Ace's `MODEL_CHOICES` or in the
+pricing worker's selector inventory. Both already derive from
+`AGENT_MODEL_OVERRIDES`; the pricing union also already named the Azure
+deployment, so the set continues to write one KV record for Sol.
+
+**Consequences:** The model ID is now a valid explicit pin. Its Azure-only
+provider policy is owned by the harness rather than this product list: choosing
+Sol never authorizes an OpenRouter route for the same model.
 
 ### 2026-09-02 — Live application settings outrank an older initial snapshot
 

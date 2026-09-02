@@ -230,6 +230,7 @@ export const AGENT_MODEL_OVERRIDES = [
   "google/gemini-3.6-flash",
   "google/gemini-3.5-flash",
   "google/gemini-3-flash-preview",
+  "openai/gpt-5.6-sol",
   "openai/gpt-5.6-terra",
   "openai/gpt-5.6-luna",
   "deepseek/deepseek-v4-pro",
