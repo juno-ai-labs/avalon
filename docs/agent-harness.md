@@ -27,7 +27,7 @@ internal `block_dashboard` / `BlockDashboardAgent` name.
 | Path | Responsibility |
 | --- | --- |
 | `packages/agent-harness/src/bind-runtime.ts` | The Bind adapter itself — registry construction, the tool loop's hooks, streaming. |
-| `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization and bounded model-visible argument errors. |
+| `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization, blanked-optional-argument stripping, and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
 | `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the three skills the package ships. |
@@ -413,7 +413,8 @@ tool batch and then fails the current cycle visibly without retrying the
 provider or pretending that human input was requested.
 
 Before the input hash or any host hook sees arguments, the harness walks the
-tool's provider-facing JSON Schema and normalizes a string only where the field
+tool's provider-facing JSON Schema and applies two normalizations. It normalizes
+a string only where the field
 is exclusively numeric and the complete string is a finite JSON number. Unsafe
 integers and ambiguous string-or-number fields remain strings and fail or parse
 under the executor's normal contract. A redundant `number` plus `integer` type
@@ -422,7 +423,26 @@ uses number semantics, because number already contains integer. One shared
 addition to the depth cap, so a provider-controlled recursive branching schema
 cannot turn the walk exponential. This makes a medium model's `"0"` and the
 preferred `0` one canonical receipt identity without turning numeric-looking
-resource ids or free text into numbers. Executors remain the enforcement point.
+resource ids or free text into numbers. On a tool whose `mode` is `read`, it also drops an
+**optional** property whose value is `""` when that property's schema declares
+the empty string is not one of its values — `minLength` of at least 1, a `type` without `string`, or an
+`enum`/`const` excluding it, composed through `$ref`, `allOf`, and every branch
+of an `anyOf`/`oneOf`. A required property keeps the blank so validation names
+the field, an undeclared key keeps it so a strict parse still reports it, and a
+schema this walk cannot read keeps it too. A **write** keeps every blank,
+because there `null` and absence are different requests — clearing a field
+versus leaving it alone — and choosing between them is the executor's to refuse
+by name, not the harness's to guess. So does anything nested inside a value,
+and any schema carrying `if`, `then`, `else`, `dependentRequired`, or
+`dependentSchemas`: requiredness there is answerable only per instance or by
+merging an ancestor's branches, which is a schema evaluator's job. Requiredness is itself resolved
+across the composed schema rather than read from the node carrying `properties`,
+since a generated schema commonly separates the two, and a walk that cannot
+finish drops nothing. `{}` and `{ after: "" }` are
+therefore one receipt identity. What that is for, and the obligation it puts on
+a tool's schema, is
+[`agent-tools.md`](agent-tools.md#1-fail-loud-never-silently-ignore-an-input).
+Executors remain the enforcement point.
 When one throws a Zod error, the harness checks the normalized input against the
 same JSON Schema the model saw and any code-authored `validateInput` refinement:
 a mismatch becomes a bounded `kind: "validation"` result from the closest union
@@ -1214,6 +1234,52 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-02 — A blanked optional argument is normalized to an omission
+
+**What changed:** `normalizeToolArguments` gained a second rule beside
+numeric-string normalization: on a tool whose `mode` is `read`, an optional
+property of the top-level arguments object given `""` is removed when its
+declared schema says the empty string is not one of its values. It takes the
+tool's mode from the call site for that reason. It runs in
+the same walk, under the same depth and visit budgets, and therefore before the
+input hash, `beforeToolCall`, receipt planning, and execution. The three
+functions in `tool-arguments.ts` are now exported from the package so the
+composition of harness rule and connector schema can be tested against the real
+tool registries.
+
+**Why:** A production run could not file a Linear ticket because it sent
+`after: ""` as a pagination cursor; Linear answered `Argument Validation Error`
+with no field named, and the model retried unchanged until it gave up. Blanking
+an optional parameter rather than omitting it is ordinary small-model behavior,
+and the harness is the one place that can absorb it for every tool at once
+instead of each connector rediscovering it.
+
+**Considered and rejected:** Fixing it inside each connector executor, which
+leaves the next connector to repeat it and still spends a round trip on an error
+the model may not recover from. Also rejected: applying the rule to writes. A
+blanked `assigneeId` dropped from `linear_update_issue` leaves the issue's
+assignee untouched and reports the update as complete, while `null` there
+clears it — two different requests the harness cannot choose between, so the
+executor refuses the call by name instead. Also rejected: treating what the
+walk cannot read as requiring nothing. A depth or visit bound, an unresolvable
+`$ref`, a nested value whose requiredness an ancestor's branches split between
+them, and the conditional requiredness keywords are each unproven rather than
+unrequiring, and each keeps every blank. Also rejected: reading `required` from the node
+that declares `properties`. A generated or hosted-MCP schema separates the two,
+so that would have dropped a required blank from a tool whose arguments Rally
+forwards without a local parse — the argument would have gone missing instead of
+being refused. Also rejected: stripping every empty string,
+which would silently discard values that mean something — a cleared description,
+a repository root path — and is the silent drop `agent-tools.md` principle 1
+forbids. Gating on what the schema itself declares is what keeps the two apart,
+and it is deliberately narrow: `pattern` and `format` are not consulted, so a
+field that must not be empty says so with `minLength`.
+
+**Consequences:** The tolerance is opt-in per field through the declared schema,
+so a tool that omits `minLength: 1` on a never-empty string still forwards the
+blank. Receipt identity for a call with a blanked optional argument now matches
+the same call without it, which is a change in `inputHash` for that shape.
 
 ### 2026-09-02 — Automation authoring and interrupted turns share durable truth
 
