@@ -3309,9 +3309,12 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
    and the answer's paragraphs, and the chevron is the only thing outside that
    edge. Taking the mark column in flow instead — the first thing tried here —
    put the total 27px inside the edge every other row starts at, which reads as
-   a row that drifted rather than one hung off the column. The offset is a flat
-   20px rather than the heading's `em`-derived one because this row's line box
-   is a fixed 20px, not a heading's. */
+   a row that drifted rather than one hung off the column. The horizontal offset
+   is the heading's exactly — both are a flat `left: -20px`, and an alignment
+   change has to move both. What is not shared is the vertical box: the heading
+   sizes its own against a heading's line in `em` (`height: 1.25em`,
+   `top: 0.12em`), while this row's line is a fixed 20px, so `height: 100%` on
+   the toggle is enough. */
 .work-accordion { display: grid; gap: 12px; }
 
 .work-accordion-toggle {
