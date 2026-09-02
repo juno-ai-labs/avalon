@@ -131,7 +131,7 @@ function assertPersistedRunStatus(status: string): asserts status is PersistedRu
  * Every one of these writes was a routed `INSERT … SELECT … FROM harness_runs
  * WHERE lease_owner = ?` followed by a diagnostic read, because the insert's
  * own `meta.changes` could not distinguish "already written by me" from "I no
- * longer hold the run". These four states are that distinction, made once.
+ * longer hold the run". These three states are that distinction, made once.
  */
 export type FencedWriteOutcome =
   | { outcome: "persisted" }
@@ -765,14 +765,21 @@ export class WorkstreamHarnessRunStorage {
     limitsJson: string;
   }): FencedWriteOutcome {
     return this.storage.transactionSync(() => {
+      // The fence comes first, and covers the reuse path as well as the insert.
+      // While the old comparison stood it was doing this job by accident: a
+      // stale executor carries a different `attemptId`, so it fell to
+      // `mismatch` and threw. Reusing on the row alone would have answered it
+      // with success and let it keep setting up against a run it no longer
+      // holds. A legitimate replacement attempt has claimed the lease and
+      // passes here.
+      if (this.attemptOwnership(input).outcome !== "owned") {
+        return { outcome: "ownership_lost" as const };
+      }
       const existing = first(this.sql.exec<{ attempt_id: string } & Record<string, SqlStorageValue>>(
         `SELECT attempt_id FROM run_scopes WHERE run_id = ?`,
         input.runId,
       ));
       if (existing) return { outcome: "reused" as const };
-      if (this.attemptOwnership(input).outcome !== "owned") {
-        return { outcome: "ownership_lost" as const };
-      }
       this.sql.exec(
         `INSERT INTO run_scopes
            (run_id, attempt_id, execution_principal_json, eligible_connection_ids_json,
@@ -822,6 +829,12 @@ export class WorkstreamHarnessRunStorage {
     toolSurfaceHash: string;
   }): FencedWriteOutcome {
     return this.storage.transactionSync(() => {
+      // Fenced before the reuse path, for the reason given in `persistScope`:
+      // an executor that has lost its lease must not be told its activation is
+      // durable and go on preparing the plugin.
+      if (this.attemptOwnership(input).outcome !== "owned") {
+        return { outcome: "ownership_lost" as const };
+      }
       const existing = first(this.sql.exec<{ attempt_id: string } & Record<string, SqlStorageValue>>(
         `SELECT attempt_id FROM run_plugin_activations
           WHERE run_id = ? AND plugin_id = ?`,
@@ -829,9 +842,6 @@ export class WorkstreamHarnessRunStorage {
         input.pluginId,
       ));
       if (existing) return { outcome: "reused" as const };
-      if (this.attemptOwnership(input).outcome !== "owned") {
-        return { outcome: "ownership_lost" as const };
-      }
       this.sql.exec(
         `INSERT INTO run_plugin_activations
            (run_id, attempt_id, plugin_id, tool_surface_hash, authorized_at, activated_at)
