@@ -23,7 +23,7 @@ them.
 | `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, one `@thesvg/react` component per brand, and `connectorBrandMark` — the one table saying which mark a connector wears. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `ConnectorMark`, the one component that draws one. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
-| `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot; `groupPluginToolMessages` collapses the composed feed, and `groupThinkingMessages` collapses the thinking left in it. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, and `groupThinkingMessages` collapses the thinking left in it. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Applies `groupPluginToolMessages` and then `groupThinkingMessages` to the composed transcript, and is the only caller of either. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark stand in for the thinking orb. |
@@ -96,6 +96,9 @@ Two rows deliberately stay out of it:
   already keys on.
 - **The plugin rows the thinking surrounds.** They keep their own places, since
   grouping has already anchored each at its plugin's first call in the run.
+
+A run also stops at a stretch of transcript this client has not loaded, which
+the projection marks for both passes — see the invariant below.
 
 The arithmetic follows the plugin row's, for the same reasons: one segment with
 an unknown duration makes the whole run's total unknown rather than shorter, a
@@ -233,6 +236,14 @@ under the answer reads like another step still to come.
 - **A group row's position is its plugin's first row in the run, never its
   last.** The feed's order is the order work started in; the alternative makes a
   row jump downward as the plugin is used again.
+- **A run never crosses transcript nobody has loaded.** A snapshot's coverage
+  is not one interval — the opening one commonly holds an unread island and a
+  separate latest island — and the projection flattens both into one list, so
+  two rows either side of that seam look adjacent and are not. The projection
+  marks the first row after a gap with `precededByTranscriptGap`, computed from
+  the snapshot's own coverage, and **both** passes close their run on it. A jump
+  in `transcriptSequence` is not the signal: it cannot tell a hidden turn from a
+  sequence the transcript never assigned.
 - **`pluginGroup` is the only mapping.** A second table anywhere — a component
   branching on `pluginId`, a screen naming Rally itself — is how the feed and
   the row it draws come to disagree about what a group is.
@@ -321,10 +332,13 @@ It deliberately does **not** cover:
   and no more, which is what the per-plugin activity row said before this change
   too; a run's failures reach the reader through Rally's own words and the run
   failure notice.
-- **A run of thinking that spans a transcript page boundary** collapses per
-  loaded page, so a reader who scrolls back can see two rows where a single
-  session had one run. The alternative is holding run state across a paging
-  boundary the feed itself does not carry; the rows are still each true.
+- **A run that spans a stretch of transcript this client has not loaded** is
+  cut at the seam, so a reader can see two rows where one session had one run.
+  That is deliberate and is the safe direction: the turn that would have ended
+  the run may be in the part nobody loaded, and joining across it would report
+  work as one stretch that a sentence from Rally had in fact separated. Loading
+  the gap does not re-join the rows, because each pass sees only what is
+  loaded.
 - No caps, quotas, or timeouts: the whole module is a pure function over a list
   that is already bounded by the transcript's own paging.
 
@@ -379,13 +393,35 @@ which would make the header the only place reasoning appeared and erase the
 progress a reader watches during a live run — the same trade the 2026-08-29
 entry rejected in the other direction.
 
+**Found in review, and fixed here:** a run could cross a stretch of transcript
+this client had not loaded. `orderedTranscriptMessages` flattens every range of
+a snapshot into one list, and a snapshot's coverage is not one interval — the
+opening one carries an unread island and a separate latest island whenever the
+unread anchor is away from the tail, which is the ordinary case for someone
+returning to a busy work stream. The two rows either side of that seam look
+adjacent and are not, so a run joined work across turns nobody had seen — a
+sentence from Rally among them, which is exactly what is supposed to end a run.
+A three-island fixture summed 29s + 38s + 17s into one 1m 24s row that stood for
+two unrelated stretches. The projection now marks the first row after a gap with
+`precededByTranscriptGap`, computed from the snapshot's own coverage, and both
+passes close their run on it. **This was already true of the plugin grouping**,
+which has flattened the same list since it shipped; fixing only the new pass
+would have left the two disagreeing about where a run ends, which is the one
+thing sharing `continuesPluginActivityRun` exists to prevent.
+
+A jump in `transcriptSequence` was rejected as the signal. It is derivable from
+the rows alone and needs no new field, but it cannot tell a turn the client did
+not load from a sequence the transcript never assigned, so it would cut runs
+that are genuinely contiguous. Coverage is what the snapshot actually states.
+
 **Consequences:** A thought row can now stand for several activities, so
 anything reading a duration off one is reading a run's total rather than one
 segment's, and `monotonicStartedAt` on it may be a list. The response-scope row
 is told apart by its verb — `activeVerb === 'thinking'` is a turn's own
 reasoning — so a future scope that reuses either verb joins whichever collapse
-that verb names. A run of thinking that straddles a transcript page boundary
-collapses per page.
+that verb names. Any future pass that reasons about a run of adjacent rows owes
+the same `precededByTranscriptGap` check; `continuesPluginActivityRun` answers
+what a row *is*, not whether the row before it is really the row before it.
 
 ### 2026-08-30 — Multimodal generation keeps a named plugin row
 
