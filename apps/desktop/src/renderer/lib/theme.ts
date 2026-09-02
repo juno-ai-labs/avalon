@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  appearanceOf,
   defaultThemeChoice,
   parseThemeChoice,
   resolveTheme,
@@ -174,4 +175,19 @@ export function useTheme(): ThemeState {
     };
   }, []);
   return state;
+}
+
+/**
+ * The lighting the document is currently drawn in, for a component that has to
+ * be handed one rather than naming a token.
+ *
+ * `thinking-orbs` is the case this exists for: it paints a canvas, so no rule
+ * can reach its ink, and it takes `dark`/`light` as a prop. Its own `auto`
+ * detection cannot answer the question here — it looks for `data-theme="dark"`
+ * or `data-theme="light"`, and ours carries an appearance name like
+ * `terra-light`, so `auto` falls through to `prefers-color-scheme` and ignores
+ * a person who pinned the mode against their Mac.
+ */
+export function useAppearance(): 'light' | 'dark' {
+  return appearanceOf(useTheme().resolved);
 }

@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { useEffect, useState } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
 import { formatDuration } from '../lib/format';
+import { useAppearance } from '../lib/theme';
 
 export interface AgentWorkTimingProps {
   active: boolean;
@@ -45,6 +46,8 @@ export interface AgentWorkTimingProps {
 }
 
 export function AgentCompactionIndicator(): React.JSX.Element {
+  const appearance = useAppearance();
+
   return (
     <div
       aria-atomic="true"
@@ -59,7 +62,7 @@ export function AgentCompactionIndicator(): React.JSX.Element {
         size={20}
         speed={1}
         state="solving"
-        theme="dark"
+        theme={appearance}
       />
       <span aria-hidden="true" className="agent-work-timing-label">
         Compacting conversation context…
@@ -79,6 +82,7 @@ export function AgentWorkTiming({
   timingAccuracy = 'observed',
   startedAt,
 }: AgentWorkTimingProps): React.JSX.Element {
+  const appearance = useAppearance();
   const [now, setNow] = useState(() => Date.now());
 
   const monotonicStarts = monotonicStartedAt === undefined
@@ -137,7 +141,7 @@ export function AgentWorkTiming({
           // thinking-orbs@0.2.0 draws animation time zero when speed is zero.
           speed={running ? 1 : 0}
           state="solving"
-          theme="dark"
+          theme={appearance}
         />
       )}
       <span aria-hidden="true" className="agent-work-timing-label">{label}</span>

@@ -160,3 +160,15 @@ export function familyOf(theme: ResolvedTheme): ThemeFamily {
   ));
   return found ?? 'terra';
 }
+
+/**
+ * Which way round an appearance runs.
+ *
+ * The stylesheet never needs this — a rule names a token and the token already
+ * carries the lighting. It exists for the surfaces that cannot name a token at
+ * all: a canvas painted by a third-party component, which has to be *told*
+ * whether it is drawing on a light ground or a dark one.
+ */
+export function appearanceOf(theme: ResolvedTheme): 'light' | 'dark' {
+  return familyAppearances[familyOf(theme)].dark === theme ? 'dark' : 'light';
+}
