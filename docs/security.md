@@ -231,14 +231,16 @@ are hashed for sessions or AES-GCM encrypted for providers.
 
 Every resolvable connector callback and every newly emitted workspace-scoped
 external link carries `(region, workspace_id)` as routing context. Those values
-are public identifiers, not bearer authority. The renderer must activate the
-target through Electron main, verify the returned session names the exact pair,
-and only then use the destination. Explicit activation always reaches the
-platform membership path, including when a matching credential is already
-selected; cached credentials remain an optimization for ordinary workspace
-selection, never proof for an external link. The regional middleware still resolves active
-membership and workspace scope on every request. A failed activation cannot fall
-back to the currently active workspace or search other stored credentials.
+are public identifiers, not bearer authority. The renderer must enter the target
+through Electron main, verify the returned session names the exact pair, and
+only then use the destination. Main answers a link that names the active
+workspace with the session already in use, and every other target reaches the
+platform membership path through activation; a stored credential for a
+workspace that is not active is never enough to switch on, because an ended
+membership leaves its session row alive and only the platform refuses that link
+before the window moves. The regional middleware resolves active membership and
+workspace scope on every request under either path. A failed activation cannot
+fall back to the currently active workspace or search other stored credentials.
 
 Addressed native links use the distinct `workspace` host rather than routing
 query parameters. A pre-addressing desktop therefore rejects them instead of
@@ -764,6 +766,22 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-09-02 — A link to the active workspace uses the session in use
+
+**What changed:** An addressed link whose target is the active workspace no
+longer re-activates it through the platform; Electron main answers with the
+session already in use. Links into any other workspace still activate.
+
+**Why:** For the active workspace the activation minted a credential that then
+went through the same per-request membership check as the one in use, so the
+round trip added no enforcement and cost a visible reload. It stays for other
+targets because an ended membership leaves its session row alive and the
+platform is what refuses that link before the window moves.
+
+**Consequences:** The 2026-09-01 entry “External workspace targets cannot rely
+on local authority” still holds for every target that is not active. Shipped
+in #484.
 
 ### 2026-09-02 — Prepared feed admission remains revocable and one-use
 

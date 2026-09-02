@@ -32,6 +32,7 @@ let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
 let observedReconnectAccount: (() => Promise<void>) | null = null;
 let observedSurrenderActiveWorkspace: (() => Promise<void>) | null = null;
+let observedActivateWorkspace: AppSessionValue['activateWorkspace'] | null = null;
 let observedLeaveWorkspace: ((
   workspaceId: string,
   expectedOutcome: 'left' | 'abandoned',
@@ -59,6 +60,7 @@ const bridge = vi.hoisted(() => ({
   openExternal: vi.fn(),
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
+  reselectActiveWorkspace: vi.fn(),
   showDeepLinkError: vi.fn<RallyDesktopBridge['showDeepLinkError']>(async () => undefined),
   surrenderActiveWorkspace: vi.fn(),
   reportTelemetryProductIntent: vi.fn(),
@@ -99,6 +101,7 @@ function SessionProbe(): React.JSX.Element {
   observedSignOutIfCleared = context.signOutIfCredentialCleared;
   observedReconnectAccount = context.reconnectAccountIdentity;
   observedSurrenderActiveWorkspace = context.surrenderActiveWorkspace;
+  observedActivateWorkspace = context.activateWorkspace;
   observedLeaveWorkspace = context.leaveWorkspace;
   observedPendingConnectorOAuth = context.pendingConnectorOAuth;
   observedSetPendingConnectorOAuth = context.setPendingConnectorOAuth;
@@ -159,6 +162,7 @@ function resetDesktopBridge(): void {
   observedSignOutIfCleared = null;
   observedReconnectAccount = null;
   observedSurrenderActiveWorkspace = null;
+  observedActivateWorkspace = null;
   observedLeaveWorkspace = null;
   observedPendingConnectorOAuth = null;
   observedSetPendingConnectorOAuth = null;
@@ -196,6 +200,11 @@ function resetDesktopBridge(): void {
     codeChallenge: 'challenge',
   });
   bridge.surrenderActiveWorkspace.mockResolvedValue(null);
+  // Main answers a link with the active session only when a test says the
+  // target is active; otherwise every addressed link activates, as before.
+  bridge.reselectActiveWorkspace.mockResolvedValue(null);
+  // A test that navigates leaves the hash behind for the next one.
+  window.location.hash = '';
 }
 
 describe('single-platform desktop identity routing', () => {
@@ -807,6 +816,11 @@ describe('single-platform desktop identity routing', () => {
       ...globalIdentitySession,
       workspace: { id: workspaceId, name: 'Ordered Workspace', region: 'global', role: 'member' },
     };
+    // Main answers a claim from whatever it has activated so far.
+    let mainActiveSession: DesktopSession | null = null;
+    bridge.reselectActiveWorkspace.mockImplementation(async (target) => (
+      mainActiveSession?.workspace?.id === target.workspaceId ? mainActiveSession : null
+    ));
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
@@ -817,11 +831,19 @@ describe('single-platform desktop identity routing', () => {
       `rallywithai://workspace/global/${workspaceId}/workstreams/${secondWorkstreamId}`,
     );
 
+    // The second link waits behind the first's activation rather than running
+    // against the workspace that was active before it.
     await waitFor(() => expect(activations).toHaveLength(1));
+    expect(window.location.hash).not.toContain(secondWorkstreamId);
+    mainActiveSession = activated;
     activations[0]!.resolve(activated);
-    await waitFor(() => expect(activations).toHaveLength(2));
-    activations[1]!.resolve(activated);
     await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${secondWorkstreamId}`));
+    // By the time the second link ran, its workspace was the active one, so
+    // main answered the claim and it opened without a second activation. Had
+    // the second link run before the first resolved, the claim would have
+    // found nothing active and a second activation would be pending here.
+    expect(activations).toHaveLength(1);
+    expect(bridge.reselectActiveWorkspace).toHaveBeenCalledTimes(2);
   });
 
   it('continues serialized deep-link delivery after one action rejects', async () => {
@@ -995,7 +1017,7 @@ describe('single-platform desktop identity routing', () => {
       accessToken: 'renewed-target-token-longer-than-twenty-characters',
     };
     bridge.getSession.mockResolvedValueOnce(staleSession);
-    bridge.activateWorkspace.mockResolvedValue(staleSession);
+    bridge.reselectActiveWorkspace.mockResolvedValueOnce(staleSession);
     bridge.refreshSession.mockResolvedValue(renewedSession);
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const fetchRequest = vi.spyOn(globalThis, 'fetch')
@@ -1015,10 +1037,11 @@ describe('single-platform desktop identity routing', () => {
     );
 
     await waitFor(() => expect(fetchRequest).toHaveBeenCalledTimes(2));
-    expect(bridge.activateWorkspace).toHaveBeenCalledWith({
-      region: 'global',
-      workspaceId,
-    });
+    // The link names the active workspace, so main answered the claim and the
+    // stale bearer is renewed by the target API's own renewal, not by a
+    // platform activation minting a fresh session.
+    expect(bridge.reselectActiveWorkspace).toHaveBeenCalledWith({ region: 'global', workspaceId });
+    expect(bridge.activateWorkspace).not.toHaveBeenCalled();
     expect(bridge.refreshSession).toHaveBeenCalledOnce();
     expect(new Headers(fetchRequest.mock.calls[1]?.[1]?.headers).get('authorization'))
       .toBe(`Bearer ${renewedSession.accessToken}`);
@@ -1202,6 +1225,98 @@ describe('single-platform desktop identity routing', () => {
     expect(lastDeepLinkFailure()).toContain('reopen this link');
     expect(window.location.hash).toBe(before);
     expect(screen.getByText('eu:European Research')).toBeVisible();
+  });
+
+  it('opens a link to the active workspace without re-activating it', async () => {
+    const activeWorkspaceId = '00000000-0000-7000-8000-000000000040';
+    const activeSession: DesktopSession = {
+      ...globalIdentitySession,
+      workspace: { id: activeWorkspaceId, name: 'Juno Labs', region: 'global', role: 'member' },
+    };
+    window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000041';
+    bridge.getSession.mockResolvedValueOnce(activeSession);
+    bridge.reselectActiveWorkspace.mockResolvedValueOnce(activeSession);
+    const client = renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+    client.setQueryData(['members'], ['cached']);
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${activeWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000042`,
+    );
+
+    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000042'));
+    // Straight to the work stream: main answered with the session in use, no
+    // platform round trip, and the shell keeps what it had loaded rather than
+    // reloading behind the link.
+    expect(bridge.reselectActiveWorkspace).toHaveBeenCalledWith({ region: 'global', workspaceId: activeWorkspaceId });
+    expect(bridge.activateWorkspace).not.toHaveBeenCalled();
+    expect(client.getQueryData(['members'])).toEqual(['cached']);
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
+  it('activates a workspace that is not the active one, even when its credential is stored', async () => {
+    const targetWorkspaceId = '00000000-0000-7000-8000-000000000045';
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: targetWorkspaceId, name: 'Fresh Workspace', region: 'global', role: 'member' },
+    });
+    const client = renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    client.setQueryData(['members'], ['from-eu']);
+
+    await dispatchDeepLink(
+      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000046`,
+    );
+
+    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000046'));
+    // Main declined the local claim, so the platform revalidated the
+    // membership before the window moved.
+    expect(bridge.reselectActiveWorkspace).toHaveBeenCalledWith({ region: 'global', workspaceId: targetWorkspaceId });
+    expect(bridge.activateWorkspace).toHaveBeenCalledWith({ region: 'global', workspaceId: targetWorkspaceId });
+    expect(await screen.findByText('global:Fresh Workspace')).toBeVisible();
+    // A different workspace is a different cache scope: nothing from the
+    // previous one may be drawn under the new credential.
+    expect(client.getQueryData(['members'])).toBeUndefined();
+  });
+
+  it('keeps the query cache when a same-workspace session is applied', async () => {
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.activateWorkspace.mockResolvedValueOnce({
+      ...euSession,
+      accessToken: 'renewed-token-longer-than-twenty-characters',
+      expiresAt: futureExpiry,
+    });
+    const client = renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    client.setQueryData(['members'], ['cached']);
+
+    await act(async () => {
+      await observedActivateWorkspace!('eu', euSession.workspace!.id);
+    });
+
+    await waitFor(() => expect(screen.getByTestId('session-token'))
+      .toHaveTextContent('renewed-token-longer-than-twenty-characters'));
+    expect(client.getQueryData(['members'])).toEqual(['cached']);
+  });
+
+  it('clears the query cache when a sign-in completes for another account', async () => {
+    bridge.getSession.mockResolvedValueOnce({ ...euSession, expiresAt: futureExpiry });
+    bridge.exchangeDesktopTicket.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      user: { id: 'user-2', email: 'other@example.com', name: 'Other' },
+    });
+    const client = renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    client.setQueryData(['members'], ['first-account']);
+
+    await dispatchDeepLink(`rallywithai://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'d'.repeat(43)}`);
+
+    // The previous session is compared before the new one is adopted: a
+    // different account is a different scope, and nothing it cached may be
+    // drawn for the account that just signed in.
+    await waitFor(() => expect(screen.getByTestId('session-email')).toHaveTextContent('other@example.com'));
+    expect(client.getQueryData(['members'])).toBeUndefined();
   });
 
   it('opens the note a closing meeting window hands back', async () => {
