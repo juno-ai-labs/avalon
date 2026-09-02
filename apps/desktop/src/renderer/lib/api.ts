@@ -638,6 +638,21 @@ export class RallyApi {
     this.session = session;
   }
 
+  /**
+   * Who this client is authenticated as, for the one decision that cannot be
+   * made without knowing: whether an arriving turn is the reader's own. Every
+   * request already carries this identity in its bearer token, so a caller
+   * threading the signed-in user alongside the api it is already holding would
+   * be carrying the same fact twice — and a screen that passed the wrong one
+   * would silently mis-attribute somebody else's message.
+   *
+   * Null before sign-in and after signing out, which is also the only state a
+   * caller has to handle: nothing is anybody's own message then.
+   */
+  get viewerUserId(): string | null {
+    return this.session?.user.id ?? null;
+  }
+
   /** Access tokens live minutes while the durable refresh credential lives
    * weeks. Without a reactive renewal an expired bearer fails every request
    * with `invalid_session` until the app restarts, because retrying replays

@@ -68,7 +68,15 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
   };
 }
 
-function withDerivedUnread(workstream: WorkstreamSummary): WorkstreamSummary {
+/**
+ * The unread pair every writer of viewer state has to agree on: `hasUnread` and
+ * `firstUnreadSequenceNumber` are derived from the manual mark, the read
+ * waterline, and the latest attention ordinal — never stored independently. Two
+ * copies of this arithmetic is how a sidebar dot and a transcript divider come
+ * to disagree about the same work stream, so the realtime feed's own attention
+ * advance imports this rather than repeating it.
+ */
+export function withDerivedUnread<T extends WorkstreamSummary>(workstream: T): T {
   const manual = workstream.manualUnreadFromSequenceNumber;
   const seen = workstream.readThroughSequenceNumber;
   const latest = workstream.latestAttentionSequenceNumber;

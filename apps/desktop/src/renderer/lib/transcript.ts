@@ -1,4 +1,6 @@
-import type { ElicitationData, Message, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
+import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
+import type { MentionIdentity } from './api';
+import type { ElicitationData, Message, MessageMention, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
 import { pluginGroup } from './plugin-groups';
 import {
   AutomationDraftProposedV1Schema,
@@ -115,6 +117,65 @@ const activityReceiptMonotonic = new WeakMap<TranscriptActivity, {
 
 export function createTextMessage({ text, ...message }: TextMessageInput): Message {
   return { ...message, messageType: 'text', text };
+}
+
+/**
+ * The text and mentions an optimistic turn has to carry to render as the turn
+ * the room is about to store.
+ *
+ * A mention chip is drawn from the message's *text*: a person mention is
+ * `[@Name](person://<id>)` Markdown, and `renderIdentity` resolves that href
+ * against `mentions` to find the name and avatar. The composer holds neither —
+ * it holds the plain `@Name` the person typed and the identities they picked
+ * from the popover — so an optimistic turn built straight from the draft
+ * renders plain text and becomes a chip only when the canonical turn lands,
+ * widening the bubble at exactly the moment an in-flight row exists to make
+ * uneventful.
+ *
+ * `prepareMentionMarkdown` is the room's own rewrite, shared out of
+ * `@rally/contracts` rather than reimplemented here, so the two sides cannot
+ * disagree about escaping, overlapping selections, ordering, or which
+ * selections are dropped for no longer matching their visible text. What it
+ * returns is the stored text, byte for byte, for every mention it accepts; a
+ * selection it drops stays the plain text the room will also keep.
+ *
+ * The text is for rendering only — what is *sent* is the draft the person
+ * typed, and the room rewrites it there. A selection with no offsets is
+ * dropped: the offsets are the span the rewrite replaces, and a wrong pair
+ * would rewrite the wrong words.
+ */
+export function optimisticMentionRendering(
+  text: string,
+  selected: readonly MentionIdentity[],
+  members: readonly WorkspaceMember[],
+): { text: string; mentions: MessageMention[] } {
+  const offsetSelections = selected.flatMap((mention) =>
+    mention.startOffset === undefined || mention.endOffset === undefined ? [] : [{
+      type: mention.type,
+      userId: mention.userId,
+      connectorType: mention.connectorType,
+      startOffset: mention.startOffset,
+      endOffset: mention.endOffset,
+    }]);
+  if (offsetSelections.length === 0) return { text, mentions: [] };
+  const people = new Map(members.map((member) => [member.id, {
+    id: member.id,
+    name: member.name,
+    avatarUrl: member.avatarUrl ?? null,
+  }]));
+  const prepared = prepareMentionMarkdown(text, offsetSelections, people);
+  return {
+    text: prepared.text,
+    mentions: prepared.mentions.map((mention) => ({
+      type: mention.type,
+      ...(mention.userId ? { personId: mention.userId } : {}),
+      ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
+      ...(mention.displayName ? { displayName: mention.displayName } : {}),
+      ...(mention.avatarUrl ? { avatarUrl: mention.avatarUrl } : {}),
+      startOffset: mention.startOffset,
+      endOffset: mention.endOffset,
+    })),
+  };
 }
 
 export function createToolEventMessage({ toolEvent, ...message }: ToolEventMessageInput): Message {

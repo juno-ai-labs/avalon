@@ -1988,7 +1988,7 @@ export function MessageBlock({
           came from is the only thing standing between them and a turn they do
           not remember typing. The name stays suppressed; only the label and the
           time appear. */}
-      {!sending && (!human || !ownHumanMessage || message.contextLabel) && (
+      {(!human || !ownHumanMessage || message.contextLabel) && (
         <header>
           {!ownHumanMessage && (
             <>
@@ -2004,47 +2004,45 @@ export function MessageBlock({
           {!human && collapseHeadings && <MarkdownCollapseAllButton />}
         </header>
       )}
-      {sending
-        ? <span aria-hidden="true" className="message-skeleton" />
-        : human ? (
-            <div className="human-message-content">
-              {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
-                <MessageAttachments
-                  attachments={message.attachments}
-                  loadContent={loadAttachmentContent}
-                  onOpen={onOpenAttachment}
-                />
-              ) : null}
-              {message.text ? (
-                <div className="human-message-bubble">
-                  <MarkdownBody
-                    mentions={message.mentions}
-                    telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
-                    verbatim
-                  >{message.text}</MarkdownBody>
-                </div>
-              ) : null}
-              {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
-            </div>
-          ) : (
-            <>
-              {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
-                <MessageAttachments
-                  attachments={message.attachments}
-                  loadContent={loadAttachmentContent}
-                  onOpen={onOpenAttachment}
-                />
-              ) : null}
-              <AssistantMessageContent
-                citations={citations}
-                collapseHeadings={collapseHeadings}
+      {human ? (
+        <div className="human-message-content">
+          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+            <MessageAttachments
+              attachments={message.attachments}
+              loadContent={loadAttachmentContent}
+              onOpen={onOpenAttachment}
+            />
+          ) : null}
+          {message.text ? (
+            <div className="human-message-bubble">
+              <MarkdownBody
                 mentions={message.mentions}
-                streaming={message.streaming}
-                text={message.text ?? ''}
                 telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
-              />
-            </>
-          )}
+                verbatim
+              >{message.text}</MarkdownBody>
+            </div>
+          ) : null}
+          {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
+        </div>
+      ) : (
+        <>
+          {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+            <MessageAttachments
+              attachments={message.attachments}
+              loadContent={loadAttachmentContent}
+              onOpen={onOpenAttachment}
+            />
+          ) : null}
+          <AssistantMessageContent
+            citations={citations}
+            collapseHeadings={collapseHeadings}
+            mentions={message.mentions}
+            streaming={message.streaming}
+            text={message.text ?? ''}
+            telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+          />
+        </>
+      )}
     </article>
   );
   if (human || !collapseHeadings) return article;
