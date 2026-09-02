@@ -102,6 +102,7 @@ import {
   validateToolArguments,
 } from "./tool-arguments";
 import { modelDefaultReasoningEffort } from "./model-inference-defaults";
+import { repairRootSchemaForProviders } from "./tool-schema-safety";
 
 const PersistedProviderMessageSchema = z.custom<ProviderMessage>(
   (value) => {
@@ -3403,17 +3404,32 @@ function normalizeMessageOrigin(
   return { ...provenance };
 }
 
+/**
+ * The one place every tool becomes a provider payload, and therefore where the
+ * root-schema corrector belongs.
+ *
+ * A tool whose `parameters` root is not a plain object fails the whole request
+ * on both measured providers, taking every other tool in the run with it, and
+ * the schemas that reach here come from four different places: this repository,
+ * a connector adapter, a hosted MCP server, and a skill. Correcting at each
+ * source is a rule four sets of authors have to remember; correcting here is
+ * one that cannot be forgotten. `repairRootSchemaForProviders` is a no-op for a
+ * schema that is already safe, so this costs a shape check per tool per turn.
+ */
 function toModelToolDefinitions(tools: ProviderTool[]): ModelToolDefinition[] {
   return tools.map((tool) => {
     if (tool.type !== "function") {
       throw new Error(`Unsupported model tool type: ${tool.type}`);
     }
+    const parameters = tool.function.parameters === undefined
+      ? undefined
+      : repairRootSchemaForProviders(tool.function.parameters as Record<string, unknown>);
     return {
       type: "function",
       function: {
         name: tool.function.name,
         ...(tool.function.description === undefined ? {} : { description: tool.function.description }),
-        ...(tool.function.parameters === undefined ? {} : { parameters: tool.function.parameters }),
+        ...(parameters === undefined ? {} : { parameters }),
         ...(tool.function.strict == null ? {} : { strict: tool.function.strict }),
       },
     };
