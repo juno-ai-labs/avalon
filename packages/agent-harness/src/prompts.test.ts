@@ -86,7 +86,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "4858ae1500eaa3c393986c7762c677e4c1df79bd4d8c5586e0326a82fb22af0f",
+        hash: "82d0a59549b98f9ffac137f1a6b1b54fdf0e8242662aadb51d63542a7bd654c7",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -94,7 +94,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "2ca06344777ec650150ce224bb5fe6a5f5b340f90bae6677a8425b08dbf92fad",
+        hash: "0b2d44ae135aa8408afa1d1841ce702ed4c5bcae711888642378446e1df24917",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -665,6 +665,9 @@ describe("prompt renderers", () => {
       objective: "O",
     });
 
+    expect(workstreamPrompt).toContain("Sites are public by default");
+    expect(workstreamPrompt).toContain("protection requires an active site that enforces Rally viewer headers");
+
     // Raised from 8,000 when the standing policy gained a second section, and
     // raised rather than absorbed because there was nowhere left to absorb it.
     // The arithmetic, re-measured on this base rather than carried over from
@@ -672,7 +675,8 @@ describe("prompt renderers", () => {
     // bytes, so the old ceiling left 173 bytes of headroom, and a second
     // publish shape cannot introduce itself, name its skill, and give its one
     // most-missed rule (publish the directory, not a file inside it) in 173.
-    // `# Sites` costs 567, which lands at 8,394 and leaves 106 under this bound.
+    // With the public/protected-site rule, `# Sites` costs 662, which lands at
+    // 8,489 and leaves 11 under this bound.
     //
     // Per the instruction below, here is what looked misplaced rather than
     // merely long, for whoever owns that prose to decide: `# Documents` opens
