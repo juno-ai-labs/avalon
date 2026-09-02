@@ -496,8 +496,10 @@ checked-in canonical-model binding and one planner transport per provider; Bind
 resolves the policy, filters candidates against the turn's actual capabilities,
 builds the Azure/OpenRouter/model stages, operates their shared circuit breaker,
 and executes traversal. `x-ai/grok-4.3` and `x-ai/grok-4.6` are Azure-bound:
-their same-model route is Azure first and OpenRouter second. Other canonical
-models remain OpenRouter-only. A file-parser request, audio input, or another
+their same-model route is Azure first and OpenRouter second.
+`openai/gpt-5.6-sol` is hard-fenced to Azure only; an Azure outage or missing
+price fails that model stage instead of sending the expensive same-model call
+to OpenRouter. Other canonical models remain OpenRouter-only. A file-parser request, audio input, or another
 capability an Azure binding has not proved skips that candidate before any
 network request rather than sending a body the deployment may reject.
 
@@ -527,15 +529,23 @@ ledger; the Azure deployment name is recorded separately as the provider
 invocation model.
 
 The checked-in Monad production bindings were verified against the live
-`monad-prod-resource` deployment details on 2026-08-30:
+`monad-prod-resource` deployment details on 2026-08-30 for Grok and on
+2026-09-02 for Sol:
 
 | Canonical model | Azure deployment | Version / lifecycle | Deployment | Live quota | Guardrail |
 | --- | --- | --- | --- | --- | --- |
 | `x-ai/grok-4.3` | `grok-4.3` | `1` / Preview | Global Standard | 250,000 TPM / 250 RPM | DefaultV2 |
 | `x-ai/grok-4.6` | `grok-4.6` | `1` / Preview | Global Standard | 2,250,000 TPM / 2,250 RPM | DefaultV2 |
+| `openai/gpt-5.6-sol` | `gpt-5.6-sol` | `2026-07-09` / Generally Available | Global Standard | 2,500,000 TPM / 2,500 RPM | DefaultV2 |
 
-Both expose
+All three accept Chat Completions at
 `https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions`.
+The Foundry deployment's generated sample defaults Sol to the Responses API,
+while its model details explicitly list both Chat completion and Responses;
+Rally uses the already-supported Chat Completions surface. Sol accepts text and
+image input, returns text, supports agent tools, and has a 1,050k context window
+with a 128k output limit. Its version policy upgrades when a new default version
+is available, and the deployment has no spillover or priority target.
 Manual inference probes returned token usage but no dollar `cost` or `price`
 field. When that happens, the configured fallback is the unweighted arithmetic
 mean of OpenRouter's published endpoint prices for that canonical model—not the
@@ -550,8 +560,9 @@ and preserves the decimal costs as strings. The inventory covers every model in
 the developer-mode manual selector plus every Monad production Azure
 deployment carried by OpenRouter: fourteen unique IDs on that date. API inference
 only reads the cache when the primary or a fallback model has an Azure binding;
-it never fetches or writes pricing. A failed cache read omits Azure and leaves
-OpenRouter available. Azure's Retail Prices
+it never fetches or writes pricing. A failed cache read omits Azure; the normal
+bound policy leaves OpenRouter available, while Sol's hard provider fence leaves
+no candidate and fails closed. Azure's Retail Prices
 API separately published 4.3 Global meters but no 4.6 meter that day; that API
 is useful corroboration, not this fallback's rate authority.
 The Azure agent route does not enable provider web search, so the separate
@@ -566,11 +577,13 @@ asking another provider for a competing answer. Cancellation and host failures
 never route onward.
 
 OpenRouter reports dollars directly. Azure reports token counts, so Rally feeds
-the cached per-million-token rates and declared disjoint Grok cache semantics
+the cached per-million-token rates and each binding's cache semantics
 through Bind's configured-rate billing function. Azure reports cached Grok
 tokens alongside rather than inside `prompt_tokens`, so Rally adds both input
 buckets only to select the OpenRouter prompt-size tier; Bind still prices each
-bucket exactly once. A missing, malformed, or
+bucket exactly once. Sol uses OpenAI's subset semantics, where cached tokens are
+already inside prompt tokens, so Bind subtracts that subset before pricing the
+uncached input bucket. A missing, malformed, or
 legacy numeric-cost record removes that Azure candidate before the request;
 stale valid pricing remains usable. Missing or internally inconsistent final
 Azure usage fails the attempt; it is never recorded as a zero-cost call and
@@ -1180,6 +1193,30 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-02 — GPT-5.6 Sol is Azure-only
+
+**What changed:** The provider registry now binds canonical
+`openai/gpt-5.6-sol` to the `gpt-5.6-sol` Monad production deployment and gives
+that model an explicit Azure-only policy. The binding admits Chat Completions,
+streaming, tools, image input, reasoning effort, a 128k output limit, and OpenAI
+subset cache accounting. Route tests prove a successful Azure request and prove
+that a 503 never reaches OpenRouter.
+
+**Why:** Sol is deployed with sufficient Azure capacity, while its OpenRouter
+route is too expensive to use as an availability fallback. The policy must be a
+hard provider fence, not merely the first entry in an ordered route.
+
+**Considered and rejected:** Reusing the default Azure-then-OpenRouter policy,
+or using Foundry's generated Responses sample as evidence that a new transport
+was required. The live model details list both Chat completion and Responses,
+so the existing adapter is supported; an ordered policy would violate the cost
+constraint during exactly the outages that trigger traversal.
+
+**Consequences:** Sol runs fail closed when Azure is unavailable, the Azure
+credential is absent, required capabilities do not match, or the scheduled
+price record cannot be trusted. Configured fallback *models* remain independent
+stages, but the Sol model itself can never be invoked through OpenRouter.
 
 ### 2026-09-02 — Model defaults and parallel tools are provider-boundary policy
 
