@@ -718,10 +718,10 @@ export class OpenRouterClient {
     parse: (value: unknown) => T;
     model?: string;
     /**
-     * `"none"` turns reasoning off explicitly rather than leaving it to the
-     * model's default, which differs by model: a route change that moves a
-     * mechanical one-shot call onto a thinking-by-default model would
-     * otherwise start paying for reasoning nobody asked for.
+     * `"none"` turns reasoning off explicitly. Omission accepts Rally's
+     * canonical-model default when one exists, then the provider default.
+     * Mechanical one-shot calls should therefore keep passing `"none"` when
+     * thinking would buy them nothing.
      */
     reasoningEffort?: "none" | "low" | "medium" | "high";
     signal?: AbortSignal | undefined;
@@ -778,6 +778,7 @@ export class OpenRouterClient {
             : undefined;
           const reasoningEffort = input.reasoningEffort
             ?? modelDefaultReasoningEffort(model);
+          const reasoning = structuredReasoning(reasoningEffort);
           const requestPayload = serializeOpenRouterChatRequest({
             model,
             messages: repairMessages ?? schemaMessages,
@@ -791,9 +792,7 @@ export class OpenRouterClient {
               }
             },
             plugins: [{ id: "response-healing" }],
-            ...(structuredReasoning(reasoningEffort)
-              ? { reasoning: structuredReasoning(reasoningEffort)! }
-              : {}),
+            ...(reasoning ? { reasoning } : {}),
             ...(tracePayload ? {
               ...(tracePayload.user ? { user: tracePayload.user } : {}),
               ...(tracePayload.session_id ? { sessionId: tracePayload.session_id } : {}),
@@ -1262,8 +1261,12 @@ export class AzureOpenAIClient {
         ...(input.tools?.length ? {
           tools: input.tools,
           tool_choice: input.toolChoice ?? "auto",
+          // Foundry's v1 Chat Completions contract supports parallel tool
+          // calls for tool-bearing requests, including Grok deployments.
           parallel_tool_calls: true as const,
         } : {}),
+        // This adapter sees an Azure deployment name, not Rally's canonical
+        // model ID. Bind resolves any canonical-model default before calling it.
         ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
       };
       const response = await this.fetcher(this.chatCompletionsUrl, {

@@ -2963,7 +2963,7 @@ function routePlan(
 ): RoutePlan {
   const models = [...new Set([primary, ...fallbacks].filter(Boolean))]
     .map((model) => canonicalModelIdSchema.parse(model));
-  const requirements = {
+  const sharedRequirements = {
     capabilities: routeCapabilities(request),
     requestedMaxCompletionTokens: null,
   };
@@ -2973,11 +2973,11 @@ function routePlan(
   ]);
   const stages = models.flatMap((model, index) => {
     const modelRequirements = modelDefaultReasoningEffort(model) === undefined
-      ? requirements
+      ? sharedRequirements
       : {
-          ...requirements,
+          ...sharedRequirements,
           capabilities: new Set([
-            ...requirements.capabilities,
+            ...sharedRequirements.capabilities,
             "reasoning_effort" as const,
           ]),
         };
@@ -3002,7 +3002,10 @@ function routePlan(
   });
   return {
     policyVersion: "provider-router-v1",
-    requirements,
+    // RoutePlan exposes only requirements shared by every stage. A model's
+    // default reasoning requirement filters that model's candidates above;
+    // including it here would falsely claim every fallback requires reasoning.
+    requirements: sharedRequirements,
     stages,
   };
 }

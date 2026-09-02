@@ -139,10 +139,9 @@ export async function runStructuredInference<T>(
     jsonSchema: Record<string, unknown>;
     parse: (value: unknown) => T;
     /**
-     * `"none"` asks the provider to switch reasoning off rather than leaving it
-     * to the model's default, which differs by model — a mechanical one-turn
-     * role would otherwise start paying for thinking the first time a flag
-     * retargets it at a model that reasons unless told not to.
+     * `"none"` asks the provider to switch reasoning off. Omission accepts
+     * Rally's canonical-model default when one exists, then the provider
+     * default. Mechanical one-turn roles should pass `"none"` explicitly.
      */
     reasoningEffort?: "none" | "low" | "medium" | "high";
     signal?: AbortSignal;
