@@ -25,9 +25,9 @@ them.
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, and `groupThinkingMessages` collapses the thinking left in it. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Applies `groupPluginToolMessages` and then `groupThinkingMessages` to the composed transcript, and is the only caller of either. |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row. |
-| `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark stand in for the thinking orb. |
-| `apps/desktop/src/renderer/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the bare mark and its pulse. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row; `ThinkingGlyph` draws the thinking row's brain and `ThoughtBlock` decides which of the two thought rows gets it. |
+| `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark, or the thinking row's brain, stand in for the orb. |
+| `apps/desktop/src/renderer/styles/app.css` | `.plugin-face` and `.plugin-face-active` — the transcript's bare mark box and its pulse, shared by the plugin rows and the thinking row. |
 
 ## How it works
 
@@ -86,6 +86,13 @@ answered: what places Rally worked in, and for how long.
 So `groupThinkingMessages` sums a run's thinking into one row — "thinking for
 1m 39s" while any segment is still going, "thought for 1m 38s" once they have
 all settled — sitting where the run's first thinking row sat.
+
+That row draws a **brain** where a plugin row draws its mark, in the same box
+and with the same pulse while it is still going. The orb it replaces said only
+that something was running, which the shimmering label already said; every other
+row in the column names the place the work happened, and reasoning is one of
+those places. The response's own total keeps the orb — it covers tool calls as
+well as thinking, and the orb is the shape that stands for work in general.
 
 Two rows deliberately stay out of it:
 
@@ -357,7 +364,7 @@ It deliberately does **not** cover:
 | `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
 | `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. Collapsing thinking: the summed run, the run boundary, the response total left out of it, the unknown segment, and the concurrent starts. |
-| `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, and the absent orb. |
+| `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, the absent orb, and the thinking row's brain. |
 | `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
 
 The trap is the elapsed-time format: `formatDuration` zero-pads the seconds of a
@@ -371,6 +378,34 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-09-02 — The thinking row wears a brain
+
+**What changed:** `ThoughtBlock` passes a `ThinkingGlyph` — Tabler's `IconBrain`
+in the plugin marks' own `.plugin-face` box, pulsing through `.plugin-face-active`
+while the row runs — into `AgentWorkTiming`'s `icon` slot for a thinking row.
+The response's overall "working / worked" row, which the same block draws, keeps
+the `ThinkingOrb`.
+
+**Why:** Every other row in that column names the place the work happened
+through a mark, and the thinking row was the one that did not: the orb said only
+that something was running, which the shimmering label beside it already said.
+A brain names reasoning the way the Slack mark names Slack, so the column reads
+as one vocabulary rather than a set of marks plus a spinner.
+
+**Considered and rejected:** Giving both thought rows the brain, which is the
+whole of `ThoughtBlock` and needs no verb check. The other row is the response's
+total — tool calls, waiting, and thinking together — and a brain would claim it
+was all reasoning. The verb is already how this block, `groupThinkingMessages`,
+and `foldSettledWorkIntoMessages` each tell the two apart, so the check adds no
+new way for them to disagree. Also rejected: a `.thinking-face` class of its
+own. It would have restated `.plugin-face` verbatim, and the two would drift the
+first time the column's size or neutral changed.
+
+**What a future change has to respect:** the brain rides on the row's
+`activeVerb` being `thinking`. A projection that renames that verb silently
+returns this row to the orb rather than failing, so the verb, the fold, and the
+collapse move together.
 
 ### 2026-09-02 — A run of thinking is one row
 
