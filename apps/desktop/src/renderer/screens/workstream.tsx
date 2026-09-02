@@ -9,6 +9,7 @@ import {
   Lock,
   Mail,
   Menu,
+  Monitor,
   PanelRight,
   UserPlus,
   X,
@@ -201,7 +202,7 @@ export function WorkstreamHeader({
   if (grokBotMode) {
     return (
       <header className="grokbot-workstream-header window-drag">
-        <div className="window-no-drag">
+        <div className="grokbot-header-navigation window-no-drag">
           <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}>
             <Menu size={16} />
           </IconButton>
@@ -216,19 +217,19 @@ export function WorkstreamHeader({
               onClick={() => toggleRail('context')}
               type="button"
             >
-              <span aria-hidden="true" className="grokbot-conversation-faces">
-                <WorkstreamGlyph id={workstream.id} size={22} />
-                <AvatarStack
-                  currentUserId={currentUserId}
-                  members={workstream.participants}
-                  presentUserIds={presentUserIds}
-                />
-              </span>
+              <WorkstreamGlyph id={workstream.id} size={20} />
               <span>{workstream.title}</span>
             </button>
           </h1>
         )}
-        <span aria-hidden="true" />
+        <IconButton
+          aria-pressed={showing('context')}
+          className="grokbot-computer-button window-no-drag"
+          label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
+          onClick={() => toggleRail('context')}
+        >
+          <Monitor size={16} strokeWidth={1.8} />
+        </IconButton>
       </header>
     );
   }
