@@ -7,6 +7,7 @@ import {
   ArtifactHostnameRouteSchema,
   ArtifactHostnameStubSchema,
   ArtifactManifestSchema,
+  ArtifactSocialPreviewSchema,
   SITE_MANIFEST_MIME_TYPE,
   artifactAssetKey,
   artifactHostLabel,
@@ -69,6 +70,27 @@ describe("artifact manifest", () => {
     expect(ArtifactManifestSchema.safeParse(manifest({ stateful: false })).success).toBe(true);
     const staticManifest = manifest({ mode: "static", stateful: false, serverModuleSha256: null });
     expect(ArtifactManifestSchema.safeParse(staticManifest).success).toBe(true);
+  });
+
+  it("carries a normalized social preview without invalidating older manifests", () => {
+    expect(ArtifactManifestSchema.safeParse(manifest()).success).toBe(true);
+    const socialPreview = {
+      title: "Launch status",
+      description: "The latest launch status and milestones.",
+      image: {
+        path: "social-preview.png",
+        contentType: "image/png",
+        width: 1200,
+        height: 630,
+        alt: "Launch status",
+        generated: false,
+      },
+    };
+    expect(ArtifactManifestSchema.safeParse(manifest({ socialPreview })).success).toBe(true);
+    expect(ArtifactSocialPreviewSchema.safeParse({
+      ...socialPreview,
+      image: { ...socialPreview.image, path: "" },
+    }).success).toBe(false);
   });
 });
 

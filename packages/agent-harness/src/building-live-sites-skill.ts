@@ -62,6 +62,15 @@ that works the first time.
    \`index.html\`, and \`index.js\` only when the site is active — an entry
    under any other name (\`app.js\`, \`main.js\`, \`home.html\`) is not an
    entry, and the publish will not treat the directory as a site.
+   Give shared links a useful preview: write a specific \`<title>\` and
+   \`<meta name="description">\`, create a **1200×630** image named
+   \`social-preview.png\`, and reference it with relative Open Graph and
+   Twitter/X tags in \`<head>\` (\`og:title\`, \`og:description\`,
+   \`og:image\`, and \`twitter:card\` with \`summary_large_image\`). Make
+   the card readable at thumbnail size and about this site, not a generic
+   Rally banner. Rally normalizes these tags to absolute URLs when serving
+   and generates a branded fallback card if the image or metadata is
+   missing, but authored metadata and artwork produce the best unfurl.
    Include a short \`README.md\` in the directory saying what the site is
    and anything a future revision needs to know that the code does not
    show — the next run to touch this site may know nothing you know
@@ -210,6 +219,11 @@ that works the first time.
   behavior. Do instead: delete it; \`index.html\` alone serves faster
   and can never throw. Keep the server when its early viewer-header
   guard is what protects the page.
+- **A page with no share identity.** A browser tab called "Untitled" and
+  a generic generated card make a technically working but unhelpful shared
+  link. Do instead: author the title, description, and 1200×630
+  \`social-preview.png\` while the site's subject and visual language are in
+  context; Rally's generated card is only the missing-data fallback.
 - **Streaming the site into chat.** The transcript gets a sentence and
   a citation; the code lives in the files. If someone asks to see the
   code, publish the files as ordinary resources or read out the

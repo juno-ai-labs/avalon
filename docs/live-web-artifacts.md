@@ -73,6 +73,14 @@ because almost nothing is shared — its stored content is a manifest rather tha
 the thing a viewer sees, its bytes go to version-immutable keys, and it has a
 supervisor object to point at afterwards.
 
+Every new site version also gets a normalized social preview. Publish reads the
+root page's Open Graph, Twitter/X, title, description, and local preview-image
+references. An authored local PNG, JPEG, GIF, or WebP is kept with its measured
+dimensions. When the page omits usable artwork, Rally writes a deterministic
+1200×630 PNG under `.rally/` using the page title and stores its descriptor in
+the manifest. This is publish-time work: a crawler request never parses source
+metadata, probes an image, or generates a card.
+
 ### Revising
 
 A run asked to change a site it did not build — or built in a session that has
@@ -86,6 +94,12 @@ behind files a later version deleted, and the next publish would ship them back
 as though somebody had restored them on purpose. The tree is staged beside the
 destination and moved into place, so a failure partway leaves the previous tree
 intact.
+
+The one manifest asset source import deliberately omits is a preview marked
+`generated: true`. It is Rally's derived output, not model-authored source;
+returning it to the sandbox would make an unchanged import-and-republish look
+like a source edit and could duplicate the generated asset. Authored preview
+images carry `generated: false` and import normally.
 
 ### Serving
 
@@ -114,6 +128,18 @@ Then `/__rally/*` paths are Rally's own (the access bootstrap, the redeem
 endpoint, prior-version mounts) and everything else is artifact content: assets
 resolved against the manifest for a static site, the loader for a stateless
 active one, or the facet for a stateful one.
+
+For successful current-version HTML, the Worker prepends the manifest's
+normalized canonical, description, Open Graph, and Twitter/X tags. Static HTML
+is already bounded by the publish ceiling and is rewritten as text; an active
+handler may stream, so its response is transformed with `HTMLRewriter` instead
+of buffered. The preview URL points at the site's ordinary asset path with an
+artifact-version query. That path choice is security-significant: a protected
+active handler's early viewer guard still covers the preview image, while a
+new version gets a different crawler cache key without adding a Rally route
+that could bypass model-authored access control. Error pages, redirects, JSON,
+historical versions, and manifests from before this field existed are not
+rewritten.
 
 ### Access
 
@@ -371,6 +397,7 @@ facet that holds a stateful artifact's data. It does not own:
 | --- | --- |
 | `pnpm --filter @rally/api exec vitest run test/artifact-read-only-sql.test.ts` | The SQL admission, adversarially: statement sequences that commit mid-payload, CTEs wrapping writes, semicolons inside literals, writes behind comment markers, and identifier injection. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-serving-policy.test.ts test/artifact-serving-hostname.test.ts` | The three fences: CSP directives, anonymous public reads, session identity only on eligible requests, refusal of credentialed cross-artifact writes, version-mount parsing, and asset resolution. |
+| `pnpm --filter @rally/api exec vitest run test/site-social-preview.test.ts test/artifact-social-preview.test.ts` | Publish-time metadata extraction, authored local artwork, fallback PNG generation, absolute crawler metadata, escaping, and canonical URL cleanup. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-site-publish.test.ts` | Kind resolution, the one-file refusal, the storage-class check, content types, the zip, and the asymmetric transition. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
@@ -380,6 +407,7 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
+| `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-social-preview-runtime.test.ts` | `HTMLRewriter` on real workerd: active HTML receives metadata without buffering, while protected errors and JSON remain exact. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. |
 
 Two traps:
@@ -413,6 +441,8 @@ Two traps:
   that rides the supervisor's storage envelope. Facet classes are dynamic and
   never appear in Wrangler migrations; only `ArtifactHostDO` does.
 - R2 `PAYLOADS`: `artifact/<id>/v<n>/assets/<path>` and `…/manifest.json`.
+  New manifests optionally carry a `socialPreview` descriptor; generated cards
+  are ordinary versioned assets beneath that same prefix.
 
 ## Regional impact
 
@@ -511,7 +541,38 @@ the detail's cancellation fence, and every privileged navigation request must
 carry identity and URL from one access response. Work-stream switches can no
 longer leave an old site composited over the newly selected feed or rely on
 React effect timing to preserve the artifact storage boundary.
+### 2026-09-02 — Published sites get complete social previews
 
+**What changed:** Site publication now normalizes a title, description, and
+local preview image into the version manifest, generating a deterministic
+1200×630 Rally card when the page did not supply usable artwork. The serving
+Worker injects canonical Open Graph and Twitter/X metadata into successful
+current HTML and gives the preview image URL an artifact-version query. The
+site-building skill now tells the model to author a specific title,
+description, and `social-preview.png` rather than relying on the fallback.
+
+**Why:** Making the stable URL publicly readable removed the authentication
+failure that blocked crawlers, but public HTML alone produces a weak or empty
+unfurl when the generated page omitted metadata or a share image. The publish
+boundary already has every file and a bounded input, so it is the one place
+that can fill the contract once instead of making every crawler request derive
+it again.
+
+**Considered and rejected:** A dedicated public `__rally` preview route would
+make an immutable-looking image URL, but it would run before an active site's
+model-authored viewer guard and could disclose artwork from a protected site.
+Buffering active responses would make arbitrary handler output a memory cost;
+they use the runtime's streaming HTML transform instead. Always using the
+generated Rally card would be simpler, but would discard the subject and visual
+language the author still has in context.
+
+**Consequences:** Newly published versions unfurl without requiring every model
+to remember the protocol, while authored metadata wins during normalization.
+Existing manifests stay valid because `socialPreview` is optional and begin
+using the feature on their next publish. Protected sites still return their
+guard response to anonymous crawlers and keep their image behind the same
+handler. A future change must not move the image onto a platform route unless
+that route can prove the same per-site access decision.
 ### 2026-09-02 — Sites become public by default; protection becomes active code
 
 **What changed:** Artifact `GET` and `HEAD` requests now serve the current site
