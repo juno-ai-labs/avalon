@@ -137,14 +137,16 @@ Configure the Azure values in every region where dictation is enabled. `AZURE_OP
 Azure agent inference is a separate opt-in pair:
 `AZURE_INFERENCE_ENDPOINT` and `AZURE_INFERENCE_API_KEY`. Configure both only
 on a Worker whose regional data boundary permits that resource. With neither,
-Bind omits Azure and retains the existing OpenRouter route; with only one, the
+Bind omits Azure and retains an existing OpenRouter route only when that
+model's provider policy permits one; Azure-only Sol is unavailable. With only one, the
 run fails configuration before provider I/O. The endpoint is the resource root
 or its `/openai/v1` base, never HTTP, a deployment URL, or a URL carrying
 credentials, query parameters, or a fragment; invalid values fail Worker
-startup. The key remains a Worker secret. Rally's checked-in bindings currently map canonical `x-ai/grok-4.3`
-and `x-ai/grok-4.6` to their Monad production deployment names and try Azure
-before OpenRouter for the same model. Model Flagship values stay canonical and
-must never contain an Azure deployment name.
+startup. The key remains a Worker secret. Rally's checked-in bindings currently map canonical `x-ai/grok-4.3`,
+`x-ai/grok-4.6`, and `openai/gpt-5.6-sol` to their Monad production deployment
+names. Grok tries Azure before OpenRouter for the same model; Sol is Azure-only
+and never traverses to OpenRouter. Model Flagship values stay canonical and must
+never contain an Azure deployment name.
 
 The live Monad production endpoint is
 `https://monad-prod-resource.services.ai.azure.com`. As verified on 2026-08-30,
@@ -165,10 +167,14 @@ transcription does not.
 | `DeepSeek-V4-Pro` | `deepseek/deepseek-v4-pro` |
 | `grok-4.3` | `x-ai/grok-4.3` |
 
-As verified on the same date,
-the 4.3 and 4.6 deployments are version-1 Preview Global Standard deployments
+As verified on the same date, the 4.3 and 4.6 deployments are version-1 Preview Global Standard deployments
 with DefaultV2 guardrails; their limits are respectively 250,000 TPM / 250 RPM
-and 2,250,000 TPM / 2,250 RPM. The inference API reports tokens, not dollar
+and 2,250,000 TPM / 2,250 RPM. On 2026-09-02 the live Sol deployment was
+`Succeeded`, version `2026-07-09`, Generally Available, Global Standard, and
+guarded by DefaultV2, with 2,500,000 TPM / 2,500 RPM, no spillover or priority
+target, and upgrade-on-new-default version policy. Foundry lists both Chat
+completion and Responses; Rally uses `/openai/v1/chat/completions`.
+The inference API reports tokens, not dollar
 cost. In that case, Bind bills with the cached unweighted average of every
 endpoint OpenRouter publishes for the canonical model, including the catalog's
 prompt-token override tiers. The Worker
@@ -189,16 +195,20 @@ never a workspace ID, prompt, usage, or credential. Do not copy the top-level
 OpenRouter catalog price: it is the lowest endpoint price, not the average.
 
 Inference never refreshes this cache, and a route whose primary and fallback
-models are all OpenRouter-only does not read it. On a cron failure, each stale
-valid model record remains usable. A rejected cache read or a missing,
-malformed, or legacy numeric-cost record makes Bind omit Azure for that model
-and continue with the existing OpenRouter
-candidate instead of making an unpriced Azure request. To inspect the two
+models are all OpenRouter-only does not read it. Bind reads only the Azure-bound
+models in the current route, rather than coupling every deployment to every
+run. On a cron failure, each stale valid model record remains usable. A rejected
+cache read or a missing, malformed, or legacy numeric-cost record makes Bind
+omit Azure for that model instead of making an unpriced Azure request; another
+model's valid record remains usable. Grok can then continue with its existing
+OpenRouter candidate; Sol has no OpenRouter candidate and fails closed.
+To inspect the three
 currently Azure-routed records without exposing provider credentials, run:
 
 ```bash
 pnpm --filter @rally/api exec wrangler kv key get x-ai/grok-4.3 --namespace-id <id>
 pnpm --filter @rally/api exec wrangler kv key get x-ai/grok-4.6 --namespace-id <id>
+pnpm --filter @rally/api exec wrangler kv key get openai/gpt-5.6-sol --namespace-id <id>
 ```
 
 Use the namespace ID from any of the three pricing-bound Wrangler configs. To

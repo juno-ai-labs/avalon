@@ -95,7 +95,7 @@ describe('Ace Models client', () => {
     const save = Array.from(container.querySelectorAll('button'))
       .find((button) => button.textContent === 'Save route')!;
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'), { timeout: 5_000 });
+    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available for this role.'), { timeout: 5_000 });
     expect(save.disabled).toBe(true);
 
     const addFallback = Array.from(container.querySelectorAll('button'))
@@ -110,7 +110,7 @@ describe('Ace Models client', () => {
       freeTextInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'), { timeout: 5_000 });
+    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available for this role.'), { timeout: 5_000 });
     expect(save.disabled).toBe(false);
     await act(async () => save.click());
 
@@ -145,7 +145,7 @@ describe('Ace Models client', () => {
 
     await act(async () => root.render(<ModelsView />));
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'), { timeout: 5_000 });
+    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available for this role.'), { timeout: 5_000 });
     const primary = container.querySelector<HTMLInputElement>('.model-route-card input')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(primary, 'missing/model');
@@ -153,11 +153,50 @@ describe('Ace Models client', () => {
     });
 
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-    await vi.waitFor(() => expect(container.textContent).toContain('OpenRouter does not recognize or currently route: missing/model'), { timeout: 5_000 });
+    await vi.waitFor(() => expect(container.textContent).toContain('The model catalog does not recognize or currently route: missing/model'), { timeout: 5_000 });
     expect(primary.getAttribute('aria-invalid')).toBe('true');
     const save = Array.from(container.querySelectorAll('button'))
       .find((button) => button.textContent === 'Save route')!;
     expect(save.disabled).toBe(true);
     expect(fetch.mock.calls.some(([input]) => String(input) === '/api/models/workstream')).toBe(false);
+  });
+
+  it('shows Sol only for a fully Azure-routed role and blocks it elsewhere without provider validation', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input) === '/api/models' && !init) return Response.json({ flags: [] });
+      if (String(input) === '/api/models/validate' && init?.method === 'POST') {
+        const { modelIds } = JSON.parse(String(init.body)) as { modelIds: string[] };
+        return Response.json({ models: modelIds.map((modelId) => ({ modelId, valid: true })) });
+      }
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+
+    await act(async () => root.render(<ModelsView />));
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    await vi.waitFor(() => expect(container.textContent).toContain('Flagship connected'), { timeout: 5_000 });
+    const choices = (): string[] => Array.from(
+      container.querySelectorAll<HTMLOptionElement>('#ace-model-choices option'),
+    ).map((option) => option.value);
+    expect(choices()).not.toContain('openai/gpt-5.6-sol');
+
+    const inlineChild = Array.from(container.querySelectorAll<HTMLButtonElement>('.models > button'))
+      .find((button) => button.textContent?.includes('Inline subagent'))!;
+    await act(async () => inlineChild.click());
+    expect(choices()).toContain('openai/gpt-5.6-sol');
+
+    const workstream = Array.from(container.querySelectorAll<HTMLButtonElement>('.models > button'))
+      .find((button) => button.textContent?.includes('Work-stream agent'))!;
+    await act(async () => workstream.click());
+    const primary = container.querySelector<HTMLInputElement>('.model-route-card input')!;
+    const validationCallsBefore = fetch.mock.calls.filter(([input]) => String(input) === '/api/models/validate').length;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(primary, 'openai/gpt-5.6-sol');
+      primary.dispatchEvent(new Event('input', { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    await vi.waitFor(() => expect(container.textContent).toContain(
+      'This role cannot use the Azure-only model: openai/gpt-5.6-sol',
+    ), { timeout: 5_000 });
+    expect(fetch.mock.calls.filter(([input]) => String(input) === '/api/models/validate')).toHaveLength(validationCallsBefore);
   });
 });
