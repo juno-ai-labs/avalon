@@ -2102,10 +2102,14 @@ export function WorkstreamScreen(): React.JSX.Element {
       return (
         <WorkstreamErrorState
           description={workstream.error?.message
+            ?? socketConnection.openingError
             ?? (socketConnection.state === 'reconnecting'
               ? 'The live connection could not be opened. Try again while Rally reconnects.'
               : 'This work stream is unavailable.')}
-          onRetry={() => void workstream.refetch()}
+          onRetry={() => {
+            socketConnection.retryOpening();
+            void workstream.refetch();
+          }}
           workstreamId={id}
         />
       );
