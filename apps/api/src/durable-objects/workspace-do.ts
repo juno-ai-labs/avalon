@@ -5973,15 +5973,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       projectionVersion: number;
       sourceHash: string;
     }>();
+    // Keyed by run, so several envelopes in one batch carrying the same run
+    // collapse to the last of them — the newest source version. Each carries
+    // the envelope it arrived on, because a hop that cannot be made leaves that
+    // envelope unacknowledged rather than being dropped.
     const automationRunProjections = new Map<string, {
-      automationId: string;
-      runId: string;
-      workstreamId: string;
-      workstreamGeneration: number;
-      sourceVersion: number;
-      payloadHash: string;
-      state: string;
-      completedAt: number | null;
+      messageId: string;
+      projection: {
+        automationId: string;
+        runId: string;
+        workstreamId: string;
+        workstreamGeneration: number;
+        sourceVersion: number;
+        payloadHash: string;
+        state: string;
+        completedAt: number | null;
+      };
     }>();
     const viewerChanges = new Map<string, Set<string>>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
@@ -6044,14 +6051,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             : null;
           if (durableAutomation && envelope.effect.automationSubscriptionId && envelope.effect.automationRunId) {
             automationRunProjections.set(envelope.effect.automationRunId, {
-              automationId: envelope.effect.automationSubscriptionId,
-              runId: envelope.effect.automationRunId,
-              workstreamId: envelope.workstreamId,
-              workstreamGeneration: envelope.generation,
-              sourceVersion: envelope.sourceVersion,
-              payloadHash: envelope.payloadHash,
-              state: envelope.effect.state,
-              completedAt: epoch(envelope.effect.completedAt),
+              messageId: envelope.messageId,
+              projection: {
+                automationId: envelope.effect.automationSubscriptionId,
+                runId: envelope.effect.automationRunId,
+                workstreamId: envelope.workstreamId,
+                workstreamGeneration: envelope.generation,
+                sourceVersion: envelope.sourceVersion,
+                payloadHash: envelope.payloadHash,
+                state: envelope.effect.state,
+                completedAt: epoch(envelope.effect.completedAt),
+              },
             });
           }
         }
@@ -6081,38 +6091,52 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ...coordinate,
       })
     )));
-    // One automation's refusal must not fail the batch. These envelopes are
-    // already accepted above — the directory rows are written, and this hop is
-    // the copy each automation keeps of its own run. Letting a rejection
-    // propagate out of the `Promise.all` fails every envelope in the batch,
-    // which is then redelivered with the same payload and fails the same way:
-    // one automation the agent cannot parse for stalls the directory for all
-    // of them, permanently. Each projection is carried on its own and its
-    // failure logged, so the automation that could not be reached is the only
-    // one that falls behind, and it catches up on its next projection.
-    const runProjections = await Promise.allSettled(
-      [...automationRunProjections.values()].map(async (projection) => {
-        const automationId = asAutomationId(projection.automationId);
-        const agent = await durableObjectStubForWorkspace(
-          this.env,
-          this.env.AUTOMATION_AGENTS,
-          request.workspaceId,
-          automationAgentName(this.env.AVALON_REGION, asWorkspaceId(request.workspaceId), automationId),
-        );
-        await agent.applyRunProjection({
-          schemaVersion: 1,
-          workspaceId: request.workspaceId,
-          ...projection,
-        });
+    // One automation's refusal must not fail the batch. The directory rows are
+    // written by the loop above, and this hop is the copy each automation keeps
+    // of its own run. Letting a rejection propagate out of this `Promise.all`
+    // would fail every envelope in the batch, which is then redelivered with
+    // the same payload and fails the same way: one automation whose agent
+    // cannot be reached would stall the directory for all of them,
+    // permanently. Each projection catches its own failure, so the automation
+    // that could not be reached is the only one that falls behind.
+    //
+    // What this no longer does is treat its own failure as finished. A run that
+    // has just reached a terminal state has no later projection to catch up on,
+    // so a hop dropped here pinned that run at `running` in the agent's own
+    // history forever — server-side, past any client refresh. The envelope that
+    // carried it is left unacknowledged instead: the work stream's outbox and
+    // the Queue both redeliver it, and the branch above re-derives the
+    // projection from a directory row that already matches, so a retry costs
+    // one more hop and changes nothing else.
+    const runProjections = await Promise.all(
+      [...automationRunProjections.values()].map(async ({ messageId, projection }) => {
+        try {
+          const automationId = asAutomationId(projection.automationId);
+          const agent = await durableObjectStubForWorkspace(
+            this.env,
+            this.env.AUTOMATION_AGENTS,
+            request.workspaceId,
+            automationAgentName(this.env.AVALON_REGION, asWorkspaceId(request.workspaceId), automationId),
+          );
+          const applied = await agent.applyRunProjection({
+            schemaVersion: 1,
+            workspaceId: request.workspaceId,
+            ...projection,
+          });
+          return { stateChanged: applied.stateChanged, unacknowledged: null };
+        } catch (error) {
+          logWarn(this.env, "automation_run_projection_failed", {
+            workspace_id: request.workspaceId,
+            code: diagnosticErrorCode(error, "automation_run_projection_failed"),
+          });
+          return { stateChanged: false, unacknowledged: messageId };
+        }
       }),
     );
-    for (const settled of runProjections) {
-      if (settled.status !== "rejected") continue;
-      logWarn(this.env, "automation_run_projection_failed", {
-        workspace_id: request.workspaceId,
-        code: diagnosticErrorCode(settled.reason, "automation_run_projection_failed"),
-      });
-    }
+    const runStateChanged = runProjections.some((result) => result.stateChanged);
+    const unacknowledgedMessageIds = new Set(
+      runProjections.flatMap((result) => result.unacknowledged ?? []),
+    );
     if (commonChanges.size > 0) {
       // A `directory_common` effect is the only writer of
       // `next_terminal_action_at`, and it arrives outside any alarm — off the
@@ -6141,7 +6165,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           : [...users].map((userId) => this.publishWorkstreamState(workstreamId, userId))
       )));
     }
-    return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
+    // A run reaching a terminal state is a projection between objects, not an
+    // HTTP mutation, so nothing in `workspaceSyncTopicsForMutation` ever bumped
+    // the `automations` topic for it. `POST /automations/:id/run` published one
+    // and the detail screen refetched the run as `running`; the run then
+    // finished and no second event was ever sent, so the screen went on saying
+    // "Rally is working…" — for a run that had failed within seconds — until it
+    // was remounted. Published here rather than from the agent because this is
+    // the object that holds the workspace's sockets, and only for a state a
+    // reader would actually see: the topic is the one the desktop already
+    // invalidates the automation detail query on, so the fix is a server hop
+    // rather than a poll the client has to keep running.
+    if (runStateChanged) await this.publishAutomationsSync(request.workspaceId);
+    return WorkspaceDirectoryApplyResultSchema.parse({
+      // An envelope whose run projection could not be delivered is not
+      // acknowledged, so its sender redelivers it. Every other envelope in the
+      // batch still is.
+      accepted: accepted.filter((entry) => !unacknowledgedMessageIds.has(entry.messageId)),
+      directoryChanged,
+    });
   }
 
   /**
@@ -9498,6 +9540,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const placementAffinity = this.placementAffinity();
     if (!placementAffinity) throw new Error("workspace_object_placement_affinity_missing");
     await this.publishSync(["workstream_directory"], workspaceId, placementAffinity);
+  }
+
+  private async publishAutomationsSync(workspaceId: string): Promise<void> {
+    const placementAffinity = this.placementAffinity();
+    if (!placementAffinity) throw new Error("workspace_object_placement_affinity_missing");
+    await this.publishSync(["automations"], workspaceId, placementAffinity);
   }
 
   private productStorage(): WorkspaceProductStorage {

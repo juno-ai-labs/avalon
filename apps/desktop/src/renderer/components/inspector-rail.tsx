@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { useEffect, useRef, useState, type RefObject } from 'react';
+import { runResultSummary } from '../lib/automation-run-copy';
 import { formatDateTime, formatRelative, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
 import { desktopBridge } from '../lib/platform';
@@ -457,11 +458,16 @@ function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' |
         <ul className="run-rail-list">
           {filtered.map((run) => (
             <li key={run.id}>
+              {/* The same dot, the same sentence, and the same tooltip as the
+                  run list on the automation screen. This rail sits beside that
+                  list and had its own answers for both: a run the list called
+                  "Failed" read here as the time it started, and the dot that
+                  carried the colour explained it there and not here. */}
               <button className="run-rail-row" onClick={() => onOpenRun?.(run)} type="button">
-                <StatusDot compact status={run.status} />
+                <StatusDot compact status={run.status} tooltip />
                 <span className="run-rail-copy">
                   <strong>{run.title}</strong>
-                  <small>{run.resultSummary ?? (run.status === 'running' ? `Running ${formatRelative(run.triggerTime)}` : formatRelative(run.triggerTime))}</small>
+                  <small>{runResultSummary(run)} · {formatRelative(run.triggerTime)}</small>
                 </span>
                 <Badge>{run.triggerType.toUpperCase()}</Badge>
                 <ChevronRight aria-hidden="true" size={14} />

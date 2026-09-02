@@ -2310,7 +2310,17 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return result;
   }
 
-  async applyRunProjection(input: unknown): Promise<{ applied: boolean; outcomeCode: string }> {
+  /**
+   * `stateChanged` is what a caller uses to decide whether anybody watching
+   * this automation has to be told. It is narrower than `applied`: a
+   * projection that only advances the source version — an archival, a work
+   * stream that reopened after the run finished, a second envelope carrying
+   * the state the run is already in — is a real acknowledgement the sender
+   * must not retry, and it is also nothing a reader would see.
+   */
+  async applyRunProjection(
+    input: unknown,
+  ): Promise<{ applied: boolean; outcomeCode: string; stateChanged: boolean }> {
     await this.initialized;
     const request = z.strictObject({
       schemaVersion: z.literal(1),
@@ -2339,7 +2349,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     }).parse(input);
     const identity = this.identity();
     if (identity.automation_id !== request.automationId || identity.workspace_id !== request.workspaceId) {
-      return { applied: false, outcomeCode: "automation_run_projection_destination_mismatch" };
+      return { applied: false, outcomeCode: "automation_run_projection_destination_mismatch", stateChanged: false };
     }
     const row = this.state.storage.sql.exec<{
       workstream_id: string | null;
@@ -2351,13 +2361,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
           FROM automation_runs WHERE run_id = ?`,
     request.runId).toArray()[0];
     if (!row || row.workstream_id !== request.workstreamId) {
-      return { applied: false, outcomeCode: "automation_run_projection_unknown" };
+      return { applied: false, outcomeCode: "automation_run_projection_unknown", stateChanged: false };
     }
     if (request.workstreamGeneration !== row.workstream_generation) {
-      return { applied: false, outcomeCode: "automation_run_projection_generation_stale" };
+      return { applied: false, outcomeCode: "automation_run_projection_generation_stale", stateChanged: false };
     }
     if (request.sourceVersion < row.source_version) {
-      return { applied: false, outcomeCode: "automation_run_projection_stale" };
+      return { applied: false, outcomeCode: "automation_run_projection_stale", stateChanged: false };
     }
     if (request.sourceVersion === row.source_version && row.source_hash !== null) {
       if (row.source_hash !== request.payloadHash) {
@@ -2376,9 +2386,9 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
           }, now);
         });
         this.broadcastLatestEvents();
-        return { applied: false, outcomeCode: "automation_run_projection_hash_conflict" };
+        return { applied: false, outcomeCode: "automation_run_projection_hash_conflict", stateChanged: false };
       }
-      return { applied: false, outcomeCode: "automation_run_projection_replayed" };
+      return { applied: false, outcomeCode: "automation_run_projection_replayed", stateChanged: false };
     }
     // A run's execution state only ever moves forwards. Two different senders
     // would otherwise walk it backwards, both on ordinary paths: a work stream
@@ -2408,7 +2418,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         Date.now(),
         request.runId,
       );
-      return { applied: true, outcomeCode: "automation_run_projection_applied" };
+      return { applied: true, outcomeCode: "automation_run_projection_applied", stateChanged: false };
     }
     this.state.storage.sql.exec(
       `UPDATE automation_runs
@@ -2426,7 +2436,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       Date.now(),
     ));
     this.broadcastLatestEvents();
-    return { applied: true, outcomeCode: "automation_run_projection_applied" };
+    return {
+      applied: true,
+      outcomeCode: "automation_run_projection_applied",
+      stateChanged: executionState !== row.execution_state,
+    };
   }
 
   async readRunTelemetry(input: {

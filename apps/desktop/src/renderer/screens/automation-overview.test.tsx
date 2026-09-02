@@ -370,6 +370,77 @@ describe('Automation template updates', () => {
     expect(screen.getByText('Last 2')).toBeVisible();
   });
 
+  it('gives every state the server can produce a sentence of its own', async () => {
+    // `runSummariesUnchecked` in `automation-agent.ts` has nowhere to read a
+    // result summary from, so today every run the server serves carries null —
+    // including the finished ones. Falling through to "No result summary" meant
+    // a run that had completed reported an absence, and `needs_input`, the one
+    // state that needs the reader to go and do something, reported one too.
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      runs: (['scheduled', 'running', 'needs_input', 'completed', 'failed', 'stopped'] as const)
+        .map((status, index) => ({
+          id: `run-${status}`,
+          workstreamId: `workstream-${index}`,
+          title: 'Weekly brief',
+          status,
+          triggerType: 'scheduled',
+          triggerTime: '2026-08-01T09:00:00.000Z',
+        })),
+    });
+    renderScreen();
+
+    await screen.findByRole('heading', { name: 'Recent runs' });
+    const rows = document.querySelectorAll('.automation-run-row');
+    expect([...rows].map((row) => row.querySelector('small')?.textContent)).toEqual([
+      'Not started yet',
+      'Rally is working…',
+      'Waiting for you',
+      'Finished',
+      'Failed',
+      'Stopped',
+    ]);
+  });
+
+  it('stops saying Rally is working when the run it is showing finishes', async () => {
+    // The whole defect: the screen holds one query, nothing invalidated it on a
+    // run transition, and so a run that had failed within seconds went on
+    // reading as live for as long as the page stayed open. The server now
+    // publishes the `automations` topic when a run's state moves, which the
+    // workspace socket turns into exactly this invalidation.
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      runs: [{
+        id: 'run-live',
+        workstreamId: 'workstream-1',
+        title: 'Weekly brief',
+        status: 'running',
+        triggerType: 'scheduled',
+        triggerTime: '2026-08-01T09:00:00.000Z',
+      }],
+    });
+    const queryClient = renderScreen();
+    await screen.findByText('Rally is working…');
+
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      runs: [{
+        id: 'run-live',
+        workstreamId: 'workstream-1',
+        title: 'Weekly brief',
+        status: 'failed',
+        triggerType: 'scheduled',
+        triggerTime: '2026-08-01T09:00:00.000Z',
+      }],
+    });
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['automation'] });
+    });
+
+    expect(await screen.findByText('Failed')).toBeVisible();
+    expect(screen.queryByText('Rally is working…')).not.toBeInTheDocument();
+  });
+
   it('says in words why a carried-over automation stopped, and that it will not run again', async () => {
     api.getAutomation.mockResolvedValue({ ...detail, status: 'paused', attention: 'unsupported_trigger' });
     renderScreen();
