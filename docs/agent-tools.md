@@ -96,7 +96,11 @@ governs a constraint *between* parameters: an exclusive choice belongs in the
 Then keep the parameter surface small and uniform across a family. When you must
 reject input, reject it with an error, never by dropping it.
 
-One tolerance is shared by every tool at the harness boundary: a field declared
+Two tolerances are shared by every tool at the harness boundary. **Neither is a
+licence to drop input**, and both are stated as what the *schema already says*
+rather than as a guess at intent.
+
+The first: a field declared
 exclusively as JSON Schema `number` or `integer` also accepts a string containing
 one complete finite JSON number. The runtime normalizes that string before
 authorization hooks, input hashing, receipt planning, or execution, so `0` and
@@ -118,6 +122,36 @@ types mean different things, and adds focused validation coverage.
 The rule follows only expressions reachable from a tool's `inputSchema`, so a
 module may still use coercion for an unrelated HTTP query or other non-tool
 boundary without receiving a false positive.
+
+The second: an **optional** property given `""` is treated as absent when that
+property's own schema says the empty string is not one of its values —
+`minLength` of at least 1, a `type` with no `string` in it, or an `enum`/`const`
+excluding it, through `$ref`, `allOf`, and every branch of an `anyOf`/`oneOf`.
+Nothing else counts: `pattern` and `format` are not consulted, an unreadable
+schema keeps the value, and a **required** property keeps it too so validation
+can name the field. Small models blank an optional parameter rather than
+omitting it, and the blank then either fails the tool's own parse or reaches the
+provider — Linear answers an empty GraphQL cursor with a bare
+`Argument Validation Error` naming no field, which a model cannot act on and
+retries unchanged.
+
+This is not the silent drop the principle above forbids, and the difference is
+the whole design: the value being dropped was **already declared invalid**, so
+there was no intent in it the tool could have honored, and the only alternative
+outcomes are a round trip the model may not recover from or a provider error.
+A field where the empty string *means* something — clearing a description,
+listing a repository's root — simply does not declare it invalid, and is
+untouched.
+
+What this asks of a tool is one word: **declare `minLength: 1` on every string
+parameter whose empty value is not a value.** Opaque page cursors first, then
+identifiers, handles, and dates. It is also the more accurate declaration on its
+own terms, because a model reading `{ "type": "string", "maxLength": 500 }` has
+no way to know that `""` is not among the strings that schema names. Leave it
+off content — descriptions, bodies, Markdown, replacement text — where the empty
+string is a real request. Deriving `inputSchema` from the zod schema with
+`z.toJSONSchema` keeps the two in step for free; a hand-written JSON Schema is
+where they drift, and where they drifted here.
 
 If using zod for parsing do not just return the zod error object. Provide natural
 language errors and more importantly provide instructions on how to fix the error.
@@ -765,6 +799,48 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-02 — A blanked optional argument reads as an omission
+
+**What changed:** A second harness-wide tolerance, beside numeric-string
+normalization: an optional property given `""` is dropped before hashing,
+authorization, receipt planning, or execution when its schema declares the empty
+string is not one of its values. Principle 1 above carries the rule and the
+`minLength: 1` obligation that turns it on. Every connector's cursors, ids,
+handles, and date filters now declare it, and three executors that did not
+enforce it — Linear's `after`, Granola's `cursor`, Gmail's `threadId` — do.
+
+**Why:** A production run was asked to file a Linear ticket, sent
+`after: ""` on `list_teams` and `search_issues`, and got back
+`Argument Validation Error` — Linear's verbatim message, with no field named,
+because the connector forwarded the blank cursor as the GraphQL argument. The
+model retried the identical arguments five times, varying only `first`, then
+gave up without filing anything. The declared schema had permitted `""`, the
+executor's parse had permitted it, and the model was given nothing to correct.
+Blanking an optional parameter instead of omitting it is ordinary small-model
+behavior, and it is the design target this document opens with.
+
+**Considered and rejected:** Rejecting `""` loudly in each connector, which is
+what Notion and Slack already did — it turns a provider error into a Rally
+validation error, still costs the round trip, and still depends on the model
+recovering from it. Also rejected: stripping every empty string from every
+optional field, which would silently discard `description: ""` on
+`linear_update_issue` and `path: ""` on GitHub's `contents.list`, both real
+requests, and would be exactly the silent-drop failure principle 1 exists to
+prevent. Tying the strip to what the schema declares is what makes it safe, and
+it is why the obligation is on the schema rather than on the normalizer's
+judgement. Also rejected: consulting `pattern` or `format`, which needs a regex
+or format vocabulary evaluated to answer a question `minLength` answers plainly
+and which the model reads more easily.
+
+**Consequences:** A tool that wants the tolerance must declare it; adding a
+string parameter whose empty value is meaningless without `minLength: 1` leaves
+the blank to reach the provider, and for a cursor
+`apps/api/test/tool-argument-empty-strings.test.ts` fails until it does.
+Because normalization runs before the input hash, `{}` and `{ after: "" }` are
+now one receipt identity. The X connector additionally maps its own provider's
+`next_cursor: ""` to absence inside the executor, since that empty cursor
+originates at the API rather than at the model.
 
 ### 2026-08-30 — One multimodal plugin also creates durable audio
 

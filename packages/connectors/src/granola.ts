@@ -46,21 +46,25 @@ export const GranolaCapabilities = {
 
 const noteIdJsonSchema = {
   type: "string",
+  minLength: 1,
   pattern: "^not_[A-Za-z0-9]{14}$",
   description: "A Granola note ID returned by list_notes.",
 } as const;
 const folderIdJsonSchema = {
   type: ["string", "null"],
+  minLength: 1,
   pattern: "^fol_[A-Za-z0-9]{14}$",
   description: "An optional Granola folder ID returned by list_folders.",
 } as const;
 const cursorJsonSchema = {
   type: ["string", "null"],
+  minLength: 1,
   maxLength: 4_096,
   description: "An optional opaque cursor returned by the preceding page.",
 } as const;
 const dateFilterJsonSchema = {
   type: ["string", "null"],
+  minLength: 1,
   pattern: "^\\d{4}-\\d{2}-\\d{2}(?:T.+)?$",
   maxLength: 64,
   description: "An ISO 8601 calendar date or timestamp.",
@@ -148,9 +152,9 @@ export const granolaTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: true,
       properties: {
-        folderId: { type: ["string", "null"], maxLength: 200 },
-        startDate: { type: ["string", "null"], format: "date-time" },
-        endDate: { type: ["string", "null"], format: "date-time" },
+        folderId: { type: ["string", "null"], minLength: 1, maxLength: 200 },
+        startDate: { type: ["string", "null"], minLength: 1, format: "date-time" },
+        endDate: { type: ["string", "null"], minLength: 1, format: "date-time" },
       },
     },
   },
@@ -218,7 +222,7 @@ const listNotesInput = z.strictObject({
   createdAfter: granolaDateFilter.nullable().optional(),
   updatedAfter: granolaDateFilter.nullable().optional(),
   folderId: z.string().regex(/^fol_[A-Za-z0-9]{14}$/u).nullable().optional(),
-  cursor: z.string().max(4_096).nullable().optional(),
+  cursor: z.string().min(1).max(4_096).nullable().optional(),
   pageSize: z.number().int().min(1).max(30).optional(),
 });
 const getNoteInput = z.strictObject({
@@ -226,7 +230,7 @@ const getNoteInput = z.strictObject({
   includeTranscript: z.boolean().optional(),
 });
 const listFoldersInput = z.strictObject({
-  cursor: z.string().max(4_096).nullable().optional(),
+  cursor: z.string().min(1).max(4_096).nullable().optional(),
   pageSize: z.number().int().min(1).max(30).optional(),
 });
 export interface GranolaWebhookEndpoint {
