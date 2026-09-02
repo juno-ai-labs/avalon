@@ -126,7 +126,11 @@ describe('MessageBlock model timing', () => {
 
     rerender(<MessageBlock {...actions} message={thinkingRow('completed')} />);
     expect(screen.getByText('thought for 50s')).toBeVisible();
+    // The mark is a mark, not a spinner: it stays once the row settles, and
+    // only its pulse stops.
+    expect(container.querySelector('.plugin-face .tabler-icon-brain')).not.toBeNull();
     expect(container.querySelector('.plugin-face')).not.toHaveClass('plugin-face-active');
+    expect(screen.queryByTestId('thinking-orb')).toBeNull();
   });
 });
 
