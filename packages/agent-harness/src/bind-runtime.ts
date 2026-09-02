@@ -147,7 +147,9 @@ const MODEL_ROUTE_REGISTRY = parseModelRouteRegistry({
   version: "provider-router-v1",
   unboundDefault: { mode: "only", provider: "openrouter" },
   boundDefault: { mode: "ordered", providers: ["azure", "openrouter"] },
-  models: {},
+  models: {
+    "openai/gpt-5.6-sol": { mode: "only", provider: "azure" },
+  },
 });
 const OPENROUTER_CAPABILITIES: ReadonlySet<InferenceCapability> = new Set(
   INFERENCE_CAPABILITIES,
@@ -165,6 +167,19 @@ interface AzureModelBinding {
 }
 
 const AZURE_MODEL_BINDINGS = new Map<CanonicalModelId, AzureModelBinding>([
+  [canonicalModelIdSchema.parse("openai/gpt-5.6-sol"), {
+    deployment: "gpt-5.6-sol",
+    capabilities: new Set([
+      "chat_completions",
+      "streaming",
+      "tools",
+      "image_input",
+      "reasoning_effort",
+    ]),
+    maxCompletionTokens: 128_000,
+    cachedTokenSemantics: "subset",
+    fingerprint: "azure:gpt-5.6-sol:2026-07-09:global-standard",
+  }],
   [canonicalModelIdSchema.parse("x-ai/grok-4.3"), {
     deployment: "grok-4.3",
     capabilities: new Set(["chat_completions", "streaming", "tools"]),
@@ -635,9 +650,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     ).catch((error: unknown) => {
       if (signal.aborted) throw signal.reason ?? error;
       // Pricing is required before an Azure candidate is valid. A missing or
-      // malformed scheduled-cache record therefore omits Azure while preserving
-      // the existing OpenRouter route instead of failing the whole run or
-      // recording a free Azure call.
+      // malformed scheduled-cache record therefore omits Azure. Models on the
+      // normal bound policy can still use OpenRouter; an Azure-only model stays
+      // unavailable rather than violating its provider fence or recording a
+      // free Azure call.
       return new Map();
     });
     return azureModelPricingRequest;
