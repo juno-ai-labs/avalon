@@ -1131,11 +1131,15 @@ export function useWorkstreamSocket(
       // resync branch releases these callers: a caller holding a correlated
       // promise has nothing else that will settle it, and a frame dropped here
       // costs it the full timeout and reports a timeout the room never had.
-      // The room's own code and message are carried through rather than
-      // flattened to one client code — the two the callers steer on
-      // (`workstream_socket_unavailable`, `transcript_snapshot_changed`) both
-      // mean "ask again", which a refusal does not, and a wrong one would
-      // reconnect or retry against a room that just said no.
+      // The room's own code steers, rather than being flattened to one of the
+      // client's — the two the callers act on (`workstream_socket_unavailable`,
+      // `transcript_snapshot_changed`) both mean "ask again", which a refusal
+      // does not, and a wrong one would reconnect or retry against a room that
+      // just said no. Its *message* does not reach the reader: the screen puts
+      // `error.message` straight into the transcript's banner, and the room
+      // writes for the protocol ("Subscribe before loading transcript ranges"),
+      // not for somebody looking at a work stream. The refusal's own text stays
+      // on `details`, where a report can still recover it.
       //
       // Returns, like the `transcript_range` branch below, and for the reason
       // the named identity establishes: `request_snapshot` carries no request
@@ -1151,7 +1155,12 @@ export function useWorkstreamSocket(
         if (pending) {
           pendingTranscriptRanges.delete(event.requestId);
           window.clearTimeout(pending.timeout);
-          pending.reject(new ApiError(event.message, 409, event.code));
+          pending.reject(new ApiError(
+            'This part of the transcript could not be loaded.',
+            409,
+            event.code,
+            event.message,
+          ));
         }
         return;
       }
@@ -1190,8 +1199,16 @@ export function useWorkstreamSocket(
       // error frame carries the room's current sequence, so the guard would
       // discard it whenever nothing else has moved. Either one left holding the
       // slot would suppress every later reconciliation on this socket.
+      //
+      // Only an *uncorrelated* error, though. `request_snapshot` carries no
+      // request id, so a refusal that names one answers something else, and
+      // releasing the slot on it frees a snapshot that is still outstanding.
+      // The correlated branch above already returns before reaching this line;
+      // the condition says so itself because the rule this protocol now sets —
+      // every correlated request's refusals name it — is what makes the next
+      // request/response pair added here walk straight into it.
       const answersSnapshotRequest = snapshotRequestInFlight
-        && (event.type === 'snapshot' || event.type === 'error');
+        && (event.type === 'snapshot' || (event.type === 'error' && event.requestId === null));
       if (answersSnapshotRequest) snapshotRequestInFlight = false;
       const currentTranscript = event.type === 'snapshot'
         ? queryClient.getQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId])

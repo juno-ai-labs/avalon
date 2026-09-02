@@ -698,7 +698,10 @@ naming the `requestId` it refuses. Nothing else settles the caller's promise:
 Electron holds one per request and has only a local timeout behind it, so an
 uncorrelated refusal is invisible and is reported as a timeout the room never
 had. A refusal keeps the room's own `code` — the two codes Electron steers on
-both mean "ask again", which a refusal does not.
+both mean "ask again", which a refusal does not — but not its message: the room
+writes for the protocol, the screen puts what it is given straight into the
+transcript's banner, and the refusal's own text belongs on `details` where a
+report can still recover it.
 
 The identity cuts the other way too. `request_snapshot` carries no request id,
 so a frame that carries one is never its answer, and Electron stops on a
@@ -706,7 +709,16 @@ correlated frame rather than letting it reach the check that releases the
 snapshot slot on any error. Releasing that slot early is not a lost frame but a
 duplicate request: the outstanding snapshot is still assembling, and the next
 reconciliation trigger would send a second one over the top of it — most likely
-during exactly the assembly window that produces a correlated refusal.
+during exactly the assembly window that produces a correlated refusal. That
+check tests the request id itself rather than relying on the stop above it,
+because the rule that every correlated request's refusals name it is what walks
+the next request/response pair added here into the same trap.
+
+`disconnect` lowers `snapshotInFlight` alongside `subscribed`. Both are
+admission flags now — a range is served on either — so leaving one standing
+would be an admission path the privacy write does not close. The close wins
+that race in practice, which is the accident this helper exists to not depend
+on.
 
 A socket assembling its own `request_snapshot` is subscribed and may load
 ranges. The attachment lowers `subscribed` across that window only to keep

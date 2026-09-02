@@ -659,12 +659,24 @@ function retractsReadAccess(event: ServerSocketEvent): boolean {
  * so a disconnected reader would be spared the next frame by accident rather
  * than on purpose. On a privacy path that is the wrong place for the rule to
  * live.
+ *
+ * `snapshotInFlight` is lowered with it, because it is a second admission flag:
+ * {@link SubstreamAgent.fulfillTranscriptRange} serves a range on a socket
+ * whose own snapshot is assembling, and a flag this write left standing would
+ * be an admission path the privacy write does not close. The close wins that
+ * race today — a frame sent after it throws, one racing it is dropped — but
+ * that is the runtime sparing the reader by accident again, which is the thing
+ * this function exists to not rely on.
  */
 function disconnect(socket: WebSocket, code: number, reason: string): void {
   try {
     const attachment = SocketAttachmentSchema.safeParse(socket.deserializeAttachment());
     if (attachment.success) {
-      socket.serializeAttachment({ ...attachment.data, subscribed: false } satisfies SocketAttachment);
+      socket.serializeAttachment({
+        ...attachment.data,
+        subscribed: false,
+        snapshotInFlight: false,
+      } satisfies SocketAttachment);
     }
   } catch {
     // An unreadable attachment already fails the broadcast filter.
