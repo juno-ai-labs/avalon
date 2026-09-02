@@ -67,6 +67,7 @@ import {
   upsertTranscriptMessage,
 } from './transcript';
 import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import { withDerivedUnread } from './workstream-state-store';
 import { evictCachedWorkstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkspaceSocket } from './workspace-socket';
@@ -82,6 +83,8 @@ export type WorkstreamMessageDeliveryMode = 'steer' | 'queue';
 export type WorkstreamSocketApi = Pick<
   RallyApi,
   'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'getWorkstream' | 'messageMentionPayload'
+  // Read, not called: which arriving turns are the reader's own.
+  | 'viewerUserId'
 >;
 
 export interface CreateWorkstreamMessageInput {
@@ -447,9 +450,49 @@ export function applyHarnessStatus(
       : workstream));
 }
 
+/**
+ * Move a work stream's attention state forward for one arriving canonical turn,
+ * ahead of the viewer state the room will publish for it.
+ *
+ * The one thing it must not get wrong is the reader's own turn. A message is
+ * read by the person who wrote it — the room says so, advancing that author's
+ * `seen_attention_ordinal` to their own message in the same write that stores
+ * it — and this runs a beat before that state arrives. Guessing "unread" in the
+ * gap is not a harmless early guess: it is corrected within a few hundred
+ * milliseconds, and what a person sees in those milliseconds is an **Unread
+ * messages** divider drawn above the message they just sent, and their own
+ * sidebar dot lighting for it. So the waterline is advanced here rather than
+ * waited for.
+ *
+ * **The manual mark is deliberately left alone.** The room clears it in that
+ * same write, and this function does not, because it cannot tell a mark that
+ * predates the turn from one made after it. `markUnread` stores
+ * `manual_unread_from_ordinal = latest`, which for a turn the reader just sent
+ * is that turn's own ordinal, so no ordinal comparison separates the two; the
+ * ordering lives in `manualUnreadGeneration`, and a turn frame does not carry
+ * the generation it was written under. A delayed or replayed own turn — this
+ * client reconnecting, or the same account marking the stream unread on another
+ * device — would therefore erase a newer decision the room is still honouring.
+ * Leaving it costs nothing the flash cared about: a mark is null on an ordinary
+ * send, and when it is not, the reader asked for that divider and the room's own
+ * viewer state is what clears it.
+ *
+ * **`youAreMentioned` goes with the waterline**, because the room derives it as
+ * `latest_mention_attention_ordinal > seen_attention_ordinal` rather than
+ * storing it: the write that advances the author's own seen ordinal past a
+ * mention clears the flag too. Leaving it set would defeat the point of the
+ * rule — `mentioned` outranks `unread` in `MARKER_PRECEDENCE` and puts the row
+ * in **Needs attention** — so the reader's own reply would swap one wrongly lit
+ * dot for a louder one. Unlike the manual mark this *can* be fenced honestly:
+ * it is cleared only when the arriving turn is the newest attention event this
+ * client knows of, so a mention that landed after it survives a replay.
+ *
+ * `viewerUserId` is null before sign-in, when nothing is anybody's own message.
+ */
 function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   workstream: T,
   message: Message,
+  viewerUserId: string | null,
 ): T {
   if (message.messageType === 'tool_event'
     || message.realtimeOrder !== undefined
@@ -458,21 +501,25 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
     workstream.latestAttentionSequenceNumber,
     message.attentionSequenceNumber,
   );
-  if (latestAttentionSequenceNumber === workstream.latestAttentionSequenceNumber) return workstream;
-  const hasUnread = workstream.manualUnreadFromSequenceNumber !== null
-    || latestAttentionSequenceNumber > workstream.readThroughSequenceNumber;
-  return {
+  const ownTurn = viewerUserId !== null && message.author?.id === viewerUserId;
+  const readThroughSequenceNumber = ownTurn
+    ? Math.max(workstream.readThroughSequenceNumber, message.attentionSequenceNumber)
+    : workstream.readThroughSequenceNumber;
+  const youAreMentioned = ownTurn && message.attentionSequenceNumber >= latestAttentionSequenceNumber
+    ? false
+    : workstream.youAreMentioned;
+  if (latestAttentionSequenceNumber === workstream.latestAttentionSequenceNumber
+    && readThroughSequenceNumber === workstream.readThroughSequenceNumber
+    && youAreMentioned === workstream.youAreMentioned) return workstream;
+  return withDerivedUnread({
     ...workstream,
     latestAttentionSequenceNumber,
-    hasUnread,
-    firstUnreadSequenceNumber: workstream.manualUnreadFromSequenceNumber
-      ?? (hasUnread
-        ? Math.min(latestAttentionSequenceNumber, workstream.readThroughSequenceNumber + 1)
-        : null),
+    readThroughSequenceNumber,
+    ...(youAreMentioned === undefined ? {} : { youAreMentioned }),
     lastActivityAt: message.createdAt > workstream.lastActivityAt
       ? message.createdAt
       : workstream.lastActivityAt,
-  };
+  });
 }
 
 function upsertSocketEventOverlay(
@@ -1185,12 +1232,18 @@ export function useWorkstreamSocket(
             transcriptOverlaysWithoutCanonicalMatch(canonical, current ?? []));
           const turnMessages = canonical.filter((message) =>
             message.transcriptTurnId === event.turn.turnId);
+          // Not `reduce(advanceWorkstreamAttention, …)`: reduce would hand the
+          // element index to the third parameter.
+          const viewerUserId = api?.viewerUserId ?? null;
+          const advance = <T extends WorkstreamSummary>(workstream: T): T =>
+            turnMessages.reduce(
+              (next, message) => advanceWorkstreamAttention(next, message, viewerUserId),
+              workstream,
+            );
           queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
-            current ? turnMessages.reduce(advanceWorkstreamAttention, current) : current);
+            current ? advance(current) : current);
           setCachedWorkstreams(queryClient, (current) => current?.map((workstream) =>
-            workstream.id === workstreamId
-              ? turnMessages.reduce(advanceWorkstreamAttention, workstream)
-              : workstream));
+            workstream.id === workstreamId ? advance(workstream) : workstream));
         }
       } else if (event.type === 'transcript_activity_upserted') {
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
