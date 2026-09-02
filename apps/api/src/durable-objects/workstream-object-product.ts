@@ -1921,8 +1921,8 @@ export class WorkstreamObjectProductService {
     return row ? this.hydrateMessageRow(this.runtimeAuth(), row) : null;
   }
 
-  /** The oldest blocking question, read through the canonical turn it created. */
-  async openElicitationMessageForRuntime(): Promise<Message | null> {
+  /** The blocking question created by one run, read through its canonical turn. */
+  async elicitationMessageForRunForRuntime(runId: string): Promise<Message | null> {
     const row = this.storage.sql.exec<PartRow>(
       `SELECT turn.id, turn.sequence_number, turn.attention_ordinal, turn.author_type,
               turn.author_user_id, turn.external_actor_json, turn.message_type, turn.content,
@@ -1930,10 +1930,11 @@ export class WorkstreamObjectProductService {
          FROM elicitation_requests request
          JOIN canonical_conversation_turn_details turn
            ON turn.client_message_id = 'elicitation:' || request.elicitation_id
-        WHERE request.status = 'pending' AND turn.substream_id = '0'
+        WHERE request.run_id = ? AND turn.substream_id = '0'
           AND turn.visibility IN ('people', 'both')
         ORDER BY request.created_at, request.elicitation_id
         LIMIT 1`,
+      runId,
     ).toArray()[0];
     return row ? this.hydrateMessageRow(this.runtimeAuth(), row) : null;
   }
@@ -3582,7 +3583,26 @@ export class WorkstreamObjectProductService {
     auth: AuthContext,
     rawInput: WorkstreamObjectCreateMessageInput,
   ): Promise<WorkstreamObjectCreateMessageResult> {
+    return this.createMessageWithAuthority(auth, rawInput, true);
+  }
+
+  /** Admit a command whose live room socket already carries this identity. */
+  async createMessageForAdmittedSocket(
+    auth: AuthContext,
+    rawInput: WorkstreamObjectCreateMessageInput,
+  ): Promise<WorkstreamObjectCreateMessageResult> {
+    return this.createMessageWithAuthority(auth, rawInput, false);
+  }
+
+  private async createMessageWithAuthority(
+    auth: AuthContext,
+    rawInput: WorkstreamObjectCreateMessageInput,
+    reauthorizeWorkspaceMembership: boolean,
+  ): Promise<WorkstreamObjectCreateMessageResult> {
     const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
+    const authorizedRoot = () => reauthorizeWorkspaceMembership
+      ? this.authorize(auth)
+      : Promise.resolve(this.locallyAuthorizedRoot(auth));
     const localRoot = this.locallyAuthorizedRoot(auth);
     const existing = first(this.storage.sql.exec<{
       id: string; created_at: number;
@@ -3591,12 +3611,12 @@ export class WorkstreamObjectProductService {
       input.clientMessageId,
     ));
     if (existing) {
-      await this.authorize(auth);
+      await authorizedRoot();
       return this.canonicalMessageReplay(existing, input.clientMessageId);
     }
     const existingPending = this.loops.inputByClientMessageId(input.clientMessageId);
     if (existingPending) {
-      const root = await this.authorize(auth);
+      const root = await authorizedRoot();
       const loop = this.loops.loop();
       if (!loop || loop.loop_id !== existingPending.loop_id
         || loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
@@ -3614,7 +3634,7 @@ export class WorkstreamObjectProductService {
       now: reservationNow,
     });
     return this.runInputPreparation(preparation, async () => {
-    const root = await this.authorize(auth);
+    const root = await authorizedRoot();
 
     const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];

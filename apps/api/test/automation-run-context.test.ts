@@ -243,6 +243,16 @@ describe("what an automation run is told about its own delivery", () => {
     );
   });
 
+  it("retains automatic memory recall when an automation was triggered by inbound email", async () => {
+    const env = envFor(seededDatabase());
+    const input = workflowInput();
+    input.reason = "inbound_email";
+
+    const context = await loadRunPromptContext(env, input, lease, workstream);
+
+    expect(context.memoryContextHash).toBe("hash");
+  });
+
   it("lists nothing when the automation has no destination beyond Avalon", async () => {
     const env = envFor(seededDatabase({ targets: "" }));
 

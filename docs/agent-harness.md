@@ -155,10 +155,12 @@ Terminalization releases the persistent loop as soon as its canonical
 transcript, Bind state, and run status are durable. External result delivery,
 automation finalization, and work-stream name/description maintenance use the
 same run receipt's `external_settled_at` marker in a separate object-local
-drain. The host starts that drain eagerly with `waitUntil`, and the derived
-alarm candidate recovers it after cancellation or eviction. It processes
-terminal receipts in run order, but its retry deadline never reserves the loop
-or delays the next queued inference.
+drain. Before awaiting external work, the drain moves the receipt's existing
+execution deadline to the maintenance-recovery horizon. The host starts the
+drain eagerly with `waitUntil`; the derived alarm candidate abandons a stale
+in-memory continuation and reclaims the receipt after that durable claim
+expires. It processes terminal receipts in run order, but its deadline never
+reserves the loop or delays the next queued inference.
 
 Activation has one durable signal: the subordinate run receipt. There is no
 second dispatch table whose row can disagree with it. An external automation,
@@ -1189,6 +1191,38 @@ named transient codes must be added to the bounded allowlist with provider
 evidence and a traversal test. Numeric 4xx codes outside 408 and 429 remain
 terminal. Bind's existing produced-output fence remains the authority that
 prevents replay after a partial answer.
+### 2026-09-01 — Message admission and independent settlement close their cancellation gaps
+
+**What changed:** An admitted room socket now uses its existing transport
+authority instead of repeating the standalone D1 membership query. Pending
+message activation treats its immediate alarm write as best effort because the
+reservation pre-arms cancellation recovery. External settlement claims each
+terminal receipt through its durable due time before awaiting delivery, and an
+expired claim lets an alarm replace a cancelled in-memory drain. Fresh outcomes
+also carry their run metrics into that independent lane. Elicitation delivery
+now reads the question by run ID, including after the question was answered.
+
+**Why:** The direct message path still paid an authority lookup the live socket
+had already established, and a failed eager wake-up reported a committed message
+as failed. Separately, runtime cancellation could leave the settlement drain's
+promise marked active forever, while its alarm scheduling treated that promise
+as evidence of life. Moving settlement out of the inference lane also exposed
+that its durable recovery projection does not contain transient metrics or the
+identity of the run's elicitation question.
+
+**Considered and rejected:** A client timeout would only hide an uncorrelated
+server response and guess a new defensive limit. A new settlement table or
+Queue would duplicate the terminal receipt. The socket exception is deliberately
+limited to message commands on an admitted room connection; product RPC still
+revalidates D1 membership, and revocation remains responsible for closing live
+sockets.
+
+**Consequences:** Every recognizable message command with a valid client ID must
+receive a correlated terminal receipt. Settlement work must claim before its
+first await, remain idempotent under recovery, and leave its durable due time in
+the shared alarm candidates. Transient terminal fields must be consumed before
+the first cancellable continuation.
+
 ### 2026-09-01 — External settlement no longer reserves the inference loop
 
 **What changed:** A terminal run releases the persistent loop after its
@@ -1217,11 +1251,12 @@ may gate promotion of the next queued input.
 ### 2026-09-01 — Message runs leave automatic long-term-memory recall off their critical path
 
 **What changed:** Opening and follow-up composer messages, elicitation answers,
-inbound email, and Slack opening, follow-up, and elicitation messages no longer
+non-automation inbound email, and Slack opening, follow-up, and elicitation messages no longer
 call `freezeRunMemoryContext` before the first model request. Their immutable run
 scope records a null memory-context hash. The `rally_memory` plugin and explicit
-`memory_search` tool are unchanged, and non-message runs retain automatic frozen
-admission recall.
+`memory_search` tool are unchanged. Non-message runs and automation executions
+retain automatic frozen admission recall even when an automation's trigger
+reason is also `inbound_email`.
 
 **Why:** Production traces for three ordinary composer messages showed the
 fixed Qwen query embedding taking 8.46–8.83 seconds before main inference, while

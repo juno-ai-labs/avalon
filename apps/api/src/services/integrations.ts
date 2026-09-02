@@ -5205,7 +5205,8 @@ async function loadRunPromptContext(
       ])}`,
     ));
   }
-  const recallsMemoryAtAdmission = !MESSAGE_ORIGIN_REASONS_WITHOUT_ADMISSION_RECALL.has(input.reason);
+  const recallsMemoryAtAdmission = automationContext !== null
+    || !MESSAGE_ORIGIN_REASONS_WITHOUT_ADMISSION_RECALL.has(input.reason);
   const memoryQueryParts: string[] = recallsMemoryAtAdmission
     ? [workstream.title, workstream.objective]
     : [];

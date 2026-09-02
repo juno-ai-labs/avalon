@@ -136,7 +136,7 @@ async function initializeWorkstream(
   });
 }
 
-/** Admit one member message through the same endpoint the workspace socket calls. */
+/** Admit one member message through the SubstreamAgent product/RPC compatibility endpoint. */
 async function sendMessage(
   stub: DurableObjectStub,
   input: { text: string; clientMessageId: string },
@@ -261,6 +261,70 @@ async function holdFirstExternalSettlement(
 }
 
 describe("a message queued behind a live run", () => {
+  it("records fresh terminal metrics before external settlement leaves the inference lane", async () => {
+    const stub = agentStub();
+    const analytics: unknown[] = [];
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering with measured terminal metrics")],
+        { primaryModel: MODEL, fallbackModels: [] },
+      );
+      await runInDurableObject(stub, (instance) => {
+        const target = instance as unknown as {
+          env: { RUN_ANALYTICS: { writeDataPoint: (point: unknown) => void } };
+        };
+        target.env.RUN_ANALYTICS = {
+          writeDataPoint: (point: unknown) => { analytics.push(point); },
+        };
+      });
+      const opened = await initializeWorkstream(stub, "opening message");
+      await expect.poll(async () => (await executionReceipts(stub))
+        .find((run) => run.run_id === opened.body.harnessRunId)?.terminalized_at ?? null, {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+      }).not.toBeNull();
+
+      await expect.poll(() => analytics.length, {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "fresh terminal metrics were lost before external settlement",
+      }).toBe(1);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ settled_at: number | null }>(
+          `SELECT external_settled_at AS settled_at FROM runs WHERE run_id = ?`,
+          opened.body.harnessRunId as string,
+        ).one().settled_at), {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+      }).not.toBeNull();
+      expect(await runInDurableObject(stub, (instance, state) => {
+        const runId = opened.body.harnessRunId as string;
+        const input = JSON.parse(state.storage.sql.exec<{ execution_context_json: string }>(
+          `SELECT execution_context_json FROM runs WHERE run_id = ?`,
+          runId,
+        ).one().execution_context_json);
+        state.storage.sql.exec(
+          `UPDATE runs SET external_settled_at = 123456789, execution_available_at = NULL
+            WHERE run_id = ?`,
+          runId,
+        );
+        void (instance as unknown as {
+          persistAgentRunForExternalSettlement: (
+            workflowInput: unknown,
+            outcome: { status: "completed" },
+          ) => Promise<unknown>;
+        }).persistAgentRunForExternalSettlement(input, { status: "completed" });
+        return state.storage.sql.exec<{ settled_at: number | null }>(
+          `SELECT external_settled_at AS settled_at FROM runs WHERE run_id = ?`,
+          runId,
+        ).one().settled_at;
+      })).toBe(123456789);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
   it("starts the next inference while the previous run's external settlement is blocked", async () => {
     const stub = agentStub();
     let settlementGate: { entered: boolean; open: boolean } | null = null;
@@ -307,6 +371,50 @@ describe("a message queued behind a live run", () => {
         interval: 50,
         message: "the independent settlement lane did not drain",
       }).toBe(0);
+    } finally {
+      if (settlementGate) settlementGate.open = true;
+      await openProviderGate(stub).catch(() => undefined);
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("reclaims an external settlement drain after its durable claim expires", async () => {
+    const stub = agentStub();
+    let settlementGate: { entered: boolean; open: boolean } | null = null;
+    try {
+      await installScriptedProvider(
+        stub,
+        [assistantTurn("answering before a cancelled external continuation")],
+        { primaryModel: MODEL, fallbackModels: [], gateFirstCall: true },
+      );
+      await initializeWorkstream(stub, "opening message");
+      await waitForGatedProviderCall(stub);
+      settlementGate = await holdFirstExternalSettlement(stub);
+      await openProviderGate(stub);
+      await expect.poll(() => settlementGate?.entered ?? false, {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+      }).toBe(true);
+
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          `UPDATE runs SET execution_available_at = ?
+            WHERE terminalized_at IS NOT NULL AND external_settled_at IS NULL`,
+          Date.now() - 1,
+        );
+      });
+      await runDurableObjectAlarm(stub);
+
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM runs
+            WHERE terminalized_at IS NOT NULL AND external_settled_at IS NULL`,
+        ).one().count), {
+        timeout: RUN_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "expired external settlement claim was not reclaimed",
+      }).toBe(0);
+      expect(settlementGate.open).toBe(false);
     } finally {
       if (settlementGate) settlementGate.open = true;
       await openProviderGate(stub).catch(() => undefined);
