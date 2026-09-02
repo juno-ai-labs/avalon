@@ -19,8 +19,8 @@ export function useDebugEnabled(): boolean {
 
   useEffect(() => {
     let cancelled = false;
-    // Main announces transitions, not the current value on every poll. Once a
-    // live transition arrives, the older mount-time read must never replace it.
+    // Invoke replies and live events use independent Electron channels. Once a
+    // live transition arrives, the pending mount-time read is obsolete.
     let liveUpdateGeneration = 0;
     const unsubscribe = bridge.onApplicationSettingsChanged((settings) => {
       liveUpdateGeneration += 1;
