@@ -31,7 +31,7 @@ import type { Session } from 'electron';
  */
 export interface ArtifactViewHandle {
   setBounds(bounds: PreviewBounds): void;
-  loadURL(url: string): void;
+  loadURL(url: string): Promise<void>;
   close(): void;
 }
 
@@ -53,6 +53,30 @@ export interface ArtifactPresentation {
   /** The one-shot access URL; its code lives in the fragment. */
   url: string;
   bounds: PreviewBounds;
+}
+
+/**
+ * Apply the main process's broad navigation fence without stealing artifact
+ * navigation from its stricter, origin-scoped owner.
+ *
+ * `web-contents-created` installs the broad fence before a `WebContentsView`
+ * can be marked as an artifact. The decision therefore happens when the
+ * navigation fires. Most importantly, an artifact returns before
+ * `preventDefault()`: preventing first and then "deferring" blocked the
+ * bootstrap's same-origin redemption POST and left every preview on an empty
+ * Opening page.
+ */
+export function applyGlobalNavigationPolicy(input: {
+  event: { preventDefault(): void };
+  url: string;
+  artifactSurface: boolean;
+  rendererAllowed: (url: string) => boolean;
+  externalAllowed: (url: string) => boolean;
+  openExternal: (url: string) => void;
+}): void {
+  if (input.rendererAllowed(input.url) || input.artifactSurface) return;
+  input.event.preventDefault();
+  if (input.externalAllowed(input.url)) input.openExternal(input.url);
 }
 
 /**
@@ -206,14 +230,23 @@ export class ArtifactPreviewController {
   ) {}
 
   /** Show one artifact in the rail's preview region. */
-  present(request: ArtifactPresentation): boolean {
+  async present(request: ArtifactPresentation): Promise<boolean> {
     if (!isArtifactUrl(request.url, this.servingDomain)) return false;
     if (this.artifactId !== request.artifactId) this.destroy();
     this.bounds = request.bounds;
     if (!this.view) {
       this.view = this.createView(request);
       this.artifactId = request.artifactId;
-      this.view.loadURL(request.url);
+      const created = this.view;
+      this.applyBounds();
+      try {
+        await created.loadURL(request.url);
+      } catch {
+        // `loadURL` rejects for DNS, TLS, and terminal navigation failures.
+        // Do not report a composited-but-empty view as a successful preview.
+        if (this.view === created) this.destroy();
+        return false;
+      }
     }
     this.applyBounds();
     return true;

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   ArtifactPreviewController,
+  applyGlobalNavigationPolicy,
   artifactPartition,
   artifactWebPreferences,
   clampBounds,
@@ -9,6 +10,40 @@ import {
   isArtifactUrl,
   type PreviewBounds,
 } from './artifact-viewers';
+
+describe('the global navigation fence handoff', () => {
+  it('defers artifact navigation before preventing it', () => {
+    const preventDefault = vi.fn();
+    const openExternal = vi.fn();
+    applyGlobalNavigationPolicy({
+      event: { preventDefault },
+      url: `${ORIGIN}/__rally/redeem`,
+      artifactSurface: true,
+      rendererAllowed: () => false,
+      externalAllowed: () => true,
+      openExternal,
+    });
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it('still blocks and hands an ordinary external navigation to the browser', () => {
+    const preventDefault = vi.fn();
+    const openExternal = vi.fn();
+    applyGlobalNavigationPolicy({
+      event: { preventDefault },
+      url: 'https://example.test/',
+      artifactSurface: false,
+      rendererAllowed: () => false,
+      externalAllowed: () => true,
+      openExternal,
+    });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(openExternal).toHaveBeenCalledWith('https://example.test/');
+  });
+});
 
 const DOMAIN = 'rallyusercontent.test';
 const ARTIFACT = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
@@ -166,7 +201,7 @@ describe('confining a surface to its artifact', () => {
 });
 
 describe('the rail preview controller', () => {
-  function harness(servingDomain = DOMAIN) {
+  function harness(servingDomain = DOMAIN, loadFailure: Error | null = null) {
     const views: {
       url: string | null;
       bounds: PreviewBounds[];
@@ -184,7 +219,10 @@ describe('the rail preview controller', () => {
         views.push(state);
         return {
           setBounds: (bounds: PreviewBounds) => state.bounds.push(bounds),
-          loadURL: (url: string) => { state.url = url; },
+          loadURL: async (url: string) => {
+            state.url = url;
+            if (loadFailure) throw loadFailure;
+          },
           close: () => { state.closed = true; },
         };
       },
@@ -194,18 +232,26 @@ describe('the rail preview controller', () => {
 
   const bounds = { x: 900, y: 100, width: 280, height: 400 };
 
-  it('presents an artifact and positions it over the rail', () => {
+  it('presents an artifact and positions it over the rail', async () => {
     const { controller, views } = harness();
-    expect(controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(true);
     expect(views).toHaveLength(1);
     expect(views[0]?.url).toBe(`${ORIGIN}/`);
     expect(views[0]?.bounds.at(-1)).toEqual(bounds);
   });
 
-  it('refuses a URL that is not an artifact, and creates nothing', () => {
+  it('refuses a URL that is not an artifact, and creates nothing', async () => {
     const { controller, views } = harness();
-    expect(controller.present({ artifactId: ARTIFACT, url: 'https://rallywith.ai/app', bounds })).toBe(false);
+    expect(await controller.present({ artifactId: ARTIFACT, url: 'https://rallywith.ai/app', bounds })).toBe(false);
     expect(views).toHaveLength(0);
+    expect(controller.currentArtifactId()).toBeNull();
+  });
+
+  it('reports a failed navigation and removes the empty composited view', async () => {
+    const { controller, views, removed } = harness(DOMAIN, new Error('ERR_NAME_NOT_RESOLVED'));
+    expect(await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds })).toBe(false);
+    expect(views[0]?.closed).toBe(true);
+    expect(removed).toHaveLength(1);
     expect(controller.currentArtifactId()).toBeNull();
   });
 

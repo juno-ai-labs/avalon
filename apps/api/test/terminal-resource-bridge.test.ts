@@ -1,5 +1,8 @@
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
+import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
@@ -72,6 +75,16 @@ function fixture(
   // and capture lives in WorkspaceDO's triggers — so the fixture takes them
   // from the ledger rather than publishing into a table that has no history.
   applyWorkspaceResourceSchema(database, W);
+  const platformDatabase = new DatabaseSync(":memory:");
+  openDatabases.push(platformDatabase);
+  platformDatabase.exec(readFileSync(fileURLToPath(new URL(
+    "../../../packages/db/platform-migrations/0001_artifact_hostname_routes.sql",
+    import.meta.url,
+  )), "utf8"));
+  platformDatabase.exec(readFileSync(fileURLToPath(new URL(
+    "../../../packages/db/platform-migrations/0002_minimize_artifact_hostname_routes.sql",
+    import.meta.url,
+  )), "utf8"));
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
@@ -116,7 +129,8 @@ function fixture(
     delete: vi.fn(async (key: string) => { objects.delete(key); }),
   });
   const baseEnv = createTestEnv({
-    DB: workspaceDatabase(database), PAYLOADS: bucket, AVALON_REGION: "global", APP_ENV: "test",
+    DB: workspaceDatabase(database), PLATFORM_DB: sqliteD1(platformDatabase),
+    PAYLOADS: bucket, AVALON_REGION: "global", APP_ENV: "test",
     MAX_ATTACHMENT_BYTES: "25000000",
     // The reaper's decisions are typed WorkspaceDO methods now. They run the
     // object's own storage functions over this fixture's database, because a

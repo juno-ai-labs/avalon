@@ -34,6 +34,8 @@
     "db:migrate:remote:eu": "node ../../scripts/migrate-d1.mjs --remote --region eu",
     "db:migrate:remote:list": "node ../../scripts/migrate-d1.mjs --remote --list --region global",
     "db:migrate:remote:list:eu": "node ../../scripts/migrate-d1.mjs --remote --list --region eu",
+    "db:platform:migrate:remote": "wrangler d1 migrations apply PLATFORM_DB --remote --config platform.wrangler.jsonc",
+    "db:platform:migrate:remote:list": "wrangler d1 migrations list PLATFORM_DB --remote --config platform.wrangler.jsonc",
     "db:seed": "node ../../scripts/seed-local-region.mjs global",
     "db:seed:eu": "node ../../scripts/seed-local-region.mjs eu",
     "deploy:global": "node ../../scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings && wrangler deploy --config wrangler.documents.global.jsonc && wrangler deploy --config wrangler.terminal.global.jsonc && wrangler deploy --config wrangler.telemetry.global.jsonc && wrangler deploy --config wrangler.pricing.global.jsonc && wrangler deploy --config .wrangler.lakehouses.global.json",
