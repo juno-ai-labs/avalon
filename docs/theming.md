@@ -724,9 +724,10 @@ at once, because that screen already showed what the card is supposed to be.
 one definition serves both. It is the better factoring on paper and the wrong
 change here — under Air the launch screen would stop being a card and become a
 rule, which is a product decision about a screen nobody asked about, made as a
-side effect of a colour fix. Also rejected: dropping the focus darkening to
-`line.5` so the two matched in every state. The launch composer holds `line.3`
-through focus only because its own selector outranks
+side effect of a colour fix. Also rejected: dropping the focus darkening
+entirely and holding `line.3` through focus, so the two matched in every state.
+The launch composer holds `line.3` through focus only because its own selector
+outranks
 `.workstream-composer:focus-within`; the work stream's composer is the
 long-lived field, and taking its one focus signal away to match an accident is
 not symmetry worth having.
