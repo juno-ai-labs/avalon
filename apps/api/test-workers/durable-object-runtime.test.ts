@@ -308,6 +308,10 @@ type TestableSubstreamAgent = {
   semanticRealtimeEvent(input: Record<string, unknown>): Record<string, unknown>;
   nextLoopWorkAt(): number | null;
   agentDrain: { resume(operation: () => Promise<void>, settled: () => void): Promise<void> };
+  runtimeRecovery: Promise<void> | null;
+  runtimeRecoveryAttempt: () => Promise<void>;
+  startRuntimeRecovery(): Promise<void>;
+  fulfillSubscription(...args: unknown[]): Promise<boolean>;
 };
 
 type TestableDispatchScheduler = {
@@ -398,6 +402,27 @@ async function provisionBootstrappedWorkstream(
 }
 
 describe("Durable Objects in the Workers runtime", () => {
+  it("retries runtime recovery after one attempt fails instead of poisoning the isolate", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+
+    await runInDurableObject(stub, async (instance) => {
+      const testable = instance as unknown as TestableSubstreamAgent;
+      let attempts = 0;
+      testable.runtimeRecovery = null;
+      testable.runtimeRecoveryAttempt = async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("injected_runtime_recovery_failure");
+      };
+
+      await expect(testable.startRuntimeRecovery())
+        .rejects.toThrow("injected_runtime_recovery_failure");
+      await expect(testable.startRuntimeRecovery()).resolves.toBeUndefined();
+      expect(attempts).toBe(2);
+    });
+  });
+
   it("refuses fresh workspace, work-stream, substream, and automation admission after abandonment", async () => {
     await seedOpenAuthority();
     const identity = { sessionId: SESSION_ID, userId: USER_ID, workspaceId: WORKSPACE_ID };
@@ -5265,6 +5290,144 @@ describe("Durable Objects in the Workers runtime", () => {
     }>).map((input) => input.inputSequence))).toEqual(
       Array.from({ length: 10 }, (_, index) => index + 1),
     );
+  });
+
+  it("bootstraps the presence-free feed during upgrade without a subscribe message", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000600",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-socket-after-sequence": "0",
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    const delivered = nextMessage(socket);
+    socket.accept();
+
+    expect(JSON.parse(String((await delivered).data))).toMatchObject({
+      type: "snapshot",
+      reason: "initial",
+    });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
+        afterSequence: 0,
+        publishPresence: false,
+        subscribed: true,
+        role: "member",
+      });
+    });
+    socket.close(1000, "test complete");
+  });
+
+  it("does not trust an unsigned bootstrap cursor from the room URL", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+
+    const response = await stub.fetch("https://substream.test/socket?afterSequence=0", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-00000000060e",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
+        afterSequence: 0,
+        publishPresence: true,
+        subscribed: false,
+      });
+    });
+    socket.close(1000, "test complete");
+  });
+
+  it("closes an accepted socket when upgrade-time subscription bootstrap throws", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+    await runInDurableObject(stub, (instance) => {
+      const testable = instance as unknown as TestableSubstreamAgent;
+      testable.fulfillSubscription = async () => {
+        throw new Error("injected_subscription_bootstrap_failure");
+      };
+    });
+
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-00000000060f",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-socket-after-sequence": "0",
+      },
+    });
+
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    const closed = nextClose(socket);
+    socket.accept();
+    await expect(closed).resolves.toMatchObject({ code: 1011 });
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => state.getWebSockets().length),
+      { timeout: 5_000 },
+    ).toBe(0);
   });
 
   it("sends the newest page and the reader's own position in one snapshot", async () => {

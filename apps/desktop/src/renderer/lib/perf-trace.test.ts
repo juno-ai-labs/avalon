@@ -75,6 +75,17 @@ describe('renderer performance tracing', () => {
     }));
   });
 
+  it('keeps speculative socket traces local when no click owns them', () => {
+    reportTelemetryProductIntent.mockClear();
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const trace = startPerfTrace('workstream_open', { report: false });
+
+    trace.end({ outcome: 'unmounted' });
+
+    expect(reportTelemetryProductIntent).not.toHaveBeenCalled();
+    expect(traceLines(debug)).toHaveLength(1);
+  });
+
   it('prints one line naming every phase in order', async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
     const trace = startPerfTrace('workstream_open', { traceId: 'trace-1', workstreamId: 'workstream-1' });

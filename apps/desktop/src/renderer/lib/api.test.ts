@@ -954,6 +954,41 @@ describe('socket ticket transport', () => {
     });
   });
 
+  it('requests a signed subscription bootstrap at the current feed cursor', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      void input;
+      return json({
+        url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        subscriptionBootstrap: true,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.getSocketTicket(workstreamId, '0', undefined, 42)).resolves.toMatchObject({
+      subscriptionBootstrap: true,
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('afterSequence=42');
+  });
+
+  it('labels a hover feed ticket as speculative', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      void input;
+      return json({
+        url: `wss://api.rally.test/socket/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        subscriptionBootstrap: true,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await api.getSocketTicket(workstreamId, '0', undefined, 0, true);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('afterSequence=0&speculative=true');
+  });
+
   it('requests the one workspace-scoped sync and command socket ticket', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;

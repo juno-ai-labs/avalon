@@ -1783,12 +1783,42 @@ export class WorkstreamObjectProductService {
 
   async get(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<WorkstreamDetail> {
     const root = await this.authorize(auth);
+    return this.detailAfterAdmission(auth, root, viewers);
+  }
+
+  /**
+   * Detail for a socket whose session and membership were admitted at upgrade.
+   * Revocation closes that socket; repeating the regional membership read
+   * while assembling its first frame only lengthens the admission it already
+   * passed.
+   */
+  async getAdmitted(
+    auth: AuthContext,
+    viewers: WorkstreamDetail["viewers"] = [],
+    markOpened = true,
+  ): Promise<WorkstreamDetail> {
+    const root = this.locallyAuthorizedRoot(auth);
+    return this.detailAfterAdmission(auth, root, viewers, markOpened);
+  }
+
+  /** Settle unseen state after a speculative socket is promoted by navigation. */
+  async markOpenedAdmitted(auth: AuthContext): Promise<void> {
+    this.locallyAuthorizedRoot(auth);
+    await this.markOpened(auth.userId);
+  }
+
+  private async detailAfterAdmission(
+    auth: AuthContext,
+    root: RootRow,
+    viewers: WorkstreamDetail["viewers"],
+    markOpened = true,
+  ): Promise<WorkstreamDetail> {
     // Both ways of opening a work stream — the socket's snapshot and
     // `GET /workstreams/:id` — assemble their answer here, so this is where
     // "they have now seen it" is true. Ordered before the read below so the
     // detail this call returns already says so, rather than telling the
     // client it is unseen and correcting itself over the socket a beat later.
-    await this.markOpened(auth.userId);
+    if (markOpened) await this.markOpened(auth.userId);
     const [workstream, participants, resources, connections] = await Promise.all([
       this.summary(root, auth.userId),
       this.participants(),

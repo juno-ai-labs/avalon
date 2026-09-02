@@ -34,6 +34,7 @@ import {
   REALTIME_SOCKET_CONNECTING,
   REALTIME_SOCKET_OPEN,
   type RealtimeSocket,
+  type RealtimeSocketHandshakePhaseEvent,
 } from './realtime-socket';
 import { advanceStreamReveal, applyRevealedText, flushStreamReveal } from './streaming-reveal';
 import {
@@ -590,6 +591,7 @@ export function useWorkstreamSocket(
   controlSocketOwnedExternally = false,
   initialReason: Exclude<WorkstreamSocketStartReason, 'reconnect'> = 'active_workstream',
   socketLeaseId?: string,
+  openCommitted = true,
 ): WorkstreamSocketConnection {
   const queryClient = useQueryClient();
   const {
@@ -600,6 +602,12 @@ export function useWorkstreamSocket(
   const resolvedSocketLeaseId = socketLeaseId ?? generatedSocketLeaseId;
   const initialReasonRef = useRef(initialReason);
   initialReasonRef.current = initialReason;
+  const openCommittedRef = useRef(openCommitted);
+  openCommittedRef.current = openCommitted;
+  const markOpenedRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    if (openCommitted) markOpenedRef.current();
+  }, [openCommitted]);
   useWorkstreamControlSocket(
     api,
     workstreamId,
@@ -667,6 +675,19 @@ export function useWorkstreamSocket(
     // they can read.
     let accessRevoked = false;
     let socket: RealtimeSocket | null = null;
+    let markOpenedRequired = false;
+    let markOpenedSent = false;
+    const markOpened = (): void => {
+      if (
+        !openCommittedRef.current
+        || !markOpenedRequired
+        || markOpenedSent
+        || socket?.readyState !== REALTIME_SOCKET_OPEN
+      ) return;
+      socket.send(JSON.stringify({ type: 'mark_opened' }));
+      markOpenedSent = true;
+    };
+    markOpenedRef.current = markOpened;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -1547,7 +1568,12 @@ export function useWorkstreamSocket(
       // the person waited for. `ticketId` is what the server's upgrade and room
       // spans carry as `rally.socket.ticket_id`, and the request id joins the
       // ticket call itself. Replaced per attempt: a reconnect is a new open.
-      const trace = startPerfTrace('workstream_open', { workstreamId });
+      const openingAttemptId = workstreamFeedOpenAttemptId(workstreamId);
+      const trace = startPerfTrace('workstream_open', {
+        workstreamId,
+        ...(openingAttemptId ? { operationId: openingAttemptId } : {}),
+        report: openingAttemptId !== undefined,
+      });
       openTrace?.end({ outcome: 'superseded' });
       openTrace = trace;
       reportWorkstreamSocketStarted(
@@ -1557,7 +1583,7 @@ export function useWorkstreamSocket(
         attempts.current === 0 ? initialReasonRef.current : 'reconnect',
         attempts.current,
         trace.traceId,
-        workstreamFeedOpenAttemptId(workstreamId),
+        openingAttemptId,
       );
       trace.annotate({
         attempt: attempts.current,
@@ -1570,11 +1596,19 @@ export function useWorkstreamSocket(
         ) / 10,
       });
       try {
+        const speculative = initialReasonRef.current === 'hover_warmup'
+          && !openCommittedRef.current;
         // Called directly rather than through `trace.step`: the socket-ticket
         // lint rule recognizes a ticket only when the awaited call is the
         // declarator's own initializer, and a `mark` on the next line closes
         // exactly the same span.
-        const socketTicket = await api.getSocketTicket(workstreamId, '0', trace.traceId);
+        const socketTicket = await api.getSocketTicket(
+          workstreamId,
+          '0',
+          trace.traceId,
+          resumeState.lastSequence,
+          speculative,
+        );
         trace.mark('socket_ticket');
         trace.annotate({ ticketId: socketTicket.ticketId ?? null });
         if (closedByEffect) {
@@ -1588,6 +1622,8 @@ export function useWorkstreamSocket(
           return;
         }
         const nextSocket = createRealtimeSocket('substream_feed', socketTicket.url, socketTicket.protocols);
+        markOpenedRequired = speculative;
+        markOpenedSent = !speculative;
         // Splits the wait between holding a ticket and being connected into the
         // two halves that have opposite fixes. Nothing is awaited between the
         // ticket resolving and this line, so `dial` can only be large if the
@@ -1597,6 +1633,26 @@ export function useWorkstreamSocket(
         // slow server either way.
         trace.mark('dial');
         socket = nextSocket;
+        let failedRouteCount = 0;
+        nextSocket.addEventListener('handshakephase', (
+          phaseEvent: RealtimeSocketHandshakePhaseEvent,
+        ) => {
+          if (closedByEffect || socket !== nextSocket) return;
+          const annotation = {
+            proxy_resolution: 'pacResolutionMs',
+            dns: 'dnsMs',
+            tcp: 'tcpMs',
+            tls: 'tlsMs',
+            edge_upgrade: 'edgeUpgradeMs',
+            proxy_connect_tls_edge: 'proxyHandshakeMs',
+            route_failed: null,
+          }[phaseEvent.phase];
+          if (annotation) trace.annotate({ [annotation]: phaseEvent.durationMs });
+          if (phaseEvent.phase === 'route_failed') {
+            failedRouteCount += 1;
+            trace.annotate({ failedRouteCount });
+          }
+        });
         nextSocket.addEventListener('open', () => {
           if (closedByEffect || socket !== nextSocket) return;
           // Before the stability timer resets the counter: the depth this
@@ -1611,11 +1667,14 @@ export function useWorkstreamSocket(
           // that answer and paid two REST round trips to arrive at the same
           // place.
           snapshotRequestInFlight = false;
-          nextSocket.send(JSON.stringify({
-            type: 'subscribe',
-            afterSequence: resumeState.lastSequence,
-            publishPresence: false,
-          }));
+          if (!socketTicket.subscriptionBootstrap) {
+            nextSocket.send(JSON.stringify({
+              type: 'subscribe',
+              afterSequence: resumeState.lastSequence,
+              publishPresence: false,
+            }));
+          }
+          markOpened();
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
         });
@@ -1767,6 +1826,7 @@ export function useWorkstreamSocket(
       closedByEffect = true;
       setSendReady(false);
       requestSnapshotRef.current = () => undefined;
+      markOpenedRef.current = () => undefined;
       openTrace?.end({ outcome: 'unmounted' });
       openTrace = null;
       createMessageRef.current = () => Promise.reject(new ApiError(

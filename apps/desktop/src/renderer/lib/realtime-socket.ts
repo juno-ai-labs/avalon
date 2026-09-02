@@ -1,6 +1,7 @@
 import type {
   DesktopRealtimeSocketCloseInput,
   DesktopRealtimeSocketEvent,
+  DesktopRealtimeSocketHandshakePhase,
   DesktopRealtimeSocketKind,
   DesktopRealtimeSocketOpenInput,
   DesktopRealtimeSocketSendInput,
@@ -23,11 +24,22 @@ export interface RealtimeSocketCloseEvent extends Event {
   readonly wasClean: boolean;
 }
 
+export interface RealtimeSocketHandshakePhaseEvent extends Event {
+  readonly phase: DesktopRealtimeSocketHandshakePhase;
+  readonly durationMs: number;
+  readonly routeIndex: number;
+  readonly proxied: boolean;
+}
+
 export interface RealtimeSocket {
   readonly readyState: number;
   addEventListener(type: 'open' | 'error', listener: (event: Event) => void): void;
   addEventListener(type: 'message', listener: (event: MessageEvent<string>) => void): void;
   addEventListener(type: 'close', listener: (event: RealtimeSocketCloseEvent) => void): void;
+  addEventListener(
+    type: 'handshakephase',
+    listener: (event: RealtimeSocketHandshakePhaseEvent) => void,
+  ): void;
   close(code?: number, reason?: string): void;
   send(data: string): void;
 }
@@ -79,6 +91,17 @@ class BrokeredCloseEvent extends Event implements RealtimeSocketCloseEvent {
   }
 }
 
+class BrokeredHandshakePhaseEvent extends Event implements RealtimeSocketHandshakePhaseEvent {
+  constructor(
+    readonly phase: DesktopRealtimeSocketHandshakePhase,
+    readonly durationMs: number,
+    readonly routeIndex: number,
+    readonly proxied: boolean,
+  ) {
+    super('handshakephase');
+  }
+}
+
 class BrokeredRealtimeSocket extends EventTarget implements RealtimeSocket {
   readyState = REALTIME_SOCKET_CONNECTING;
   private readonly unsubscribe: () => void;
@@ -90,7 +113,14 @@ class BrokeredRealtimeSocket extends EventTarget implements RealtimeSocket {
     super();
     this.unsubscribe = subscribeToSocketEvents(this.bridge, input.socketId, (event) => {
       if (this.readyState === REALTIME_SOCKET_CLOSED) return;
-      if (event.type === 'open') {
+      if (event.type === 'handshake_phase') {
+        this.dispatchEvent(new BrokeredHandshakePhaseEvent(
+          event.phase,
+          event.durationMs,
+          event.routeIndex,
+          event.proxied,
+        ));
+      } else if (event.type === 'open') {
         if (this.readyState !== REALTIME_SOCKET_CONNECTING) return;
         this.readyState = REALTIME_SOCKET_OPEN;
         this.dispatchEvent(new Event('open'));
@@ -112,10 +142,15 @@ class BrokeredRealtimeSocket extends EventTarget implements RealtimeSocket {
   override addEventListener(type: 'message', listener: (event: MessageEvent<string>) => void): void;
   override addEventListener(type: 'close', listener: (event: RealtimeSocketCloseEvent) => void): void;
   override addEventListener(
+    type: 'handshakephase',
+    listener: (event: RealtimeSocketHandshakePhaseEvent) => void,
+  ): void;
+  override addEventListener(
     type: string,
     listener: ((event: Event) => void)
       | ((event: MessageEvent<string>) => void)
-      | ((event: RealtimeSocketCloseEvent) => void),
+      | ((event: RealtimeSocketCloseEvent) => void)
+      | ((event: RealtimeSocketHandshakePhaseEvent) => void),
   ): void {
     super.addEventListener(type, listener as EventListener);
   }
