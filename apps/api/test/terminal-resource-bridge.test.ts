@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { Env } from "../src/env";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
 import { reapDeletedResourceObjects } from "../src/services/resource-object-cleanup";
@@ -12,6 +13,7 @@ import type { WorkstreamRuntimeResourceAttacher } from "../src/services/workstre
 import {
   createCloudflareTestBinding,
   createTestD1Database,
+  createTestDurableObjectId,
   createTestD1PreparedStatement,
   createTestEnv,
 } from "./helpers/cloudflare-test";
@@ -29,6 +31,7 @@ import {
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
 import { workspaceResourceMaintenanceBinding } from "./helpers/workspace-object-rpcs";
+import { sha256Hex } from "../src/lib/crypto";
 
 const W = "10000000-0000-4000-8000-000000000001";
 const S = "10000000-0000-4000-8000-000000000002";
@@ -129,6 +132,7 @@ function fixture(
     }),
     delete: vi.fn(async (key: string) => { objects.delete(key); }),
   });
+  const recordPublish = vi.fn(async () => undefined);
   const baseEnv = createTestEnv({
     DB: workspaceDatabase(database), PLATFORM_DB: sqliteD1(platformDatabase),
     PAYLOADS: bucket, AVALON_REGION: "global", APP_ENV: "test",
@@ -137,6 +141,10 @@ function fixture(
     // object's own storage functions over this fixture's database, because a
     // second real object could not see the rows the bridge writes here.
     WORKSPACE_DOS: workspaceResourceMaintenanceBinding(database),
+    ARTIFACT_HOSTS: createCloudflareTestBinding<Env["ARTIFACT_HOSTS"]>({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: () => ({ recordPublish }),
+    }),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
       extra: {
         attachRuntimeResource: vi.fn((request: {
@@ -188,6 +196,7 @@ function fixture(
     objectStore,
     objects,
     put,
+    recordPublish,
     setAfterPut(callback: () => Promise<void>) { afterPut = callback; },
     env,
     provider,
@@ -200,6 +209,65 @@ function fixture(
 }
 
 describe("Terminal resource bridge", () => {
+  it("upgrades an unchanged legacy site on its next publish", async () => {
+    const state = fixture();
+    const fileSha256 = "b".repeat(64);
+    const contentDigest = await sha256Hex(new TextEncoder().encode(JSON.stringify([
+      ["index.html", fileSha256],
+    ])));
+    state.objects.set("old-manifest", new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      artifactId: ARTIFACT,
+      artifactVersion: 1,
+      mode: "static",
+      stateful: false,
+      serverModuleSha256: null,
+      assets: [{
+        path: "index.html",
+        contentType: "text/html; charset=utf-8",
+        sizeBytes: 12,
+        sha256: fileSha256,
+      }],
+      totalBytes: 12,
+      publishedAt: "2026-08-13T00:00:00.000Z",
+    })));
+    state.database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+          content_ref, content_sha256, metadata_json, attachment_status, model_content_status,
+          created_at, updated_at)
+       VALUES (?, ?, 'generated_site', 'avalon_generated', ?, 'Site',
+               'application/vnd.rally.site-manifest+json', 'old-manifest', ?, '{}',
+               'attached', 'unsupported', '2026-08-13', '2026-08-13')`,
+    ).run(RESOURCE, W, `terminal:${S}:site`, contentDigest);
+    state.database.prepare(
+      `INSERT INTO artifact_registry
+         (artifact_id, workspace_id, workstream_id, resource_id, mode, stateful,
+          current_version, manifest_ref, hostname_stub, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'static', 0, 1, 'old-manifest',
+               'level-luminous-sequential-schrodinger', 1, 1)`,
+    ).run(ARTIFACT, W, S, RESOURCE);
+
+    const output = await state.bridge.publishSiteResource(context, { filePath: "site" }, {
+      mode: "static",
+      stateful: false,
+      files: [{
+        path: "index.html",
+        bytes: new TextEncoder().encode("<h1>new</h1>"),
+        sha256: fileSha256,
+      }],
+      serverModuleSha256: null,
+    });
+
+    expect(output.version).toBe(2);
+    expect(state.recordPublish).toHaveBeenCalledWith(expect.objectContaining({
+      manifest: expect.objectContaining({ socialPreview: expect.any(Object) }),
+    }));
+    expect(state.database.prepare(
+      "SELECT current_version FROM artifact_registry WHERE artifact_id = ?",
+    ).get(ARTIFACT)).toEqual({ current_version: 2 });
+  });
+
   it("reserves a site's hostname before a republish mutates its resource row", async () => {
     const state = fixture();
     const originalDigest = "a".repeat(64);

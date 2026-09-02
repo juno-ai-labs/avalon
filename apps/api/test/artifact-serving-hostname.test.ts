@@ -14,7 +14,9 @@ import {
 
 const ARTIFACT = "00000000-0000-7000-8000-0000000000b1";
 const STUB = "level-luminous-sequential-schrodinger";
-const INDEX_HTML = "<h1>Public artifact</h1>";
+const INDEX_HTML = "<!doctype html><html><head><title>Public artifact</title></head><body><h1>Public artifact</h1></body></html>";
+const PRICING_HTML = "<!doctype html><html><head><meta property=\"og:title\" content=\"Pricing\"></head><body>Pricing</body></html>";
+const PREVIEW_BYTES = new Uint8Array([137, 80, 78, 71]);
 
 const MANIFEST: ArtifactManifest = {
   version: 1,
@@ -23,13 +25,39 @@ const MANIFEST: ArtifactManifest = {
   mode: "static",
   stateful: false,
   serverModuleSha256: null,
-  assets: [{
-    path: "index.html",
-    contentType: "text/html; charset=utf-8",
-    sizeBytes: INDEX_HTML.length,
-    sha256: "0".repeat(64),
-  }],
-  totalBytes: INDEX_HTML.length,
+  assets: [
+    {
+      path: "index.html",
+      contentType: "text/html; charset=utf-8",
+      sizeBytes: INDEX_HTML.length,
+      sha256: "0".repeat(64),
+    },
+    {
+      path: "pricing.html",
+      contentType: "text/html; charset=utf-8",
+      sizeBytes: PRICING_HTML.length,
+      sha256: "3".repeat(64),
+    },
+    {
+      path: ".rally/social-preview.png",
+      contentType: "image/png",
+      sizeBytes: PREVIEW_BYTES.length,
+      sha256: "2".repeat(64),
+    },
+  ],
+  socialPreview: {
+    title: "Public artifact",
+    description: "A public Rally artifact.",
+    image: {
+      path: ".rally/social-preview.png",
+      contentType: "image/png",
+      width: 1200,
+      height: 630,
+      alt: "Public artifact",
+      generated: true,
+    },
+  },
+  totalBytes: INDEX_HTML.length + PRICING_HTML.length + PREVIEW_BYTES.length,
   publishedAt: "2026-09-02T00:00:00.000Z",
 };
 const ACTIVE_MANIFEST: ArtifactManifest = {
@@ -96,10 +124,15 @@ function fixture(route: unknown | null, options: {
         prepare,
       }),
       PAYLOADS: createCloudflareTestBinding<R2Bucket>({
-        get: async () => ({
-          body: new TextEncoder().encode(INDEX_HTML),
-          text: async () => INDEX_HTML,
-        }),
+        get: async (key: string) => {
+          const bytes = key.endsWith("/.rally/social-preview.png")
+            ? PREVIEW_BYTES
+            : new TextEncoder().encode(key.endsWith("/pricing.html") ? PRICING_HTML : INDEX_HTML);
+          return {
+            body: bytes,
+            text: async () => new TextDecoder().decode(bytes),
+          };
+        },
       }),
       ...(options.loaderFetch
         ? {
@@ -201,10 +234,34 @@ describe("artifact serving hostname routes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe(INDEX_HTML);
+    const body = await response.text();
+    expect(body).toContain("<title>Public artifact</title>");
+    expect(body).toContain(`property="og:title" content="Public artifact"`);
+    expect(body).toContain(
+      `property="og:image" content="https://${STUB}-g.rallyusercontent.test/.rally/social-preview.png?v=1"`,
+    );
+    expect(body).toContain(`name="twitter:card" content="summary_large_image"`);
     expect(response.headers.get("content-security-policy")).toBeTruthy();
     expect(checkSession).not.toHaveBeenCalled();
     expect(currentState).toHaveBeenCalledOnce();
+
+    const image = await artifactWorker.fetch(
+      new Request(`https://${STUB}-g.rallyusercontent.test/.rally/social-preview.png?v=1`),
+      env,
+      context(),
+    );
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await image.arrayBuffer())).toEqual(PREVIEW_BYTES);
+
+    const pricing = await artifactWorker.fetch(
+      new Request(`https://${STUB}-g.rallyusercontent.test/pricing.html`),
+      env,
+      context(),
+    );
+    const pricingBody = await pricing.text();
+    expect(pricingBody).toBe(PRICING_HTML);
+    expect(pricingBody).not.toContain(`content="Public artifact"`);
   });
 
   it("does not attach a Rally session to a cross-site public read", async () => {
