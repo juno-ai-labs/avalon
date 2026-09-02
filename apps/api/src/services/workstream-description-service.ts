@@ -458,6 +458,8 @@ async function evaluate(
   let proposal: z.infer<typeof DescriptionDecisionSchema>;
   let evaluatedModel = "unknown";
   try {
+    // Deliberately accept the selected model's app-wide reasoning default: this
+    // is a judgment call, unlike the mechanical roles that explicitly disable it.
     const inference = await runStructuredInference(env, {
       role: "workstream_description",
       context: {

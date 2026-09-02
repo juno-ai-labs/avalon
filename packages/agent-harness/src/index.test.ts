@@ -391,6 +391,7 @@ describe("agent harness", () => {
       },
     });
     expect(requestHeaders!.get("X-OpenRouter-Metadata")).toBe("enabled");
+    expect(requestHeaders!.get("HTTP-Referer")).toBe("https://rallywith.ai");
     expect(requestBody).toMatchObject({
       user: "workspace-1",
       session_id: "workstream-1-substream-1",
@@ -430,6 +431,47 @@ describe("agent harness", () => {
         usage: { prompt_tokens: 12, completion_tokens: 3, reasoning_tokens: 1 },
       },
     });
+  });
+
+  it("uses app-wide model reasoning defaults without changing the undefined standard", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({
+        model: "test/model",
+        choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }],
+      });
+    }) as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      fetch: fetcher,
+    });
+    const structuredInput = {
+      messages: [{ role: "user" as const, content: "test" }],
+      schemaName: "model_reasoning_default",
+      jsonSchema: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+        additionalProperties: false,
+      },
+      parse: (value: unknown) => value as { ok: boolean },
+    };
+
+    await client.structured(structuredInput);
+    await client.structured({ ...structuredInput, model: "x-ai/grok-4.6" });
+    await client.structured({
+      ...structuredInput,
+      model: "x-ai/grok-4.6",
+      reasoningEffort: "none",
+    });
+
+    expect(requestBodies).toHaveLength(3);
+    expect(requestBodies[0]).not.toHaveProperty("reasoning");
+    expect(requestBodies[0]).not.toHaveProperty("parallel_tool_calls");
+    expect(requestBodies[1]?.reasoning).toEqual({ effort: "low" });
+    expect(requestBodies[2]?.reasoning).toEqual({ effort: "none" });
   });
 
   it("keeps the intended model in structured fallback trace metadata", async () => {
@@ -734,6 +776,62 @@ describe("agent harness", () => {
     await expect(client.stream({ messages: [{ role: "user", content: "test" }] }, () => {}))
       .resolves.toMatchObject({ model: "fallback/model", content: "ok" });
     expect(requests).toEqual(["primary/model", "primary/model", "fallback/model"]);
+  });
+
+  it("resolves a model reasoning default only after selecting a fallback", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return requestBodies.length === 1
+        ? Response.json({ error: { message: "primary unavailable" } }, { status: 503 })
+        : streamResponse([{ choices: [{ delta: { content: "fallback" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      fallbackModels: ["x-ai/grok-4.6"],
+      sameModelRetries: 0,
+      fetch: fetcher,
+    });
+
+    await expect(client.stream({
+      messages: [{ role: "user", content: "test" }],
+    }, () => {})).resolves.toMatchObject({ model: "x-ai/grok-4.6" });
+
+    expect(requestBodies[0]).not.toHaveProperty("reasoning");
+    expect(requestBodies[1]?.reasoning).toEqual({ effort: "low" });
+  });
+
+  it("enables parallel tool calls on a direct OpenRouter stream request", async () => {
+    let requestBody: Record<string, unknown> = {};
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      fetch: fetcher,
+    });
+
+    await expect(client.stream({
+      messages: [{ role: "user", content: "test" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "lookup",
+          description: "Look up a value",
+          parameters: { type: "object", additionalProperties: false },
+        },
+      }],
+    }, () => {})).resolves.toMatchObject({ content: "done" });
+
+    expect(requestBody).toMatchObject({
+      tool_choice: "auto",
+      parallel_tool_calls: true,
+    });
   });
 
   it("treats OpenRouter auth failures as terminal", async () => {
@@ -1716,6 +1814,7 @@ describe("agent harness", () => {
     expect(traces[1]?.generation_name).toBe("rally.turn.run-1:turn:2");
     expect(traces[0]?.turn_id).toBe("run-1:turn:1");
     expect(traces[1]?.turn_id).toBe("run-1:turn:2");
+    expect(requestBodies.every((body) => body.parallel_tool_calls === true)).toBe(true);
   });
 
   it("numbers accepted tool results densely when an earlier elicitation result is withheld", async () => {
@@ -1824,11 +1923,13 @@ describe("agent harness", () => {
     expect(requestBody).not.toHaveProperty("plugins");
     expect(requestBody).not.toHaveProperty("reasoning");
     expect(requestBody).not.toHaveProperty("reasoning_effort");
+    expect(requestBody.parallel_tool_calls).toBe(true);
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({
       model: "x-ai/grok-4.3",
       provider: "azure",
       providerInvocationModel: "grok-4.3",
+      payload: { parallel_tool_calls: true },
     });
     expect(attempts).toHaveLength(1);
     expect(attempts[0]).toMatchObject({
@@ -2087,7 +2188,7 @@ describe("agent harness", () => {
     expect(urls).toEqual(["https://openrouter.ai/api/v1/chat/completions"]);
   });
 
-  it("routes Grok 4.6 reasoning through its Azure deployment and prices cached usage", async () => {
+  it("applies the Grok 4.6 low reasoning default through Azure and prices cached usage", async () => {
     let requestBody: Record<string, unknown> = {};
     const attempts: InferenceAttemptEvent[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
@@ -2110,20 +2211,84 @@ describe("agent harness", () => {
       ...runInput(fetcher, {
         primaryModel: "x-ai/grok-4.6",
         azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
-        reasoningEffort: "high",
         workspaceId: "workspace-azure-grok-46",
       }),
       onInferenceAttempt: (event) => { attempts.push(event); },
     });
 
     expect(outcome).toMatchObject({ status: "completed", model: "x-ai/grok-4.6" });
-    expect(requestBody).toMatchObject({ model: "grok-4.6", reasoning_effort: "high" });
+    expect(requestBody).toMatchObject({
+      model: "grok-4.6",
+      reasoning_effort: "low",
+      parallel_tool_calls: true,
+    });
     expect(requestBody).not.toHaveProperty("reasoning");
     expect(attempts[0]).toMatchObject({
       provider: "azure",
       reasoningTokens: 12,
       cachedInputTokens: 40,
       costCents: 0.0585,
+    });
+  });
+
+  it("lets an explicit routed reasoning effort override the Grok 4.6 default", async () => {
+    let requestBody: Record<string, unknown> = {};
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        choices: [{ delta: { content: "explicit effort" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
+      }]);
+    }) as typeof fetch;
+
+    await expect(runHarness(runInput(fetcher, {
+      primaryModel: "x-ai/grok-4.6",
+      azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+      reasoningEffort: "high",
+      workspaceId: "workspace-azure-grok-46-explicit-reasoning",
+    }))).resolves.toMatchObject({ status: "completed", content: "explicit effort" });
+
+    expect(requestBody).toMatchObject({
+      model: "grok-4.6",
+      reasoning_effort: "high",
+    });
+  });
+
+  it("resolves the Grok 4.6 default after a routed fallback reaches that model", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(request);
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push({ url, body });
+      if (url === "https://openrouter.ai/api/v1/chat/completions") {
+        return Response.json({ error: { message: "primary unavailable" } }, { status: 503 });
+      }
+      return streamResponse([{
+        choices: [{ delta: { content: "fallback effort" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
+      }]);
+    }) as typeof fetch;
+
+    await expect(runHarness(runInput(fetcher, {
+      primaryModel: "test/model",
+      fallbackModels: ["x-ai/grok-4.6"],
+      azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+      transportRetries: 0,
+      workspaceId: "workspace-routed-grok-46-fallback-reasoning",
+    }))).resolves.toMatchObject({
+      status: "completed",
+      model: "x-ai/grok-4.6",
+      content: "fallback effort",
+    });
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.body).not.toHaveProperty("reasoning");
+    expect(requests[1]).toMatchObject({
+      url: "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+      body: {
+        model: "grok-4.6",
+        reasoning_effort: "low",
+      },
     });
   });
 
