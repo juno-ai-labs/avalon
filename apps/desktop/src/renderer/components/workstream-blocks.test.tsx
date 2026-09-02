@@ -106,6 +106,28 @@ describe('MessageBlock model timing', () => {
     expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
   });
+
+  it('marks a thinking row with the brain rather than the orb, and pulses it while it runs', () => {
+    const thinkingRow = (status: 'started' | 'completed'): Message => ({
+      ...baseMessage,
+      id: 'thought-thinking',
+      authorType: 'agent',
+      author: undefined,
+      messageType: 'thought',
+      thoughtEvent: { status, durationMs: 50_000, activeVerb: 'thinking', completedVerb: 'thought' },
+    });
+    const { container, rerender } = render(<MessageBlock {...actions} message={thinkingRow('started')} />);
+
+    expect(screen.getByText('thinking for 50s')).toBeVisible();
+    // The mark replaces the spinner rather than joining it.
+    expect(screen.queryByTestId('thinking-orb')).toBeNull();
+    expect(container.querySelector('.plugin-face .tabler-icon-brain')).not.toBeNull();
+    expect(container.querySelector('.plugin-face')).toHaveClass('plugin-face-active');
+
+    rerender(<MessageBlock {...actions} message={thinkingRow('completed')} />);
+    expect(screen.getByText('thought for 50s')).toBeVisible();
+    expect(container.querySelector('.plugin-face')).not.toHaveClass('plugin-face-active');
+  });
 });
 
 const singleSelectElicitation: ElicitationData = {

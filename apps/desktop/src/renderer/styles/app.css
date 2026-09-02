@@ -4786,7 +4786,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   min-height: 34px;
 }
 
-/* Bare, by design: no chip, no ring, no per-connector brand fill. A column of
+/* The transcript's mark box: a plugin row's glyph, and the thinking row's brain
+   in the orb's place.
+
+   Bare, by design: no chip, no ring, no per-connector brand fill. A column of
    enclosed glyphs down the transcript reads as a toolbar of controls, and these
    are labels. The single neutral is also the only colour with guaranteed
    contrast here — a connector's brand foreground was chosen against its own
@@ -4838,10 +4841,11 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    column, not by geometry. */
 .plugin-face .connector-mark { height: 15px; width: 15px; }
 
-/* The group's "still going" signal, in place of the spinner each plugin row
-   used to carry. The reduced-motion block near the end of this file cuts the
-   animation to a single 0.001ms iteration; with no fill mode the mark settles
-   on its own full opacity, and the rule beside that block pins it there. */
+/* The "still going" signal a group — or the thinking row — shows in place of the
+   spinner each plugin row used to carry. The reduced-motion block near the end
+   of this file cuts the animation to a single 0.001ms iteration; with no fill
+   mode the mark settles on its own full opacity, and the rule beside that block
+   pins it there. */
 .plugin-face-active { animation: active-pulse 1.8s ease-in-out infinite; }
 
 :is(.workstream-screen, .automation-chat-surface) .tool-icon {
