@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -28,8 +28,8 @@ function surface(overrides: Partial<SiteResourceDetailProps['surface']> = {}) {
 /**
  * Every mint returns a *different* code, because the real one is single-use.
  * A surface that reused an earlier code would be indistinguishable from a
- * correct one against a constant fixture — and that is the bug this file now
- * pins, so the fixture has to be able to tell them apart.
+ * correct one against a constant fixture — and that is the single-use URL bug
+ * these navigation tests pin, so the fixture must tell them apart.
  */
 function mintingAccess() {
   let minted = 0;
@@ -100,6 +100,35 @@ describe('showing a live artifact in the rail', () => {
     expect(new Set([presented, poppedOut, external]).size).toBe(3);
   });
 
+  it('pairs a navigation URL with the artifact identity minted alongside it', async () => {
+    // The URL origin and artifact id enforce different halves of the native
+    // viewer's isolation. They must come from one access response rather than
+    // combining a fresh URL with identity retained from an earlier response.
+    const navigationArtifact = '3f2504e0-4f89-41d3-9a0c-0305e82c3399';
+    const openArtifact = vi.fn()
+      .mockResolvedValueOnce({
+        openUrl: OPEN_URL,
+        canonicalUrl: CANONICAL,
+        artifactId: ARTIFACT,
+        mode: 'active' as const,
+        stateful: true,
+      })
+      .mockResolvedValueOnce({
+        openUrl: `https://${navigationArtifact}-g.rallyusercontent.test/__rally/open#fresh-code`,
+        canonicalUrl: `https://${navigationArtifact}-g.rallyusercontent.test`,
+        artifactId: navigationArtifact,
+        mode: 'active' as const,
+        stateful: true,
+      });
+    const { props } = setup({ openArtifact });
+
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    expect(props.surface.present).toHaveBeenCalledWith(expect.objectContaining({
+      artifactId: navigationArtifact,
+      url: expect.stringContaining(navigationArtifact),
+    }));
+  });
+
   it('shows the unavailable state when the preview cannot be presented at all', async () => {
     // A rejected mint or a main process that cannot composite leaves the
     // tri-state at `null` unless this path sets it — an empty bordered box
@@ -150,6 +179,41 @@ describe('showing a live artifact in the rail', () => {
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
     unmount();
     expect(props.surface.close).toHaveBeenCalled();
+  });
+
+  it('does not present after it goes away while minting a navigation', async () => {
+    // Switching work streams unmounts this detail. If its second, navigation-
+    // specific mint finishes afterwards, presenting then resurrects the old
+    // native view after the cleanup has already tried to close it.
+    let finishMint: ((access: SiteArtifactAccess) => void) | undefined;
+    const openArtifact = vi.fn()
+      .mockResolvedValueOnce({
+        openUrl: OPEN_URL,
+        canonicalUrl: CANONICAL,
+        artifactId: ARTIFACT,
+        mode: 'active' as const,
+        stateful: true,
+      })
+      .mockImplementationOnce(() => new Promise<SiteArtifactAccess>((resolve) => {
+        finishMint = resolve;
+      }));
+    const previewSurface = surface();
+    const { unmount } = setup({ openArtifact, surface: previewSurface });
+    await waitFor(() => expect(openArtifact).toHaveBeenCalledTimes(2));
+
+    unmount();
+    await act(async () => finishMint?.({
+      openUrl: `${OPEN_URL}-late`,
+      canonicalUrl: CANONICAL,
+      artifactId: ARTIFACT,
+      mode: 'active',
+      stateful: true,
+    }));
+
+    // Exactly one close proves cleanup ran without a late continuation trying
+    // to compensate by closing a second time after stale content was shown.
+    expect(previewSurface.close).toHaveBeenCalledOnce();
+    expect(previewSurface.present).not.toHaveBeenCalled();
   });
 });
 

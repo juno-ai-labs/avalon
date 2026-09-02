@@ -232,6 +232,13 @@ is the only place that can forward into it.
   and the gap between access arriving and the main process answering is not a
   failure — a component that used one flashes an unavailable message on every
   open of a page that is about to work.
+- **A preview presentation cannot outlive the detail that requested it.** The
+  navigation-specific access mint crosses the API and can settle after a work-
+  stream switch has unmounted the detail. A cancelled detail must refuse to
+  call the main process after cleanup, or it recreates an ownerless old preview
+  over the newly selected stream. The presentation's artifact ID and open URL
+  must also come from that same navigation mint: the ID selects its isolated
+  storage partition while the URL selects its confined origin.
 - **Everything the renderer measures is a request, not an instruction.** The
   preview rectangle is clamped to the window, because a wrong or hostile one
   would paint artifact content over the chrome a person needs to escape it. And
@@ -426,6 +433,29 @@ rather than workspace authority.
 
 ## Changelog
 
+### 2026-09-02 — A cancelled detail cannot resurrect its preview
+
+**What changed:** The live-site detail now checks its ownership again after a
+navigation access mint settles and before asking Electron to present the native
+preview. It also carries the artifact ID and URL from the same mint into preview
+and pop-out requests. Regression tests hold a mint across unmount to prove no
+late presentation and reject an identity/URL pair from different mints.
+
+**Why:** Switching work streams closes the preview while the old detail unmounts,
+but minting the preview's single-use access URL is asynchronous. When that mint
+finished after cleanup, the continuation still called the main process and
+created the old stream's site view with no mounted component left to close it.
+
+**Considered and rejected:** Closing every preview a second time after minting
+would still let stale artifact content appear briefly and could close a newer
+detail's valid preview. The cancelled owner instead never presents.
+
+**Consequences:** Every asynchronous step before native presentation must keep
+the detail's cancellation fence, and every privileged navigation request must
+carry identity and URL from one access response. Work-stream switches can no
+longer leave an old site composited over the newly selected feed or rely on
+React effect timing to preserve the artifact storage boundary.
+
 ### 2026-09-02 — Sites become public by default; protection becomes active code
 
 **What changed:** Artifact `GET` and `HEAD` requests now serve the current site
@@ -462,7 +492,6 @@ version cannot run its protection guard, and a stateless active site returns
 hostname is not treated as secrecy; its finite vocabulary is accepted because
 the content is public, while `noindex` avoids turning sharing into search
 discovery.
-
 ### 2026-09-02 — Pop-outs keep artifact content below the window controls
 
 **What changed:** The desktop artifact pop-out now uses Electron's compact
