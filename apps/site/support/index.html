@@ -3,44 +3,55 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#111210" />
+    <meta name="theme-color" content="#ccff00" />
+    <meta name="description" content="Rally support for the desktop app, Slack Agent, every connector, privacy, and troubleshooting." />
+    <link rel="canonical" href="https://rallywith.ai/support" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="stylesheet" href="/src/styles.css" />
-    <title>Rally support</title>
+    <title>Support Center · Rally</title>
   </head>
-  <body class="invite-page">
-    <main class="invite-shell">
-      <section class="invite-card support-card" aria-labelledby="support-title">
-        <a class="brand invite-brand" href="/" aria-label="Rally home"><img class="brand-mark" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="" /><span>rally</span></a>
-        <p class="eyebrow">Support</p>
-        <h1 id="support-title">How can we help?</h1>
-        <p>Email <a href="mailto:help@rallywith.ai?subject=Rally%20support">help@rallywith.ai</a>. We respond within two business days.</p>
-        <section class="support-topic" aria-labelledby="granola-key-title">
-          <h2 id="granola-key-title">Generate a Granola Workspace API key</h2>
-          <p>A workspace-wide Granola connection requires a Workspace API key. You must be a Granola workspace administrator on a Business or Enterprise plan.</p>
-          <ol class="support-steps">
-            <li><span>1</span><p>Open the <strong>Granola desktop app</strong>.</p></li>
-            <li><span>2</span><p>Go to <strong>Settings → Connectors → Workspace API keys</strong>.</p></li>
-            <li><span>3</span><p>Select <strong>Create new key</strong>.</p></li>
-            <li><span>4</span><p>Copy the key, then open Rally → Settings → Connections → Granola → <strong>Connect workspace</strong> and paste it into the password field.</p></li>
-          </ol>
-          <div class="support-note">
-            <strong>What the key can access</strong>
-            <p>Workspace keys can read public workspace notes and notes in spaces where Granola API access is enabled. They cannot read other private notes. Rally encrypts the key in your selected data region and never returns it to the desktop.</p>
-          </div>
-          <p>Connecting Granola only for yourself? Choose <strong>Connect for me</strong> in Rally instead. Personal connections use Granola’s browser sign-in and do not require an API key.</p>
-          <p><a href="https://docs.granola.ai/help-center/sharing/integrations/granola-api" rel="noreferrer" target="_blank">Read Granola’s official API key guide ↗</a></p>
-        </section>
-        <a class="button button-primary invite-open" href="/open#target=rally%3A%2F%2Fsettings%2Fconnections">Open Rally Connections <span class="button-arrow" aria-hidden="true">↗</span></a>
-        <section class="support-topic" aria-labelledby="slack-help-title">
-          <h2 id="slack-help-title">Slack troubleshooting</h2>
-          <p>Open Rally → Settings → Connections to test, reconnect, or disconnect a Slack installation. Open Rally’s Home tab in Slack to link your Slack identity, start a task, and manage notifications.</p>
-          <p>Include the approximate time, your Rally region, and any visible request ID. Never send Slack tokens, OAuth codes, link tokens, passwords, or private message contents by email.</p>
-        </section>
-        <p><a href="/privacy">Privacy policy</a></p>
+  <body class="legal-page support-page">
+    <a class="skip-link" href="#support-topics">Skip to support topics</a>
+    <header class="trust-header"><div class="trust-header-inner"><a class="rally-wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="30" height="30" alt="" /><span>rally</span></a><span class="trust-header-title">Support Center</span><a class="trust-report-link" href="/support/contact/">Contact support <span>→</span></a></div></header>
+
+    <main class="support-center">
+      <nav class="support-page-nav" aria-label="Support Center pages"><a href="/support/" aria-current="page">Overview</a><a href="/support/getting-started/">Getting started</a><a href="/support/connectors/">Connectors</a><a href="/support/connectors/slack/">Slack</a><a href="/support/contact/">Contact</a></nav>
+      <section class="support-hero" aria-labelledby="support-title">
+        <div><p class="support-kicker">Rally support · Public help</p><h1 id="support-title">How can<br />we help?</h1><p class="support-lede">Find setup and troubleshooting guidance for Rally’s desktop app, Slack Agent, and every connector the product currently ships.</p></div>
+        <aside class="support-contact-card"><span>Direct support</span><strong>help@rallywith.ai</strong><p>We respond within two business days. Please do not send passwords, access tokens, OAuth codes, or private customer content.</p><a href="mailto:help@rallywith.ai?subject=Rally%20support">Email support <span>↗</span></a></aside>
       </section>
+
+      <section id="support-topics" class="support-hub-section" aria-labelledby="support-topics-title">
+        <header><p>01 / Support pages</p><h2 id="support-topics-title">Choose the right path.</h2></header>
+        <div class="support-topic-grid">
+          <a href="/support/getting-started/"><span>01</span><strong>Getting started</strong><p>Open Rally, activate links, and find workspace settings.</p></a>
+          <a href="/support/connectors/"><span>02</span><strong>All connectors</strong><p>Setup and troubleshooting for every current integration.</p></a>
+          <a href="/support/connectors/slack/"><span>03</span><strong>Rally for Slack</strong><p>Install, use, reconnect, or remove the Slack Agent.</p></a>
+          <a href="/support/contact/"><span>04</span><strong>Contact support</strong><p>Send the details that help us investigate safely.</p></a>
+          <a href="/trust/"><span>05</span><strong>Privacy &amp; security</strong><p>Read policies, controls, and data-processing terms.</p></a>
+          <a href="/open#target=rally%3A%2F%2Fsettings%2Fconnections"><span>06</span><strong>Open Connections</strong><p>Go directly to Rally’s connection settings.</p></a>
+        </div>
+      </section>
+
+      <section class="support-hub-section support-connector-directory" aria-labelledby="connector-directory-title">
+        <header><p>02 / Connector support</p><h2 id="connector-directory-title">Every connection has a page.</h2></header>
+        <div class="support-connector-grid">
+          <a href="/support/connectors/google/"><strong>Google</strong><span>Gmail, Calendar, Drive, Docs &amp; Sheets →</span></a>
+          <a href="/support/connectors/github/"><strong>GitHub</strong><span>Repositories, issues &amp; pull requests →</span></a>
+          <a href="/support/connectors/granola/"><strong>Granola</strong><span>Personal and workspace meeting context →</span></a>
+          <a href="/support/connectors/linear/"><strong>Linear</strong><span>Issues, projects &amp; workspace activity →</span></a>
+          <a href="/support/connectors/notion/"><strong>Notion</strong><span>Personal tools and selected workspace pages →</span></a>
+          <a href="/support/connectors/slack/"><strong>Slack</strong><span>Agent, messages, files &amp; notifications →</span></a>
+          <a href="/support/connectors/inbound-webhook/"><strong>Inbound webhook</strong><span>Signed activity from other systems →</span></a>
+          <a href="/support/connectors/x/"><strong>Public X</strong><span>Read-only public timelines and threads →</span></a>
+        </div>
+      </section>
+
+      <section class="support-contact-section"><p>03 / Direct contact</p><h2>Still stuck?<br /><em>Send the useful part.</em></h2><p>Tell us what you were doing, what you expected, what happened instead, and when it occurred. Include your Rally region and a visible request ID if one appears.</p><a href="/support/contact/">Prepare a support request <span>→</span></a></section>
     </main>
+
+    <footer class="legal-footer"><div class="legal-footer-inner"><div class="legal-footer-brand"><a class="brand" href="/"><img class="brand-mark" src="/brand/rally-mark-small.svg" width="20" height="20" alt="" /><span>rally</span></a><p>AI is multiplayer now.</p></div><div class="legal-footer-links"><a href="/support/">Support Center</a><a href="/support/connectors/">Connectors</a><a href="/support/connectors/slack/">Slack support</a><a href="/support/contact/">Contact</a><a href="/trust/">Trust Center</a><a href="/trust/privacy/">Privacy Policy</a></div><p class="legal-footer-meta">© 2026 Juno AI Labs · Rally</p></div></footer>
   </body>
 </html>
