@@ -4633,7 +4633,11 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: fit-content;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message.is-pending-delivery {
+/* The two ways a turn can be in the room before the room has it: still in
+   flight, or admitted and waiting for the loop. Both are the reader's own words
+   already rendered, and both say the same thing about themselves — not landed
+   yet — so they say it the same way. */
+:is(.workstream-screen, .automation-chat-surface) :is(.human-message.is-pending-delivery, .human-message.is-sending) {
   opacity: 0.82;
 }
 
@@ -4650,37 +4654,29 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   padding: 4px 7px;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message.is-sending {
-  background: var(--av-sys-color-surface-raised);
-  border-color: var(--av-ref-color-line-2);
-  height: 40px;
+/* An in-flight turn states no geometry of its own. It is the same bubble, at the
+   width its own words give it, so the transition from sending to sent moves
+   nothing on screen — which is what the fixed-size placeholder that used to
+   stand here could not do: it was one size for every message, and the moment
+   the room accepted a turn the box jumped to the shape of the text it had been
+   hiding. The shimmer is the whole difference now, and it is inside the bubble
+   rather than around it. */
+:is(.workstream-screen, .automation-chat-surface) .human-message.is-sending .human-message-bubble {
   overflow: hidden;
-  padding: 0;
   position: relative;
-  width: 176px;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .human-message.is-sending::after {
-  animation: message-skeleton-shimmer 1.8s ease-in-out infinite;
+:is(.workstream-screen, .automation-chat-surface) .human-message.is-sending .human-message-bubble::after {
+  animation: message-sending-shimmer 1.8s ease-in-out infinite;
   background: linear-gradient(105deg, transparent 25%, var(--av-sys-color-shimmer-default) 45%, var(--av-sys-color-shimmer-default) 50%, var(--av-sys-color-shimmer-default) 55%, transparent 75%);
   content: '';
   inset: 0;
+  pointer-events: none;
   position: absolute;
   transform: translateX(-125%);
 }
 
-.message-skeleton {
-  background: var(--av-sys-color-surface-elevated-hover);
-  border-radius: var(--av-sys-size-radius-pill);
-  display: block;
-  height: 8px;
-  left: 15px;
-  position: absolute;
-  top: 15px;
-  width: 112px;
-}
-
-@keyframes message-skeleton-shimmer {
+@keyframes message-sending-shimmer {
   100% { transform: translateX(125%); }
 }
 
