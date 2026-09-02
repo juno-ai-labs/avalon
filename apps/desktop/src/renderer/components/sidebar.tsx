@@ -1657,6 +1657,14 @@ export function Sidebar({
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
           </IconButton>
+          <NavLink
+            aria-label="New work stream"
+            className={({ isActive }) => clsx('sidebar-new-button window-no-drag', isActive && 'is-active')}
+            onClick={() => markSurfaceEntrypoint('sidebar_new')}
+            to="/workstreams/new"
+          >
+            <Plus aria-hidden="true" size={16} />
+          </NavLink>
         </div>
 
         <nav
