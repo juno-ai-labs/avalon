@@ -61,7 +61,9 @@ export function planRelease({
   headSha,
   publishedVersion,
   releasedCommit,
+  changedPaths,
   releaseInputPaths,
+  classificationFailed = false,
 }) {
   if (eventName === 'workflow_dispatch') {
     if (!inputTag) throw new Error('A manual release dispatch must name the tag to replay');
@@ -95,13 +97,22 @@ export function planRelease({
   if (!releasedCommit) {
     return release(`no released commit is recorded, so ${version} ships the current tree`);
   }
-  if (releaseInputPaths === null) {
+  if (changedPaths === null || releaseInputPaths === null) {
     return release(`the recorded release commit is unreachable, so ${version} ships the current tree`);
+  }
+  if (classificationFailed) {
+    return release(`desktop input classification failed open, so ${version} ships the current tree`);
   }
 
   const short = releasedCommit.slice(0, 7);
+  const changedSinceRelease = changedPaths.filter((path) => path !== RELEASE_RECORD_PATH);
   const outstanding = releaseInputPaths.filter((path) => path !== RELEASE_RECORD_PATH);
   if (outstanding.length === 0) {
+    if (changedSinceRelease.length > 0) {
+      return skip(
+        `${changedSinceRelease.length} changed path(s) since ${short} are outside desktop release inputs: ${changedSinceRelease.slice(0, 5).join(', ')}`,
+      );
+    }
     return skip(`nothing but the release record has landed since the released commit ${short}`);
   }
   return release(`${outstanding.length} path(s) changed since ${short}: ${outstanding.slice(0, 5).join(', ')}`);
@@ -157,16 +168,32 @@ export function releaseRecordAt(commit) {
 
 // Returns null when the watermark is not reachable in this checkout — a
 // force-push or a pruned commit — which the planner treats as unknown.
-export function changedPathsSince(releasedCommit, headSha) {
+export function changedPathsSince(releasedCommit, headSha, gitDirectory = repositoryDirectory) {
   try {
     const output = execFileSync(
       '/usr/bin/git',
-      ['diff', '--name-only', `${releasedCommit}..${headSha}`],
-      { cwd: repositoryDirectory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      ['diff', '--no-renames', '--name-only', '-z', `${releasedCommit}..${headSha}`],
+      { cwd: gitDirectory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
-    return output.split('\n').map((line) => line.trim()).filter(Boolean);
+    return output.split('\0').filter(Boolean);
   } catch {
     return null;
+  }
+}
+
+export async function classifyReleaseInputs(changedPaths, classifier) {
+  try {
+    return {
+      classificationFailed: false,
+      releaseInputPaths: await classifier(changedPaths),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown classification error';
+    console.warn(`::warning::Desktop input classification failed open: ${message}`);
+    return {
+      classificationFailed: true,
+      releaseInputPaths: changedPaths,
+    };
   }
 }
 
@@ -193,10 +220,10 @@ async function main() {
     ?? await readFile(resolve(repositoryDirectory, RELEASE_RECORD_PATH), 'utf8').then(JSON.parse);
   const releasedCommit = typeof siteRelease.commit === 'string' ? siteRelease.commit : undefined;
   const changedPaths = releasedCommit ? changedPathsSince(releasedCommit, planFrom) : [];
-  const releaseInputPaths = changedPaths === null
-    ? null
+  const classification = changedPaths === null
+    ? { classificationFailed: false, releaseInputPaths: null }
     : await import('./desktop-release-inputs.mjs')
-      .then(({ desktopReleaseInputPaths }) => desktopReleaseInputPaths(changedPaths));
+      .then(({ desktopReleaseInputPaths }) => classifyReleaseInputs(changedPaths, desktopReleaseInputPaths));
 
   return report(planRelease({
     eventName,
@@ -204,7 +231,8 @@ async function main() {
     headSha: planFrom,
     publishedVersion: siteRelease.version,
     releasedCommit,
-    releaseInputPaths,
+    changedPaths,
+    ...classification,
   }));
 }
 

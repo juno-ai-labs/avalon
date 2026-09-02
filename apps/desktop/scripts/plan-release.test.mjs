@@ -1,12 +1,26 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { RELEASE_RECORD_PATH, planRelease, planningCommit } from './plan-release.mjs';
+import {
+  changedPathsSince,
+  classifyReleaseInputs,
+  RELEASE_RECORD_PATH,
+  planRelease,
+  planningCommit,
+} from './plan-release.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 // Resolved the way plan-release.mjs and validate-release-tag.mjs resolve it —
@@ -19,14 +33,23 @@ const UNRESOLVABLE_SHA = '0000000000000000000000000000000000000000';
 
 const RELEASED = '1111111111111111111111111111111111111111';
 
-const branchPush = (overrides = {}) => ({
-  eventName: 'push',
-  headSha: 'abc123',
-  publishedVersion: '1.33.0',
-  releasedCommit: RELEASED,
-  releaseInputPaths: ['apps/desktop/src/main/index.ts'],
-  ...overrides,
-});
+const branchPush = (overrides = {}) => {
+  const releaseInputPaths = Object.hasOwn(overrides, 'releaseInputPaths')
+    ? overrides.releaseInputPaths
+    : ['apps/desktop/src/main/index.ts'];
+  const changedPaths = Object.hasOwn(overrides, 'changedPaths')
+    ? overrides.changedPaths
+    : releaseInputPaths;
+  return {
+    eventName: 'push',
+    headSha: 'abc123',
+    publishedVersion: '1.33.0',
+    releasedCommit: RELEASED,
+    changedPaths,
+    releaseInputPaths,
+    ...overrides,
+  };
+};
 
 test('a branch push is planned from the tip, not from what triggered it', () => {
   // The trigger commit is what broke v1.49.0: it predates the record the
@@ -182,7 +205,10 @@ test('the state a completed release actually leaves behind skips', () => {
   // the watermark always contains apps/site/release.config.json. Feeding []
   // tested a state that cannot occur and left the skip below dead — a re-plan
   // of a finished release cut an empty minor.
-  const plan = planRelease(branchPush({ releaseInputPaths: [RELEASE_RECORD_PATH] }));
+  const plan = planRelease(branchPush({
+    changedPaths: [RELEASE_RECORD_PATH],
+    releaseInputPaths: [],
+  }));
   assert.equal(plan.shouldRelease, false);
   assert.match(plan.reason, /nothing but the release record/u);
 });
@@ -190,14 +216,15 @@ test('the state a completed release actually leaves behind skips', () => {
 test('the record is excluded by name, not by being the only path', () => {
   // Real work landing alongside the record still releases.
   const plan = planRelease(branchPush({
-    releaseInputPaths: [RELEASE_RECORD_PATH, 'apps/desktop/src/main/index.ts'],
+    changedPaths: [RELEASE_RECORD_PATH, 'apps/desktop/src/main/index.ts'],
+    releaseInputPaths: ['apps/desktop/src/main/index.ts'],
   }));
   assert.equal(plan.shouldRelease, true);
   assert.match(plan.reason, /1 path\(s\) changed/u);
 });
 
 test('a merge with nothing at all since the release skips', () => {
-  const plan = planRelease(branchPush({ releaseInputPaths: [] }));
+  const plan = planRelease(branchPush({ changedPaths: [], releaseInputPaths: [] }));
   assert.equal(plan.shouldRelease, false);
 });
 
@@ -220,6 +247,37 @@ test('work stranded by an earlier discarded run ships with the next release', ()
   assert.match(plan.reason, /2 path\(s\) changed/u);
 });
 
+test('moving a desktop file outside the release inputs still reports its deleted path', () => {
+  const repository = mkdtempSync(join(tmpdir(), 'plan-release-rename-'));
+  const git = (...args) => execFileSync(GIT, args, { cwd: repository, stdio: 'ignore' });
+  try {
+    git('init', '--quiet');
+    git('config', 'user.name', 'Release test');
+    git('config', 'user.email', 'release-test@example.com');
+    mkdirSync(join(repository, 'apps/desktop/src'), { recursive: true });
+    writeFileSync(join(repository, 'apps/desktop/src/feature.ts'), 'export const feature = true;\n');
+    git('add', '.');
+    git('commit', '--quiet', '-m', 'Add desktop feature');
+    const before = execFileSync(GIT, ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim();
+
+    mkdirSync(join(repository, 'docs'), { recursive: true });
+    renameSync(
+      join(repository, 'apps/desktop/src/feature.ts'),
+      join(repository, 'docs/feature.ts'),
+    );
+    git('add', '-A');
+    git('commit', '--quiet', '-m', 'Move feature documentation');
+    const after = execFileSync(GIT, ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8' }).trim();
+
+    assert.deepEqual(changedPathsSince(before, after, repository), [
+      'apps/desktop/src/feature.ts',
+      'docs/feature.ts',
+    ]);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
 test('an unrecorded watermark fails open rather than retiring work silently', () => {
   // Skipping a release that had work in it is the failure mode this planner
   // exists to prevent, so an unknown watermark releases.
@@ -229,9 +287,9 @@ test('an unrecorded watermark fails open rather than retiring work silently', ()
 });
 
 test('an unreachable watermark fails open too', () => {
-  // releaseInputPaths is null when git cannot reach the recorded commit — a force
+  // Both path lists are null when git cannot reach the recorded commit — a force
   // push, or a pruned object.
-  const plan = planRelease(branchPush({ releaseInputPaths: null }));
+  const plan = planRelease(branchPush({ changedPaths: null, releaseInputPaths: null }));
   assert.equal(plan.shouldRelease, true);
   assert.match(plan.reason, /unreachable/u);
 });
@@ -252,7 +310,11 @@ test('the stable promotion stays a human decision', () => {
 test('a version already published is never cut twice', () => {
   // Every published payload is immutable under v<version>. The watermark moves
   // with each release, so the same version cannot come around again.
-  const afterRelease = planRelease(branchPush({ publishedVersion: '1.34.0', releaseInputPaths: [] }));
+  const afterRelease = planRelease(branchPush({
+    publishedVersion: '1.34.0',
+    changedPaths: [],
+    releaseInputPaths: [],
+  }));
   assert.equal(afterRelease.shouldRelease, false);
   const next = planRelease(branchPush({ publishedVersion: '1.34.0' }));
   assert.equal(next.version, '1.35.0');
@@ -308,9 +370,25 @@ test('the plan is idempotent across repeated merges', () => {
   assert.deepEqual(planRelease(branchPush()), planRelease(branchPush()));
 });
 
-test('a trigger with no release input since the watermark stops on Ubuntu', () => {
-  // Every contracts change reaches the workflow, but the classifier removes an
-  // API-only or test-only change before the pure planner sees it.
-  const plan = planRelease(branchPush({ releaseInputPaths: [] }));
+test('a classified-away change gets a distinct Ubuntu skip reason', () => {
+  const plan = planRelease(branchPush({
+    changedPaths: ['packages/contracts/src/text.ts'],
+    releaseInputPaths: [],
+  }));
   assert.equal(plan.shouldRelease, false);
+  assert.match(plan.reason, /1 changed path\(s\).*outside desktop release inputs.*text\.ts/u);
+  assert.doesNotMatch(plan.reason, /nothing but the release record/u);
+});
+
+test('a classifier error fails open instead of retiring a desktop release', async () => {
+  const changedPaths = ['packages/contracts/src/index.ts'];
+  const classification = await classifyReleaseInputs(changedPaths, async () => {
+    throw new Error('Cannot resolve a scanner candidate');
+  });
+  const plan = planRelease(branchPush({ changedPaths, ...classification }));
+
+  assert.equal(classification.classificationFailed, true);
+  assert.deepEqual(classification.releaseInputPaths, changedPaths);
+  assert.equal(plan.shouldRelease, true);
+  assert.match(plan.reason, /classification failed open/u);
 });

@@ -9,6 +9,8 @@ import {
   desktopContractSourceClosure,
   desktopReleaseInputPaths,
   FIXED_DESKTOP_RELEASE_INPUTS,
+  resolveContractPackageImport,
+  resolveContractSpecifier,
 } from './desktop-release-inputs.mjs';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -57,6 +59,7 @@ test('the macOS runner is only claimed after the frozen release commit passes Ub
   assert.match(verifyJob, /^ {4}needs: plan$/mu);
   assert.match(verifyJob, /^ {4}if: needs\.plan\.outputs\.should_release == 'true'$/mu);
   assert.match(verifyJob, /^ {4}runs-on: ubuntu-latest$/mu);
+  assert.match(verifyJob, /^ {4}timeout-minutes: 30$/mu);
   assert.match(releaseJob, /^ {4}needs: \[plan, verify\]$/mu);
   assert.match(releaseJob, /^ {4}runs-on: macos-26$/mu);
   assert.match(releaseJob, /ref: \$\{\{ needs\.verify\.outputs\.release_commit \}\}/u);
@@ -184,20 +187,25 @@ function matchesFilter(patterns, path) {
     : path === pattern));
 }
 
-async function filesBelow(directory) {
+async function filesBelow(directory, ignoredDirectories = new Set()) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await filesBelow(path));
-    else files.push(path);
+    if (entry.isDirectory()) {
+      if (!ignoredDirectories.has(entry.name)) files.push(...await filesBelow(path, ignoredDirectories));
+      continue;
+    }
+    files.push(path);
   }
   return files;
 }
 
 async function staticModuleSpecifiers(path) {
   const source = await readFile(path, 'utf8');
-  const syntax = path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const syntax = path.endsWith('.tsx')
+    ? ts.ScriptKind.TSX
+    : /\.[cm]?js$/u.test(path) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, syntax);
   const specifiers = [];
   const visit = (node) => {
@@ -223,21 +231,19 @@ async function staticModuleSpecifiers(path) {
 }
 
 async function typescriptDesktopContractSourceClosure() {
-  const desktopSource = join(repositoryDirectory, 'apps/desktop/src');
+  const desktopDirectory = join(repositoryDirectory, 'apps/desktop');
   const contractDirectory = join(repositoryDirectory, 'packages/contracts');
   const packageJson = JSON.parse(await readFile(join(contractDirectory, 'package.json'), 'utf8'));
   const entryPoints = new Set();
 
-  for (const path of await filesBelow(desktopSource)) {
+  for (const path of await filesBelow(
+    desktopDirectory,
+    new Set(['coverage', 'dist', 'node_modules', 'out']),
+  )) {
     if (!/\.[cm]?[jt]sx?$/u.test(path) || /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path)) continue;
     for (const specifier of await staticModuleSpecifiers(path)) {
-      if (specifier !== '@rally/contracts' && !specifier.startsWith('@rally/contracts/')) continue;
-      const exportKey = specifier === '@rally/contracts'
-        ? '.'
-        : `./${specifier.slice('@rally/contracts/'.length)}`;
-      const target = packageJson.exports[exportKey];
-      assert.equal(typeof target, 'string', `Desktop contract import ${specifier} must resolve through package exports`);
-      entryPoints.add(resolve(contractDirectory, target));
+      const entryPoint = resolveContractPackageImport(packageJson, specifier);
+      if (entryPoint) entryPoints.add(entryPoint);
     }
   }
 
@@ -248,8 +254,8 @@ async function typescriptDesktopContractSourceClosure() {
     if (closure.has(path)) continue;
     closure.add(path);
     for (const specifier of await staticModuleSpecifiers(path)) {
-      if (!specifier.startsWith('.')) continue;
-      const imported = resolve(dirname(path), specifier.endsWith('.ts') ? specifier : `${specifier}.ts`);
+      const imported = await resolveContractSpecifier(path, specifier, packageJson);
+      if (!imported) continue;
       if (!closure.has(imported)) pending.push(imported);
     }
   }
@@ -288,6 +294,53 @@ test('the release trigger covers everything the installed app is built from', as
   );
 });
 
+async function workspacePackages() {
+  const workspace = await readFile(join(repositoryDirectory, 'pnpm-workspace.yaml'), 'utf8');
+  const packagePatterns = workspace
+    .match(/^packages:\n(?<body>(?: {2}- .*\n)+)/mu)?.groups?.body
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.replace(/^ {2}- /u, '').replace(/^['"]|['"]$/gu, ''));
+  assert.ok(packagePatterns, 'pnpm-workspace.yaml must declare package directories');
+
+  const packages = [];
+  for (const pattern of packagePatterns) {
+    assert.match(pattern, /\/\*$/u, `Release invariant does not understand workspace pattern ${pattern}`);
+    const parent = pattern.slice(0, -2);
+    for (const entry of await readdir(join(repositoryDirectory, parent), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const directory = `${parent}/${entry.name}`;
+      try {
+        const manifest = JSON.parse(await readFile(join(repositoryDirectory, directory, 'package.json'), 'utf8'));
+        packages.push({ directory, manifest });
+      } catch { /* A workspace glob may contain a directory that is not a package. */ }
+    }
+  }
+  return packages;
+}
+
+test('every desktop workspace dependency reaches both the workflow and planner', async () => {
+  const patterns = await triggerPaths();
+  const packages = await workspacePackages();
+  const packageByName = new Map(packages.map(({ directory, manifest }) => [manifest.name, directory]));
+  const desktop = packages.find(({ manifest }) => manifest.name === '@rally/desktop')?.manifest;
+  assert.ok(desktop, 'The desktop package must belong to the pnpm workspace');
+  const dependencies = { ...desktop.dependencies, ...desktop.devDependencies };
+
+  for (const [name, version] of Object.entries(dependencies)) {
+    if (!version.startsWith('workspace:')) continue;
+    const directory = packageByName.get(name);
+    assert.ok(directory, `${name} must resolve to a package declared by pnpm-workspace.yaml`);
+    const manifestPath = `${directory}/package.json`;
+    assert.equal(matchesFilter(patterns, manifestPath), true, `${name} changes must reach Ubuntu planning`);
+    assert.deepEqual(
+      await desktopReleaseInputPaths([manifestPath]),
+      [manifestPath],
+      `${name} changes must remain release inputs after Ubuntu classification`,
+    );
+  }
+});
+
 test('the dependency-free planner scan equals the TypeScript contract import graph', async () => {
   const contractSources = await desktopContractSourceClosure();
   assert.deepEqual(
@@ -295,11 +348,13 @@ test('the dependency-free planner scan equals the TypeScript contract import gra
     await typescriptDesktopContractSourceClosure(),
     'Import syntax the planner cannot recognize must fail CI instead of silently missing a desktop dependency',
   );
-  assert.deepEqual(
-    await desktopReleaseInputPaths(contractSources),
-    contractSources,
-    'Every module in the derived closure must be admitted to a desktop release',
-  );
+  const mixedChanges = [
+    contractSources[0],
+    'packages/contracts/src/text.ts',
+    'packages/contracts/src/index.test.ts',
+    'docs/runbook.md',
+  ];
+  assert.deepEqual(await desktopReleaseInputPaths(mixedChanges), [contractSources[0]]);
 });
 
 test('the Ubuntu planner excludes what a user could never install', async () => {
