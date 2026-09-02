@@ -26,7 +26,7 @@ protocol inside each Durable Object.
 | --- | --- |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | Selects the active work stream, every pinned work stream, the five most recently active unpinned work streams, and any additional running work stream for proactive connection. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Owns the singleton native Chromium WorkspaceDO socket, workspace subscription, directory paging, replay, and outbound message-command queue. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one WorkstreamDO/substream `0` pair per selected work stream above the route, retains recently viewed pairs for five minutes, and supports control-only hover warming. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one WorkstreamDO/substream `0` pair per selected work stream above the route, retains recently viewed pairs for five minutes, and supports presence-free pair warming on deliberate hover. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Owns the WorkstreamDO metadata protocol, ticket request, snapshot application, heartbeat, and reconnect state machine. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Owns the SubstreamAgent feed protocol, ticket request, snapshot/replay application, heartbeat, pagination, and reconnect state machine. |
 | `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | Owns the AutomationAgent draft protocol for the one open draft: ticket request, snapshot application under the agent's own event sequence, compiler stream folding, heartbeat, and reconnect. It is mounted by `screens/new-automation.tsx` and is not pooled. |
@@ -109,9 +109,12 @@ the set the pool opens.
 
 When a work stream leaves the active route, its exact pair remains mounted for
 five minutes. It stays longer when it still qualifies as pinned, recent, or
-running. A one-second deliberate pointer hover may add only the WorkstreamDO
-control socket for one otherwise-cold row; hover never opens the SubstreamAgent
-feed or publishes presence.
+running. A one-second deliberate pointer hover may add one complete
+WorkstreamDO and SubstreamAgent pair for an otherwise-cold row. The feed
+subscription is presence-free, so transport warmth does not claim that the
+person is viewing the row or clear its unseen marker. When navigation commits,
+the renderer promotes that same admitted socket with `mark_opened`; no new
+ticket, handshake, or snapshot enters the paint path.
 
 ### Opening a pair
 
@@ -132,7 +135,10 @@ system or PAC proxy and gives Node both its bundled and operating-system CA
 roots. A semicolon-delimited PAC result remains ordered: a connection advances
 to the next proxy only when a pre-open attempt fails, and uses `DIRECT` only
 when the resolved policy included it. Every client and server control/feed
-frame is bounded to the shared 1 MB protocol ceiling. The broker therefore
+frame is bounded to the shared 1 MB protocol ceiling. A direct route reports
+PAC resolution, DNS, TCP, TLS, and edge upgrade separately. A proxy route
+reports its CONNECT/TLS/edge work as one aggregate because Node's proxy agent
+does not expose truthful boundaries inside the tunnel. The broker therefore
 avoids Chromium's handshake queue without silently bypassing a managed network,
 interception certificate, or fallback policy.
 
@@ -340,7 +346,7 @@ move WorkspaceDO, HyperSight block, or dictation transport into Node.
 | `apps/desktop/src/main/realtime-socket-broker.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-broker.test.ts` | Destination confinement, ordered PAC fallback, shared payload limit, event relay, normal close cleanup, sends, and renderer-owner teardown. |
 | `apps/desktop/src/main/realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-ipc.test.ts src/common/realtime-socket-validation.test.ts` | Shared channel wiring, main-window authorization, request confinement, broker relay, and strict dependency-free event validation. |
 | `apps/desktop/src/renderer/lib/realtime-socket.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/realtime-socket.test.ts` | Browser-shaped state/events, IPC calls, and one multiplexed preload listener for a socket swarm. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Pair ownership, independent starts, route retention, expiry, overlap, and control-only hover warming. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Pair ownership, independent starts, route retention, expiry, overlap, speculative pair warming, and navigation promotion. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
@@ -363,8 +369,8 @@ the Worker output. Each proactively selected work stream should produce one
 `101` for `/socket/workstreams/:id` and one for
 `/socket/workstreams/:id/substreams/0`. Opening a row whose complete pair was
 proactively warmed should render its feed and enabled composer without new
-connection setup. A control-only hover warm-up still opens the feed on
-selection. A local model credential is required only to complete inference
+connection setup. A hover-warmed pair requires no new control or feed
+connection on selection. A local model credential is required only to complete inference
 after a send, not to verify socket or WorkspaceDO command admission.
 
 ## Regional impact
@@ -396,11 +402,15 @@ Electron trust boundary.
 
 Client `workstream_socket_started`, `realtime_socket_state`, and
 `renderer_perf_flow` records identify socket kind, reason, lease, and opening
-phase without message content. For packaged macOS builds, governed renderer
-performance records also appear in Unified Logging. The `workstream_open`
-`handshake` phase spans renderer-to-main IPC plus the network/Worker/object
-upgrade; Chromium NetLog no longer contains WorkstreamDO and SubstreamAgent
-handshakes.
+phase without message content. `renderer_perf_flow` is uploaded only for
+click-scoped opening attempts; speculative and retained background socket work
+remains in the local performance log rather than polluting user-visible open
+percentiles. For packaged macOS builds, governed renderer performance records
+also appear in Unified Logging. The `workstream_open` `handshake` phase spans
+renderer-to-main IPC plus the network/Worker/object upgrade. Its direct-route
+PAC, DNS, TCP, TLS, and edge-upgrade annotations locate that total; proxied
+attempts expose one aggregate. Chromium NetLog no longer contains WorkstreamDO
+and SubstreamAgent handshakes.
 
 Worker traces and `perf_flow` rows cover ticket issue, edge upgrade, Durable
 Object binding, acceptance, subscription, and snapshot assembly. Correlate the
@@ -428,6 +438,33 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-09-01 — Intent warmth covers the feed and handshakes expose their real phases
+
+**What changed:** A deliberate one-second row hover mounts the complete
+presence-free control/feed pair. The signed feed ticket carries its resume
+cursor so a current server can authorize and queue the initial subscription
+during the upgrade; explicit `subscribe` remains the rolling-deploy fallback.
+The Electron broker reports PAC, DNS, TCP, TLS, and edge upgrade for direct
+routes and one honest proxy aggregate. Only click-scoped opening traces are
+exported.
+
+**Why:** The product target is a total two-second switch, while the prior hover
+left the largest connection cold and the 72-hour diagnostic distribution mixed
+background retained sockets with real clicks. A single handshake total also
+could not distinguish local proxy work from Cloudflare/object latency.
+
+**Considered and rejected:** Publishing feed presence during hover would turn
+prediction into user attention. Inventing subphases inside a proxy tunnel would
+produce precise-looking false data. Removing the explicit subscribe immediately
+would break an old-server/new-client rolling deployment.
+
+**Consequences:** One qualified speculative row may now consume a complete pair
+and initial snapshot without changing its unseen state. Navigation sends one
+promotion frame on that retained socket. Feed warmth remains bounded by the
+existing single hover candidate and retention policy. Direct and proxied
+handshake cohorts must be read separately, and product totals continue to come
+from feed-visible and send-ready rather than background transport traces.
 
 ### 2026-08-31 — The singleton workspace socket follows the active workspace
 

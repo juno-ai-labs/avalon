@@ -49,6 +49,8 @@ export const RALLY_HEADERS = Object.freeze({
   REGION: "x-rally-region",
   SESSION_ID: "x-rally-session-id",
   SIGNATURE: "x-rally-signature",
+  SOCKET_AFTER_SEQUENCE: "x-rally-socket-after-sequence",
+  SOCKET_SPECULATIVE: "x-rally-socket-speculative",
   SOCKET_TICKET_EXPIRES_AT: "x-rally-socket-ticket-expires-at",
   SOCKET_TICKET_ID: "x-rally-socket-ticket-id",
   SUBSTREAM_ID: "x-rally-substream-id",

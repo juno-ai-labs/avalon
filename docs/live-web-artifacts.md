@@ -352,6 +352,24 @@ artifact content and viewer sessions rather than workspace authority.
 
 ## Changelog
 
+### 2026-09-01 — Archive determinism uses the ZIP calendar, not a UTC instant
+
+**What changed:** Directory archives pin every entry to local-calendar
+`1980-01-01 00:00:00`, the earliest DOS timestamp ZIP can encode, rather than
+passing the UTC instant for that date to the encoder.
+
+**Why:** `fflate` validates and serializes ZIP timestamps through local calendar
+fields. West of UTC, the UTC instant was still `1979-12-31` locally, so archive
+publication threw `date not in range 1980-2099` even though the intended date
+looked valid in source.
+
+**Considered and rejected:** Moving to a later UTC instant would hide the
+timezone conversion only for some offsets and make the chosen date arbitrary.
+
+**Consequences:** Every timezone encodes the same DOS calendar fields and
+therefore the same archive bytes; unchanged republish deduplication remains
+stable.
+
 ### 2026-09-01 — `ASSETS` becomes an exported entrypoint, because nothing else crosses
 
 **What changed:** The `ASSETS` binding is now `ArtifactAssetLoopback`, a

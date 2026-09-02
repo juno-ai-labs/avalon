@@ -735,17 +735,35 @@ export class WorkstreamService {
     return (await this.authoritativeClient(id)).retry();
   }
 
-  async socketTicket(id: string, substreamId = "0") {
+  async socketTicket(
+    id: string,
+    substreamId = "0",
+    afterSequence?: number,
+    speculative = false,
+  ) {
     await this.requireVisibleWorkstream(id);
     // Minted here rather than inside the issuer so the route can log the id the
     // room will report consuming; see `docs/performance-tracing.md`.
     const ticketId = newId();
-    const ticket = await issueSocketTicket(this.env, this.auth, id, substreamId, ticketId);
+    const ticket = await issueSocketTicket(
+      this.env,
+      this.auth,
+      id,
+      substreamId,
+      ticketId,
+      afterSequence,
+      speculative,
+    );
     const url = new URL(this.env.PUBLIC_API_BASE_URL);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = `/socket/workstreams/${id}/substreams/${substreamId}`;
     url.search = new URLSearchParams({ ticket }).toString();
-    return { url: url.toString(), ticket, ticketId };
+    return {
+      url: url.toString(),
+      ticket,
+      ticketId,
+      subscriptionBootstrap: afterSequence !== undefined,
+    };
   }
 
   async workstreamControlSocketTicket(id: string) {

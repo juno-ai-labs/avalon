@@ -290,6 +290,43 @@ describe("a work stream nobody has shown this person yet", () => {
     expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(false);
   });
 
+  it("keeps a speculative socket snapshot unseen until navigation promotes it", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, [INVITEE_ID]);
+    expect(await firstOpenedAt(stub, INVITEE_ID)).toBeNull();
+
+    const response = await stub.fetch("https://object.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": INVITEE_ID,
+        "x-rally-session-id": INVITEE_SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-0000000007d1",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-socket-after-sequence": "0",
+        "x-rally-socket-speculative": "true",
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    const snapshot = nextEvent(socket, "snapshot");
+    socket.accept();
+    await snapshot;
+
+    expect(await firstOpenedAt(stub, INVITEE_ID)).toBeNull();
+    expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(true);
+
+    socket.send(JSON.stringify({ type: "mark_opened" }));
+    await expect.poll(
+      () => firstOpenedAt(stub, INVITEE_ID),
+      { timeout: 5_000 },
+    ).toEqual(expect.any(Number));
+    expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(false);
+    socket.close(1000, "test complete");
+  });
+
   it("does not make a work stream new again when somebody adds a person who is already in it", async () => {
     const stub = agentStub();
     await startWorkstream(stub, [INVITEE_ID]);

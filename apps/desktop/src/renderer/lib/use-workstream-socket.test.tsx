@@ -698,6 +698,34 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
+  it('does not send a second subscribe when the signed upgrade bootstraps the feed', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000624';
+    const getSocketTicket = vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+      subscriptionBootstrap: true,
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    expect(socket.send).not.toHaveBeenCalled();
+    expect(getSocketTicket).toHaveBeenCalledWith(
+      workstreamId,
+      '0',
+      expect.any(String),
+      0,
+      false,
+    );
+  });
+
   it('normalizes legacy suggested resources in snapshots and live frames without losing sequence', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);

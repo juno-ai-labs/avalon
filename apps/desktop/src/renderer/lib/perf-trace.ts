@@ -174,6 +174,13 @@ export function rendererPerfFlowIntent(
   const clientMessageId = typeof fields['clientMessageId'] === 'string'
     ? fields['clientMessageId']
     : undefined;
+  const pacResolutionMs = telemetryNumber(fields['pacResolutionMs']);
+  const dnsMs = telemetryNumber(fields['dnsMs']);
+  const tcpMs = telemetryNumber(fields['tcpMs']);
+  const tlsMs = telemetryNumber(fields['tlsMs']);
+  const edgeUpgradeMs = telemetryNumber(fields['edgeUpgradeMs']);
+  const proxyHandshakeMs = telemetryNumber(fields['proxyHandshakeMs']);
+  const failedRouteCount = countBucketOrUndefined(fields['failedRouteCount']);
   return {
     kind: 'renderer_perf_flow',
     operationId,
@@ -193,6 +200,13 @@ export function rendererPerfFlowIntent(
     ...(messageLength ? { messageLength } : {}),
     ...(messageCount ? { messageCount } : {}),
     ...(clientMessageId ? { clientMessageId } : {}),
+    ...(pacResolutionMs !== undefined ? { pacResolutionMs } : {}),
+    ...(dnsMs !== undefined ? { dnsMs } : {}),
+    ...(tcpMs !== undefined ? { tcpMs } : {}),
+    ...(tlsMs !== undefined ? { tlsMs } : {}),
+    ...(edgeUpgradeMs !== undefined ? { edgeUpgradeMs } : {}),
+    ...(proxyHandshakeMs !== undefined ? { proxyHandshakeMs } : {}),
+    ...(failedRouteCount ? { failedRouteCount } : {}),
   };
 }
 
@@ -201,6 +215,8 @@ export interface PerfTraceOptions {
   traceId?: string;
   /** UUIDv7 accepted by telemetry when `traceId` is a UUIDv4 product id. */
   operationId?: string;
+  /** Keep speculative/background socket timings device-local. */
+  report?: boolean;
   workstreamId?: string;
 }
 
@@ -255,14 +271,16 @@ export function startPerfTrace(flow: PerfFlow, options: PerfTraceOptions = {}): 
         ...blocking,
         ...combinedFields,
       });
-      reportTelemetryProductIntent(rendererPerfFlowIntent(
-        flow,
-        operationId,
-        durationMs,
-        phases,
-        blocking,
-        combinedFields,
-      ));
+      if (options.report !== false) {
+        reportTelemetryProductIntent(rendererPerfFlowIntent(
+          flow,
+          operationId,
+          durationMs,
+          phases,
+          blocking,
+          combinedFields,
+        ));
+      }
     },
   };
 }

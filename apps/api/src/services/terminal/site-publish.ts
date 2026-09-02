@@ -177,8 +177,8 @@ export function assetContentType(path: string): string {
  * bucket, so the bytes have to come back here regardless, and a tool that asked
  * the model to `tar` first would be a step it could get wrong for no gain.
  */
-/** 1980-01-01T00:00:00Z, the earliest instant a zip timestamp can hold. */
-const ZIP_EPOCH_MS = Date.UTC(1980, 0, 1);
+/** 1980-01-01 local calendar time, the earliest DOS timestamp a zip can hold. */
+const ZIP_EPOCH = new Date(1980, 0, 1);
 
 export function bundleArchive(files: readonly { path: string; bytes: Uint8Array }[]): Uint8Array {
   const tree: Record<string, Uint8Array> = {};
@@ -189,7 +189,7 @@ export function bundleArchive(files: readonly { path: string; bytes: Uint8Array 
   // a version nobody asked for. It is the zip format's own epoch rather than
   // Unix's — a DOS timestamp cannot represent anything before 1980, and `0`
   // throws rather than clamping.
-  return zipSync(tree, { mtime: ZIP_EPOCH_MS });
+  return zipSync(tree, { mtime: ZIP_EPOCH });
 }
 
 /**
