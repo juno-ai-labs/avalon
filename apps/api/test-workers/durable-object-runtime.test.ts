@@ -5096,6 +5096,158 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("serves a transcript range while this socket's own snapshot is assembling", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+    await runInDurableObject(stub, async (_instance, state) => {
+      for (let sequence = 1; sequence <= 6; sequence += 1) {
+        await seedParticipantMessage(state, {
+          id: `00000000-0000-7000-8021-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          text: `assembling ${sequence}`,
+          authorType: "agent",
+          now: 30_000 + sequence,
+        });
+      }
+    });
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8021-000000000801",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    try {
+      const snapshotMessage = nextMessageOfType(socket, "snapshot");
+      socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+      const snapshot = await snapshotMessage as {
+        sequence: number;
+        transcript: { snapshotId: string };
+      };
+
+      // The window `request_snapshot` opens: this reader is subscribed and its
+      // fence still stands, but the attachment says otherwise so that
+      // broadcasts stay out while its replacement snapshot is assembled. A
+      // range asked for inside it is still this reader's own question.
+      await runInDurableObject(stub, async (_instance, state) => {
+        const server = state.getWebSockets()[0]!;
+        server.serializeAttachment({
+          ...(server.deserializeAttachment() as Record<string, unknown>),
+          subscribed: false,
+          snapshotInFlight: true,
+        });
+      });
+
+      const rangeMessage = nextMessageOfType(socket, "transcript_range");
+      socket.send(JSON.stringify({
+        type: "load_transcript_range",
+        requestId: "00000000-0000-7000-8021-000000000802",
+        request: {
+          snapshotId: snapshot.transcript.snapshotId,
+          range: { startInclusive: 1, endExclusive: 4 },
+          resumeAfterEventSequence: snapshot.sequence,
+        },
+      }));
+      const range = await rangeMessage as {
+        requestId: string;
+        result: {
+          covered: { startInclusive: number; endExclusive: number };
+          turns: Array<{ transcriptSequence: number }>;
+        };
+      };
+
+      expect(range.requestId).toBe("00000000-0000-7000-8021-000000000802");
+      expect(range.result.covered).toEqual({ startInclusive: 1, endExclusive: 4 });
+      expect(range.result.turns.map((turn) => turn.transcriptSequence)).toEqual([1, 2, 3]);
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("names the request a refused transcript range answers", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8021-000000000901",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    try {
+      // A socket that never subscribed is still refused. The caller is holding
+      // a promise only this identity can settle, so the refusal has to carry
+      // it — otherwise the refusal is invisible and the caller waits out its
+      // own timeout instead.
+      const refusal = nextMessageOfType(socket, "error");
+      socket.send(JSON.stringify({
+        type: "load_transcript_range",
+        requestId: "00000000-0000-7000-8021-000000000902",
+        request: {
+          snapshotId: "00000000-0000-7000-8021-000000000903",
+          range: { startInclusive: 1, endExclusive: 4 },
+          resumeAfterEventSequence: 0,
+        },
+      }));
+
+      expect(await refusal).toMatchObject({
+        type: "error",
+        code: "subscription_required",
+        requestId: "00000000-0000-7000-8021-000000000902",
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
   it("serves an indivisible oversized turn as a sequence-owning placeholder envelope", async () => {
     await seedOpenAuthority();
     await env.DB.batch([

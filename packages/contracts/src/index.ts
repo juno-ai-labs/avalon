@@ -2800,7 +2800,22 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     /** Preserves the explicit compaction indicator across replay-window loss. */
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
   }),
-  ServerEventBaseSchema.extend({ type: z.literal("error"), code: z.string(), message: z.string() })
+  ServerEventBaseSchema.extend({
+    type: z.literal("error"),
+    code: z.string(),
+    message: z.string(),
+    /**
+     * The client request this error answers, when it answers one.
+     *
+     * Most errors are unsolicited: they describe the socket rather than a
+     * question somebody asked on it. A refusal of a correlated request is
+     * different — the caller is holding a promise that nothing else will
+     * settle, and without this it waits out a client-side timeout and reports
+     * the timeout instead of the reason. Null keeps every existing producer's
+     * frame valid, and an older Worker's uncorrelated frame still parses.
+     */
+    requestId: IdSchema.nullable().default(null),
+  })
 ]);
 
 /** Events delivered to one authenticated user and intentionally excluded from room replay sequencing. */

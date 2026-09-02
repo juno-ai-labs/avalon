@@ -691,6 +691,22 @@ range while its reply is in flight, Electron rejects that reply as
 `transcript_snapshot_changed` and recomputes the adjacent gap against the new
 snapshot. It never resolves a discarded old-fence range as successful.
 
+Every answer to a correlated request must be correlated back. A range is
+answered by `transcript_range` carrying its `requestId`, by `resync_required`,
+which releases every range in flight on that socket, or by an `error` frame
+naming the `requestId` it refuses. Nothing else settles the caller's promise:
+Electron holds one per request and has only a local timeout behind it, so an
+uncorrelated refusal is invisible and is reported as a timeout the room never
+had. A refusal keeps the room's own `code` — the two codes Electron steers on
+both mean "ask again", which a refusal does not.
+
+A socket assembling its own `request_snapshot` is subscribed and may load
+ranges. The attachment lowers `subscribed` across that window only to keep
+broadcasts out of it; a range is a direct reply read from the fence the caller
+named, so serving it publishes nothing and skips no check. Once assembly
+installs the replacement fence the ordinary `snapshot_expired` resync answers
+instead. Only a socket that never subscribed is refused.
+
 ### Queueing and steering
 
 Incoming human input is first a server-authoritative pending record with a
@@ -1504,6 +1520,47 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-09-02 — A refused transcript range names the request it refuses
+
+**What changed:** The socket `error` frame carries an optional `requestId`, and
+`fulfillTranscriptRange` sets it when refusing. Electron settles a pending range
+on a correlated error, passing the room's own code and message through rather
+than flattening them to one of its own. Separately, a range is now served on a
+socket whose own `request_snapshot` is still assembling: only a socket that
+never subscribed is refused.
+
+**Why:** `fulfillSnapshotRequest` lowers `subscribed` for the length of its
+assembly window so broadcasts stay out of it, and `fulfillTranscriptRange` read
+that flag as "never subscribed". A range asked for inside the window — which is
+the *common* case, because the screen requests a reconciliation snapshot the
+moment the socket connects and on every `harness_status_changed`, and a reader
+whose opening page is a fraction of the transcript reaches for **Load earlier
+messages** immediately — was answered "Subscribe before loading transcript
+ranges". That was untrue, unactionable, and, because the frame named no request,
+invisible: Electron's promise stayed open until its own 15-second timer fired
+and reported *The transcript range request timed out*. The room had answered in
+milliseconds. A production work stream reproduced this with a five-turn opening
+page over forty-three turns, no server-side error, and every Durable Object
+invocation `ok`.
+
+**Considered and rejected:** Answering `snapshot_in_flight` and having the
+client retry, which keeps a refusal where there is no reason to refuse and adds
+a retry loop against a window measured in hundreds of milliseconds. Blocking
+range requests on the client while a snapshot is in flight, which moves the same
+false coupling into the renderer and cannot help a reader whose snapshot request
+raced its click. Rejecting every pending range on any `error` frame, which would
+settle a caller on an unrelated protocol error. Raising the 15-second timeout,
+which lengthens the wrong answer instead of removing it.
+
+**Consequences:** `requestId` on `error` is nullable and defaulted, so an older
+Worker's uncorrelated frame still parses and an older client ignores the new
+field; both halves ship independently. Any future request/response pair added to
+this socket owes its refusals the same `requestId` — the client-side timeout is
+a backstop, not a protocol. The refusal reaching the caller with the room's own
+code means a range failure is now visible in the transcript's error banner
+instead of arriving as a timeout, so a genuinely unsubscribed socket reports
+what it is.
 
 ### 2026-09-02 — Run-generated resources reach the open rail immediately
 
