@@ -18,7 +18,6 @@ import {
   Globe2,
   LogOut,
   Menu,
-  MessageSquarePlus,
   Mic2,
   NotebookText,
   Pencil,
@@ -26,6 +25,7 @@ import {
   PinOff,
   Play,
   Plus,
+  Search,
   Settings,
   Trash2,
 } from 'lucide-react';
@@ -61,6 +61,7 @@ import { Avatar, AvatarStack, Badge, Button, IconButton, InlineError, Modal, Sta
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
 import { SidebarSkeletonGroup, SidebarSkeletonRows } from './sidebar-skeleton';
 import { ContextNestedMenu } from './nested-menu';
+import { WorkstreamGlyph } from './workstream-glyph';
 
 interface SidebarProps {
   workspace: Workspace;
@@ -626,12 +627,18 @@ function WorkstreamRow({
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
-              <StatusDot compact status={workstreamMarkerStatus(workstream)} tooltip />
+              <WorkstreamGlyph id={workstream.id} />
+              <span className="workstream-row-status">
+                <StatusDot compact status={workstreamMarkerStatus(workstream)} tooltip />
+              </span>
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">
-                {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
-                {naming ? <TitleSkeleton /> : workstream.title}
+                <span className="sidebar-row-title-copy">
+                  {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
+                  {naming ? <TitleSkeleton /> : workstream.title}
+                </span>
+                <time aria-hidden="true" dateTime={workstream.lastActivityAt}>{formatRelative(workstream.lastActivityAt)}</time>
               </span>
               {description && (
                 <span className="sidebar-row-hint">
@@ -672,16 +679,15 @@ function WorkstreamRow({
                 </Tooltip.Portal>
               </Tooltip.Root>
             )}
-            {workstream.scope === 'workspace'
-              ? <PublicMarker />
-              : (
-                <SidebarWorkstreamFacepile
-                  currentUserId={currentUserId}
-                  extraCount={workstream.participantExtraCount}
-                  memberIds={workstream.participantUserIds}
-                  roster={members}
-                />
-              )}
+            <span className="workstream-row-people">
+              <SidebarWorkstreamFacepile
+                currentUserId={currentUserId}
+                extraCount={workstream.participantExtraCount}
+                memberIds={workstream.participantUserIds}
+                roster={members}
+              />
+              {workstream.scope === 'workspace' && <PublicMarker />}
+            </span>
             <CommandShortcutHint shortcut={commandShortcut} visible={commandShortcutsVisible} />
           </NavLink>
         </div>
@@ -998,6 +1004,7 @@ export function Sidebar({
   onLoadMoreNotes,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
+  const [searchQuery, setSearchQuery] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
@@ -1092,30 +1099,30 @@ export function Sidebar({
   // of it. Comparing a finished drag against the second would compare it with
   // itself and conclude nothing moved.
   const storedPinnedWorkstreams = useMemo(
-    () => orderPinnedWorkstreams(workstreams, null),
-    [workstreams],
+    () => orderPinnedWorkstreams(visibleWorkstreams, null),
+    [visibleWorkstreams],
   );
   const pinnedWorkstreams = useMemo(
-    () => orderPinnedWorkstreams(workstreams, dragOrder),
-    [dragOrder, workstreams],
+    () => orderPinnedWorkstreams(visibleWorkstreams, dragOrder),
+    [dragOrder, visibleWorkstreams],
   );
   const unpinnedWorkstreams = useMemo(
-    () => workstreams.filter((workstream) => workstream.pinPosition === null),
-    [workstreams],
+    () => visibleWorkstreams.filter((workstream) => workstream.pinPosition === null),
+    [visibleWorkstreams],
   );
   const [groupedAtMs, setGroupedAtMs] = useState(() => Date.now());
   useEffect(() => {
     const now = new Date();
     const next = nextRecencyBoundary([
       ...unpinnedWorkstreams,
-      ...notes,
+      ...visibleNotes,
     ], now);
     const timer = window.setTimeout(
       () => setGroupedAtMs(Date.now()),
       Math.max(1, next - now.getTime() + 1),
     );
     return () => window.clearTimeout(timer);
-  }, [groupedAtMs, notes, unpinnedWorkstreams]);
+  }, [groupedAtMs, unpinnedWorkstreams, visibleNotes]);
   const groups = useMemo(() => {
     const groupedAt = new Date(groupedAtMs);
     return groupActivityItems<RecentSidebarItem>([
@@ -1125,14 +1132,14 @@ export function Sidebar({
         lastActivityAt: workstream.lastActivityAt,
         workstream,
       })),
-      ...notes.map((note) => ({
+      ...visibleNotes.map((note) => ({
         type: 'note' as const,
         id: `note:${note.id}`,
         lastActivityAt: note.lastActivityAt,
         note,
       })),
     ], groupedAt);
-  }, [groupedAtMs, notes, unpinnedWorkstreams]);
+  }, [groupedAtMs, unpinnedWorkstreams, visibleNotes]);
 
   // The visible destination order is one run: the reader's manually arranged
   // pins first, then recent work streams and notes in exactly the order the
@@ -1682,14 +1689,14 @@ export function Sidebar({
           onScroll={loadMoreWhenNearBottom}
           ref={scrollRef}
         >
-          <div className="sidebar-primary-actions">
+          <div className="sidebar-commandbar window-no-drag">
             <NavLink
-              className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')}
+              aria-label="New work stream"
+              className={({ isActive }) => clsx('sidebar-new-button', isActive && 'is-active')}
               onClick={() => markSurfaceEntrypoint('sidebar_new')}
               to="/workstreams/new"
             >
-              <MessageSquarePlus aria-hidden="true" size={15} />
-              <span>New work stream</span>
+              <Plus aria-hidden="true" size={17} />
             </NavLink>
             {/* Creates the automation and opens its conversation, which is
                 where the draft is written. */}
@@ -1718,14 +1725,14 @@ export function Sidebar({
             onRestore={onRestoreProject}
             projects={projects}
             renderWorkstream={renderWorkstream}
-            workstreams={workstreams}
+            workstreams={visibleWorkstreams}
           />
 
           <section className="sidebar-section" aria-labelledby="automations-heading">
             <div className="sidebar-section-heading">
               <h2 id="automations-heading">Automations</h2>
             </div>
-            {loading && automations.length === 0 ? (
+            {loading && visibleAutomations.length === 0 ? (
               <SidebarSkeletonRows count={3} />
             ) : automations.length === 0 ? (
               <p className="sidebar-empty">No automations</p>
@@ -1818,7 +1825,7 @@ export function Sidebar({
                 <span className="sr-only">Loading your projects, work streams, automations and notes</span>
               </div>
             )}
-            {loading && workstreams.length === 0 && notes.length === 0 ? (
+            {loading && visibleWorkstreams.length === 0 && visibleNotes.length === 0 ? (
               <>
                 <SidebarSkeletonGroup count={4} />
                 <SidebarSkeletonGroup count={3} />
@@ -1827,7 +1834,9 @@ export function Sidebar({
               // Pinned work streams are work streams, so the empty line only
               // holds when nothing is pinned either; with everything pinned the
               // section has nothing left to say and says nothing.
-              pinnedWorkstreams.length === 0 && <p className="sidebar-empty">No work streams or notes yet</p>
+              pinnedWorkstreams.length === 0 && (
+                <p className="sidebar-empty">{normalizedSearch ? 'No matching work streams' : 'No work streams or notes yet'}</p>
+              )
             ) : (
               groups.map((group) => (
                 <div className="sidebar-group" key={group.label}>

@@ -755,7 +755,7 @@ describe('Sidebar work-stream markers', () => {
         'Before this month',
       ]);
       expect(screen.queryByRole('heading', { name: 'Work streams' })).not.toBeInTheDocument();
-      expect([...document.querySelectorAll('.workstream-row .sidebar-row-title')].map((row) => row.textContent)).toEqual([
+      expect([...document.querySelectorAll('.workstream-row .sidebar-row-title-copy')].map((row) => row.textContent)).toEqual([
         'Just completed',
         'Recently running',
         'Failed yesterday',
@@ -1234,7 +1234,7 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    expect([...document.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent)).toEqual([
+    expect([...document.querySelectorAll('.sidebar-row-title')].map((row) => row.querySelector('.sidebar-row-title-copy')?.textContent ?? row.textContent)).toEqual([
       'Customer interview',
       'Shared research',
       'Older work stream',
@@ -1836,7 +1836,8 @@ describe('private work streams', () => {
   it('marks a workspace-scoped work stream as public', () => {
     renderWith([{
       ...workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed'),
-      // Leftover ids from when the row was personal must not paint a pile.
+      // Participant presence remains visible even when the work stream is
+      // available to the whole workspace.
       participantUserIds: ['user-1', 'user-2'],
       participantExtraCount: 3,
     }]);
@@ -1844,7 +1845,7 @@ describe('private work streams', () => {
     const row = screen.getByRole('link', { name: /Launch/u });
     expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(row.querySelector('.sidebar-workstream-facepile')).toBeNull();
+    expect(row.querySelector('.sidebar-workstream-facepile')).not.toBeNull();
   });
 
   it('paints the three newest faces and an overflow for everyone past that', () => {

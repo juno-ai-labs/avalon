@@ -465,6 +465,7 @@ async function reportTelemetryProductIntent(
 }
 
 let mainWindow: BrowserWindow | null = null;
+let conversationDetailsExpansion: { originalBounds: ReturnType<BrowserWindow['getBounds']> } | null = null;
 let settingsWindow: BrowserWindow | null = null;
 /**
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
@@ -3317,6 +3318,45 @@ function registerIpc(): void {
     }
     clipboard.writeText(text);
   });
+  ipcMain.handle('window:set-conversation-details', (event, rawInput: unknown) => {
+    assertMainWindowIpcSender(event);
+    if (!rawInput || typeof rawInput !== 'object') throw new Error('Invalid conversation details window request');
+    const input = rawInput as { open?: unknown; width?: unknown };
+    if (typeof input.open !== 'boolean' || typeof input.width !== 'number' || !Number.isFinite(input.width) || input.width < 0) {
+      throw new Error('Invalid conversation details window request');
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const bounds = mainWindow.getBounds();
+    if (input.open) {
+      if (mainWindow.isMaximized() || mainWindow.isFullScreen()) return;
+      if (conversationDetailsExpansion) return;
+      const workArea = electronScreen.getDisplayMatching(bounds).workArea;
+      const targetWidth = Math.min(workArea.width, bounds.width + Math.round(input.width));
+      const targetX = Math.max(workArea.x, Math.min(bounds.x, workArea.x + workArea.width - targetWidth));
+      conversationDetailsExpansion = { originalBounds: bounds };
+      if (targetWidth !== bounds.width || targetX !== bounds.x) {
+        mainWindow.setBounds({ ...bounds, x: targetX, width: targetWidth }, true);
+      }
+      return;
+    }
+    const expansion = conversationDetailsExpansion;
+    conversationDetailsExpansion = null;
+    if (!expansion) return;
+    const restoreOriginalBounds = (): void => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.setBounds(expansion.originalBounds, true);
+    };
+    if (mainWindow.isFullScreen()) {
+      mainWindow.once('leave-full-screen', restoreOriginalBounds);
+      return;
+    }
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+      restoreOriginalBounds();
+      return;
+    }
+    restoreOriginalBounds();
+  });
   ipcMain.handle('message-export:save', async (event, request: unknown) => {
     assertTrustedIpcSender(event);
     return messageExporter.save(parseMessageExportRequest(request));
@@ -4217,7 +4257,7 @@ async function createMainWindow(): Promise<void> {
   }
   rendererReady = false;
   mainWindow = new BrowserWindow({
-    width: 1480,
+    width: 1180,
     height: 940,
     minWidth: 860,
     minHeight: 640,
@@ -4257,6 +4297,7 @@ async function createMainWindow(): Promise<void> {
   mainWindow.on('closed', () => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
     rendererReady = false;
+    conversationDetailsExpansion = null;
     mainWindow = null;
   });
 

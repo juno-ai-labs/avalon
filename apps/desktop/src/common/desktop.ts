@@ -470,6 +470,9 @@ export interface RallyDesktopBridge {
   hasStoredCredential: () => Promise<boolean>;
   logout: () => Promise<void>;
   copyText: (text: string) => Promise<void>;
+  /** Let the main conversation rail borrow desktop space instead of narrowing
+   * the feed whenever the display has room for it. */
+  setConversationDetailsOpen: (input: { open: boolean; width: number }) => Promise<void>;
   /**
    * Renders one of Rally's messages as a picture or a PDF and offers to save
    * it. Resolves with `saved: false` when the person dismissed the dialog, and

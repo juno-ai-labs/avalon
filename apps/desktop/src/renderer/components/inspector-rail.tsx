@@ -242,6 +242,7 @@ function ContextContent({
   automationsSection = true,
   onAddParticipant,
   onAddResource,
+  onOpenRun,
   onToggleWatch,
 }: Pick<InspectorRailProps,
   | 'workstream'
@@ -251,6 +252,7 @@ function ContextContent({
   | 'automationsSection'
   | 'onAddParticipant'
   | 'onAddResource'
+  | 'onOpenRun'
   | 'onToggleWatch'
 >): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
@@ -288,7 +290,7 @@ function ContextContent({
     <div className="rail-sections">
       <Section
         action={<IconButton label="Add participant" onClick={onAddParticipant}><UserPlus size={14} /></IconButton>}
-        title="People"
+        title="Participants"
       >
         {workstream.participants.length === 0 ? (
           <p className="rail-empty-line">No human participants</p>
@@ -320,20 +322,30 @@ function ContextContent({
 
       <Section
         action={<IconButton label="Add resource" onClick={onAddResource}><Plus size={14} /></IconButton>}
-        title="Sources"
+        title="Resources"
       >
-        {sources.length === 0 ? (
-          <p className="rail-empty-line">No sources attached</p>
+        {sources.length === 0 && artifacts.length === 0 ? (
+          <p className="rail-empty-line">No resources attached</p>
         ) : (
-          <ResourceCards onToggleWatch={onToggleWatch} resources={sources} />
+          <ResourceCards onToggleWatch={onToggleWatch} resources={[...sources, ...artifacts]} />
         )}
       </Section>
 
-      <Section title="Artifacts">
-        {artifacts.length === 0 ? (
-          <p className="rail-empty-line">No artifacts generated</p>
+      <Section title="Recent runs">
+        {runs.length === 0 ? (
+          <p className="rail-empty-line">No runs yet</p>
         ) : (
-          <ResourceCards resources={artifacts} />
+          <ul className="run-rail-list compact-run-list">
+            {runs.slice(0, 3).map((run) => (
+              <li key={run.id}>
+                <button className="run-rail-row" onClick={() => onOpenRun?.(run)} type="button">
+                  <StatusDot compact status={run.status} />
+                  <span className="run-rail-copy"><strong>{run.title}</strong><small>{formatRelative(run.triggerTime)}</small></span>
+                  <ChevronRight aria-hidden="true" size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </Section>
 

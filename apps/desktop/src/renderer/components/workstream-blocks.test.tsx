@@ -449,6 +449,7 @@ describe('MessageBlock human identity', () => {
       .toHaveClass('message-context-label');
     expect(screen.getByLabelText('Message from Adam')).toHaveClass('own-human-message');
     expect(screen.getByText('Adam')).toHaveClass('message-author');
+    expect(document.querySelector('.message-author-dot')).toBeInTheDocument();
   });
 
   it('shows compact identity for a coworker prompt', () => {
