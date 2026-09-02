@@ -35,6 +35,7 @@ export interface RealtimeSocketHandshakeTiming {
 export type RealtimeSocketFactory = (
   url: string,
   protocols: readonly string[],
+  onHandshakePhase?: (phase: RealtimeSocketHandshakeTiming) => void,
 ) => RealtimeSocketClient;
 
 export type RealtimeSocketProxyResolver = (url: string) => Promise<string>;
@@ -214,7 +215,9 @@ class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
     private readonly ca: readonly string[],
     resolveProxy: RealtimeSocketProxyResolver,
     private readonly createAttempt: RealtimeSocketAttemptFactory,
+    onHandshakePhase?: (phase: RealtimeSocketHandshakeTiming) => void,
   ) {
+    if (onHandshakePhase) this.handshakePhaseListeners.add(onHandshakePhase);
     const proxyStartedAt = performance.now();
     void resolveProxy(url)
       .then((resolution) => {
@@ -381,12 +384,13 @@ export function createNodeRealtimeSocketFactory(
     ...getCACertificates('default'),
     ...getCACertificates('system'),
   ])];
-  return (url, protocols) => new ProxyFallbackRealtimeSocketClient(
+  return (url, protocols, onHandshakePhase) => new ProxyFallbackRealtimeSocketClient(
     url,
     protocols,
     ca,
     resolveProxy,
     createAttempt,
+    onHandshakePhase,
   );
 }
 
@@ -468,24 +472,29 @@ export class RealtimeSocketBroker {
   ): void {
     const key = this.key(ownerId, input.socketId);
     if (this.sockets.has(key)) throw new Error('Realtime socket ID is already in use');
+    const pendingHandshakePhases: RealtimeSocketHandshakeTiming[] = [];
+    let relayHandshakePhase = (phase: RealtimeSocketHandshakeTiming): void => {
+      pendingHandshakePhases.push(phase);
+    };
     const owned: OwnedSocket = {
       active: true,
-      client: this.createSocket(input.url, input.protocols),
+      client: this.createSocket(input.url, input.protocols, (phase) => relayHandshakePhase(phase)),
     };
     this.sockets.set(key, owned);
     const emitWhileOwned = (event: DesktopRealtimeSocketEvent): void => {
       if (owned.active && this.sockets.get(key) === owned) emit(event);
     };
+    relayHandshakePhase = (phase): void => emitWhileOwned({
+      type: 'handshake_phase',
+      socketId: input.socketId,
+      ...phase,
+    });
+    for (const phase of pendingHandshakePhases.splice(0)) relayHandshakePhase(phase);
     owned.client.onOpen(() => emitWhileOwned({
       type: 'open',
       socketId: input.socketId,
       protocol: owned.client.protocol,
       extensions: owned.client.extensions,
-    }));
-    owned.client.onHandshakePhase((phase) => emitWhileOwned({
-      type: 'handshake_phase',
-      socketId: input.socketId,
-      ...phase,
     }));
     owned.client.onMessage((data) => emitWhileOwned({
       type: 'message',

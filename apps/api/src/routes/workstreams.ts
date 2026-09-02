@@ -376,7 +376,7 @@ workstreamRoutes.get(
       identity: { workstreamId: id, substreamId: "0" },
     }, async (span) => {
       const issued = await span.step("workstream.socket.ticket.issue", () =>
-        new WorkstreamService(c.env, getAuth(c)).socketTicket(
+        new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).socketTicket(
           id,
           "0",
           afterSequence,
@@ -405,7 +405,7 @@ workstreamRoutes.get(
       identity: { workstreamId: param.id, substreamId: param.substreamId },
     }, async (span) => {
       const issued = await span.step("workstream.socket.ticket.issue", () =>
-        new WorkstreamService(c.env, getAuth(c)).socketTicket(
+        new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).socketTicket(
           param.id,
           param.substreamId,
           afterSequence,
