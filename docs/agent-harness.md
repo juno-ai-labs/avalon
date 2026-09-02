@@ -221,6 +221,8 @@ An automation run's final message is what Rally delivers, so the run is told whi
 
 A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds, while a HyperSight block run skips publication and submits finished Markdown through its required block tool. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
+The same module's **Sites** section is the site-shaped equivalent: a request whose natural output is a page or a small app becomes a *directory* of files, published as a live artifact people open. It carries only the trigger and the two rules a model gets wrong without it — publish the directory rather than a file inside it, and a request for a new thing is a new site at a new path — plus the pointer to the skill. The build craft is hundreds of lines and would be charged to every request, so it ships as the loadable `building-live-sites` skill and is read at the moment it matters. Like the document half it is standing rather than gated, and falls back the same way when the sandbox cannot be reached. [`live-web-artifacts.md`](live-web-artifacts.md) owns what a published directory becomes and how it is served.
+
 An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. The *announcement* rule — the embed form for a document the run just published — lives in `DOCUMENT_GENERATION_POLICY` so there is one rule for that act. Rendered for every work-stream run — interactive, automation and scheduled digest alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
 
 Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — Unicode or plain words are used instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). Elicitation questions and option labels are plain text because their surface does not render Markdown. The TeX rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
@@ -1144,6 +1146,39 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-09-01 — The standing policy gains a site trigger; the craft goes to a skill
+
+**What changed:** `DOCUMENT_GENERATION_POLICY` gained a `# Sites` section, and
+`building-live-sites` joined the built-in skills with `ownerPlugin:
+"rally:terminal"`.
+
+**Why:** A site-shaped request has the same shape as a document-shaped one —
+write files, publish, announce, revise the same path — so the trigger belongs
+beside the document trigger rather than in a second mechanism. What does *not*
+belong there is how to build one: the entry-file rule, the handler shape, the
+storage class, the viewer headers and the polling manners run to hundreds of
+lines, and the standing policy is charged to every interactive run in a
+Terminal-supported region.
+
+The byte-budget test is why the section is two paragraphs rather than the nine
+bullets it was first written as, and why the bound moved. The first draft put
+the layout rules and the entry-name warnings inline and pushed the prompt to
+8,735 bytes against an 8,000 ceiling — exactly the prose creep that bound
+exists to catch, and moving that material into the skill is what the comment
+beside the ceiling asks for. What the trim could not cover is that the
+`2026-08-31` change above made this policy standing rather than gated and
+rewrote `# Documents` into prose, leaving about 175 bytes of headroom — less
+than a second section needs to name itself, name its skill, and give its one
+most-missed rule. So the bound is 8,500, raised deliberately rather than
+absorbed, and the comment beside it names the sentence in `# Documents` that
+now says twice what the two paragraphs after it say once. Trimming somebody
+else'"'"'s freshly-landed policy to make room for this one is a decision for
+whoever owns that prose, not a silent edit.
+
+**Considered and rejected:** a second standing policy module for sites. It would
+have doubled the gating condition and the announcement rules for a trigger that
+differs from the document one by a noun.
 
 ### 2026-08-31 — Built-in plugin authorization is derived from registration
 

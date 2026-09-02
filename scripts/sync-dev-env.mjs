@@ -17,6 +17,7 @@ const workerKeys = [
   "PUBLIC_API_BASE_URL",
   "EU_PUBLIC_API_BASE_URL",
   "PUBLIC_WEB_BASE_URL",
+  "ARTIFACT_SERVING_DOMAIN",
   "ALLOWED_ORIGINS",
   "DESKTOP_DEEP_LINK_URI",
   "OPENROUTER_API_KEY",
@@ -153,6 +154,11 @@ const safeDefaults = {
   APP_ENV: "development",
   RALLY_DEV_AUTH: "true",
   PUBLIC_WEB_BASE_URL: "http://127.0.0.1:5174",
+  // A domain rather than a URL: per-artifact labels are prefixed onto it. In a
+  // sandbox nothing resolves it — artifacts are not served locally — but every
+  // publish still mints a URL, and pointing those at the production domain
+  // would put a dead link in the rail that looks live.
+  ARTIFACT_SERVING_DOMAIN: "rallyusercontent.localhost",
   ALLOWED_ORIGINS: "app://rallywithai,app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
   DESKTOP_DEEP_LINK_URI: "rallywithai://auth/complete",
   TERMINAL_REGION_CAPABILITY: "unsupported",

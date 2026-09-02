@@ -6,6 +6,7 @@ const durableObjectBindings = new Set([
   "WORKSPACE_DOS",
   "WORKSPACE_SCHEDULERS",
   "WORKSTREAM_DOS",
+  "ARTIFACT_HOSTS",
 ]);
 
 const namespaceMethods = new Set([
@@ -60,7 +61,7 @@ export const durableObjectRegionRoutingRule = {
     },
     schema: [],
     messages: {
-      bypass: "Resolve Avalon Durable Objects through durableObjectStubForWorkspace() or durableObjectStubForRegionalSingleton(). Direct {{method}} routing can bypass the US/EU jurisdiction lock or the workspace's immutable first-placement affinity.",
+      bypass: "Resolve Avalon Durable Objects through durableObjectStubForWorkspace(), durableObjectStubForRegionalSingleton(), or durableObjectStubForArtifact(). Direct {{method}} routing can bypass the US/EU jurisdiction lock or the workspace's immutable first-placement affinity.",
     },
   },
   create(context) {

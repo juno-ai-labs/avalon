@@ -347,6 +347,27 @@ export interface DesktopDeepLinkErrorNotice {
   message: string;
 }
 
+export interface DesktopArtifactPreviewBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface DesktopArtifactPreviewRequest {
+  artifactId: string;
+  /** The one-shot access URL. Its code is the fragment. */
+  url: string;
+  bounds: DesktopArtifactPreviewBounds;
+}
+
+export interface DesktopArtifactWindowRequest {
+  artifactId: string;
+  url: string;
+  /** Shown in the window's title bar, so a person knows what they popped out. */
+  title: string;
+}
+
 export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
@@ -427,6 +448,29 @@ export interface RallyDesktopBridge {
    */
   exportMessage: (request: MessageExportRequest) => Promise<MessageExportResult>;
   openExternal: (url: string) => Promise<void>;
+  /**
+   * Show a live artifact in the rail's preview region.
+   *
+   * The renderer never embeds artifact content: it hands over an artifact id, a
+   * one-shot access URL, and the rectangle it measured, and the main process
+   * owns everything else — the view, its isolation, and whether that URL is one
+   * it will load at all. Resolves `false` when the URL is refused.
+   */
+  presentArtifactPreview: (request: DesktopArtifactPreviewRequest) => Promise<boolean>;
+  /** Move the preview when the rail's layout changes. Layout only, not scroll. */
+  setArtifactPreviewBounds: (bounds: DesktopArtifactPreviewBounds) => Promise<void>;
+  /**
+   * Hide the preview while an app surface that can overlap the rail is open.
+   *
+   * A composited view paints *above* the renderer's DOM, so a dialog, the
+   * command palette, or a lightbox would otherwise have artifact content drawn
+   * over it. The view collapses rather than closing, so state survives.
+   */
+  setArtifactPreviewHidden: (hidden: boolean) => Promise<void>;
+  /** Tear the preview down: the detail closed, or the work stream changed. */
+  closeArtifactPreview: () => Promise<void>;
+  /** Open the same artifact in its own window, sharing the preview's session. */
+  popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   openMeetingNotes: (noteId?: string) => Promise<void>;
   /**

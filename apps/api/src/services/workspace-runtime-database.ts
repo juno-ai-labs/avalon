@@ -94,6 +94,13 @@ export const WORKSPACE_LOCAL_TABLES = [
   "automation_email_receipts",
   "automation_email_rate_windows",
   "automation_resources",
+  // WorkspaceDO migration 28. The site-publish path writes it through this
+  // facade, and the revocation walk reads it inside the object. Listed for the
+  // reason `automation_directory` above is: a table missing here takes the
+  // regional fallthrough and answers `no such table` from D1, which for this
+  // one would mean every directory publish failing after its bytes had already
+  // landed in the bucket.
+  "artifact_registry",
   // The digest domain reaches these through typed WorkspaceDO methods now.
   // One routed statement remains — the settings read that joins
   // `digest_delivery_targets` to `connector_connections` for display names —

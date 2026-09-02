@@ -202,8 +202,8 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       additionalProperties: false,
       properties: {
         resourceId: { type: "string", format: "uuid", description: "Currently visible work-stream resource ID." },
-        destinationPath: pathProperty("Explicit workspace-relative destination path."),
-        overwrite: { type: "boolean", default: false, description: "Replace an existing regular file only when intentional." },
+        destinationPath: pathProperty("Explicit workspace-relative destination path. For a site resource this names the directory root to materialize the tree into."),
+        overwrite: { type: "boolean", default: false, description: "Replace an existing destination only when intentional. For a site this replaces the whole destination directory rather than merging into it, so files a later version deleted do not survive." },
       },
       required: ["resourceId"],
       // The destinationPath/overwrite pairing is stated in the description and
@@ -214,13 +214,13 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   publish_resource: {
     name: "publish_resource",
-    description: "Publish one stable non-empty regular file beneath AVALON_RESOURCE_DIR as a generated work-stream resource. filePath is relative to that output directory, not the repository. Publishing the same filePath again updates that resource in place — new content, and a new title when displayName is given — instead of creating a second one, so republish the same path to revise a document and choose a different path for a different document.",
+    description: "Publish one stable non-empty regular file, or a whole directory, beneath AVALON_RESOURCE_DIR as a generated work-stream resource. filePath is relative to that output directory, not the repository. A directory with index.js at its root publishes as a live site Rally hosts and serves; one with index.html at its root publishes as a live static site; any other directory publishes as one downloadable archive. The result's publishKind says which of file, site, or archive it became. Publishing the same filePath again updates that resource in place — new content, and a new title when displayName is given — instead of creating a second one, so republish the same path to revise it and choose a different path for a different thing.",
     capability: "terminal.resource.publish",
     mode: "write",
     idempotency: "provider_key",
     timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 120_000,
     inputSchema: objectSchema({
-      filePath: pathProperty("Path relative to AVALON_RESOURCE_DIR."),
+      filePath: pathProperty("Path relative to AVALON_RESOURCE_DIR. A file path publishes that file; a directory path publishes the whole tree beneath it."),
       displayName: { type: "string", minLength: 1, maxLength: 300, description: "Optional participant-visible resource title." },
       description: { type: "string", maxLength: 2_000, description: "Optional participant-visible description." },
     }, ["filePath"]),

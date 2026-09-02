@@ -1,6 +1,14 @@
-import { asAutomationId, asBlockId, asWorkspaceId, asWorkstreamId, type SubstreamId } from "@rally/contracts";
+import {
+  asArtifactId,
+  asAutomationId,
+  asBlockId,
+  asWorkspaceId,
+  asWorkstreamId,
+  type SubstreamId,
+} from "@rally/contracts";
 
 import {
+  artifactHostDOName,
   automationAgentName,
   blockDashboardAgentName,
   substreamAgentName,
@@ -8,7 +16,11 @@ import {
   workstreamDOName,
 } from "../durable-objects/names";
 import type { Env } from "../env";
-import { durableObjectStubForWorkspace, workspacePlacementAffinity } from "../lib/durable-object-namespace";
+import {
+  durableObjectStubForArtifact,
+  durableObjectStubForWorkspace,
+  workspacePlacementAffinity,
+} from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import {
   AccessRevocationMessageSchema,
@@ -51,7 +63,17 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
       workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { workstreamIds, automationIds } = await workspace.revokeSocketAccess(revocation);
+    // Every list is defaulted, and that is about deploys rather than about
+    // tests: this consumer and WorkspaceDO are separate deployments of the same
+    // Worker, so during a rollout a consumer that knows about artifacts can
+    // reach an object that does not yet name them. Reading `undefined.map`
+    // there would throw and fail the whole revocation hop — dropping a
+    // retraction — where an empty list simply reaches nothing new.
+    const {
+      workstreamIds = [],
+      automationIds = [],
+      artifactIds = [],
+    } = await workspace.revokeSocketAccess(revocation);
     await publishDescendantRevocations(env, [
       ...workstreamIds.map((workstreamId) =>
         descendantRevocation(revocation, { scope: "workstream", workstreamId })),
@@ -60,7 +82,29 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
       // object — the room never re-authorizes on its own.
       ...automationIds.map((automationId) =>
         descendantRevocation(revocation, { scope: "automation", automationId })),
+      // An artifact host holds no socket, but it holds viewer sessions, and a
+      // session that outlived a membership would keep serving a page to
+      // somebody who is no longer in the workspace. It is a sibling of the
+      // work streams for the same reason an automation is: `artifact_registry`
+      // lives in WorkspaceDO, so that is the only object that can name them.
+      ...artifactIds.map((artifactId) =>
+        descendantRevocation(revocation, { scope: "artifact", artifactId })),
     ]);
+    return;
+  }
+
+  if (target.scope === "artifact") {
+    // Named directly rather than through `durableObjectStubForWorkspace`: an
+    // artifact object's name carries no workspace segment — the serving Worker
+    // has only a hostname to derive it from — so there is no workspace
+    // affinity to look up here either. A leaf; it names no children.
+    const artifact = durableObjectStubForArtifact(
+      env,
+      env.ARTIFACT_HOSTS,
+      artifactHostDOName(env.AVALON_REGION, asArtifactId(target.artifactId)),
+      placementAffinity,
+    );
+    await artifact.revokeSocketAccess(revocation);
     return;
   }
 

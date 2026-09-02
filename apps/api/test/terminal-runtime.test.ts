@@ -1,4 +1,4 @@
-import { asUserId } from "@rally/contracts";
+import { SITE_MANIFEST_MIME_TYPE, asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -23,6 +23,7 @@ import {
   type TerminalImportResourceOutput,
   type TerminalPublishedBranchAndPrOutput,
   type TerminalPublishedResourceOutput,
+  type TerminalPublishedSiteOutput,
 } from "../src/services/terminal/tools";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import type { DatabaseSync } from "node:sqlite";
@@ -161,7 +162,25 @@ function fixture(
     cleanupCommand: vi.fn(async () => undefined),
   };
   const runCommandImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
-  provider.runUtilityCommand = vi.fn((id, input) => runCommandImplementation(id, {
+  provider.runUtilityCommand = vi.fn(async (id, input) => {
+    // The publish path now asks what a path *is* before reading it, and the
+    // answer decides whether it publishes as a document, a site, or an
+    // archive. The simulated shell answers from the same `files` map every
+    // other command reads, so a directory here is any prefix that files live
+    // beneath — which is what it is in the sandbox too.
+    if (input.operation === "resource.publish.inspect_target") {
+      const target = /^target='([^']+)'/u.exec(input.command)?.[1] ?? "";
+      const exact = files.get(target);
+      if (exact) return { exitCode: 0, stdout: `file ${exact.byteLength} ${await sha256Hex(exact)}\n`, stderr: "" };
+      const beneath = [...files.entries()]
+        .filter(([path]) => path.startsWith(`${target}/`))
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+      if (beneath.length === 0) return { exitCode: 44, stdout: "", stderr: "" };
+      const listed = await Promise.all(beneath.map(async ([path, bytes]) =>
+        `${bytes.byteLength} ${await sha256Hex(bytes)} ${path.slice(target.length + 1)}`));
+      return { exitCode: 0, stdout: `directory\n${listed.join("\n")}\n`, stderr: "" };
+    }
+    return runCommandImplementation(id, {
     ...input,
     taskName: input.operation === "file.read_page"
       ? "terminal-read-page"
@@ -170,7 +189,8 @@ function fixture(
         : input.operation === "file.replace"
           ? "avalon-write"
           : "terminal-utility",
-  }));
+    });
+  });
   const resources: TerminalResourceBridge = {
     importResource: vi.fn(async (_context, input, destination): Promise<TerminalImportResourceOutput> => ({
       resourceId: input.resourceId, filePath: destination, outcome: "created",
@@ -178,9 +198,24 @@ function fixture(
     })),
     publishResource: vi.fn(async (_context, input, bytes): Promise<TerminalPublishedResourceOutput> => ({
       resourceId: "published", title: input.displayName ?? input.filePath,
-      resourceType: "generated_file", provider: "avalon_generated", mimeType: "text/plain",
+      publishKind: "file", resourceType: "generated_file", provider: "avalon_generated", mimeType: "text/plain",
       sizeBytes: bytes.byteLength, sourceSha256: "b".repeat(64), attachmentKind: "text",
       contentMode: "read", derivativeStatus: "pending", createdAt: "2026-08-13T12:00:00.000Z",
+    })),
+    publishedKindForPath: vi.fn(async (): Promise<"site" | "archive" | "file" | null> => null),
+    publishSiteResource: vi.fn(async (
+      _context,
+      input,
+      site: Parameters<TerminalResourceBridge["publishSiteResource"]>[2],
+    ): Promise<TerminalPublishedSiteOutput> => ({
+      resourceId: "published-site", title: input.displayName ?? input.filePath,
+      publishKind: "site", resourceType: "generated_site", provider: "avalon_generated", attachmentKind: "site",
+      slug: "site-slug",
+      url: `https://${"1".repeat(8)}-g.rallyusercontent.test`,
+      mode: site.mode, stateful: site.stateful, version: 1,
+      mimeType: SITE_MANIFEST_MIME_TYPE, fileCount: site.files.length,
+      totalBytes: site.files.reduce((total, file) => total + file.bytes.byteLength, 0),
+      manifestSha256: "c".repeat(64), createdAt: "2026-08-13T12:00:00.000Z",
     })),
   };
   const publisher: TerminalRepositoryPublisher = {
@@ -990,7 +1025,10 @@ describe("Daytona Terminal runtime", () => {
     files.set("/workspace/.rally-output/report.txt", new TextEncoder().encode("report"));
     vi.mocked(provider.runUtilityCommand).mockClear();
     await expect(runtime.publishResource(context, { filePath: "report.txt" })).resolves.toMatchObject({ resourceId: "published", sizeBytes: 6 });
-    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(2);
+    // Three now, not two: the path's shape is asked once before the
+    // before/after stability pair, because a directory and a file publish
+    // through entirely different paths.
+    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(3);
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/report.txt");
     expect(resources.importResource).toHaveBeenCalledWith(context, expect.anything(), ".rally/resources/00000000-0000-4000-8000-000000000099/resource", 1, "sandbox-runtime", expect.anything());
   });
@@ -1003,7 +1041,7 @@ describe("Daytona Terminal runtime", () => {
        VALUES ('command-log', ?, 'generated_file', 'rally_terminal', 'Command log', '{}', '2026-08-13', '2026-08-13')`,
     ).run(W);
     vi.mocked(resources.publishResource).mockResolvedValueOnce({
-      resourceId: "command-log", title: "Command log", resourceType: "generated_file",
+      resourceId: "command-log", title: "Command log", publishKind: "file", resourceType: "generated_file",
       provider: "avalon_generated", mimeType: "text/plain", sizeBytes: 150_000,
       sourceSha256: "d".repeat(64), attachmentKind: "text", contentMode: "read",
       derivativeStatus: "pending", createdAt: "2026-08-13T12:00:00.000Z",
@@ -1024,6 +1062,89 @@ describe("Daytona Terminal runtime", () => {
       "SELECT output_resource_id FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
     )).toEqual({ output_resource_id: "command-log" });
+  });
+
+  it("publishes a directory with a root index.js as an active site, module excluded from assets", async () => {
+    const { files, provider, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/rsvp/index.html", new TextEncoder().encode("<h1>RSVP</h1>"));
+    files.set("/workspace/.rally-output/rsvp/style.css", new TextEncoder().encode("h1{color:red}"));
+    files.set(
+      "/workspace/.rally-output/rsvp/index.js",
+      new TextEncoder().encode("export class SiteData extends DurableObject { async fetch() {} }"),
+    );
+    await expect(runtime.publishResource(context, { filePath: "rsvp" })).resolves.toMatchObject({
+      resourceType: "generated_site",
+      attachmentKind: "site",
+      mode: "active",
+      // The class is exported, so the site gets a database.
+      stateful: true,
+      fileCount: 3,
+    });
+    const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
+    expect(site.files.map((file) => file.path).sort()).toEqual(["index.html", "index.js", "style.css"]);
+    expect(site.serverModuleSha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/rsvp/index.js");
+  });
+
+  it("publishes a directory with only index.html as a static site with no database", async () => {
+    const { files, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/checklist/index.html", new TextEncoder().encode("<ul></ul>"));
+    await expect(runtime.publishResource(context, { filePath: "checklist" })).resolves.toMatchObject({
+      resourceType: "generated_site",
+      mode: "static",
+      stateful: false,
+    });
+    const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
+    expect(site.serverModuleSha256).toBeNull();
+  });
+
+  it("treats a stateless active module as a site without storage", async () => {
+    const { files, runtime } = fixture();
+    files.set("/workspace/.rally-output/search/index.html", new TextEncoder().encode("<input>"));
+    files.set(
+      "/workspace/.rally-output/search/index.js",
+      new TextEncoder().encode("export default { async fetch(r, env) { return env.ASSETS.fetch(r); } };"),
+    );
+    await expect(runtime.publishResource(context, { filePath: "search" })).resolves.toMatchObject({
+      mode: "active",
+      stateful: false,
+    });
+  });
+
+  it("bundles a multi-file directory with no entry into one zip through the document path", async () => {
+    const { files, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/exports/a.csv", new TextEncoder().encode("a,b\n1,2"));
+    files.set("/workspace/.rally-output/exports/b.csv", new TextEncoder().encode("c,d\n3,4"));
+    const published = await runtime.publishResource(context, { filePath: "exports" });
+    expect(published).toMatchObject({ publishKind: "archive", resourceType: "generated_file", fileCount: 2 });
+    expect(resources.publishSiteResource).not.toHaveBeenCalled();
+    // It rides the ordinary document publish, so identity, replay, and version
+    // capture all behave exactly as a document's do.
+    const [, , bytes] = vi.mocked(resources.publishResource).mock.calls[0]!;
+    expect(Array.from(bytes.slice(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
+  });
+
+  it("refuses a one-file directory that reaches the archive branch", async () => {
+    const { files, runtime } = fixture();
+    files.set("/workspace/.rally-output/report/summary.md", new TextEncoder().encode("# Summary"));
+    await expect(runtime.publishResource(context, { filePath: "report" }))
+      .rejects.toMatchObject({ code: "single_file_directory" });
+  });
+
+  it("refuses a republish that would downgrade a live site to an archive", async () => {
+    const { files, resources, runtime } = fixture();
+    vi.mocked(resources.publishedKindForPath).mockResolvedValue("site");
+    files.set("/workspace/.rally-output/rsvp/a.txt", new TextEncoder().encode("one"));
+    files.set("/workspace/.rally-output/rsvp/b.txt", new TextEncoder().encode("two"));
+    await expect(runtime.publishResource(context, { filePath: "rsvp" }))
+      .rejects.toMatchObject({ code: "site_entry_removed" });
+  });
+
+  it("refuses an empty directory rather than publishing an empty artifact", async () => {
+    const { files, runtime } = fixture();
+    files.set("/workspace/.rally-output/other/thing.txt", new TextEncoder().encode("x"));
+    await expect(runtime.publishResource(context, { filePath: "empty" }))
+      .rejects.toMatchObject({ code: "not_found" });
   });
 
   it("rejects missing and empty generated files with model-repairable publication errors", async () => {

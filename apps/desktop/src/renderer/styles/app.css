@@ -3786,6 +3786,64 @@ pre {
 .inspector-versions-menu .inspector-version-group-label { color: var(--av-sys-color-text-muted); font-size: 10.5px; font-weight: 560; padding: 7px 8px 3px; }
 .inspector-version-item { display: grid; gap: 9px; grid-template-columns: 22px minmax(0, 1fr) auto; }
 .inspector-version-author { color: var(--av-ref-color-neutral-12); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+
+/* A live artifact's detail: the one rail body that is not something the
+   renderer drew. The preview pane is a *fixed region* the main process
+   composites an Electron view over, so it needs a real height whether or not
+   anything is in it — a content-sized box would hand the main process a
+   rectangle the size of its own placeholder text, and the page would be
+   composited into a sliver. It is also why the pane does not scroll: a
+   composited view that chases a scrolling rectangle jitters, and the fix is
+   layout rather than synchronization. */
+.site-detail { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.site-detail > h3 { margin: 0; font-size: 12.5px; }
+.site-detail-kind { margin: 0; color: var(--av-ref-color-neutral-9); font-size: 11px; }
+.site-detail-tabs { display: flex; gap: 6px; }
+.site-detail-tabs [aria-selected='true'] { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-ref-color-line-4); }
+.site-detail-pane {
+  position: relative;
+  /* Tall enough to be a viewing area rather than a strip, and elastic so a
+     wider rail gives the page more room. */
+  flex: 1 1 auto;
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--av-ref-color-line-4);
+  border-radius: var(--av-sys-size-radius-md);
+  background: var(--av-sys-color-surface-raised);
+  overflow: hidden;
+}
+.site-detail-status { margin: 0; color: var(--av-ref-color-neutral-9); font-size: 11px; }
+.site-data { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.site-data-tables { display: flex; flex-wrap: wrap; gap: 6px; }
+.site-data-tables [aria-selected='true'] { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-ref-color-line-4); }
+/* Its own scroller: a model-designed schema can be any width, and a table that
+   widened the rail would push the transcript around. */
+.site-data-scroll { overflow: auto; max-height: 340px; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); }
+.site-data-scroll table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.site-data-scroll th,
+.site-data-scroll td { padding: 6px 9px; text-align: left; border-bottom: 1px solid var(--av-ref-color-line-4); white-space: nowrap; }
+.site-data-scroll th { position: sticky; top: 0; background: var(--av-sys-color-surface-raised); font-weight: 600; }
+.site-data-scroll tr:last-child td { border-bottom: none; }
+.site-errors { display: flex; flex-direction: column; gap: 8px; }
+.site-errors ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.site-errors li { padding: 8px 10px; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); }
+.site-errors code { font-size: 11px; color: var(--av-ref-color-neutral-9); }
+/* The model's own error text, wrapped rather than clipped: it is the thing a
+   participant pastes back into chat, so all of it has to be selectable. */
+.site-errors p { margin: 4px 0 2px; font-size: 11px; overflow-wrap: anywhere; }
+.site-errors small { color: var(--av-ref-color-neutral-9); font-size: 9.5px; }
+/* History under the actions: what the resource is comes first, what it was
+   comes after. The rows are their own grid so the version number, the author
+   and the time line up down the column rather than per row. */
+.inspector-versions { margin-top: 22px; }
+.inspector-versions ul { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.inspector-versions li { align-items: center; display: grid; gap: 9px; grid-template-columns: 22px minmax(0, 1fr) auto; min-height: 36px; }
+.inspector-version-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.inspector-version-meta > .inspector-version-author { color: var(--av-ref-color-neutral-12); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-version-meta > time { color: var(--av-sys-color-text-muted); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-version-label { color: var(--av-sys-color-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .inspector-version-item > .badge { justify-self: end; }
 /* A notice, not a caption: a superseded version renders in the same surface as

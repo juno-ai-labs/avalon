@@ -1,7 +1,7 @@
 name: Deploy Avalon API
 
 # Ordinary regional release, in the order docs/runbook.md requires:
-# build and locally profile all eight static Worker artifacts, upload every
+# build and locally profile all ten static Worker artifacts, upload every
 # ordinary Worker version without traffic, apply ordinary remote D1 migrations,
 # promote EU services and API, prove EU health, promote Global, then prove both regions. The one
 # destructive product-schema retirement is detected from each region's pending
@@ -124,6 +124,8 @@ jobs:
               pnpm --filter @rally/api build:telemetry &&
               pnpm --filter @rally/api check:telemetry-startup-boundary &&
               pnpm --filter @rally/api build:pricing &&
+              pnpm --filter @rally/api build:artifacts &&
+              pnpm --filter @rally/api build:artifacts:eu &&
               pnpm --filter @rally/engineering-mcp build &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-2
@@ -337,6 +339,10 @@ jobs:
         if: env.DEPLOY_EU == 'true'
         run: pnpm --filter @rally/api build:terminal:eu
 
+      - name: Build and profile the EU artifact-serving Worker
+        if: env.DEPLOY_EU == 'true'
+        run: pnpm --filter @rally/api build:artifacts:eu
+
       - name: Build and profile the exact EU Worker artifact
         if: env.DEPLOY_EU == 'true'
         run: pnpm --filter @rally/api build:deployed:eu
@@ -356,6 +362,10 @@ jobs:
       - name: Build and profile the Global inference-pricing Worker
         if: env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @rally/api build:pricing
+
+      - name: Build and profile the Global artifact-serving Worker
+        if: env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/api build:artifacts
 
       - name: Build and profile the exact Global Worker artifact
         if: env.DEPLOY_GLOBAL == 'true'
@@ -400,6 +410,7 @@ jobs:
             args+=(--deployed-sha "$(deployed_sha wrangler.documents.eu.jsonc)")
             args+=(--deployed-sha "$(deployed_sha wrangler.terminal.eu.jsonc)")
             args+=(--deployed-sha "$(deployed_sha .wrangler.lakehouses.eu.json)")
+            args+=(--deployed-sha "$(deployed_sha wrangler.artifacts.eu.jsonc)")
           fi
           if [ "$DEPLOY_GLOBAL" = "true" ]; then
             args+=(--deployed-sha "$(deployed_sha wrangler.documents.global.jsonc)")
@@ -407,6 +418,7 @@ jobs:
             args+=(--deployed-sha "$(deployed_sha wrangler.telemetry.global.jsonc)")
             args+=(--deployed-sha "$(deployed_sha wrangler.pricing.global.jsonc)")
             args+=(--deployed-sha "$(deployed_sha .wrangler.lakehouses.global.json)")
+            args+=(--deployed-sha "$(deployed_sha wrangler.artifacts.global.jsonc)")
           fi
           selection="$(node scripts/select-api-deploy-mode.mjs "${args[@]}")"
           echo "mode=$(jq -r .mode <<< "$selection")" >> "$GITHUB_OUTPUT"
@@ -437,6 +449,11 @@ jobs:
           upload_version wrangler.documents.eu.jsonc eu_documents
           upload_version wrangler.terminal.eu.jsonc eu_terminal
           upload_version .wrangler.lakehouses.eu.json eu_api
+          # After the API, not beside the other internal services: the
+          # artifact-serving Worker cross-script binds ArtifactHostDO, which the
+          # API Worker declares and migrates, and Cloudflare resolves bindings
+          # at upload. Before the API carries that class the upload fails.
+          upload_version wrangler.artifacts.eu.jsonc eu_artifacts
 
       - name: Upload all Global Worker versions without traffic
         id: upload_global
@@ -464,6 +481,9 @@ jobs:
           upload_version wrangler.telemetry.global.jsonc global_telemetry
           upload_version wrangler.pricing.global.jsonc global_pricing
           upload_version .wrangler.lakehouses.global.json global_api
+          # After the API, for the cross-script ArtifactHostDO binding — see the
+          # EU block above.
+          upload_version wrangler.artifacts.global.jsonc global_artifacts
 
       - name: List the pending remote migrations for EU
         id: pending_eu
@@ -554,8 +574,9 @@ jobs:
             promote_version wrangler.documents.eu.jsonc "${{ steps.upload_eu.outputs.eu_documents }}"
             promote_version wrangler.terminal.eu.jsonc "${{ steps.upload_eu.outputs.eu_terminal }}"
             promote_version .wrangler.lakehouses.eu.json "${{ steps.upload_eu.outputs.eu_api }}"
+            promote_version wrangler.artifacts.eu.jsonc "${{ steps.upload_eu.outputs.eu_artifacts }}"
           else
-            for config in wrangler.documents.eu.jsonc wrangler.terminal.eu.jsonc .wrangler.lakehouses.eu.json; do
+            for config in wrangler.documents.eu.jsonc wrangler.terminal.eu.jsonc .wrangler.lakehouses.eu.json wrangler.artifacts.eu.jsonc; do
               pnpm --filter @rally/api exec wrangler deploy \
                 --config "$config" \
                 --tag "$DEPLOY_SHA" \
@@ -589,8 +610,9 @@ jobs:
             promote_version wrangler.telemetry.global.jsonc "${{ steps.upload_global.outputs.global_telemetry }}"
             promote_version wrangler.pricing.global.jsonc "${{ steps.upload_global.outputs.global_pricing }}"
             promote_version .wrangler.lakehouses.global.json "${{ steps.upload_global.outputs.global_api }}"
+            promote_version wrangler.artifacts.global.jsonc "${{ steps.upload_global.outputs.global_artifacts }}"
           else
-            for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc wrangler.telemetry.global.jsonc wrangler.pricing.global.jsonc .wrangler.lakehouses.global.json; do
+            for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc wrangler.telemetry.global.jsonc wrangler.pricing.global.jsonc .wrangler.lakehouses.global.json wrangler.artifacts.global.jsonc; do
               pnpm --filter @rally/api exec wrangler deploy \
                 --config "$config" \
                 --tag "$DEPLOY_SHA" \

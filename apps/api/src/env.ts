@@ -25,6 +25,7 @@ import type {
 import type { RegionalTelemetryBridgeRpcBinding } from "./telemetry/regional-bridge";
 import type { GlobalTelemetryControlRpcBinding } from "./telemetry/control";
 import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
+import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
@@ -65,6 +66,16 @@ export interface Env {
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   SLACK_REACTION_TICKERS: DurableObjectNamespace;
+  /** One supervisor per live web artifact, named by the artifact's own id. */
+  ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
+  /**
+   * Cloudflare's Worker Loader, which materializes model-authored code.
+   *
+   * Optional because it is account-level configuration this repository does not
+   * create: without it a static artifact still serves and an active one degrades
+   * to its assets, which is a visible partial failure rather than a dead origin.
+   */
+  ARTIFACT_LOADER?: WorkerLoader;
   ACTIVITY_QUEUE: Queue;
   /** Regional durable hand-off from inference capture to Pipeline ingestion. */
   INFERENCE_LAKEHOUSE_QUEUE?: Queue;
@@ -109,6 +120,19 @@ export interface Env {
   PUBLIC_API_BASE_URL: string;
   EU_PUBLIC_API_BASE_URL?: string;
   PUBLIC_WEB_BASE_URL: string;
+  /**
+   * The registrable domain live artifacts are served from.
+   *
+   * Not `rallywith.ai` and deliberately not a subdomain of it. Model-authored
+   * pages get their own registrable domain in the `*usercontent.com` idiom the
+   * industry uses for exactly this, so an artifact is never same-origin with
+   * the application or the API, and never cookie-adjacent to the product apex.
+   *
+   * It is a variable rather than a constant because the local and test
+   * environments serve artifacts from somewhere else, and a hard-coded host
+   * would make every artifact URL in a sandbox point at production.
+   */
+  ARTIFACT_SERVING_DOMAIN: string;
   ALLOWED_ORIGINS: string;
   DESKTOP_DEEP_LINK_URI: string;
   GITHUB_INGRESS_BASE_URL?: string;
@@ -320,6 +344,8 @@ const EnvContractSchema = z.object({
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   SLACK_REACTION_TICKERS: binding<DurableObjectNamespace>(),
+  ARTIFACT_HOSTS: binding<DurableObjectNamespace<ArtifactHostDO>>(),
+  ARTIFACT_LOADER: binding<WorkerLoader>().optional(),
   ACTIVITY_QUEUE: binding<Queue>(),
   INFERENCE_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
   ANALYTICS_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
@@ -335,6 +361,10 @@ const EnvContractSchema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]),
   PUBLIC_API_BASE_URL: HttpUrlSchema,
   PUBLIC_WEB_BASE_URL: HttpUrlSchema,
+  // A bare registrable domain, not a URL: it is a suffix that per-artifact
+  // labels are prefixed onto, and a scheme here would produce hosts nothing
+  // can resolve.
+  ARTIFACT_SERVING_DOMAIN: z.string().min(1).regex(/^[a-z0-9.-]+$/u),
   ALLOWED_ORIGINS: z.string().min(1),
   DESKTOP_DEEP_LINK_URI: DesktopDeepLinkUrlSchema,
   TERMINAL_REGION_CAPABILITY: z.enum(["supported", "unsupported"]).optional(),

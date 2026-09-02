@@ -205,6 +205,8 @@ import type { TranscriptObjectPort } from "../durable-objects/workstream-transcr
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createResourceObjectPort } from "../runtime/resource-port";
+import { createWorkstreamArtifactDataTools } from "./workstream-artifact-data-tools";
+import { createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
@@ -7276,6 +7278,14 @@ const ScheduleWakeupInputSchema = z.strictObject({
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
   const tools: HarnessTool[] = [
     ...createWorkstreamAttachmentTools(env, input),
+    // Reading a live artifact's stored data is a work-stream capability, not a
+    // Terminal one: answering "who hasn't voted?" must not require a sandbox,
+    // and the run that answers it is usually not the run that built the page.
+    ...createWorkstreamArtifactDataTools(createArtifactDataToolContext(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      principal: input.executionPrincipal,
+    })),
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
       execute: async (raw) => {

@@ -86,7 +86,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "4dbd8653427a7c3e999ab6ace7fb7ce6fe11a29832dd28f1926bf2c7d55b7873",
+        hash: "4858ae1500eaa3c393986c7762c677e4c1df79bd4d8c5586e0326a82fb22af0f",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -94,7 +94,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "56ef591a99cb6607b8ae8af5b78be160cad8614d6b745e2278417c66cc546224",
+        hash: "2ca06344777ec650150ce224bb5fe6a5f5b340f90bae6677a8425b08dbf92fad",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -665,7 +665,25 @@ describe("prompt renderers", () => {
       objective: "O",
     });
 
-    expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_000);
+    // Raised from 8,000 when the standing policy gained a second section, and
+    // raised rather than absorbed because there was nowhere left to absorb it.
+    // The arithmetic, re-measured on this base rather than carried over from
+    // when the raise was first written: without `# Sites` the prompt is 7,827
+    // bytes, so the old ceiling left 173 bytes of headroom, and a second
+    // publish shape cannot introduce itself, name its skill, and give its one
+    // most-missed rule (publish the directory, not a file inside it) in 173.
+    // `# Sites` costs 567, which lands at 8,394 and leaves 106 under this bound.
+    //
+    // Per the instruction below, here is what looked misplaced rather than
+    // merely long, for whoever owns that prose to decide: `# Documents` opens
+    // with "Use the terminal tool to write the document in the sandbox,
+    // publish it, and then present it to the user with an embedded citation",
+    // which the next two paragraphs then say again in full and in detail. It is
+    // worth 131 bytes — not enough to get back under 8,000 on its own, which is
+    // the honest reason this is a raise and not a trim. It was left alone
+    // because it landed in a separate change and trimming somebody else's
+    // freshly-written policy to make room is not a silent edit to make.
+    expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_500);
   });
 
   it("requires the work-stream agent to hydrate referenced attachments and respect exact partial coverage", () => {

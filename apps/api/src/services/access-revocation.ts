@@ -37,6 +37,21 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
   }),
   z.strictObject({ scope: z.literal("block"), workstreamId: IdSchema, blockId: IdSchema }),
   z.strictObject({ scope: z.literal("automation"), automationId: IdSchema }),
+  /**
+   * A live web artifact's supervisor, a sibling of the work streams.
+   *
+   * It hangs off the workspace hop rather than a work stream's because
+   * `artifact_registry` lives in WorkspaceDO beside the resource authority,
+   * and only the object that holds a list can name its children. It is a leaf:
+   * an artifact has no children of its own.
+   *
+   * What it drops is viewer sessions rather than sockets — an artifact holds
+   * none — but the reason it is on this queue is the same as everything else
+   * here: a session that outlived a membership is a page still serving to
+   * somebody who is no longer in the workspace, and nothing the object can see
+   * would tell it that.
+   */
+  z.strictObject({ scope: z.literal("artifact"), artifactId: IdSchema }),
 ]);
 
 export const AccessRevocationMessageSchema = z.strictObject({
