@@ -28,6 +28,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { automationAttentionNotice } from '../lib/automation-attention';
+import { runResultSummary, runTriggerLabel } from '../lib/automation-run-copy';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import {
@@ -44,31 +45,6 @@ import { InspectorRail } from '../components/inspector-rail';
 import { RallyMark, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal, OpeningState, StatusDot } from '../components/primitives';
 
 type RunFilter = 'all' | 'scheduled' | 'manual';
-
-/**
- * What separates one run from the next, since the title cannot.
- *
- * Every run of an automation is titled after the automation, so a
- * list of them is the same sentence repeated. What actually differs
- * is why each one started and when.
- */
-function runTriggerLabel(triggerType: string): string {
-  if (triggerType === 'manual') return 'Run now';
-  if (triggerType === 'scheduled') return 'On schedule';
-  if (triggerType === 'inbound_email') return 'By email';
-  if (triggerType === 'external_event') return 'By activity';
-  return triggerType.replaceAll('_', ' ');
-}
-
-function runResultSummary(run: AutomationRunSummary): string {
-  if (run.resultSummary) return run.resultSummary;
-  if (run.status === 'running') return 'Rally is working…';
-  // "No result summary" is what a failed run said before, which
-  // reads as an absence rather than as the thing that happened.
-  if (run.status === 'failed') return 'Failed';
-  if (run.status === 'stopped') return 'Stopped';
-  return 'No result summary';
-}
 
 function RunRow({ run, onOpen }: { run: AutomationRunSummary; onOpen: () => void }): React.JSX.Element {
   return (

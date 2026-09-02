@@ -36,8 +36,8 @@ retired WorkspaceDO subscription-row design and is not implementation guidance.
 | `apps/api/src/durable-objects/workspace-do.ts` | Migration 22: `automation_creation_claims`, `automation_directory`, `workspace_external_event_registrations`, `workspace_external_event_deliveries`, `automation_cutover_campaign` — plus the matcher and the delivery lease. |
 | `apps/api/src/queues/activity-consumer.ts` | Carries a canonical event into matching and each ID-only delivery out to its destination object. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | Screens inbound mail against the agent before storing anything, then admits it. |
-| `apps/desktop/src/renderer/screens/automation.tsx` | The stable `/automations/:id` route; `new-automation.tsx` is its draft adapter and `automation-overview.tsx` its accepted one. |
-| `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | The draft feed: ticket, snapshot, compiler stream, heartbeat, and reconnect. |
+| `apps/desktop/src/renderer/screens/automation.tsx` | The stable `/automations/:id` route. `automation-overview.tsx` is its one screen; the draft adapter that used to sit beside it, and the agent socket hook that fed it, were retired with the draft surface and are gone. |
+| `apps/desktop/src/renderer/lib/automation-run-copy.ts` | The one set of words for a run — its trigger label and the sentence each execution state reads as — shared by the run list and the runs rail so the same run cannot read two ways on one screen. |
 | `scripts/cutover-automation-agents.mjs` | The one-shot authority cutover, now an operator tool rather than a deploy step — see the changelog for 2026-08-29. Idempotent per workspace. |
 
 ## How it works
@@ -292,6 +292,25 @@ automation that already carries a reason — and so nothing a person reads was
 written for whoever was debugging the cutover. `unsupported_trigger` is the only
 one that says the automation will not run again; the other two are recoverable.
 
+**A run's own state changes reach the desktop through the workspace socket, not
+this one.** `WorkstreamDO` projects the run's work-stream state to
+`WorkspaceDO`, which hops it on to `AutomationAgent.applyRunProjection`; when
+that hop moves the run's `execution_state`, WorkspaceDO publishes the
+`automations` sync topic, and the desktop invalidates `['automation', id]` on it
+the way it already did for every automation mutation. The topic is published for
+a state a reader would see and not for an acknowledgement that changes nothing —
+an archival, or a work stream that reopened after its run finished, both advance
+the source version without moving the run — which is what `applyRunProjection`'s
+`stateChanged` distinguishes from `applied`.
+
+**That hop is acknowledged only when it lands.** An envelope whose run
+projection could not be delivered is left out of the `accepted` set, so the work
+stream's outbox and the Queue redeliver it; every other envelope in the same
+batch is still acknowledged, because one automation whose agent cannot be reached
+must not stall the directory for the rest. The directory row itself has already
+committed by then, so the redelivery takes the replay branch, finds a row that
+already matches, and repeats only the hop.
+
 The draft screen holds one WebSocket to the agent, admitted through the ordinary
 ticket flow (`GET /automations/:id/agent/socket`, then an upgrade at
 `/socket/automations/:id`). The room accepts through Cloudflare's hibernation
@@ -382,6 +401,14 @@ telemetry storage — not a product-state fallback.
   object's one monotonic counter. A second source of that number silently drops
   updates, because WorkspaceDO's comparison is the only thing standing between a
   reordered delivery and a wrong sidebar.
+- **A change a reader would see is published, or the envelope carrying it is not
+  acknowledged.** A run reaching a terminal state has no later projection to
+  catch up on, so a hop dropped between WorkspaceDO and AutomationAgent pins that
+  run at `running` in the agent's own history permanently — past any client
+  refresh — and a state change nobody publishes leaves an open screen describing
+  a run that ended days ago. Every new projection between these objects owes both:
+  a publication when it moves something visible, and a withheld acknowledgement
+  when it does not land.
 - **An event is admitted once, by canonical event ID.** `automation_trigger_receipts`
   is keyed on it, so a Queue redelivery, a lease expiry, and a duplicate match all
   resolve to the same occurrence.
@@ -459,6 +486,13 @@ email is addressed and rendered
   both have had a pass, so a disabled connector cannot stop the directory
   projection or the child-archive effects a delete depends on. The run returns to
   `claimed` and the entry retries behind the shared alarm backoff.
+- **A run has no result summary to show.** `runSummariesUnchecked` sends
+  `resultSummary: null` for every run, because `automation_runs` has no column to
+  read one from: what the run produced is delivered to the frozen destinations
+  and judged by `resolveRunDisposition`, and neither writes a sentence back to
+  the run row. The desktop therefore names the run's *state* for every run it
+  lists rather than falling through to an absence, and the contract keeps the
+  field nullable for when the row can carry one.
 - **An outbox effect fails.** It returns to `pending` with an incremented attempt
   and the shared exponential delay. An effect kind nothing can deliver is marked
   `failed` rather than retried forever ahead of the effects behind it.
@@ -604,6 +638,80 @@ workspace found holding legacy state is to run the script again, which is
 idempotent per workspace.
 
 ## Changelog
+
+### 2026-09-02 — A run that has ended has to stop saying it is running
+
+**What changed:** `AutomationAgent.applyRunProjection` now reports
+`stateChanged` alongside `applied`, and `WorkspaceDO.applyWorkstreamDirectoryEffects`
+does two things with the answer. It publishes the `automations` sync topic when a
+run's `execution_state` moved, so the desktop invalidates `['automation', id]`
+and the open automation screen refetches. And it leaves an envelope
+unacknowledged when its run projection could not be delivered, so the sender
+redelivers it; the rest of the batch is still acknowledged.
+
+In the renderer, the run list's copy moved to
+`apps/desktop/src/renderer/lib/automation-run-copy.ts`, gained a sentence for
+`scheduled`, `needs_input` and `completed`, and is now shared with the runs rail.
+
+**Why:** the automation detail screen holds one query with a ten-second
+`staleTime`, no `refetchInterval`, and no socket subscription, and
+`refetchOnWindowFocus` is off app-wide. Nothing invalidated that key when a run
+ended, because `workspaceSyncTopicsForMutation` derives topics from an HTTP
+method and pathname and a run reaching a terminal state is neither — it is a
+projection between Durable Objects. `POST /automations/:id/run` bumped the topic
+and the row refetched as `running`; the run then ended and nothing bumped it
+again, so the row said "Rally is working…" under a pulsing dot for as long as the
+screen stayed open. Found while fixing the outage where every run died with
+`harness_execution_failed` within seconds: the runs were failing immediately and
+the screen showed them as live for days, which is the whole reason the outage
+read as *hung* runs rather than failing ones. The same silence covered success —
+a completed run never flipped off "Rally is working…" either.
+
+A `refetchInterval` while any visible run is non-terminal was the other option
+and is worse in two ways. It is a poll added to fix a missing push, and its
+number is a defensive limit this repository requires the team to set rather than
+an agent to guess — so the renderer-only fix could not even be written closed.
+The server already knew: the projection hop runs inside WorkspaceDO, which is the
+object holding the workspace's sockets, and the desktop already invalidates
+`['automation']` on the `automations` topic. Publishing there removes a poll
+instead of adding one and needs no renderer change to deliver the news.
+
+`stateChanged` is narrower than `applied` on purpose. An archival, a work stream
+that reopened after its run finished, and a second envelope carrying the state
+the run is already in are all real acknowledgements the sender must not retry,
+and all of them advance the source version without moving anything a reader
+sees. Publishing on `applied` would have put a socket event and a refetch behind
+each of them.
+
+The acknowledgement change is the other half of the same defect, server-side.
+The hop was carried in a `Promise.allSettled` whose rejections were only logged,
+on the reasoning that one automation's failure must not stall the directory for
+every other automation in the batch — which is right, and is kept. What was
+wrong was the sentence after it: a failure was said to catch up "on its next
+projection", and a run that has just reached a terminal state has no next
+projection. One dropped hop pinned that run at `running` in the agent's own
+history permanently, past any refresh the client could do. Withholding just that
+envelope's acknowledgement keeps the isolation and makes the loss recoverable:
+the directory row has already committed, so the redelivery takes the replay
+branch, finds a row that matches, and repeats only the hop. A future projection
+between these objects owes both halves — publish what is visible, and do not
+acknowledge what did not land.
+
+The renderer copy was the third symptom of the same thing. `runResultSummary`
+had branches for `running`, `failed` and `stopped` and fell through to "No result
+summary" for the rest, so `needs_input` — the one state that needs the person to
+go and do something — rendered as an absence, as did every `scheduled` run and
+every completed one. Completed runs read that way *always*, because
+`runSummariesUnchecked` sends `resultSummary: null` for every row:
+`automation_runs` has no column to read a summary from, since what a run produced
+goes to the frozen destinations and through `resolveRunDisposition` without being
+written back. The screen's test supplied a non-null summary from a mock, so the
+suite was asserting on a value the server cannot produce. Naming the state is
+what the server can actually support today; giving the run row a summary column
+is a larger change and is recorded above as a known limit rather than done here.
+The runs rail was disagreeing with the list beside it for the same reason — its
+own inline copy, and a status dot without the tooltip the list passes
+deliberately — so both now draw from one module.
 
 ### 2026-09-01 — An event-driven draft must carry its rules to be submitted
 

@@ -671,6 +671,38 @@ describe('InspectorRail details', () => {
 
 });
 
+describe('InspectorRail runs', () => {
+  beforeEach(() => {
+    useUiStore.setState({ railOpen: true, railVariant: 'runs', railWidth: 360, inspector: null });
+  });
+
+  it('reads a run the same way the list beside it does', () => {
+    // This rail sits next to the automation screen's own run list, and the two
+    // disagreed about the same runs: a failed run read here as the time it
+    // started, and a finished one read as its trigger time rather than as
+    // having finished. Both now draw the sentence from `automation-run-copy`.
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          runs={[
+            { id: 'run-1', workstreamId: 'workstream-1', title: 'Weekly brief', status: 'failed', triggerType: 'scheduled', triggerTime: '2026-08-01T09:00:00.000Z' },
+            { id: 'run-2', workstreamId: 'workstream-2', title: 'Weekly brief', status: 'needs_input', triggerType: 'manual', triggerTime: '2026-08-01T09:00:00.000Z' },
+          ]}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const rows = document.querySelectorAll('.run-rail-row');
+    expect([...rows].map((row) => row.querySelector('small')?.textContent?.split(' · ')[0]))
+      .toEqual(['Failed', 'Waiting for you']);
+    // The dot carries the colour, and the list explains it on hover. A rail
+    // that omitted the tooltip left colour as the only thing saying how a run
+    // ended, on the same screen where hovering the other list works.
+    expect(rows[0]?.querySelector('.status-indicator')).toHaveAttribute('data-state');
+  });
+});
+
 describe('resource detail content preview', () => {
   // This block used to inherit `railOpen` from the suite above it, which held
   // only in source order: shuffled, the rail rendered nothing and every test
