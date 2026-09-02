@@ -19,6 +19,7 @@
  * See `docs/live-web-artifacts.md`.
  */
 import {
+  ARTIFACT_MAX_ASSET_COUNT,
   ArtifactHostnameStubSchema,
   SITE_MANIFEST_MIME_TYPE,
   artifactAssetKey,
@@ -97,6 +98,13 @@ export async function writeArtifactVersion(
       sizeBytes: file.bytes.byteLength,
       sha256: file.sha256,
     }));
+  if (assets.length > ARTIFACT_MAX_ASSET_COUNT) {
+    throw new TerminalToolError(
+      "resource_publish_failed",
+      `This site has too many served files to add its generated social preview. Keep the directory below ${ARTIFACT_MAX_ASSET_COUNT} served files and publish it again.`,
+      { field: "filePath", reason: "Remove at least one served file, then publish the directory again." },
+    );
+  }
   const manifest: ArtifactManifest = {
     version: 1,
     artifactId: asArtifactId(artifactId),

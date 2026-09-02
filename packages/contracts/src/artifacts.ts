@@ -108,6 +108,9 @@ export const ArtifactManifestEntrySchema = z.strictObject({
 });
 export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>;
 
+/** Existing manifest ceiling; publishers reserve one slot for derived assets. */
+export const ARTIFACT_MAX_ASSET_COUNT = 10_000;
+
 /** Normalized metadata Rally can inject into a site's HTML response. */
 export const ArtifactSocialPreviewSchema = z.strictObject({
   title: z.string().min(1).max(300),
@@ -146,7 +149,7 @@ export const ArtifactManifestSchema = z.strictObject({
   stateful: z.boolean(),
   /** Present when `mode` is `active`; the module's own digest. */
   serverModuleSha256: z.string().regex(/^[0-9a-f]{64}$/u).nullable(),
-  assets: z.array(ArtifactManifestEntrySchema).max(10_000),
+  assets: z.array(ArtifactManifestEntrySchema).max(ARTIFACT_MAX_ASSET_COUNT),
   /** Present on versions published after automatic social previews shipped. */
   socialPreview: ArtifactSocialPreviewSchema.optional(),
   totalBytes: z.number().int().nonnegative(),

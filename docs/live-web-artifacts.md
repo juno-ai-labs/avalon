@@ -79,7 +79,11 @@ references. An authored local PNG, JPEG, GIF, or WebP is kept with its measured
 dimensions. When the page omits usable artwork, Rally writes a deterministic
 1200×630 PNG under `.rally/` using the page title and stores its descriptor in
 the manifest. This is publish-time work: a crawler request never parses source
-metadata, probes an image, or generates a card.
+metadata, probes an image, or generates a card. `.rally/` is a platform-reserved
+directory and authored files there are refused before any version is written.
+The bitmap font transliterates accented Latin text and gives titles with no
+supported glyphs a stable visible site code; an authored card remains the right
+answer for non-Latin branding.
 
 ### Revising
 
@@ -129,17 +133,22 @@ endpoint, prior-version mounts) and everything else is artifact content: assets
 resolved against the manifest for a static site, the loader for a stateless
 active one, or the facet for a stateful one.
 
-For successful current-version HTML, the Worker prepends the manifest's
-normalized canonical, description, Open Graph, and Twitter/X tags. Static HTML
-is already bounded by the publish ceiling and is rewritten as text; an active
-handler may stream, so its response is transformed with `HTMLRewriter` instead
-of buffered. The preview URL points at the site's ordinary asset path with an
-artifact-version query. That path choice is security-significant: a protected
-active handler's early viewer guard still covers the preview image, while a
-new version gets a different crawler cache key without adding a Rally route
-that could bypass model-authored access control. Error pages, redirects, JSON,
-historical versions, and manifests from before this field existed are not
-rewritten.
+For successful current-version HTML, the Worker adds the manifest's normalized
+canonical, description, Open Graph, and Twitter/X tags after authored tags, so
+the page's own values win and Rally fills what is missing. Static injection is
+limited to the root `index.html`; a second page keeps its own metadata rather
+than receiving the home page's title. Static HTML is already bounded by the
+publish ceiling and is rewritten as text; an active handler may stream, so its
+response is transformed with `HTMLRewriter` instead of buffered. The preview
+URL points at the site's ordinary asset path with an artifact-version query.
+That path choice is security-significant: a protected active handler's early
+viewer guard still covers the preview image, while a new version gets a
+different crawler cache key without adding a Rally route that could bypass
+model-authored access control. It also means every active handler must keep the
+taught `env.ASSETS.fetch(request)` fallback for the generated image to resolve;
+Rally deliberately does not route around a handler that owns access control.
+Error pages, redirects, JSON, historical versions, and manifests from before
+this field existed are not rewritten.
 
 ### Access
 
@@ -541,6 +550,7 @@ the detail's cancellation fence, and every privileged navigation request must
 carry identity and URL from one access response. Work-stream switches can no
 longer leave an old site composited over the newly selected feed or rely on
 React effect timing to preserve the artifact storage boundary.
+
 ### 2026-09-02 — Published sites get complete social previews
 
 **What changed:** Site publication now normalizes a title, description, and
@@ -567,12 +577,14 @@ generated Rally card would be simpler, but would discard the subject and visual
 language the author still has in context.
 
 **Consequences:** Newly published versions unfurl without requiring every model
-to remember the protocol, while authored metadata wins during normalization.
-Existing manifests stay valid because `socialPreview` is optional and begin
-using the feature on their next publish. Protected sites still return their
-guard response to anonymous crawlers and keep their image behind the same
-handler. A future change must not move the image onto a platform route unless
-that route can prove the same per-site access decision.
+to remember the protocol, while authored metadata wins in the served head.
+Existing manifests stay valid because `socialPreview` is optional; an unchanged
+republish detects a legacy manifest and deliberately mints the preview-bearing
+version instead of taking the ordinary content-deduplication return. Protected
+sites still return their guard response to anonymous crawlers and keep their
+image behind the same handler. A future change must not move the image onto a
+platform route unless that route can prove the same per-site access decision.
+
 ### 2026-09-02 — Sites become public by default; protection becomes active code
 
 **What changed:** Artifact `GET` and `HEAD` requests now serve the current site
@@ -609,6 +621,7 @@ version cannot run its protection guard, and a stateless active site returns
 hostname is not treated as secrecy; its finite vocabulary is accepted because
 the content is public, while `noindex` avoids turning sharing into search
 discovery.
+
 ### 2026-09-02 — Pop-outs keep artifact content below the window controls
 
 **What changed:** The desktop artifact pop-out now uses Electron's compact

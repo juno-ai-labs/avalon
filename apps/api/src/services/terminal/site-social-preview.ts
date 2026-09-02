@@ -30,21 +30,21 @@ export async function prepareSocialPreview(
 ): Promise<PreparedSocialPreview> {
   const index = files.find((file) => file.path === "index.html");
   const source = index ? new TextDecoder("utf-8", { fatal: false }).decode(index.bytes) : "";
-  const title = firstText(
+  const title = limitUtf16WithoutSplitting(firstText(
     metaContent(source, "property", "og:title"),
     metaContent(source, "name", "twitter:title"),
     elementText(source, "title"),
     elementText(source, "h1"),
     fallbackTitle,
     "Rally site",
-  ).slice(0, 300);
-  const description = firstText(
+  ), 300);
+  const description = limitUtf16WithoutSplitting(firstText(
     metaContent(source, "property", "og:description"),
     metaContent(source, "name", "twitter:description"),
     metaContent(source, "name", "description"),
     elementText(source, "p"),
     `A live site about ${title}.`,
-  ).slice(0, 500);
+  ), 500);
   const image = findAuthoredPreview(source, files);
   if (image) {
     return {
@@ -87,6 +87,15 @@ function firstText(...values: Array<string | null | undefined>): string {
     if (normalized) return normalized;
   }
   return "Rally site";
+}
+
+function limitUtf16WithoutSplitting(value: string, maximumCodeUnits: number): string {
+  let result = "";
+  for (const character of value) {
+    if (result.length + character.length > maximumCodeUnits) break;
+    result += character;
+  }
+  return result;
 }
 
 function normalizeText(value: string): string {
@@ -189,13 +198,28 @@ function imageDimensions(
     && String.fromCharCode(...bytes.subarray(0, 3)) === "GIF") {
     return dimensions(bytes[6]! | (bytes[7]! << 8), bytes[8]! | (bytes[9]! << 8));
   }
-  if (contentType === "image/webp" && bytes.length >= 30
-    && String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF"
-    && String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP"
-    && String.fromCharCode(...bytes.subarray(12, 16)) === "VP8X") {
+  if (contentType === "image/webp") return webpDimensions(bytes);
+  if (contentType === "image/jpeg") return jpegDimensions(bytes);
+  return null;
+}
+
+function webpDimensions(bytes: Uint8Array): { width: number; height: number } | null {
+  if (bytes.length < 25
+    || String.fromCharCode(...bytes.subarray(0, 4)) !== "RIFF"
+    || String.fromCharCode(...bytes.subarray(8, 12)) !== "WEBP") return null;
+  const chunk = String.fromCharCode(...bytes.subarray(12, 16));
+  if (chunk === "VP8X" && bytes.length >= 30) {
     return dimensions(1 + readUint24Le(bytes, 24), 1 + readUint24Le(bytes, 27));
   }
-  if (contentType === "image/jpeg") return jpegDimensions(bytes);
+  if (chunk === "VP8 " && bytes.length >= 30
+    && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+    return dimensions(readUint16Le(bytes, 26) & 0x3fff, readUint16Le(bytes, 28) & 0x3fff);
+  }
+  if (chunk === "VP8L" && bytes[20] === 0x2f) {
+    const width = 1 + bytes[21]! + ((bytes[22]! & 0x3f) << 8);
+    const height = 1 + (bytes[22]! >> 6) + (bytes[23]! << 2) + ((bytes[24]! & 0x0f) << 10);
+    return dimensions(width, height);
+  }
   return null;
 }
 
@@ -235,8 +259,13 @@ function readUint24Le(bytes: Uint8Array, offset: number): number {
   return bytes[offset]! | (bytes[offset + 1]! << 8) | (bytes[offset + 2]! << 16);
 }
 
+function readUint16Le(bytes: Uint8Array, offset: number): number {
+  return bytes[offset]! | (bytes[offset + 1]! << 8);
+}
+
 /** A dependency-free, deterministic branded card for sites without artwork. */
 export function generateFallbackSocialCard(title: string): Uint8Array {
+  assertFontShape();
   const rgba = new Uint8Array(CARD_WIDTH * CARD_HEIGHT * 4);
   const seed = [...title].reduce((value, character) => ((value * 33) ^ character.codePointAt(0)!) >>> 0, 5381);
   const accent = [180 + (seed & 31), 78 + ((seed >>> 5) & 31), 74 + ((seed >>> 10) & 31)] as const;
@@ -254,7 +283,7 @@ export function generateFallbackSocialCard(title: string): Uint8Array {
   fillRoundedApprox(rgba, 100, 100, 104, 104, 24, [...accent, 255]);
   drawText(rgba, "R", 128, 122, 12, [255, 255, 255, 255]);
   drawText(rgba, "RALLY", 238, 128, 8, [39, 39, 45, 255]);
-  const words = normalizeText(title).toUpperCase().split(" ");
+  const words = fallbackCardText(title, seed).split(" ");
   const lines = wrapWords(words, 18).slice(0, 2);
   lines.forEach((line, index) => drawText(rgba, line, 105, 270 + index * 92, 10, [39, 39, 45, 255]));
   fillRect(rgba, 105, 490, 180, 8, [...accent, 255]);
@@ -264,7 +293,7 @@ export function generateFallbackSocialCard(title: string): Uint8Array {
 function wrapWords(words: string[], lineLength: number): string[] {
   const lines: string[] = [];
   for (const word of words) {
-    const clipped = word.slice(0, lineLength);
+    const clipped = limitUtf16WithoutSplitting(word, lineLength);
     const current = lines.at(-1);
     if (!current || current.length + 1 + clipped.length > lineLength) lines.push(clipped);
     else lines[lines.length - 1] = `${current} ${clipped}`;
@@ -272,8 +301,25 @@ function wrapWords(words: string[], lineLength: number): string[] {
   return lines.length > 0 ? lines : ["RALLY SITE"];
 }
 
+function fallbackCardText(title: string, seed: number): string {
+  const transliterated = normalizeText(title)
+    .normalize("NFKD")
+    .replace(/\p{Mark}+/gu, "")
+    .toUpperCase();
+  let supportedCharacters = 0;
+  const visible = [...transliterated].map((character) => {
+    if (FONT[character]) {
+      if (/[A-Z0-9]/u.test(character)) supportedCharacters += 1;
+      return character;
+    }
+    return character.trim() ? "?" : " ";
+  }).join("").replace(/\s+/gu, " ").trim();
+  if (supportedCharacters > 0) return visible;
+  return `RALLY SITE ${seed.toString(16).toUpperCase().padStart(8, "0").slice(0, 6)}`;
+}
+
 const FONT: Readonly<Record<string, string>> = Object.freeze({
-  A: "011101000110001111111000110001", B: "11110100011000111110100011000111110",
+  A: "01110100011000111111100011000110001", B: "11110100011000111110100011000111110",
   C: "01111100001000010000100001000001111", D: "11110100011000110001100011000111110",
   E: "11111100001000011110100001000011111", F: "11111100001000011110100001000010000",
   G: "01111100001000010111100011000101111", H: "10001100011000111111100011000110001",
@@ -292,8 +338,15 @@ const FONT: Readonly<Record<string, string>> = Object.freeze({
   "6": "01110100001000011110100011000101110", "7": "11111000010001000100010000100001000",
   "8": "01110100011000101110100011000101110", "9": "01110100011000101111000010000101110",
   "-": "00000000000000011111000000000000000", ".": "00000000000000000000000000110001100",
+  "?": "01110100010001000100001000000000100",
   " ": "00000000000000000000000000000000000",
 });
+
+function assertFontShape(): void {
+  for (const [character, glyph] of Object.entries(FONT)) {
+    if (glyph.length !== 35) throw new Error(`Invalid social-preview glyph: ${character}`);
+  }
+}
 
 function drawText(
   rgba: Uint8Array,
@@ -305,7 +358,7 @@ function drawText(
 ): void {
   let cursor = x;
   for (const character of value) {
-    const glyph = FONT[character] ?? FONT[" "]!;
+    const glyph = FONT[character] ?? FONT["?"]!;
     for (let row = 0; row < 7; row += 1) {
       for (let column = 0; column < 5; column += 1) {
         if (glyph[row * 5 + column] === "1") fillRect(rgba, cursor + column * scale, y + row * scale, scale, scale, color);

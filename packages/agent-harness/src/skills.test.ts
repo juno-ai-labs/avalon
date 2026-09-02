@@ -568,6 +568,7 @@ describe("built-in skills", () => {
     expect(body).toContain("1200×630");
     expect(body).toContain("summary_large_image");
     expect(body).toContain("generates a branded fallback card");
+    expect(body).toContain("Never create files beneath `.rally/`");
     expect(body).toMatch(/before\s+API routing and before `env\.ASSETS\.fetch`/u);
     expect(body).not.toMatch(/\bRally-Viewer-Id\b/u);
     // The three rules that keep a polling page a good citizen, and the one that

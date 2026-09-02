@@ -64,6 +64,13 @@ export type DirectoryPublishKind =
  * ordinary static site.
  */
 export function resolveDirectoryPublish(entries: readonly DirectoryEntry[]): DirectoryPublishKind {
+  if (entries.some((entry) => entry.path === ".rally" || entry.path.startsWith(".rally/"))) {
+    throw new TerminalToolError(
+      "reserved_site_path",
+      "The .rally directory is reserved for Rally-generated site files. Move authored files outside it and publish the directory again.",
+      { field: "filePath", reason: "Move authored files outside the reserved .rally directory." },
+    );
+  }
   if (entries.some((entry) => entry.path === ARTIFACT_SERVER_ENTRY)) {
     return { kind: "site", mode: "active", entryPath: ARTIFACT_SERVER_ENTRY };
   }

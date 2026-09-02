@@ -1,4 +1,4 @@
-import { artifactAssetKey } from "@rally/contracts";
+import { ARTIFACT_MAX_ASSET_COUNT, artifactAssetKey } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
@@ -39,5 +39,33 @@ describe("site artifact social-preview storage", () => {
       new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
     );
     expect(written.manifest.totalBytes).toBeGreaterThan(html.byteLength);
+  });
+
+  it("refuses a generated card that would exceed the existing manifest asset ceiling", async () => {
+    const put = vi.fn(async () => undefined);
+    const env = {
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put }),
+    } satisfies Pick<Env, "PAYLOADS">;
+    const bytes = new TextEncoder().encode("x");
+    const files = Array.from({ length: ARTIFACT_MAX_ASSET_COUNT }, (_, index) => ({
+      path: index === 0 ? "index.html" : `asset-${index}.txt`,
+      bytes,
+      sha256: "1".repeat(64),
+    }));
+
+    await expect(writeArtifactVersion(env, {
+      workspaceId: "00000000-0000-7000-8000-0000000000c1",
+      workstreamId: "00000000-0000-7000-8000-0000000000d1",
+      region: "global",
+      artifactId: ARTIFACT,
+      resourceId: "00000000-0000-7000-8000-0000000000e1",
+      version: 3,
+      mode: "static",
+      stateful: false,
+      files,
+      fallbackTitle: "Plan",
+      serverModuleSha256: null,
+    })).rejects.toMatchObject({ code: "resource_publish_failed" });
+    expect(put).not.toHaveBeenCalled();
   });
 });
