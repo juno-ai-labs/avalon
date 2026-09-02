@@ -566,6 +566,7 @@ export class WorkstreamService {
   private warmMainSocketSubstream(input: {
     workstreamId: WorkstreamId;
     ticketId: string;
+    ticketIssuedAt: number;
     ticketExpiresAt: number;
     afterSequence?: number;
     speculative: boolean;
@@ -592,6 +593,7 @@ export class WorkstreamService {
           userId: this.auth.userId,
           sessionId: this.auth.sessionId,
           ticketId: input.ticketId,
+          ticketIssuedAt: input.ticketIssuedAt,
           ticketExpiresAt: input.ticketExpiresAt,
           authorityGeneration: input.authorityGeneration,
           role: this.auth.role,
@@ -844,6 +846,7 @@ export class WorkstreamService {
       this.warmMainSocketSubstream({
         workstreamId,
         ticketId,
+        ticketIssuedAt: issuedAt,
         ticketExpiresAt: issuedAt + WORKSTREAM_SOCKET_TICKET_TTL_SECONDS,
         ...(afterSequence === undefined ? {} : { afterSequence }),
         speculative,

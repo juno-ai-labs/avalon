@@ -304,6 +304,7 @@ const SocketAdmissionPreparationSchema = z.strictObject({
   userId: UserIdSchema,
   sessionId: z.string().min(1).max(200),
   ticketId: z.string().uuid(),
+  ticketIssuedAt: z.number().int().positive(),
   ticketExpiresAt: z.number().int().positive(),
   authorityGeneration: z.number().int().nonnegative(),
   role: z.enum(["owner", "admin", "member"]),
@@ -441,6 +442,7 @@ function recoveredToolReceiptError(value: string | null): {
 interface AuthRoleRow {
   role: AuthContext["role"];
   analytics_workspace_id?: string | null;
+  session_expires_at?: string;
 }
 
 const RoomIdentitySchema = z.object({ workspaceId: WorkspaceIdSchema, workstreamId: WorkstreamIdSchema });
@@ -740,7 +742,7 @@ type SocketSnapshotEvent = Extract<ServerSocketEvent, { type: "snapshot" }>;
 
 interface PreparedSocketSnapshot {
   event: SocketSnapshotEvent;
-  pendingInputFrames: string[];
+  pendingInputChunks: WorkstreamTranscriptSnapshot["pendingInputs"][];
   encodedBytes: number;
   transcriptSnapshot: SocketAttachment["transcriptSnapshot"];
   settleUnseen: boolean;
@@ -749,9 +751,11 @@ interface PreparedSocketSnapshot {
 interface PreparedSocketAdmission {
   input: SocketAdmissionPreparation;
   auth: AuthContext;
+  sessionExpiresAt: number | null;
   snapshot: PreparedSocketSnapshot | null;
   snapshotReason: "initial" | "history_unavailable" | null;
   snapshotSequence: number | null;
+  snapshotRevision: number | null;
 }
 
 /**
@@ -829,6 +833,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private replayFloorSequence: number | null = null;
   /** Ticket-scoped admission and snapshot work prepared during ticket transit. */
   private readonly preparedSocketAdmissions = new Map<string, PreparedSocketAdmission>();
+  /** Newer tickets supersede the one preparation retained by this room. */
+  private preparedSocketAdmissionTicketId: string | null = null;
+  /** Only the most recently completed room snapshot stays resident. */
+  private preparedSocketSnapshotTicketId: string | null = null;
+  /** Object-local product mutations invalidate snapshot reuse without a realtime event. */
+  private socketSnapshotRevision = 0;
+  /** Latest delivered retraction prevents an older in-flight preparation from reappearing. */
+  private latestSocketRevocationAt = 0;
   /** Avoid a durable-outbox point read on every high-frequency token frame. */
   private semanticRealtimePending = false;
   /**
@@ -1177,7 +1189,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!parsed.success) return { outcome: "refused" };
     const preparation = parsed.data;
     this.prunePreparedSocketAdmissions();
-    if (preparation.ticketExpiresAt <= Math.floor(Date.now() / 1_000)) {
+    if (
+      preparation.ticketIssuedAt >= preparation.ticketExpiresAt
+      || preparation.ticketExpiresAt <= Math.floor(Date.now() / 1_000)
+      || this.socketPreparationWasRevoked(preparation)
+    ) {
       return { outcome: "refused" };
     }
 
@@ -1196,22 +1212,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || !this.product.canRead(preparation.userId)
     ) return { outcome: "refused" };
 
-    const auth: AuthContext = {
-      sessionId: preparation.sessionId,
-      userId: preparation.userId,
-      workspaceId: preparation.workspaceId,
-      region: this.env.AVALON_REGION,
-      role: preparation.role,
-      analyticsWorkspaceId: preparation.analyticsWorkspaceId,
-    };
+    // Ticket issue authenticated this session, but the deferred call can arrive
+    // after a logout or membership removal. Recheck during ticket transit so
+    // the upgrade can safely reuse the result without paying this D1 join.
+    const admission = await this.socketAdmissionAuth(preparation);
+    if (
+      !admission
+      || admission.auth.role !== preparation.role
+      || (admission.auth.analyticsWorkspaceId ?? null) !== preparation.analyticsWorkspaceId
+      // The revocation handler can interleave while the D1 query above yields.
+      // Its latest-per-reader fence closes that ordering before insertion.
+      || this.socketPreparationWasRevoked(preparation)
+      || this.objectStore.realtimeAuthorityGeneration() !== preparation.authorityGeneration
+      || !this.objectStore.isRealtimeWritable()
+      || !this.product.canRead(preparation.userId)
+    ) return { outcome: "refused" };
+
     const entry: PreparedSocketAdmission = {
       input: preparation,
-      auth,
+      auth: admission.auth,
+      sessionExpiresAt: admission.sessionExpiresAt,
       snapshot: null,
       snapshotReason: null,
       snapshotSequence: null,
+      snapshotRevision: null,
     };
-    this.preparedSocketAdmissions.set(preparation.ticketId, entry);
+    this.storePreparedSocketAdmission(entry);
 
     const sequence = await this.currentSequence();
     const plan = planSocketReplay(
@@ -1220,13 +1246,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.replayFloorSequence,
       this.recentEvents,
     );
-    if (plan.type !== "snapshot") return { outcome: "admission_prepared" };
+    // A speculative hover can remain unused for most of the ticket window.
+    // Keep its admission warm, but assemble viewer-specific detail only for an
+    // immediate non-speculative dial so time-derived and external D1 fields do
+    // not sit stale behind the realtime sequence fence.
+    if (plan.type !== "snapshot" || preparation.speculative) {
+      return { outcome: "admission_prepared" };
+    }
 
     try {
+      const snapshotRevision = this.socketSnapshotRevision;
       const snapshot = await this.assembleSocketSnapshot(
         preparation.workspaceId,
         preparation.workstreamId,
-        auth,
+        admission.auth,
         preparation.speculative,
         plan.reason,
         sequence,
@@ -1237,12 +1270,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (
         this.preparedSocketAdmissions.get(preparation.ticketId) === entry
         && preparation.ticketExpiresAt > Math.floor(Date.now() / 1_000)
+        && !this.socketPreparationWasRevoked(preparation)
         && this.objectStore.realtimeAuthorityGeneration() === preparation.authorityGeneration
         && this.product.canRead(preparation.userId)
+        && this.socketSnapshotRevision === snapshotRevision
       ) {
+        // Pending-input spill is intentionally unbounded by aggregate transport
+        // size. It must stay a streaming delivery path, never retained as a
+        // prepared array of encoded frames.
+        if (snapshot.pendingInputChunks.length > 0) {
+          return { outcome: "admission_prepared" };
+        }
+        this.clearPreparedSocketSnapshot();
         entry.snapshot = snapshot;
         entry.snapshotReason = plan.reason;
         entry.snapshotSequence = sequence;
+        entry.snapshotRevision = snapshotRevision;
+        this.preparedSocketSnapshotTicketId = preparation.ticketId;
         return { outcome: "snapshot_prepared" };
       }
     } catch (error) {
@@ -1263,8 +1307,54 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private prunePreparedSocketAdmissions(now = Math.floor(Date.now() / 1_000)): void {
     for (const [ticketId, prepared] of this.preparedSocketAdmissions) {
-      if (prepared.input.ticketExpiresAt <= now) this.preparedSocketAdmissions.delete(ticketId);
+      if (prepared.input.ticketExpiresAt <= now) this.deletePreparedSocketAdmission(ticketId);
     }
+  }
+
+  private storePreparedSocketAdmission(entry: PreparedSocketAdmission): void {
+    const olderTicketId = this.preparedSocketAdmissionTicketId;
+    if (olderTicketId) this.deletePreparedSocketAdmission(olderTicketId);
+    this.preparedSocketAdmissions.set(entry.input.ticketId, entry);
+    this.preparedSocketAdmissionTicketId = entry.input.ticketId;
+  }
+
+  private deletePreparedSocketAdmission(ticketId: string): void {
+    const prepared = this.preparedSocketAdmissions.get(ticketId);
+    this.preparedSocketAdmissions.delete(ticketId);
+    if (prepared && this.preparedSocketAdmissionTicketId === ticketId) {
+      this.preparedSocketAdmissionTicketId = null;
+    }
+    if (this.preparedSocketSnapshotTicketId === ticketId) {
+      this.preparedSocketSnapshotTicketId = null;
+    }
+  }
+
+  private clearPreparedSocketSnapshot(): void {
+    const ticketId = this.preparedSocketSnapshotTicketId;
+    if (!ticketId) return;
+    const prepared = this.preparedSocketAdmissions.get(ticketId);
+    if (prepared) {
+      prepared.snapshot = null;
+      prepared.snapshotReason = null;
+      prepared.snapshotSequence = null;
+      prepared.snapshotRevision = null;
+    }
+    this.preparedSocketSnapshotTicketId = null;
+  }
+
+  private invalidatePreparedSocketSnapshots(): void {
+    this.socketSnapshotRevision += 1;
+    this.clearPreparedSocketSnapshot();
+  }
+
+  private socketPreparationWasRevoked(
+    preparation: Pick<SocketAdmissionPreparation, "ticketIssuedAt">,
+  ): boolean {
+    return this.latestSocketRevocationAt >= preparation.ticketIssuedAt;
+  }
+
+  private rememberSocketRevocation(): void {
+    this.latestSocketRevocationAt = Math.floor(Date.now() / 1_000);
   }
 
   private preparedSocketAdmission(identity: SocketUpgradeIdentity): PreparedSocketAdmission | null {
@@ -1291,11 +1381,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       && input.analyticsWorkspaceId === (identity.analyticsWorkspaceId ?? null);
     if (
       !matches
+      || this.socketPreparationWasRevoked(input)
+      || (prepared.sessionExpiresAt !== null && prepared.sessionExpiresAt <= Date.now())
       || this.objectStore.realtimeAuthorityGeneration() !== input.authorityGeneration
       || !this.objectStore.isRealtimeWritable()
       || !this.product.canRead(input.userId)
     ) {
-      this.preparedSocketAdmissions.delete(identity.ticketId);
+      this.deletePreparedSocketAdmission(identity.ticketId);
       return null;
     }
     return prepared;
@@ -2728,6 +2820,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     span.setAttributes(identityAttributes({
       analyticsWorkspaceId: current.analyticsWorkspaceId,
     }));
+    // Several product reads settle per-reader state, and several mutations do
+    // not allocate a realtime sequence. Clearing the one prepared snapshot at
+    // this common admitted boundary prevents either kind from being hidden by
+    // an unchanged transcript cursor. A raced assembly also observes the
+    // incremented revision before it can install its result.
+    this.invalidatePreparedSocketSnapshots();
     try {
       if (request.operation === "initialize") {
         const input = request.input;
@@ -5305,7 +5403,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     ).bind(workspaceId, userId, this.env.AVALON_REGION).first<AuthRoleRow>();
   }
 
-  private async socketAuth(attachment: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">): Promise<AuthContext | null> {
+  private async socketAdmissionAuth(
+    attachment: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">,
+  ): Promise<{ auth: AuthContext; sessionExpiresAt: number | null } | null> {
     const role = this.env.APP_ENV === "development"
       && this.env.RALLY_DEV_AUTH === "true"
       && attachment.sessionId === "development"
@@ -5317,7 +5417,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // surrogate is deliberately not fetched here: it would mean joining
         // `users` from a Durable Object, and no diagnostic is worth widening
         // what a socket's authorization depends on.
-        `SELECT member.role, workspace.analytics_workspace_id
+        `SELECT member.role, workspace.analytics_workspace_id,
+                session.expires_at AS session_expires_at
            FROM sessions session
            JOIN workspace_members member
              ON member.workspace_id = session.workspace_id
@@ -5337,14 +5438,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.env.AVALON_REGION,
       ).first<AuthRoleRow>();
     if (!role) return null;
+    const sessionExpiresAt = role.session_expires_at === undefined
+      ? null
+      : Date.parse(role.session_expires_at);
+    if (sessionExpiresAt !== null && !Number.isFinite(sessionExpiresAt)) return null;
     return {
-      sessionId: attachment.sessionId!,
-      userId: attachment.userId,
-      workspaceId: attachment.workspaceId,
-      region: this.env.AVALON_REGION,
-      role: role.role,
-      analyticsWorkspaceId: role.analytics_workspace_id ?? null,
+      auth: {
+        sessionId: attachment.sessionId!,
+        userId: attachment.userId,
+        workspaceId: attachment.workspaceId,
+        region: this.env.AVALON_REGION,
+        role: role.role,
+        analyticsWorkspaceId: role.analytics_workspace_id ?? null,
+      },
+      sessionExpiresAt,
     };
+  }
+
+  private async socketAuth(
+    attachment: Pick<SocketAttachment, "sessionId" | "userId" | "workspaceId">,
+  ): Promise<AuthContext | null> {
+    return (await this.socketAdmissionAuth(attachment))?.auth ?? null;
   }
 
   /**
@@ -5688,7 +5802,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     void reason;
     void wasClean;
     const attachment = this.readAttachment(socket);
-    if (attachment?.ticketId) this.preparedSocketAdmissions.delete(attachment.ticketId);
+    if (attachment?.ticketId) this.deletePreparedSocketAdmission(attachment.ticketId);
     if (attachment?.subscribed && attachment.publishPresence) {
       await this.broadcastPresence(attachment.workspaceId, attachment.workstreamId, socket);
     }
@@ -5696,7 +5810,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   override async webSocketError(socket: WebSocket): Promise<void> {
     const attachment = this.readAttachment(socket);
-    if (attachment?.ticketId) this.preparedSocketAdmissions.delete(attachment.ticketId);
+    if (attachment?.ticketId) this.deletePreparedSocketAdmission(attachment.ticketId);
     try {
       socket.close(1011, "Realtime connection failed");
     } catch {
@@ -5790,23 +5904,31 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       throw error;
     }
 
-    const prepared = this.preparedSocketAdmission(identity.data);
+    // A generation identifies the object graph, but maintenance can close the
+    // current generation in place. Preserve the pre-existing phase fence on
+    // both prepared and fallback admissions.
+    const currentAuthority = await span.step("workstream.room.socket.authority_read", () =>
+      readWorkstreamAuthorityControl(this.env));
+    if (!acceptsNewWorkstreamWork(currentAuthority)) {
+      span.setError("workstream_maintenance");
+      return jsonResponse({
+        error: "workstream_maintenance",
+        phase: currentAuthority.phase,
+        generation: currentAuthority.generation,
+      }, 503);
+    }
+
+    let prepared = this.preparedSocketAdmission(identity.data);
+    if (prepared && prepared.input.authorityGeneration !== currentAuthority.generation) {
+      this.deletePreparedSocketAdmission(identity.data.ticketId);
+      prepared = null;
+    }
     let auth: AuthContext | null;
     if (prepared) {
       auth = prepared.auth;
       span.setAttributes({ "rally.socket.admission_source": "ticket_preparation" });
     } else {
       span.setAttributes({ "rally.socket.admission_source": "regional_fallback" });
-      const currentAuthority = await span.step("workstream.room.socket.authority_read", () =>
-        readWorkstreamAuthorityControl(this.env));
-      if (!acceptsNewWorkstreamWork(currentAuthority)) {
-        span.setError("workstream_maintenance");
-        return jsonResponse({
-          error: "workstream_maintenance",
-          phase: currentAuthority.phase,
-          generation: currentAuthority.generation,
-        }, 503);
-      }
       auth = await span.step(
         "workstream.room.socket.member_authorize",
         () => this.socketAuth(identity.data),
@@ -5829,7 +5951,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       identity.data.ticketId,
       identity.data.ticketExpiresAt,
     )) {
-      this.preparedSocketAdmissions.delete(identity.data.ticketId);
+      this.deletePreparedSocketAdmission(identity.data.ticketId);
       span.setError("socket_ticket_replayed");
       return jsonResponse({ error: "socket_ticket_replayed" }, 401);
     }
@@ -6259,7 +6381,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         snapshotReasonOverride,
       ));
     if (!delivered) {
-      if (preparedTicketId) this.preparedSocketAdmissions.delete(preparedTicketId);
+      if (preparedTicketId) this.deletePreparedSocketAdmission(preparedTicketId);
       return false;
     }
 
@@ -6286,7 +6408,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           ),
         ));
       if (!caughtUp) {
-        if (preparedTicketId) this.preparedSocketAdmissions.delete(preparedTicketId);
+        if (preparedTicketId) this.deletePreparedSocketAdmission(preparedTicketId);
         return false;
       }
       deliveredThrough = catchUpSequence;
@@ -6299,7 +6421,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       afterSequence: deliveredThrough,
       subscribed: true,
     } satisfies SocketAttachment);
-    if (preparedTicketId) this.preparedSocketAdmissions.delete(preparedTicketId);
+    if (preparedTicketId) this.deletePreparedSocketAdmission(preparedTicketId);
     return true;
   }
 
@@ -6372,6 +6494,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         prepared?.snapshot
         && prepared.snapshotReason === reason
         && prepared.snapshotSequence === sequence
+        && prepared.snapshotRevision === this.socketSnapshotRevision
       ) {
         snapshot = prepared.snapshot;
         if (!attachment.speculative && snapshot.settleUnseen) {
@@ -6399,9 +6522,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             sequence,
             true,
           ));
-        span.setAttributes({ "rally.snapshot.source": "room_assembly" });
+        span.setAttributes({
+          "rally.snapshot.source": prepared
+            ? "ticket_preparation_incomplete"
+            : "room_assembly",
+        });
       }
-      if (attachment.ticketId) this.preparedSocketAdmissions.delete(attachment.ticketId);
+      if (attachment.ticketId) this.deletePreparedSocketAdmission(attachment.ticketId);
       span.mark("workstream.room.snapshot.encode");
       span.setAttributes({
         // Bytes, not `encoded.length`: that counts UTF-16 code units, so any
@@ -6413,7 +6540,21 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ),
       });
       socket.send(JSON.stringify(snapshot.event));
-      for (const frame of snapshot.pendingInputFrames) socket.send(frame);
+      for (const [chunkIndex, inputs] of snapshot.pendingInputChunks.entries()) {
+        const frame = JSON.stringify(ServerSocketEventSchema.parse({
+          type: "pending_inputs_snapshot_chunk",
+          sequence,
+          occurredAt: snapshot.event.occurredAt,
+          snapshotId: snapshot.event.transcript.snapshotId,
+          chunkIndex,
+          chunkCount: snapshot.pendingInputChunks.length,
+          inputs,
+        }));
+        if (textEncoder.encode(frame).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+          throw new Error("substream_pending_input_snapshot_chunk_too_large");
+        }
+        socket.send(frame);
+      }
       const currentAttachment = this.readAttachment(socket);
       if (currentAttachment) {
         socket.serializeAttachment({
@@ -6536,7 +6677,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       event = snapshotEvent();
       encodedBytes = textEncoder.encode(JSON.stringify(event)).byteLength;
     }
-    const pendingInputFrames = pendingInputChunks.map((inputs, chunkIndex) => {
+    // Validate each spill frame without retaining its serialized form. The
+    // complete pending-input queue is intentionally not aggregate-size-bound,
+    // so delivery below must hold only one encoded chunk at a time.
+    for (const [chunkIndex, inputs] of pendingInputChunks.entries()) {
       const frame = JSON.stringify(ServerSocketEventSchema.parse({
         type: "pending_inputs_snapshot_chunk",
         sequence,
@@ -6549,11 +6693,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (textEncoder.encode(frame).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
         throw new Error("substream_pending_input_snapshot_chunk_too_large");
       }
-      return frame;
-    });
+    }
     return {
       event,
-      pendingInputFrames,
+      pendingInputChunks,
       encodedBytes,
       transcriptSnapshot: {
         snapshotId: transcript.snapshotId,
@@ -6725,7 +6868,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     let evicted = false;
     for (const [ticketId, prepared] of this.preparedSocketAdmissions) {
       if (this.product.canRead(prepared.input.userId)) continue;
-      this.preparedSocketAdmissions.delete(ticketId);
+      this.deletePreparedSocketAdmission(ticketId);
     }
     for (const socket of this.state.getWebSockets()) {
       const attachment = this.readAttachment(socket);
@@ -6739,10 +6882,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<void> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
+    // Keep the newest retraction per reader even when no socket or preparation
+    // exists yet. An older deferred preparation may be suspended in its D1
+    // authorization query and must not recreate access after this call.
+    this.rememberSocketRevocation();
     let evicted = false;
     for (const [ticketId, prepared] of this.preparedSocketAdmissions) {
       if (!revocationClosesSocket(request, prepared.input)) continue;
-      this.preparedSocketAdmissions.delete(ticketId);
+      this.deletePreparedSocketAdmission(ticketId);
     }
     for (const socket of this.state.getWebSockets()) {
       const attachment = this.readAttachment(socket);
