@@ -20,6 +20,7 @@ behavior is in the approved [Projects design](PRDs/2026-08-26_projects/prd.md).
 | `apps/api/src/queues/activity-consumer.ts` | Fenced default-resource attachment through the regional activity Queue. |
 | `apps/desktop/src/renderer/screens/project-space.tsx` | Project dashboard: work-stream list, default resources, inline presentation and audience controls. The Work streams heading plus opens the same **New project work stream** route as the sidebar row plus. |
 | `apps/desktop/src/renderer/components/project-sidebar-section.tsx` | Creation, fixed ordering, accordion membership, drag targets, and recovery. Nested members render through the sidebar's work-stream row. |
+| `apps/desktop/src/renderer/components/sidebar-skeleton.tsx` | The sidebar's placeholder rows, shared by this section and the lists below it while the first answer is in flight. |
 
 ## How it works
 
@@ -215,6 +216,37 @@ send leaves them pending for a later alarm; accepted messages remain safe to
 duplicate because the consumer rechecks target generations.
 
 ## Changelog
+
+### 2026-09-02 — The Projects sidebar section waits with skeleton rows
+
+**What changed:** While the first answer is in flight, the Projects section
+shows three row-shaped placeholders instead of the line "Loading projects…".
+`SidebarSkeletonRow`, `SidebarSkeletonRows`, and `SidebarSkeletonGroup` moved
+out of `sidebar.tsx` into `components/sidebar-skeleton.tsx` so both the sidebar
+and `project-sidebar-section.tsx` can render them; importing them from
+`sidebar.tsx` would close an import cycle, since that file renders the Projects
+section. The one live region for the wait now names projects alongside the work
+streams, automations, and notes it already announced.
+
+**Why:** Projects load from the same answer as the two lists below them, which
+have shown placeholder rows since they arrived together. A sentence sat among
+them as a third kind of wait — a different shape, a different height, and prose
+that collapsed into rows the moment it resolved. The
+[2026-08-26 projects PRD](PRDs/2026-08-26_projects/prd.md) had asked for
+skeleton rows here from the start; the prose was the placeholder that shipped.
+
+**Considered and rejected:** A dense variant of the skeleton row to match
+`--av-cmp-row-height-dense` on a project row. The difference is one or two
+pixels per theme, the automations section has stood on the same non-dense
+placeholder since it was written, and a second row geometry would have to be
+kept in step with both. Announcing the Projects section separately: the wait is
+one round trip, and a second live region would say the same thing twice.
+
+**Consequences:** A section that is genuinely empty still says **No projects
+yet** or **No active projects** — the skeletons are only shown while nothing has
+arrived. `loading` is still the sidebar's one flag, derived from the work-stream
+list rather than the projects query, so a projects answer that lands first ends
+the skeleton only once a project is in it.
 
 ### 2026-08-30 — Archived project-space empty copy no longer points at a disabled plus
 
