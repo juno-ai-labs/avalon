@@ -1942,6 +1942,131 @@ describe("agent harness", () => {
     expect(attempts[0]!.costCents).toBe(0.026);
   });
 
+  it("routes GPT-5.6 Sol through its Azure deployment", async () => {
+    const urls: string[] = [];
+    const bodies: Array<Record<string, unknown>> = [];
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      urls.push(String(request));
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return streamResponse([
+        { choices: [{ delta: { content: "from sol" }, finish_reason: "stop" }] },
+        {
+          choices: [],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            prompt_tokens_details: { cached_tokens: 25 },
+          },
+        },
+      ]);
+    }) as typeof fetch;
+    const resolveAzureModelPricing = vi.fn(async (modelIds: readonly string[]) => {
+      const pricing = new Map<string, AzureModelPricing>();
+      if (modelIds.includes("openai/gpt-5.6-sol")) {
+        pricing.set("openai/gpt-5.6-sol", {
+          inputUsdPerM: 5,
+          cachedInputUsdPerM: 0.5,
+          outputUsdPerM: 25,
+          overrides: [],
+          sourceFingerprint: "openrouter-endpoint-average:v2:test:gpt-5.6-sol",
+        });
+      }
+      return pricing;
+    });
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "openai/gpt-5.6-sol",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        workspaceId: "workspace-azure-sol",
+      }),
+      resolveAzureModelPricing,
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "from sol", model: "openai/gpt-5.6-sol" });
+    expect(urls).toEqual([
+      "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+    ]);
+    expect(bodies[0]).toMatchObject({ model: "gpt-5.6-sol", stream: true });
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      success: true,
+      provider: "azure",
+      cachedInputTokens: 25,
+    });
+    expect(attempts[0]!.costCents).toBe(0.0888);
+    expect(resolveAzureModelPricing).toHaveBeenCalledWith(
+      ["openai/gpt-5.6-sol"],
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("fails Sol before provider I/O when Azure is not configured", async () => {
+    const fetcher = vi.fn() as unknown as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "openai/gpt-5.6-sol",
+        workspaceId: "workspace-azure-sol-missing-config",
+      }),
+    })).resolves.toMatchObject({ status: "failed", model: null });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("fails Sol before provider I/O when a PDF requires OpenRouter's file parser", async () => {
+    const fetcher = vi.fn() as unknown as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "openai/gpt-5.6-sol",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        workspaceId: "workspace-azure-sol-file-parser",
+      }),
+      messages: [{
+        role: "user",
+        content: [{
+          type: "file",
+          file: { filename: "notes.pdf", file_data: "data:application/pdf;base64,AA==" },
+        }],
+      }],
+    })).resolves.toMatchObject({ status: "failed", model: null });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("never falls back GPT-5.6 Sol to OpenRouter", async () => {
+    const urls: string[] = [];
+    const attempts: InferenceAttemptEvent[] = [];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      const url = String(request);
+      urls.push(url);
+      return url.includes("services.ai.azure.com")
+        ? Response.json({ error: { message: "Azure unavailable" } }, { status: 503 })
+        : streamResponse([{
+            choices: [{ delta: { content: "expensive fallback" }, finish_reason: "stop" }],
+          }]);
+    }) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "openai/gpt-5.6-sol",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        transportRetries: 0,
+        workspaceId: "workspace-azure-sol-no-openrouter",
+      }),
+      onInferenceAttempt: (event) => { attempts.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "failed", model: null });
+    expect(urls).toEqual([
+      "https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions",
+    ]);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({ provider: "azure", success: false });
+  });
+
   it("uses Bind's provider traversal from Azure to OpenRouter before changing models", async () => {
     const urls: string[] = [];
     const attempts: InferenceAttemptEvent[] = [];
@@ -2185,6 +2310,10 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ status: "completed", content: "priced fallback" });
 
     expect(resolveAzureModelPricing).toHaveBeenCalledTimes(1);
+    expect(resolveAzureModelPricing).toHaveBeenCalledWith(
+      ["x-ai/grok-4.3"],
+      expect.any(AbortSignal),
+    );
     expect(urls).toEqual(["https://openrouter.ai/api/v1/chat/completions"]);
   });
 
@@ -5785,6 +5914,14 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
                     outputUsdPerM: 17.04,
                   }],
                   sourceFingerprint: "openrouter-endpoint-average:v2:test:grok-4.6",
+                });
+              } else if (modelId === "openai/gpt-5.6-sol") {
+                prices.set(modelId, {
+                  inputUsdPerM: 5,
+                  cachedInputUsdPerM: 0.5,
+                  outputUsdPerM: 25,
+                  overrides: [],
+                  sourceFingerprint: "openrouter-endpoint-average:v2:test:gpt-5.6-sol",
                 });
               }
             }

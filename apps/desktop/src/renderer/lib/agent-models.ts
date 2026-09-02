@@ -61,6 +61,7 @@ const PRESENTATION: Readonly<Record<AgentModelOverride, AgentModelPresentation>>
   'google/gemini-3.6-flash': { provider: 'Google', label: 'Gemini 3.6 Flash' },
   'google/gemini-3.5-flash': { provider: 'Google', label: 'Gemini 3.5 Flash' },
   'google/gemini-3-flash-preview': { provider: 'Google', label: 'Gemini 3 Flash Preview' },
+  'openai/gpt-5.6-sol': { provider: 'OpenAI', label: 'GPT-5.6 Sol' },
   'openai/gpt-5.6-terra': { provider: 'OpenAI', label: 'GPT-5.6 Terra' },
   'openai/gpt-5.6-luna': { provider: 'OpenAI', label: 'GPT-5.6 Luna' },
   'deepseek/deepseek-v4-pro': { provider: 'DeepSeek', label: 'DeepSeek V4 Pro' },

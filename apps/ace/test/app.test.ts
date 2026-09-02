@@ -233,6 +233,25 @@ describe('Ace Hono application', () => {
     expect(String(fetch.mock.calls[0]![0])).toContain('openrouter.ai');
   });
 
+  it('rejects Sol for a role with a direct OpenRouter path before provider or Flagship I/O', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const response = await worker.fetch!(new Request(
+      'https://ace.internal.rallywith.ai/api/models/workstream',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://ace.internal.rallywith.ai' },
+        body: JSON.stringify({
+          role: 'workstream',
+          routing: { model: 'openai/gpt-5.6-sol', fallbackModels: [] },
+        }),
+      },
+    ), env(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: 'invalid_model_configuration' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('rejects a model write whose role does not match its path', async () => {
     const cloudflare = vi.spyOn(globalThis, 'fetch');
     const response = await worker.fetch!(new Request(

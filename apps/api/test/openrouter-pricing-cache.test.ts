@@ -20,11 +20,11 @@ const EXPECTED_MODEL_IDS = [
   "google/gemini-3.6-flash",
   "google/gemini-3.5-flash",
   "google/gemini-3-flash-preview",
+  "openai/gpt-5.6-sol",
   "openai/gpt-5.6-terra",
   "openai/gpt-5.6-luna",
   "deepseek/deepseek-v4-pro",
   "deepseek/deepseek-v4-flash-0731",
-  "openai/gpt-5.6-sol",
   "openai/text-embedding-3-large",
   "openai/gpt-image-2",
   "black-forest-labs/flux.2-flex",
@@ -174,14 +174,14 @@ describe("OpenRouter endpoint-average pricing cache", () => {
     })).toBe("0.0309");
   });
 
-  it("fails closed for a missing or legacy numeric-price record", async () => {
+  it("omits a missing or legacy numeric-price record without dropping valid peers", async () => {
     const missingResolver = createAzureModelPricingResolver({
       INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({
         get: vi.fn(async () => null),
       }),
     });
     await expect(missingResolver(["x-ai/grok-4.3"], new AbortController().signal))
-      .rejects.toThrow("Azure model pricing cache is unavailable for x-ai/grok-4.3");
+      .resolves.toEqual(new Map());
 
     const numericResolver = createAzureModelPricingResolver({
       INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({
@@ -189,7 +189,22 @@ describe("OpenRouter endpoint-average pricing cache", () => {
       }),
     });
     await expect(numericResolver(["x-ai/grok-4.3"], new AbortController().signal))
-      .rejects.toThrow("Azure model pricing cache is unavailable for x-ai/grok-4.3");
+      .resolves.toEqual(new Map());
+
+    const mixedGet = vi.fn(async (modelId: string) => modelId === "x-ai/grok-4.3"
+      ? pricingJson(modelId, NOW)
+      : null) as unknown as KVNamespace["get"];
+    const mixedResolver = createAzureModelPricingResolver({
+      INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({
+        get: mixedGet,
+      }),
+    });
+    const mixed = await mixedResolver(
+      ["x-ai/grok-4.3", "openai/gpt-5.6-sol"],
+      new AbortController().signal,
+    );
+    expect([...mixed.keys()]).toEqual(["x-ai/grok-4.3"]);
+    expect(mixed.get("x-ai/grok-4.3")?.inputUsdPerM).toBe(1.875);
   });
 
   it("does not write any records unless every catalog response succeeds", async () => {
