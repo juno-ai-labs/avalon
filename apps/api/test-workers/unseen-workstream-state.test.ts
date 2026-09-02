@@ -325,6 +325,10 @@ describe("a work stream nobody has shown this person yet", () => {
     ).toEqual(expect.any(Number));
     expect((await viewerState(stub, INVITEE_ID))?.unseen).toBe(false);
     socket.close(1000, "test complete");
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => state.getWebSockets().length),
+      { timeout: 5_000 },
+    ).toBe(0);
   });
 
   it("does not make a work stream new again when somebody adds a person who is already in it", async () => {
@@ -454,6 +458,10 @@ describe("a work stream nobody has shown this person yet", () => {
       userId: INVITEE_ID,
     });
     creatorSocket.close(1000, "test complete");
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => state.getWebSockets().length),
+      { timeout: 5_000 },
+    ).toBe(0);
     // The suite's 30s budget covers two real WebSocket handshake-plus-
     // subscribe round trips and three product ops under contended
     // parallel-file load, not a slow object. `nextClose` and
