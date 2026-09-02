@@ -2932,7 +2932,12 @@ pre {
    near-borderless warm card drawn with space on Air; the kind takes the
    theme's own label voice for the same reason. */
 .citation-card { background: var(--av-sys-color-surface-elevated); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-text-default); cursor: pointer; display: flex; flex-direction: column; font: inherit; gap: 9px; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; min-height: 170px; overflow: hidden; padding: 11px; text-align: left; width: 176px; }
-.citation-card:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-strong); }
+/* Written against the element, not against a `:not()` of the audio class: the
+   whole-card hover belongs to the cards that *are* one button, and an audio
+   card is a container with two controls in it. Lighting the container on hover
+   advertises a click the container does not take. */
+button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-strong); }
+.citation-card-audio { cursor: default; }
 .citation-card-badge { align-items: center; align-self: flex-start; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-muted); display: inline-flex; height: 27px; justify-content: center; width: 27px; }
 /* An image is the card's glance at an image resource. A fixed preview box keeps
    portrait and landscape files from changing the row's height; `cover` fills
@@ -3004,11 +3009,47 @@ pre {
 }
 @media (prefers-reduced-motion: reduce) {
   .citation-card-preview-skeleton > span { animation: none; }
+  .citation-card-progress[data-loading='true'] { animation: none; }
 }
+/* The audio card's transport, in the badge slot and in the room above the
+   title.
+
+   The play control is the badge — same square, same hairline, now a button —
+   so a recording's card is the file tile every other card is, with its one
+   affordance where the kind glyph would have been. `background: none` and
+   `font: inherit` are the button reset the badge never needed as a span.
+
+   The bar itself is drawn on a pseudo-element from `--citation-card-played`,
+   which the card publishes as a percentage. That keeps a position that changes
+   four times a second out of the DOM: it is one custom property on one node,
+   not a child element React reconciles on every `timeupdate`. While the bytes
+   are still arriving the empty bar takes the skeleton's own shimmer, so the
+   card says it is asking without borrowing three text-shaped lines for a file
+   that has no text — the track is already the skeleton's own fill, so the
+   loading state adds the shimmer and nothing else. That token rather than a
+   line colour: the line ramp is a hairline against a surface, and on the dark
+   themes it is within a few points of the card it would be drawn on, which
+   left the empty bar invisible and the clock floating under nothing. `margin-top: auto` seats the transport with the title
+   rather than under the badge — the room above it is the same deliberate empty
+   room every other card keeps, and the first `auto` in the column takes the
+   slack, so the title block's own stays true. */
+.citation-card-play { background: none; cursor: pointer; font: inherit; padding: 0; }
+.citation-card-play:hover { border-color: var(--av-sys-color-border-strong); color: var(--av-sys-color-text-default); }
+.citation-card-transport { display: flex; flex-direction: column; gap: 5px; margin-top: auto; min-width: 0; }
+.citation-card-progress { background: var(--av-sys-color-shimmer-default); border-radius: var(--av-sys-size-radius-pill); height: 3px; overflow: hidden; width: 100%; }
+.citation-card-progress::after { background: var(--av-sys-color-text-muted); content: ''; display: block; height: 100%; width: var(--citation-card-played, 0%); }
+.citation-card-progress[data-loading='true'] { animation: citation-card-shimmer 1.8s ease-in-out infinite; }
+.citation-card-elapsed { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); font-variant-numeric: tabular-nums; letter-spacing: var(--av-sys-label-tracking); }
+/* The element is the playback, not a control: the transport above it is what a
+   reader operates, and the browser's own bar would be a second one. */
+.citation-card-audio-source { display: none; }
 /* `margin-top: auto` puts the title block at the foot whether or not a preview
    filled the room above it, so a card with an excerpt is the same shape as one
-   without. */
+   without. The audio card's title block is a button, so it carries the reset
+   the span never needed. */
 .citation-card-text { display: flex; flex-direction: column; gap: 3px; margin-top: auto; min-width: 0; }
+.citation-card-open { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; }
+.citation-card-open:hover .citation-card-title { text-decoration: underline; }
 .citation-card-title { font-size: 0.97em; font-weight: var(--av-sys-font-weight-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .citation-card-kind { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); letter-spacing: var(--av-sys-label-tracking); text-transform: var(--av-sys-label-transform); }
 /* A run of embeds, merged by the rehype pass into one row that scrolls

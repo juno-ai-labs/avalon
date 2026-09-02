@@ -433,6 +433,27 @@ ${syntax}
      and the honest answer for a live-loading affordance in a picture is that
      it is not drawn. */
   .citation-card-image-preview, .citation-card-preview, .citation-card-preview-skeleton { display: none; }
+  /* An audio card is a container with controls in it rather than one button,
+     and a picture of a transport is a dead bar with a clock stopped on it — so
+     the still keeps the tile and drops the playback entirely. The title block
+     is a button here, which in a document that loads no preflight means the
+     UA's own chrome unless it is reset like the card is. */
+  .citation-card-audio { display: flex; flex-direction: column; gap: 9px; }
+  .citation-card-audio-source, .citation-card-elapsed, .citation-card-play,
+  .citation-card-progress, .citation-card-transport { display: none; }
+  .citation-card-open {
+    background: none;
+    border: 0;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    font: inherit;
+    gap: 3px;
+    line-height: inherit;
+    margin-top: auto;
+    padding: 0;
+    text-align: left;
+  }
   .citation-card-text { display: flex; flex-direction: column; gap: 3px; margin-top: auto; }
   .citation-card-title { font-size: 0.97em; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* No text-transform: the renderer already turns the system identifier into
