@@ -37,7 +37,7 @@ export const MAX_RAIL_WIDTH = 560;
 export const DEFAULT_RAIL_WIDTH = 360;
 export const MIN_SIDEBAR_WIDTH = 224;
 export const MAX_SIDEBAR_WIDTH = 360;
-export const DEFAULT_SIDEBAR_WIDTH = 248;
+export const DEFAULT_SIDEBAR_WIDTH = 242;
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
 
