@@ -659,12 +659,24 @@ function retractsReadAccess(event: ServerSocketEvent): boolean {
  * so a disconnected reader would be spared the next frame by accident rather
  * than on purpose. On a privacy path that is the wrong place for the rule to
  * live.
+ *
+ * `snapshotInFlight` is lowered with it, because it is a second admission flag:
+ * {@link SubstreamAgent.fulfillTranscriptRange} serves a range on a socket
+ * whose own snapshot is assembling, and a flag this write left standing would
+ * be an admission path the privacy write does not close. The close wins that
+ * race today — a frame sent after it throws, one racing it is dropped — but
+ * that is the runtime sparing the reader by accident again, which is the thing
+ * this function exists to not rely on.
  */
 function disconnect(socket: WebSocket, code: number, reason: string): void {
   try {
     const attachment = SocketAttachmentSchema.safeParse(socket.deserializeAttachment());
     if (attachment.success) {
-      socket.serializeAttachment({ ...attachment.data, subscribed: false } satisfies SocketAttachment);
+      socket.serializeAttachment({
+        ...attachment.data,
+        subscribed: false,
+        snapshotInFlight: false,
+      } satisfies SocketAttachment);
     }
   } catch {
     // An unreadable attachment already fails the broadcast filter.
@@ -5203,6 +5215,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // otherwise to keep broadcasts out of the window below — and telling that
       // reader to subscribe first would be a lie it cannot act on.
       const assembling = attachment.snapshotInFlight === true;
+      // Uncorrelated on purpose: `request_snapshot` carries no request id, so
+      // there is none to name, and the client reads an uncorrelated error as
+      // the answer that releases its snapshot slot. Give that command a request
+      // id one day and this call has to forward it — leaving it would make the
+      // refusal invisible to the caller and, worse, still look like a snapshot
+      // answer to every other one.
       this.sendError(
         socket,
         assembling ? "snapshot_in_flight" : "subscription_required",
@@ -5271,8 +5289,39 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // socket to one object-local work-stream/substream authority. Revocation
     // evicts the socket through the local participant/session epoch path, so a
     // range does not repeat D1 authorization per block or hydrated turn.
-    if (!attachment.subscribed) {
-      this.sendError(socket, "subscription_required", "Subscribe before loading transcript ranges");
+    //
+    // A socket assembling its own requested snapshot is subscribed. The flag is
+    // lowered for that window only to keep *broadcasts* out of it, and a range
+    // is not a broadcast: it is a direct reply to this reader, read from the
+    // fence this reader named, and it publishes nothing to anybody else. So
+    // serve it. Refusing here told a subscribed reader to subscribe — advice it
+    // could not act on, delivered through a frame it could not correlate, which
+    // is how a "Load earlier messages" click became a 15-second timeout.
+    //
+    // Once assembly replaces the fence, the snapshot check below answers
+    // `snapshot_expired` and the reader reloads under the new snapshot ID. That
+    // is the same answer it would get from any other superseding snapshot, and
+    // unlike a refusal it is a frame the reader already knows how to act on.
+    if (!attachment.subscribed && attachment.snapshotInFlight !== true) {
+      // What is left here is a reader asking for history on a socket that never
+      // joined the feed, which no client of ours does. It went unlogged before,
+      // and that silence is most of why the bug this branch used to cause had
+      // to be diagnosed from the renderer's error string rather than from the
+      // room. The `warn` is the trace the next one gets.
+      logWarn(this.env, "substream_transcript_range_refused", {
+        workspace_id: attachment.workspaceId,
+        workstream_id: attachment.workstreamId,
+        substream_id: attachment.substreamId,
+        connection_id: attachment.connectionId,
+        request_id: request.requestId,
+        code: "subscription_required",
+      });
+      this.sendError(
+        socket,
+        "subscription_required",
+        "Subscribe before loading transcript ranges",
+        request.requestId,
+      );
       return;
     }
     const sequence = await this.currentSequence();
@@ -6879,7 +6928,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
-  private sendError(socket: WebSocket, code: string, message: string): void {
+  /**
+   * Refuse one frame in a way the reader can act on.
+   *
+   * Pass `requestId` whenever the refused frame carried one, and leave it null
+   * only when the frame genuinely had none. A caller that correlated its
+   * request is waiting on that identity and on nothing else: an uncorrelated
+   * refusal is invisible to it, so its promise survives until a local timeout
+   * fires and reports a timeout the room never had. The default is null
+   * because most refusals answer no request — a malformed frame, or a mutation
+   * that belongs on REST — not because omitting it is free where one exists.
+   */
+  private sendError(socket: WebSocket, code: string, message: string, requestId: string | null = null): void {
     const event = ServerSocketEventSchema.parse({
       type: "error",
       // A private protocol error is not part of the canonical feed. Reusing
@@ -6888,7 +6948,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       sequence: this.objectStore.currentSequence(),
       occurredAt: new Date().toISOString(),
       code,
-      message
+      message,
+      requestId
     });
     socket.send(JSON.stringify(event));
   }

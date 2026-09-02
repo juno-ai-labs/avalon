@@ -1028,6 +1028,36 @@ describe("boundary contracts", () => {
     })).toMatchObject({ type: "compaction_finished", outcome: "completed" });
   });
 
+  it("names the request a socket error refuses, and stays valid without one", () => {
+    expect(ServerSocketEventSchema.parse({
+      type: "error",
+      sequence: 12,
+      occurredAt: "2026-09-02T17:00:00.000Z",
+      code: "subscription_required",
+      message: "Subscribe before loading transcript ranges",
+      requestId: id,
+    })).toMatchObject({ type: "error", requestId: id });
+    // The field is what tells a correlated refusal from an unsolicited one, so
+    // a producer that has no request to name must land on null rather than
+    // undefined: the client reads `requestId !== null` to decide both who it
+    // settles and whether the frame is its snapshot request's answer.
+    expect(ServerSocketEventSchema.parse({
+      type: "error",
+      sequence: 12,
+      occurredAt: "2026-09-02T17:00:00.000Z",
+      code: "invalid_event",
+      message: "The socket event is not valid.",
+    })).toMatchObject({ type: "error", requestId: null });
+    expect(ServerSocketEventSchema.safeParse({
+      type: "error",
+      sequence: 12,
+      occurredAt: "2026-09-02T17:00:00.000Z",
+      code: "subscription_required",
+      message: "Subscribe before loading transcript ranges",
+      requestId: "not-a-uuid",
+    }).success).toBe(false);
+  });
+
   it("rejects the retired compatibility message-page protocol", () => {
     expect(ClientSocketEventSchema.safeParse({
       type: "load_message_page",
