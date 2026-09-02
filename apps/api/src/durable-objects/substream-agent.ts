@@ -549,18 +549,23 @@ const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
 
-function overLongSocketCreateMessage(decoded: unknown): { clientMessageId: string } | null {
+function recognizableSocketCreateMessage(decoded: unknown): {
+  clientMessageId: string;
+  overLong: boolean;
+} | null {
   if (decoded === null || typeof decoded !== "object") return null;
   const frame = decoded as { type?: unknown; payload?: unknown };
   if (frame.type !== "create_message" || frame.payload === null || typeof frame.payload !== "object") {
     return null;
   }
   const payload = frame.payload as { text?: unknown; clientMessageId?: unknown };
-  if (typeof payload.text !== "string" || payload.text.length <= MESSAGE_MAX_CHARACTERS) return null;
   if (typeof payload.clientMessageId !== "string"
     || payload.clientMessageId.length < 1
     || payload.clientMessageId.length > 120) return null;
-  return { clientMessageId: payload.clientMessageId };
+  return {
+    clientMessageId: payload.clientMessageId,
+    overLong: typeof payload.text === "string" && payload.text.length > MESSAGE_MAX_CHARACTERS,
+  };
 }
 
 export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
@@ -802,6 +807,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly agentDrain = new DurableAgentDrain();
   /** Post-run delivery/maintenance proceeds independently of inference. */
   private readonly externalSettlementDrain = new DurableAgentDrain();
+  /** Fresh terminal outcomes retain metrics that are not part of the durable receipt. */
+  private readonly freshTerminalOutcomes = new Map<string, AgentTerminalOutcome>();
   /** Distinguishes this live object instance from the predecessor it replaces. */
   private readonly harnessLeaseOwnerNonce = uuidV7();
   private readonly recoverableHarnessAttempts = new Map<string, string>();
@@ -3027,6 +3034,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.externalSettlementDrain.touch();
       const settlement = this.nextUnsettledExecutionReceipt(Date.now());
       if (!settlement) return;
+      const claimNow = Date.now();
+      const claimed = this.state.storage.sql.exec<{ run_id: string }>(
+        `UPDATE runs SET execution_available_at = ?, updated_at = ?
+          WHERE run_id = ? AND terminalized_at IS NOT NULL AND external_settled_at IS NULL
+            AND (execution_available_at IS NULL OR execution_available_at <= ?)
+          RETURNING run_id`,
+        claimNow + MAINTENANCE_RECHECK_MS,
+        claimNow,
+        settlement.run_id,
+        claimNow,
+      ).toArray()[0];
+      if (!claimed) continue;
       let encoded: unknown;
       try {
         encoded = JSON.parse(settlement.execution_context_json);
@@ -3048,13 +3067,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       );
       let outcome: AgentTerminalOutcome;
       try {
-        outcome = await this.loadTerminalOutcome(executionEnv, parsed.data, settlement.status);
+        outcome = this.freshTerminalOutcomes.get(settlement.run_id)
+          ?? await this.loadTerminalOutcome(executionEnv, parsed.data, settlement.status);
       } catch (error) {
         this.deferExecutionReceipt(settlement.run_id, Date.now() + MAINTENANCE_RECHECK_MS,
           diagnosticErrorCode(error, "agent_terminal_outcome_missing"));
         return;
       }
       if (!ownsDrain()) return;
+      this.freshTerminalOutcomes.delete(settlement.run_id);
       const result = await this.settleAgentRunWithRetry(executionEnv, parsed.data, outcome);
       if (result.retryAt !== null) return;
     }
@@ -3739,18 +3760,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     retryAt: number | null;
   }> {
     const outcome = AgentTerminalOutcomeSchema.parse(rawOutcome);
-    this.state.storage.sql.exec(
+    const scheduled = this.state.storage.sql.exec<{ run_id: string }>(
       `UPDATE runs SET execution_available_at = ?, external_settled_at = NULL,
               last_settlement_error_code = NULL, updated_at = ?
-        WHERE run_id = ? AND terminalized_at IS NOT NULL`,
+        WHERE run_id = ? AND terminalized_at IS NOT NULL AND external_settled_at IS NULL
+        RETURNING run_id`,
       Date.now(),
       Date.now(),
       input.harnessRunId,
-    );
+    ).toArray()[0];
     // This continuation is deliberately not awaited by the persistent loop.
     // The terminal transcript and loop fence are already durable; external
     // delivery plus metadata maintenance have their own receipt and alarm.
-    this.resumeExternalSettlementDrain();
+    if (scheduled) {
+      this.freshTerminalOutcomes.set(input.harnessRunId, outcome);
+      this.resumeExternalSettlementDrain();
+    }
     return Promise.resolve({
       status: outcome.status,
       errorCode: outcome.error?.code ?? null,
@@ -3850,7 +3875,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
   ): Promise<string | null> {
-    await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
     if (outcome.metrics) {
       recordHarnessRunObservation(this.env, {
         workspaceId: input.workspaceId,
@@ -3862,6 +3886,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         metrics: outcome.metrics,
       });
     }
+    await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
 
     await this.finalizeAutomation(executionEnv, input, outcome);
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
@@ -4098,7 +4123,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     }
     const elicitationMessage = outcome.status === "needs_input"
-      ? await this.product.openElicitationMessageForRuntime()
+      ? await this.product.elicitationMessageForRunForRuntime(input.harnessRunId)
       : null;
     const message = elicitationMessage ?? finalMessage;
     // External platforms are projections of durable transcript state. Status
@@ -4596,12 +4621,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
 
-    const overLong = overLongSocketCreateMessage(decoded);
-    if (overLong) {
+    const recognizableCreate = recognizableSocketCreateMessage(decoded);
+    if (recognizableCreate?.overLong) {
       socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
         type: "client_command_failed",
         command: "create_message",
-        clientMessageId: overLong.clientMessageId,
+        clientMessageId: recognizableCreate.clientMessageId,
         error: { status: 400, code: "message_too_long", message: MESSAGE_TOO_LONG_MESSAGE },
       })));
       return;
@@ -4609,6 +4634,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     const parsed = ClientSocketEventSchema.safeParse(decoded);
     if (!parsed.success) {
+      if (recognizableCreate) {
+        socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
+          type: "client_command_failed",
+          command: "create_message",
+          clientMessageId: recognizableCreate.clientMessageId,
+          error: { status: 400, code: "invalid_event", message: "The socket event is not valid." },
+        })));
+        return;
+      }
       this.sendError(socket, "invalid_event", "The socket event is not valid.");
       return;
     }
@@ -4749,7 +4783,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const result = await this.admitMessage(auth, {
           ...command.payload,
           telemetryOperationId: command.operationId,
-        }, span);
+        }, span, true);
         socket.send(JSON.stringify(WorkstreamSocketCommandResultSchema.parse({
           type: "client_command_succeeded",
           command: "create_message",
@@ -4793,13 +4827,28 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     auth: AuthContext,
     input: WorkstreamObjectCreateMessageInput,
     span: FlowSpan,
+    admittedSocket = false,
   ): Promise<WorkstreamMessageAdmissionReceipt> {
     const result = await span.step("workstream.room.product.create_message", () =>
-      this.product.createMessage(auth, input));
+      admittedSocket
+        ? this.product.createMessageForAdmittedSocket(auth, input)
+        : this.product.createMessage(auth, input));
     const activationRequest = result.activationRequest;
     if (activationRequest !== null) {
-      await span.step("workstream.room.loop.activate", () =>
-        this.requestPersistentLoopActivation(activationRequest));
+      try {
+        await span.step("workstream.room.loop.activate", () =>
+          this.requestPersistentLoopActivation(activationRequest));
+      } catch (error) {
+        // Admission arms cancellation recovery before its durable input row.
+        // An eager wake-up failure must not turn that committed message into a
+        // client-visible failure whose retry can only replay the same row.
+        logWarn(this.env, "substream_message_activation_wakeup_failed", {
+          workspace_id: auth.workspaceId,
+          workstream_id: this.objectStore.identity()?.workstreamId,
+          client_message_id: input.clientMessageId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
     }
     if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
     span.setAttributes({ "rally.message.deduplicated": !result.inserted });
@@ -5279,6 +5328,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       && !hasLoopWork && nextExternalSettlementAt === null) return;
 
     if (nextExternalSettlementAt !== null && nextExternalSettlementAt <= Date.now()) {
+      if (this.externalSettlementDrain.abandonActive()) {
+        logWarn(this.env, "substream_external_settlement_stale_drain_reclaimed", {
+          workspace_id: this.objectStore.identity()?.workspaceId,
+          workstream_id: this.objectStore.identity()?.workstreamId,
+          substream_id: this.externalSubstreamId(),
+        });
+      }
       this.resumeExternalSettlementDrain();
     }
 
@@ -5851,7 +5907,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   protected override armAlarmAfterDueWork(): Promise<unknown> {
-    return this.loopDrainDeferred || this.externalSettlementDrain.active
+    return this.loopDrainDeferred
       ? this.armAlarmDuringRunDrain()
       : this.armNextAlarm();
   }
@@ -5946,9 +6002,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.objectStore.nextSemanticRealtimeDueAt(),
       this.objectStore.nextBlockDashboardDueAt(),
       this.nextLoopWorkAt(now),
-      this.externalSettlementDrain.active
-        ? now + KEEP_ALIVE_INTERVAL_MS
-        : this.nextExternalSettlementAt(),
+      this.nextExternalSettlementAt(),
     ];
     if (this.keepAliveLease.active) candidates.push(now + KEEP_ALIVE_INTERVAL_MS);
     return candidates.filter((candidate): candidate is number => candidate !== null);

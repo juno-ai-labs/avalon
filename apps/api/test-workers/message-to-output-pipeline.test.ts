@@ -1854,6 +1854,14 @@ describe("a member's message travels the whole pipeline", () => {
       stub,
       "00000000-0000-7000-8000-0000000005b7",
     );
+    await runInDurableObject(stub, (instance) => {
+      const productService = (instance as unknown as {
+        product: { authorize: () => Promise<never> };
+      }).product;
+      productService.authorize = async () => {
+        throw new Error("socket_message_reauthorized_workspace_membership");
+      };
+    });
     const command = {
       type: "create_message",
       operationId: "00000000-0000-7000-8000-0000000005b8",
@@ -1885,6 +1893,72 @@ describe("a member's message travels the whole pipeline", () => {
       clientMessageId: command.payload.clientMessageId,
       turn: accepted.turn,
     });
+    socket.close(1000, "done");
+  });
+
+  it("correlates a malformed create command to the pending client message", async () => {
+    const stub = agentStub();
+    await initializeWorkstream(stub, "first message");
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005b9",
+    );
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000005ba",
+      payload: { clientMessageId: "pipeline-room-socket-invalid-1" },
+    }));
+
+    expect(await receipt).toMatchObject({
+      type: "client_command_failed",
+      command: "create_message",
+      clientMessageId: "pipeline-room-socket-invalid-1",
+      error: { code: "invalid_event" },
+    });
+    socket.close(1000, "done");
+  });
+
+  it("acknowledges durable admission when the eager loop wake-up fails", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005bb",
+    );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as {
+        requestPersistentLoopActivation: () => Promise<never>;
+      };
+      target.requestPersistentLoopActivation = async () => {
+        throw new Error("injected_activation_wakeup_failure");
+      };
+    });
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000005bc",
+      payload: {
+        text: "the durable row is the authority",
+        clientMessageId: "pipeline-room-socket-wakeup-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    }));
+
+    expect(await receipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "create_message",
+      clientMessageId: "pipeline-room-socket-wakeup-1",
+      deliveryState: "pending",
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM pending_loop_inputs
+          WHERE client_message_id = 'pipeline-room-socket-wakeup-1'`,
+      ).one().count)).toBe(1);
     socket.close(1000, "done");
   });
 

@@ -1786,6 +1786,15 @@ export function useWorkstreamSocket(
             }
             const event = ServerSocketEventSchema.safeParse(parsed);
             if (event.success) {
+              if (event.data.type === 'error'
+                && ['workspace_socket_required', 'invalid_event'].includes(event.data.code)
+                && pendingMessageCommands.size > 0) {
+                rejectPendingMessages(new ApiError(
+                  event.data.message,
+                  400,
+                  event.data.code,
+                ));
+              }
               if (openTrace === trace) {
                 // The first server frame after `subscribe` is the one that
                 // fills the screen — a snapshot, a replayed event, or the
