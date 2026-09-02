@@ -1601,6 +1601,21 @@ describe('MessageBlock plugin activity rows', () => {
     expect(container.querySelector('svg.tabler-icon-image-generation')).toBeVisible();
     expect(container.querySelector('svg.tabler-icon-plug')).toBeNull();
   });
+
+  it('draws automations with Tabler\'s keyframes glyph', () => {
+    const { container } = render(<MessageBlock {...actions} message={pluginRow('message-automations', {
+      groupKey: 'name:Automations',
+      name: 'Automations',
+      icon: 'automations',
+      completedVerb: 'Used Automations',
+      active: false,
+      durationMs: 5_000,
+    })} />);
+
+    expect(screen.getByText('Used Automations for 5s')).toBeVisible();
+    expect(container.querySelector('svg.tabler-icon-keyframes')).toBeVisible();
+    expect(container.querySelector('svg.tabler-icon-plug')).toBeNull();
+  });
 });
 
 describe('MessageBlock work accordion', () => {
