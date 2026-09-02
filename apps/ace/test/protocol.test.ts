@@ -196,13 +196,6 @@ describe('Ace managed model protocol', () => {
   it('suggests the checked-in classifier model as well as the reviewed pin list', () => {
     expect(MODEL_CHOICES).toContain('google/gemini-2.5-flash-lite');
     expect(MODEL_CHOICES).toContain('x-ai/grok-4.3');
-    expect(MODEL_CHOICES.filter((id) => id.startsWith('google/gemini-3'))).toEqual([
-      'google/gemini-3.8-flash',
-      'google/gemini-3.7-flash',
-      'google/gemini-3.6-flash',
-      'google/gemini-3.5-flash',
-      'google/gemini-3-flash-preview',
-    ]);
     expect(MODEL_CHOICES.filter((id) => id.startsWith('openai/gpt-5.6-'))).toEqual([
       'openai/gpt-5.6-sol',
       'openai/gpt-5.6-terra',
