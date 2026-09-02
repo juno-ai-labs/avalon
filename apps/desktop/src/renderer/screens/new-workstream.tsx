@@ -2,9 +2,9 @@ import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type WorkstreamTransc
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Plus } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import {
@@ -21,7 +21,7 @@ import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMenti
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useProjectDirectories } from '../lib/use-project-directories';
-import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { useWorkstreamsQuery, WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -325,9 +325,11 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   const routeProjectId = useParams<{ projectId: string }>().projectId;
   const owningProjectId = projectId === 'route' ? routeProjectId : projectId;
   const { api } = useAppSession();
+  const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const recipientInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const draftRevisionRef = useRef(0);
   const opportunityKeys = useRef(new Map<string, string>());
@@ -343,6 +345,8 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     setMentions: setSelectedMentions,
   } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
+  const [recipientQuery, setRecipientQuery] = useState('');
+  const [recipientPickerOpen, setRecipientPickerOpen] = useState(owningProjectId === undefined);
   const [pickerOpen, setPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -371,8 +375,53 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     enabled: Boolean(api),
     staleTime: 60_000,
   });
+  const workstreams = useWorkstreamsQuery();
   const { active: projects } = useProjectDirectories();
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
+  const recipientCandidates = useMemo(() => {
+    const normalized = recipientQuery.trim().toLocaleLowerCase();
+    return (members.data ?? [])
+      .filter((member) => (
+        member.id !== workspace.currentUser.id
+        && (member.status ?? 'active') === 'active'
+        && !selectedIds.has(member.id)
+      ))
+      .filter((member) => !normalized || `${member.name} ${member.email}`.toLocaleLowerCase().includes(normalized));
+  }, [members.data, recipientQuery, selectedIds, workspace.currentUser.id]);
+  const selectRecipient = useCallback((member: WorkspaceMember): void => {
+    setSelectedMembers((current) => current.some((candidate) => candidate.id === member.id)
+      ? current
+      : [...current, member]);
+    setRecipientQuery('');
+    setRecipientPickerOpen(true);
+    requestAnimationFrame(() => recipientInputRef.current?.focus());
+  }, []);
+  const recipientNavigation = useMentionNavigation(
+    recipientPickerOpen ? recipientCandidates.map((member) => member.id) : [],
+    (index) => {
+      const member = recipientCandidates[index];
+      if (member) selectRecipient(member);
+    },
+  );
+  const removeRecipient = useCallback((memberId: string): void => {
+    setSelectedMembers((current) => current.filter((member) => member.id !== memberId));
+    setRecipientPickerOpen(true);
+    requestAnimationFrame(() => recipientInputRef.current?.focus());
+  }, []);
+  const closeNewChat = useCallback((): void => {
+    const returnTo = typeof location.state === 'object'
+      && location.state !== null
+      && 'returnTo' in location.state
+      && typeof location.state.returnTo === 'string'
+      ? location.state.returnTo
+      : null;
+    if (returnTo && returnTo !== location.pathname) {
+      void navigate(returnTo, { replace: true });
+      return;
+    }
+    const fallback = workstreams.data?.[0];
+    if (fallback) void navigate(`/workstreams/${fallback.id}`, { replace: true });
+  }, [location.pathname, location.state, navigate, workstreams.data]);
   const owningProject = projects.data?.items.find((project) => project.id === owningProjectId);
   const personalProjectParticipantIds = useMemo(() => new Set(
     owningProject?.scope === 'personal'
@@ -388,6 +437,11 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     )));
     setPickerOpen(false);
   }, [members.data, owningProject?.scope, personalProjectParticipantIds, workspace.currentUser.id]);
+  useEffect(() => {
+    if (owningProjectId !== undefined || launching) return;
+    const frame = requestAnimationFrame(() => recipientInputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [launching, owningProjectId]);
   // Opened on the keystroke that starts a work stream and closed once the
   // route change is requested. The surface is optimistic — the work stream is
   // already on screen — so what this spans is the round trip behind it. Held in
@@ -643,9 +697,74 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
        an approximation of it. The composer is never unmounted between them: it
        is the element the eye holds on to while everything around it changes,
        and remounting it would break the hand-off into two separate objects. */
-    <div className={clsx('workstream-launch-screen', launching && 'workstream-screen is-launching')}>
+    <div className={clsx(
+      'workstream-launch-screen',
+      owningProjectId === undefined && 'new-chat-screen',
+      launching && 'workstream-screen is-launching',
+    )}>
       {!launching && <div className="screen-drag-strip window-drag" />}
       <header className="launch-header workstream-header window-drag">
+        {!launching && owningProjectId === undefined && (
+          <div className="new-chat-recipient-bar window-no-drag">
+            <span className="new-chat-to-label">To:</span>
+            <div className="new-chat-recipient-input-shell">
+              {selectedMembers.map((member) => (
+                <span className="new-chat-recipient-chip" key={member.id}>
+                  <Avatar member={member} size="small" />
+                  <span>{member.name}</span>
+                  <button
+                    aria-label={`Remove ${member.name}`}
+                    onClick={() => removeRecipient(member.id)}
+                    type="button"
+                  >
+                    <X aria-hidden="true" size={13} strokeWidth={1.7} />
+                  </button>
+                </span>
+              ))}
+              <input
+                aria-activedescendant={recipientNavigation.activeOptionId}
+                aria-controls="new-chat-recipient-listbox"
+                aria-expanded={recipientPickerOpen}
+                aria-label="Search people"
+                autoComplete="off"
+                onChange={(event) => {
+                  setRecipientQuery(event.currentTarget.value);
+                  setRecipientPickerOpen(true);
+                }}
+                onFocus={() => setRecipientPickerOpen(true)}
+                onKeyDown={(event) => {
+                  if (event.metaKey && /^[1-9]$/u.test(event.key)) {
+                    const member = recipientCandidates[Number(event.key) - 1];
+                    if (member) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      selectRecipient(member);
+                    }
+                    return;
+                  }
+                  if (recipientNavigation.handleKeyDown(event)) return;
+                  if (event.key === 'Backspace' && recipientQuery.length === 0 && selectedMembers.length > 0) {
+                    event.preventDefault();
+                    removeRecipient(selectedMembers[selectedMembers.length - 1]!.id);
+                    return;
+                  }
+                  if (event.key !== 'Escape') return;
+                  event.preventDefault();
+                  if (recipientPickerOpen) setRecipientPickerOpen(false);
+                  else closeNewChat();
+                }}
+                placeholder={selectedMembers.length === 0 ? 'Search people' : 'Add people'}
+                ref={recipientInputRef}
+                role="combobox"
+                type="text"
+                value={recipientQuery}
+              />
+            </div>
+            <button aria-label="Close new chat" className="new-chat-close" onClick={closeNewChat} type="button">
+              <X aria-hidden="true" size={16} strokeWidth={1.7} />
+            </button>
+          </div>
+        )}
         {launching && (
           <div className="workstream-header-left window-no-drag">
             <div className="workstream-title-block">
@@ -656,6 +775,46 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
                 <h1><TitleSkeleton className="title-skeleton-header" /></h1>
               </div>
             </div>
+          </div>
+        )}
+        {!launching && owningProjectId === undefined && recipientPickerOpen && (
+          <div
+            aria-label="People"
+            className="new-chat-recipient-results window-no-drag"
+            id="new-chat-recipient-listbox"
+            role="listbox"
+          >
+            {members.isLoading ? (
+              <p className="new-chat-recipient-empty">Loading people…</p>
+            ) : recipientCandidates.length > 0 ? recipientCandidates.map((member, index) => (
+              <button
+                aria-label={`${member.name} — ${member.email}`}
+                aria-selected={index === recipientNavigation.activeIndex}
+                className={index === recipientNavigation.activeIndex ? 'is-selected' : undefined}
+                id={mentionOptionId(member.id)}
+                key={member.id}
+                onClick={() => selectRecipient(member)}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseMove={() => recipientNavigation.setActiveIndex(index)}
+                ref={index === recipientNavigation.activeIndex ? recipientNavigation.activeOptionRef : undefined}
+                role="option"
+                type="button"
+              >
+                <Avatar member={member} size="small" />
+                <span className="new-chat-recipient-copy">
+                  <strong>{member.name}</strong>
+                </span>
+                {index < 9 && (
+                  <span aria-hidden="true" className="new-chat-recipient-shortcut">
+                    <kbd>⌘</kbd><kbd>{index + 1}</kbd>
+                  </span>
+                )}
+              </button>
+            )) : (
+              <p className="new-chat-recipient-empty">
+                {recipientQuery.trim() ? 'No matching people' : 'Everyone available is selected'}
+              </p>
+            )}
           </div>
         )}
       </header>
@@ -688,7 +847,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
 
       <section className="composer-dock launch-dock" aria-labelledby="new-workstream-heading">
         <h2 className="sr-only" id="new-workstream-heading">Start a new work stream</h2>
-        <div className="launch-modifiers">
+        {owningProjectId !== undefined && <div className="launch-modifiers">
           <div className="new-workstream-modifiers" aria-label="Work-stream participants">
             {owningProject?.scope === 'personal' ? (
               <Tooltip.Root delayDuration={300}>
@@ -728,9 +887,17 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             </button>
             </>}
           </div>
-        </div>
+        </div>}
 
-        <div className="composer-stack">
+        <div
+          className="composer-stack"
+          onFocusCapture={() => {
+            if (owningProjectId === undefined) setRecipientPickerOpen(false);
+          }}
+          onPointerDown={() => {
+            if (owningProjectId === undefined) setRecipientPickerOpen(false);
+          }}
+        >
           {visibleCandidates.length > 0 && (
             <div className="mention-popover" id="launch-mention-listbox" role="listbox" aria-label="Mentions">
               {visibleCandidates.map((member, index) => (
@@ -759,11 +926,12 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             api={api ?? undefined}
             ariaLabel="Opening work-stream message"
             attachments={attachmentDraft.attachments}
-            autoFocus
+            autoFocus={owningProjectId !== undefined}
             className="launch-composer"
             error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
             fileInputRef={fileInputRef}
             footerHint="Enter to create · Shift+Enter for a new line"
+            layout={owningProjectId === undefined ? 'message-capsule' : undefined}
             maxHeight={220}
             model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
             mentionLabels={mentionLabels}
@@ -788,9 +956,13 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             // write the empty value it is being shown back over the draft it is
             // hiding, and lose it.
             onValueChange={(value) => { updateMessage(value); setTooLong(false); }}
-            placeholder="Describe a task or ask a question…"
+            placeholder={owningProjectId === undefined
+              ? selectedMembers.length > 0
+                ? `Message ${selectedMembers.map((member) => member.name).join(', ')}`
+                : 'Message workspace'
+              : 'Describe a task or ask a question…'}
             ref={textareaRef}
-            rows={2}
+            rows={owningProjectId === undefined ? 1 : 2}
             shouldSubmitOnEnter={() => mentionQuery === null}
             submitDisabled={attachmentDraft.uploading || (!message.trim() && attachmentDraft.ready.length === 0) || launching !== null}
             submitLabel="Create work stream"
@@ -805,7 +977,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         {members.error && !launching && <p className="muted-notice">People could not be loaded. You can still create this work stream with yourself.</p>}
       </section>
 
-      {owningProject?.scope !== 'personal' && <ParticipantPicker
+      {owningProjectId !== undefined && owningProject?.scope !== 'personal' && <ParticipantPicker
         currentUser={workspace.currentUser}
         members={activeMembers}
         onOpenChange={setPickerOpen}

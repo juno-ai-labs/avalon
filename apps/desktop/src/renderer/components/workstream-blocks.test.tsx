@@ -1268,7 +1268,7 @@ describe('MessageBlock agent document cards', () => {
     ].join('\n'),
   };
 
-  it('turns each h2 into a square card while leaving the preamble readable', () => {
+  it('turns each h2 into a stacked file-style card while leaving the preamble readable', () => {
     render(<MessageBlock {...actions} agentDocumentCards message={documentMessage} />);
 
     expect(screen.getByText('Here is the complete review.')).toBeInTheDocument();

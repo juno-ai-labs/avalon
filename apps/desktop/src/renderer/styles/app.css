@@ -1085,19 +1085,21 @@ pre {
 .account-trigger {
   align-items: center;
   background: transparent;
-  border-top: 1px solid var(--av-ref-color-line-1);
-  color: var(--av-sys-color-text-subtle);
+  border: 0;
+  border-radius: 8px;
+  color: var(--av-sys-color-text-default);
   display: flex;
-  gap: 8px;
-  min-height: 54px;
-  padding: 8px 12px;
+  gap: 10px;
+  margin: 0 8px 6px;
+  min-height: 46px;
+  padding: 7px 8px;
   text-align: left;
-  width: 100%;
+  width: calc(100% - 16px);
 }
 
 .account-trigger:hover { background: var(--av-sys-color-surface-subtle); }
 .account-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.account-copy strong { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-copy span { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-attention-dot,
 .workspace-activity-dot {
@@ -1173,6 +1175,49 @@ pre {
   .workspace-shell.is-entering-workspace .sidebar,
   .workspace-shell.is-entering-workspace .main-pane { animation: none; }
 }
+/* The account card deliberately owns its palette instead of borrowing the
+   generic raised menu. Grok Bot keeps this card nearly as dark as the sidebar,
+   with one quiet border and a broad charcoal hover row. */
+.account-menu-content {
+  background: #fbfbfb;
+  border-color: #d7d7d7;
+  border-radius: 11px;
+  box-shadow: 0 12px 34px rgb(0 0 0 / 14%);
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  min-width: 228px;
+  padding: 5px 6px;
+  width: 228px;
+}
+
+.account-menu-item.menu-item {
+  border-radius: 7px;
+  color: var(--av-sys-color-text-default);
+  display: grid;
+  font-size: 14px;
+  font-weight: 400;
+  gap: 8px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  line-height: 20px;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+.account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
+.account-menu-item.menu-item[data-highlighted] { background: #ebebeb; }
+.account-menu-item > svg { height: 16px; stroke-width: 1.8; width: 16px; }
+.account-menu-item > span:not(.account-menu-value) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu-value { color: var(--av-sys-color-text-muted); justify-self: end; }
+.account-menu-chevron { color: var(--av-sys-color-text-muted); height: 14px !important; width: 14px !important; }
+.account-menu-separator.menu-separator { margin: 4px 6px; }
+
+[data-theme='air-dark'] .account-menu-content {
+  background: #181818;
+  border-color: #3a3a3a;
+  box-shadow: 0 14px 38px rgb(0 0 0 / 32%);
+}
+
+[data-theme='air-dark'] .account-menu-item.menu-item[data-highlighted] { background: #2c2c2c; }
 .mobile-sidebar-trigger { display: none; left: 8px; position: fixed; top: 9px; z-index: 25; }
 .sidebar-scrim { display: none; }
 .mobile-only { display: none; }
@@ -2797,37 +2842,38 @@ pre {
 .markdown-body em { font-style: italic; }
 .markdown-body a { color: var(--av-sys-color-accent-soft); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .markdown-body a:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; }
-/* A sent mention wears the same brand as the draft it was typed in. */
-.mention-chip { align-items: center; background: color-mix(in srgb, var(--av-sys-color-brand-base) 12%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 26%, transparent); border-radius: var(--av-sys-size-radius-pill); box-sizing: border-box; color: var(--av-sys-color-brand-ink); display: inline-flex; font-size: 0.92em; font-weight: 580; gap: 4px; height: 1.55em; line-height: 1; max-width: 100%; padding: 1px 6px 1px 2px; vertical-align: middle; white-space: nowrap; }
+/* Grok Bot keeps mentions inside the message rather than making them read like
+   links: one flat rectangular chip, the identity mark, and the name. */
+.mention-chip { align-items: center; background: #dedede; border: 0; border-radius: 4px; box-sizing: border-box; color: #242424; display: inline-flex; font-size: 14px; font-weight: 500; gap: 5px; height: 21px; line-height: 20px; max-width: 100%; padding: 1px 6px 1px 4px; vertical-align: middle; white-space: nowrap; }
+[data-theme='air-dark'] .mention-chip { background: #818181; color: #fcfcfc; }
 .mention-chip-connector {
-  background: var(--av-sys-color-surface-raised);
-  border-color: var(--av-ref-color-line-4);
-  color: var(--av-sys-color-text-default);
+  background: #dedede;
+  border: 0;
+  color: #242424;
   gap: 5px;
-  padding: 1px 1px 1px 5px;
+  padding: 1px 6px 1px 4px;
 }
+[data-theme='air-dark'] .mention-chip-connector { background: #818181; color: #fcfcfc; }
 .mention-chip-avatar { align-items: center; background: var(--av-ref-color-neutral-6); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-14); display: inline-flex; flex: 0 0 auto; font-size: 6.5px; font-weight: 700; height: 16px; justify-content: center; letter-spacing: -0.02em; overflow: hidden; position: relative; width: 16px; }
 /* Cap-height centring, as on .avatar-fallback above. */
 .mention-chip-avatar > span { text-box: trim-both cap alphabetic; }
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
-/* Connector mentions keep the company mark but not Settings' citron control
-   treatment. In transcript prose, only connection state carries colour. */
+/* Connector mentions keep the company mark without bringing Settings' larger
+   provider-icon surface or a second status pill into the message. */
 .mention-chip-connector-icon.provider-icon {
   background: transparent;
   border: 0;
   border-radius: 0;
-  color: var(--av-sys-color-text-muted);
+  color: currentColor;
   flex: 0 0 auto;
-  height: 14px;
-  width: 14px;
+  height: 16px;
+  width: 16px;
 }
-.mention-chip-connector-icon.provider-icon .connector-mark { height: 11px; width: 11px; }
+.mention-chip-connector-icon.provider-icon .connector-mark { height: 14px; width: 14px; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .mention-chip-status {
-  align-items: center;
-  border-radius: var(--av-sys-size-radius-pill);
-  display: inline-flex;
+  display: none;
   flex: 0 0 auto;
   font-size: 0.78em;
   font-weight: 560;
@@ -3645,35 +3691,69 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .attachment-lightbox-status.is-error { color: var(--av-sys-color-danger-soft); }
 .agent-document-deck-region { margin-top: 10px; max-width: 100%; }
 .agent-document-preamble { margin-bottom: 14px; }
-.agent-document-deck-scroll { max-width: 100%; overflow-x: auto; padding: 5px 10px 7px 4px; }
+.agent-document-deck-scroll { max-width: 100%; overflow-x: auto; padding: 4px 10px 8px 4px; }
 .agent-document-deck { position: relative; }
 .agent-document-card {
-  background: var(--av-sys-color-surface-raised);
-  border: 1px solid var(--av-ref-color-line-5);
-  border-radius: var(--av-sys-size-radius-md);
-  box-shadow: var(--av-sys-elevation-shadow-md);
+  align-items: center;
+  background: #ececec;
+  border: 1px solid #d8d8d8;
+  border-radius: 13px;
+  box-shadow: none;
+  box-sizing: border-box;
   color: var(--av-sys-color-text-default);
   cursor: zoom-in;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  height: 176px;
+  gap: 8px;
+  grid-template-columns: 36px minmax(0, 1fr);
+  height: 53px;
   overflow: hidden;
-  padding: 14px;
+  padding: 8px;
   position: absolute;
   text-align: left;
   transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
-  width: 176px;
+  width: 220px;
 }
 .agent-document-card:hover,
-.agent-document-card:focus-visible { border-color: var(--av-sys-color-brand-base); box-shadow: var(--av-sys-elevation-shadow-lg); transform: translate(-2px, -2px); z-index: 100 !important; }
-.agent-document-card:focus-visible { outline: 2px solid var(--av-sys-color-brand-base); outline-offset: 2px; }
+.agent-document-card:focus-visible { background: #e4e4e4; border-color: #c8c8c8; box-shadow: 0 7px 18px rgb(0 0 0 / 12%); transform: translate(-1px, -1px); z-index: 100 !important; }
+.agent-document-card:focus-visible { outline: 2px solid #1681f8; outline-offset: 2px; }
 .agent-document-card:not(:first-child) > * { visibility: hidden; }
 .agent-document-card:not(:first-child):hover > *,
 .agent-document-card:not(:first-child):focus-visible > * { visibility: visible; }
-.agent-document-card-number { color: var(--av-sys-color-brand-ink); font-size: 10px; font-weight: 680; letter-spacing: .08em; line-height: 1; margin-bottom: 18px; }
-.agent-document-card strong { color: var(--av-sys-color-text-default); display: -webkit-box; font-size: 14px; font-weight: 630; line-height: 1.3; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-.agent-document-card > span:last-child { color: var(--av-sys-color-text-subtle); display: -webkit-box; font-size: 11px; line-height: 1.45; margin-top: 9px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.agent-document-deck-count { color: var(--av-sys-color-text-subtle); display: inline-block; font-size: 11px; margin: 5px 0 0 5px; }
+.agent-document-card-icon {
+  align-items: center;
+  background: #d9eaff;
+  border-radius: 7px;
+  color: #1681f8;
+  display: flex;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+}
+.agent-document-card-copy { display: flex; flex-direction: column; min-width: 0; }
+.agent-document-card-copy strong {
+  color: var(--av-sys-color-text-default);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-document-card-copy > span {
+  color: var(--av-sys-color-text-subtle);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-theme='air-dark'] .agent-document-card { background: #3d3d3d; border-color: #4e4e4e; }
+[data-theme='air-dark'] .agent-document-card:hover,
+[data-theme='air-dark'] .agent-document-card:focus-visible { background: #454545; border-color: #595959; box-shadow: 0 8px 20px rgb(0 0 0 / 28%); }
+[data-theme='air-dark'] .agent-document-card-icon { background: #3d5378; color: #5d9df7; }
+[data-theme='air-dark'] .agent-document-card-copy strong { color: #e3e3e3; }
+[data-theme='air-dark'] .agent-document-card-copy > span { color: #aaa; }
 .agent-document-lightbox {
   background: var(--av-sys-color-surface-raised);
   border: 1px solid var(--av-ref-color-line-4);
@@ -3714,6 +3794,8 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
  */
 .workstream-composer textarea,
 .workstream-composer .composer-highlight {
+  font-size: 14px;
+  font-weight: 400;
   line-height: var(--composer-line-height);
   overflow-wrap: break-word;
   overflow-x: hidden;
@@ -3739,13 +3821,14 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .workstream-composer.is-composing textarea { color: var(--av-sys-color-text-default); }
 .workstream-composer.is-composing .composer-highlight { visibility: hidden; }
 .composer-mention {
-  background: color-mix(in srgb, var(--av-sys-color-brand-base) 12%, transparent);
-  border-radius: var(--av-sys-size-radius-xs);
+  background: #dedede;
+  border-radius: 4px;
   box-decoration-break: clone;
-  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--av-sys-color-brand-base) 12%, transparent);
-  color: var(--av-sys-color-brand-ink);
+  box-shadow: none;
+  color: #242424;
   -webkit-box-decoration-break: clone;
 }
+[data-theme='air-dark'] .composer-mention { background: #818181; color: #fcfcfc; }
 .composer-toolbar { align-items: center; display: flex; justify-content: space-between; min-height: 38px; padding: 2px 7px 6px; }
 .composer-tools,
 .composer-submit-area { align-items: center; display: flex; gap: 5px; }
@@ -3801,20 +3884,22 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
 .composer-error-slot { padding-top: 7px; }
 .composer-error-slot .inline-error { background: var(--av-sys-color-danger-wash); border: 1px solid var(--av-sys-color-danger-edge); border-radius: var(--av-sys-size-radius-sm); margin: 0; padding: 6px 8px; }
-.mention-popover { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); bottom: calc(100% + 7px); box-shadow: var(--av-sys-elevation-shadow-md); left: 0; max-height: 310px; overflow: auto; padding: 4px; position: absolute; width: min(390px, 100%); z-index: 20; }
-.mention-popover > button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); display: flex; gap: 9px; min-height: 43px; padding: 6px 7px; text-align: left; width: 100%; }
+.mention-popover { background: #fcfcfc; border: 1px solid #d7d7d7; border-radius: 12px; bottom: calc(100% - 8px); box-shadow: 0 12px 30px rgb(0 0 0 / 16%); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; left: 40px; max-height: 280px; overflow: auto; padding: 5px; position: absolute; width: min(360px, calc(100% - 40px)); z-index: 20; }
+.mention-popover > button { align-items: center; background: transparent; border-radius: 7px; color: var(--av-sys-color-text-default); display: flex; gap: 8px; min-height: 32px; padding: 4px 9px; text-align: left; width: 100%; }
 /* One marked row, and `is-selected` is the one: the pointer moves the selection
    rather than painting a second highlight beside the keyboard's, so a `:hover`
-   rule here would mark a row Enter is not going to take. The popover sits on
-   `surface-raised`, and Terra Light gives `surface-elevated-hover` the same
-   value as that — a highlighted row nobody could see. The raised surface's own
-   hover shade differs in all four themes. */
+   rule here would mark a row Enter is not going to take. */
 .mention-popover > button:focus-visible,
-.mention-popover > button.is-selected { background: var(--av-sys-color-surface-raised-hover); }
-.mention-icon { align-items: center; display: flex; height: 25px; justify-content: center; width: 25px; }
-.mention-popover button > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.mention-popover strong { font-size: 11.5px; }
-.mention-popover small { color: var(--av-sys-color-text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-popover > button.is-selected { background: #ebebeb; }
+.mention-icon { align-items: center; display: flex; flex: 0 0 24px; height: 24px; justify-content: center; width: 24px; }
+.mention-icon .avatar-small { height: 20px; width: 20px; }
+.mention-popover-copy { align-items: baseline; display: flex; flex: 1; gap: 8px; min-width: 0; }
+.mention-popover strong { font-size: 14px; font-weight: 400; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-popover small { color: #8f8f8f; font-size: 13px; font-weight: 400; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-popover-kind { color: #8f8f8f; flex: 0 0 auto; font-size: 13px; font-weight: 400; line-height: 18px; margin-left: auto; }
+[data-theme='air-dark'] .mention-popover { background: #070707; border-color: #2b2b2b; box-shadow: 0 14px 34px rgb(0 0 0 / 34%); }
+[data-theme='air-dark'] .mention-popover > button.is-selected { background: #2f2f2f; }
+[data-theme='air-dark'] .mention-popover :is(small, .mention-popover-kind) { color: #909090; }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
 .mention-confirm-person > span { display: flex; flex-direction: column; }
 .mention-confirm-person small { color: var(--av-sys-color-text-muted); font-size: 11px; }
@@ -4833,7 +4918,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 :is(.workstream-screen, .automation-chat-surface) .agent-message {
-  width: 100%;
+  max-width: var(--av-cmp-turn-width);
+  min-width: 0;
+  width: fit-content;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .agent-message > header {
@@ -4873,11 +4960,12 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   --turn-bubble-radius: calc(var(--av-sys-size-radius-xl) + 6px);
   margin-left: var(--av-cmp-turn-margin);
   max-width: var(--av-cmp-turn-width);
+  min-width: 0;
   width: fit-content;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message-content {
-  align-items: var(--av-cmp-turn-align);
+  align-items: flex-end;
   display: flex;
   flex-direction: column;
   max-width: 100%;
@@ -4972,7 +5060,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    which is the same relationship on the other side. */
 :is(.workstream-screen, .automation-chat-surface) .human-message > header {
   gap: 5px;
-  justify-content: var(--av-cmp-turn-align);
+  justify-content: flex-end;
   margin-bottom: 4px;
   padding-inline-end: var(--turn-bubble-radius);
 }
@@ -5043,6 +5131,40 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .sidebar-commandbar {
   display: block;
   margin: 0 1px 12px;
+}
+
+.sidebar-new-chat-draft {
+  align-items: center;
+  background: var(--av-cmp-row-background-hover);
+  border-radius: 8px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  font-size: 14px;
+  font-weight: 500;
+  gap: 9px;
+  line-height: 20px;
+  margin: 0 1px 12px;
+  min-height: 44px;
+  padding: 4px 8px;
+}
+
+.sidebar-new-chat-draft-icon {
+  align-items: center;
+  background: var(--av-ref-color-neutral-4);
+  border: 1px solid var(--av-ref-color-line-4);
+  border-radius: 50%;
+  color: var(--av-sys-color-text-subtle);
+  display: flex;
+  flex: 0 0 30px;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+
+[data-theme='air-dark'] .sidebar-new-chat-draft-icon {
+  background: #454545;
+  border-color: #5b5b5b;
+  color: #c5c5c5;
 }
 
 .sidebar-new-button {
@@ -5131,7 +5253,15 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-row .sidebar-row-icon { align-items: center; display: flex; height: 30px; justify-content: center; position: relative; width: 30px; }
 .workstream-row-status { bottom: -2px; position: absolute; right: -3px; }
 .workstream-row-status .status-indicator { background: var(--av-sys-color-surface-default); border-radius: var(--av-sys-size-radius-pill); height: 12px; width: 12px; }
-.workstream-row-status .status-dot { height: 6px; width: 6px; }
+.workstream-row .workstream-row-status .status-dot {
+  height: 6px;
+  inset: auto;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+}
 .workstream-row .sidebar-row-main { align-self: stretch; justify-content: center; }
 .workstream-row .sidebar-row-title { align-items: baseline; color: var(--av-sys-color-text-default); display: flex; font-size: 12px; font-weight: 520; gap: 6px; justify-content: space-between; line-height: 15px; width: 100%; }
 .sidebar-row-title-copy { align-items: center; display: flex; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -5189,63 +5319,201 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 .workstream-screen:has(> .grokbot-workstream-header) { grid-template-rows: 40px minmax(0, 1fr) auto; }
 .grokbot-workstream-header {
+  --grok-header-background: #fcfcfc;
+  --grok-header-border: #e7e7e7;
+  --grok-header-title-background: #fcfcfc;
+  --grok-header-control-hover: #ededed;
   align-items: center;
-  border-bottom: 1px solid var(--av-sys-color-border-subtle);
+  background: var(--grok-header-background);
+  border-bottom: 1px solid var(--grok-header-border);
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 8px 0 16px;
 }
-.grokbot-workstream-header > h1 { display: flex; justify-content: center; min-width: 0; }
+.grokbot-header-navigation { display: none; }
+.grokbot-workstream-header > h1 { display: flex; justify-content: flex-start; min-width: 0; }
 .grokbot-conversation-title {
   align-items: center;
-  background: transparent;
+  background: var(--grok-header-title-background);
   border: 0;
+  border-radius: 8px;
   color: var(--av-sys-color-text-default);
   display: flex;
-  font-size: 12px;
-  font-weight: 620;
+  font-size: 13px;
+  font-weight: 500;
   gap: 6px;
-  justify-content: center;
+  height: 28px;
+  justify-content: flex-start;
+  line-height: 18px;
   max-width: 100%;
   min-width: 0;
-  padding: 4px 8px;
+  padding: 4px 9px;
 }
 .grokbot-conversation-title > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.grokbot-conversation-title:hover { color: var(--av-sys-color-text-default); }
-.grokbot-conversation-faces { align-items: center; display: flex; flex: 0 0 auto; }
-.grokbot-conversation-faces .avatar-stack { margin-left: -7px; }
-.grokbot-conversation-faces .avatar-small { height: 19px; width: 19px; }
-.grokbot-conversation-faces .avatar-fallback { font-size: 6px; }
-.grokbot-conversation-faces .avatar-stack-item + .avatar-stack-item { margin-left: -7px; }
-.grokbot-workstream-header .header-menu-button { visibility: hidden; }
+.grokbot-conversation-title:hover { background: var(--grok-header-control-hover); color: var(--av-sys-color-text-default); }
+.grokbot-computer-button.icon-button {
+  color: #969696;
+  height: 28px;
+  width: 28px;
+}
+.grokbot-computer-button.icon-button:hover,
+.grokbot-computer-button.icon-button[aria-pressed='true'] {
+  background: var(--grok-header-control-hover);
+  color: var(--av-sys-color-text-default);
+}
+[data-theme='air-dark'] .grokbot-workstream-header {
+  --grok-header-background: #070707;
+  --grok-header-border: #262626;
+  --grok-header-title-background: #1a1a1a;
+  --grok-header-control-hover: #1a1a1a;
+}
 
-.grokbot-shell { --grok-sidebar-search-background: #ebebeb; --grok-sidebar-secondary: #696969; }
-[data-theme='air-dark'] .grokbot-shell { --grok-sidebar-search-background: #232323; --grok-sidebar-secondary: #9e9e9e; }
+.grokbot-shell {
+  --grok-font-body-1-size: 14px;
+  --grok-font-body-1-leading: 20px;
+  --grok-font-body-2-size: 13px;
+  --grok-font-body-2-leading: 18px;
+  --grok-font-label-size: 12px;
+  --grok-font-label-leading: 16px;
+  --grok-font-caption-size: 11px;
+  --grok-font-caption-leading: 16px;
+  --grok-font-regular: 400;
+  --grok-font-medium: 500;
+  --grok-font-semibold: 600;
+  --av-cmp-row-background-hover: #ebebeb;
+  --av-cmp-row-background-selected: #e1e1e1;
+  --grok-command-shortcut-background: #f7f7f7;
+  --grok-sidebar-search-background: #ebebeb;
+  --grok-sidebar-secondary: #696969;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: var(--grok-font-body-1-size);
+  font-weight: var(--grok-font-regular);
+  letter-spacing: 0;
+  line-height: var(--grok-font-body-1-leading);
+}
+[data-theme='air-dark'] .grokbot-shell {
+  --av-cmp-row-background-hover: #232323;
+  --av-cmp-row-background-selected: #313131;
+  --grok-command-shortcut-background: #181818;
+  --grok-sidebar-search-background: #232323;
+  --grok-sidebar-secondary: #9e9e9e;
+}
+.grokbot-shell .workstream-row {
+  border-radius: 10px;
+  gap: 8px;
+  height: 54px;
+  min-height: 54px;
+  padding: 9px;
+}
+.grokbot-shell .workstream-row.is-active { background: var(--av-cmp-row-background-selected); }
+.grokbot-shell .command-shortcut-scrim {
+  justify-content: flex-end;
+  padding: 0 8px 0 24px;
+  right: 0;
+  width: 72px;
+  z-index: 5;
+}
+.grokbot-shell .scope-badge.command-shortcut-pill {
+  background: var(--grok-command-shortcut-background);
+  border: 0;
+  border-radius: 4px;
+  color: var(--grok-sidebar-secondary);
+  font-size: 9px;
+  font-weight: 500;
+  gap: 0;
+  height: 14px;
+  line-height: 14px;
+  min-width: 19px;
+  padding: 0 3px;
+}
 .grokbot-shell .sidebar-scroll { padding-top: 0; }
 .grokbot-shell .workstreams-section { margin-top: 10px; }
 .grokbot-shell .sidebar-group { margin-top: 14px; }
 .grokbot-shell .sidebar-group:first-child { margin-top: 0; }
 .grokbot-shell .sidebar-group-heading { min-height: 17px; padding: 0 7px 7px; }
-.grokbot-shell .sidebar-group h3 { color: var(--grok-sidebar-secondary); font-size: 10px; font-weight: 450; letter-spacing: 0; text-transform: none; }
+.grokbot-shell .sidebar-search input {
+  font-size: var(--grok-font-body-1-size);
+  font-weight: var(--grok-font-regular);
+  line-height: var(--grok-font-body-1-leading);
+}
+.grokbot-shell .workstream-row .sidebar-row-title {
+  font-size: var(--grok-font-body-1-size);
+  font-weight: var(--grok-font-medium);
+  line-height: var(--grok-font-body-1-leading);
+}
+.grokbot-shell .workstream-row .sidebar-row-title time {
+  font-size: var(--grok-font-label-size);
+  font-weight: var(--grok-font-regular);
+  line-height: var(--grok-font-label-leading);
+}
+.grokbot-shell .workstream-row .sidebar-row-hint {
+  font-size: var(--grok-font-body-2-size);
+  font-weight: var(--grok-font-regular);
+  line-height: var(--grok-font-body-2-leading);
+}
+.grokbot-shell .sidebar-group h3 {
+  color: var(--grok-sidebar-secondary);
+  font-size: var(--grok-font-label-size);
+  font-weight: var(--grok-font-regular);
+  letter-spacing: 0;
+  line-height: var(--grok-font-label-leading);
+  text-transform: none;
+}
 .grokbot-shell .sidebar-group-menu-trigger { display: none; }
 
 .workstream-screen .human-message-bubble {
   background: var(--av-cmp-bubble-human-background);
   border: 0;
-  border-radius: 18px 18px 5px 18px;
-  box-shadow: inset -3px 0 0 var(--person-accent);
+  border-radius: 18px;
+  box-shadow: none;
   color: var(--av-cmp-bubble-human-foreground);
-  padding: 9px 13px 10px;
+  padding: 8px 12px;
 }
 
 .workstream-screen .human-message-bubble .markdown-body,
 .workstream-screen .human-message-bubble .markdown-body :is(p, strong, em, code, a) { color: var(--av-cmp-bubble-human-foreground); }
 .workstream-screen .human-message > header { margin-bottom: 5px; padding-right: 4px; }
-.workstream-screen .human-message .message-author { color: var(--av-sys-color-text-subtle); font-size: 9px; }
+.workstream-screen .human-message .message-author { color: var(--av-sys-color-text-subtle); font-size: 12px; }
 .workstream-screen .human-message time { color: var(--av-sys-color-text-muted); }
 .workstream-screen .agent-message { padding-left: 2px; }
 .workstream-screen .agent-message > header { margin-bottom: 7px; }
+
+/* GrokBot uses four text roles throughout its conversation surfaces rather
+   than per-theme typography. Keep Rally's extra author/time labels on the same
+   label role so the deliberate metadata addition still belongs to the system. */
+:is(.workstream-screen, .new-chat-screen) {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+:is(.workstream-screen, .automation-chat-surface) .agent-message .message-author {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 18px;
+  text-transform: none;
+}
+:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body,
+:is(.workstream-screen, .automation-chat-surface) .human-message-bubble .markdown-body {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+:is(.workstream-screen, .automation-chat-surface) .human-message .message-author {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+:is(.workstream-screen, .automation-chat-surface) .human-message time {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+:is(.workstream-screen, .automation-chat-surface) :is(.agent-work-timing-label, .tool-summary strong) {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
 
 .composer-wrap { max-width: min(760px, calc(100% - 28px)); }
 .workstream-composer {
@@ -5355,8 +5623,9 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 
 :is(.workstream-screen, .automation-chat-surface) .tool-summary strong {
   color: var(--av-ref-color-neutral-10);
-  font-size: 11.5px;
-  font-weight: 480;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .tool-summary strong::before {
@@ -5367,7 +5636,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity .tool-summary strong {
   color: var(--av-ref-color-neutral-11);
   font-size: 13px;
-  font-weight: 480;
+  font-weight: 500;
+  line-height: 18px;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity .tool-summary strong::before {
@@ -5514,83 +5784,149 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
    shelf. The shared composer keeps its neutral toolbar layout; only the main
    work-stream adapter opts into this grid. Attachments get their own row when
    present, while the empty state remains a single 42px control. */
-.workstream-screen .workstream-composer.is-message-capsule {
-  --composer-text-padding: 7px 2px;
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule {
+  --composer-text-padding: 9px 4px 6px;
   align-items: end;
   background: var(--av-cmp-composer-background);
-  border: 1px solid var(--av-ref-color-line-4);
+  border: 1px solid #bdbdbd;
   border-radius: 22px;
   box-shadow: none;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
-  min-height: 42px;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  min-height: 44px;
   overflow: visible;
 }
 
-.workstream-screen .workstream-composer.is-message-capsule:focus-within {
-  border-color: var(--av-ref-color-line-6);
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within {
+  border-color: #bdbdbd;
 }
 
-.workstream-screen .is-message-capsule .composer-attachments {
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments {
   grid-column: 1 / -1;
   grid-row: 1;
-  padding: 11px 12px 3px;
+  padding: 10px 12px 2px;
 }
 
-.workstream-screen .is-message-capsule .composer-input-shell {
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-attachments .attachment-tile {
+  border-radius: 14px;
+  height: 52px;
+  width: 52px;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-input-shell {
   align-self: end;
   grid-column: 2;
   grid-row: 2;
   min-width: 0;
 }
 
-.workstream-screen .workstream-composer.is-message-capsule textarea {
-  min-height: 34px;
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule textarea {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  min-height: 42px;
+}
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule .composer-highlight {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
 }
 
-.workstream-screen .is-message-capsule .composer-toolbar { display: contents; }
+:is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule.has-attachments textarea { min-height: 67px; }
 
-.workstream-screen .is-message-capsule .composer-tools {
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-toolbar { display: contents; }
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools {
   align-self: end;
   grid-column: 1;
   grid-row: 2;
   justify-content: center;
-  padding: 4px;
+  padding: 7px;
 }
 
-.workstream-screen .is-message-capsule .composer-tools > .icon-button {
-  background: var(--av-ref-color-neutral-3);
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
+  background: #dedede;
+  border: 1px solid #c7c7c7;
   border-radius: 50%;
-  color: var(--av-ref-color-neutral-11);
-  height: 32px;
-  width: 32px;
+  color: #747474;
+  height: 28px;
+  width: 28px;
 }
 
-.workstream-screen .is-message-capsule .composer-tools > .icon-button:hover:not(:disabled) {
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button:hover:not(:disabled) {
   background: var(--av-ref-color-neutral-4);
   color: var(--av-ref-color-neutral-13);
 }
 
-.workstream-screen .is-message-capsule .composer-hint { display: none; }
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-hint { display: none; }
 
-.workstream-screen .is-message-capsule .composer-submit-area {
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-submit-area {
   align-self: end;
   grid-column: 3;
   grid-row: 2;
-  padding: 4px;
+  padding: 7px;
 }
 
-.workstream-screen .is-message-capsule :is(.composer-send, .microphone-control .dictation-button) {
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button) {
   background: var(--av-cmp-composer-send-background);
   border-radius: 50%;
   color: var(--av-cmp-composer-send-foreground);
-  height: 32px;
-  width: 32px;
+  height: 28px;
+  width: 28px;
 }
 
-.workstream-screen .is-message-capsule :is(.composer-send, .microphone-control .dictation-button):hover:not(:disabled) {
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule.has-submit .microphone-control .dictation-button {
+  background: #dedede;
+  color: #747474;
+}
+
+:is(.workstream-screen, .new-chat-screen) .is-message-capsule :is(.composer-send, .microphone-control .dictation-button):hover:not(:disabled) {
   filter: brightness(.9);
 }
+
+.composer-action-menu {
+  background: #fbfbfb;
+  border-color: #d7d7d7;
+  border-radius: 11px;
+  box-shadow: 0 12px 34px rgb(0 0 0 / 14%);
+  box-sizing: border-box;
+  min-width: 200px;
+  padding: 4px;
+  width: 200px;
+}
+
+.composer-action-menu-item.menu-item {
+  border-radius: 7px;
+  color: #252525;
+  font-size: 14px;
+  font-weight: 400;
+  gap: 11px;
+  line-height: 20px;
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+.composer-action-menu-item > svg { height: 16px; stroke-width: 1.9; width: 16px; }
+.composer-action-menu-item .composer-teach-task-icon { color: #ff273c; stroke-width: 2.4; }
+
+[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule { border-color: #4e4e4e; }
+[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .workstream-composer.is-message-capsule:focus-within { border-color: #4e4e4e; }
+[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule .composer-tools > .icon-button {
+  background: #3b3b3b;
+  border-color: #4e4e4e;
+  color: #a8a8a8;
+}
+[data-theme='air-dark'] :is(.workstream-screen, .new-chat-screen) .is-message-capsule.has-submit .microphone-control .dictation-button {
+  background: #3c3c3c;
+  color: #a8a8a8;
+}
+[data-theme='air-dark'] .composer-action-menu {
+  background: #181818;
+  border-color: #3a3a3a;
+  box-shadow: 0 14px 38px rgb(0 0 0 / 32%);
+}
+[data-theme='air-dark'] .composer-action-menu-item.menu-item { color: #f4f4f4; }
+[data-theme='air-dark'] .composer-action-menu-item.menu-item[data-highlighted] { background: #2c2c2c; }
 
 
 .command-popover {
@@ -5663,8 +5999,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
     padding-right: 24px;
   }
 
-  .workstream-screen .human-message {
-    max-width: 88%;
+  .workstream-screen :is(.human-message, .agent-message) {
+    max-width: var(--av-cmp-turn-width);
   }
 
   .workstream-screen .composer-dock {
@@ -5674,7 +6010,8 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 }
 
 @media (max-width: 920px) {
-  .grokbot-workstream-header .header-menu-button { visibility: visible; }
+  .grokbot-workstream-header { grid-template-columns: 28px minmax(0, 1fr) 28px; padding-left: 8px; }
+  .grokbot-header-navigation { display: block; }
 }
 
 /* Starting a work stream.
@@ -5833,6 +6170,214 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .workstream-launch-screen:not(.is-launching) .launch-composer .composer-hint {
   color: var(--av-ref-color-neutral-9);
 }
+
+/* New chat follows GrokBot's recipient-first composition surface. The chips
+   stay deliberately dense: each participant reads as one charcoal pill, with
+   the caret beginning immediately after the final selected person. */
+.new-chat-screen:not(.is-launching) > .launch-header {
+  border-bottom: 1px solid var(--av-sys-color-border-subtle);
+  height: 43px;
+  overflow: visible;
+  padding: 0;
+  position: relative;
+  z-index: 8;
+}
+
+.new-chat-recipient-bar {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  height: 43px;
+  padding: 0 9px 0 13px;
+}
+
+.new-chat-to-label {
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.new-chat-recipient-input-shell {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  gap: 5px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.new-chat-recipient-input-shell::-webkit-scrollbar { display: none; }
+
+.new-chat-recipient-chip {
+  align-items: center;
+  background: #f0f0f0;
+  border-radius: 999px;
+  color: #222;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 400;
+  gap: 6px;
+  height: 29px;
+  line-height: 20px;
+  padding: 0 7px 0 4px;
+}
+
+.new-chat-recipient-chip .avatar-small {
+  border-color: transparent;
+  height: 23px;
+  width: 23px;
+}
+
+.new-chat-recipient-chip > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #777;
+  display: flex;
+  height: 19px;
+  justify-content: center;
+  margin-left: 1px;
+  padding: 0;
+  width: 16px;
+}
+
+.new-chat-recipient-chip > button:hover { color: #333; }
+
+[data-theme='air-dark'] .new-chat-recipient-chip {
+  background: #1a1a1a;
+  color: #f2f2f2;
+}
+
+[data-theme='air-dark'] .new-chat-recipient-chip > button { color: #949494; }
+[data-theme='air-dark'] .new-chat-recipient-chip > button:hover { color: #d7d7d7; }
+
+.new-chat-recipient-input-shell > input {
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-default);
+  flex: 1 0 132px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  min-width: 132px;
+  outline: 0;
+  padding: 0;
+}
+
+.new-chat-recipient-input-shell > input::placeholder { color: var(--av-sys-color-text-muted); }
+
+.new-chat-close {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--av-sys-color-text-muted);
+  display: flex;
+  flex: 0 0 28px;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+}
+
+.new-chat-close:hover { color: var(--av-sys-color-text-default); }
+
+.new-chat-recipient-results {
+  background: #fcfcfc;
+  border: 1px solid #e6e6e6;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 12%);
+  left: 42px;
+  max-height: min(330px, calc(100vh - 150px));
+  overflow-y: auto;
+  padding: 5px;
+  position: absolute;
+  top: 35px;
+  width: min(560px, calc(100% - 62px));
+  z-index: 20;
+}
+
+[data-theme='air-dark'] .new-chat-recipient-results {
+  background: #2f2f2f;
+  border-color: #555;
+  box-shadow: 0 14px 38px rgb(0 0 0 / 34%);
+}
+
+.new-chat-recipient-results > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  gap: 10px;
+  min-height: 36px;
+  padding: 4px 9px;
+  text-align: left;
+  width: 100%;
+}
+
+.new-chat-recipient-results:has(> .new-chat-recipient-empty) {
+  align-items: center;
+  display: grid;
+  min-height: 59px;
+}
+
+.new-chat-recipient-results > button.is-selected,
+.new-chat-recipient-results > button:hover { background: #e6e6e6; }
+[data-theme='air-dark'] .new-chat-recipient-results > button.is-selected,
+[data-theme='air-dark'] .new-chat-recipient-results > button:hover { background: #464646; }
+
+.new-chat-recipient-results .avatar-small { height: 24px; width: 24px; }
+.new-chat-recipient-copy { display: flex; flex: 1; min-width: 0; }
+.new-chat-recipient-copy strong { font-size: 14px; font-weight: 400; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-chat-recipient-shortcut { display: flex; gap: 2px; margin-left: auto; }
+.new-chat-recipient-shortcut kbd {
+  align-items: center;
+  background: #dedede;
+  border: 0;
+  border-radius: 4px;
+  color: #777;
+  display: inline-flex;
+  font-family: inherit;
+  font-size: 10px;
+  height: 19px;
+  justify-content: center;
+  min-width: 19px;
+  padding: 0 4px;
+}
+[data-theme='air-dark'] .new-chat-recipient-shortcut kbd { background: #111; color: #aaa; }
+.new-chat-recipient-empty {
+  color: var(--av-sys-color-text-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  margin: 0;
+  padding: 0 13px;
+  text-align: center;
+}
+
+.new-chat-screen:not(.is-launching) > .launch-dock {
+  background: linear-gradient(to top, var(--av-sys-color-surface-default) 72%, transparent);
+  bottom: 0;
+  left: 0;
+  padding: 20px 14px 14px;
+  position: absolute;
+  right: 0;
+}
+
+.new-chat-screen:not(.is-launching) .composer-stack { max-width: 760px; }
+.new-chat-screen:not(.is-launching) .launch-composer {
+  background: var(--av-cmp-composer-background);
+  border: 1px solid #bdbdbd;
+  border-radius: 22px;
+  box-shadow: none;
+}
+.new-chat-screen:not(.is-launching) .launch-composer textarea { min-height: 42px; }
+.new-chat-screen:not(.is-launching) .launch-composer.has-attachments textarea { min-height: 67px; }
+[data-theme='air-dark'] .new-chat-screen:not(.is-launching) .launch-composer { border-color: #4e4e4e; }
 
 @media (max-width: 760px) {
   .workstream-launch-screen:not(.is-launching) > .launch-dock {

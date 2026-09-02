@@ -20,6 +20,7 @@ import {
   Clipboard,
   Copy,
   FileDown,
+  FileText,
   ImageDown,
   LoaderCircle,
   Square,
@@ -674,8 +675,8 @@ function MentionChip({ fallbackLabel, mention, personId }: {
 }): React.JSX.Element {
   const fallbackText = typeof fallbackLabel === 'string' ? fallbackLabel : '@Person';
   const label = mention?.displayName
-    ? `@${mention.displayName.replace(/^@/u, '')}`
-    : fallbackLabel;
+    ? mention.displayName.replace(/^@/u, '')
+    : typeof fallbackLabel === 'string' ? fallbackLabel.replace(/^@/u, '') : fallbackLabel;
   const initials = mentionInitials(mention?.displayName ?? fallbackText);
 
   return (
@@ -1304,20 +1305,9 @@ export function MarkdownBody({
   );
 }
 
-const DOCUMENT_CARD_SIZE = 176;
+const DOCUMENT_CARD_WIDTH = 220;
+const DOCUMENT_CARD_HEIGHT = 53;
 const DOCUMENT_CARD_OFFSET = 20;
-
-function documentCardPreview(source: string): string {
-  return source
-    .replace(/```[^\n]*\n?/gu, '')
-    .replace(/`([^`]+)`/gu, '$1')
-    .replace(/!\[([^\]]*)\]\([^)]*\)/gu, '$1')
-    .replace(/\[([^\]]+)\]\([^)]*\)/gu, '$1')
-    .replace(/^ {0,3}(?:#{1,6}|[-+*]|\d{1,9}[.)])\s+/gmu, '')
-    .replace(/[>*_~]/gu, '')
-    .replace(/\s+/gu, ' ')
-    .trim();
-}
 
 function mentionsWithin(
   mentions: readonly MessageMention[],
@@ -1398,7 +1388,8 @@ function AgentDocumentDeck({
   }
 
   const active = openIndex === null ? null : positioned[openIndex];
-  const deckExtent = DOCUMENT_CARD_SIZE + (positioned.length - 1) * DOCUMENT_CARD_OFFSET;
+  const deckWidth = DOCUMENT_CARD_WIDTH + (positioned.length - 1) * DOCUMENT_CARD_OFFSET;
+  const deckHeight = DOCUMENT_CARD_HEIGHT + (positioned.length - 1) * DOCUMENT_CARD_OFFSET;
   const page = (direction: -1 | 1): void => {
     setOpenIndex((current) => {
       if (current === null) return null;
@@ -1434,7 +1425,7 @@ function AgentDocumentDeck({
       <div aria-label={`${positioned.length} document sections`} className="agent-document-deck-scroll">
         <div
           className="agent-document-deck"
-          style={{ height: deckExtent, width: deckExtent }}
+          style={{ height: deckHeight, width: deckWidth }}
         >
           {positioned.map(({ section }, index) => (
             <button
@@ -1452,14 +1443,18 @@ function AgentDocumentDeck({
               }}
               type="button"
             >
-              <span className="agent-document-card-number">{String(index + 1).padStart(2, '0')}</span>
-              <strong>{section.title}</strong>
-              <span>{documentCardPreview(section.body) || 'Open this section'}</span>
+              <span aria-hidden="true" className="agent-document-card-icon">
+                <FileText size={24} strokeWidth={1.8} />
+              </span>
+              <span className="agent-document-card-copy">
+                <strong>{section.title}</strong>
+                <span>Section {index + 1} of {positioned.length}</span>
+              </span>
             </button>
           ))}
         </div>
       </div>
-      <span className="agent-document-deck-count">{positioned.length} {positioned.length === 1 ? 'section' : 'sections'}</span>
+      <span className="sr-only">{positioned.length} {positioned.length === 1 ? 'section' : 'sections'}</span>
 
       <Dialog.Root open={active !== null} onOpenChange={(open) => !open && setOpenIndex(null)}>
         {active && (
