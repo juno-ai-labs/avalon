@@ -905,6 +905,53 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-09-02 — Webhook ingestion stops asking regional D1 for connector rows
+
+**What changed:** three fixes in `provider-webhook-service.ts`, all the same
+mistake in different clothes. The GitHub credential door
+(`withAuthorizedConnection`) and the credential envelope
+(`decryptVersionedConnectorCredentials`) now receive
+`withWorkspaceRuntimeDatabase(this.env, …)` rather than the raw environment.
+And the redelivery shortcut in `ingestVerified` is now gated on
+`!this.env.WORKSPACE_DOS`, like every other legacy branch in the file.
+
+**Why:** the class never stores a wrapped environment — each use wraps inline —
+so a missed one is invisible beside its neighbours. The GitHub case sat twelve
+lines above a correctly wrapped write, inside the same `try`/`catch`, about the
+same connection. It fires only when a personal connection's token is inside the
+refresh window as a repository event arrives, and when it fired the throw landed
+*before* the payload was stored and the receipt written, so the whole delivery
+was discarded — including healthy workspace-scope connections in other
+workspaces. The envelope case is dormant until `CONNECTOR_CREDENTIALS_KEY_VERSION`
+is incremented, which is precisely when it would have stopped ingestion for all
+three providers at once, while blocking the rewrite the rotation waits on.
+
+The redelivery shortcut is a different failure with the same symptom. It reads
+`activities`, which 0090 dropped and which is in **neither** authority — not
+regional D1, and not `WORKSPACE_LOCAL_TABLES` — so no wrap could have rescued
+it. Unguarded, it threw on every redelivery of an unprocessed receipt, the
+provider retried into the same branch, and `processed_at` could never be set:
+permanent, on the path whose whole job is recovering from a crash.
+
+**Considered and rejected:** routing the `activities` read instead of guarding
+the branch. There is nowhere to route it to. The branch is also redundant — the
+main path already repairs the same case in the current shape, through the
+receipt conflict, `existingWorkspaceReceipt`, and `finishWorkspaceReceipt`,
+which enqueues connector events rather than pre-cutover activity ids. Deleting
+the branch outright would have been cleaner still and was left alone: it is the
+only coverage `provider-webhooks.test.ts` has, since that suite binds no
+`WORKSPACE_DOS` and therefore exercises the legacy path exclusively.
+
+**What a future change has to respect:** every `this.env` in this class is the
+raw regional binding, so a new connector-row statement needs its own wrap; there
+is no constructor to inherit one from, and the correct neighbours are no
+evidence that yours is right. The scan that finds these is also weaker than it
+looks — three statements in this file hold their SQL in a variable rather than a
+template literal, so any check keyed on a backtick walks straight past them.
+Two of the three are regional and correct; the third is inside
+`loadLegacyMatchingConnections` and dead. That they had to be resolved by hand
+is the point.
+
 ### 2026-09-02 — Every shipped connector gets public support coverage
 
 **What changed:** The public Support Center now mirrors the product connector

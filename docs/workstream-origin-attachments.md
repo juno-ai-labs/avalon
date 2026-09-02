@@ -375,6 +375,46 @@ step the ingress has to remember.
 
 ## Changelog
 
+### 2026-09-02 — Origin resolution reads the object that has `resources`
+
+**What changed:** `resolveOriginResource` now wraps its own environment —
+`env = withWorkspaceRuntimeDatabase(env, workspaceId)` — before touching
+`resources`. Every query in `workstream-origin-resource.ts` lives inside that
+function, and `attachWorkstreamOriginResource` goes through it, so the one wrap
+covers the module.
+
+**Why:** `resources` is a `WORKSPACE_LOCAL_TABLES` entry, and migration 0090
+dropped it from regional D1. Nothing on the path from
+`POST /work-opportunities/:id/start` wrapped: `WorkOpportunityService` hands its
+raw environment to `WorkstreamService`, which contains no
+`withWorkspaceRuntimeDatabase` at all, which hands it here. So the lookup asked
+regional D1 for a table it does not have.
+
+What made this the longest-lived instance of that mistake is that it never
+produced a 500. `resolveDurableOpportunityOriginResources` catches, logs
+`workstream_opportunity_origin_resolve_failed`, and returns `[]`. The work
+stream was created, reported success, and attached **no origin resources at
+all** — on every suggestion-started work stream, permanently, with the D1
+message visible only inside a warning's `reason`. The feature described three
+paragraphs above this changelog has not run since the cutover.
+
+**Considered and rejected:** wrapping in `WorkstreamService`'s constructor.
+It would work, and it would be wider than the defect: that class otherwise
+speaks only regional SQL, so the wrap would sit in front of reads that do not
+want it and the boundary would stop being visible at the crossing. Wrapping in
+the function that owns the workspace id keeps it where a reader looking at the
+statement can see it, which is the same shape `user-delivery.ts` and
+`connector-actor-identity.ts` already use.
+
+**What a future change has to respect:** the swallowing `try/catch` is what hid
+this, and it is still there — it is correct for a genuinely missing resource,
+and it will hide the next routing mistake just as completely. Anything added to
+this module that reads a workspace table needs the port, and a test that proves
+it needs the table seeded **only** in WorkspaceDO: the workers suite's D1 starts
+empty, so a fixture that creates `resources` there hands the code an authority
+production retired and passes against the bug. `docs/testing.md` states the rule
+under "Declaring a table the region does not have".
+
 ### 2026-08-30 — Archive waits for the unlink; Versions distinguishes loading from none
 
 **What changed:** **Archive** stays open until `detachResource` succeeds, keeps

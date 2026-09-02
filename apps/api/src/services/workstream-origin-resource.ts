@@ -12,6 +12,7 @@ import { newId, nowIso } from "@rally/db";
 import type { Env } from "../env";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
+import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { logWarn } from "../observability/logger";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 
@@ -239,6 +240,13 @@ export async function resolveOriginResource(
   workspaceId: string,
   descriptor: OriginResourceDescriptor,
 ): Promise<string | null> {
+  // `resources` is WorkspaceDO's; regional D1 has not had it since migration
+  // 0090. Callers hand this an unwrapped environment — `WorkstreamService` has
+  // no wrap of its own — and the caller above catches, logs and returns an
+  // empty list, so an unrouted read here did not surface as a failure: every
+  // work stream started from an opportunity was created with no origin
+  // resources attached, silently, on every attempt.
+  env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const bindings = [
     workspaceId,
     descriptor.connectionId,
