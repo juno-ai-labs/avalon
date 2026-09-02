@@ -141,6 +141,16 @@ describe("the cross-artifact request fence", () => {
     )).toBe("refused");
   });
 
+  it("refuses an opaque Origin even when fetch metadata claims same-origin", () => {
+    // Chromium sent this exact pair from the no-referrer bootstrap in
+    // production. The string `null` is an opaque Origin, not a missing header,
+    // and must never become equivalent to same-origin admission.
+    expect(classifyFetchMetadata(
+      request({ site: "same-origin", method: "POST", origin: "null" }),
+      ORIGIN,
+    )).toBe("refused");
+  });
+
   it("refuses a top-level navigation that is not a GET", () => {
     expect(classifyFetchMetadata(request({ navigation: true, method: "POST" }), ORIGIN)).toBe("refused");
   });
