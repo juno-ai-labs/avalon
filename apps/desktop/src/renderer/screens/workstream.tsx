@@ -1692,11 +1692,14 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   // The shell lays the main pane out against whichever panel holds the right
   // sidebar, and only this screen knows whether HyperSight has it — or which
-  // panel is still fading out of it.
-  useEffect(() => {
+  // panel is still fading out of it. Layout effects, like the close they
+  // describe: what the shell is told and what this screen renders have to reach
+  // the same frame, or a switch away from an open panel paints the arriving
+  // feed padded for a sidebar that is no longer drawn beside it.
+  useLayoutEffect(() => {
     setBlockDashboardOpen(blockDashboardOpen);
   }, [blockDashboardOpen, setBlockDashboardOpen]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     setRailLeaving(railLeaving);
     return () => setRailLeaving(null);
   }, [railLeaving, setRailLeaving]);
