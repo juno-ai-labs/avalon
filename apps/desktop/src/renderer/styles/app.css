@@ -3288,6 +3288,40 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
   color: transparent;
   -webkit-background-clip: text;
 }
+/* A settled run's work, closed behind its own total.
+
+   The toggle takes the type of the timing rows it hides, because it stands for
+   them: same size, same weight, same neutral, so opening the drawer changes
+   what is on screen rather than how the column reads. It is a control, so it
+   gains the hover those labels have no use for, and the global `:focus-visible`
+   ring reaches it as an ordinary button. */
+.work-accordion { display: grid; gap: 12px; }
+
+.work-accordion-toggle {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: var(--av-ref-color-neutral-9);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 480;
+  gap: 3px;
+  justify-self: start;
+  min-height: 20px;
+  padding: 0;
+}
+
+.work-accordion-toggle:hover { color: var(--av-ref-color-neutral-11); }
+
+/* The rows inside carry the feed's own bottom margin, which spaces one row from
+   the next in a column that has nothing else in it. Inside the drawer the grid
+   gap does that job, and the margin would add a run's worth of empty space
+   under the last row. */
+.work-accordion-rows { display: grid; gap: 12px; }
+.work-accordion-rows .agent-work-timing { margin: 0; }
+
 .run-failure-notice {
   align-items: flex-start;
   background: color-mix(in srgb, var(--av-sys-color-danger-base) 10%, var(--av-sys-color-surface-subtle));
@@ -4828,7 +4862,10 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   margin: -17px 0 18px;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .transcript-event:has(.agent-work-timing) {
+/* `.work-accordion` is named alongside the timing row it wraps because a closed
+   accordion contains no timing row at all, and a transcript event that changed
+   its own outer margin on being opened would shift the answer under it. */
+:is(.workstream-screen, .automation-chat-surface) .transcript-event:is(:has(.agent-work-timing), :has(.work-accordion)) {
   margin: -12px 0 18px;
 }
 

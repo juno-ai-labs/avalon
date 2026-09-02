@@ -1473,12 +1473,12 @@ describe('MessageBlock system rows', () => {
     const disclosure = { expanded, onToggle: (id: string) => { expanded.add(id); } };
     const message = systemMessage('message-kept', 'An automation run prompt of some length');
 
-    const { unmount } = render(<MessageBlock {...actions} message={message} systemRowDisclosure={disclosure} />);
+    const { unmount } = render(<MessageBlock {...actions} message={message} rowDisclosure={disclosure} />);
     fireEvent.click(openControl());
     expect(expanded.has('message-kept')).toBe(true);
     unmount();
 
-    render(<MessageBlock {...actions} message={message} systemRowDisclosure={disclosure} />);
+    render(<MessageBlock {...actions} message={message} rowDisclosure={disclosure} />);
 
     expect(screen.getByText('An automation run prompt of some length')).toHaveAttribute('data-expanded', 'true');
     expect(closeControl()).toBeInTheDocument();
@@ -1600,6 +1600,90 @@ describe('MessageBlock plugin activity rows', () => {
     expect(screen.getByText('Multimodal generation is working for 6s')).toBeVisible();
     expect(container.querySelector('svg.tabler-icon-image-generation')).toBeVisible();
     expect(container.querySelector('svg.tabler-icon-plug')).toBeNull();
+  });
+});
+
+describe('MessageBlock work accordion', () => {
+  const row = (id: string, over: Partial<Message>): Message => ({
+    ...baseMessage, id, authorType: 'agent', author: undefined, text: undefined, ...over,
+  });
+  const accordion = (over: Partial<NonNullable<Message['workAccordion']>> = {}): Message => row(
+    'thought-one:work-accordion',
+    {
+      messageType: 'work_accordion',
+      attentionSequenceNumber: null,
+      workAccordion: {
+        durationMs: 2_477_000,
+        rows: [
+          row('thought-one', {
+            messageType: 'thought',
+            thoughtEvent: {
+              status: 'completed', durationMs: 50_000,
+              activeVerb: 'thinking', completedVerb: 'thought',
+            },
+          }),
+          row('plugin-web', {
+            messageType: 'plugin_activity',
+            pluginActivity: {
+              groupKey: 'name:Web', name: 'Web', icon: 'web', active: false, durationMs: 7_000,
+              activeVerb: 'Using Web', completedVerb: 'Used Web',
+            },
+          }),
+        ],
+        ...over,
+      },
+    },
+  );
+
+  it('shows the run\'s total closed, and the rows it stands for when opened', () => {
+    render(<MessageBlock {...actions} message={accordion()} />);
+
+    const toggle = screen.getByRole('button', { name: 'Worked for 41m 17s' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    // Closed is closed: the receipt is one line, not one line plus the rows.
+    expect(screen.queryByText('thought for 50s')).toBeNull();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    // Each row keeps the wording and the mark it had in the feed, because the
+    // drawer draws them through the same components.
+    expect(screen.getByText('thought for 50s')).toBeVisible();
+    expect(screen.getByText('Used Web for 7s')).toBeVisible();
+    expect(screen.getByRole('img', { name: 'Plugin: Web' })).toBeVisible();
+
+    fireEvent.click(toggle);
+    expect(screen.queryByText('Used Web for 7s')).toBeNull();
+  });
+
+  it('says a run it could not time worked, rather than printing a total it does not have', () => {
+    render(<MessageBlock {...actions} message={accordion({ durationMs: null })} />);
+    expect(screen.getByRole('button', { name: 'Worked' })).toBeInTheDocument();
+  });
+
+  it('reports a recovered total as an upper bound', () => {
+    render(<MessageBlock {...actions} message={accordion({ timingAccuracy: 'upper_bound' })} />);
+    expect(screen.getByRole('button', { name: 'Worked for at most 41m 17s' })).toBeInTheDocument();
+  });
+
+  it('takes its open state from the caller when the caller keeps it', () => {
+    // The same requirement the clamped system row has, and the reason it is one
+    // set: this row grows by a run's worth of timing rows when opened, and a
+    // virtualized row that scrolls away open and returns closed leaves the size
+    // cache expecting the taller one.
+    const expanded = new Set<string>();
+    const disclosure = { expanded, onToggle: (id: string) => { expanded.add(id); } };
+    const message = accordion();
+
+    const { unmount } = render(<MessageBlock {...actions} message={message} rowDisclosure={disclosure} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 41m 17s' }));
+    expect(expanded.has('thought-one:work-accordion')).toBe(true);
+    unmount();
+
+    render(<MessageBlock {...actions} message={message} rowDisclosure={disclosure} />);
+
+    expect(screen.getByRole('button', { name: 'Worked for 41m 17s' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Used Web for 7s')).toBeVisible();
   });
 });
 

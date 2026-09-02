@@ -1272,7 +1272,10 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
 }
 
 /**
- * Which system rows are open, held by a caller that virtualizes its transcript.
+ * Which collapsible rows are open, held by a caller that virtualizes its
+ * transcript. Two kinds of row use it — a clamped system note, and a settled
+ * run's work accordion — and one set covers both: message ids are unique, and
+ * the question ("which rows has this reader opened") is the same one.
  *
  * `useState` inside the row is not enough there. The work-stream transcript
  * unmounts a row that scrolls out of the window, and the row's open/closed flag
@@ -1285,7 +1288,7 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
  * size the cache already expects. A caller that mounts its rows once needs none
  * of this and can leave it undefined.
  */
-export interface SystemRowDisclosure {
+export interface RowDisclosure {
   expanded: ReadonlySet<string>;
   onToggle: (messageId: string) => void;
 }
@@ -1407,9 +1410,9 @@ function PrincipalUnavailableCard({
   );
 }
 
-function SystemMessageBlock({ disclosure, message }: { disclosure?: SystemRowDisclosure; message: Message }): React.JSX.Element {
+function SystemMessageBlock({ disclosure, message }: { disclosure?: RowDisclosure; message: Message }): React.JSX.Element {
   // The fallback for a caller that does not virtualize. Where one does, the
-  // state has to outlive the row — see `SystemRowDisclosure`.
+  // state has to outlive the row — see `RowDisclosure`.
   const [locallyExpanded, setLocallyExpanded] = useState(false);
   const [textNode, setTextNode] = useState<HTMLElement | null>(null);
   const text = message.text ?? '';
@@ -1619,6 +1622,73 @@ function PluginActivityBlock({ message }: { message: Message }): React.JSX.Eleme
       monotonicStartedAt={group.monotonicStartedAt}
       timingAccuracy={group.timingAccuracy}
     />
+  );
+}
+
+/**
+ * One row inside a work accordion.
+ *
+ * Only the two kinds `collapseSettledWorkIntoAccordion` swallows: the drawer is
+ * built from the feed's own rows and draws them the way the feed did, so a
+ * plugin's mark, wording, and tense are decided in exactly one place whether
+ * the run is open or closed. They lose the `message-<id>` anchor their feed
+ * rows carried — the accordion above them holds the one for this stretch, and
+ * two elements answering to the same anchor is worse than none.
+ */
+function WorkAccordionRow({ message }: { message: Message }): React.JSX.Element | null {
+  if (message.messageType === 'thought') return <ThoughtBlock message={message} />;
+  if (message.messageType === 'plugin_activity') return <PluginActivityBlock message={message} />;
+  return null;
+}
+
+/**
+ * A settled run's work, closed behind the total it added up to.
+ *
+ * "Worked for 41m 17s", with the plugin and thinking rows behind a chevron.
+ * While the loop runs those rows are the progress a reader is watching and the
+ * feed shows them; once it finishes they are a receipt for a fact the one line
+ * above the answer already states, and a reader who wants the breakdown asks
+ * for it. See `collapseSettledWorkIntoAccordion` for what goes in and why the
+ * total moved out of the message header to get here.
+ *
+ * The open flag comes from the feed where there is one, because this row is
+ * exactly the shape the virtualizer mismeasures: it grows by a run's worth of
+ * rows when opened, and a row that scrolls away open and returns closed leaves
+ * the size cache expecting the taller one. See `RowDisclosure`.
+ */
+function WorkAccordionBlock({ disclosure, message }: {
+  disclosure?: RowDisclosure;
+  message: Message;
+}): React.JSX.Element | null {
+  // The fallback for a caller that does not virtualize, as the system row has.
+  const [locallyExpanded, setLocallyExpanded] = useState(false);
+  const accordion = message.workAccordion;
+  if (!accordion) return null;
+  const expanded = disclosure ? disclosure.expanded.has(message.id) : locallyExpanded;
+  // The same sentence the message header printed before this row existed, from
+  // the same function: the total did not change, only where it is written.
+  const label = workSummaryLabel(accordion);
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  return (
+    <div className="work-accordion">
+      <button
+        aria-expanded={expanded}
+        className="work-accordion-toggle"
+        onClick={() => {
+          if (disclosure) disclosure.onToggle(message.id);
+          else setLocallyExpanded((current) => !current);
+        }}
+        type="button"
+      >
+        <span className="work-accordion-total">{label}</span>
+        <Chevron aria-hidden="true" size={14} />
+      </button>
+      {expanded && (
+        <div className="work-accordion-rows">
+          {accordion.rows.map((row) => <WorkAccordionRow key={row.id} message={row} />)}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1902,7 +1972,7 @@ interface MessageBlockProps {
   loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
   onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
-  systemRowDisclosure?: SystemRowDisclosure;
+  rowDisclosure?: RowDisclosure;
   /**
    * Takes over an automation whose principal lost access. Absent on a surface
    * with no API session, where the card still explains what is wrong — the room
@@ -1926,7 +1996,7 @@ export function MessageBlock({
   message,
   onAnswerElicitation,
   onOpenAttachment,
-  systemRowDisclosure,
+  rowDisclosure,
   onClaimExecutionPrincipal,
   claimingExecutionPrincipalFor,
   claimExecutionPrincipalError,
@@ -1937,6 +2007,13 @@ export function MessageBlock({
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
   if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
   if (message.messageType === 'plugin_activity') return <div className="transcript-event" id={`message-${message.id}`}><PluginActivityBlock message={message} /></div>;
+  if (message.messageType === 'work_accordion') {
+    return (
+      <div className="transcript-event" id={`message-${message.id}`}>
+        <WorkAccordionBlock disclosure={rowDisclosure} message={message} />
+      </div>
+    );
+  }
   if (message.messageType === 'elicitation' && message.elicitation) {
     if (message.elicitation.status === 'answered') {
       const externalResponse = message.authorType === 'external';
@@ -2018,7 +2095,7 @@ export function MessageBlock({
   }
   const automation = message.messageType === 'automation_activation';
   if (!automation && (message.authorType === 'system' || message.messageType === 'system')) {
-    return <SystemMessageBlock disclosure={systemRowDisclosure} message={message} />;
+    return <SystemMessageBlock disclosure={rowDisclosure} message={message} />;
   }
 
   // The ordinary authored row, not a kind of its own: the same block a

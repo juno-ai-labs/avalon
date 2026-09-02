@@ -59,6 +59,7 @@ import {
 } from '../lib/telemetry';
 import {
   adjacentTranscriptRange,
+  collapseSettledWorkIntoAccordion,
   composeTranscript,
   createTextMessage,
   foldSettledWorkIntoMessages,
@@ -1335,9 +1336,11 @@ export function WorkstreamScreen(): React.JSX.Element {
     () => {
       const feedOverlays = (transcriptOverlays.data ?? []).filter((overlay) =>
         !isComposerQueueOverlay(overlay, { harnessRunning }));
-      return foldSettledWorkIntoMessages(
-        groupThinkingMessages(
-          groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+      return collapseSettledWorkIntoAccordion(
+        foldSettledWorkIntoMessages(
+          groupThinkingMessages(
+            groupPluginToolMessages(composeTranscript(canonicalTranscript, feedOverlays)),
+          ),
         ),
       );
     },
