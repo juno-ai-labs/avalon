@@ -1253,7 +1253,7 @@ Azure with no second candidate to fall back to — so the first production run t
 choose it died before its first turn. Tool schemas reach this function from four
 independent places: this repository, a connector adapter, a hosted MCP server,
 and a skill. Only two of those are visible to a build-time test, and a rule that
-three sets of authors have to remember is one that will be forgotten. The single
+four sets of authors have to remember is one that will be forgotten. The single
 chokepoint every tool already passes through is the only place a guarantee can
 actually be made.
 

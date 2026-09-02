@@ -333,6 +333,33 @@ describe("repairRootSchemaForProviders", () => {
     });
   });
 
+  it("strips a root `enum` or `const` without reading its values as branches", () => {
+    // `enum` always holds instance values and `const` may hold an array of
+    // them, so neither is a list of subschemas. Walking them reads the object
+    // value `{ properties: { mode: "fast" } }` as a branch declaring a property
+    // `mode` whose schema is the string `"fast"` — not a schema at all, and a
+    // shape a provider can reject on its own. They are removed, never merged.
+    const enumSchema = {
+      type: "object",
+      properties: { a: { type: "string" } },
+      enum: [{ properties: { mode: "fast" } }],
+    };
+    const constSchema = {
+      type: "object",
+      properties: { a: { type: "string" } },
+      const: [{ properties: { mode: "slow" } }],
+    };
+
+    expect(repairRootSchemaForProviders(enumSchema)).toEqual({
+      type: "object",
+      properties: { a: { type: "string" } },
+    });
+    expect(repairRootSchemaForProviders(constSchema)).toEqual({
+      type: "object",
+      properties: { a: { type: "string" } },
+    });
+  });
+
   it("keeps only what every branch of a union requires", () => {
     // `required` is what a merge most easily gets backwards. The branches are
     // alternatives, so their union of `required` would demand both names at
