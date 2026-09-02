@@ -44,6 +44,7 @@ import type {
   BindLoopTransition,
   BindProviderBoundary,
 } from "./bind-loop-projection";
+import { modelDefaultReasoningEffort } from "./model-inference-defaults";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
@@ -91,6 +92,12 @@ export {
 } from "./skills";
 export { parseSkillMarkdown, type SkillSummary } from "@juno-ai/bind/skills";
 export {
+  MODEL_INFERENCE_DEFAULTS,
+  modelDefaultReasoningEffort,
+  type ModelInferenceDefaults,
+  type ModelReasoningEffort,
+} from "./model-inference-defaults";
+export {
   AUTOMATIONS_PLUGIN_ID,
   AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
   createAutomationsPlugin,
@@ -111,7 +118,8 @@ export interface OpenRouterConfig {
   fallbackModels?: string[];
   /** Additional attempts on one model for transport failures before fallback. */
   sameModelRetries?: number;
-  appUrl?: string;
+  /** Product site attributed to OpenRouter through its HTTP-Referer header. */
+  httpReferer?: string;
   appName?: string;
   fetch?: typeof globalThis.fetch;
   /** Maximum time to establish an HTTP response from OpenRouter. */
@@ -134,6 +142,9 @@ export interface AzureOpenAIConfig {
 
 /** Shared freshness horizon for OpenRouter catalog-derived metadata. */
 export const OPENROUTER_CATALOG_CACHE_TTL_MS = 60 * 60 * 1_000;
+
+/** Stable product attribution for every Rally OpenRouter request. */
+export const RALLY_OPENROUTER_HTTP_REFERER = "https://rallywith.ai";
 
 /** One host-resolved token-rate tier Bind can use to bill an Azure attempt. */
 export interface AzureModelTokenRates {
@@ -339,6 +350,7 @@ export interface OpenRouterInferencePayload {
   stream_options: { include_usage: true };
   tools?: ModelRequestTool[];
   tool_choice?: "auto";
+  parallel_tool_calls?: true;
   plugins?: Array<Record<string, unknown>>;
   reasoning?: { effort: "none" | "low" | "medium" | "high" };
   /** Azure's OpenAI-compatible Chat Completions reasoning control. */
@@ -706,10 +718,10 @@ export class OpenRouterClient {
     parse: (value: unknown) => T;
     model?: string;
     /**
-     * `"none"` turns reasoning off explicitly rather than leaving it to the
-     * model's default, which differs by model: a route change that moves a
-     * mechanical one-shot call onto a thinking-by-default model would
-     * otherwise start paying for reasoning nobody asked for.
+     * `"none"` turns reasoning off explicitly. Omission accepts Rally's
+     * canonical-model default when one exists, then the provider default.
+     * Mechanical one-shot calls should therefore keep passing `"none"` when
+     * thinking would buy them nothing.
      */
     reasoningEffort?: "none" | "low" | "medium" | "high";
     signal?: AbortSignal | undefined;
@@ -764,6 +776,9 @@ export class OpenRouterClient {
                 trace: { ...builtTracePayload.trace, trace_id: traceId },
               }
             : undefined;
+          const reasoningEffort = input.reasoningEffort
+            ?? modelDefaultReasoningEffort(model);
+          const reasoning = structuredReasoning(reasoningEffort);
           const requestPayload = serializeOpenRouterChatRequest({
             model,
             messages: repairMessages ?? schemaMessages,
@@ -777,9 +792,7 @@ export class OpenRouterClient {
               }
             },
             plugins: [{ id: "response-healing" }],
-            ...(structuredReasoning(input.reasoningEffort)
-              ? { reasoning: structuredReasoning(input.reasoningEffort)! }
-              : {}),
+            ...(reasoning ? { reasoning } : {}),
             ...(tracePayload ? {
               ...(tracePayload.user ? { user: tracePayload.user } : {}),
               ...(tracePayload.session_id ? { sessionId: tracePayload.session_id } : {}),
@@ -1045,6 +1058,7 @@ export class OpenRouterClient {
         max_total_results: input.maxWebResults ?? 8
       });
     }
+    const reasoningEffort = input.reasoningEffort ?? modelDefaultReasoningEffort(model);
     try {
       const requestPayload = serializeOpenRouterChatRequest({
         model,
@@ -1054,9 +1068,10 @@ export class OpenRouterClient {
         ...(tools.length > 0 ? {
           tools,
           toolChoice: input.toolChoice ?? "auto",
+          parallelToolCalls: true,
         } : {}),
         ...(input.plugins?.length ? { plugins: input.plugins } : {}),
-        ...(input.reasoningEffort ? { reasoning: { effort: input.reasoningEffort } } : {}),
+        ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
         ...(input.trace ? {
           ...(input.trace.user ? { user: input.trace.user } : {}),
           ...(input.trace.session_id ? { sessionId: input.trace.session_id } : {}),
@@ -1183,7 +1198,7 @@ export class OpenRouterClient {
       "Content-Type": "application/json",
       "X-OpenRouter-Metadata": "enabled",
       ...(sessionId ? { "X-Session-ID": sessionId } : {}),
-      ...(this.config.appUrl ? { "HTTP-Referer": this.config.appUrl } : {}),
+      "HTTP-Referer": this.config.httpReferer ?? RALLY_OPENROUTER_HTTP_REFERER,
       ...(this.config.appName ? { "X-Title": this.config.appName } : {})
     };
   }
@@ -1246,7 +1261,12 @@ export class AzureOpenAIClient {
         ...(input.tools?.length ? {
           tools: input.tools,
           tool_choice: input.toolChoice ?? "auto",
+          // Foundry's v1 Chat Completions contract supports parallel tool
+          // calls for tool-bearing requests, including Grok deployments.
+          parallel_tool_calls: true as const,
         } : {}),
+        // This adapter sees an Azure deployment name, not Rally's canonical
+        // model ID. Bind resolves any canonical-model default before calling it.
         ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
       };
       const response = await this.fetcher(this.chatCompletionsUrl, {
@@ -1387,6 +1407,7 @@ function serializeOpenRouterChatRequest(input: {
   streamOptions?: { includeUsage: boolean };
   tools?: ModelRequestTool[];
   toolChoice?: "auto" | "none";
+  parallelToolCalls?: boolean;
   plugins?: Array<Record<string, unknown>>;
   reasoning?: { effort: "none" | "low" | "medium" | "high" };
   responseFormat?: OpenRouterChatRequest["responseFormat"];
@@ -1402,6 +1423,9 @@ function serializeOpenRouterChatRequest(input: {
       ...(input.streamOptions ? { streamOptions: input.streamOptions } : {}),
       ...(input.tools ? { tools: toSdkTools(input.tools) } : {}),
       ...(input.toolChoice ? { toolChoice: input.toolChoice } : {}),
+      ...(input.parallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: input.parallelToolCalls }),
       ...(input.plugins ? { plugins: toSdkPlugins(input.plugins) } : {}),
       ...(input.reasoning ? { reasoning: input.reasoning } : {}),
       ...(input.responseFormat ? { responseFormat: input.responseFormat } : {}),

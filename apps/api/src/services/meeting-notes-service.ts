@@ -257,7 +257,6 @@ export class MeetingNotesService {
         apiKey: this.env.OPENROUTER_API_KEY,
         primaryModel: routing.model,
         fallbackModels: routing.fallbackModels,
-        appUrl: this.env.PUBLIC_API_BASE_URL,
         appName: "Rally",
         maxIterations: 1,
         maxToolCalls: 0,
