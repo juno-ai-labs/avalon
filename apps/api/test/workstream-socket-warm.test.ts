@@ -9,8 +9,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { substreamAgentName } from "../src/durable-objects/names";
 import { WorkstreamService } from "../src/services/workstream-service";
+import { verifySocketTicket } from "../src/services/socket-service";
 import {
   createCloudflareTestBinding,
+  createTestD1Database,
+  createTestD1PreparedStatement,
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
@@ -28,16 +31,26 @@ const auth: AuthContext = {
 };
 
 function environment(
-  wake: () => Promise<void>,
+  prepareSocketAdmission: (input: unknown) => Promise<{ outcome: "snapshot_prepared" }>,
   substreamObjectName: (name: string) => DurableObjectId = () =>
     createTestDurableObjectId("substream"),
-  getSubstream: (id: DurableObjectId) => object = () => ({ wake }),
+  getSubstream: (id: DurableObjectId) => object = () => ({ prepareSocketAdmission }),
 ): Env {
   return createTestEnv({
     APP_ENV: "test",
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.rallywith.ai",
     SESSION_SIGNING_KEY: "socket-warm-test-signing-key",
+    DB: createTestD1Database({
+      prepare: () => createTestD1PreparedStatement({
+        first: async () => ({
+          phase: "durable_object_open",
+          generation: 7,
+          required_serving_contract_version: 1,
+          serving_contract_version: 1,
+        }),
+      }),
+    }),
     WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
       idFromName: () => createTestDurableObjectId("workspace"),
       get: () => ({ canReadWorkstream: async () => true }),
@@ -49,14 +62,14 @@ function environment(
   });
 }
 
-describe("work-stream socket ticket warming", () => {
-  it("defers a measurable storage-ready wake for the main feed object", async () => {
-    const wake = vi.fn(async () => undefined);
+describe("work-stream socket ticket preparation", () => {
+  it("defers measurable admission and snapshot preparation for the main feed object", async () => {
+    const prepareSocketAdmission = vi.fn(async () => ({ outcome: "snapshot_prepared" as const }));
     const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
     const deferred: Promise<unknown>[] = [];
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const service = new WorkstreamService(
-      environment(wake, substreamObjectName),
+      environment(prepareSocketAdmission, substreamObjectName),
       auth,
       (promise) => deferred.push(promise),
     );
@@ -64,12 +77,40 @@ describe("work-stream socket ticket warming", () => {
     const ticket = await service.socketTicket(workstreamId);
 
     expect(ticket.url).toContain(`/socket/workstreams/${workstreamId}/substreams/0`);
+    await expect(verifySocketTicket(
+      environment(prepareSocketAdmission, substreamObjectName),
+      ticket.ticket,
+    )).resolves.toMatchObject({
+      ticketId: ticket.ticketId,
+      admission: {
+        version: 1,
+        authorityGeneration: 7,
+        role: "member",
+        analyticsWorkspaceId: null,
+      },
+    });
     expect(deferred).toHaveLength(1);
     await expect(deferred[0]).resolves.toBeUndefined();
     expect(substreamObjectName).toHaveBeenCalledWith(
       substreamAgentName("global", workspaceId, workstreamId),
     );
-    expect(wake).toHaveBeenCalledOnce();
+    expect(prepareSocketAdmission).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId,
+      workstreamId,
+      substreamId: "0",
+      userId,
+      sessionId: auth.sessionId,
+      ticketId: ticket.ticketId,
+      ticketIssuedAt: expect.any(Number),
+      ticketExpiresAt: expect.any(Number),
+      authorityGeneration: 7,
+      role: "member",
+      speculative: false,
+    }));
+    const preparation = (prepareSocketAdmission as unknown as {
+      mock: { calls: Array<[{ ticketIssuedAt: number; ticketExpiresAt: number }]> };
+    }).mock.calls[0]![0];
+    expect(preparation.ticketExpiresAt - preparation.ticketIssuedAt).toBe(60);
     expect(info).toHaveBeenCalledWith(expect.objectContaining({
       event: "workstream_socket_ticket_warm_finished",
       workspace_id: workspaceId,
@@ -78,14 +119,15 @@ describe("work-stream socket ticket warming", () => {
       ticket_id: ticket.ticketId,
       duration_ms: expect.any(Number),
       outcome: "success",
+      preparation_outcome: "snapshot_prepared",
     }));
   });
 
-  it("returns the ticket when the best-effort wake fails", async () => {
-    const wake = vi.fn(async () => { throw new Error("probe wake failed"); });
+  it("returns the ticket when best-effort preparation fails", async () => {
+    const prepareSocketAdmission = vi.fn(async () => { throw new Error("probe wake failed"); });
     const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
     const deferred: Promise<unknown>[] = [];
-    const env = environment(wake, substreamObjectName);
+    const env = environment(prepareSocketAdmission, substreamObjectName);
     const service = new WorkstreamService(env, auth, (promise) => deferred.push(promise));
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
@@ -107,12 +149,12 @@ describe("work-stream socket ticket warming", () => {
   });
 
   it("does not materialize an unrecorded non-main substream from a ticket request", async () => {
-    const wake = vi.fn(async () => undefined);
+    const prepareSocketAdmission = vi.fn(async () => ({ outcome: "snapshot_prepared" as const }));
     const substreamObjectName = vi.fn(() => createTestDurableObjectId("substream"));
-    const getSubstream = vi.fn(() => ({ wake }));
+    const getSubstream = vi.fn(() => ({ prepareSocketAdmission }));
     const deferred: Promise<unknown>[] = [];
     const service = new WorkstreamService(
-      environment(wake, substreamObjectName, getSubstream),
+      environment(prepareSocketAdmission, substreamObjectName, getSubstream),
       auth,
       (promise) => deferred.push(promise),
     );
@@ -123,6 +165,6 @@ describe("work-stream socket ticket warming", () => {
     expect(deferred).toEqual([]);
     expect(substreamObjectName).not.toHaveBeenCalled();
     expect(getSubstream).not.toHaveBeenCalled();
-    expect(wake).not.toHaveBeenCalled();
+    expect(prepareSocketAdmission).not.toHaveBeenCalled();
   });
 });
