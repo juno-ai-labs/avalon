@@ -23,6 +23,7 @@ function fixture(route: unknown | null): {
   readRoute: ReturnType<typeof vi.fn>;
   prepare: ReturnType<typeof vi.fn>;
   idFromName: ReturnType<typeof vi.fn>;
+  redeemCode: ReturnType<typeof vi.fn>;
 } {
   const readRoute = vi.fn(async () => route === null ? null : route);
   const prepare = vi.fn((sql: string) => {
@@ -35,14 +36,16 @@ function fixture(route: unknown | null): {
     });
   });
   const idFromName = vi.fn((name: string) => createTestDurableObjectId(name));
+  const redeemCode = vi.fn();
   const hosts = createCloudflareTestBinding<ArtifactServingEnv["ARTIFACT_HOSTS"]>({
     idFromName,
-    get: () => ({}),
+    get: () => ({ redeemCode }),
   });
   return {
     readRoute,
     prepare,
     idFromName,
+    redeemCode,
     env: {
       APP_ENV: "test",
       AVALON_REGION: "global",
@@ -73,7 +76,7 @@ describe("artifact serving hostname routes", () => {
   });
 
   it("keeps the Rally bootstrap same-origin without weakening artifact responses", async () => {
-    const { env } = fixture({
+    const { env, redeemCode } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
       region: "global",
@@ -90,9 +93,31 @@ describe("artifact serving hostname routes", () => {
       env,
       context(),
     );
+    const refusedOpaqueRedeem = await artifactWorker.fetch(
+      new Request(`${origin}/__rally/redeem`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "null",
+          "sec-fetch-dest": "document",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-site": "same-origin",
+        },
+        body: "code=unused",
+      }),
+      env,
+      context(),
+    );
 
+    expect(bootstrap.status).toBe(200);
     expect(bootstrap.headers.get("referrer-policy")).toBe("same-origin");
+    expect(bootstrap.headers.get("content-security-policy")).toContain("form-action 'self'");
+    expect(bootstrap.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(bootstrap.headers.get("x-frame-options")).toBe("DENY");
+    expect(bootstrap.headers.get("cache-control")).toContain("private");
     expect(refusedArtifact.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(refusedOpaqueRedeem.status).toBe(403);
+    expect(redeemCode).not.toHaveBeenCalled();
   });
 
   it("returns the neutral 404 when the route is absent or crosses regions", async () => {
