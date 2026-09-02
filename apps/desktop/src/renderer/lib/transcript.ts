@@ -1847,7 +1847,19 @@ function isCollapsedWorkRow(message: Message): boolean {
  * exactly one run's worth of rows, each already collapsed to one per plugin.
  * A stretch of transcript nobody has loaded ends it too, for the reason every
  * pass here stops there: the sentence that closed the earlier run may be
- * sitting in the part nobody loaded.
+ * sitting in the part nobody loaded. That seam is checked at *both* ends of the
+ * scan. An answer that carries it is itself the first row of a newly loaded
+ * island, so the machinery above it belongs to an earlier one and is not this
+ * answer's to fold — the projection marks only a turn's first row, so an answer
+ * that opens its turn is exactly the shape where that happens.
+ *
+ * The accordion keeps the attention ordinal of the first row it swallowed,
+ * because the unread divider is placed at the first row carrying one and the
+ * machinery of an unread turn belongs under that divider with the answer it
+ * produced. Carrying the ordinal is not the same as having been read, though:
+ * `highestVisibleAttentionSequence` excludes this row for the reason it already
+ * excludes a tool row — an accordion scrolling into view, or a long one being
+ * scrolled through, must not acknowledge a sentence still below the fold.
  *
  * The accordion sits where the run's first row sat and takes a derived id: it
  * is a different row from the one it replaces, and that row is still in the
@@ -1858,7 +1870,10 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
   const rows: Message[] = [];
   for (const message of messages) {
     const summary = message.workSummary;
-    if (summary === undefined || message.messageType !== 'text' || message.authorType !== 'agent') {
+    if (summary === undefined || message.messageType !== 'text' || message.authorType !== 'agent'
+      // The answer opens a newly loaded island, so what sits above it in this
+      // list is the previous island's work, not this run's.
+      || message.precededByTranscriptGap) {
       rows.push(message);
       continue;
     }
@@ -1879,12 +1894,14 @@ export function collapseSettledWorkIntoAccordion(messages: readonly Message[]): 
       ...first,
       id: `${first.id}:work-accordion`,
       messageType: 'work_accordion',
-      // Machinery carries no attention ordinal, for the reason a grouped plugin
-      // row does not: the rows it is built from carry their *turn's* ordinal,
-      // which is also that turn's answer's, so keeping it would let an
-      // accordion scrolling into view acknowledge a sentence still below the
-      // fold.
-      attentionSequenceNumber: null,
+      // The unread divider is placed at the first row carrying an ordinal, so a
+      // row that swallowed the ones that carried it has to carry it too or the
+      // divider slides down past the accordion and leaves an unread turn's work
+      // sitting in the read section above it. Acknowledgement is the separate
+      // question, and the answer there is still no: see the docblock.
+      attentionSequenceNumber: collapsed.find(
+        (row) => row.attentionSequenceNumber != null,
+      )?.attentionSequenceNumber ?? null,
       // The row's own work is inside it now; nothing downstream should read the
       // first row's timing back off the wrapper.
       pluginActivity: undefined,

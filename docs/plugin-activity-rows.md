@@ -369,6 +369,21 @@ them already one per plugin.
 - **The accordion takes a derived id.** The row it sits in place of is still in
   the feed — inside it — and two elements answering to one `message-<id>` anchor
   is worse than none. The rows inside carry no anchor at all.
+- **The run's seam is checked at both ends of the scan.** An answer that itself
+  carries `precededByTranscriptGap` opens a newly loaded island, so the
+  machinery above it in the list belongs to an earlier one. The projection marks
+  only a turn's *first* row, so this is the shape where an answer carries the
+  flag: a turn whose first block is its text. Scanning back from it would fold a
+  previous island's rows into this answer's drawer.
+- **The accordion carries an attention ordinal but never acknowledges one.**
+  Two different questions, and the grouped plugin row answers only the second.
+  The unread divider is placed at the first row carrying an ordinal, so a row
+  that swallowed the ones that carried it has to carry it too — otherwise the
+  divider slides down past the accordion and an unread turn's work sits in the
+  read section above it. Acknowledgement is separate:
+  `highestVisibleAttentionSequence` excludes `work_accordion` the way it already
+  excludes a tool row, because an accordion scrolling into view — or a long one
+  being scrolled through — says nothing about having read the sentence below it.
 - **The grouped list is renumbered.** `sequenceNumber` is a dense display index
   and dropped rows have to be squeezed out of it, or the unread divider and the
   virtualizer key off positions that no longer exist.
@@ -445,9 +460,13 @@ It deliberately does **not** cover:
   never established. The same happens to work that trails an answer with no
   answer of its own after it.
 - **A reader who opens an accordion and scrolls away** keeps it open, because
-  the flag lives in `MessageFeed`. It resets when the feed unmounts — leaving
-  the work stream and coming back closes every drawer — which is the same
-  lifetime the clamped system rows have.
+  the flag lives in `MessageFeed`. It lasts until that component actually
+  unmounts, which is *not* every navigation: `WorkstreamScreen` stays mounted
+  across work streams and its `MessageFeed` is not keyed by work stream, so a
+  drawer opened here is still open on coming back to the same work stream. The
+  set is keyed on message ids, which are unique across work streams, so what it
+  retains is inert everywhere else. This is the lifetime the clamped system rows
+  already had; sharing the set did not change it.
 - No caps, quotas, or timeouts: the whole module is a pure function over a list
   that is already bounded by the transcript's own paging.
 
