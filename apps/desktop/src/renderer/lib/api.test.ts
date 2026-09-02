@@ -869,8 +869,8 @@ describe('Rally API wire adapter', () => {
 });
 
 describe('message mention resolution', () => {
-  function stubRoster(): void {
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  function stubRoster(): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/workspace/members')) {
         return json({ items: [{ user, role: 'owner', status: 'active', joinedAt: timestamp }] });
@@ -879,8 +879,28 @@ describe('message mention resolution', () => {
       // members and nothing else, so a request for the work stream — which is
       // what used to carry the connections — fails this test loudly.
       throw new Error(`unexpected request: ${url}`);
-    }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
   }
+
+  it('does not fetch the workspace roster for plain message text', async () => {
+    const fetchMock = stubRoster();
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.messageMentionPayload('Send the finished brief')).resolves.toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('fetches the workspace roster for durable person mention Markdown', async () => {
+    const fetchMock = stubRoster();
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await api.messageMentionPayload(`Ask Adam (person://${userId})`);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/members');
+  });
 
   it('resolves a typed member name and leaves a typed connection name alone', async () => {
     stubRoster();

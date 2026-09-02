@@ -251,6 +251,22 @@ import { requireOpenWorkstreamAuthority } from "./workstream-authority";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
+
+/**
+ * A message already supplies the model's immediate context through the durable
+ * transcript. Do not put automatic long-term-memory recall between accepting
+ * that message and starting inference; the model can still call the explicit
+ * `rally_memory` tools when the task needs older context.
+ */
+const MESSAGE_ORIGIN_REASONS_WITHOUT_ADMISSION_RECALL = new Set([
+  "opening_message",
+  "human_message",
+  "elicitation_answer",
+  "inbound_email",
+  "slack_workspace_opening_message",
+  "slack_workspace_message",
+  "slack_workspace_elicitation_answer",
+]);
 const INLINE_CHILD_PROMPT_VERSION = "inline-child-v2";
 const INLINE_CHILD_ROUTING_POLICY_VERSION = "bind-10-openrouter-inline-child-v1";
 const TOOL_REPLAY_READ_TIMEOUT_MS = 2_000;
@@ -5098,7 +5114,7 @@ async function loadRunPromptContext(
 ): Promise<{
   systemPrompt: string;
   additionalMessages: ModelMessage[];
-  memoryContextHash: string;
+  memoryContextHash: string | null;
 }> {
   let automationContext:
     | {
@@ -5189,15 +5205,19 @@ async function loadRunPromptContext(
       ])}`,
     ));
   }
-  const memoryQueryParts: string[] = [workstream.title, workstream.objective];
-  if (automationContext) {
+  const recallsMemoryAtAdmission = automationContext !== undefined
+    || !MESSAGE_ORIGIN_REASONS_WITHOUT_ADMISSION_RECALL.has(input.reason);
+  const memoryQueryParts: string[] = recallsMemoryAtAdmission
+    ? [workstream.title, workstream.objective]
+    : [];
+  if (automationContext && recallsMemoryAtAdmission) {
     // Everything but the delivery destination: an address is control-plane
     // configuration, and embedding it shifts recall for every automation that
     // has a target while retrieving nothing anybody wants back.
     const recallable = { ...automationContext, resultDelivery: undefined };
     memoryQueryParts.push(JSON.stringify(recallable));
   }
-  if (input.triggerMessageId) {
+  if (input.triggerMessageId && recallsMemoryAtAdmission) {
     const triggerMessage = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
       .message({ messageId: input.triggerMessageId });
     if (triggerMessage?.text_content.trim()) memoryQueryParts.push(triggerMessage.text_content);
@@ -5216,7 +5236,7 @@ async function loadRunPromptContext(
       textSnippet: activity.textSnippet,
       metadata: activity.metadata,
     };
-    memoryQueryParts.push(JSON.stringify(triggerContext));
+    if (recallsMemoryAtAdmission) memoryQueryParts.push(JSON.stringify(triggerContext));
     triggerMessage = modelDerivative(
       renderTriggerActivityMessage(triggerContext),
       "connector_activity",
@@ -5235,7 +5255,7 @@ async function loadRunPromptContext(
     if (!wakeup || wakeup.workstream_id !== input.workstreamId) {
       throw new Error("scheduled_wakeup_context_not_found");
     }
-    memoryQueryParts.push(wakeup.prompt);
+    if (recallsMemoryAtAdmission) memoryQueryParts.push(wakeup.prompt);
     triggerMessage = modelDerivative(renderScheduledWakeupMessage({
       prompt: wakeup.prompt,
       scheduledAt: wakeup.created_at,
@@ -5281,13 +5301,15 @@ async function loadRunPromptContext(
       eventCount: digestWindow.eventCount,
     }), "digest_delivery", input.digestDeliveryId);
   }
-  const frozenMemory = await freezeRunMemoryContext(
-    env,
-    input,
-    lease,
-    memoryQueryParts.filter(Boolean).join("\n\n"),
-  );
-  if (frozenMemory.results.length > 0) {
+  const frozenMemory = recallsMemoryAtAdmission
+    ? await freezeRunMemoryContext(
+        env,
+        input,
+        lease,
+        memoryQueryParts.filter(Boolean).join("\n\n"),
+      )
+    : null;
+  if (frozenMemory && frozenMemory.results.length > 0) {
     additionalMessages.push(modelDerivative({
       role: "user",
       content: [
@@ -5323,7 +5345,7 @@ async function loadRunPromptContext(
       ...(automationContext ? { automation: automationContext } : {}),
     }),
     additionalMessages,
-    memoryContextHash: frozenMemory.memoryContextHash,
+    memoryContextHash: frozenMemory?.memoryContextHash ?? null,
   };
 }
 

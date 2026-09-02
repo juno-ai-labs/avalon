@@ -6251,7 +6251,7 @@ describe("Durable Objects in the Workers runtime", () => {
     second.close(1000, "done");
   });
 
-  it("rejects retired message pages and keeps the SubstreamAgent socket read-only for commands", async () => {
+  it("rejects retired message pages on the authenticated SubstreamAgent socket", async () => {
     await seedOpenAuthority();
     const id = env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
@@ -6300,22 +6300,6 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(JSON.parse(String((await pageReceipt).data))).toMatchObject({
       type: "error",
       code: "invalid_event",
-    });
-    const receipt = nextMessage(socket!);
-    socket!.send(JSON.stringify({
-      type: "create_message",
-      operationId: "00000000-0000-7000-8000-000000000107",
-      payload: {
-        text: "route me through the workspace",
-        clientMessageId: "client-runtime-test",
-        mentions: [],
-        confirmedParticipantUserIds: [],
-        attachmentIds: [],
-      },
-    }));
-    expect(JSON.parse(String((await receipt).data))).toMatchObject({
-      type: "error",
-      code: "workspace_socket_required",
     });
     socket!.close(1000, "done");
   });

@@ -553,12 +553,12 @@ So the shape of every mutation is: **REST request → authoritative write →
 response to the caller → push to every socket that cares.** The response is a
 convenience for the caller; the push is the truth for everyone.
 
-Enforce that at the room rather than by convention. `SubstreamAgent` answers any
-mutation frame with `rest_required` — "persist this action through the
-work-stream API before publishing it" — and answers a `create_message` frame
-with `workspace_socket_required`. A frame type existing in a shared client
-schema is not permission to send it; the authority decides, and it says so in an
-error a client author can act on.
+Enforce that at the room rather than by convention. `SubstreamAgent` accepts
+only `create_message` as a mutation on the admitted room socket; every other
+mutation frame receives `rest_required` — "persist this action through the
+work-stream API before publishing it." A frame type existing in a shared client
+schema is not permission to send it; the authority decides, and it says so in
+an error a client author can act on.
 
 **Do**
 
@@ -726,17 +726,16 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
 | The sidebar's automations and notes | Carried on the `workspace_sync` answer to `subscribe`, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | Yes. |
 | Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
-| Sending a message | Command frame on the WorkspaceDO command socket, answered with a private receipt | **No** — and deliberately, for now. See below. |
+| Sending a message | Command frame on the admitted SubstreamAgent socket, answered with a private receipt | Yes. The command is scoped by the socket attachment and remains idempotent across reconnect. |
 | Connector list in workspace settings | `GET /connections`, re-read on every window refocus (`refetchOnWindowFocus: 'always'`) | **No.** The one focus revalidation in the client; the global default is off. See below. |
 | Every other mutation | REST, refused on the feed socket with `rest_required` | Yes. |
 
 ## Known divergences
 
-Three places where the running code does not follow this document. They are
+Two places where the running code does not follow this document. They are
 written down so that nobody reproduces them by copying what is already there,
-and so the work to close them is legible to whoever picks it up. **None of them
-is an exception you may extend: two are gaps, and the message send is a single
-argued-for carve-out.**
+and so the work to close them is legible to whoever picks it up. **Neither is
+an exception you may extend.**
 
 **Cold connect pushes an invalidation, not the data.** A first `subscribe` is
 answered with a single `workspace_sync` event whose topic list is *every* topic
@@ -786,17 +785,6 @@ sync topics — so closing it means applying pushed connection state on that
 screen instead of re-reading. Until then, this is the one place a timer-like
 read survives, and it is not a precedent.
 
-**Message sends go up the workspace socket, not over REST.** This was decided
-on purpose and the reasoning is recorded in
-[`architecture.md`](architecture.md#changelog) (2026-08-17): a foreground send
-and its realtime result are one interaction owned by one authority, and
-splitting request from result across HTTP and WebSocket made a lost response
-ambiguous. That argument is about the *send*, which is the one mutation whose
-result is a stream rather than a value, and it is not weakened by anything in
-this document. It remains the one standing exception to "mutations go over
-REST"; adding a second one requires the same standard of argument, and
-converting this one back requires answering the ambiguity that produced it.
-
 ## Related documents
 
 - [`realtime-sockets.md`](realtime-sockets.md) — how a socket is admitted, which
@@ -816,6 +804,25 @@ converting this one back requires answering the ambiguity that produced it.
   the caller is made to wait for.
 
 ## Changelog
+
+### 2026-09-01 — Message admission moves to the socket that owns the room
+
+**What changed:** `create_message` now uses the admitted SubstreamAgent socket,
+with a private correlated receipt and reconnect resend under the same client
+message identity. The workspace socket is no longer the current desktop's
+message route.
+
+**Why:** The message and its resulting stream are one interaction owned by the
+room. Its retained socket already fixes routing and authority, so the workspace
+hop was neither a REST boundary nor useful parent coordination.
+
+**Considered and rejected:** Returning to REST recreates the ambiguous lost
+response that private receipts solve. Per-message D1 reauthorization on the
+child duplicates admission while the access-revocation queue already closes
+lost authority.
+
+**Consequences:** Sending remains the deliberate mutation-over-socket case; it
+now matches the authority rule instead of appearing as a known divergence.
 
 ### 2026-08-30 — Sidebar participant preview is join time
 

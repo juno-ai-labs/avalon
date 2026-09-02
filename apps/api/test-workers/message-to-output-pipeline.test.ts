@@ -3,8 +3,8 @@
 /**
  * The complete member-visible pipeline: a message goes in, something comes out.
  *
- * This drives the SubstreamAgent through its real product endpoint — the same
- * one WorkspaceDO's socket calls — with real D1 session auth, and then lets the
+ * This drives the SubstreamAgent through its real product endpoint and direct
+ * room socket with real D1 session auth, and then lets the
  * real alarm execute the run. Nothing is seeded into the object by hand; every
  * row the pipeline needs is created by the pipeline.
  *
@@ -369,6 +369,22 @@ function nextSocketFrameOfType(socket: WebSocket, type: string): Promise<SocketF
       try {
         const frame = JSON.parse(String(event.data)) as SocketFrame;
         if (frame.type !== type) return;
+        socket.removeEventListener("message", onMessage);
+        resolve(frame);
+      } catch {
+        // Ignore heartbeat and unrelated non-JSON frames.
+      }
+    };
+    socket.addEventListener("message", onMessage);
+  });
+}
+
+function nextSocketCommandOutcome(socket: WebSocket): Promise<SocketFrame> {
+  return new Promise((resolve) => {
+    const onMessage = (event: MessageEvent) => {
+      try {
+        const frame = JSON.parse(String(event.data)) as SocketFrame;
+        if (!["client_command_succeeded", "client_command_failed", "error"].includes(frame.type)) return;
         socket.removeEventListener("message", onMessage);
         resolve(frame);
       } catch {
@@ -1827,6 +1843,123 @@ describe("a member's message travels the whole pipeline", () => {
       // side of that asynchronous boundary happens to be observed here.
       expect(canonicalCopies.n + pendingCopies.n).toBe(1);
     });
+  });
+
+  it("admits an idempotent message on the authenticated room socket across hibernation", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    const openingRunId = opened.body.harnessRunId as string;
+    await settledRun(stub, openingRunId);
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005b7",
+    );
+    await runInDurableObject(stub, (instance) => {
+      const productService = (instance as unknown as {
+        product: { authorize: () => Promise<never> };
+      }).product;
+      productService.authorize = async () => {
+        throw new Error("socket_message_reauthorized_workspace_membership");
+      };
+    });
+    const command = {
+      type: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000005b8",
+      payload: {
+        text: "send me to the room directly",
+        clientMessageId: "pipeline-room-socket-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    };
+    const firstReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(command));
+    const accepted = await firstReceipt;
+    expect(accepted).toMatchObject({
+      type: "client_command_succeeded",
+      command: "create_message",
+      clientMessageId: command.payload.clientMessageId,
+      deliveryState: expect.stringMatching(/^(canonical|pending)$/u),
+    });
+
+    await evictDurableObject(stub);
+
+    const replayReceipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify(command));
+    expect(await replayReceipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "create_message",
+      clientMessageId: command.payload.clientMessageId,
+      turn: accepted.turn,
+    });
+    socket.close(1000, "done");
+  });
+
+  it("correlates a malformed create command to the pending client message", async () => {
+    const stub = agentStub();
+    await initializeWorkstream(stub, "first message");
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005b9",
+    );
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000005ba",
+      payload: { clientMessageId: "pipeline-room-socket-invalid-1" },
+    }));
+
+    expect(await receipt).toMatchObject({
+      type: "client_command_failed",
+      command: "create_message",
+      clientMessageId: "pipeline-room-socket-invalid-1",
+      error: { code: "invalid_event" },
+    });
+    socket.close(1000, "done");
+  });
+
+  it("acknowledges durable admission when the eager loop wake-up fails", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const { socket } = await openSubscribedSocket(
+      stub,
+      "00000000-0000-7000-8000-0000000005bb",
+    );
+    await runInDurableObject(stub, (instance) => {
+      const target = instance as unknown as {
+        requestPersistentLoopActivation: () => Promise<never>;
+      };
+      target.requestPersistentLoopActivation = async () => {
+        throw new Error("injected_activation_wakeup_failure");
+      };
+    });
+    const receipt = nextSocketCommandOutcome(socket);
+    socket.send(JSON.stringify({
+      type: "create_message",
+      operationId: "00000000-0000-7000-8000-0000000005bc",
+      payload: {
+        text: "the durable row is the authority",
+        clientMessageId: "pipeline-room-socket-wakeup-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      },
+    }));
+
+    expect(await receipt).toMatchObject({
+      type: "client_command_succeeded",
+      command: "create_message",
+      clientMessageId: "pipeline-room-socket-wakeup-1",
+      deliveryState: "pending",
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM pending_loop_inputs
+          WHERE client_message_id = 'pipeline-room-socket-wakeup-1'`,
+      ).one().count)).toBe(1);
+    socket.close(1000, "done");
   });
 
   it("a revoked session cannot write into the work stream", async () => {
