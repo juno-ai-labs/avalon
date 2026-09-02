@@ -756,13 +756,18 @@ future agent tool or plugin, not just this family.
    family; the canonical name does not repeat its plugin prefix.
 2. No silently ignored params: `additionalProperties: false` declared *and* a
    strict zod parse in the executor enforcing it; the surface is uniform across
-   the family. An exclusive or conditional choice between parameters lives in
-   the `description` and the executor's parse, never in a root-level
-   `oneOf`/`anyOf` of bare `required` branches. Bind 13 repairs that shape
-   rather than emptying it, as earlier versions did, but the schema is still not
-   the enforcement point: a branch naming an undeclared property is still pruned
-   away, an unrepairable root union is dropped whole, and `z.toJSONSchema`
-   cannot carry a `.refine()` across the boundary regardless.
+   the family. **A tool's `parameters` root is `{ type: "object", properties:
+   {…} }` and nothing else** — no root-level `oneOf`/`anyOf`/`allOf`/`enum`/
+   `const`/`not`, whatever the branches look like, and never a root without a
+   `type`. That is Azure OpenAI's rule, it is the strictest of the two measured,
+   and a root it rejects fails the whole request with every other tool in it.
+   `z.union` emits exactly that shape, so an exclusive or conditional choice
+   between parameters is a flat object with a `superRefine`, stated in the
+   `description` and enforced by the executor's parse. The schema was never the
+   enforcement point in any case: a branch naming an undeclared property is
+   pruned away, `repairRootSchemaForProviders` flattens a root combinator on the
+   way to the wire, and `z.toJSONSchema` cannot carry a `.refine()` across the
+   boundary regardless. Item 12 below is then mandatory.
 3. References accept names where a person would use a name; ambiguity is an
    error, never a guess.
 4. There is a discovery path for any id, type, or enum the tool requires.
@@ -812,6 +817,52 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-09-02 — A tool parameters root is a plain object, on every provider
+
+**What changed:** The rule for a tool's `parameters` root tightened from "a root
+union whose branches all read as objects is fine" to "no root-level combinator
+at all, and always `type: "object"`". `nonObjectRootSchema` states it,
+`apps/api/test/tool-schema-sanitization.test.ts` gates every authored schema on
+it, and `repairRootSchemaForProviders` corrects it for schemas no test can see.
+`AttachmentListResourcesArgumentsSchema` and `AttachmentReadResourceArgumentsSchema`
+stopped being `z.union`s and became flat objects whose cursor exclusivity is a
+`superRefine`, with `validateInput` attached per item 12. Checklist item 2
+carries the rule.
+
+**Why:** `openai/gpt-5.6-sol` is fenced to Azure with no fallback candidate, and
+the first production run to pick it from the model picker died on 2026-09-02
+before its first turn. Azure answered `invalid_function_parameters` naming
+`workstream_list_resources`: `schema must be a JSON Schema of 'type: "object"',
+got 'type: "None"'`. Both offending tools were root `anyOf`s with fully readable
+object branches, which is precisely the shape the previous rule was written to
+*allow* — it was measured against xAI, Gemini, and GPT reached through
+OpenRouter, and OpenRouter silently repairs root unions, so nine models' worth
+of evidence agreed on a rule the first directly-called provider rejected. The
+obvious patch of adding `type: "object"` beside the `anyOf` was tested against
+the live deployment and also fails: `schema must have type 'object' and not have
+'oneOf'/'anyOf'/'allOf'/'enum'/'const'/'not' at the top level`.
+
+The corrector had to change too, and that is the part to respect. It previously
+*deleted* the offending root keywords, which is fine for a schema that also
+declares root `properties` and catastrophic for one that does not: a `z.union`
+root is only the `anyOf`, so deleting it leaves `{}` — a tool advertising no
+parameters whose executor still demands them. It now merges the branches into
+one object, intersecting `required` across a union and unioning it across an
+`allOf`. What a merge cannot preserve is the exclusivity, and that loss is
+deliberate: xAI could read it, Azure will not accept the request that carries
+it, and a constraint only one provider honours is worth less than a request the
+other does not reject outright.
+
+**What a future change has to respect:** the corrector runs at
+`toModelToolDefinitions`, the single point where any tool — this repository's, a
+connector's, a hosted MCP server's, a skill's — becomes a provider payload.
+Correcting at each source is a rule four sets of authors must remember; this is
+one that cannot be forgotten, and moving it back toward the sources reopens the
+class. `nonObjectRootSchema` deliberately judges the schema **as authored**
+rather than as `sanitizeToolSchema` renders it, because this repository's
+transports do not sanitize before serializing: the archived Azure request that
+failed carried the bare root `anyOf` exactly as `z.toJSONSchema` emitted it.
 
 ### 2026-09-02 — A blanked optional argument reads as an omission
 

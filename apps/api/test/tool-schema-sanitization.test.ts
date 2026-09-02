@@ -4,6 +4,7 @@ import {
   AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   AVALON_SKILL_TOOL_DEFINITIONS,
+  nonObjectRootSchema,
   nonObjectRootUnionBranches,
   weakenedCompositionBranches,
 } from "@rally/agent-harness";
@@ -140,6 +141,13 @@ describe("tool schema sanitization", () => {
     expect(rejected).toEqual([]);
   });
 
+  it("leaves no tool whose root is not a plain object schema", () => {
+    const rejected = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
+      nonObjectRootSchema(schema).map((path) => `${name}: ${path}`));
+
+    expect(rejected).toEqual([]);
+  });
+
   it("leaves no tool with a composition branch the sanitizer strips a constraint from", () => {
     const weakened = everyAuthoredToolSchema().flatMap(({ name, schema }) =>
       weakenedCompositionBranches(schema).map((path) => `${name}: ${path}`));
@@ -231,7 +239,12 @@ describe("dynamic connector tool schemas", () => {
     }
   });
 
-  it("leaves a remote schema alone when its root union is already object-branched", () => {
+  it("flattens an object-branched root union rather than leaving it, because Azure rejects it too", () => {
+    // This case inverted. An object-branched root union satisfies xAI's rule
+    // and was deliberately left alone; Azure OpenAI rejects a root combinator
+    // whatever its branches look like, so it now has to be merged. Every
+    // property survives — deleting the union, which is what the corrector used
+    // to do, would leave a tool with no parameters at all.
     const schema = {
       anyOf: [
         { type: "object", properties: { pageId: { type: "string" } }, required: ["pageId"] },
@@ -239,7 +252,22 @@ describe("dynamic connector tool schemas", () => {
       ],
     };
 
-    expect(validate(schema)).toEqual(schema);
+    expect(validate(schema)).toEqual({
+      type: "object",
+      properties: { pageId: { type: "string" }, cursor: { type: "string" } },
+    });
+  });
+
+  it("lets nothing a remote server serves reach the wire in a shape Azure rejects", () => {
+    for (const remote of [
+      { anyOf: [{ type: "object", properties: { a: { type: "string" } } }] },
+      { type: "object", properties: { a: { type: "string" } }, oneOf: [{ required: ["a"] }] },
+      { type: "object", properties: { a: { type: "string" } }, allOf: [{ required: ["a"] }] },
+      { properties: { a: { type: "string" } } },
+      { type: "string" },
+    ]) {
+      expect(nonObjectRootSchema(validate(remote))).toEqual([]);
+    }
   });
 
   it("leaves an ordinary remote object schema untouched", () => {

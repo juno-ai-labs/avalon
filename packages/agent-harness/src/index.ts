@@ -76,9 +76,10 @@ export {
   type BindSystemProjection,
 } from "./bind-loop-projection";
 export {
+  nonObjectRootSchema,
   nonObjectRootUnionBranches,
   readableRootUnionBranch,
-  repairRootUnionForProviders,
+  repairRootSchemaForProviders,
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
 export {
