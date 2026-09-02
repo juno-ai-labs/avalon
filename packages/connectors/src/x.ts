@@ -244,7 +244,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
           cursor: args.cursor,
         }, context.signal);
         return {
-          output: boundXValue(output),
+          output: boundXPage(output),
           summary: `Read the X timeline for ${userName ? `@${userName}` : `user ${userId}`}`,
         };
       }
@@ -252,7 +252,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       if (name === "get_tweet_thread_context") {
         const args = threadContextSchema.parse(rawArgs);
         const output = await getThreadContext(request, args.tweetId, args.cursor, context.signal);
-        return { output: boundXValue(output), summary: `Read the X thread containing post ${args.tweetId}` };
+        return { output: boundXPage(output), summary: `Read the X thread containing post ${args.tweetId}` };
       }
 
       if (name === "get_tweet_replies_v2") {
@@ -262,7 +262,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
           cursor: args.cursor,
           queryType: args.queryType,
         }, context.signal);
-        return { output: boundXValue(output), summary: `Read replies to X post ${args.tweetId}` };
+        return { output: boundXPage(output), summary: `Read replies to X post ${args.tweetId}` };
       }
 
       if (name === "list_timeline") {
@@ -271,7 +271,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
           listId: args.listId,
           cursor: args.cursor,
         }, context.signal);
-        return { output: boundXValue(output), summary: `Read the X List timeline ${args.listId}` };
+        return { output: boundXPage(output), summary: `Read the X List timeline ${args.listId}` };
       }
 
       throw new ConnectorError("unsupported_capability", `Unsupported X tool: ${name}`);
@@ -398,6 +398,22 @@ async function resolveUserId(request: XRequest, userName: string, signal: AbortS
 
 function normalizeUserName(value: string): string {
   return value.startsWith("@") ? value.slice(1) : value;
+}
+
+/**
+ * What a tool returns for one provider page.
+ *
+ * X reports a last page as `next_cursor: ""` rather than by omitting it, and
+ * the plugin tells the model to keep paging while a cursor comes back. Handed
+ * that blank verbatim, a model pages with it forever: the request side reads it
+ * as no cursor, X answers with page one, and page one says `next_cursor: ""`
+ * again. Reporting the end of the list as `null` is what makes a last page
+ * legible as one, the same shape Slack returns.
+ */
+function boundXPage(output: Record<string, unknown>): unknown {
+  const bounded = boundXValue(output);
+  if (!isRecord(bounded) || !Object.hasOwn(bounded, "next_cursor")) return bounded;
+  return { ...bounded, next_cursor: stringValue(bounded, "next_cursor") || null };
 }
 
 function boundXValue(value: unknown, depth = 0): unknown {

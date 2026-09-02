@@ -423,13 +423,16 @@ uses number semantics, because number already contains integer. One shared
 addition to the depth cap, so a provider-controlled recursive branching schema
 cannot turn the walk exponential. This makes a medium model's `"0"` and the
 preferred `0` one canonical receipt identity without turning numeric-looking
-resource ids or free text into numbers. It also drops an **optional** property
-whose value is `""` when that property's schema declares the empty string is not
-one of its values — `minLength` of at least 1, a `type` without `string`, or an
+resource ids or free text into numbers. On a tool whose `mode` is `read`, it also drops an
+**optional** property whose value is `""` when that property's schema declares
+the empty string is not one of its values — `minLength` of at least 1, a `type` without `string`, or an
 `enum`/`const` excluding it, composed through `$ref`, `allOf`, and every branch
 of an `anyOf`/`oneOf`. A required property keeps the blank so validation names
 the field, an undeclared key keeps it so a strict parse still reports it, and a
-schema this walk cannot read keeps it too. Requiredness is itself resolved
+schema this walk cannot read keeps it too. A **write** keeps every blank,
+because there `null` and absence are different requests — clearing a field
+versus leaving it alone — and choosing between them is the executor's to refuse
+by name, not the harness's to guess. Requiredness is itself resolved
 across the composed schema rather than read from the node carrying `properties`,
 since a generated schema commonly separates the two, and a walk that cannot
 finish drops nothing. `{}` and `{ after: "" }` are
@@ -1232,8 +1235,10 @@ silently return every test to the shared key while each still passes alone.
 ### 2026-09-02 — A blanked optional argument is normalized to an omission
 
 **What changed:** `normalizeToolArguments` gained a second rule beside
-numeric-string normalization: an optional property given `""` is removed when
-its declared schema says the empty string is not one of its values. It runs in
+numeric-string normalization: on a tool whose `mode` is `read`, an optional
+property given `""` is removed when its declared schema says the empty string is
+not one of its values. It takes the tool's mode from the call site for that
+reason. It runs in
 the same walk, under the same depth and visit budgets, and therefore before the
 input hash, `beforeToolCall`, receipt planning, and execution. The three
 functions in `tool-arguments.ts` are now exported from the package so the
@@ -1249,7 +1254,11 @@ instead of each connector rediscovering it.
 
 **Considered and rejected:** Fixing it inside each connector executor, which
 leaves the next connector to repeat it and still spends a round trip on an error
-the model may not recover from. Also rejected: reading `required` from the node
+the model may not recover from. Also rejected: applying the rule to writes. A
+blanked `assigneeId` dropped from `linear_update_issue` leaves the issue's
+assignee untouched and reports the update as complete, while `null` there
+clears it — two different requests the harness cannot choose between, so the
+executor refuses the call by name instead. Also rejected: reading `required` from the node
 that declares `properties`. A generated or hosted-MCP schema separates the two,
 so that would have dropped a required blank from a tool whose arguments Rally
 forwards without a local parse — the argument would have gone missing instead of
