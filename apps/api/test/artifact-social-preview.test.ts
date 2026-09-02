@@ -41,6 +41,19 @@ describe("artifact social preview markup", () => {
     const injected = injectSocialPreviewIntoHtml(source, "<meta property=\"og:title\" content=\"Report\">");
 
     expect(injected).toContain("<html><head>");
+    expect(injected.startsWith("<!doctype html>")).toBe(true);
     expect(injected.indexOf("og:title")).toBeLessThan(injected.indexOf("<body>"));
+  });
+
+  it("preserves a leading doctype and keeps authored metadata first", () => {
+    const markup = "<meta property=\"og:title\" content=\"Fallback\">";
+    const headless = injectSocialPreviewIntoHtml("<!doctype html><h1>Report</h1>", markup);
+    const authored = injectSocialPreviewIntoHtml(
+      "<!doctype html><html><head><meta property=\"og:title\" content=\"Authored\"></head><body></body></html>",
+      markup,
+    );
+
+    expect(headless.startsWith("<!doctype html>\n<head>")).toBe(true);
+    expect(authored.indexOf("Authored")).toBeLessThan(authored.indexOf("Fallback"));
   });
 });

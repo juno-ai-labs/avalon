@@ -378,7 +378,8 @@ async function serveAsset(
       headers: { "content-type": asset.contentType },
     }));
   }
-  if (socialPageUrl && manifest.socialPreview && asset.contentType.startsWith("text/html")) {
+  if (socialPageUrl && manifest.socialPreview && resolved === "index.html"
+    && asset.contentType.toLowerCase().startsWith("text/html")) {
     const source = await object.text();
     const markup = socialPreviewMarkup(manifest.socialPreview, socialPageUrl, manifest.artifactVersion);
     return withSecurityHeaders(new Response(injectSocialPreviewIntoHtml(source, markup), {

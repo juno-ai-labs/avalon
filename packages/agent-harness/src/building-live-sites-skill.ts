@@ -71,6 +71,10 @@ that works the first time.
    Rally banner. Rally normalizes these tags to absolute URLs when serving
    and generates a branded fallback card if the image or metadata is
    missing, but authored metadata and artwork produce the best unfurl.
+   Never create files beneath \`.rally/\`; Rally reserves that directory
+   for derived site assets. On an active site, keep the taught final
+   \`env.ASSETS.fetch(request)\` fallback: the generated preview image uses
+   the ordinary asset route so Rally does not bypass your access guard.
    Include a short \`README.md\` in the directory saying what the site is
    and anything a future revision needs to know that the code does not
    show — the next run to touch this site may know nothing you know
