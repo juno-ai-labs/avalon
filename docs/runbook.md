@@ -137,7 +137,8 @@ Configure the Azure values in every region where dictation is enabled. `AZURE_OP
 Azure agent inference is a separate opt-in pair:
 `AZURE_INFERENCE_ENDPOINT` and `AZURE_INFERENCE_API_KEY`. Configure both only
 on a Worker whose regional data boundary permits that resource. With neither,
-Bind omits Azure and retains the existing OpenRouter route; with only one, the
+Bind omits Azure and retains an existing OpenRouter route only when that
+model's provider policy permits one; Azure-only Sol is unavailable. With only one, the
 run fails configuration before provider I/O. The endpoint is the resource root
 or its `/openai/v1` base, never HTTP, a deployment URL, or a URL carrying
 credentials, query parameters, or a fragment; invalid values fail Worker
@@ -194,11 +195,13 @@ never a workspace ID, prompt, usage, or credential. Do not copy the top-level
 OpenRouter catalog price: it is the lowest endpoint price, not the average.
 
 Inference never refreshes this cache, and a route whose primary and fallback
-models are all OpenRouter-only does not read it. On a cron failure, each stale
-valid model record remains usable. A rejected cache read or a missing,
-malformed, or legacy numeric-cost record makes Bind omit Azure for that model
-instead of making an unpriced Azure request. Grok can then continue with its
-existing OpenRouter candidate; Sol has no OpenRouter candidate and fails closed.
+models are all OpenRouter-only does not read it. Bind reads only the Azure-bound
+models in the current route, rather than coupling every deployment to every
+run. On a cron failure, each stale valid model record remains usable. A rejected
+cache read or a missing, malformed, or legacy numeric-cost record makes Bind
+omit Azure for that model instead of making an unpriced Azure request; another
+model's valid record remains usable. Grok can then continue with its existing
+OpenRouter candidate; Sol has no OpenRouter candidate and fails closed.
 To inspect the three
 currently Azure-routed records without exposing provider credentials, run:
 

@@ -1962,6 +1962,19 @@ describe("agent harness", () => {
         },
       ]);
     }) as typeof fetch;
+    const resolveAzureModelPricing = vi.fn(async (modelIds: readonly string[]) => {
+      const pricing = new Map<string, AzureModelPricing>();
+      if (modelIds.includes("openai/gpt-5.6-sol")) {
+        pricing.set("openai/gpt-5.6-sol", {
+          inputUsdPerM: 5,
+          cachedInputUsdPerM: 0.5,
+          outputUsdPerM: 25,
+          overrides: [],
+          sourceFingerprint: "openrouter-endpoint-average:v2:test:gpt-5.6-sol",
+        });
+      }
+      return pricing;
+    });
 
     const outcome = await runHarness({
       ...runInput(fetcher, {
@@ -1969,6 +1982,7 @@ describe("agent harness", () => {
         azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
         workspaceId: "workspace-azure-sol",
       }),
+      resolveAzureModelPricing,
       onInferenceAttempt: (event) => { attempts.push(event); },
     });
 
@@ -1983,6 +1997,43 @@ describe("agent harness", () => {
       provider: "azure",
       cachedInputTokens: 25,
     });
+    expect(attempts[0]!.costCents).toBe(0.0888);
+    expect(resolveAzureModelPricing).toHaveBeenCalledWith(
+      ["openai/gpt-5.6-sol"],
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("fails Sol before provider I/O when Azure is not configured", async () => {
+    const fetcher = vi.fn() as unknown as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "openai/gpt-5.6-sol",
+        workspaceId: "workspace-azure-sol-missing-config",
+      }),
+    })).resolves.toMatchObject({ status: "failed", model: null });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("fails Sol before provider I/O when a PDF requires OpenRouter's file parser", async () => {
+    const fetcher = vi.fn() as unknown as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher, {
+        primaryModel: "openai/gpt-5.6-sol",
+        azure: { endpoint: "https://monad-prod-resource.services.ai.azure.com", apiKey: "azure-key" },
+        workspaceId: "workspace-azure-sol-file-parser",
+      }),
+      messages: [{
+        role: "user",
+        content: [{
+          type: "file",
+          file: { filename: "notes.pdf", file_data: "data:application/pdf;base64,AA==" },
+        }],
+      }],
+    })).resolves.toMatchObject({ status: "failed", model: null });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("never falls back GPT-5.6 Sol to OpenRouter", async () => {
@@ -2259,6 +2310,10 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ status: "completed", content: "priced fallback" });
 
     expect(resolveAzureModelPricing).toHaveBeenCalledTimes(1);
+    expect(resolveAzureModelPricing).toHaveBeenCalledWith(
+      ["x-ai/grok-4.3"],
+      expect.any(AbortSignal),
+    );
     expect(urls).toEqual(["https://openrouter.ai/api/v1/chat/completions"]);
   });
 

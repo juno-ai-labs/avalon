@@ -641,22 +641,41 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   let completedByTool = false;
   let completedWithoutAcceptedAssistant = false;
   let bindLoopProjection: BindLoopProjectionState | null = null;
-  let azureModelPricingRequest: Promise<ReadonlyMap<string, AzureModelPricing>> | null = null;
-  const resolveAzureModelPricing = async (): Promise<ReadonlyMap<string, AzureModelPricing>> => {
+  const resolvedAzureModelPricing = new Map<string, AzureModelPricing>();
+  const attemptedAzureModelPricingIds = new Set<string>();
+  let azureModelPricingRequest = Promise.resolve();
+  const resolveAzureModelPricing = async (
+    routeModelIds: readonly string[],
+  ): Promise<ReadonlyMap<string, AzureModelPricing>> => {
     if (!input.config.azure || !input.resolveAzureModelPricing) return new Map();
-    azureModelPricingRequest ??= input.resolveAzureModelPricing(
-      [...AZURE_MODEL_BINDINGS.keys()],
-      signal,
-    ).catch((error: unknown) => {
-      if (signal.aborted) throw signal.reason ?? error;
-      // Pricing is required before an Azure candidate is valid. A missing or
-      // malformed scheduled-cache record therefore omits Azure. Models on the
-      // normal bound policy can still use OpenRouter; an Azure-only model stays
-      // unavailable rather than violating its provider fence or recording a
-      // free Azure call.
-      return new Map();
-    });
-    return azureModelPricingRequest;
+    const requestedModelIds = Array.from(new Set(routeModelIds)).filter((modelId) => (
+      AZURE_MODEL_BINDINGS.has(modelId as CanonicalModelId)
+    ));
+    const unresolvedModelIds = requestedModelIds.filter((modelId) => (
+      !attemptedAzureModelPricingIds.has(modelId)
+    ));
+    for (const modelId of unresolvedModelIds) attemptedAzureModelPricingIds.add(modelId);
+    if (unresolvedModelIds.length > 0) {
+      azureModelPricingRequest = azureModelPricingRequest.then(async () => {
+        try {
+          const pricing = await input.resolveAzureModelPricing!(unresolvedModelIds, signal);
+          for (const modelId of unresolvedModelIds) {
+            const entry = pricing.get(modelId);
+            if (entry) resolvedAzureModelPricing.set(modelId, entry);
+          }
+        } catch (error: unknown) {
+          if (signal.aborted) throw signal.reason ?? error;
+          // Pricing is required before an Azure candidate is valid. A rejected
+          // cache read omits only the requested models; previously resolved
+          // candidates remain usable later in the same run.
+        }
+      });
+    }
+    await azureModelPricingRequest;
+    return new Map(requestedModelIds.flatMap((modelId) => {
+      const pricing = resolvedAzureModelPricing.get(modelId);
+      return pricing ? [[modelId, pricing] as const] : [];
+    }));
   };
   const toolCallPositions = new Map<string, { turn: number; index: number }>();
   const commitBindTransition = async (transition: BindLoopTransition): Promise<void> => {
@@ -2019,7 +2038,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     const requestedReasoningEffort = args.reasoningEffort ?? args.input.config.reasoningEffort;
     const fallbackModels = args.fallbackModels ?? args.input.config.fallbackModels ?? [];
     const azurePricing = routeIncludesAzureBinding([intendedModel, ...fallbackModels])
-      ? await resolveAzureModelPricing()
+      ? await resolveAzureModelPricing([intendedModel, ...fallbackModels])
       : new Map();
     const plan = routePlan(
       intendedModel,
