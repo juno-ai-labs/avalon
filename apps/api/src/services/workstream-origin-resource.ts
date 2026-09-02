@@ -10,13 +10,9 @@ import { ConnectorOriginResourceSchema } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../env";
-import {
-  connectorRegistryForEnv,
-  connectorSupportsResourceHydration,
-} from "../lib/connector-registry";
+import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
 import { logWarn } from "../observability/logger";
-import { publishWorkstreamEvent } from "./integrations";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 
 /**
@@ -61,11 +57,6 @@ const BACKFILL_ORIGIN_RESOURCE_SQL = `UPDATE resources
       updated_at = ?
   WHERE id = ? AND workspace_id = ?
     AND ((canonical_url IS NULL AND ? IS NOT NULL) OR (content_ref IS NULL AND ? IS NOT NULL))`;
-
-const ATTACHED_ORIGIN_RESOURCE_SQL = `SELECT resource.*, connection.connector_type AS connector_type
-  FROM resources resource
-  LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
-  WHERE resource.id = ? AND resource.workspace_id = ?`;
 
 /**
  * Ask a connector where a work stream is being started from.
@@ -221,18 +212,6 @@ export async function attachWorkstreamOriginResource(env: Env, input: {
       attachedByUserId: input.attachedByUserId,
       relationshipType: ORIGIN_RELATIONSHIP_TYPE,
     });
-  
-    const row = await env.DB.prepare(ATTACHED_ORIGIN_RESOURCE_SQL)
-      .bind(resourceId, input.workspaceId)
-      .first<Record<string, unknown>>();
-    // The rail renders from the socket event, so a work stream open on a screen
-    // while its origin lands still shows it without a refetch.
-    if (row) {
-      await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
-        type: "resource_attached",
-        resource: originResourceEvent(env, row),
-      });
-    }
     return resourceId;
   } catch (error) {
     logWarn(env, "workstream_origin_resource_attach_failed", {
@@ -316,37 +295,6 @@ export async function resolveOriginResource(
   // the same object leaves one row, and both callers must attach that one.
   const canonical = await env.DB.prepare(ORIGIN_RESOURCE_LOOKUP_SQL).bind(...bindings).first<{ id: string }>();
   return canonical?.id ?? null;
-}
-
-/**
- * An origin attachment is never watched at birth — a watch is a decision
- * somebody makes afterwards — so the broadcast state is the resting state a
- * freshly attached connector resource has.
- */
-function originResourceEvent(env: Env, row: Record<string, unknown>) {
-  return {
-    id: String(row.id),
-    workspaceId: String(row.workspace_id),
-    connectionId: row.connection_id == null ? null : String(row.connection_id),
-    resourceType: String(row.resource_type),
-    provider: String(row.provider),
-    providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
-    title: String(row.title),
-    mimeType: row.mime_type == null ? null : String(row.mime_type),
-    canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
-    refreshSupported: connectorSupportsResourceHydration(
-      connectorRegistryForEnv(env),
-      row.connector_type,
-    ),
-    watchEnabled: false,
-    watchStatus: row.connection_id == null ? "unsupported" as const : "paused" as const,
-    lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-    currentVersion: Math.max(1, Number(row.current_version ?? 1)),
-    relationshipType: "origin" as const,
-    direction: "source" as const,
-  };
 }
 
 export const __originResourceTesting = {

@@ -2142,15 +2142,33 @@ export class WorkstreamObjectProductService {
     });
   }
 
-  private async resources(viewerUserId: string): Promise<WorkstreamDetail["resources"]> {
-    const links = this.storage.sql.exec<{
+  private async resources(
+    viewerUserId: string,
+    resourceIds?: readonly string[],
+  ): Promise<WorkstreamDetail["resources"]> {
+    const links = resourceIds === undefined
+      ? this.storage.sql.exec<{
+        resource_id: string;
+        watch_enabled: number;
+        relationship_type: string;
+        resource_json: string;
+      }>(
+        `SELECT resource_id, watch_enabled, relationship_type, resource_json
+           FROM workstream_resource_links ORDER BY attached_at DESC`,
+      ).toArray()
+      : resourceIds.length === 0
+        ? []
+        : this.storage.sql.exec<{
       resource_id: string;
       watch_enabled: number;
       relationship_type: string;
       resource_json: string;
     }>(
       `SELECT resource_id, watch_enabled, relationship_type, resource_json
-         FROM workstream_resource_links ORDER BY attached_at DESC`,
+         FROM workstream_resource_links
+        WHERE resource_id IN (${resourceIds.map(() => "?").join(",")})
+        ORDER BY attached_at DESC`,
+      ...resourceIds,
     ).toArray();
     if (links.length === 0) return [];
     const placeholders = links.map(() => "?").join(",");
@@ -2210,6 +2228,14 @@ export class WorkstreamObjectProductService {
         direction: resourceDirectionForRelationship(relationshipType),
       }];
     });
+  }
+
+  private async readBackAttachedResource(
+    viewerUserId: string,
+    resourceId: string,
+  ): Promise<WorkstreamResource | null> {
+    const attached = (await this.resources(viewerUserId, [resourceId]))[0];
+    return attached ? WorkstreamResourceSchema.parse(attached) : null;
   }
 
   private async connections(viewerUserId: string): Promise<WorkstreamDetail["connections"]> {
@@ -2536,11 +2562,11 @@ export class WorkstreamObjectProductService {
       },
       () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
     );
-    const attached = (await this.resources(auth.userId)).find((entry) => entry.id === resourceId);
+    const attached = await this.readBackAttachedResource(auth.userId, resourceId);
     if (!attached) {
       throw new ApiError(409, "resource_reload_failed", "The resource was attached but could not be read back");
     }
-    return WorkstreamResourceSchema.parse(attached);
+    return attached;
   }
 
   /** Attach a resource already durably created by this run in WorkspaceDO. */
@@ -2549,7 +2575,7 @@ export class WorkstreamObjectProductService {
     resourceId: string,
     attachedByUserId: string | null,
     relationshipType: ResourceRelationshipType = "generated",
-  ): Promise<WorkstreamResource> {
+  ): Promise<WorkstreamResource | null> {
     const root = this.root();
     if (root.parent_workspace_key !== workspaceId) {
       throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
@@ -2592,12 +2618,26 @@ export class WorkstreamObjectProductService {
       },
       () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
     );
-    const attached = (await this.resources(this.runtimeAuth().userId))
-      .find((entry) => entry.id === resourceId);
-    if (!attached) {
-      throw new ApiError(409, "resource_reload_failed", "The generated resource was attached but could not be read back");
+    try {
+      const attached = await this.readBackAttachedResource(this.runtimeAuth().userId, resourceId);
+      if (attached) return attached;
+      logWarn(this.env, "workstream_runtime_resource_readback_failed_after_commit", {
+        workspace_id: workspaceId,
+        workstream_id: root.workstream_key,
+        resource_id: resourceId,
+        relationship_type: relationshipType,
+        reason: "resource_not_visible",
+      });
+    } catch (error) {
+      logWarn(this.env, "workstream_runtime_resource_readback_failed_after_commit", {
+        workspace_id: workspaceId,
+        workstream_id: root.workstream_key,
+        resource_id: resourceId,
+        relationship_type: relationshipType,
+        reason: error instanceof Error ? error.message : "resource_readback_failed",
+      });
     }
-    return WorkstreamResourceSchema.parse(attached);
+    return null;
   }
 
   async detachResource(auth: AuthContext, resourceId: string): Promise<void> {
