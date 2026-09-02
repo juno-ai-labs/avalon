@@ -27,6 +27,7 @@ import {
   INFERENCE_CAPABILITIES,
   buildRoutePlan,
   canonicalModelIdSchema,
+  categorizeHttpStatus,
   classifyAttemptError,
   computeConfiguredRatesCostCents,
   createCircuitBreaker,
@@ -3170,9 +3171,26 @@ function replaceSystemMessage(messages: ProviderMessages, content: string): void
   else messages.unshift(next);
 }
 
-function providerDeclaredTransportKind(details: unknown): "server_error" | null {
+function providerDeclaredTransportFailure(details: unknown): {
+  kind: "rate_limit" | "server_error";
+  statusCode: number | null;
+} | null {
   const code = (details as { providerError?: OpenRouterProviderError } | undefined)
     ?.providerError?.code;
+
+  // OpenRouter's streamed error contract uses a numeric HTTP-shaped code even
+  // though the surrounding response is already HTTP 200. Reuse Bind's status
+  // taxonomy, but admit only transient categories: a streamed numeric 4xx still
+  // belongs to the request, credential, or credit and must remain terminal.
+  if (typeof code === "number" && Number.isInteger(code) && code >= 400 && code <= 599) {
+    const category = categorizeHttpStatus(code);
+    if (category === "rate_limit") return { kind: "rate_limit", statusCode: code };
+    if (category === "timeout" || category === "server_error") {
+      return { kind: "server_error", statusCode: code };
+    }
+    return null;
+  }
+
   if (typeof code !== "string") return null;
 
   // Some OpenAI-compatible providers accept the HTTP request and then report
@@ -3181,10 +3199,13 @@ function providerDeclaredTransportKind(details: unknown): "server_error" | null 
   // bounded machine code as the transport signal. Keep this allowlist narrow:
   // other statusless codes can describe request, policy, or model defects that
   // replaying against another endpoint must not disguise.
-  switch (code.trim().toLowerCase().replaceAll("-", "_")) {
+  // Normalize only provider-controlled casing and separator variants; the
+  // captured code itself remains unchanged in the inference-attempt ledger.
+  const normalizedCode = code.trim().toLowerCase().replaceAll("-", "_");
+  switch (normalizedCode) {
     case "unavailable":
     case "service_unavailable":
-      return "server_error";
+      return { kind: "server_error", statusCode: null };
     default:
       return null;
   }
@@ -3196,7 +3217,7 @@ function classifyProviderFailure(error: unknown) {
   }
   if (error instanceof OpenRouterError || error instanceof AzureOpenAIError) {
     const status = error.status ?? null;
-    const providerKind = status === null ? providerDeclaredTransportKind(error.details) : null;
+    const providerFailure = status === null ? providerDeclaredTransportFailure(error.details) : null;
     return {
       kind: status === 429
         ? "rate_limit" as const
@@ -3204,8 +3225,8 @@ function classifyProviderFailure(error: unknown) {
           ? "server_error" as const
           : status === 402
             ? "no_credits" as const
-            : providerKind ?? ("api" as const),
-      statusCode: status,
+            : providerFailure?.kind ?? ("api" as const),
+      statusCode: status ?? providerFailure?.statusCode ?? null,
       retryAfterMs: retryAfterMsFromHeaders((error.details as { headers?: unknown } | undefined)?.headers),
     };
   }
