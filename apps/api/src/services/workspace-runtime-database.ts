@@ -393,8 +393,12 @@ export function withWorkspaceRuntimeDatabase(
   const inherited = carriedExecutors(env);
   const executor = localExecutor ?? inherited.get(workspaceId);
   // Focused unit environments and maintenance utilities may intentionally omit
-  // the namespace. Production cannot reach this path because the environment
-  // contract requires WORKSPACE_DOS before request dispatch.
+  // the namespace. Production cannot reach this path: `WORKSPACE_DOS` is a
+  // required binding in `EnvContractSchema`, and `assertEnvContract` runs on
+  // `fetch`, `queue` and `scheduled` before any handler, so an environment
+  // missing it is refused at the edge rather than routed unrouted from here.
+  // That is why this returns rather than warning — the only caller that can
+  // reach it is a test, and a warning there would fire on every run.
   if (!env.WORKSPACE_DOS && !executor) return env;
   const database = workspaceRuntimeDatabase(env, workspaceId, executor);
   const carried: LocalExecutorRegistry = localExecutor

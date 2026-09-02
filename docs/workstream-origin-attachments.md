@@ -378,10 +378,12 @@ step the ingress has to remember.
 ### 2026-09-02 — Origin resolution reads the object that has `resources`
 
 **What changed:** `resolveOriginResource` now wraps its own environment —
-`env = withWorkspaceRuntimeDatabase(env, workspaceId)` — before touching
-`resources`. Every query in `workstream-origin-resource.ts` lives inside that
-function, and `attachWorkstreamOriginResource` goes through it, so the one wrap
-covers the module.
+`const workspaceEnv = withWorkspaceRuntimeDatabase(env, workspaceId)` — and
+reads `resources` through that. Every query in `workstream-origin-resource.ts`
+lives inside that function, and `attachWorkstreamOriginResource` goes through
+it, so the one wrap covers the module. It is a separate local rather than a
+reassigned parameter so that each of the four reads says at its own line which
+authority it is on.
 
 **Why:** `resources` is a `WORKSPACE_LOCAL_TABLES` entry, and migration 0090
 dropped it from regional D1. Nothing on the path from

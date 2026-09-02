@@ -887,7 +887,7 @@ it.
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
 | `apps/api/test/connector-event-authority.test.ts` | WorkspaceDO event admission/replay and frozen pre-cutover activity rows ignored once object authority is open. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, and terminal settlement. |
-| `apps/api/test-workers/provider-webhook-workspace-authority.test.ts` | Webhook ingestion against a real WorkspaceDO, with `connector_connections` seeded only inside the object and `activities` present in neither authority: the redelivery fall-through and the resource effects it must reach, the GitHub credential door's refresh lease, and the credential envelope's key-version rewrite. Its first test asserts those absences, because a fixture that creates either table in D1 would make the rest pass against the defect. |
+| `apps/api/test-workers/provider-webhook-workspace-authority.test.ts` | Webhook ingestion against a real WorkspaceDO, with `connector_connections` seeded only inside the object and `activities` present in neither authority: the redelivery fall-through and the resource effects it must reach, a settled redelivery answered from its receipt without reaching the provider or depending on its route still existing, the GitHub credential door's refresh lease, and the credential envelope's key-version rewrite. Its first test asserts those absences, because a fixture that creates either table in D1 would make the rest pass against the defect. |
 | `apps/api/test-workers/workspace-connections.test.ts` | The typed OAuth attempt lifecycle across the real RPC boundary — settlement witnesses, replay convergence, the member-scoped lazy expiry, the succeeded-over-expiry override — plus webhook receipt claims, their same-transaction expired-receipt sweep, and the generic port's refusal of `webhook_receipts`. |
 | `apps/api/test/connector-oauth-handoff.test.ts`, `apps/api/test/connector-outcome-telemetry.test.ts`, `apps/api/test/granola-connector.test.ts` | The connection service over a real `WorkspaceDO` via `test/helpers/workspace-object-rpcs.ts` — attempt expiry/reconciliation through the service, single-emission outcome telemetry, and that no plaintext credential crosses the recorded RPC boundary during webhook ingestion. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
@@ -913,8 +913,8 @@ mistake in different clothes. The GitHub credential door
 (`withAuthorizedConnection`) and the credential envelope
 (`decryptVersionedConnectorCredentials`) now receive
 `withWorkspaceRuntimeDatabase(this.env, …)` rather than the raw environment.
-And the redelivery shortcut in `ingestVerified` is now gated on
-`!this.env.WORKSPACE_DOS`, like every other legacy branch in the file.
+And in `ingestVerified` the pre-cutover *repair* of a pending receipt is now
+gated on `!this.env.WORKSPACE_DOS`, like every other legacy branch in the file.
 
 **Why:** the class never stores a wrapped environment — each use wraps inline —
 so a missed one is invisible beside its neighbours. The GitHub case sat twelve
@@ -927,24 +927,40 @@ workspaces. The envelope case is dormant until `CONNECTOR_CREDENTIALS_KEY_VERSIO
 is incremented, which is precisely when it would have stopped ingestion for all
 three providers at once, while blocking the rewrite the rotation waits on.
 
-The redelivery shortcut is a different failure with the same symptom. It reads
+The redelivery repair is a different failure with the same symptom. It reads
 `activities`, which 0090 dropped and which is in **neither** authority — not
 regional D1, and not `WORKSPACE_LOCAL_TABLES` — so no wrap could have rescued
-it. Unguarded, it threw on every redelivery of an unprocessed receipt, the
+it. Ungated, it threw on every redelivery of an unprocessed receipt, the
 provider retried into the same branch, and `processed_at` could never be set:
 permanent, on the path whose whole job is recovering from a crash.
 
-**Considered and rejected:** routing the `activities` read instead of guarding
-the branch. There is nowhere to route it to. The branch is also redundant — the
+Note where that gate goes. Validating an existing receipt and answering a
+settled one stay *above* connection discovery, in both authorities, because the
+discovery path is hostile to a delivery that is already done:
+`filterGitHubPersonalConnections` refreshes a token and calls GitHub and
+rethrows anything that is not `unauthorized`, so a provider blip would reject a
+redelivery of completed work; and once the matching route has been removed the
+`connections.length === 0` return fires *before* the receipt insert, so a reused
+delivery id would never be compared against its receipt at all. Gating the whole
+prior-receipt branch — the first shape of this fix, caught in review — opened
+both.
+
+**Considered and rejected:** routing the `activities` read instead of gating
+the repair. There is nowhere to route it to. The repair is also redundant — the
 main path already repairs the same case in the current shape, through the
 receipt conflict, `existingWorkspaceReceipt`, and `finishWorkspaceReceipt`,
 which enqueues connector events rather than pre-cutover activity ids. Deleting
-the branch outright would have been cleaner still and was left alone: it is the
+it outright would have been cleaner still and was left alone: it is the
 only coverage `provider-webhooks.test.ts` has, since that suite binds no
 `WORKSPACE_DOS` and therefore exercises the legacy path exclusively.
 
-**What a future change has to respect:** every `this.env` in this class is the
-raw regional binding, so a new connector-row statement needs its own wrap; there
+**What a future change has to respect:** an idempotency check answers a
+delivery from its receipt, so it belongs before anything that can fail for a
+reason unrelated to the delivery. Narrowing a pre-cutover guard is not the same
+as narrowing the branch it lives in — the guard here covers one `activities`
+read, and everything else in that branch is version-independent. And every
+`this.env` in this class is the raw regional binding, so a new connector-row
+statement needs its own wrap; there
 is no constructor to inherit one from, and the correct neighbours are no
 evidence that yours is right. The scan that finds these is also weaker than it
 looks — three statements in this file hold their SQL in a variable rather than a
