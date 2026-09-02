@@ -17,6 +17,7 @@ import {
 import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../lib/format';
 import { PLUGIN_BRAND_MARKS, type PluginBrandMark } from '../lib/plugin-marks';
 import { isComposingKeyEvent } from '../lib/ime';
+import { useAppearance } from '../lib/theme';
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
 
@@ -435,10 +436,12 @@ export function LoadingState({
   orbSize?: OrbSize;
   orbState?: OrbState;
 }): React.JSX.Element {
+  const appearance = useAppearance();
+
   return (
     <div aria-live="polite" className="center-state" role="status">
       {orbState
-        ? <ThinkingOrb aria-hidden="true" className="loading-orb" size={orbSize} state={orbState} theme="dark" />
+        ? <ThinkingOrb aria-hidden="true" className="loading-orb" size={orbSize} state={orbState} theme={appearance} />
         : <LoaderCircle aria-hidden="true" className="spin" size={18} />}
       <span>{label}</span>
     </div>

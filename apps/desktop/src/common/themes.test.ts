@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appearanceModeDescriptions,
   appearanceModes,
+  appearanceOf,
   defaultThemeChoice,
   familyAppearances,
   familyOf,
@@ -43,6 +44,19 @@ describe('the two axes', () => {
       expect(familyAppearances[familyOf(theme)]).toEqual(
         expect.objectContaining({ [theme === familyAppearances[familyOf(theme)].light ? 'light' : 'dark']: theme }),
       );
+    }
+  });
+
+  /**
+   * The half of its family each appearance is. A canvas cannot name a token,
+   * so it has to be handed this instead; an appearance that answered with the
+   * wrong half would paint pale ink on a pale ground, which is the defect this
+   * answers.
+   */
+  it('names the half of its family every appearance is', () => {
+    for (const family of themeFamilies) {
+      expect(appearanceOf(familyAppearances[family].light)).toBe('light');
+      expect(appearanceOf(familyAppearances[family].dark)).toBe('dark');
     }
   });
 
