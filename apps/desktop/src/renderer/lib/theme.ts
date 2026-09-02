@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
+  appearanceOf,
   defaultThemeChoice,
+  parseAppearanceMode,
+  parseResolvedTheme,
   parseThemeChoice,
+  parseThemeFamily,
   resolveTheme,
+  sameThemeChoice,
   type AppearanceMode,
   type ResolvedTheme,
   type ThemeChoice,
@@ -38,6 +43,30 @@ export interface ThemeState {
 }
 
 const listeners = new Set<(state: ThemeState) => void>();
+
+/**
+ * What is on screen right now, read back off the document `applyTheme` stamped.
+ *
+ * The three attributes carry the whole state — the appearance being drawn and
+ * the choice that produced it — so this is the applied truth rather than a
+ * second copy of it kept alongside. The store is not that truth:
+ * `watchThemeBroadcast` applies a choice that arrived over IPC precisely
+ * because a `localStorage` write in another renderer is not ordered against
+ * that message, so for a moment the store still holds the previous one.
+ *
+ * The store is the fallback for the only case the document cannot answer:
+ * before `installTheme` has stamped anything, which is a test or the first
+ * lines of a launch.
+ */
+function currentThemeState(): ThemeState {
+  const root = document.documentElement;
+  const resolved = parseResolvedTheme(root.dataset['theme']);
+  const family = parseThemeFamily(root.dataset['themeFamily']);
+  const mode = parseAppearanceMode(root.dataset['themeMode']);
+  if (resolved && family && mode) return { choice: { family, mode }, resolved };
+  const choice = readThemeChoice();
+  return { choice, resolved: resolvedThemeFor(choice) };
+}
 
 /**
  * jsdom implements no `matchMedia`, and neither does an Electron window early
@@ -158,20 +187,48 @@ export function watchThemeBroadcast(): () => void {
 }
 
 /**
- * The active theme, for a component that has to name it. Reads the document
- * rather than the store so that a surface mounted after `installTheme` cannot
- * disagree with what is on screen.
+ * The active theme, for a component that has to name it. Reads what was
+ * applied rather than what is stored, so that a surface mounted after
+ * `installTheme` cannot disagree with what is on screen.
+ *
+ * Which is the whole difficulty: those two can differ. A choice made in the
+ * Settings window arrives here over IPC, and `watchThemeBroadcast` applies it
+ * without waiting for the `localStorage` write behind it — so a surface that
+ * mounted from the store in that gap would draw the *previous* appearance and
+ * then never hear about it, having already missed the announcement. The
+ * re-read inside the effect closes the same gap one level down: React
+ * subscribes after the render that snapshotted, and an `applyTheme` in between
+ * would otherwise be lost. It keeps the previous object when nothing moved, so
+ * the ordinary mount still renders once.
  */
 export function useTheme(): ThemeState {
-  const [state, setState] = useState<ThemeState>(() => {
-    const choice = readThemeChoice();
-    return { choice, resolved: resolvedThemeFor(choice) };
-  });
+  const [state, setState] = useState<ThemeState>(currentThemeState);
   useEffect(() => {
     listeners.add(setState);
+    const current = currentThemeState();
+    setState((previous) => (
+      previous.resolved === current.resolved && sameThemeChoice(previous.choice, current.choice)
+        ? previous
+        : current
+    ));
     return () => {
       listeners.delete(setState);
     };
   }, []);
   return state;
+}
+
+/**
+ * The lighting the document is currently drawn in, for a component that has to
+ * be handed one rather than naming a token.
+ *
+ * `thinking-orbs` is the case this exists for: it paints a canvas, so no rule
+ * can reach its ink, and it takes `dark`/`light` as a prop. Its own `auto`
+ * detection cannot answer the question here — it looks for `data-theme="dark"`
+ * or `data-theme="light"`, and ours carries an appearance name like
+ * `terra-light`, so `auto` falls through to `prefers-color-scheme` and ignores
+ * a person who pinned the mode against their Mac.
+ */
+export function useAppearance(): 'light' | 'dark' {
+  return appearanceOf(useTheme().resolved);
 }

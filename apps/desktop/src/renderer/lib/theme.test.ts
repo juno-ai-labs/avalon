@@ -1,3 +1,4 @@
+import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEVICE_PREFERENCES_STORAGE_KEY, readDevicePreferences } from './device-preferences';
@@ -8,6 +9,8 @@ import {
   readThemeChoice,
   resolvedThemeFor,
   watchSystemAppearance,
+  useAppearance,
+  useTheme,
   watchThemeBroadcast,
   withFamily,
   withMode,
@@ -349,5 +352,52 @@ describe('theme', () => {
 
     expect(setWindowTheme).toHaveBeenNthCalledWith(1, { family: 'terra', mode: 'system' });
     expect(setWindowTheme).toHaveBeenNthCalledWith(2, { family: 'terra', mode: 'dark' });
+  });
+});
+
+describe('what a surface reads', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    removeMatchMedia();
+  });
+
+  /**
+   * The gap `watchThemeBroadcast` deliberately opens. It applies the choice the
+   * IPC message carried without waiting for the `localStorage` write behind it,
+   * so for a moment the store still holds the previous choice — and a surface
+   * that mounted in that moment and read the store would draw the appearance
+   * the window has just stopped being in, having already missed the
+   * announcement that would have corrected it. For the thinking orb that is an
+   * inverted canvas until something else applies a theme.
+   *
+   * This proves the pair together. `renderHook` flushes effects, so the
+   * re-read inside the subscribing effect alone would satisfy it — what that
+   * cannot cover is the frame in between, since a passive effect runs after
+   * the paint that has already drawn the wrong ink. The snapshot has to be
+   * right too, and only a real window shows the difference.
+   */
+  it('reads what was applied rather than a store that has not caught up', () => {
+    installMatchMedia(false);
+    window.localStorage.setItem(
+      DEVICE_PREFERENCES_STORAGE_KEY,
+      JSON.stringify({ version: 1, theme: { family: 'terra', mode: 'light' } }),
+    );
+
+    applyTheme({ family: 'terra', mode: 'dark' });
+
+    expect(renderHook(() => useTheme()).result.current.resolved).toBe('terra');
+    expect(renderHook(() => useAppearance()).result.current).toBe('dark');
+  });
+
+  it('follows a theme applied while it is mounted', () => {
+    installMatchMedia(false);
+    applyTheme({ family: 'terra', mode: 'light' });
+    const { result, rerender } = renderHook(() => useAppearance());
+
+    expect(result.current).toBe('light');
+    applyTheme({ family: 'air', mode: 'dark' });
+    rerender();
+
+    expect(result.current).toBe('dark');
   });
 });
