@@ -2549,7 +2549,7 @@ export class WorkstreamObjectProductService {
     resourceId: string,
     attachedByUserId: string | null,
     relationshipType: ResourceRelationshipType = "generated",
-  ): Promise<void> {
+  ): Promise<WorkstreamResource> {
     const root = this.root();
     if (root.parent_workspace_key !== workspaceId) {
       throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
@@ -2592,6 +2592,12 @@ export class WorkstreamObjectProductService {
       },
       () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
     );
+    const attached = (await this.resources(this.runtimeAuth().userId))
+      .find((entry) => entry.id === resourceId);
+    if (!attached) {
+      throw new ApiError(409, "resource_reload_failed", "The generated resource was attached but could not be read back");
+    }
+    return WorkstreamResourceSchema.parse(attached);
   }
 
   async detachResource(auth: AuthContext, resourceId: string): Promise<void> {
