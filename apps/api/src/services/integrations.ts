@@ -26,7 +26,7 @@ import {
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
   rejectToolModesBeforeCall,
-  repairRootUnionForProviders,
+  repairRootSchemaForProviders,
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
   runHarness,
@@ -6597,14 +6597,15 @@ function validateDynamicConnectorTools(
     }
     names.add(definition.name);
     wireNames.add(wireName);
-    // A remote server's schema is the one input here Avalon did not write, and
-    // a root union branch xAI cannot read as an object fails the *whole*
-    // request — every tool in the run, including Avalon's own. The build-time
-    // guard cannot see a schema that arrives at run time, so the same measured
-    // rule is applied here as a repair. See `repairRootUnionForProviders`.
-    const inputSchema = repairRootUnionForProviders(definition.inputSchema);
+    // A remote server's schema is the one input here Rally did not write, and a
+    // fatal root schema fails the *whole* request — every tool in the run,
+    // including Rally's own. The corrector runs again at the wire for every
+    // tool, so this call is not what makes the request safe; it is here because
+    // this is the only place that can name the connector and tool in a log.
+    // See `repairRootSchemaForProviders`.
+    const inputSchema = repairRootSchemaForProviders(definition.inputSchema);
     if (inputSchema !== definition.inputSchema) {
-      logStructuredEvent(env, "warn", "dynamic_tool_root_union_repaired", {
+      logStructuredEvent(env, "warn", "dynamic_tool_root_schema_repaired", {
         connector_type: adapter.manifest.type,
         tool: definition.name,
         scope,
