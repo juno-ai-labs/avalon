@@ -2,6 +2,96 @@ import { describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
 
+function attachmentReadPage(
+  resourceId: string,
+  nextCursor: string | null,
+  previousCursor: string | null = null,
+  start = 0,
+) {
+  const totalCharacters = 24_000;
+  const end = Math.min(totalCharacters, start + 12_000);
+  return {
+    resourceId,
+    title: "Call transcript",
+    sourceMimeType: "text/plain",
+    modelMimeType: "text/plain",
+    version: { sha256: "a".repeat(64), extractorVersion: "text-v1" },
+    range: { start, end },
+    totalCharacters,
+    charactersBefore: start,
+    charactersReturned: end - start,
+    charactersAfter: totalCharacters - end,
+    text: "verified page",
+    previousCursor,
+    nextCursor,
+  };
+}
+
+function attachmentSearchResult(resourceId: string, readCursor: string) {
+  return {
+    resourceId,
+    title: "Call transcript",
+    sourceMimeType: "text/plain",
+    modelMimeType: "text/plain",
+    version: { sha256: "a".repeat(64), extractorVersion: "text-v1" },
+    query: "decision",
+    totalMatches: 1,
+    returnedMatches: 1,
+    passages: [{
+      rank: 1,
+      sectionLabel: null,
+      range: { start: 0, end: 8 },
+      text: "decision",
+      readCursor,
+    }],
+    truncated: false,
+  };
+}
+
+function attachmentSummaryResult(resourceId: string, readCursor: string) {
+  return {
+    resourceId,
+    title: "Call transcript",
+    sourceMimeType: "text/plain",
+    modelMimeType: "text/plain",
+    version: { sha256: "a".repeat(64), extractorVersion: "text-v1" },
+    prompt: null,
+    outline: [],
+    summary: "Verified summary",
+    citations: [{ label: "Decision", range: { start: 0, end: 8 }, readCursor }],
+    coverage: {
+      status: "complete",
+      totalCharacters: 24_000,
+      consideredCharacters: 24_000,
+      limitations: [],
+    },
+  };
+}
+
+function attachmentReceipt(overrides: Record<string, unknown>) {
+  return {
+    effectIntentId: "effect-1",
+    runId: "run-1",
+    toolCallId: "tool-read-1",
+    toolName: "workstream_read_resource",
+    mode: "read",
+    connectionId: null,
+    requestHash: "hash",
+    inputJson: JSON.stringify({}),
+    status: "completed",
+    outputRef: null,
+    outputSummary: null,
+    providerOperationId: null,
+    errorJson: null,
+    executionPlanHash: "plan",
+    executionPlanJson: JSON.stringify({ capability: "workstream.resources.read" }),
+    startedAt: 1,
+    settledAt: 2,
+    checkpointIndex: 1,
+    ...overrides,
+  };
+}
+
 describe("Bind host durability boundaries", () => {
   it("requires an explicit protocol turn identity for every durable final response", () => {
     expect(__integrationTesting.resolveHarnessFinalTurnId("accepted response", "run-1:turn:2"))
@@ -271,7 +361,7 @@ describe("Bind host durability boundaries", () => {
     expect(accepted.text).toContain("Attachment content unverified");
   });
 
-  it("rebuilds attachment safety from durable receipts and lets a later verified read clear it", () => {
+  it("rebuilds attachment safety from durable receipts and lets a later verified read clear it", async () => {
     const guard = new __integrationTesting.AttachmentGroundingGuard();
     const resourceId = "00000000-0000-7000-8000-000000000780";
     const receipt = (overrides: Record<string, unknown>) => ({
@@ -296,10 +386,10 @@ describe("Bind host durability boundaries", () => {
       ...overrides,
     });
 
-    guard.restoreReceipts([receipt({})] as never);
+    await guard.restoreReceipts([receipt({})] as never);
     expect(guard.boundary()).toContain(resourceId);
 
-    guard.restoreReceipts([receipt({
+    await guard.restoreReceipts([receipt({
       effectIntentId: "effect-2",
       toolCallId: "tool-read-2",
       status: "completed",
@@ -416,6 +506,386 @@ describe("Bind host durability boundaries", () => {
     } as never);
     expect(guard.boundary()).toBeNull();
   });
+
+  it("recovers a uniquely active read after the model corrupts its opaque cursor", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    const resourceId = "00000000-0000-7000-8000-000000000774";
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-first-page",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-first-page",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      result: {
+        output: attachmentReadPage(resourceId, "issued-cursor"),
+        summary: "Read first page",
+      },
+    } as never);
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-corrupted-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { cursor: "issued-curs0r" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-corrupted-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      error: "Attachment cursor is invalid",
+      data: { code: "invalid_cursor" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+    expect(guard.boundary()).toContain(resourceId);
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-explicit-recovery",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId, startCharacter: 12_000 },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-explicit-recovery",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      result: { output: attachmentReadPage(resourceId, null), summary: "Read recovery page" },
+    } as never);
+
+    expect(guard.boundary()).toBeNull();
+  });
+
+  it("recovers a corrupted backwards cursor issued by a completed read", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    const resourceId = "00000000-0000-7000-8000-000000000781";
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-terminal-page",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId, startCharacter: 12_000 },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-terminal-page",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      result: {
+        output: attachmentReadPage(resourceId, null, "issued-previous-cursor", 12_000),
+        summary: "Read terminal page",
+      },
+    } as never);
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-corrupted-previous-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { cursor: "issued-previous-curs0r" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-corrupted-previous-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      error: "Attachment cursor is invalid",
+      data: { code: "invalid_cursor" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+    expect(guard.boundary()).toContain(resourceId);
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-backwards-recovery",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-backwards-recovery",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      result: { output: attachmentReadPage(resourceId, "next-page"), summary: "Restarted read" },
+    } as never);
+    expect(guard.boundary()).toBeNull();
+  });
+
+  it("counts search and summary read cursors before inferring one resource", () => {
+    const readPolicy = { capability: "workstream.resources.read" };
+    const resourceA = "00000000-0000-7000-8000-000000000782";
+    const resourceB = "00000000-0000-7000-8000-000000000783";
+    const issuerScenarios = [
+      {
+        capability: "workstream.resources.search",
+        toolName: "workstream_search_resource",
+        output: attachmentSearchResult(resourceB, "search-read-cursor"),
+      },
+      {
+        capability: "workstream.resources.summarize",
+        toolName: "workstream_summarize_resource",
+        output: attachmentSummaryResult(resourceB, "summary-read-cursor"),
+      },
+    ];
+
+    for (const [index, scenario] of issuerScenarios.entries()) {
+      const guard = new __integrationTesting.AttachmentGroundingGuard();
+      guard.onStarted({
+        type: "tool_started",
+        toolCallId: `tool-read-a-${index}`,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy: readPolicy,
+        input: { resourceId: resourceA },
+      } as never);
+      guard.onCompleted({
+        type: "tool_completed",
+        toolCallId: `tool-read-a-${index}`,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy: readPolicy,
+        result: { output: attachmentReadPage(resourceA, "read-a-cursor"), summary: "Read A" },
+      } as never);
+      guard.onStarted({
+        type: "tool_started",
+        toolCallId: `tool-issuer-b-${index}`,
+        toolName: scenario.toolName,
+        pluginId: "rally_core",
+        policy: { capability: scenario.capability },
+        input: { resourceId: resourceB },
+      } as never);
+      guard.onCompleted({
+        type: "tool_completed",
+        toolCallId: `tool-issuer-b-${index}`,
+        toolName: scenario.toolName,
+        pluginId: "rally_core",
+        policy: { capability: scenario.capability },
+        result: { output: scenario.output, summary: "Issued B cursor" },
+      } as never);
+
+      const failedToolCallId = `tool-read-corrupted-b-${index}`;
+      guard.onStarted({
+        type: "tool_started",
+        toolCallId: failedToolCallId,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy: readPolicy,
+        input: { cursor: "corrupted-b-cursor" },
+      } as never);
+      guard.onFailed({
+        type: "tool_failed",
+        toolCallId: failedToolCallId,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy: readPolicy,
+        error: "Attachment cursor is invalid",
+        data: { code: "invalid_cursor" },
+        phase: "execution",
+        outcome: "definitive_failure",
+      } as never);
+      expect(guard.boundary()).toContain(failedToolCallId);
+      expect(guard.boundary()).not.toContain(resourceA);
+      expect(guard.boundary()).not.toContain(resourceB);
+
+      guard.onStarted({
+        type: "tool_started",
+        toolCallId: `tool-read-a-recovery-${index}`,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy: readPolicy,
+        input: { resourceId: resourceA, startCharacter: 12_000 },
+      } as never);
+      guard.onCompleted({
+        type: "tool_completed",
+        toolCallId: `tool-read-a-recovery-${index}`,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy: readPolicy,
+        result: {
+          output: attachmentReadPage(resourceA, null, "read-a-previous", 12_000),
+          summary: "Read A recovery",
+        },
+      } as never);
+      expect(guard.boundary()).toContain(failedToolCallId);
+    }
+  });
+
+  it("rebuilds cursor provenance from completed outputs before restoring failures", async () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const resourceId = "00000000-0000-7000-8000-000000000784";
+    const outputs = new Map<string, unknown>([
+      ["output:first", attachmentReadPage(resourceId, "issued-cursor")],
+      ["output:recovery", attachmentReadPage(resourceId, null, null, 12_000)],
+    ]);
+    const loadOutput = async (receipt: { outputRef: string | null }) => receipt.outputRef
+      ? outputs.get(receipt.outputRef) ?? null
+      : null;
+    await guard.restoreReceipts([
+      attachmentReceipt({
+        effectIntentId: "effect-first-page",
+        toolCallId: "tool-first-page",
+        inputJson: JSON.stringify({ resourceId }),
+        outputRef: "output:first",
+        startedAt: 1,
+        settledAt: 2,
+      }),
+      attachmentReceipt({
+        effectIntentId: "effect-corrupted-cursor",
+        toolCallId: "tool-corrupted-cursor",
+        inputJson: JSON.stringify({ cursor: "issued-curs0r" }),
+        status: "failed",
+        outputRef: null,
+        errorJson: JSON.stringify({
+          code: "tool_failed",
+          data: { code: "invalid_cursor" },
+        }),
+        startedAt: 3,
+        settledAt: 4,
+      }),
+    ] as never, loadOutput as never);
+    expect(guard.boundary()).toContain(resourceId);
+
+    await guard.restoreReceipts([
+      attachmentReceipt({
+        effectIntentId: "effect-recovery",
+        toolCallId: "tool-recovery",
+        inputJson: JSON.stringify({ resourceId, startCharacter: 12_000 }),
+        outputRef: "output:recovery",
+        startedAt: 5,
+        settledAt: 6,
+      }),
+    ] as never, loadOutput as never);
+    expect(guard.boundary()).toBeNull();
+  });
+
+  it("does not let a restored executing call borrow later cursor provenance", async () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const resourceId = "00000000-0000-7000-8000-000000000785";
+    await guard.restoreReceipts([
+      attachmentReceipt({
+        effectIntentId: "effect-restored-running",
+        toolCallId: "tool-restored-running",
+        inputJson: JSON.stringify({ cursor: "unknown-cursor" }),
+        status: "executing",
+        outputRef: null,
+        settledAt: null,
+      }),
+    ] as never);
+
+    const policy = { capability: "workstream.resources.read" };
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-new-read",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-new-read",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      result: { output: attachmentReadPage(resourceId, "new-cursor"), summary: "Read new page" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-restored-running",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      error: "Attachment cursor is invalid",
+      data: { code: "invalid_cursor" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+
+    expect(guard.boundary()).toContain("tool-restored-running");
+    expect(guard.boundary()).not.toContain(resourceId);
+  });
+
+  it("keeps a corrupted cursor anonymous when more than one read continuation is active", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    const resourceIds = [
+      "00000000-0000-7000-8000-000000000775",
+      "00000000-0000-7000-8000-000000000776",
+    ];
+    resourceIds.forEach((resourceId, index) => {
+      const toolCallId = `tool-read-page-${index}`;
+      guard.onStarted({
+        type: "tool_started",
+        toolCallId,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy,
+        input: { resourceId },
+      } as never);
+      guard.onCompleted({
+        type: "tool_completed",
+        toolCallId,
+        toolName: "workstream_read_resource",
+        pluginId: "rally_core",
+        policy,
+        result: {
+          output: attachmentReadPage(resourceId, `issued-cursor-${index}`),
+          summary: "Read first page",
+        },
+      } as never);
+    });
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-ambiguous-corrupted-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { cursor: "unknown-corrupted-cursor" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-ambiguous-corrupted-cursor",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      error: "Attachment cursor is invalid",
+      data: { code: "invalid_cursor" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+
+    const boundary = guard.boundary();
+    expect(boundary).toContain("tool-read-ambiguous-corrupted-cursor");
+    expect(boundary).not.toContain(resourceIds[0]);
+    expect(boundary).not.toContain(resourceIds[1]);
+  });
+
   it("returns preload candidates to Bind only after their activation is persisted", async () => {
     const order: string[] = [];
     const persisted = new Set<string>();
