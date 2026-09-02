@@ -800,16 +800,32 @@ describe("freezing a run's scope", () => {
       .toEqual({ outcome: "reused" });
   });
 
-  it("refuses a second, different scope on the same run", () => {
+  it("keeps the recorded scope when a resumed attempt recomputes a different one", () => {
     const { storage } = claimed();
     storage.persistScope({ ...fence, runId: RUN, ...scope });
 
-    // The scope is immutable for the life of the run: what the model was
-    // allowed to reach cannot be renegotiated after it started reaching. This
-    // is a caller defect rather than a race, which is why it is its own answer.
+    // The incident this replaced: Cloudflare resets a Durable Object on deploy,
+    // so a run in flight resumes on a new bundle and recomputes a scope hash
+    // that carries the new build. Refusing that killed the run and told the
+    // member not to retry. The recorded scope wins and the loop restarts.
     expect(storage.persistScope({ ...fence, runId: RUN, ...scope, scopeHash: "scope-hash-2" }))
-      .toEqual({ outcome: "mismatch" });
+      .toEqual({ outcome: "reused" });
     expect(storage.scope({ runId: RUN })).toMatchObject({ scope_hash: "scope-hash-1" });
+  });
+
+  it("keeps the recorded scope when a later attempt takes the run over", () => {
+    const { storage, sql } = claimed();
+    storage.persistScope({ ...fence, runId: RUN, ...scope });
+
+    // A restart that mints a fresh attempt id, rather than reclaiming the
+    // fenced one, is the other shape of the same thing: the run's scope is
+    // still the one it was admitted with, not the taker's recomputation.
+    sql.exec(`UPDATE runs SET lease_owner = ?, attempt_epoch = 2 WHERE run_id = ?`, "owner-2", RUN);
+    expect(storage.persistScope({
+      ...fence, runId: RUN, ...scope, attemptId: "attempt-2", owner: "owner-2", scopeHash: "scope-hash-2",
+    })).toEqual({ outcome: "reused" });
+    expect(storage.scope({ runId: RUN }))
+      .toMatchObject({ attempt_id: "attempt-1", scope_hash: "scope-hash-1" });
   });
 
   it("refuses an attempt that no longer holds the run", () => {
@@ -870,16 +886,22 @@ describe("recording a plugin activation", () => {
       .toEqual({ outcome: "reused" });
   });
 
-  it("refuses an activation whose tool surface has changed", () => {
-    const { storage } = claimed();
+  it("keeps the recorded activation when a resumed attempt recomputes a different surface", () => {
+    const { storage, sql } = claimed();
     storage.persistPluginActivation({ ...fence, runId: RUN, ...activation });
 
-    // The surface hash is part of the frozen scope. A second activation naming
-    // a different one means the tools moved under a run that was promised they
-    // would not, so it is refused rather than recorded over.
+    // The same deploy that moves a run's scope hash moves each plugin's surface
+    // hash, for the same reason and out of the same tool definitions. Refusing
+    // here was the second landmine on the resumption path, so fixing only
+    // `persistScope` would have moved the next deploy's failure to this row.
     expect(storage.persistPluginActivation({
       ...fence, runId: RUN, ...activation, toolSurfaceHash: "surface-v2",
-    })).toEqual({ outcome: "mismatch" });
+    })).toEqual({ outcome: "reused" });
+    expect(sql.exec(
+      `SELECT tool_surface_hash FROM run_plugin_activations WHERE run_id = ? AND plugin_id = ?`,
+      RUN,
+      "linear",
+    ).one()).toMatchObject({ tool_surface_hash: "surface-v1" });
   });
 
   it("refuses an attempt that no longer holds the run", () => {
