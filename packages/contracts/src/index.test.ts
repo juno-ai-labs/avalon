@@ -299,7 +299,7 @@ describe("boundary contracts", () => {
     // `gpt-5.6-*` ids share a version, as do the two `deepseek-v4` ids, and
     // ties are ordered by hand rather than by this rule.
     // The *first* numeric run in the model segment, which is the version in
-    // every id the list carries: `grok-4.6` and `gemini-3.7-flash` match on the
+    // every id the list carries: `grok-4.6` and `gemini-3.8-flash` match on the
     // version itself, `deepseek-v4-pro` on the `v`-prefixed form. An id that put
     // a different number first — `foo-v2-3.0-bar` — would yield 2 rather than 3
     // and compare on the wrong field, so a family whose ids are not named this
@@ -318,6 +318,13 @@ describe("boundary contracts", () => {
       "openai/gpt-5.6-sol",
       "openai/gpt-5.6-terra",
       "openai/gpt-5.6-luna",
+    ]);
+    expect(AGENT_MODEL_OVERRIDES.filter((id) => id.startsWith("google/gemini-3"))).toEqual([
+      "google/gemini-3.8-flash",
+      "google/gemini-3.7-flash",
+      "google/gemini-3.6-flash",
+      "google/gemini-3.5-flash",
+      "google/gemini-3-flash-preview",
     ]);
 
     // Takes its two versions in the order the list mentions them, so the call
