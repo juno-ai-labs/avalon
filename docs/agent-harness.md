@@ -432,7 +432,10 @@ the field, an undeclared key keeps it so a strict parse still reports it, and a
 schema this walk cannot read keeps it too. A **write** keeps every blank,
 because there `null` and absence are different requests — clearing a field
 versus leaving it alone — and choosing between them is the executor's to refuse
-by name, not the harness's to guess. Requiredness is itself resolved
+by name, not the harness's to guess. So does anything nested inside a value,
+and any schema carrying `if`, `then`, `else`, `dependentRequired`, or
+`dependentSchemas`: requiredness there is answerable only per instance or by
+merging an ancestor's branches, which is a schema evaluator's job. Requiredness is itself resolved
 across the composed schema rather than read from the node carrying `properties`,
 since a generated schema commonly separates the two, and a walk that cannot
 finish drops nothing. `{}` and `{ after: "" }` are
@@ -1236,9 +1239,9 @@ silently return every test to the shared key while each still passes alone.
 
 **What changed:** `normalizeToolArguments` gained a second rule beside
 numeric-string normalization: on a tool whose `mode` is `read`, an optional
-property given `""` is removed when its declared schema says the empty string is
-not one of its values. It takes the tool's mode from the call site for that
-reason. It runs in
+property of the top-level arguments object given `""` is removed when its
+declared schema says the empty string is not one of its values. It takes the
+tool's mode from the call site for that reason. It runs in
 the same walk, under the same depth and visit budgets, and therefore before the
 input hash, `beforeToolCall`, receipt planning, and execution. The three
 functions in `tool-arguments.ts` are now exported from the package so the
@@ -1258,7 +1261,11 @@ the model may not recover from. Also rejected: applying the rule to writes. A
 blanked `assigneeId` dropped from `linear_update_issue` leaves the issue's
 assignee untouched and reports the update as complete, while `null` there
 clears it — two different requests the harness cannot choose between, so the
-executor refuses the call by name instead. Also rejected: reading `required` from the node
+executor refuses the call by name instead. Also rejected: treating what the
+walk cannot read as requiring nothing. A depth or visit bound, an unresolvable
+`$ref`, a nested value whose requiredness an ancestor's branches split between
+them, and the conditional requiredness keywords are each unproven rather than
+unrequiring, and each keeps every blank. Also rejected: reading `required` from the node
 that declares `properties`. A generated or hosted-MCP schema separates the two,
 so that would have dropped a required blank from a tool whose arguments Rally
 forwards without a local parse — the argument would have gone missing instead of

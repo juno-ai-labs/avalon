@@ -143,6 +143,58 @@ describe("tool argument normalization", () => {
     expect(normalizeToolArguments({ target: "" }, viaBranch, "read")).toEqual({ target: "" });
   });
 
+  it("keeps a blank a conditional keyword could require", () => {
+    // `dependentRequired` and `if`/`then` answer "is this required" only
+    // against the instance being validated. This walk does not evaluate them,
+    // so a schema carrying one is unproven rather than unrequiring.
+    const dependent = {
+      type: "object",
+      properties: { other: { type: "string" }, target: { type: "string", minLength: 1 } },
+      dependentRequired: { other: ["target"] },
+    };
+    const conditional = {
+      type: "object",
+      properties: { kind: { type: "string" }, target: { type: "string", minLength: 1 } },
+      if: { properties: { kind: { const: "byId" } } },
+      then: { required: ["target"] },
+    };
+
+    expect(normalizeToolArguments({ other: "x", target: "" }, dependent, "read"))
+      .toEqual({ other: "x", target: "" });
+    expect(normalizeToolArguments({ kind: "byId", target: "" }, conditional, "read"))
+      .toEqual({ kind: "byId", target: "" });
+  });
+
+  it("keeps a blank the depth bound stopped it from reading", () => {
+    let deep: Record<string, unknown> = { required: ["target"] };
+    for (let index = 0; index < 70; index += 1) deep = { allOf: [deep] };
+    const schema = {
+      type: "object",
+      properties: { target: { type: "string", minLength: 1 } },
+      ...deep,
+    };
+
+    expect(normalizeToolArguments({ target: "" }, schema, "read")).toEqual({ target: "" });
+  });
+
+  it("strips nothing inside a nested value, where requiredness is not resolvable", () => {
+    // An ancestor's composition branches can describe the same nested object
+    // separately — one carrying `properties`, another `required` — and merging
+    // them is a schema evaluator's job. The tool's own arguments object is the
+    // one place this walk can answer the question, so it is the only place it
+    // answers it.
+    const schema = {
+      type: "object",
+      allOf: [
+        { properties: { target: { type: "object", properties: { id: { type: "string", minLength: 1 } } } } },
+        { properties: { target: { type: "object", required: ["id"] } } },
+      ],
+    };
+
+    expect(normalizeToolArguments({ target: { id: "" } }, schema, "read"))
+      .toEqual({ target: { id: "" } });
+  });
+
   it("keeps every blank when it cannot finish reading what the schema requires", () => {
     const unresolvable = {
       type: "object",

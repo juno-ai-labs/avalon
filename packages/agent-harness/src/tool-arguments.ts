@@ -6,6 +6,14 @@ const MAX_VALIDATION_ISSUES = 5;
 const MAX_VALIDATION_ERROR_CHARACTERS = 1_200;
 const JSON_NUMBER_TEXT = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u;
 const UNSAFE_REFERENCE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+/** JSON Schema keywords that can require a key only for a particular instance. */
+const CONDITIONAL_REQUIREDNESS_KEYWORDS = [
+  "if",
+  "then",
+  "else",
+  "dependentRequired",
+  "dependentSchemas",
+] as const;
 
 type JsonObject = Record<string, unknown>;
 type NumericKind = "integer" | "number";
@@ -20,6 +28,13 @@ type SchemaVisitBudget = { remaining: number };
 type RequiredKeys = { keys: ReadonlySet<string>; complete: boolean };
 
 const NO_REQUIRED_KEYS: RequiredKeys = { keys: new Set(), complete: true };
+/**
+ * What a caller gets where requiredness cannot be established. Every blank is
+ * kept under it, so it is also how the walk refuses to strip inside a nested
+ * value: `required` for a nested object can be split across composition
+ * branches of an ancestor, and merging those is a schema evaluator's job.
+ */
+const UNPROVEN_REQUIRED_KEYS: RequiredKeys = { keys: new Set(), complete: false };
 
 /** A tool's declared `mode`; the blank-argument rule below applies only to reads. */
 export type ToolArgumentMode = "read" | "write";
@@ -33,8 +48,9 @@ export type ToolArgumentMode = "read" | "write";
  *    learn the preferred shape. String alternatives remain strings: identifiers
  *    and free text must not change meaning merely because their characters look
  *    numeric.
- * 2. On a **read**, an optional property given `""` is treated as absent when
- *    the property's own schema says the empty string is not one of its values.
+ * 2. On a **read**, an optional property of the **top-level** arguments object
+ *    given `""` is treated as absent when the property's own schema says the
+ *    empty string is not one of its values.
  *    Models blank out optional cursors, ids, and filters rather than omitting
  *    them, and the tool then either rejects the call or forwards the blank to a
  *    provider that rejects it. On a read there is nothing else a blank could
@@ -170,7 +186,7 @@ function normalizeDirect(
     const prefixItems = Array.isArray(schema.prefixItems) ? schema.prefixItems : [];
     const values = input.map((item, index) => {
       const itemSchema = prefixItems[index] ?? schema.items;
-      const normalized = normalizeValue(item, itemSchema, rootSchema, depth + 1, budget, NO_REQUIRED_KEYS, mode);
+      const normalized = normalizeValue(item, itemSchema, rootSchema, depth + 1, budget, UNPROVEN_REQUIRED_KEYS, mode);
       changed ||= normalized.changed;
       return normalized.value;
     });
@@ -197,9 +213,9 @@ function normalizeDirect(
     }
     let normalized: Normalized = { value, changed: false };
     if (declared) {
-      normalized = normalizeValue(value, properties[key], rootSchema, depth + 1, budget, NO_REQUIRED_KEYS, mode);
+      normalized = normalizeValue(value, properties[key], rootSchema, depth + 1, budget, UNPROVEN_REQUIRED_KEYS, mode);
     } else if (isObject(schema.additionalProperties)) {
-      normalized = normalizeValue(value, schema.additionalProperties, rootSchema, depth + 1, budget, NO_REQUIRED_KEYS, mode);
+      normalized = normalizeValue(value, schema.additionalProperties, rootSchema, depth + 1, budget, UNPROVEN_REQUIRED_KEYS, mode);
     }
     changed ||= normalized.changed;
     entries.push([key, normalized.value]);
@@ -225,8 +241,10 @@ function collectRequiredKeys(
   depth: number,
   budget: SchemaVisitBudget,
 ): RequiredKeys {
-  if (depth > MAX_SCHEMA_DEPTH || !isObject(schemaValue)) return NO_REQUIRED_KEYS;
-  if (!consumeSchemaVisit(budget)) return { keys: new Set(), complete: false };
+  // A schema that is not an object requires nothing, and that is provable. The
+  // two bounds are not: what they cut off may have required a key.
+  if (!isObject(schemaValue)) return NO_REQUIRED_KEYS;
+  if (depth > MAX_SCHEMA_DEPTH || !consumeSchemaVisit(budget)) return UNPROVEN_REQUIRED_KEYS;
   const schema = schemaValue;
   const keys = new Set<string>();
   let complete = true;
@@ -251,9 +269,18 @@ function collectRequiredKeys(
   for (const branch of Array.isArray(schema.anyOf) ? schema.anyOf : []) compose(branch);
   for (const branch of Array.isArray(schema.oneOf) ? schema.oneOf : []) compose(branch);
 
+  // Conditional requiredness answers "is this key required" only against the
+  // instance being validated, which is a schema evaluator's job rather than
+  // this walk's. A schema carrying any of it is therefore unproven, not
+  // unrequiring.
+  if (CONDITIONAL_REQUIREDNESS_KEYWORDS.some((keyword) => Object.hasOwn(schema, keyword))) {
+    complete = false;
+  }
+
   return { keys, complete };
 }
 
+/** Union of two required-key sets; unproven on either side stays unproven. */
 function mergeRequiredKeys(left: RequiredKeys, right: RequiredKeys): RequiredKeys {
   if (left.keys.size === 0 && left.complete) return right;
   if (right.keys.size === 0 && right.complete) return left;
