@@ -1221,11 +1221,15 @@ silently return every test to the shared key while each still passes alone.
 idempotency, matching the receipt-derived key its executor requires. A persisted
 credential activation now records both the canonical `connection:<uuid>` and
 the model-facing `plugin_*` identity consumed by ready-draft validation,
-including preloaded and restored activation hints. Completed inspection and
+including preloaded and restored activation hints; a dropped activation removes
+both identities again. Completed inspection, people/resource search, and
 evaluator receipts rebuild the Automations plugin's otherwise in-memory state
-after eviction. On object takeover, a pending assistant reservation is settled
-visibly and the Bind loop continues at the next model turn instead of
-terminalizing the execution.
+after eviction in durable tool order. The authoring run ID is also the stable
+automation ID, so recreating the plugin cannot fork a second automation. On
+object takeover, a pending assistant reservation is settled visibly and the
+Bind loop continues at the next model turn instead of terminalizing the
+execution, while the configured model-turn ceiling continues counting across
+takeovers.
 
 **Why:** One production automation-authoring run exposed all three mismatches.
 The elicitation definition withheld the key its executor required; loading and
@@ -1241,10 +1245,11 @@ accepted assistant/tool turn after eviction would risk repeating an external
 effect; only an unaccepted reservation is retried.
 
 **Consequences:** Elicitations converge on one durable question; ready drafts
-recognize the connector activation, inspection, and evaluator facts the harness
-actually persisted; and an instance/socket reset self-heals when the abandoned
-model turn has no accepted side effects. Existing ambiguous-tool recovery and
-explicit cancellation remain fail-closed.
+recognize only live connector activations plus the inspection, research, and
+evaluator facts the harness actually persisted; and an instance/socket reset
+self-heals when the abandoned model turn has no accepted side effects. Repeated
+takeovers cannot reset the run's model-turn budget. Existing ambiguous-tool
+recovery and explicit cancellation remain fail-closed.
 
 ### 2026-09-02 — GPT-5.6 Sol is Azure-only
 

@@ -600,7 +600,14 @@ async function delayUnlessAborted(ms: number, signal: AbortSignal): Promise<void
 
 export async function runHarnessWithBind(input: RunHarnessInput): Promise<HarnessOutcome> {
   const onTurnWouldEnd = input.onTurnWouldEnd;
-  const maxIterations = input.config.maxIterations ?? Number.POSITIVE_INFINITY;
+  const runMaxIterations = input.config.maxIterations ?? Number.POSITIVE_INFINITY;
+  // A persistent Bind projection is the run, not a fresh loop budget. Count
+  // model turns already committed before this activation so eviction, human
+  // input, and other resumptions cannot each reset the same run-wide ceiling.
+  const maxIterations = Math.max(
+    0,
+    runMaxIterations - (input.bindLoopProjection?.lastModelTurnIndex ?? 0),
+  );
   const deadline = input.config.maxWallClockMs === undefined
     ? null
     : createRunDeadline({
@@ -1877,7 +1884,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       return outcome("stopped", streamedContent || content, model, state, routedAttempts, resultStats);
     }
     if (result.stopReason === "iteration_limit") {
-      throw new HarnessLimitError("run_iteration_limit_exceeded", `Harness exceeded ${maxIterations} model iterations`);
+      throw new HarnessLimitError("run_iteration_limit_exceeded", `Harness exceeded ${runMaxIterations} model iterations`);
     }
     const completedReservation = bindLoopProjection?.lastAssistantReservation;
     if (completedWithoutAcceptedAssistant && completedReservation?.status === "failed") {

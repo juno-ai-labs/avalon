@@ -1599,7 +1599,9 @@ assistant reservation as an interruption status turn, close its stale stream,
 and continue the same durable execution at the next model-turn index. An
 explicit stop still settles the reservation and terminalizes the run. Real
 workerd coverage forces eviction with a streaming reservation and checks the
-new execution epoch, canonical status turn, and still-executing singleton.
+new execution epoch, canonical status turn, and still-executing singleton. The
+Bind runtime subtracts already-persisted model turns from the configured run
+ceiling, so takeover does not refresh that budget.
 
 **Why:** A production instance reset closed the feed sockets while an automation
 authoring response was reserved. Recovery successfully reclaimed the durable
@@ -1615,8 +1617,9 @@ receipts because an outward effect may already have happened.
 
 **Consequences:** A host/socket reset can leave a visible interruption pill, but
 it no longer ends side-effect-safe work. Model-turn IDs advance rather than
-reusing the abandoned reservation, cancellation remains terminal, and no new
-numeric retry ceiling is introduced.
+reusing the abandoned reservation, cancellation remains terminal, and the
+existing run-wide model-turn ceiling remains effective across every takeover.
+
 ### 2026-09-02 — Run-generated resources reach the open rail immediately
 
 **What changed:** The resident resource-attachment path now reads back only the

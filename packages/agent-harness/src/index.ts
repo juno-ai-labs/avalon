@@ -101,6 +101,8 @@ export {
   AUTOMATIONS_PLUGIN_ID,
   AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
   createAutomationsPlugin,
+  rememberAutomationPeopleSearchResult,
+  rememberAutomationResourceSearchResult,
   type AutomationCreatorToolHost,
 } from "./automation-creator-tools";
 export {

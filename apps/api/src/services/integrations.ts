@@ -27,6 +27,8 @@ import {
   renderCompactionCheckpointContent,
   rejectToolModesBeforeCall,
   repairRootUnionForProviders,
+  rememberAutomationPeopleSearchResult,
+  rememberAutomationResourceSearchResult,
   runHarness,
   type AddressingContextMessage,
   type BindLoopProjectionState,
@@ -1774,6 +1776,12 @@ function createAvalonAutomationsPlugin(
 ): HarnessPlugin {
   const catalog: AutomationCreatorPluginCatalogEntry[] = [];
   const inspectedPluginIds = new Set<string>();
+  const resolvedResources = new Map<string, {
+    pluginId: string;
+    resourceType: string;
+    sourceBindingKeys: readonly string[];
+  }>();
+  const resolvedPersonIds = new Set<string>();
   const authorUserId = input.executionPrincipal?.type === "user"
     ? input.executionPrincipal.userId
     : null;
@@ -1781,15 +1789,14 @@ function createAvalonAutomationsPlugin(
    * The evaluator rules the model set, waiting for a submission to attach them
    * to. Null until it sets any; a draft with no event trigger never needs them.
    */
-  let stagedEvaluatorRules: AutomationSetEvaluatorRulesInputV1 | null = null;
   const draftState: {
     submitted: AutomationDraft | null;
-    evaluatorRules?: AutomationSetEvaluatorRulesInputV1 | null;
-  } = { submitted: null };
+    evaluatorRules: AutomationSetEvaluatorRulesInputV1 | null;
+  } = { submitted: null, evaluatorRules: null };
   // One automation per authoring loop. Held here so a second submission
   // refines the first rather than creating another: an agent that asked a
   // clarifying question and submitted again has one proposal, not two.
-  let authoredAutomationId: string | null = null;
+  const authoredAutomationId = asAutomationId(input.harnessRunId);
   let preparation: Promise<void> | null = null;
   const prepare = async (): Promise<void> => {
     if (!authorUserId) return;
@@ -1810,13 +1817,16 @@ function createAvalonAutomationsPlugin(
         runId: input.harnessRunId,
         capabilities: [
           "rally.automation.plugins.inspect",
+          "rally.automation.people.search",
+          "rally.automation.resources.search",
           "rally.automation.evaluators.set",
         ],
       });
+      const replayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
       for (const receipt of receipts) {
         if (receipt.status !== "completed") continue;
         const plan = parseJson<{ canonicalToolName?: unknown }>(
-          receipt.executionPlanJson ?? "null",
+          receipt.executionPlanJson,
           {},
         );
         const raw = parseJson<unknown>(receipt.inputJson, null);
@@ -1830,9 +1840,18 @@ function createAvalonAutomationsPlugin(
         } else if (plan.canonicalToolName === "set_evaluator_rules") {
           const restored = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
           if (restored.success) {
-            stagedEvaluatorRules = restored.data;
             draftState.evaluatorRules = restored.data;
           }
+        } else if (receipt.outputRef && plan.canonicalToolName === "people_search") {
+          rememberAutomationPeopleSearchResult(
+            await loadToolReplayOutput(env, receipt.outputRef, replayDeadline),
+            resolvedPersonIds,
+          );
+        } else if (receipt.outputRef && plan.canonicalToolName === "resources_search") {
+          rememberAutomationResourceSearchResult(
+            await loadToolReplayOutput(env, receipt.outputRef, replayDeadline),
+            resolvedResources,
+          );
         }
       }
     })();
@@ -1846,13 +1865,13 @@ function createAvalonAutomationsPlugin(
   const plugin = createAutomationsPlugin({
     catalog,
     inspectedPluginIds,
-    resolvedResources: new Map(),
+    resolvedResources,
     // Shared with the work-stream plugin activation receipts below. The
     // automation tools use model-facing ids, while the durable activation uses
     // canonical connection ids, so the host bridges them when activation is
     // persisted.
     loadedPluginIds,
-    resolvedPersonIds: new Set<string>(),
+    resolvedPersonIds,
     draftState,
     // Telemetry only: the diagnostics these tools emit name the model that
     // produced the arguments, and a work-stream run does not fix one here.
@@ -1860,7 +1879,6 @@ function createAvalonAutomationsPlugin(
     draftMutationPort: {
       submitDraft: async (draft: AutomationDraft) => {
         if (!authorUserId) throw new Error("automation_draft_author_unavailable");
-        authoredAutomationId ??= crypto.randomUUID();
         const agent = await durableObjectStubForWorkspace(
           env,
           env.AUTOMATION_AGENTS,
@@ -1881,7 +1899,7 @@ function createAvalonAutomationsPlugin(
           // Only a real channel. A DM is where somebody asked, not somewhere a
           // standing automation should speak from, and a mention with no
           // channel has nothing to record.
-          evaluatorRules: stagedEvaluatorRules,
+          evaluatorRules: draftState.evaluatorRules,
           authoredOrigin: input.slackOrigin?.channelId
             && input.slackOrigin.channelType !== "im"
             ? {
@@ -1933,7 +1951,7 @@ function createAvalonAutomationsPlugin(
       // every event-driven draft authored in a room impossible to accept:
       // `prepareAcceptance` requires evaluators for exactly those triggers.
       setEvaluatorRules: async (rules) => {
-        stagedEvaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse(rules);
+        draftState.evaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse(rules);
         return { accepted: true as const };
       },
     },
@@ -3075,6 +3093,12 @@ export async function runWorkstreamHarness(
       );
     },
     onActivationDropped: (drop) => {
+      forgetCredentialPluginActivation(
+        drop,
+        harnessTools.frozenConnections,
+        activeCredentialPluginIds,
+        harnessTools.loadedAutomationPluginIds,
+      );
       logStructuredEvent(env, "warn", "harness_plugin_activation_dropped", {
         request_id: input.harnessRunId,
         workspace_id: input.workspaceId,
@@ -6208,6 +6232,27 @@ function recordCredentialPluginActivation(
   loadedAutomationPluginIds.add(frozen.modelPluginId);
 }
 
+/** Remove both names when Bind drops a credential from the active surface. */
+function forgetCredentialPluginActivation(
+  drop: unknown,
+  frozenConnections: ReadonlyMap<string, FrozenConnectorPlugin>,
+  activeCredentialPluginIds: Set<string>,
+  loadedAutomationPluginIds: Set<string>,
+): void {
+  const pluginId = typeof drop === "object" && drop !== null && "name" in drop
+    && typeof drop.name === "string"
+    ? drop.name
+    : null;
+  if (!pluginId) return;
+  const frozen = frozenConnections.get(pluginId);
+  if (!frozen) return;
+  activeCredentialPluginIds.delete(pluginId);
+  const sameModelIdRemains = [...activeCredentialPluginIds].some(
+    (activeId) => frozenConnections.get(activeId)?.modelPluginId === frozen.modelPluginId,
+  );
+  if (!sameModelIdRemains) loadedAutomationPluginIds.delete(frozen.modelPluginId);
+}
+
 /**
  * Render a credential plugin from trusted connector code and the credential's
  * granted capability IDs. Provider account labels and resource content must
@@ -8514,6 +8559,7 @@ export const __integrationTesting = {
   eligibleConnectionCapabilityMap,
   persistInitialPluginActivations,
   recordCredentialPluginActivation,
+  forgetCredentialPluginActivation,
   publishRuntimeEventBestEffort,
   advanceHarnessStreamText,
   applyHarnessAttachmentBoundary,
