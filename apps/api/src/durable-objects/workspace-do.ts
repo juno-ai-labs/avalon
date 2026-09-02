@@ -789,6 +789,8 @@ import {
   WorkspaceProjectDirectoryResultSchema,
   WorkspaceProjectListRequestSchema,
   WorkspaceProjectLifecycleRequestSchema,
+  WorkspaceProjectMembersRequestSchema,
+  WorkspaceProjectMembersResultSchema,
   WorkspaceProjectMembershipPlanResultSchema,
   WorkspaceProjectMembershipPrepareRequestSchema,
   WorkspaceProjectMembershipSettleRequestSchema,
@@ -805,6 +807,8 @@ import {
   type WorkspaceProjectDirectoryResult,
   type WorkspaceProjectListRequest,
   type WorkspaceProjectLifecycleRequest,
+  type WorkspaceProjectMembersRequest,
+  type WorkspaceProjectMembersResult,
   type WorkspaceProjectMembershipPlanResult,
   type WorkspaceProjectMembershipPrepareRequest,
   type WorkspaceProjectMembershipSettleRequest,
@@ -4648,6 +4652,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /**
+   * Every work stream a project holds, archived ones included — what the
+   * client-facing summary deliberately leaves out.
+   */
+  async listProjectMembers(input: WorkspaceProjectMembersRequest): Promise<WorkspaceProjectMembersResult> {
+    await this.initialized;
+    const request = WorkspaceProjectMembersRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const workstreamIds = this.projectStorage().members(request.userId, request.projectId);
+    return workstreamIds === false
+      ? { ok: false, code: "project_not_found" }
+      : WorkspaceProjectMembersResultSchema.parse({ ok: true, workstreamIds });
+  }
+
   async archiveProject(input: WorkspaceProjectLifecycleRequest): Promise<WorkspaceProjectMutationResult> {
     await this.initialized;
     const request = WorkspaceProjectLifecycleRequestSchema.parse(input);
@@ -5945,6 +5966,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     let directoryChanged = false;
     const commonChanges = new Set<string>();
+    const archivalChanges = new Set<string>();
     const watchReconciliations = new Map<string, {
       authorityGeneration: number;
       projectionVersion: number;
@@ -5965,6 +5987,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     for (const envelope of request.envelopes) {
       const applied = this.applyDirectoryEnvelope(envelope, activeUsers, originLabels);
       directoryChanged = directoryChanged || applied.changed;
+      if (applied.archivalChanged) archivalChanges.add(envelope.workstreamId);
       if (applied.changed && envelope.effect.kind === "directory_common") {
         commonChanges.add(envelope.workstreamId);
       } else if (applied.changed && envelope.effect.kind === "directory_user") {
@@ -6088,6 +6111,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           ? []
           : [...users].map((userId) => this.publishWorkstreamState(workstreamId, userId))
       )));
+      // Archiving a work stream is not a project mutation, so nothing else
+      // here touches project state — and without this the sidebar keeps
+      // counting a member it has just stopped being able to show until the
+      // next project write or reconnect. The call advances the project
+      // waterline only when one of these work streams is actually in a
+      // project, which is both what makes the snapshot newer than the one its
+      // readers hold and what keeps this off the path every projection takes.
+      if (archivalChanges.size > 0 && this.projectStorage().noteMemberArchivalChange([...archivalChanges])) {
+        this.publishProjectSnapshot();
+      }
     }
     return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
   }
@@ -8818,7 +8851,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     envelope: WorkstreamRegionalEffectEnvelope,
     activeUsers: ReadonlySet<string>,
     originLabels: ReadonlyMap<string, string>,
-  ): { changed: boolean; participantMembershipChanged: boolean } {
+  ): { changed: boolean; participantMembershipChanged: boolean; archivalChanged: boolean } {
     return this.state.storage.transactionSync(() => {
       const receipt = this.state.storage.sql.exec<{ payload_hash: string }>(
         `SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?`,
@@ -8828,19 +8861,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (receipt.payload_hash !== envelope.payloadHash) {
           throw new Error("workspace_directory_effect_idempotency_conflict");
         }
-        return { changed: false, participantMembershipChanged: false };
+        return { changed: false, participantMembershipChanged: false, archivalChanged: false };
       }
 
       const now = Date.now();
       let changed = false;
       let participantMembershipChanged = false;
+      let archivalChanged = false;
       if (envelope.effect.kind === "directory_common") {
         const current = this.state.storage.sql.exec<{
           authority_generation: number;
           waterline: number;
           payload_hash: string;
+          archived_at: number | null;
         }>(
-          `SELECT authority_generation, waterline, payload_hash
+          `SELECT authority_generation, waterline, payload_hash, archived_at
              FROM workspace_workstream_directory WHERE workstream_id = ?`,
           envelope.workstreamId,
         ).toArray()[0];
@@ -8977,6 +9012,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             );
           }
           changed = true;
+          // A project counts the members it can show, so a work stream
+          // arriving or leaving the archive changes what its projects say
+          // about themselves. Compared rather than assumed: this effect is
+          // written on ordinary activity too, and republishing every project
+          // to every socket on each of those would cost the sidebar far more
+          // than the count is worth.
+          archivalChanged = (current?.archived_at ?? null) !== epoch(effect.archivedAt);
         }
       } else if (envelope.effect.kind === "directory_user") {
         const effect = envelope.effect;
@@ -9076,7 +9118,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         now,
       );
       if (changed) this.advanceDirectoryVersion(now);
-      return { changed, participantMembershipChanged };
+      return { changed, participantMembershipChanged, archivalChanged };
     });
   }
 

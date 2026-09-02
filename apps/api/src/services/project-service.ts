@@ -15,6 +15,7 @@ import {
 import {
   WorkspaceProjectDirectoryResultSchema,
   WorkspaceProjectDefaultResultSchema,
+  WorkspaceProjectMembersResultSchema,
   WorkspaceProjectMutationResultSchema,
   type WorkspaceProjectErrorCode,
 } from "../durable-objects/workspace-project-protocol";
@@ -127,7 +128,12 @@ export class ProjectService {
       [...requestedParticipants],
     );
     const workstreams = new WorkstreamService(this.env, this.auth);
-    for (const workstreamId of current.workstreamIds) {
+    // The membership, not `current.workstreamIds`: that field is the members a
+    // surface can list, and an archived one is not among them. An audience is
+    // who may read the work stream, so a fan-out that skipped the archived
+    // members would leave a removed participant reading whatever is unarchived
+    // afterwards.
+    for (const workstreamId of await this.members(projectId)) {
       if (input.scope === "workspace") {
         await workstreams.update(workstreamId, { scope: "workspace" });
       } else {
@@ -305,6 +311,25 @@ export class ProjectService {
         "Make the work stream personal and add each of its participants to the project first",
       );
     }
+  }
+
+  /**
+   * Every work stream the project holds, archived ones included.
+   *
+   * `ProjectSummary.workstreamIds` is the members a surface can list, so
+   * anything acting on the project's behalf asks the authority instead of
+   * reading the shape built for a screen.
+   */
+  private async members(projectId: ProjectId): Promise<WorkstreamId[]> {
+    const result = WorkspaceProjectMembersResultSchema.parse(
+      await (await this.workspace()).listProjectMembers({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        projectId,
+      }),
+    );
+    if (!result.ok) throw projectError(result.code);
+    return result.workstreamIds;
   }
 
   private workspace() {
