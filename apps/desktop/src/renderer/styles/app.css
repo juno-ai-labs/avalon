@@ -530,7 +530,10 @@ pre {
    hover partner; Terra Light's `elevated-hover` is the same as the menu base.
    The danger rule has equal specificity and follows this one, so source order
    preserves its dedicated tint. */
-.menu-item { align-items: center; border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 8px; min-height: 30px; outline: 0; padding: 4px 8px; text-align: start; width: 100%; }
+/* A Radix menu item is a div, and a div full of text shows the I-beam and lets
+   the text be dragged into a selection. It is a command: the same hand the
+   buttons in the same menu already get, and nothing in it to highlight. */
+.menu-item { align-items: center; border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); cursor: pointer; display: flex; font-size: 12px; gap: 8px; min-height: 30px; outline: 0; padding: 4px 8px; text-align: start; user-select: none; width: 100%; }
 .menu-item[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .menu-item[data-disabled] { opacity: 0.42; }
 .menu-item-danger { color: var(--av-sys-color-danger-base); }
@@ -1106,6 +1109,10 @@ pre {
 .workspace-menu-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
+/* A workspace this device still lists but cannot open until the account is
+   reconnected: outlined rather than removed, with the reason in a tooltip. */
+.workspace-menu-item.is-unavailable { box-shadow: inset 0 0 0 1px var(--av-sys-color-danger-base); }
+.workspace-menu-tooltip { line-height: 1.4; max-width: 240px; }
 .workspace-region-tag {
   background: var(--av-sys-color-surface-subtle);
   border: 1px solid var(--av-sys-color-border-subtle);
@@ -4145,6 +4152,8 @@ button.citation-card:hover { background: var(--av-sys-color-surface-elevated-hov
 .run-duration { color: var(--av-ref-color-neutral-9); font-size: 9px; text-align: right; }
 .form-field { display: grid; gap: 6px; }
 .form-field > span { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
+.form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); outline: 0; padding: 9px 10px; width: 100%; }
+.form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
 .form-field textarea { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-sm); line-height: 1.5; outline: 0; padding: 10px; resize: vertical; width: 100%; }
 .granola-key-guide { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-md); margin-bottom: 16px; padding: 13px 14px; }
 .granola-key-guide h3 { color: var(--av-sys-color-text-default); font-size: 11.5px; margin: 0; }

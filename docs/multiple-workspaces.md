@@ -19,6 +19,8 @@ switching, background attention, leaving, or abandonment.
 | `apps/api/src/services/workspace-attention-service.ts`, `durable-objects/workspace-do.ts` | The regional attention read and WorkspaceDO projection. |
 | `apps/desktop/src/main/stored-auth.ts`, `index.ts` | Versioned credential/profile sets, device-local recency, exact-credential refresh and removal, activation races, and complete sign-out. |
 | `apps/desktop/src/main/workspace-selection.ts`, `workspace-activation.ts` | The local claim that answers a link to the active workspace, and the platform activation every other addressed link takes. |
+| `apps/desktop/src/main/credential-refresh.ts` | One rotation per refresh token: every path that renews a stored credential shares an in-flight refresh of the same token. |
+| `apps/desktop/src/main/workspace-directory.ts` | The account menu's directory: the stored set merged with discovery, and the reconciliation that retires a membership a complete discovery no longer lists. |
 | `apps/desktop/src/renderer/components/workspace-account-menu.tsx`, `app-shell.tsx` | Flagged switcher, invitations, creation, attention states, and switching presentation. |
 | `apps/desktop/src/renderer/lib/draft-keys.ts`, `draft-cache.ts`, `app-session.tsx` | Workspace-scoped composer drafts and exact cleanup when one membership ends. |
 
@@ -49,6 +51,52 @@ Google account may have different user UUIDs in Global and EU. The verified
 email in the Global identity session links discovery to the regional account.
 An older version-1 workspace-only envelope can be reconnected in place after one
 Google exchange, preserving its selected workspace rather than forcing setup.
+
+### Credential renewal
+
+Access tokens live fifteen minutes; refresh tokens rotate on every renewal and
+the API honours the token it just retired for sixty seconds more, so a device
+whose rotation response was lost can present the old one again. That grace
+makes a *concurrent* pair of renewals with the same token succeed twice, each
+rotating, and the answer that reaches the desktop first is the one persisted.
+The device is then holding a token the service accepts only until the grace
+ends; the next renewal is a 401, which is terminal, and the credential is
+surrendered. For the identity credential that is the "Reconnect account…" item
+and every discovered workspace gone from the menu until the account is signed
+in again.
+
+Every renewal therefore goes through `credential-refresh.ts`: two requests
+that found the same access token expired share one rotation and persist the
+same result, whether they arrived through discovery, activation, a background
+attention read, a departure, or the renderer's own refresh of the active
+session. An identity request whose presented credential has already been
+replaced adopts the stored one rather than rotating a token the service has
+retired, and refreshes it only if it has itself expired.
+
+### The account menu's directory
+
+The menu lists the union of what this device has stored and what Global
+discovery answers, in device recency order. Discovery is the account's
+complete membership and needs the identity credential; the stored set is one
+regional credential and cached profile per workspace this device has opened,
+readable with no network at all. `getOnboardingState` never rejects on
+discovery's account. It reports `identity` as `connected`, `reconnect_required`
+(no identity credential is stored), or `unavailable` (discovery failed for
+another reason), and lists the stored set either way, merged with the last
+discovery this run received so a blip does not shrink the list. While the
+account needs reconnecting no other workspace can be opened — every switch
+crosses Global activation — so each background row is outlined and its
+tooltip says why, and selecting one shows the reason under the row instead of
+attempting an activation that must fail.
+
+A discovery that succeeds is complete (a regional outage is a 503, never a
+shorter list), so a stored background workspace it does not list is a
+membership that has ended: removed by an owner, left from another device, or
+abandoned. Its credential and profile are removed then. Two are spared: the
+active workspace, whose revocation the socket path owns, and anything written
+after the discovery request began, because a workspace created or activated
+while the request was in flight is exactly what an answer started earlier
+fails to list.
 
 The renderer mounts one WorkspaceDO socket for the active workspace. Background
 workspaces get no sockets and expose no items across the boundary. Their stored
@@ -184,6 +232,10 @@ active workspace.
   membership through platform activation; a locally stored credential is never
   enough to switch on. A link into the active workspace opens with the
   credential in use, which the regional API re-checks on every request.
+- A stored workspace stays on the account menu whether or not discovery can be
+  reached. Only a complete discovery that no longer lists it, a departure, a
+  revocation of its credential, or sign-out removes it.
+- This device rotates one refresh token at most once at a time.
 - Leaving one workspace cannot delete another workspace's credential, profile,
   query state, or draft.
 - Abandonment retains data and is reversible only by a paired operator action;
@@ -206,6 +258,10 @@ never acquire a product WebSocket.
   removes that exact workspace entry; ordinary transport failures retain it.
 - Failed attention reads keep the last values and label their relative update
   time. Discovery reconciliation removes a membership that has actually ended.
+- Discovery that cannot run leaves the stored set listed and says which state
+  the account is in; a missing identity credential is a state the menu shows
+  with the rows outlined, not an error it retries into a menu item that comes
+  and goes.
 - An unreachable target region leaves the active workspace intact and reports
   that connectivity is required. A link into the active workspace needs no
   connectivity to open and fails on its first read like any other request.
@@ -261,6 +317,46 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-09-02 — Stored workspaces outlive discovery, and one token rotates once
+
+**What changed:** The account menu lists the device's stored workspaces
+merged with discovery rather than discovery alone, `getOnboardingState`
+reports the account's identity state instead of rejecting, background rows
+are outlined with a tooltip while the account needs reconnecting, a complete
+discovery retires stored memberships it no longer lists, and every renewal of
+a stored credential is single-flight per refresh token. The create-workspace
+dialog's name field took the app's form-field styling, and menu items stopped
+showing the text cursor.
+
+**Why:** A field report: "Reconnect account…" appeared some five seconds
+after the menu opened, and a workspace created the day before was missing
+from the menu until the account was reconnected. The missing workspace was
+the menu listing only discovery, which needs the identity credential. The
+credential had been surrendered by a terminal 401 on refresh, and the way to
+reach one without the token expiring is the rotation race in
+[Credential renewal](#credential-renewal): two identity requests that found
+the same access token expired — a focus refetch and a deep link, a menu open
+and a switch — each rotated the token, and the earlier answer was persisted.
+The five seconds were React Query retrying a thrown "sign in first" error
+twice before surfacing it, and clearing it again on every refetch while the
+query had never succeeded.
+
+**Considered and rejected:** Refusing the second concurrent rotation on the
+server, which would turn the lost-response recovery the grace exists for into
+a forced sign-in. Caching discovery to disk so a never-opened workspace also
+survives a discovery failure, which makes the device a content directory it
+does not own; the stored set is what the device has authority for. Keeping a
+stored row that a complete discovery no longer lists, which is a ghost that
+can never open.
+
+**Consequences:** A device's own workspaces never leave the menu on the
+account's failure, and the menu distinguishes "reconnect" from "try later"
+without inspecting error text. Any new path that renews a stored credential
+must go through `credential-refresh.ts`. A stored workspace absent from a
+successful discovery is removed, so a regional discovery that could ever
+return a partial list would have to stop failing closed before that rule was
+safe.
 
 ### 2026-09-02 — A link to the active workspace opens without re-activating it
 

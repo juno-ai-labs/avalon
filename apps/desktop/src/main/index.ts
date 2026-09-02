@@ -78,7 +78,9 @@ import type {
   DesktopSession,
   DesktopTelemetryProductIntent,
   DesktopTelemetryScreen,
+  DesktopPendingWorkspaceInvitation,
   DesktopWorkspaceOnboardingState,
+  DesktopWorkspaceSummary,
   MeetingAudioPermissionKind,
   RuntimeConfig,
   DesktopDeepLinkErrorNotice,
@@ -229,12 +231,17 @@ import {
   storedAuthFromSession,
   storedProfileForCredential,
   storedWorkspaceCredential,
-  workspaceReferenceKey,
   type StoredAuth,
   type StoredAuthSet,
   type StoredProfileSet,
 } from './stored-auth';
 import { requestWithOnboardingIdentity } from './onboarding-identity-request';
+import { CredentialRefreshRegistry } from './credential-refresh';
+import {
+  endedStoredWorkspaces,
+  mergeWorkspaceDirectory,
+  storedWorkspaceSummaries,
+} from './workspace-directory';
 import { parseLegacyStoredSession } from './stored-session';
 import {
   decryptSessionValue,
@@ -499,6 +506,16 @@ let quitting = false;
 let inMemoryAuthSet: StoredAuthSet | null = null;
 let inMemoryProfileSet: StoredProfileSet | null = null;
 let inMemorySession: WireSession | null = null;
+/** The last discovery this run received, so a refetch that fails degrades to
+ * a stale-but-complete directory rather than to the stored set alone. It
+ * belongs to the signed-in account and is cleared with the stored set. */
+let lastWorkspaceDiscovery: {
+  workspaces: DesktopWorkspaceSummary[];
+  invitations: DesktopPendingWorkspaceInvitation[];
+} | null = null;
+/** One rotation per refresh token across every path that renews a stored
+ * credential; `credential-refresh.ts` says why two would be one too many. */
+const credentialRefreshes = new CredentialRefreshRegistry<WireSession>();
 let refreshInFlight: Promise<DesktopSession> | null = null;
 let sessionMutationTail: Promise<void> = Promise.resolve();
 let sessionLifecycleEpoch = 0;
@@ -1070,6 +1087,7 @@ async function clearCredentialsForLockdownRelogin(): Promise<void> {
   inMemoryAuthSet = null;
   inMemoryProfileSet = null;
   inMemorySession = null;
+  lastWorkspaceDiscovery = null;
   let failure: unknown;
   const directories = [
     userDataDirectory(),
@@ -1596,6 +1614,7 @@ async function clearStoredSessionUnlocked(): Promise<void> {
   inMemoryAuthSet = null;
   inMemoryProfileSet = null;
   inMemorySession = null;
+  lastWorkspaceDiscovery = null;
   let failure: unknown;
   const directories = [
     userDataDirectory(),
@@ -2098,8 +2117,14 @@ async function onboardingIdentityRequest(
     refresh: async (identity) => {
       const auth = await loadStoredAuthSet();
       const account = auth?.account;
-      if (!account || !storedAuthMatches(account, storedAuthFromSession(identity, 'global'))) {
-        throw new Error('A newer Rally identity credential replaced this request');
+      if (!account) throw new Error('Sign in to Rally before setting up a workspace');
+      if (!storedAuthMatches(account, storedAuthFromSession(identity, 'global'))) {
+        // Something already replaced the credential this request presented: a
+        // refresh that finished first, or a fresh sign-in. Use what is stored
+        // rather than rotating a token the service has since retired, and
+        // refresh the stored one only when it has itself expired.
+        const replacement = await storedSessionForCredential(account);
+        if (replacement && Date.parse(replacement.expiresAt) > Date.now()) return replacement;
       }
       return refreshStoredCredential(account);
     },
@@ -2107,7 +2132,33 @@ async function onboardingIdentityRequest(
   });
 }
 
-async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
+interface WorkspaceDiscovery {
+  identity: WireSession;
+  workspace: DesktopWorkspaceSummary | null;
+  workspaces: DesktopWorkspaceSummary[];
+  invitations: DesktopPendingWorkspaceInvitation[];
+}
+
+function workspaceSummary(workspace: {
+  id: string;
+  name: string;
+  slug: string;
+  region: RallyRegion;
+  role: 'owner' | 'admin' | 'member';
+  createdAt: string;
+}): DesktopWorkspaceSummary {
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    slug: workspace.slug,
+    region: workspace.region,
+    role: workspace.role,
+    createdAt: workspace.createdAt,
+  };
+}
+
+/** Ask Global for the account's complete membership and invitations. */
+async function discoverWorkspaces(): Promise<WorkspaceDiscovery> {
   const { identity, response } = await onboardingIdentityRequest((credential) => net.fetch(
     `${runtimeConfig().api.global}/onboarding`,
     {
@@ -2125,22 +2176,105 @@ async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
   if (parsed.data.invitations.some((invitation) => invitation.email.toLocaleLowerCase('en-US') !== accountEmail)) {
     throw new Error('Rally returned an invitation for another account');
   }
-  const auth = await loadStoredAuthSet();
-  const recency = new Map((auth?.workspaceRecency ?? []).map((reference, index) => (
-    [workspaceReferenceKey(reference), index]
-  )));
-  const workspaces = [...parsed.data.workspaces].sort((left, right) => {
-    const leftIndex = recency.get(desktopWorkspaceIdentityKey(left.region, left.id));
-    const rightIndex = recency.get(desktopWorkspaceIdentityKey(right.region, right.id));
-    if (leftIndex === undefined && rightIndex === undefined) return 0;
-    if (leftIndex === undefined) return 1;
-    if (rightIndex === undefined) return -1;
-    return leftIndex - rightIndex;
-  });
-  return { ...parsed.data, workspaces };
+  return {
+    identity,
+    workspace: parsed.data.workspace ? workspaceSummary(parsed.data.workspace) : null,
+    workspaces: parsed.data.workspaces.map(workspaceSummary),
+    invitations: parsed.data.invitations,
+  };
 }
 
-async function refreshStoredCredential(previous: StoredAuth): Promise<WireSession> {
+/** Discovery's rows over this device's stored set, in device recency order. */
+async function workspaceDirectoryRows(discovered: DesktopWorkspaceSummary[]): Promise<DesktopWorkspaceSummary[]> {
+  const auth = await loadStoredAuthSet();
+  const profiles = await loadStoredProfileSet();
+  return mergeWorkspaceDirectory(discovered, storedWorkspaceSummaries(auth, profiles), auth?.workspaceRecency ?? []);
+}
+
+/**
+ * Drop the stored credential and profile of every background workspace a
+ * complete discovery no longer lists. Listing the stored set regardless of
+ * discovery is what keeps a workspace on the menu when the account cannot be
+ * reached; this is what keeps a membership that has actually ended from
+ * living on as a stored row that can never open. `endedStoredWorkspaces`
+ * spares the active workspace and anything written after `discoveredAt`.
+ */
+async function reconcileStoredWorkspaces(
+  identity: WireSession,
+  discovered: DesktopWorkspaceSummary[],
+  discoveredAt: string,
+): Promise<void> {
+  await withSessionMutation(async () => {
+    const auth = await loadStoredAuthSet();
+    const profiles = await loadStoredProfileSet();
+    if (!auth || !profiles || auth.account?.binding.userId !== identity.user.id) return;
+    const ended = endedStoredWorkspaces(auth, profiles, discovered, discoveredAt);
+    if (ended.length === 0) return;
+    let nextAuth = auth;
+    let nextProfiles = profiles;
+    for (const reference of ended) {
+      ({ auth: nextAuth, profiles: nextProfiles } = removeStoredWorkspace(
+        nextAuth,
+        nextProfiles,
+        reference.workspaceId,
+        reference.region,
+      ));
+    }
+    await writeStoredAuthFile(
+      userDataDirectory(),
+      encryptStoredSessionValue(JSON.stringify(nextAuth)),
+    );
+    await writeStoredProfileFile(
+      userDataDirectory(),
+      encryptStoredSessionValue(JSON.stringify(nextProfiles)),
+    );
+    inMemoryAuthSet = nextAuth;
+    inMemoryProfileSet = nextProfiles;
+    logWarn('rally', `removed ${ended.length} stored workspace credential(s) whose membership has ended`);
+  });
+}
+
+/**
+ * The account menu's directory. Never rejects on discovery's account: the
+ * stored set is listed whatever happened, and the answer says which of three
+ * states the account is in, so the renderer shows a state rather than
+ * retrying an error into a menu item that comes and goes.
+ */
+async function getOnboardingState(): Promise<DesktopWorkspaceOnboardingState> {
+  const discoveredAt = new Date().toISOString();
+  let discovered: WorkspaceDiscovery;
+  try {
+    discovered = await discoverWorkspaces();
+  } catch (error) {
+    // The difference between "reconnect the account" and "try again later"
+    // is whether an identity credential is still on this device: a refresh
+    // that just proved one dead has surrendered it by the time this runs.
+    const identityStored = await loadStoredIdentitySession() !== null;
+    return {
+      workspace: null,
+      workspaces: await workspaceDirectoryRows(lastWorkspaceDiscovery?.workspaces ?? []),
+      invitations: lastWorkspaceDiscovery?.invitations ?? [],
+      identity: identityStored ? 'unavailable' : 'reconnect_required',
+      identityError: error instanceof Error ? error.message : 'Rally could not check your workspaces.',
+    };
+  }
+  lastWorkspaceDiscovery = { workspaces: discovered.workspaces, invitations: discovered.invitations };
+  await reconcileStoredWorkspaces(discovered.identity, discovered.workspaces, discoveredAt);
+  return {
+    workspace: discovered.workspace,
+    workspaces: await workspaceDirectoryRows(discovered.workspaces),
+    invitations: discovered.invitations,
+    identity: 'connected',
+  };
+}
+
+/** Renew exactly this stored credential, sharing the rotation with any other
+ * request that found the same token expired. */
+function refreshStoredCredential(previous: StoredAuth): Promise<WireSession> {
+  return credentialRefreshes.run(previous, () => refreshStoredCredentialOnce(previous));
+}
+
+async function refreshStoredCredentialOnce(previous: StoredAuth): Promise<WireSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   if (loggingOut) throw new Error('Rally is signing out');
   const apiBaseUrl = apiBaseForAuth(previous);
@@ -2468,6 +2602,13 @@ async function refreshWireSession(): Promise<WireSession> {
   if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
     throw new Error('Rally was signed out while the session was refreshing');
   }
+  // The active credential can also be presented by `refreshStoredCredential`
+  // — leaving the workspace does — so both share the registry and one token
+  // is rotated once whichever path asks first.
+  return credentialRefreshes.run(previousAuth, () => refreshActiveSessionOnce(previousAuth, expectedLifecycleEpoch));
+}
+
+async function refreshActiveSessionOnce(previousAuth: StoredAuth, expectedLifecycleEpoch: number): Promise<WireSession> {
   const apiBaseUrl = apiBaseForAuth(previousAuth);
   let session: WireSession;
   try {

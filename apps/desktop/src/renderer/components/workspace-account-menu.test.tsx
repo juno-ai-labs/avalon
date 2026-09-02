@@ -1,7 +1,8 @@
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { WorkspaceAccountMenu } from './workspace-account-menu';
+import { WORKSPACE_NEEDS_ACCOUNT_RECONNECT, WorkspaceAccountMenu } from './workspace-account-menu';
 import { desktopWorkspaceIdentityKey } from '../../common/desktop';
 
 const currentUser = { id: 'user-1', name: 'Ada', email: 'ada@example.com', timezone: 'America/New_York' };
@@ -39,7 +40,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     workspaces: [active, eu],
     ...overrides,
   };
-  render(<WorkspaceAccountMenu {...props} />);
+  render(<Tooltip.Provider><WorkspaceAccountMenu {...props} /></Tooltip.Provider>);
   return props;
 }
 
@@ -119,6 +120,33 @@ describe('workspace account menu', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect account…' }));
     expect(props.onReconnectAccount).toHaveBeenCalledOnce();
+  });
+
+  it('keeps every other workspace listed while the account needs reconnecting, outlined with the reason', async () => {
+    const props = renderMenu({ accountReconnectRequired: true, attention: {} });
+    openMenu();
+
+    const menu = screen.getByRole('menu');
+    const current = within(menu).getByRole('menuitem', { name: /Global Studio.*Current/u });
+    expect(current).not.toHaveClass('is-unavailable');
+    const europe = within(menu).getByRole('menuitem', { name: /Europe Studio/u });
+    expect(europe).toBeVisible();
+    expect(europe).toHaveClass('is-unavailable');
+    expect(europe).toHaveAccessibleName(new RegExp(WORKSPACE_NEEDS_ACCOUNT_RECONNECT.slice(0, 40), 'u'));
+
+    fireEvent.pointerMove(europe);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(WORKSPACE_NEEDS_ACCOUNT_RECONNECT);
+    fireEvent.click(europe);
+    expect(props.onSwitchWorkspace).toHaveBeenCalledWith(eu);
+  });
+
+  it('does not outline any workspace while the account is connected', () => {
+    renderMenu({ accountReconnectRequired: false });
+    openMenu();
+
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: /Europe Studio/u })).not.toHaveClass('is-unavailable');
+    expect(within(menu).queryByRole('menuitem', { name: 'Reconnect account…' })).not.toBeInTheDocument();
   });
 
   it('confirms an invitation and creates a workspace from the same menu', async () => {

@@ -284,8 +284,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryFn: getOnboardingState,
     enabled: multipleWorkspacesEnabled,
   });
-  const accountReconnectRequired = workspaceDirectory.error instanceof Error
-    && workspaceDirectory.error.message.includes('Sign in to Rally before setting up a workspace');
+  // A state the bridge reports, not an error string it retries: main lists the
+  // stored set whatever happened to discovery, and says which of three states
+  // the account is in. Every switch crosses Global activation, so while the
+  // identity credential is missing no other workspace can be opened — the menu
+  // marks those rows rather than losing them.
+  const accountReconnectRequired = workspaceDirectory.data?.identity === 'reconnect_required';
   const pendingInvitationPreview = useQuery({
     queryKey: ['workspace-invitation-preview', pendingInvitation?.region, pendingInvitation?.token],
     queryFn: ({ signal }) => invitationApi!.getInvitationPreview(pendingInvitation!.token, signal),
@@ -329,18 +333,22 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const backgroundWorkspaces = knownWorkspaces.filter((candidate) => (
     candidate.id !== workspace.id || candidate.region !== workspace.region
   ));
-  const backgroundWorkspaceKeys = backgroundWorkspaces.map((candidate) => (
+  // Attention is read with each workspace's own stored credential, so only the
+  // rows this device holds one for can answer. A row discovery listed that was
+  // never opened here has none, and asking would fail the whole batch.
+  const attentionWorkspaces = backgroundWorkspaces.filter((candidate) => candidate.credentialStored === true);
+  const attentionWorkspaceKeys = attentionWorkspaces.map((candidate) => (
     desktopWorkspaceIdentityKey(candidate.region, candidate.id)
   ));
   const workspaceAttention = useQuery<Record<string, WorkspaceAttention>>({
-    queryKey: ['workspace-attention', ...backgroundWorkspaceKeys],
-    queryFn: async () => Object.fromEntries(await Promise.all(backgroundWorkspaces.map(async (candidate) => (
+    queryKey: ['workspace-attention', ...attentionWorkspaceKeys],
+    queryFn: async () => Object.fromEntries(await Promise.all(attentionWorkspaces.map(async (candidate) => (
       [
         desktopWorkspaceIdentityKey(candidate.region, candidate.id),
         await desktopBridge().getWorkspaceAttention({ region: candidate.region, workspaceId: candidate.id }),
       ] as const
     )))),
-    enabled: multipleWorkspacesEnabled && backgroundWorkspaces.length > 0,
+    enabled: multipleWorkspacesEnabled && attentionWorkspaces.length > 0,
     placeholderData: (previous) => previous,
     retry: false,
   });
@@ -356,11 +364,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     if (!multipleWorkspacesEnabled) return undefined;
     const refresh = (): void => {
       void workspaceDirectory.refetch();
-      if (backgroundWorkspaces.length > 0) void workspaceAttention.refetch();
+      if (attentionWorkspaces.length > 0) void workspaceAttention.refetch();
     };
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
-  }, [backgroundWorkspaceKeys.join(':'), multipleWorkspacesEnabled]);
+  }, [attentionWorkspaceKeys.join(':'), multipleWorkspacesEnabled]);
   const [switchingWorkspaceKey, setSwitchingWorkspaceKey] = useState<string | null>(null);
   const [workspaceErrors, setWorkspaceErrors] = useState<Record<string, string | undefined>>({});
   const switchingWorkspace = knownWorkspaces.find((candidate) => (
@@ -435,7 +443,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             }}
             onMenuOpen={() => {
               void workspaceDirectory.refetch();
-              if (backgroundWorkspaces.length > 0) void workspaceAttention.refetch();
+              if (attentionWorkspaces.length > 0) void workspaceAttention.refetch();
             }}
             onReconnectAccount={async () => {
               try {
@@ -451,6 +459,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             onSignOut={() => { void signOut().catch(() => undefined); }}
             onSwitchWorkspace={async (target) => {
               const targetKey = desktopWorkspaceIdentityKey(target.region, target.id);
+              if (accountReconnectRequired) {
+                setWorkspaceErrors((current) => ({
+                  ...current, [targetKey]: 'Reconnect your account to open this workspace',
+                }));
+                return;
+              }
               if (!navigator.onLine) {
                 setWorkspaceErrors((current) => ({ ...current, [targetKey]: 'Connect to open this workspace' }));
                 return;
