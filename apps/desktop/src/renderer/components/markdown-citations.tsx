@@ -424,8 +424,9 @@ let sounding: HTMLAudioElement | null = null;
  * would go, and it is the one card that is *not* a single button: a control
  * cannot nest inside one, and a play button that opened the rail instead would
  * be the same defect in the other direction. The tile keeps its shape — the
- * badge slot becomes play/pause, the title block becomes the button that opens
- * the rail — so a row of cards still reads as a row of cards.
+ * badge stays the kind glyph every card carries, the room becomes the position
+ * with a small play/pause button under it, and the title block is the button
+ * that opens the rail — so a row of cards still reads as a row of cards.
  *
  * It is a transport, not a player: play, pause, and where you are. Scrubbing,
  * volume and speed are the rail's own `<audio controls>`, one click away
@@ -483,25 +484,14 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
 
   return (
     <span className="citation-card citation-card-audio" data-resource-type={resource.resourceType}>
-      {src === undefined
-        ? <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type="audio" /></span>
-        : (
-          <button
-            aria-label={`${playing ? 'Pause' : 'Play'} ${resource.title}`}
-            className="citation-card-badge citation-card-play"
-            onClick={() => {
-              const audio = element.current;
-              if (!audio) return;
-              if (audio.paused) void audio.play().catch(() => setPlaying(false));
-              else audio.pause();
-            }}
-            type="button"
-          >
-            {playing ? <Pause size={14} /> : <Play size={14} />}
-          </button>
-        )}
+      {/* The kind badge every card carries, and the same speaker glyph the rail's
+          own list draws for a recording. The transport below is the control;
+          the badge says what the card is. */}
+      <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type="audio" /></span>
       {/* The bar shimmers while the bytes are on their way and sits empty when
-          no route offered them, which is also what a saved still holds. */}
+          no route offered them, which is also what a saved still holds. The
+          control sits under the position it moves, so the eye reads the card
+          top to bottom: what this is, where it is, what to press. */}
       <span className="citation-card-transport">
         <span
           aria-hidden="true"
@@ -513,6 +503,21 @@ function ResourceAudioCard({ label, loading, onOpen, resource, src }: {
           <small className="citation-card-elapsed">
             {clock(position)}{duration === null ? '' : ` / ${clock(duration)}`}
           </small>
+        )}
+        {src !== undefined && (
+          <button
+            aria-label={`${playing ? 'Pause' : 'Play'} ${resource.title}`}
+            className="citation-card-play"
+            onClick={() => {
+              const audio = element.current;
+              if (!audio) return;
+              if (audio.paused) void audio.play().catch(() => setPlaying(false));
+              else audio.pause();
+            }}
+            type="button"
+          >
+            {playing ? <Pause size={12} /> : <Play size={12} />}
+          </button>
         )}
       </span>
       {src !== undefined && (
