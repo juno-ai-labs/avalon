@@ -339,7 +339,10 @@ export class ArtifactPreviewController {
     if (!view.destroyed()) view.close();
   }
 
-  /** For tests and diagnostics: which artifact this window is showing. */
+  /**
+   * For tests and diagnostics: which artifact this window is showing, or
+   * `null` once `destroy()` has run.
+   */
   currentArtifactId(): string | null {
     return this.artifactId;
   }

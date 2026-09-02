@@ -414,6 +414,10 @@ describe('the rail preview controller', () => {
     // to happen; only the second close would throw.
     expect(removed).toHaveLength(1);
     expect(views[0]?.closed).toBe(false);
+    // Idempotent here too. This is the path where it is not obvious: the
+    // window is alive, so nothing else would stop a second detach.
+    controller.destroy();
+    expect(removed).toHaveLength(1);
   });
 
   it('replaces a view whose contents closed themselves rather than reporting it live', async () => {
@@ -428,6 +432,19 @@ describe('the rail preview controller', () => {
     expect(views[1]?.bounds.at(-1)).toEqual(bounds);
     // The dead one is detached from the window that is still holding it.
     expect(removed).toHaveLength(1);
+  });
+
+  it('stops laying out a view whose contents closed themselves', async () => {
+    const { controller, views } = harness();
+    await controller.present({ artifactId: ARTIFACT, url: `${ORIGIN}/`, bounds });
+    const laidOut = views[0]!.bounds.length;
+    // The window is alive, so the window half of the layout guard does not
+    // apply. The rail goes on sending layout updates — a resize — because it
+    // has no way to learn the preview died under it.
+    views[0]!.destroyed = true;
+    controller.setBounds({ x: 100, y: 100, width: 200, height: 200 });
+    controller.setOverlayOpen(true);
+    expect(views[0]?.bounds).toHaveLength(laidOut);
   });
 
   it('refuses to lay out or present over a window that is gone', async () => {
